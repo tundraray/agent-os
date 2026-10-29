@@ -14,10 +14,10 @@ Metadata:
 В `ChatController.onFinish` после строки `usage` — `this.titles.schedule({ threadId, resourceId: req.user.id })`; остальное в контроллере не меняется (проверка владельца и «сброс хвоста» — уже в T2.5). **`chat.module.ts` в этой задаче не правится**: `ChatModule.imports: [ThreadsModule]` добавлен в T2.5, `ThreadsModule` экспортирует `ThreadTitleService` с T4.2. Конструктор `ChatController` получает **только `ThreadTitleService`** (дополнительно к `ThreadsService` из T2.5); поле — `titles`. `createTestApp` **всегда** применяет `.overrideProvider(THREAD_TITLE_AGENT)` с mock-агентом, по умолчанию возвращающим `'Тестовый заголовок'`; параметр `titleModel` лишь меняет сценарий — так ни один e2e (в т. ч. T2.x, T3.x, T5.1, perf), отправляющий `POST /api/chat/assistant`, не вызывает сетевую модель заголовков. `mockModels.ts` — сценарии заголовков: по умолчанию фиксированный `'Тестовый заголовок'`; успех «План отпуска на Байкал»; ошибка; задержка с параметром мс; переключаемый. Подключение `schedule` и override входят в одну единицу, готовую к коммиту.
 
 ## Target Files
-- [ ] `apps/api/src/chat/chat.controller.ts` (только `onFinish` и конструктор — добавляется `ThreadTitleService`; `ThreadsService` и вызовы `getOwnedThread`/`discardRepliesAfter` из T2.5 не менять)
-- [ ] `apps/api/test/support/createTestApp.ts` (`titleModel`, `.overrideProvider(THREAD_TITLE_AGENT)` — всегда)
-- [ ] `apps/api/test/support/mockModels.ts` (сценарии заголовков)
-- [ ] `apps/api/test/chat-threads.e2e-spec.ts`
+- [x] `apps/api/src/chat/chat.controller.ts` (только `onFinish` и конструктор — добавляется `ThreadTitleService`; `ThreadsService` и вызовы `getOwnedThread`/`discardRepliesAfter` из T2.5 не менять)
+- [x] `apps/api/test/support/createTestApp.ts` (`titleModel`, `.overrideProvider(THREAD_TITLE_AGENT)` — всегда)
+- [x] `apps/api/test/support/mockModels.ts` (сценарии заголовков)
+- [x] `apps/api/test/chat-threads.e2e-spec.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации. В `chat.controller.ts` меняются только `onFinish` и конструктор (только `ThreadTitleService`). `chat.module.ts` — вне списка (изменён в T2.5).
 
@@ -41,31 +41,38 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Доп. e2e вне скелета | `manual rename while title generation is pending wins` | work plan T4.3, Notes |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат Compliance Check.)
+- Observations: `ChatController` (after T2.5) has `ThreadsService` in the constructor, `getOwnedThread` before streaming and `discardRepliesAfter` for a resent user message; `onFinish` logged only the `usage` line. `ChatModule.imports: [ThreadsModule]` exists; `ThreadsModule` exports `ThreadTitleService` and provides `THREAD_TITLE_AGENT` via `threadTitleAgentProvider` (real Mastra `Agent`, model from `TITLE_MODEL`/`ASSISTANT_MODEL`). `ThreadTitleService` depends only on `generate(message, { abortSignal })` of the agent. Mastra `Agent.generate` calls `model.doGenerate` (methodType `generate`), so the title mock implements `doGenerate`. `POST /api/threads` (201) and `PATCH /api/threads/:id` exist (Phase 3).
+- Planned approach: `onFinish` calls `this.titles.schedule({ threadId, resourceId: req.user.id })` right after the `usage` line; the constructor gains only `ThreadTitleService` (field `titles`). `mockModels.ts` gets `titleModel(scenario)` — a `MockLanguageModelV4` (`doGenerate`) recording each call's user prompt text, with scenarios `titleSuccess`, `titleError`, `titleDelayed(title, ms)` (honours the abort signal), default `DEFAULT_TEST_TITLE = 'Тестовый заголовок'`, switchable via `use()`. `createTestApp` always applies `.overrideProvider(THREAD_TITLE_AGENT).useValue(...)` with an `Agent` (`id: 'thread-title'`, `THREAD_TITLE_INSTRUCTIONS`) on that mock model — the production agent shape, so the real `Agent.generate` path is exercised; `titleModel` only changes the scenario and is returned on `TestApp`.
+- Reference Contract (AC-17.1): e2e polls `GET /api/threads/:id` every 100 ms up to 10 000 ms (`pollUntil` / `awaitTitle`) and asserts the literal 'План отпуска на Байкал' — Compliance Check: **Y** (final implementation, `chat-threads.e2e-spec.ts` AC-17.1 green).
+- RED evidence (before wiring `schedule`): AC-17.1, AC-17.3 and the rename race failed with `not reached within 10000 ms`; AC-17.2 passed (non-regression by nature: no call expected).
+- GREEN evidence: `chat-threads.e2e-spec.ts` 7 passed / 3 todo; full `test:e2e` with `ANTHROPIC_API_KEY=` and `OPENAI_API_KEY=` emptied: 25 passed / 5 todo, `app.e2e-spec.ts` unchanged and green.
+- AC-17.3: the warning is awaited by polling the `Logger.prototype.warn` spy (it is written only after the failed title call settled, so it implies the mock was called); the retry prompt is the call after the switch and contains only the first stored message.
+- Rename race: the PATCH is sent as soon as the mock recorded the call (generation pending, 1 500 ms delay); `'Ручной'` is asserted at +2 s and +5 s after the PATCH; the mock was called exactly once.
+- Adjacent sweep: not required (no `Change Category`). Out of scope, observed: `prettier --check` reports 7 pre-existing files outside Target Files (`src/audit/*`, `src/auth/session.guard.ts`, `src/mastra/*`) — unchanged by this task (no diff vs HEAD), left as is.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -123,12 +130,12 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] 3 e2e скелета + 1 доп. зелёные; `it.todo` этих кейсов закрыты (`chat-threads.e2e-spec.ts` 4/7)
-- [ ] `app.e2e-spec.ts` проходит без правок
-- [ ] Повторный полный прогон `pnpm --filter api test:e2e` зелёный, сетевых вызовов модели нет (без ключей провайдеров)
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/e2e/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] 3 e2e скелета + 1 доп. зелёные; `it.todo` этих кейсов закрыты (`chat-threads.e2e-spec.ts` 4/7)
+- [x] `app.e2e-spec.ts` проходит без правок
+- [x] Повторный полный прогон `pnpm --filter api test:e2e` зелёный, сетевых вызовов модели нет (без ключей провайдеров)
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/e2e/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `chat.controller.ts` (T2.3 `onError` → T2.5 → T4.3 `onFinish`; T5.1 production-код не меняет), `createTestApp.ts`/`mockModels.ts` (общие для всех e2e; `mockModels.ts` до этого правили T1.3, T2.4, T2.5), `chat-threads.e2e-spec.ts` (T2.4 → T2.5 → T4.3 → T5.1).

@@ -14,9 +14,9 @@ Metadata:
 `schedule({ threadId, resourceId }): void` — промис кладётся в `Set` (`pending`), все ошибки пойманы (нет висящих промисов, `no-floating-promises`); токен `THREAD_TITLE_TIMEOUT_MS` (`useValue: 8_000` в `ThreadsModule`). Шаги 1–4 Design Doc: (1) проверка, что title ещё пуст (иначе `debug` и выход, без `recall` и модели); (2) чтение первого сообщения из `Memory.recall` с литеральными аргументами, конкатенация текстовых частей, `trim`, обрезка до 2 000 символов; (3) вызов агента с `AbortSignal.timeout(THREAD_TITLE_TIMEOUT_MS)`; **сразу после разрешения `generate` (до `signal.throwIfAborted()`) — `this.logger.log('usage agent=thread-title thread=<id> input=<n> output=<n>')`**, где `input`/`output` — входные и выходные токены из total usage результата `generate`, `0` при отсутствии (тот же формат, что строка `usage` чата); только id и числа, без текста; затем `signal.throwIfAborted()` (Mastra разрешает прерванный `generate`); (4) запись заголовка под `ThreadWriteLock` с перепроверкой `title === ''`. **Шаг 5**: в `catch` — `reason = signal.aborted ? 'TimeoutError' : error.name`, плюс `statusCode=`/`code=` при наличии; без `error.message` и текста; `EmptyTitle` при пустой нормализации. Шаг 6 — повтор: следующий `schedule` повторяет генерацию. `beforeApplicationShutdown` — `Promise.allSettled(pending)`.
 
 ## Target Files
-- [ ] `apps/api/src/threads/thread-title.service.ts` (new)
-- [ ] `apps/api/src/threads/thread-title.service.spec.ts` (new)
-- [ ] `apps/api/src/threads/threads.module.ts`
+- [x] `apps/api/src/threads/thread-title.service.ts` (new)
+- [x] `apps/api/src/threads/thread-title.service.spec.ts` (new)
+- [x] `apps/api/src/threads/threads.module.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -47,31 +47,60 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Гонка с ручным переименованием | запись только под `ThreadWriteLock` с перепроверкой `title === ''` | work plan T4.2, AC-17.2 |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат каждого Compliance Check.)
+**Наблюдения.**
+- `ThreadWriteLock.run(key, fn)` — очередь по ключу; `ThreadsService.rename` пишет под тем же lock (`threads.service.ts`), поэтому перепроверка `title === ''` внутри `lock.run` закрывает гонку AC-17.2.
+- `THREAD_TITLE_AGENT` даёт `Agent` (`thread-title.agent.ts`); `Agent.generate(messages, { abortSignal })` возвращает `FullOutput` с `text` и `totalUsage` (`@mastra/core` 1.80.0, `stream/base/output.d.ts`).
+- Строка `usage` чата (`chat.controller.ts`): `input=${u.inputTokens ?? 0} … output=${u.outputTokens ?? 0}` — тот же приём `?? 0`.
+- `Memory.recall` / `getThreadById` / `updateThread({ id, title })` — сигнатуры `@mastra/memory` 1.39.1. В `threads.service.spec.ts` фейк `Memory` — реальный экземпляр со `vi.spyOn` (без БД) — этот приём используется и здесь.
+- Сервис зависит от узкого структурного типа `ThreadTitleGenerator` (только `generate`), которому `Agent` удовлетворяет (проверка `expectTypeOf<Agent>().toExtend<…>()` в spec под `tsc`). Прецедент — `AgentMemorySource` в `thread-memory.provider.ts`. Так фейковый агент в unit — обычный объект без `as`.
+
+**План подхода.** `schedule` создаёт промис `run(...).catch(...)` → добавляет в `Set pending`, удаляет в `finally`. `run`: шаг 1 `getThreadById` (`null`/непустой → `debug`, выход); шаг 2 `recall` с литеральными аргументами, `first.role !== 'user'` → `debug`, выход; текст — `parts` с `type === 'text'`, `join('')`, `trim`, обрезка до 2 000 code points; пусто → `debug`, выход; шаг 3 `signal = AbortSignal.timeout(timeoutMs)` создаётся до `generate` (переменная видна в `catch`), `generate(userText, { abortSignal: signal })`, затем `log('usage agent=thread-title thread=<id> input=<n> output=<n>')` из `totalUsage` (`?? 0`), затем `signal.throwIfAborted()`, `normalizeGeneratedTitle`, пусто → ошибка с `name = 'EmptyTitle'`; шаг 4 запись под `lock.run` с перепроверкой; шаг 5 `catch` → `warn('Title generation failed thread=<id> reason=<signal?.aborted ? 'TimeoutError' : error.name>[ statusCode=<n>][ code=<c>]')`, без `error.message`. `beforeApplicationShutdown` → `Promise.allSettled(pending)`. Модуль: `{ provide: THREAD_TITLE_TIMEOUT_MS, useValue: 8_000 }`, `ThreadTitleService` в providers и exports.
+
+**Compliance Checks (план → финал).**
+| # | Контракт | План | Финал |
+|---|---|---|---|
+| 1 | формат `warn`/`debug`, без `error.message`/текста | Y — строка собирается только из id, reason, statusCode, code | Y — `thread-title.service.ts` `logFailure`; кейс «ошибка модели» проверяет литерал и отсутствие message |
+| 2 | таймаут: ровно `'Title generation failed thread=t-1 reason=TimeoutError'`, нет `updateThread` | Y | Y — кейс «таймаут: generate разрешается aborted» |
+| 3 | `reason = signal.aborted ? 'TimeoutError' : error.name`, обёрнутая ошибка → TimeoutError | Y — сигнал до `generate`, выражение в `catch` | Y — кейс `new Error('wrapped')` |
+| 4 | `usage` после каждого разрешённого `generate` | Y | Y — лог до `throwIfAborted`, и в кейсе таймаута тоже пишется |
+| 5 | токены из `totalUsage`, `0` при отсутствии, без текста | Y | Y — `?? 0`; кейс 12/5 |
+| 6 | литерал `'usage agent=thread-title thread=t-1 input=12 output=5'` | Y | Y |
+| 7 | `throwIfAborted` после `generate`; тест таймаута красный без него | Y | Y — проверено мутацией: без вызова падает строка «partial text» (частичный заголовок записывается). Строка «empty text» по литералу DD без вызова остаётся зелёной: пустая нормализация → `EmptyTitle`, а шаг 5 по `signal.aborted` даёт `TimeoutError`; поэтому добавлена строка с частичным текстом (Primary failure mode Proof Obligation) |
+| 8 | модуль `useValue: 8_000`, unit 20 | Y | Y — `threads.module.ts`, spec `TIMEOUT_MS = 20` |
+| 9 | `recall` ровно с литеральными аргументами | Y | Y |
+| 10 | 2 500 → ровно 2 000 | Y | Y |
+
+**Доказательства и отклонения при реализации.**
+- Гонка AC-17.2: мутация (убрана перепроверка под lock) → кейс гонки красный; восстановлено → зелёный. Rename идёт через реальный `ThreadsService.rename` с тем же `ThreadWriteLock`.
+- `DOMException` (причина `AbortSignal.timeout`) имеет устаревшее числовое поле `code` (23); без исключения строка таймаута получала бы ` code=23` и не совпала бы с литералом DD. `errorField` пропускает `DOMException`, `statusCode`/`code` берутся только у прочих ошибок (ошибки провайдера).
+- Кейсы гонки и `beforeApplicationShutdown` держат ответ модели открытым, поэтому идут с таймаутом 5 000 мс (иначе 20 мс истекают до разрешения); кейсы таймаута — `TIMEOUT_MS = 20`.
+- `expectTypeOf<Agent>().toExtend<ThreadTitleGenerator>()` под `tsc` подтверждает, что Mastra `Agent` удовлетворяет узкому типу зависимости.
+- Покрытие `thread-title.service.ts`: строки 100 %, ветви 94,7 %.
+- `prettier --check "src/**/*.ts" "test/**/*.ts"` по всему пакету сообщает о 7 файлах вне Target Files (`src/audit/*`, `src/auth/session.guard.ts`, `src/mastra/*`) — не изменялись этой задачей; Target Files отформатированы.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -139,12 +168,12 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Unit зелёный, прогон содержательный (включая кейс «таймаут с обёрнутой ошибкой», обрезку 2 500 → 2 000 и литерал строки `usage agent=thread-title thread=t-1 input=12 output=5`)
-- [ ] oxlint `no-floating-promises` без ошибок
-- [ ] Покрытие файла `thread-title.service.ts` ≥ 80 %
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] Unit зелёный, прогон содержательный (включая кейс «таймаут с обёрнутой ошибкой», обрезку 2 500 → 2 000 и литерал строки `usage agent=thread-title thread=t-1 input=12 output=5`)
+- [x] oxlint `no-floating-promises` без ошибок
+- [x] Покрытие файла `thread-title.service.ts` ≥ 80 %
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `threads.module.ts` (последний в цепочке T2.1 → T2.2 → T3.2 → T4.1 → T4.2).

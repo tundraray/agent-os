@@ -19,7 +19,7 @@ Metadata:
 **Мутационная проверка (один раз, после того как 3 e2e зелёные)**: (1) сохранить копию `apps/api/src/chat/chat.controller.ts` в каталог scratchpad и записать её sha256; (2) временно удалить вызов `getOwnedThread` в `ChatController.chat`; (3) запустить 3 e2e — кейсы `AC-16.1` и `foreign thread and unknown client id …` должны покраснеть (404 → иное), результат записать в Investigation Notes; (4) восстановить файл из копии и проверить, что sha256 совпадает с исходным; (5) повторно запустить 3 e2e — зелёные. Без `git stash`/`git checkout`/`git reset`.
 
 ## Target Files
-- [ ] `apps/api/test/chat-threads.e2e-spec.ts`
+- [x] `apps/api/test/chat-threads.e2e-spec.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации. `apps/api/src/chat/chat.controller.ts` меняется **только временно** в мутационной проверке и обязан быть восстановлен байт-в-байт (итоговое состояние = состоянию до мутации). `apps/api/test/app.e2e-spec.ts` не меняется (`git diff --exit-code` пуст).
 
@@ -51,32 +51,39 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Гонка удаления между `getOwnedThread` и `agent.stream` | принято Design Doc как риск без задачи | work plan, Design-to-Plan Traceability |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат каждого Compliance Check.)
+- Предусловие (T2.5): `apps/api/src/chat/chat.controller.ts:54` — `await this.threads.getOwnedThread(threadId, req.user.id)` стоит после проверки агента (404) и наличия id (400), до разбора последнего сообщения/`discardRepliesAfter` (стр. 59–66) и `agent.stream` (стр. 74). Эскалация не нужна.
+- `ThreadsService.getOwnedThread` (`threads.service.ts:51`) → `memory.getThreadById({ threadId, resourceId })`, `null` → `threadNotFound()` (`threads.errors.ts`, единственный источник тела 404).
+- План: три `it.todo` наполнены по Arrange/Act/Assert скелета; в `startAppWith` наружу отдаётся mock-модель ассистента (`assistant`), чтобы проверять `doStreamCalls` (0 новых вызовов при 404); вспомогательные `listedThreadIds` (`ThreadListResponseSchema`) и `threadHistory`; литерал `NOT_FOUND_BODY` как в `threads.e2e-spec.ts`. Беседы создаются `POST /api/threads`, удаление — `DELETE` (204).
+- Adjacent sweep (state-change, boundary-change): неизвестный агент (404) и отсутствующий id (400) проверяются до `getOwnedThread` — порядок в коде не изменён, покрытие — `app.e2e-spec.ts` (зелёный, без правок). Чужая беседа (было 500) и клиентский id без беседы — кейс `foreign thread and unknown client id …`. Удалённая беседа — кейс AC-16.1. Остатков вне Target Files нет.
+- Reference Contract «AC-16.1» (state-lifecycle-negative): **Y** — после `DELETE` → `POST /api/chat/assistant` статус 404, `content-type` `application/json` (не SSE), тело = литерал, `getThreadById` → `null`, в `GET /api/threads` id отсутствует, `doStreamCalls` не вырос.
+- Reference Contract «находка 7» (structure-order): **Y** — тела 404 для чужой и неизвестной беседы `toEqual({ message: 'Thread not found', error: 'Not Found', statusCode: 404, errorCode: 'THREAD_NOT_FOUND' })`.
+- Мутационная проверка (2026-10-29, один раз): копия `D:\Temp\claude\D--git-github-ai-agent-os\9bee0586-b376-4f97-b39b-7eb4cd59a0ce\scratchpad\chat.controller.ts.orig`; sha256 до мутации `6aae49bad1bee035cd7c8949ce7d2bb3357045b157fcfa92c19e0d63c992d901`; удалена строка `await this.threads.getOwnedThread(threadId, req.user.id);` (sha256 мутанта `516af321b2c2a4ad4032232ae9c18c3d48876f4457b5ce4855dcbf200f7e2953`). Результат: `AC-16.1 …` × (`expected 500 to be 404`), `foreign thread and unknown client id …` × (`expected 500 to be 404`), `own thread …` ✓ — 2 failed | 1 passed. Файл восстановлен копированием из scratchpad; sha256 после восстановления `6aae49bad1bee035cd7c8949ce7d2bb3357045b157fcfa92c19e0d63c992d901` (совпадает); повторный прогон — 3 passed. `git stash`/`checkout`/`reset` не использовались.
+- Гейты: lint 0, tsc 0, unit 118/118, e2e 28 passed + 2 todo (`threads.perf.e2e-spec.ts`, скелет perf, вне T5.1), build OK, `git diff --exit-code apps/api/test/app.e2e-spec.ts` пуст. `prettier --check`: Target File чист; предупреждения только у 7 файлов вне Target Files без диффа к HEAD (`src/audit/*`, `src/auth/session.guard.ts`, `src/mastra/*`) — как в T4.3, оставлены как есть.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Убедиться, что `ChatController.chat` содержит `getOwnedThread` до `agent.stream` (T2.5); при отсутствии — эскалация
-- [ ] Написать e2e (наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены). Production-код уже есть (T2.5), поэтому кейсы сразу зелёные — «красное» доказывается мутацией ниже
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Убедиться, что `ChatController.chat` содержит `getOwnedThread` до `agent.stream` (T2.5); при отсутствии — эскалация
+- [x] Написать e2e (наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены). Production-код уже есть (T2.5), поэтому кейсы сразу зелёные — «красное» доказывается мутацией ниже
 
 ### 2. Green Phase
-- [ ] Запустить 3 добавленных e2e, убедиться, что они зелёные
-- [ ] **Мутационная проверка (один раз)**: удалить вызов `getOwnedThread` в `ChatController.chat` (копия и sha256 сохранены) → кейсы `AC-16.1` и `foreign thread and unknown client id …` краснеют; результат записать в Investigation Notes
-- [ ] Восстановить `chat.controller.ts` из копии, сверить sha256, повторно запустить 3 e2e — зелёные
+- [x] Запустить 3 добавленных e2e, убедиться, что они зелёные
+- [x] **Мутационная проверка (один раз)**: удалить вызов `getOwnedThread` в `ChatController.chat` (копия и sha256 сохранены) → кейсы `AC-16.1` и `foreign thread and unknown client id …` краснеют; результат записать в Investigation Notes
+- [x] Восстановить `chat.controller.ts` из копии, сверить sha256, повторно запустить 3 e2e — зелёные
 
 ### 3. Refactor Phase
-- [ ] Улучшить тестовый код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить тестовый код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (полный прогон; Postgres на хост-порту 5433, `DATABASE_URL=postgres://agent:agent@localhost:5433/agent_os`)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (полный прогон; Postgres на хост-порту 5433, `DATABASE_URL=postgres://agent:agent@localhost:5433/agent_os`)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -121,11 +128,11 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: итоговая проверка — T6.2.
 
 ## Completion Criteria
-- [ ] 3 e2e зелёные; `it.todo` этих кейсов закрыты (`chat-threads.e2e-spec.ts` 7/7), `app.e2e-spec.ts` зелёный и не изменён
-- [ ] Мутационная проверка выполнена один раз (оба кейса 404 краснеют без `getOwnedThread`), `chat.controller.ts` восстановлен (sha256 совпадает), результат в Investigation Notes
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/e2e/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия) на `feature/chat-shell` (в `main` — только вместе с `web-shell`); `git commit` не выполнялся
+- [x] 3 e2e зелёные; `it.todo` этих кейсов закрыты (`chat-threads.e2e-spec.ts` 7/7), `app.e2e-spec.ts` зелёный и не изменён
+- [x] Мутационная проверка выполнена один раз (оба кейса 404 краснеют без `getOwnedThread`), `chat.controller.ts` восстановлен (sha256 совпадает), результат в Investigation Notes
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/e2e/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия) на `feature/chat-shell` (в `main` — только вместе с `web-shell`); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `POST /api/chat/:agentId` — все клиенты чата (в т. ч. прототип `apps/web/src/components/assistant.tsx`).

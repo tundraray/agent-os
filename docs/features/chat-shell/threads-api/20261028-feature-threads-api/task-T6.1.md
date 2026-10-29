@@ -16,10 +16,10 @@ Metadata:
 **Решение плана о запуске** (Design Doc передал его плану): perf остаётся в `test:e2e`. Если perf-кейс падает хотя бы в 1 из 3 полных прогонов `test:e2e`, но проходит в изолированном прогоне — perf выносится в `test:perf` (`vitest run --config ./vitest.config.e2e.ts --no-file-parallelism test/threads.perf.e2e-spec.ts`), а `test:e2e` его исключает; запись в Notes плана.
 
 ## Target Files
-- [ ] `apps/api/test/threads.perf.e2e-spec.ts`
+- [x] `apps/api/test/threads.perf.e2e-spec.ts`
 - [ ] `apps/api/package.json` (скрипт `test:perf` — **только** при нестабильности)
 - [ ] `apps/api/vitest.config.e2e.ts` (исключение perf из `test:e2e` — **только** при нестабильности)
-- [ ] `docs/features/chat-shell/threads-api/20261028-feature-threads-api.md` (только пункт «Решение о `test:perf`» в Notes)
+- [x] `docs/features/chat-shell/threads-api/20261028-feature-threads-api.md` (только пункт «Решение о `test:perf`» в Notes)
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -40,31 +40,36 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Размеры данных | 200 бесед для AC-13.4; 100 сообщений для AC-14.4 | work plan T6.1 |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода.)
+- Скелет: 2 `it.todo` с Arrange/Act/Assert; харнесс `test/support` — `createTestApp()` (mock-модели, `THREAD_TITLE_AGENT` подменён — сеть не используется), `seed` (явный `updatedAt`, format-2 сообщения, префикс id на вызов), `descendingDates`, `newUser`, `cleanupUsers`. Список — страница 20 (`ThreadListResponseSchema`), история возвращает все сообщения (`ThreadMessagesResponseSchema`). `vitest.config.e2e.ts` подхватывает `**/*.e2e-spec.ts`, файлы идут параллельно.
+- План: одно приложение на файл (`beforeAll`/`afterAll` с `cleanupUsers` и `app.close()`), уникальный пользователь на тест; хелпер `measureSequential` — 5 прогревочных (тоже проверяются, но в замер не входят) + 50 последовательных запросов с `performance.now()`, каждый ответ проверяется (200, 20 бесед / 100 сообщений), длительности сортируются по возрастанию, сравнивается `durations[47]` (константа `P95_INDEX = ceil(0.95·50) − 1`) с литералами 300 / 500. Таймаут теста 120 с (засев 200 бесед).
+- Reference Contract — **Y**: 5 прогревочных + 50 последовательных запросов; сравнивается отсортированный `durations[47]` с 300 мс (список) и 500 мс (сообщения) — `test/threads.perf.e2e-spec.ts`, `measureSequential` и два `expect(durations[P95_INDEX]).toBeLessThanOrEqual(...)`.
+- Red: до реализации кейсы были `it.todo` (не исполнялись); проверка, что утверждение может упасть, — временный порог 1 мс краснит оба кейса (`expected 4.64 / 6.40 to be less than or equal to 1`), порог возвращён.
+- Результаты (Postgres `localhost:5433`, пустые ключи): изолированно p95 AC-13.4 = 4.6 мс, AC-14.4 = 6.4 мс; полный `test:e2e` — 4/4 прогона зелёные (30/30), в verbose-прогоне p95 6.6 / 6.0 мс. Правило выноса в `test:perf` не сработало — perf остаётся в `test:e2e`, `package.json` и `vitest.config.e2e.ts` не менялись.
+- Гейты: lint (код выхода 0), `tsc --noEmit`, unit 118/118, `nest build` — OK; `prettier --check` по целевому файлу OK; общий `prettier --check "src/**/*.ts" "test/**/*.ts"` предупреждает о 7 файлах вне scope, не изменённых относительно HEAD (`src/audit/audit.module.ts`, `src/audit/audit.service.ts`, `src/auth/session.guard.ts`, `src/mastra/agents/assistant.agent.ts`, `src/mastra/mastra.lifecycle.ts`, `src/mastra/models.spec.ts`, `src/mastra/models.ts`) — уже существовавшее состояние, оставлено для T6.2.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"` (целевой файл чист; 7 файлов вне scope, не изменённых относительно HEAD, — см. Investigation Notes)
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -90,11 +95,11 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: шум общей БД при параллельном запуске — правило выноса в `test:perf`.
 
 ## Completion Criteria
-- [ ] Perf 2/2 зелёные; `it.todo` в `threads.perf.e2e-spec.ts` не осталось
-- [ ] Решение о скрипте (`test:e2e` или `test:perf`) записано в Notes плана
-- [ ] Compliance Check = `Y`, доказательство в Investigation Notes
-- [ ] lint/tsc/prettier/e2e/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] Perf 2/2 зелёные; `it.todo` в `threads.perf.e2e-spec.ts` не осталось
+- [x] Решение о скрипте (`test:e2e` или `test:perf`) записано в Notes плана
+- [x] Compliance Check = `Y`, доказательство в Investigation Notes
+- [x] lint/tsc/prettier/e2e/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: время прогона `test:e2e`.

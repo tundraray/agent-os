@@ -21,6 +21,7 @@ import { MASTRA } from '../mastra/mastra.constants.js';
 import { SessionGuard } from '../auth/session.guard.js';
 import type { AuthedRequest } from '../auth/auth.types.js';
 import { toStreamErrorText } from '../common/stream-error-text.js';
+import { ThreadTitleService } from '../threads/thread-title.service.js';
 import { ThreadsService } from '../threads/threads.service.js';
 import { ChatDto } from './chat.dto.js';
 
@@ -31,6 +32,7 @@ export class ChatController {
   constructor(
     @Inject(MASTRA) private readonly mastra: Mastra,
     private readonly threads: ThreadsService,
+    private readonly titles: ThreadTitleService,
   ) {}
 
   @Post(':agentId')
@@ -78,6 +80,8 @@ export class ChatController {
             `cacheRead=${u.cachedInputTokens ?? 0} cacheWrite=${u.cacheCreationInputTokens ?? 0} ` +
             `output=${u.outputTokens ?? 0}`,
         );
+        // FR-17: background auto-title; never throws, an untitled thread retries on the next reply.
+        this.titles.schedule({ threadId, resourceId: req.user.id });
       },
     });
 

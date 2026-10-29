@@ -13,14 +13,22 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import {
+  THREAD_TITLE_AGENT,
+  THREAD_TITLE_INSTRUCTIONS,
+} from '../../src/threads/thread-title.agent.js';
+import {
   assistantModel as scriptedAssistantModel,
   FAILING_TOOL,
+  titleModel as defaultTitleModel,
+  type TitleModel,
   WEATHER_TOOL,
 } from './mockModels.js';
 
 export interface TestAppOptions {
   /** Mock model of the `assistant` agent; default — one with no scripted responses. */
   assistantModel?: MockLanguageModelV4;
+  /** Mock model of the title agent; default — one answering `'Тестовый заголовок'`. */
+  titleModel?: TitleModel;
 }
 
 export interface TestApp {
@@ -29,6 +37,8 @@ export interface TestApp {
   mastra: Mastra;
   /** The `assistant` agent's memory (shared `PostgresStore`), for `seed` / `cleanupUsers`. */
   memory: Memory;
+  /** The title agent's mock model (calls, scenario switch). */
+  titleModel: TitleModel;
 }
 
 const getWeather = createTool({
@@ -69,15 +79,27 @@ function createTestMastra(
   });
 }
 
+/** The production title agent's shape (no memory, no tools) on a mock model. */
+function createTestTitleAgent(title: TitleModel): Agent {
+  return new Agent({
+    id: 'thread-title',
+    name: 'Thread title',
+    instructions: THREAD_TITLE_INSTRUCTIONS,
+    model: title.model,
+  });
+}
+
 /**
  * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`)
  * with `MASTRA` replaced by a test instance whose `assistant` agent runs on a
- * `MockLanguageModelV4` — no network, no provider keys.
+ * `MockLanguageModelV4` — no network, no provider keys. `THREAD_TITLE_AGENT` is
+ * always replaced too, so no reply ever triggers a network title model.
  */
 export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
   const model = options.assistantModel ?? scriptedAssistantModel();
+  const title = options.titleModel ?? defaultTitleModel();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
@@ -85,13 +107,20 @@ export async function createTestApp(
       factory: (config: ConfigService) => createTestMastra(config, model),
       inject: [ConfigService],
     })
+    .overrideProvider(THREAD_TITLE_AGENT)
+    .useValue(createTestTitleAgent(title))
     .compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);
   await app.init();
   const mastra = moduleRef.get<Mastra>(MASTRA);
-  return { app, mastra, memory: await assistantMemory(mastra) };
+  return {
+    app,
+    mastra,
+    memory: await assistantMemory(mastra),
+    titleModel: title,
+  };
 }
 
 /** The agent's memory once Mastra has injected its storage (fails fast otherwise). */

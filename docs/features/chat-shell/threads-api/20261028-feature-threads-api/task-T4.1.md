@@ -14,10 +14,10 @@ Metadata:
 `createThreadTitleAgent(model)` — `id: 'thread-title'`, **не** регистрируется в `Mastra`, без памяти, инструментов и `providerOptions`; `THREAD_TITLE_INSTRUCTIONS` — дословно (Reference Contracts); `normalizeGeneratedTitle`; провайдер `THREAD_TITLE_AGENT` в `ThreadsModule`: `useFactory: (config) => createThreadTitleAgent(parseModelId(config.get('TITLE_MODEL') ?? config.get('ASSISTANT_MODEL')))`; `.env.example` — `TITLE_MODEL` с комментарием о быстрой модели. Фабрика не обращается к сети при создании.
 
 ## Target Files
-- [ ] `apps/api/src/threads/thread-title.agent.ts` (new)
-- [ ] `apps/api/src/threads/thread-title.agent.spec.ts` (new)
-- [ ] `apps/api/src/threads/threads.module.ts`
-- [ ] `apps/api/.env.example`
+- [x] `apps/api/src/threads/thread-title.agent.ts` (new)
+- [x] `apps/api/src/threads/thread-title.agent.spec.ts` (new)
+- [x] `apps/api/src/threads/threads.module.ts`
+- [x] `apps/api/.env.example`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -44,31 +44,37 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Регистрация агента | не регистрируется в `Mastra`; `mastra.getAgent` его не видит | work plan T4.1 |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат каждого Compliance Check.)
+- Наблюдения: `parseModelId` (`mastra/models.ts`) — пустое/`undefined` → `DEFAULT_MODEL`, без провайдера → исключение. `assistant.agent.ts` создаёт `Agent` с `model`-строкой роутера Mastra; разрешение модели ленивое (без сети и без ключа при создании — проверено `agent.getModel()` в unit без `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`). `ThreadsModule` после T3.2: `threadMemoryProvider`, `ThreadWriteLock`, `ThreadsService`. `GENERATED_THREAD_TITLE_MAX_LENGTH = 80` экспортируется из `@agent-os/contracts`.
+- План: `thread-title.agent.ts` содержит токен `THREAD_TITLE_AGENT` (Symbol, по образцу `THREAD_MEMORY`), `THREAD_TITLE_INSTRUCTIONS`, `createThreadTitleAgent(model)` (`id: 'thread-title'`, только `instructions` и `model`), `normalizeGeneratedTitle`, `createThreadTitleAgentFromConfig(config)` и `threadTitleAgentProvider` (`inject: [ConfigService]`, `useFactory: createThreadTitleAgentFromConfig`). Агент нигде не передаётся в `new Mastra(...)` (`mastra.provider.ts` не менялся), поэтому `mastra.getAgent('thread-title')` его не видит. Токен не экспортируется из модуля: потребитель (`ThreadTitleService`, T4.2) — в том же модуле; `overrideProvider` в T4.3 работает и для неэкспортированных провайдеров.
+- Reference Contract 1 (инструкции): **Y** — строка скопирована из § Title Agent, совпадает побайтно.
+- Reference Contract 2 (нормализация): **Y** — шаги в порядке DD: удаление `<think>…</think>` (нежадно, все блоки) → первая непустая строка (строки trim) → снятие обрамляющих кавычек `«»"'\`` (ведущие и замыкающие) → схлопывание пробельных серий в один пробел → обрезка до 80 по кодовым точкам (`Array.from`, суррогатная пара не разрезается) → trim. Тест «120 → 80» и «surrogate pair» зелёные; мутационные проверки (без `Array.from`, без финального trim, без удаления `<think>`, без `TITLE_MODEL`) дают красные тесты.
+- Reference Contract 3 (лимит): **Y** — 80 берётся из `GENERATED_THREAD_TITLE_MAX_LENGTH`.
+- Решение «по границе символа»: символ = кодовая точка Unicode (заголовок ≤ 80 кодовых точек; в UTF-16 может быть длиннее 80, но ≤ 160 < `THREAD_TITLE_MAX_LENGTH` 200).
+- Residual для ревью: провайдер использует `??` дословно по DD, поэтому `TITLE_MODEL=` (пустая строка) даёт `DEFAULT_MODEL`, а не `ASSISTANT_MODEL`. В `.env.example` переменная оставлена закомментированной с пояснением «не оставлять пустой».
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -102,11 +108,11 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: качество языка — T6.3.
 
 ## Completion Criteria
-- [ ] Unit зелёный, прогон содержательный
-- [ ] `app.e2e-spec.ts` (без ключей провайдера) проходит без правок
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия), строго после T3.2 и пройденных гейтов G (T2.3) и G3 (T2.5); `git commit` не выполнялся
+- [x] Unit зелёный, прогон содержательный
+- [x] `app.e2e-spec.ts` (без ключей провайдера) проходит без правок
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия), строго после T3.2 и пройденных гейтов G (T2.3) и G3 (T2.5); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `threads.module.ts` (последовательность T2.1 → T2.2 → T3.2 → T4.1 → T4.2).

@@ -5,8 +5,7 @@
 // (AC-14.6) and the regenerate/edit history characterization. File name per Design Doc Test Strategy
 // ("chat-threads.e2e-spec.ts").
 //
-// Status: the AC-14.6 cases and the characterization are implemented; the AC-16.1, ownership and FR-17 cases
-// are still `it.todo` (implemented in later tasks following their Arrange/Act/Assert comments).
+// Status: all cases are implemented (AC-16.1, thread ownership on chat, FR-17, AC-14.6, characterization).
 //
 // Environment: same harness as threads.e2e-spec.ts (test/support/createTestApp, mockModels, seed);
 // Postgres from infra/docker-compose.yml; unique `resourceId = 'e2e-' + randomUUID()` per test as `x-user-id`;
@@ -18,9 +17,13 @@
 // running the existing apps/api/test/app.e2e-spec.ts unchanged; no new case is generated for it here.
 
 import { randomUUID } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  ApiErrorSchema,
+  ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
+  ThreadSummarySchema,
   type HistoryMessage,
 } from '@agent-os/contracts';
 import { safeValidateUIMessages } from 'ai';
@@ -33,7 +36,12 @@ import {
   partialTextThenErrorStep,
   partialTextUntilAbortStep,
   textStep,
+  titleDelayed,
+  titleError,
+  titleModel,
+  titleSuccess,
   type AssistantStep,
+  type TitleModel,
 } from './support/mockModels.js';
 import { cleanupUsers, newUser, seed } from './support/seed.js';
 
@@ -41,9 +49,19 @@ import { cleanupUsers, newUser, seed } from './support/seed.js';
 const started: { testApp: TestApp; users: Set<string> }[] = [];
 
 /** Boots the app with the given scripted assistant replies; `user()` registers a user for cleanup. */
-async function startApp(...steps: AssistantStep[]) {
+function startApp(...steps: AssistantStep[]) {
+  return startAppWith({ steps });
+}
+
+/** As `startApp`, with a scripted title model (default: `'Тестовый заголовок'`). */
+async function startAppWith(options: {
+  steps: AssistantStep[];
+  title?: TitleModel;
+}) {
+  const assistant = assistantModel(...options.steps);
   const testApp = await createTestApp({
-    assistantModel: assistantModel(...steps),
+    assistantModel: assistant,
+    titleModel: options.title,
   });
   const users = new Set<string>();
   started.push({ testApp, users });
@@ -52,7 +70,45 @@ async function startApp(...steps: AssistantStep[]) {
     users.add(id);
     return id;
   };
-  return { ...testApp, http: request(testApp.app.getHttpServer()), user };
+  return {
+    ...testApp,
+    assistant,
+    http: request(testApp.app.getHttpServer()),
+    user,
+  };
+}
+
+/** The single 404 body for a missing, foreign or deleted thread (Design Doc, finding 7). */
+const NOT_FOUND_BODY = {
+  message: 'Thread not found',
+  error: 'Not Found',
+  statusCode: 404,
+  errorCode: 'THREAD_NOT_FOUND',
+};
+
+/** Ids of the user's threads (GET /api/threads, first page). */
+async function listedThreadIds(
+  http: ReturnType<typeof request>,
+  userId: string,
+): Promise<string[]> {
+  const res = await http
+    .get('/api/threads')
+    .set('x-user-id', userId)
+    .expect(200);
+  return ThreadListResponseSchema.parse(res.body).threads.map(({ id }) => id);
+}
+
+/** Messages of GET /api/threads/:id/messages. */
+async function threadHistory(
+  http: ReturnType<typeof request>,
+  userId: string,
+  threadId: string,
+): Promise<HistoryMessage[]> {
+  const res = await http
+    .get(`/api/threads/${threadId}/messages`)
+    .set('x-user-id', userId)
+    .expect(200);
+  return ThreadMessagesResponseSchema.parse(res.body).messages;
 }
 
 afterEach(async () => {
@@ -81,6 +137,60 @@ async function seedThread(
   const id = ids.get(1);
   if (!id) throw new Error('seed returned no thread id');
   return id;
+}
+
+/** Creates an untitled thread through POST /api/threads; returns its id. */
+async function createThread(
+  http: ReturnType<typeof request>,
+  userId: string,
+): Promise<string> {
+  const res = await http
+    .post('/api/threads')
+    .set('x-user-id', userId)
+    .expect(201);
+  return ThreadSummarySchema.parse(res.body).id;
+}
+
+/** `title` of GET /api/threads/:id. */
+async function threadTitle(
+  http: ReturnType<typeof request>,
+  userId: string,
+  threadId: string,
+): Promise<string | null> {
+  const res = await http
+    .get(`/api/threads/${threadId}`)
+    .set('x-user-id', userId)
+    .expect(200);
+  return ThreadSummarySchema.parse(res.body).title;
+}
+
+/**
+ * Polls `check` every 100 ms until it returns a value other than `undefined`;
+ * fails when nothing arrives within `maxMs` (default 10 000 ms, AC-17.1).
+ */
+async function pollUntil<T>(
+  check: () => Promise<T | undefined>,
+  maxMs = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + maxMs;
+  for (;;) {
+    const value = await check();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline)
+      throw new Error(`not reached within ${maxMs} ms`);
+    await delay(100);
+  }
+}
+
+/** Polls GET /api/threads/:id (100 ms, up to 10 000 ms) until the title is set. */
+function awaitTitle(
+  http: ReturnType<typeof request>,
+  userId: string,
+  threadId: string,
+): Promise<string> {
+  return pollUntil(
+    async () => (await threadTitle(http, userId, threadId)) ?? undefined,
+  );
 }
 
 /** A user message as the AI SDK chat transport sends it (client-generated id). */
@@ -202,18 +312,38 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
   // @dependency: ChatController, ThreadsService.getOwnedThread, Mastra agent 'assistant', Memory, PostgresStore
   // @complexity: medium
   describe('AC-16.1 deleted thread', () => {
-    it.todo(
-      'AC-16.1: chat into a deleted thread answers 404 THREAD_NOT_FOUND before streaming and does not recreate it',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; one exchange via POST /api/chat/assistant (200);
-        //   DELETE /api/threads/:threadId -> 204
-        // Act: POST /api/chat/assistant { id: threadId, messages: [{ role: 'user', parts: [{ type: 'text', text: 'Снова привет' }] }] }
-        // Assert: 404; content-type is JSON (not text/event-stream); body.errorCode === 'THREAD_NOT_FOUND';
-        //   GET /api/threads -> ids do not contain threadId;
-        //   memory.getThreadById({ threadId, resourceId: user }) resolves null;
-        //   assistant mock model doGenerate/doStream call count unchanged by the 404 request (0 new calls)
-      },
-    );
+    it('AC-16.1: chat into a deleted thread answers 404 THREAD_NOT_FOUND before streaming and does not recreate it', async () => {
+      // Arrange: a created thread with one exchange, then deleted.
+      const t = await startApp(textStep('Привет!'));
+      const user = t.user();
+      const threadId = await createThread(t.http, user);
+      await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [clientUserMessage('Привет')] })
+        .expect(200);
+      await t.http
+        .delete(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .expect(204);
+      const modelCallsBefore = t.assistant.doStreamCalls.length;
+
+      // Act: chat into the deleted thread.
+      const res = await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [clientUserMessage('Снова привет')] });
+
+      // Assert: 404 JSON before any SSE; the thread is not resurrected; the model is not called.
+      expect(res.status).toBe(404);
+      expect(res.headers['content-type']).toMatch(/^application\/json/);
+      expect(ApiErrorSchema.parse(res.body)).toEqual(NOT_FOUND_BODY);
+      expect(await listedThreadIds(t.http, user)).not.toContain(threadId);
+      expect(
+        await t.memory.getThreadById({ threadId, resourceId: user }),
+      ).toBeNull();
+      expect(t.assistant.doStreamCalls).toHaveLength(modelCallsBefore);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -229,24 +359,67 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
   // @dependency: SessionGuard, ChatController, ThreadsService.getOwnedThread, Memory, PostgresStore
   // @complexity: medium
   describe('thread ownership on chat', () => {
-    it.todo('own thread: 200 SSE and both messages are persisted', () => {
-      // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; assistant mock replies 'Привет! Чем помочь?'
-      // Act: POST /api/chat/assistant { id: threadId, messages: [user 'Привет'] }
-      // Assert: 200; content-type starts with 'text/event-stream'; stream completes;
-      //   GET /api/threads/:threadId/messages -> 2 messages: user text 'Привет', assistant text 'Привет! Чем помочь?'
+    it('own thread: 200 SSE and both messages are persisted', async () => {
+      // Arrange: a created thread; the assistant answers 'Привет! Чем помочь?'.
+      const t = await startApp(textStep('Привет! Чем помочь?'));
+      const user = t.user();
+      const threadId = await createThread(t.http, user);
+
+      // Act
+      const res = await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [clientUserMessage('Привет')] });
+
+      // Assert: an SSE stream that completed; both messages are stored.
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/^text\/event-stream/);
+      expect(sseChunks(res.text).map((chunk) => chunk.type)).toContain(
+        'finish',
+      );
+      expect(roleAndTexts(await threadHistory(t.http, user, threadId))).toEqual(
+        [
+          ['user', ['Привет']],
+          ['assistant', ['Привет! Чем помочь?']],
+        ],
+      );
     });
 
-    it.todo(
-      'foreign thread and unknown client id both answer 404 THREAD_NOT_FOUND and nothing is written',
-      () => {
-        // Arrange: userA, userB = 'e2e-'+uuid; as A: POST /api/threads -> threadA; unknownId = 'client-' + uuid
-        // Act: as B: POST /api/chat/assistant { id: threadA, messages: [user 'Чужое'] };
-        //   as B: POST /api/chat/assistant { id: unknownId, messages: [user 'Новое'] }
-        // Assert: both 404 (foreign previously 500) with errorCode 'THREAD_NOT_FOUND' and identical bodies;
-        //   as A: GET /api/threads/{threadA}/messages -> messages === [];
-        //   as B: GET /api/threads -> threads === []; memory.getThreadById({ threadId: unknownId, resourceId: userB }) -> null
-      },
-    );
+    it('foreign thread and unknown client id both answer 404 THREAD_NOT_FOUND and nothing is written', async () => {
+      // Arrange: user A owns a thread; user B has none; an unknown client-generated id.
+      const t = await startApp();
+      const userA = t.user();
+      const userB = t.user();
+      const threadA = await createThread(t.http, userA);
+      const unknownId = `client-${randomUUID()}`;
+      const chatAsB = (id: string, text: string) =>
+        t.http
+          .post('/api/chat/assistant')
+          .set('x-user-id', userB)
+          .send({ id, messages: [clientUserMessage(text)] });
+
+      // Act
+      const foreign = await chatAsB(threadA, 'Чужое');
+      const unknown = await chatAsB(unknownId, 'Новое');
+
+      // Assert: the same 404 body for both (foreign was 500 before); nothing written or created.
+      expect(foreign.status).toBe(404);
+      expect(unknown.status).toBe(404);
+      expect(foreign.headers['content-type']).toMatch(/^application\/json/);
+      expect(unknown.headers['content-type']).toMatch(/^application\/json/);
+      expect(ApiErrorSchema.parse(foreign.body)).toEqual(NOT_FOUND_BODY);
+      expect(ApiErrorSchema.parse(unknown.body)).toEqual(NOT_FOUND_BODY);
+      expect(await threadHistory(t.http, userA, threadA)).toEqual([]);
+      expect(await countMessages(threadA)).toBe(0);
+      expect(await listedThreadIds(t.http, userB)).toEqual([]);
+      expect(
+        await t.memory.getThreadById({
+          threadId: unknownId,
+          resourceId: userB,
+        }),
+      ).toBeNull();
+      expect(t.assistant.doStreamCalls).toHaveLength(0);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -265,18 +438,40 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
     // @dependency: ChatController onFinish, ThreadTitleService, THREAD_TITLE_AGENT (mock), ThreadWriteLock, Memory
     // @complexity: high
     // Note: language and quality on a real model are verified manually (metric No. 7), not here.
-    it.todo(
-      'AC-17.1: an untitled thread gets the generated title within 10 s from the first user message',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId (title null);
-        //   title mock returns 'План отпуска на Байкал'
-        // Act: POST /api/chat/assistant { id: threadId, messages: [user 'Помоги составить план отпуска на Байкал в июле'] };
-        //   consume the stream to completion; poll GET /api/threads/:threadId every 100 ms up to 10 000 ms
-        // Assert: title === 'План отпуска на Байкал' within 10 000 ms; title.length <= 80; no '\n'; no surrounding quotes;
-        //   title !== 'Помоги составить план отпуска на Байкал в июле';
-        //   the title mock received a prompt containing the literal 'Помоги составить план отпуска на Байкал в июле'
-      },
-    );
+    it('AC-17.1: an untitled thread gets the generated title within 10 s from the first user message', async () => {
+      // Arrange: an untitled thread; the title mock answers 'План отпуска на Байкал'.
+      const t = await startAppWith({
+        steps: [textStep('Вот план')],
+        title: titleModel(titleSuccess('План отпуска на Байкал')),
+      });
+      const user = t.user();
+      const threadId = await createThread(t.http, user);
+      expect(await threadTitle(t.http, user, threadId)).toBeNull();
+
+      // Act: one exchange (supertest reads the stream to its end), then poll the title.
+      await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({
+          id: threadId,
+          messages: [
+            clientUserMessage('Помоги составить план отпуска на Байкал в июле'),
+          ],
+        })
+        .expect(200);
+      const title = await awaitTitle(t.http, user, threadId);
+
+      // Assert
+      expect(title).toBe('План отпуска на Байкал');
+      expect(title.length).toBeLessThanOrEqual(80);
+      expect(title).not.toContain('\n');
+      expect(title).not.toMatch(/^["'«]|["'»]$/);
+      expect(title).not.toBe('Помоги составить план отпуска на Байкал в июле');
+      expect(t.titleModel.prompts).toHaveLength(1);
+      expect(t.titleModel.prompts[0]).toContain(
+        'Помоги составить план отпуска на Байкал в июле',
+      );
+    }, 20_000);
 
     // AC-17.2: "If у беседы уже есть непустой заголовок (ручной или ранее сгенерированный), then the system shall не
     //   запускать генерацию; if ручное переименование пришло во время генерации, then сгенерированный заголовок не
@@ -289,16 +484,29 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
     // @category: core-functionality
     // @dependency: ThreadsService.rename, ThreadTitleService, THREAD_TITLE_AGENT (mock)
     // @complexity: medium
-    it.todo(
-      'AC-17.2: a manually titled thread keeps its title and the title model is not called',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; PATCH { title: 'Отчёт Q3' } -> 200;
-        //   reset title mock call count
-        // Act: POST /api/chat/assistant { id: threadId, messages: [user 'Сделай сводку'] }; consume the stream;
-        //   wait 1 000 ms for any background work
-        // Assert: GET /api/threads/:threadId -> title === 'Отчёт Q3'; title mock call count === 0
-      },
-    );
+    it('AC-17.2: a manually titled thread keeps its title and the title model is not called', async () => {
+      // Arrange: a thread renamed by hand; a fresh title mock (no calls yet).
+      const t = await startAppWith({ steps: [textStep('Сводка готова')] });
+      const user = t.user();
+      const threadId = await createThread(t.http, user);
+      await t.http
+        .patch(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .send({ title: 'Отчёт Q3' })
+        .expect(200);
+
+      // Act: one exchange, then time for any background work.
+      await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [clientUserMessage('Сделай сводку')] })
+        .expect(200);
+      await delay(1_000);
+
+      // Assert
+      expect(await threadTitle(t.http, user, threadId)).toBe('Отчёт Q3');
+      expect(t.titleModel.prompts).toHaveLength(0);
+    });
 
     // AC-17.3: "If генерация упала или превысила таймаут, then the system shall оставить заголовок пустым (title: null в
     //   API), записать предупреждение в лог с threadId и причиной, при этом ответ ассистента и сообщения уже сохранены
@@ -312,25 +520,122 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
     // @category: edge-case
     // @dependency: ChatController onFinish, ThreadTitleService, THREAD_TITLE_AGENT (mock), Logger, Memory
     // @complexity: high
-    it.todo(
-      'AC-17.3: a failing title model leaves title null and logs a warning; the next reply retries from the first stored message',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; title mock throws an Error;
-        //   spy on Logger.prototype.warn; assistant mock replies 'Готово'
-        // Act 1: POST /api/chat/assistant { id: threadId, messages: [user 'Помоги составить план отпуска на Байкал в июле'] };
-        //   consume the stream; wait until the title mock was called once (poll 100 ms, max 10 000 ms)
-        // Assert 1: chat status 200 and the stream completed; GET /messages -> 2 messages (user + assistant 'Готово');
-        //   GET /api/threads/:threadId -> title === null;
-        //   warn called with a string starting 'Title generation failed thread=' + threadId and containing 'reason=';
-        //   the warn string contains neither the error message nor the user text
-        // Act 2: switch the title mock to success 'План отпуска на Байкал';
-        //   POST /api/chat/assistant { id: threadId, messages: [ONLY the new user message 'А что взять с собой?'] }
-        //   (no history in body.messages); consume the stream; poll GET /api/threads/:threadId (100 ms, max 10 000 ms)
-        // Assert 2: title === 'План отпуска на Байкал';
-        //   the title mock's second prompt contains 'Помоги составить план отпуска на Байкал в июле'
-        //   and does not contain 'А что взять с собой?'; GET /messages -> 4 messages
-      },
-    );
+    it('AC-17.3: a failing title model leaves title null and logs a warning; the next reply retries from the first stored message', async () => {
+      // Arrange: an untitled thread; the title mock throws; Logger.warn is observed.
+      const title = titleModel(titleError('mock title failure'));
+      const t = await startAppWith({
+        steps: [textStep('Готово'), textStep('Возьмите тёплую куртку')],
+        title,
+      });
+      const user = t.user();
+      const threadId = await createThread(t.http, user);
+      const warn = vi.spyOn(Logger.prototype, 'warn');
+      const firstText = 'Помоги составить план отпуска на Байкал в июле';
+      const chat = (text: string) =>
+        t.http
+          .post('/api/chat/assistant')
+          .set('x-user-id', user)
+          .send({ id: threadId, messages: [clientUserMessage(text)] })
+          .expect(200);
+      const history = async () => {
+        const res = await t.http
+          .get(`/api/threads/${threadId}/messages`)
+          .set('x-user-id', user)
+          .expect(200);
+        return ThreadMessagesResponseSchema.parse(res.body).messages;
+      };
+      const failureWarning = () =>
+        warn.mock.calls
+          .map(([message]: unknown[]) => message)
+          .find(
+            (message): message is string =>
+              typeof message === 'string' &&
+              message.startsWith(`Title generation failed thread=${threadId}`),
+          );
+
+      try {
+        // Act 1: the reply succeeds; the title attempt fails in the background.
+        const first = await chat(firstText);
+        // The warning is logged once the failed title call settled (so the mock was called).
+        const warning = await pollUntil(() =>
+          Promise.resolve(failureWarning()),
+        );
+
+        // Assert 1: the reply and messages are intact, the title stays null, the warning has no PII.
+        expect(sseChunks(first.text).map((chunk) => chunk.type)).toContain(
+          'finish',
+        );
+        expect(roleAndTexts(await history())).toEqual([
+          ['user', [firstText]],
+          ['assistant', ['Готово']],
+        ]);
+        expect(title.prompts.length).toBeGreaterThanOrEqual(1);
+        expect(await threadTitle(t.http, user, threadId)).toBeNull();
+        expect(warning).toBe(
+          `Title generation failed thread=${threadId} reason=Error`,
+        );
+        expect(warning).not.toContain('mock title failure');
+        expect(warning).not.toContain(firstText);
+
+        // Act 2: the title model recovers; the next request carries ONLY the new message.
+        title.use(titleSuccess('План отпуска на Байкал'));
+        const callsBeforeRetry = title.prompts.length;
+        await chat('А что взять с собой?');
+        const retried = await awaitTitle(t.http, user, threadId);
+
+        // Assert 2: the retry titled the thread from the first stored message.
+        expect(retried).toBe('План отпуска на Байкал');
+        expect(title.prompts).toHaveLength(callsBeforeRetry + 1);
+        const retryPrompt = title.prompts[callsBeforeRetry];
+        expect(retryPrompt).toContain(firstText);
+        expect(retryPrompt).not.toContain('А что взять с собой?');
+        expect(await history()).toHaveLength(4);
+      } finally {
+        warn.mockRestore();
+      }
+    }, 30_000);
+
+    // AC-17.2 race branch + Integration Verification Points (additional e2e outside the skeleton).
+    // Defect caught (the unit test with a shared ThreadWriteLock cannot see it): on the real Mastra storage the
+    //   background write does not re-check the empty title under ThreadWriteLock, so a rename that landed while
+    //   the title model was still answering is overwritten by the generated title.
+    // EARS: If-then -> branch (rename during generation)
+    // @category: edge-case
+    // @dependency: ChatController onFinish, ThreadTitleService, ThreadsService.rename, ThreadWriteLock, Memory
+    // @complexity: high
+    it('manual rename while title generation is pending wins', async () => {
+      // Arrange: the title mock answers 'Сгенерированный' after 1 500 ms; an untitled seeded thread.
+      const t = await startAppWith({
+        steps: [textStep('Ответ')],
+        title: titleModel(titleDelayed('Сгенерированный', 1_500)),
+      });
+      const user = t.user();
+      const threadId = await seedThread(t.memory, user);
+
+      // Act: one exchange; while the title call is pending, rename by hand.
+      await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [clientUserMessage('Вопрос')] })
+        .expect(200);
+      await pollUntil(() =>
+        Promise.resolve(t.titleModel.prompts.length > 0 ? true : undefined),
+      );
+      const titleCalledAt = Date.now();
+      await t.http
+        .patch(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .send({ title: 'Ручной' })
+        .expect(200);
+      const renamedAt = Date.now();
+      // The rename must land while the 1 500 ms generation is still pending, otherwise the test passes vacuously.
+      expect(renamedAt - titleCalledAt).toBeLessThan(1_500);
+
+      // Assert: the manual title survives the end of the delayed generation.
+      await delay(renamedAt + 2_000 - Date.now());
+      expect(await threadTitle(t.http, user, threadId)).toBe('Ручной');
+      expect(t.titleModel.prompts).toHaveLength(1);
+    }, 20_000);
   });
 
   // ---------------------------------------------------------------------------

@@ -688,22 +688,22 @@ flowchart LR
 
 #### Tasks
 
-- [ ] **T4.1 Агент заголовков, инструкции, `normalizeGeneratedTitle`, провайдер `THREAD_TITLE_AGENT`, `TITLE_MODEL`**
+- [x] **T4.1 Агент заголовков, инструкции, `normalizeGeneratedTitle`, провайдер `THREAD_TITLE_AGENT`, `TITLE_MODEL`**
   - Target Files: `apps/api/src/threads/thread-title.agent.ts` (new), `apps/api/src/threads/thread-title.agent.spec.ts` (new), `apps/api/src/threads/threads.module.ts`, `apps/api/.env.example`
   - Содержание: `createThreadTitleAgent(model)` — `id: 'thread-title'`, **не** регистрируется в `Mastra`, без памяти, инструментов и `providerOptions`; `THREAD_TITLE_INSTRUCTIONS` — дословно (Reference Contract Values); провайдер `useFactory: (config) => createThreadTitleAgent(parseModelId(config.get('TITLE_MODEL') ?? config.get('ASSISTANT_MODEL')))`; `.env.example` — `TITLE_MODEL` с комментарием о быстрой модели.
   - Unit: нормализация — кавычки «» и `"`, `<think>`-блоки, многострочный ответ, 120 символов → 80 (по границе символа), только пробелы → `''`; фабрика — без `TITLE_MODEL` берётся `ASSISTANT_MODEL` (missing config); агент не попадает в `mastra.getAgent`.
   - Зависимости: T2.1 (`ThreadsModule` существует), T3.2 (общий `threads.module.ts` — готова к коммиту строго после T3.2), гейты G (T2.3) и G3 (T2.5). Параллельно с T3.1/T3.3–T3.5 после T3.2, только когда гейты G и G3 пройдены.
-  - Completion: [ ] unit зелёный; [ ] `app.e2e-spec.ts` (без ключей провайдера) проходит; [ ] lint/tsc/build OK.
+  - Completion: [x] unit зелёный; [x] `app.e2e-spec.ts` (без ключей провайдера) проходит; [x] lint/tsc/build OK.
 
-- [ ] **T4.2 `ThreadTitleService` (алгоритм 1–6 DD, вкл. лог `usage`) + `thread-title.service.spec.ts`** (AC-17.1, AC-17.2, AC-17.3 — unit; риск стоимости заголовков PRD)
+- [x] **T4.2 `ThreadTitleService` (алгоритм 1–6 DD, вкл. лог `usage`) + `thread-title.service.spec.ts`** (AC-17.1, AC-17.2, AC-17.3 — unit; риск стоимости заголовков PRD)
   - Target Files: `apps/api/src/threads/thread-title.service.ts` (new), `apps/api/src/threads/thread-title.service.spec.ts` (new), `apps/api/src/threads/threads.module.ts`
   - Содержание: `schedule({ threadId, resourceId }): void` (промис в `Set`, все ошибки пойманы); `THREAD_TITLE_TIMEOUT_MS` токен (`useValue: 8_000`); шаги 1–4 DD; **шаг 3 — лог `usage`**: сразу после разрешения `generate` (до `signal.throwIfAborted()`) — `this.logger.log('usage agent=thread-title thread=<id> input=<n> output=<n>')`, где `input`/`output` — входные и выходные токены из total usage результата `generate`, `0` при отсутствии (как строка `usage` чата); только id и числа, без текста; **шаг 5**: в `catch` — `reason = signal.aborted ? 'TimeoutError' : error.name`, плюс `statusCode=`/`code=` при наличии; без `error.message` и текста; `EmptyTitle` при пустой нормализации; `beforeApplicationShutdown` — `Promise.allSettled(pending)`; `ThreadsModule` экспортирует `ThreadsService`, `ThreadTitleService`.
   - Unit (фейковые `Memory` и агент), все кейсы DD: `recall` вызван с литеральными аргументами; модель получила «План отпуска на Байкал в августе»; первое сообщение из 2 500 символов → фейковый агент получает ровно 2 000 символов (шаг 2: обрезка); первое не `user` / без текста → модель не вызвана; непустой title → нет `recall` и модели; запись при `''`; **лог `usage`**: фейковый агент возвращает `totalUsage` `{ inputTokens: 12, outputTokens: 5 }` → `log` вызван ровно с `'usage agent=thread-title thread=t-1 input=12 output=5'`; ошибка модели → нет записи, `warn` с `threadId` и `statusCode`/`code`, без `error.message`; **таймаут**: `THREAD_TITLE_TIMEOUT_MS = 20`, агент разрешается `{ text: '', finishReason: 'aborted' }` → `warn` ровно `'Title generation failed thread=t-1 reason=TimeoutError'`, `updateThread` не вызван; **таймаут с обёрнутой ошибкой (Test Strategy DD)**: `THREAD_TITLE_TIMEOUT_MS = 20`, агент ждёт `abort` и отклоняется `new Error('wrapped')` → `warn` ровно `'Title generation failed thread=t-1 reason=TimeoutError'`; повтор после ошибки — следующий `schedule` вызывает модель и пишет; **гонка AC-17.2**: генерация блокирована отложенным промисом, `rename` через тот же `ThreadWriteLock`, промис разрешается → заголовок ручной; `beforeApplicationShutdown` дожидается незавершённой задачи.
   - Зависимости: T3.2, T4.1.
   - Proof obligations: тест таймаута обязан упасть без `signal.throwIfAborted()` (Mastra разрешает прерванный `generate`); кейс с обёрнутой ошибкой — при логировании `reason=Error`; кейс `usage` — если строка не пишется, пишется до разрешения `generate`, берёт токены не из total usage или содержит текст; кейс 2 500 символов — при передаче модели необрезанного текста; тест гонки — без перепроверки `title === ''` под lock.
-  - Completion: [ ] unit зелёный (вкл. литерал строки `usage`); [ ] oxlint `no-floating-promises` без ошибок; [ ] покрытие файла ≥ 80 %.
+  - Completion: [x] unit зелёный (вкл. литерал строки `usage`); [x] oxlint `no-floating-promises` без ошибок; [x] покрытие файла ≥ 80 %.
 
-- [ ] **T4.3 `onFinish` → `ThreadTitleService.schedule`, обвязка заголовков, e2e 17.x** (AC-17.1, AC-17.2, AC-17.3)
+- [x] **T4.3 `onFinish` → `ThreadTitleService.schedule`, обвязка заголовков, e2e 17.x** (AC-17.1, AC-17.2, AC-17.3)
   - Target Files: `apps/api/src/chat/chat.controller.ts` (только `onFinish` и конструктор — `ThreadTitleService`), `apps/api/test/support/createTestApp.ts` (`titleModel`, `.overrideProvider(THREAD_TITLE_AGENT)` — **всегда**), `apps/api/test/support/mockModels.ts` (сценарии заголовков: по умолчанию фиксированный `'Тестовый заголовок'`; успех «План отпуска на Байкал»; ошибка; задержка с параметром мс; переключаемый), `apps/api/test/chat-threads.e2e-spec.ts`
   - Содержание: в `onFinish` после строки `usage` — `this.titles.schedule({ threadId, resourceId: req.user.id })`; конструктор дополнительно получает `ThreadTitleService`; остальное в контроллере не меняется (проверка владельца и «сброс хвоста» — уже T2.5; `ChatModule.imports: [ThreadsModule]` — с T2.5). `createTestApp` **всегда** применяет `.overrideProvider(THREAD_TITLE_AGENT)` с mock-агентом, по умолчанию возвращающим `'Тестовый заголовок'`; параметр `titleModel` лишь меняет сценарий. Так ни один e2e (в т. ч. T2.x, T3.x, T5.1, perf), отправляющий `POST /api/chat/assistant`, не вызывает сетевую модель заголовков. Подключение `schedule` и override входят в одну единицу, готовую к коммиту (manual-стратегия).
   - e2e (3 из скелета + 1 доп.): `AC-17.1: an untitled thread gets the generated title within 10 s from the first user message`; `AC-17.2: a manually titled thread keeps its title and the title model is not called`; `AC-17.3: a failing title model leaves title null and logs a warning; the next reply retries from the first stored message` (второй запрос — `body.messages` содержит **только** новое сообщение). Опрос `GET /api/threads/:id` каждые 100 мс, максимум 10 000 мс.
@@ -711,11 +711,11 @@ flowchart LR
   - Proof obligations (доп.): тест обязан упасть, если фоновая запись не перепроверяет `title === ''` под `ThreadWriteLock` (заголовок станет `'Сгенерированный'`).
   - Зависимости: T4.2, T3.4 (для AC-17.2 нужен `PATCH`).
   - Proof obligations: 17.3 обязан упасть, если источник — `body.messages`, если ошибка заголовка ломает стрим, или если повтор не запускается.
-  - Completion: [ ] 3 e2e скелета + 1 доп. зелёные; [ ] `app.e2e-spec.ts` проходит без правок; [ ] повторный полный прогон `pnpm --filter api test:e2e` зелёный, и ни один тест не делает сетевого вызова модели (прогон без ключей провайдеров в окружении; `createTestApp` всегда подменяет `MASTRA` и `THREAD_TITLE_AGENT`); [ ] lint/tsc/format/build OK.
+  - Completion: [x] 3 e2e скелета + 1 доп. зелёные; [x] `app.e2e-spec.ts` проходит без правок; [x] повторный полный прогон `pnpm --filter api test:e2e` зелёный, и ни один тест не делает сетевого вызова модели (прогон без ключей провайдеров в окружении; `createTestApp` всегда подменяет `MASTRA` и `THREAD_TITLE_AGENT`); [x] lint/tsc/format/build OK.
 
 #### Phase Completion Criteria
-- [ ] Интеграционные тесты: скелеты 18/21 (`chat-threads.e2e-spec.ts` 4/7) + доп. 5/5 (T2.2, T2.4, T2.5, T3.1, T4.3)
-- [ ] Unit `thread-title.agent`, `thread-title.service` (вкл. кейс таймаута с обёрнутой ошибкой, обрезку 2 500 → 2 000 и строку `usage agent=thread-title`) зелёные
+- [x] Интеграционные тесты: скелеты 18/21 (`chat-threads.e2e-spec.ts` 4/7) + доп. 5/5 (T2.2, T2.4, T2.5, T3.1, T4.3)
+- [x] Unit `thread-title.agent`, `thread-title.service` (вкл. кейс таймаута с обёрнутой ошибкой, обрезку 2 500 → 2 000 и строку `usage agent=thread-title`) зелёные
 - [ ] lint, tsc, format, unit, e2e, build — без ошибок
 
 #### Operational Verification Procedures
@@ -729,18 +729,18 @@ flowchart LR
 
 #### Tasks
 
-- [ ] **T5.1 e2e проверки беседы в `POST /api/chat/:agentId`** (AC-16.1 вариант «404», AC-18.3)
+- [x] **T5.1 e2e проверки беседы в `POST /api/chat/:agentId`** (AC-16.1 вариант «404», AC-18.3)
   - Target Files: `apps/api/test/chat-threads.e2e-spec.ts`
   - Содержание: production-код не меняется. Перед e2e — проверить, что `ChatController.chat` выполняет «агент → наличие id → `getOwnedThread` → разбор последнего сообщения и `discardRepliesAfter` → `agent.stream`» (T2.5); если `getOwnedThread` в чате нет — эскалация, а не правка вне Target Files.
   - e2e (3): `AC-16.1: chat into a deleted thread answers 404 THREAD_NOT_FOUND before streaming and does not recreate it`; `own thread: 200 SSE and both messages are persisted`; `foreign thread and unknown client id both answer 404 THREAD_NOT_FOUND and nothing is written`.
   - AC-18.3: `test/app.e2e-spec.ts` проходит без правок; `git diff --exit-code apps/api/test/app.e2e-spec.ts` пуст.
   - Зависимости: T4.3 (общий `chat-threads.e2e-spec.ts`), T2.5 (код проверки), T3.3 (`DELETE`), T3.1 (список).
   - Proof obligations: тест AC-16.1 обязан упасть, если Mastra неявно создаёт тред (`getThreadById` → не `null` после запроса); foreign — если статус 500 или в чужую беседу записано сообщение. Кейсы пишутся после кода, поэтому один раз проверяются мутацией: без строки `getOwnedThread` в `ChatController.chat` оба кейса 404 краснеют.
-  - Completion: [ ] 3 e2e зелёные, `app.e2e-spec.ts` зелёный; [ ] мутационная проверка выполнена; [ ] lint/tsc/format/build OK; [ ] готово к коммиту (manual-стратегия) на `feature/chat-shell` (в `main` — только вместе с `web-shell`).
+  - Completion: [x] 3 e2e зелёные, `app.e2e-spec.ts` зелёный; [x] мутационная проверка выполнена; [x] lint/tsc/format/build OK; [x] готово к коммиту (manual-стратегия) на `feature/chat-shell` (в `main` — только вместе с `web-shell`).
 
 #### Phase Completion Criteria
-- [ ] Интеграционные тесты: скелеты 21/21 (`threads.e2e-spec.ts` 14/14, `chat-threads.e2e-spec.ts` 7/7) + доп. 5/5
-- [ ] `app.e2e-spec.ts` без изменений и зелёный
+- [x] Интеграционные тесты: скелеты 21/21 (`threads.e2e-spec.ts` 14/14, `chat-threads.e2e-spec.ts` 7/7) + доп. 5/5
+- [x] `app.e2e-spec.ts` без изменений и зелёный
 
 #### Operational Verification Procedures
 (Integration Point 2 DD) 1. Создать беседу `POST /api/threads`, отправить сообщение через mock-модель с reasoning и инструментами, получить историю — `safeValidateUIMessages` успешен, части совпадают с литералами. 2. `DELETE` беседы → `POST /api/chat/assistant` с её id → 404 `THREAD_NOT_FOUND` до SSE; `getThreadById` → `null`; беседы нет в списке. 3. Чужая беседа → 404 (раньше 500).
@@ -753,12 +753,12 @@ flowchart LR
 
 #### Tasks
 
-- [ ] **T6.1 Perf-тесты AC-13.4, AC-14.4**
+- [x] **T6.1 Perf-тесты AC-13.4, AC-14.4**
   - Target Files: `apps/api/test/threads.perf.e2e-spec.ts`; при нестабильности — `apps/api/package.json` (скрипт `test:perf`) и `apps/api/vitest.config.e2e.ts` (исключение perf из `test:e2e`)
   - e2e (2): `AC-13.4: GET /api/threads p95 <= 300 ms with 200 threads`; `AC-14.4: GET /api/threads/:threadId/messages p95 <= 500 ms with 100 messages`. Метод — Reference Contract Values (5 прогревочных + 50, `durations[47]`).
   - **Решение плана о запуске** (DD передал его плану): perf остаётся в `test:e2e`. Если perf-кейс падает хотя бы в 1 из 3 полных прогонов `test:e2e`, но проходит в изолированном прогоне — perf выносится в `test:perf` (`vitest run --config ./vitest.config.e2e.ts --no-file-parallelism test/threads.perf.e2e-spec.ts`), а `test:e2e` его исключает; запись в Notes.
   - Зависимости: T5.1.
-  - Completion: [ ] perf 2/2 зелёные; [ ] решение о скрипте записано.
+  - Completion: [x] perf 2/2 зелёные; [x] решение о скрипте записано.
 
 - [ ] **T6.2 Итоговые гейты качества и проверка всех AC**
   - Target Files: нет изменений кода (исправления — в рамках файлов уже затронутых задач, отдельной единицей, готовой к коммиту (manual-стратегия))
@@ -869,7 +869,7 @@ flowchart LR
 - **Решение по гейту G3** (первый прогон T2.4): выбран вариант (1) — оставить действие с исправлением хранения; DD v1.8 делает «сброс хвоста» обязательным и удаляет части `error` из истории (AC-14.5 (b)). Реализация — T2.5 в Phase 2 (не в Phase 5): см. «Отклонение от порядка DD» в Implementation Phases. Хранимое состояние после ошибки модели записано в DD «Контракт для `web-shell`», п. 6.
 - **Гейт G3 после «сброса хвоста»** (T2.5, 2026-10-29; `ai` 7.0.148, `@mastra/memory` 1.39.1, `@mastra/core` 1.80.0, `@mastra/ai-sdk` 1.11.2; Postgres `localhost:5433`): **пройден.** Зелёные: e2e `AC-14.6: regenerating a reply that failed mid-stream …` — шаг 1: SSE `error` `'Agent error'`, `/messages` `[['user', ['Вопрос']], ['assistant', ['Частичный']]]`, id ответа = `messageId` SSE `start`, типы частей ответа `['text']`, `safeValidateUIMessages` успешен, в теле `/messages` нет `'mock stream failure'`, строк 2; шаг 2 (литерал без изменений): `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк 2; `AC-14.6 (network drop): …` — тот же литерал, строк 2; характеризация — перегенерация `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк 2; правка `[['user', ['Вопрос']], ['assistant', ['Ответ 2']], ['user', ['Вопрос (изменён)']], ['assistant', ['Ответ 3']]]`, строк 4. Полный `test:e2e` зелёный (AC-14.1 с 12 сообщениями, сравнение со стримом, `app.e2e-spec.ts` без правок). Мутация (вызов `discardRepliesAfter` выключен) краснит все три кейса; мутация (часть `error` не удаляется) краснит шаг 1. Phase 3 и Phase 4 (включая T4.1) разблокированы.
 - **Хранимое состояние после обрыва сети** (T2.5, 2026-10-29; клиент обрывает HTTP-запрос после чанка `text-delta 'Частичный'`, mock-модель держит поток открытым до `abortSignal`): сервер передал обрыв модели (промис отмены сценария разрешился; `res.on('close')` → `abortSignal`). **После обрыва** (`countMessages` устоялся ≥ 1 000 мс; 3 прогона, одинаково): `/messages` — `[['user', ['Вопрос']], ['assistant', ['Частичный']]]`, типы частей ответа `['text']`, строк `mastra_messages` — **2**; сообщение пользователя сохранено (клиентский id); сырой `content` ответа — `{"format":2,"parts":[{"type":"text","text":"Частичный",…}],"content":"Частичный"}` (части `error` нет). Состояние того же класса, что после ошибки модели (частичный ответ записан до повторной отправки) — «сброс хвоста» его обрабатывает. **После перегенерации**: `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк **2**. Расхождения с DD «Контракт для `web-shell`», п. 6 нет.
-- **Решение о `test:perf`** (заполняется в T6.1): —
+- **Решение о `test:perf`** (T6.1, 2026-10-29; Postgres `localhost:5433`, пустые ключи провайдеров): **perf остаётся в `test:e2e`**, скрипт `test:perf` не вводится, `package.json` и `vitest.config.e2e.ts` не менялись. Правило выноса не сработало: 4 из 4 полных прогонов `test:e2e` зелёные (30/30 тестов, 4 файла параллельно), изолированный прогон тоже зелёный. Метод: 5 прогревочных + 50 последовательных запросов, `performance.now()`, p95 = отсортированные `durations[47]`. Замеры p95: AC-13.4 (`GET /api/threads`, 200 бесед, страница 20) — 4.6 мс изолированно, 6.6 мс в полном прогоне (порог 300 мс); AC-14.4 (`GET /api/threads/:threadId/messages`, 100 сообщений format 2) — 6.4 мс изолированно, 6.0 мс в полном прогоне (порог 500 мс). Мутационная проверка: порог 1 мс краснит оба кейса (`expected 4.64 / 6.40 to be less than or equal to 1`).
 - **L1 / метрики № 7, № 10** (заполняется в T6.3): —
 
 ## Change History

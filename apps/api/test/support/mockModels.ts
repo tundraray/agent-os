@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 
 /** One `doStream` result of the mock model (one step of the agent loop). */
@@ -180,4 +181,91 @@ export function assistantModel(...steps: AssistantStep[]): MockLanguageModelV4 {
       return Promise.resolve(typeof next === 'function' ? next(options) : next);
     },
   });
+}
+
+/** Title every e2e app gets unless a test scripts the title model. */
+export const DEFAULT_TEST_TITLE = 'Тестовый заголовок';
+
+/** One `doGenerate` result of the mock title model. */
+type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
+type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
+
+/**
+ * What the title model does on each call until switched: answer `title`
+ * (after `delayMs`, when given), or reject with `error`.
+ */
+export type TitleScenario =
+  { title: string; delayMs?: number } | { error: Error };
+
+/** Scenario "title": the model answers `title` at once. */
+export function titleSuccess(title: string): TitleScenario {
+  return { title };
+}
+
+/** Scenario "title model error": every call rejects. */
+export function titleError(message = 'mock title failure'): TitleScenario {
+  return { error: new Error(message) };
+}
+
+/** Scenario "slow title": the model answers `title` after `delayMs` (aborts early on its signal). */
+export function titleDelayed(title: string, delayMs: number): TitleScenario {
+  return { title, delayMs };
+}
+
+/** Mock model of the title agent: records each call's user text; the scenario is switchable. */
+export interface TitleModel {
+  model: MockLanguageModelV4;
+  /** Concatenated user text of each call's prompt, in call order. */
+  prompts: string[];
+  /** Replaces the scenario for the following calls. */
+  use(scenario: TitleScenario): void;
+}
+
+function promptUserText(prompt: GenerateOptions['prompt']): string {
+  return prompt
+    .flatMap((message) => (message.role === 'user' ? message.content : []))
+    .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    .join('');
+}
+
+function titleResult(title: string): GenerateResult {
+  return {
+    content: [{ type: 'text', text: title }],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: USAGE,
+    warnings: [],
+  };
+}
+
+/**
+ * Mock title model; by default answers `DEFAULT_TEST_TITLE`, so no e2e that
+ * finishes a chat reply ever reaches a network title model.
+ */
+export function titleModel(
+  initial: TitleScenario = titleSuccess(DEFAULT_TEST_TITLE),
+): TitleModel {
+  let scenario = initial;
+  const prompts: string[] = [];
+  const model = new MockLanguageModelV4({
+    provider: 'mock',
+    modelId: 'mock-title',
+    doGenerate: async (options) => {
+      prompts.push(promptUserText(options.prompt));
+      const current = scenario;
+      if ('error' in current) throw current.error;
+      if (current.delayMs !== undefined) {
+        await delay(current.delayMs, undefined, {
+          signal: options.abortSignal,
+        });
+      }
+      return titleResult(current.title);
+    },
+  });
+  return {
+    model,
+    prompts,
+    use: (next) => {
+      scenario = next;
+    },
+  };
 }
