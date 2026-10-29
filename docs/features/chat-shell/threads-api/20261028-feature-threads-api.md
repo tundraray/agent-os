@@ -631,44 +631,44 @@ flowchart LR
 
 #### Tasks
 
-- [ ] **T3.1 `thread-cursor.ts` + `ThreadsService.list` + `GET /api/threads` + e2e** (AC-13.1, AC-13.2, unit AC-13.2a)
+- [x] **T3.1 `thread-cursor.ts` + `ThreadsService.list` + `GET /api/threads` + e2e** (AC-13.1, AC-13.2, unit AC-13.2a)
   - Target Files: `apps/api/src/threads/thread-cursor.ts` (new), `apps/api/src/threads/thread-cursor.spec.ts` (new), `apps/api/src/threads/threads.service.ts`, `apps/api/src/threads/threads.controller.ts`, `apps/api/test/threads.e2e-spec.ts`
   - Содержание: `listThreads({ filter: { resourceId }, perPage: false, orderBy: updatedAt DESC })` → сортировка `(updatedAt ms DESC, id DESC)` → `selectThreadPage({ sorted, cursor, size })`; query через `ZodValidationPipe(ThreadListQuerySchema)`.
   - Unit (test-first, `thread-cursor.spec.ts`): encode/decode; мусор → 400 `INVALID_CURSOR`; 120 элементов → 6 страниц, 120 уникальных id; граница ровно 20 на 6-й → `nextCursor: null`; **AC-13.2a — литералы из Reference Contract Values (119 / 79 / 19)**; равные `updatedAt` (same-value) — порядок по `id` DESC и курсор на границе равенства без дублей; пустой список → `{ threads: [], nextCursor: null }`.
   - e2e (3 из скелета + 1 доп.): `AC-13.1: returns only the caller's 3 threads ordered by updatedAt DESC`; `AC-13.2: 120 threads are returned as 6 pages of 20 …`; `rejects an unparsable cursor with 400 INVALID_CURSOR`; доп. (вне скелета, invalid option): `GET /api/threads?cursor=<513 символов>` → 400, `errorCode: 'VALIDATION_FAILED'` (граница `ThreadListQuerySchema` ≤ 512 срабатывает в пайпе до декодирования курсора).
   - Зависимости: T2.3 (гейт G), T2.5 (гейт G3). Параллельно с T3.2, T3.5. Формулировка AC-13.2a — DD, Element 3 Step 1.
   - Proof obligations: тест обязан упасть при offset-пагинации (дубль/пропуск при подъёме/удалении), при `isAfter` с `<=` и при утечке бесед пользователя B.
-  - Completion: [ ] unit + 3 e2e скелета + 1 доп. зелёные; [ ] lint/tsc/format/build OK.
+  - Completion: [x] unit + 3 e2e скелета + 1 доп. зелёные; [x] lint/tsc/format/build OK.
 
-- [ ] **T3.2 `ThreadWriteLock` + `thread-write-lock.spec.ts`** (Element 4)
+- [x] **T3.2 `ThreadWriteLock` + `thread-write-lock.spec.ts`** (Element 4)
   - Target Files: `apps/api/src/threads/thread-write-lock.ts` (new), `apps/api/src/threads/thread-write-lock.spec.ts` (new), `apps/api/src/threads/threads.module.ts`
   - Unit: задачи одного ключа строго последовательны; разных ключей — параллельны; после завершения (и после отказа задачи) хвост ключа удалён; отказ одной задачи не блокирует следующую.
   - Зависимости: T2.3 (гейт G), T2.5 (гейт G3). Параллельно с T3.1.
-  - Completion: [ ] unit зелёный; [ ] провайдер зарегистрирован в `ThreadsModule`.
+  - Completion: [x] unit зелёный; [x] провайдер зарегистрирован в `ThreadsModule`.
 
-- [ ] **T3.3 `POST /api/threads`, `DELETE /api/threads/:threadId` + e2e** (Element 1; AC-16.1 часть threads, AC-16.2, AC-16.3)
+- [x] **T3.3 `POST /api/threads`, `DELETE /api/threads/:threadId` + e2e** (Element 1; AC-16.1 часть threads, AC-16.2, AC-16.3)
   - Target Files: `apps/api/src/threads/threads.service.ts`, `apps/api/src/threads/threads.controller.ts`, `apps/api/test/threads.e2e-spec.ts`
   - Содержание: `create` — `createThread({ resourceId, threadId: crypto.randomUUID() })`, 201, тело игнорируется; `delete` — `getOwnedThread` → `deleteThread`, `@HttpCode(204)`.
   - e2e (3): `creates a thread with a server UUID and title null that is listed first` (с телом `{ id: 'x' }` — id клиента не используется: no-op); `AC-16.1/AC-16.3: deleted thread disappears …` (`countMessages(threadId)` = `0`, повторный `DELETE` → 404); `AC-16.2: DELETE of a foreign thread answers 404 and the thread and its messages remain`.
   - Зависимости: T3.1.
   - Proof obligations: тест обязан упасть, если сообщения осиротели (count ≠ 0), если повторное удаление даёт 500 или 204, если id клиента принят.
-  - Completion: [ ] 3 e2e зелёные; [ ] lint/tsc/format/build OK.
+  - Completion: [x] 3 e2e зелёные; [x] lint/tsc/format/build OK.
 
-- [ ] **T3.4 `PATCH /api/threads/:threadId` (rename под lock) + `threads.service.spec.ts` + e2e 15.x, 13.2a, 13.3** (AC-15.1, AC-15.2, AC-15.3, AC-13.2a, AC-13.3)
+- [x] **T3.4 `PATCH /api/threads/:threadId` (rename под lock) + `threads.service.spec.ts` + e2e 15.x, 13.2a, 13.3** (AC-15.1, AC-15.2, AC-15.3, AC-13.2a, AC-13.3)
   - Target Files: `apps/api/src/threads/threads.service.ts`, `apps/api/src/threads/threads.service.spec.ts` (создан в T2.5 — дополняется), `apps/api/src/threads/threads.controller.ts`, `apps/api/test/threads.e2e-spec.ts`
   - Содержание: `rename({ threadId, userId, title })` по фрагменту DD (lock → `getOwnedThread` → `updateThread`; `isMastraUserError` → 404; перечитывание с `.catch(() => undefined)`, `null` → 404; иначе исходная ошибка).
   - Unit (`threads.service.spec.ts`, фейковый `Memory`): `MastraError` category `USER` → 404; прочая ошибка при существующей беседе → та же ошибка; перечитывание → `null` → 404; `new Error('db down')` + перечитывание отклонено `new Error('re-read failed')` → выброшен исходный объект (`toBe`); `getOwnedThread` при `null` → `NotFoundException` с телом `threadNotFound().getResponse()`; повторный `rename` тем же значением → тот же `title` (same-value).
   - e2e (5): `AC-15.1: saves the trimmed title …`; `AC-15.2: missing, empty, whitespace-only and 201-char titles are rejected …`; `AC-15.3: PATCH of a foreign or missing thread …`; `AC-13.2a: deleting a page-1 thread and raising a page-5 thread between pages 2 and 3 yields 119 unique ids …` (литералы Reference Contract Values; id — производные литералы от префикса `seed`: удалённая `${p}-t-005`, поднятая `${p}-t-085`; свежая первая страница начинается с `${p}-t-085` с title `'Поднятая'`); `AC-13.3: every /api/threads* route answers 401 when NODE_ENV=production` (все шесть маршрутов уже существуют).
   - Зависимости: T3.2, T3.3.
   - Proof obligations: e2e 13.2a обязан упасть при повторной выдаче поднятой беседы или пропуске любой из 79; 15.2 — при принятии 201 символа или изменении беседы после 400; 13.3 — если хотя бы один маршрут без guard.
-  - Completion: [ ] unit + 5 e2e зелёные; [ ] lint/tsc/format/build OK.
+  - Completion: [x] unit + 5 e2e зелёные; [x] lint/tsc/format/build OK.
 
-- [ ] **T3.5 `AuditInterceptor`: `threadId` из маршрута + `audit.interceptor.spec.ts`** (Integration Point 3)
+- [x] **T3.5 `AuditInterceptor`: `threadId` из маршрута + `audit.interceptor.spec.ts`** (Integration Point 3)
   - Target Files: `apps/api/src/audit/audit.interceptor.ts`, `apps/api/src/audit/audit.interceptor.spec.ts` (new)
   - Содержание: `threadId: params.threadId ?? (params.agentId ? body.threadId ?? body.id : undefined)`; одна запись на запрос сохраняется.
   - Unit: `/threads/:threadId` — id маршрута, тело `{ id }` не подменяет; `/chat/:agentId` — `body.threadId ?? body.id` (как раньше); `POST /api/threads` с телом `{ id: 'x' }` → `threadId` `undefined`; без `req.user` → `record` не вызван.
   - Зависимости: T2.3 (гейт G), T2.5 (гейт G3). Параллельно с T3.1–T3.4.
-  - Completion: [ ] unit зелёный; [ ] `audit.service.ts` не изменён.
+  - Completion: [x] unit зелёный; [x] `audit.service.ts` не изменён.
 
 #### Phase Completion Criteria
 - [ ] Интеграционные тесты: скелеты 15/21 (`threads.e2e-spec.ts` 14/14, `chat-threads.e2e-spec.ts` 1/7) + доп. 4/5 (T2.2, T2.4, T2.5, T3.1)

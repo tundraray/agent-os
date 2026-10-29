@@ -14,10 +14,10 @@ Metadata:
 `rename({ threadId, userId, title })` по фрагменту Design Doc: захват `ThreadWriteLock` по `threadId` → `getOwnedThread` → `updateThread`; ошибка `MastraError` категории `USER` (`isMastraUserError`) → 404 `THREAD_NOT_FOUND`; иначе перечитывание `getThreadById(...).catch(() => undefined)`: `null` → 404, прочее → выбрасывается исходная ошибка `updateThread`. Тело — `RenameThreadRequestSchema` через `ZodValidationPipe`. Все шесть маршрутов `/api/threads*` под `SessionGuard` (AC-13.3).
 
 ## Target Files
-- [ ] `apps/api/src/threads/threads.service.ts`
-- [ ] `apps/api/src/threads/threads.service.spec.ts` (файл существует с T2.5 — **дополняется** кейсами `rename`/`getOwnedThread`; кейсы `discardRepliesAfter` не менять и не дублировать)
-- [ ] `apps/api/src/threads/threads.controller.ts`
-- [ ] `apps/api/test/threads.e2e-spec.ts`
+- [x] `apps/api/src/threads/threads.service.ts`
+- [x] `apps/api/src/threads/threads.service.spec.ts` (файл существует с T2.5 — **дополняется** кейсами `rename`/`getOwnedThread`; кейсы `discardRepliesAfter` не менять и не дублировать)
+- [x] `apps/api/src/threads/threads.controller.ts`
+- [x] `apps/api/test/threads.e2e-spec.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -46,32 +46,44 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Перечитывание после ошибки `updateThread` | `.catch(() => undefined)`: ошибка перечитывания не подменяет исходную | work plan T3.4, Design Doc Data Contract rename |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат каждого Compliance Check.)
+**Observations**: `ThreadsService` took only `THREAD_MEMORY`; `ThreadWriteLock` was already a provider of `ThreadsModule` (T3.2), so the module needed no change — the constructor gained `private readonly lock: ThreadWriteLock`. `RenameThreadRequestSchema` (`trim().min(1).max(THREAD_TITLE_MAX_LENGTH)`) and `isMastraUserError`/`threadNotFound` already existed. `SessionGuard` throws 401 when `config.get('NODE_ENV') === 'production'`. `createTestApp` (outside Target Files) has no config override, so AC-13.3 spies on the app's own `ConfigService` instance (`vi.spyOn(config, 'get')`), which `SessionGuard` reads.
+
+**Planned approach**: `rename` follows the Design Doc fragment literally: `lock.run(threadId, …)` → `getOwnedThread` → `updateThread`; `isMastraUserError` → `threadNotFound()`; otherwise `getThreadById(...).catch(() => undefined)`, `null` → `threadNotFound()`, else the original error is rethrown. `PATCH :threadId` uses `@Body(new ZodValidationPipe(RenameThreadRequestSchema))`; the class-level `@UseGuards(SessionGuard)` covers all six routes. The existing `discardRepliesAfter` cases only had their constructor call updated (`new ThreadsService(memory, new ThreadWriteLock())`). The ownership shared Arrange is now the `createOwnedThread` helper (POST → PATCH 'Секрет A' → one chat exchange), used by AC-15.3 and AC-16.2 (AC-16.2 also asserts the title is still 'Секрет A'); the shared describe comment was reconciled (AC-14.2/14.3 still seeds the same titled thread).
+
+**Compliance Checks (final implementation)**:
+- 404 body (finding 7): **Y** — AC-15.3 compares foreign and missing PATCH to `NOT_FOUND_BODY` with `toEqual`, and the two bodies are identical.
+- `THREAD_TITLE_MAX_LENGTH`: **Y** — AC-15.1 accepts 200 chars (`toHaveLength(200)`), AC-15.2 rejects 201 with 400 `VALIDATION_FAILED`; the limit comes from the contracts schema.
+- 13.2a literals: **Y** — e2e asserts 6 pages; raised `${p}-t-085` absent from pages 3–6 and the union; union length 119 and `Set` size 119; deleted `${p}-t-005` only on page 1; pages 3–6 equal positions 41..120 without t-085 (79 ids); page 6 has 19 items and `nextCursor: null`.
+- 13.2a fresh first page: **Y** — a fresh `GET /api/threads` returns `{ id: ${p}-t-085, title: 'Поднятая' }` as `threads[0]`.
+- `db down` + `re-read failed`: **Y** — unit row checks `expect(error).toBe(updateError)`.
+- Raised thread not returned later (Element 3 Step 1): **Y** — covered by the 13.2a e2e above.
+
+**TDD progress**: unit tests were written against the new constructor signature; their ability to fail was confirmed by mutations (each reverted): removing `.catch(() => undefined)` fails the re-read-rejects row; mapping every error to 404 fails the two "original error" rows; removing the `isMastraUserError` branch fails the USER row; removing `getOwnedThread` from `rename` fails e2e AC-15.3. Gates: lint 0, tsc 0, prettier (Target Files) clean, unit 84/84, e2e 21 passed + 8 todo (`threads.e2e-spec.ts` 16/16: 14 skeleton + 2 additional, no todo left), build OK.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Открыть существующий `threads.service.spec.ts` (T2.5): использовать его фейковый `Memory` и структуру, добавить `describe` для `rename`/`getOwnedThread`
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Открыть существующий `threads.service.spec.ts` (T2.5): использовать его фейковый `Memory` и структуру, добавить `describe` для `rename`/`getOwnedThread`
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -123,11 +135,11 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Unit + 5 e2e зелёные; `it.todo` этих кейсов закрыты (после этой задачи в `threads.e2e-spec.ts` 14/14)
-- [ ] Параллельный полный прогон `pnpm --filter api test:e2e` без коллизий id
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/e2e/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] Unit + 5 e2e зелёные; `it.todo` этих кейсов закрыты (после этой задачи в `threads.e2e-spec.ts` 14/14)
+- [x] Параллельный полный прогон `pnpm --filter api test:e2e` без коллизий id
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/e2e/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `threads.service.ts`/`threads.controller.ts` — последняя в цепочке T2.2 → T2.3 → T2.5 → T3.1 → T3.3 → T3.4; `threads.service.spec.ts` — T2.5 (создание) → T3.4 (дополнение).

@@ -15,9 +15,9 @@ Metadata:
 `ThreadWriteLock` — сериализация асинхронных задач по ключу (`threadId`): задачи одного ключа строго последовательны, разных ключей — параллельны; хвост ключа очищается после завершения (в том числе после отказа задачи); отказ одной задачи не блокирует следующую. Провайдер регистрируется в `ThreadsModule`.
 
 ## Target Files
-- [ ] `apps/api/src/threads/thread-write-lock.ts` (new)
-- [ ] `apps/api/src/threads/thread-write-lock.spec.ts` (new)
-- [ ] `apps/api/src/threads/threads.module.ts`
+- [x] `apps/api/src/threads/thread-write-lock.ts` (new)
+- [x] `apps/api/src/threads/thread-write-lock.spec.ts` (new)
+- [x] `apps/api/src/threads/threads.module.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -34,31 +34,37 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Область блокировки | in-process (процесс-локальный) lock по ключу; advisory lock в БД отложен | Design Doc, Future Extensibility |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода.)
+- Design Doc v1.8 «ThreadWriteLock»: интерфейс `run<T>(key: string, fn: () => Promise<T>): Promise<T>`; хвост цепочки по ключу удаляется после завершения. Element 4 (вариант A): in-process мьютекс по `threadId` для `rename` и записи автозаголовка (AC-17.2).
+- `threads.module.ts` (T2.1/T2.2): `providers: [threadMemoryProvider, ThreadsService]` — `ThreadWriteLock` добавлен в `providers` (не экспортируется: потребители T3.4 `ThreadsService` и T4.2 `ThreadTitleService` живут в том же модуле).
+- Поиск аналогов (mutex/lock/`Map<string, Promise>`) в `apps/api/src` и `packages` — 0 совпадений; дублирования нет.
+- План: `Map<string, Promise<void>>` — хвост ключа, который никогда не отклоняется; новая задача `previous.then(fn)`; хвост = `result.then(noop, noop)` (отказ не «отравляет» цепочку, исходная ошибка пробрасывается вызывающему); в `finally` хвост удаляется, только если он всё ещё последний для ключа. Класс `@Injectable()` (Nest-провайдер).
+- Дополнение к интерфейсу DD: `isHeld(key): boolean` — только чтение, нужно для state assertion Proof Obligation (хвост присутствует во время выполнения и удалён после завершения/отказа). Контракт `run` не изменён.
+- Reference Contracts: строк нет. Binding Decisions: раздела нет.
+- Red: тест падал на отсутствующем модуле; мутации проверены — `fn()` без цепочки → падает тест последовательности; без удаления хвоста → падают 3 теста очистки.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -84,10 +90,10 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: интеграция с rename и автозаголовком — T3.4, T4.2, T4.3.
 
 ## Completion Criteria
-- [ ] Unit зелёный, прогон содержательный
-- [ ] Провайдер зарегистрирован в `ThreadsModule`
-- [ ] lint/tsc/prettier/unit/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] Unit зелёный, прогон содержательный
+- [x] Провайдер зарегистрирован в `ThreadsModule`
+- [x] lint/tsc/prettier/unit/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `threads.module.ts` (общий с T2.1, T2.2, T4.1, T4.2 — строго по порядку плана; T4.1 готова к коммиту только после T3.2).

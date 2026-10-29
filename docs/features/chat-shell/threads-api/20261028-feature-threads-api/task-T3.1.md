@@ -15,11 +15,11 @@ Metadata:
 `listThreads({ filter: { resourceId }, perPage: false, orderBy: updatedAt DESC })` → сортировка `(updatedAt ms DESC, id DESC)` в JS → `selectThreadPage({ sorted, cursor, size })` (`size = THREAD_PAGE_SIZE`); query через `ZodValidationPipe(ThreadListQuerySchema)`; мусорный курсор → 400 `INVALID_CURSOR`. Формулировка AC-13.2a — Design Doc v1.3, Element 3 Step 1.
 
 ## Target Files
-- [ ] `apps/api/src/threads/thread-cursor.ts` (new)
-- [ ] `apps/api/src/threads/thread-cursor.spec.ts` (new)
-- [ ] `apps/api/src/threads/threads.service.ts`
-- [ ] `apps/api/src/threads/threads.controller.ts`
-- [ ] `apps/api/test/threads.e2e-spec.ts`
+- [x] `apps/api/src/threads/thread-cursor.ts` (new)
+- [x] `apps/api/src/threads/thread-cursor.spec.ts` (new)
+- [x] `apps/api/src/threads/threads.service.ts`
+- [x] `apps/api/src/threads/threads.controller.ts`
+- [x] `apps/api/test/threads.e2e-spec.ts`
 
 These paths define the executor's File Scope Constraint. Файл вне списка менять нельзя без эскалации.
 
@@ -53,31 +53,57 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 | Пагинация | курсорная, не offset | Design Doc, Alternative 3 |
 
 ## Investigation Notes
-(Заполняется исполнителем до реализации: план подхода и результат каждого Compliance Check.)
+**Наблюдения (Investigation Targets)**
+- DD § thread-cursor.ts: `encodeThreadCursor`, `decodeThreadCursor` (400 `INVALID_CURSOR`), `selectThreadPage(input)` с `isAfter` на строгих `<`; § Data Contract `ThreadsService.list(userId, cursor?)`; flowchart: курсор проверяется до `listThreads`.
+- `threads.service.ts`/`threads.controller.ts` (T2.2–T2.5): `getOwnedThread`, `get`, `listMessages`, `discardRepliesAfter` — не меняются. `toThreadSummary` (mapper) переиспользуется для проекции элементов страницы.
+- `test/support/seed.ts`: id вида `${prefix}-t-${nnn}` (префикс `randomUUID()` на вызов), `descendingDates(count, newest, stepMs)`; e2e-литералы скелета (`'a-2'`, `'t-001'`) превращаются в производные от префикса (как в T3.4 плана).
+- `ZodValidationPipe` → 400 `VALIDATION_FAILED`; `ThreadListQuerySchema.cursor` ≤ 512 → курсор 513 символов отклоняется в пайпе до декодирования.
+- `HttpException` с опцией `{ errorCode }` уже даёт `errorCode` в теле (так работает `threadNotFound()`), поэтому `BadRequestException('Invalid cursor', { errorCode: 'INVALID_CURSOR' })` — ровно по DD.
+- Похожих функций (курсор, keyset, сортировка списка бесед) в `apps/api/src` нет — дублирования нет.
+
+**План подхода**
+- `thread-cursor.ts` (чистые функции): `encodeThreadCursor` = `Buffer.from(JSON.stringify({ u, i })).toString('base64url')`; `decodeThreadCursor` = base64url → `JSON.parse` → строгая zod-схема `{ u: int, i: string ≥ 1 }`, любой сбой → `BadRequestException('Invalid cursor', { errorCode: 'INVALID_CURSOR' })`; `sortThreadsForList` — копия, порядок `(updatedAt ms DESC, id DESC)` с кодовым сравнением строк (то же сравнение, что в `isAfter`); `selectThreadPage({ sorted, cursor?, size = THREAD_PAGE_SIZE })` — `start` = первый элемент с `isAfter(t, cursor)`, `slice(start, start + size)`, `nextCursor` = есть элементы после страницы ? `encode(последний)` : `null`.
+- `ThreadsService.list(userId, cursor?)`: декодирование курсора до обращения к хранилищу → `memory.listThreads({ filter: { resourceId: userId }, perPage: false, orderBy: { field: 'updatedAt', direction: 'DESC' } })` → `sortThreadsForList` → `selectThreadPage({ sorted, cursor, size: THREAD_PAGE_SIZE })` → `toThreadSummary`.
+- `ThreadsController.list`: `@Get()` + `@Query(new ZodValidationPipe(ThreadListQuerySchema))`.
+
+**Reference Contracts — Compliance Check (план → финал)**
+| # | Contract | Plan | Final | Evidence |
+|---|---|---|---|---|
+| 1 | `THREAD_PAGE_SIZE = 20` | Y | Y | `size` по умолчанию и в `list` — `THREAD_PAGE_SIZE` из `@agent-os/contracts`; unit «120 → 6 страниц по 20» использует значение по умолчанию |
+| 2 | порядок `(updatedAt ms DESC, id DESC)` | Y | Y | `sortThreadsForList`; unit same-value (равные `updatedAt` → id DESC); e2e AC-13.1 `[a-2, a-3, a-1]` |
+| 3 | encode base64url(JSON `{u,i}`), `isAfter` строгий `<` | Y | Y | unit: декодирование base64url вручную даёт `{"u":…,"i":…}`; курсор на границе равенства не повторяет и не пропускает элемент (при `<=` тест падает) |
+| 4 | литералы 119 / 79 / 19, `nextCursor: null` на стр. 6 | Y | Y | unit AC-13.2a в `thread-cursor.spec.ts` |
+| 5 | 6 × 20, 120 уникальных, `nextCursor = null` | Y | Y | unit + e2e AC-13.2 |
+| 6 | мусорный курсор → 400 `INVALID_CURSOR` | Y | Y | unit (таблица мусора) + e2e `rejects an unparsable cursor …` |
+| 7 | поднятая во время обхода не возвращается | Y | Y | unit AC-13.2a (поднятый id отсутствует в страницах 3–6) |
+
+**Ход TDD**: unit `thread-cursor.spec.ts` написан первым и упал (модуль `thread-cursor.js` отсутствовал); e2e наполнены после реализации маршрута. Итог гейтов: lint 0, tsc 0, prettier — новые/изменённые файлы чистые (8 предсуществующих файлов вне задачи не тронуты), unit 66/66, e2e 13 passed + 16 todo, build OK.
+
+**Adjacent Case Sweep (boundary-change)**: равные `updatedAt` (порядок и курсор на границе), граница ровно 20 (стр. 6 из 120 → `null`), пустой список (`{ threads: [], nextCursor: null }`), курсор удалённой беседы (keyset продолжает со следующей позиции — покрыто AC-13.2a, где курсор стр. 2 не зависит от удаления), курсор 513 символов (пайп). Вне Target Files смежных случаев с тем же дефектом нет.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
-- [ ] Просмотреть deliverables зависимостей (см. Metadata)
-- [ ] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
-- [ ] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
-- [ ] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
+- [x] Прочитать все Investigation Targets, записать наблюдения в Investigation Notes
+- [x] Просмотреть deliverables зависимостей (см. Metadata)
+- [x] Сверить контракты (Reference Contracts) с Design Doc, записать план подхода в Investigation Notes
+- [x] Написать падающие тесты (unit — test-first; e2e — наполнить `it.todo` скелета по его комментариям Arrange/Act/Assert, ожидаемые значения — литералы, пустые заглушки запрещены)
+- [x] Запустить тесты и убедиться, что они падают по правильной причине (см. Proof Obligations)
 
 ### 2. Green Phase
-- [ ] Добавить минимальную реализацию
-- [ ] Запустить только добавленные тесты, убедиться, что они проходят
+- [x] Добавить минимальную реализацию
+- [x] Запустить только добавленные тесты, убедиться, что они проходят
 
 ### 3. Refactor Phase
-- [ ] Улучшить код, не меняя поведения
-- [ ] Повторно запустить добавленные тесты
+- [x] Улучшить код, не меняя поведения
+- [x] Повторно запустить добавленные тесты
 
 ### 4. Gates (все — ноль ошибок; перед vitest после правки `packages/contracts` — `pnpm --filter @agent-os/contracts build`; перед e2e — `pnpm db:up` и `apps/api/.env` с `DATABASE_URL`)
-- [ ] `pnpm --filter api lint`
-- [ ] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
-- [ ] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
-- [ ] `pnpm --filter api test`
-- [ ] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
-- [ ] `pnpm --filter api build`
+- [x] `pnpm --filter api lint`
+- [x] `pnpm --filter api exec tsc --noEmit -p tsconfig.json`
+- [x] `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`
+- [x] `pnpm --filter api test`
+- [x] `pnpm --filter api test:e2e` (если задача затрагивает e2e или HTTP-поверхность)
+- [x] `pnpm --filter api build`
 
 ## Quality Assurance Mechanisms
 - oxlint type-aware (`typescript/no-floating-promises: error`) — Enforces: нет висящих промисов, типовые ошибки — Config/Source: `apps/api/.oxlintrc.json` — Type: `executable_check`
@@ -120,10 +146,10 @@ These paths define the executor's File Scope Constraint. Файл вне спи�
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Unit + 3 e2e скелета + 1 доп. зелёные; `it.todo` этих кейсов закрыты
-- [ ] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
-- [ ] lint/tsc/prettier/unit/e2e/build — ноль ошибок
-- [ ] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
+- [x] Unit + 3 e2e скелета + 1 доп. зелёные; `it.todo` этих кейсов закрыты
+- [x] Каждый Compliance Check = `Y`, доказательства в Investigation Notes
+- [x] lint/tsc/prettier/unit/e2e/build — ноль ошибок
+- [x] Готово к коммиту (manual-стратегия); `git commit` не выполнялся
 
 ## Notes
 - Impact scope: `threads.service.ts`/`threads.controller.ts` — последовательность T2.2 → T2.3 (`listMessages`) → T2.5 (`discardRepliesAfter`, `listMessages`) → T3.1 → T3.3 → T3.4 (не параллелить с ними). Методы T2.5 (`discardRepliesAfter`, вызов `maskHistoryErrors`) не менять.

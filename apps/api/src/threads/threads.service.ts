@@ -1,15 +1,31 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { StorageThreadType } from '@mastra/core/memory';
 import type { Memory } from '@mastra/memory';
 import { toAISdkMessages } from '@mastra/ai-sdk/ui';
 import {
+  THREAD_PAGE_SIZE,
   ThreadMessagesResponseSchema,
+  type ThreadListResponse,
   type ThreadMessagesResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
+import {
+  decodeThreadCursor,
+  selectThreadPage,
+  sortThreadsForList,
+} from './thread-cursor.js';
 import { THREAD_MEMORY } from './thread-memory.provider.js';
+import { ThreadWriteLock } from './thread-write-lock.js';
 import { maskHistoryErrors, toThreadSummary } from './thread.mapper.js';
-import { threadNotFound } from './threads.errors.js';
+import { isMastraUserError, threadNotFound } from './threads.errors.js';
+
+/** Input of `rename`; `title` is already trimmed and 1..200 characters (pipe). */
+type RenameThreadInput = {
+  threadId: string;
+  userId: string;
+  title: string;
+};
 
 /** Input of `discardRepliesAfter`; `userMessageId` is the id of the last `user` element of `body.messages`. */
 type DiscardRepliesInput = {
@@ -23,7 +39,10 @@ const DISCARD_WINDOW = 20;
 
 @Injectable()
 export class ThreadsService {
-  constructor(@Inject(THREAD_MEMORY) private readonly memory: Memory) {}
+  constructor(
+    @Inject(THREAD_MEMORY) private readonly memory: Memory,
+    private readonly lock: ThreadWriteLock,
+  ) {}
 
   /**
    * The single ownership check of the threads API: the thread must exist and
@@ -41,8 +60,85 @@ export class ThreadsService {
     return thread;
   }
 
+  /**
+   * One page of the user's threads, newest `updatedAt` first (ties: `id`
+   * DESC). Pages by an opaque keyset cursor over the full list, not by offset,
+   * so deletes and raises during a traversal cause no duplicates (AC-13.2a).
+   * An invalid cursor is rejected (400) before storage is read.
+   */
+  async list(userId: string, cursor?: string): Promise<ThreadListResponse> {
+    const position =
+      cursor === undefined ? undefined : decodeThreadCursor(cursor);
+    const { threads } = await this.memory.listThreads({
+      filter: { resourceId: userId },
+      perPage: false,
+      orderBy: { field: 'updatedAt', direction: 'DESC' },
+    });
+    const page = selectThreadPage({
+      sorted: sortThreadsForList(threads),
+      cursor: position,
+      size: THREAD_PAGE_SIZE,
+    });
+    return {
+      threads: page.threads.map(toThreadSummary),
+      nextCursor: page.nextCursor,
+    };
+  }
+
+  /**
+   * The only way a thread is created (KD-4): the id is a server UUID, never a
+   * client value, so a deleted id is never reused. Stored with title `''`.
+   */
+  async create(userId: string): Promise<ThreadSummary> {
+    const thread = await this.memory.createThread({
+      resourceId: userId,
+      threadId: randomUUID(),
+    });
+    return toThreadSummary(thread);
+  }
+
   async get(threadId: string, userId: string): Promise<ThreadSummary> {
     return toThreadSummary(await this.getOwnedThread(threadId, userId));
+  }
+
+  /**
+   * Renames an own thread under the thread's `ThreadWriteLock`, so the write is
+   * serialised with the auto-title write of the same thread (AC-17.2).
+   * `updateThread` also sets `updatedAt = now()`: the thread rises to the top of
+   * the list. A thread deleted between the ownership check and the write
+   * answers the ownership 404; any other storage failure keeps its own error.
+   */
+  async rename({
+    threadId,
+    userId,
+    title,
+  }: RenameThreadInput): Promise<ThreadSummary> {
+    return this.lock.run(threadId, async () => {
+      await this.getOwnedThread(threadId, userId);
+      try {
+        return toThreadSummary(
+          await this.memory.updateThread({ id: threadId, title }),
+        );
+      } catch (error) {
+        if (isMastraUserError(error)) throw threadNotFound();
+        // A failing re-read must not replace the original error.
+        const stillExists = await this.memory
+          .getThreadById({ threadId, resourceId: userId })
+          .catch(() => undefined);
+        if (stillExists === null) throw threadNotFound();
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Deletes an own thread with its messages (one PG transaction in
+   * `PostgresStore.deleteThread`). Foreign, missing and already deleted
+   * threads raise the ownership 404 before anything is deleted.
+   */
+  async delete(threadId: string, userId: string): Promise<void> {
+    await this.getOwnedThread(threadId, userId);
+    await this.memory.deleteThread(threadId);
   }
 
   /** Every stored message of the thread (no `lastMessages` cap), oldest first, as AI SDK v7 UIMessages. */

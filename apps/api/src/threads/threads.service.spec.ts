@@ -1,5 +1,9 @@
-import type { MastraDBMessage } from '@mastra/core/memory';
+import { NotFoundException } from '@nestjs/common';
+import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
+import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
+import { ThreadWriteLock } from './thread-write-lock.js';
+import { threadNotFound } from './threads.errors.js';
 import { ThreadsService } from './threads.service.js';
 
 type Role = 'user' | 'assistant';
@@ -87,11 +91,13 @@ describe('ThreadsService.discardRepliesAfter', () => {
   ])('$name', async ({ messages, userMessageId, deleted }) => {
     const { memory, recall, deleteMessages } = fakeMemory(messages);
 
-    await new ThreadsService(memory).discardRepliesAfter({
-      threadId: 't-1',
-      userId: 'u-1',
-      userMessageId,
-    });
+    await new ThreadsService(memory, new ThreadWriteLock()).discardRepliesAfter(
+      {
+        threadId: 't-1',
+        userId: 'u-1',
+        userMessageId,
+      },
+    );
 
     expect(recall).toHaveBeenCalledWith({
       threadId: 't-1',
@@ -103,5 +109,119 @@ describe('ThreadsService.discardRepliesAfter', () => {
     });
     if (deleted) expect(deleteMessages).toHaveBeenCalledWith(deleted);
     else expect(deleteMessages).not.toHaveBeenCalled();
+  });
+});
+
+const thread = (title: string): StorageThreadType => ({
+  id: 't-1',
+  resourceId: 'u-1',
+  title,
+  createdAt: new Date('2026-10-29T09:00:00.000Z'),
+  updatedAt: new Date('2026-10-29T10:00:00.000Z'),
+});
+
+/** What `updateThread` raises for a missing thread (deleted after the ownership check). */
+const threadMissingError = (): MastraError =>
+  new MastraError({
+    id: 'MASTRA_STORAGE_UPDATE_THREAD_FAILED',
+    domain: ErrorDomain.STORAGE,
+    category: ErrorCategory.USER,
+    text: 'Thread t-1 not found',
+  });
+
+/** A real Memory whose thread reads and writes are replaced: no database is touched. */
+const fakeThreadMemory = () => {
+  const memory = new Memory({ options: { lastMessages: 20 } });
+  const getThreadById = vi.spyOn(memory, 'getThreadById');
+  const updateThread = vi.spyOn(memory, 'updateThread');
+  const service = new ThreadsService(memory, new ThreadWriteLock());
+  return { service, getThreadById, updateThread };
+};
+
+const renameInput = { threadId: 't-1', userId: 'u-1', title: 'Отчёт Q3' };
+
+// AC-14.2 / AC-14.3 / AC-15.3: the single ownership check raises the shared 404 body.
+describe('ThreadsService.getOwnedThread', () => {
+  it('throws NotFoundException with the threadNotFound() body when the thread is missing or foreign', async () => {
+    const { service, getThreadById } = fakeThreadMemory();
+    getThreadById.mockResolvedValue(null);
+
+    const result = service.getOwnedThread('t-1', 'u-1');
+
+    await expect(result).rejects.toBeInstanceOf(NotFoundException);
+    await expect(result).rejects.toMatchObject({
+      response: threadNotFound().getResponse(),
+    });
+    expect(getThreadById).toHaveBeenCalledWith({
+      threadId: 't-1',
+      resourceId: 'u-1',
+    });
+  });
+});
+
+// AC-15.1 / AC-15.3 and Failure Mode "unavailable boundary": rename maps only a vanished thread to 404.
+describe('ThreadsService.rename', () => {
+  it('renaming to the same title again answers the same title (same-value)', async () => {
+    const { service, getThreadById, updateThread } = fakeThreadMemory();
+    getThreadById.mockResolvedValue(thread('Отчёт Q3'));
+    updateThread.mockResolvedValue(thread('Отчёт Q3'));
+
+    const first = await service.rename(renameInput);
+    const second = await service.rename(renameInput);
+
+    expect(first.title).toBe('Отчёт Q3');
+    expect(second.title).toBe('Отчёт Q3');
+  });
+
+  it.each<{
+    name: string;
+    updateError: Error;
+    reRead: StorageThreadType | null | Error;
+    expected: 'not-found' | 'update-error';
+  }>([
+    {
+      name: 'MastraError of category USER → 404',
+      updateError: threadMissingError(),
+      reRead: thread(''),
+      expected: 'not-found',
+    },
+    {
+      name: 'other error while the thread still exists → the same error',
+      updateError: new Error('db down'),
+      reRead: thread(''),
+      expected: 'update-error',
+    },
+    {
+      name: 'other error and the re-read returns null → 404',
+      updateError: new Error('db down'),
+      reRead: null,
+      expected: 'not-found',
+    },
+    {
+      name: 'other error and the re-read rejects → the original updateThread error',
+      updateError: new Error('db down'),
+      reRead: new Error('re-read failed'),
+      expected: 'update-error',
+    },
+  ])('$name', async ({ updateError, reRead, expected }) => {
+    const { service, getThreadById, updateThread } = fakeThreadMemory();
+    getThreadById.mockResolvedValueOnce(thread(''));
+    if (reRead instanceof Error) getThreadById.mockRejectedValueOnce(reRead);
+    else getThreadById.mockResolvedValueOnce(reRead);
+    updateThread.mockRejectedValue(updateError);
+
+    const error: unknown = await service.rename(renameInput).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    if (expected === 'update-error') {
+      expect(error).toBe(updateError);
+    } else {
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect(error).toMatchObject({
+        response: threadNotFound().getResponse(),
+      });
+    }
   });
 });

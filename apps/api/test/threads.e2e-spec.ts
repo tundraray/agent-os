@@ -1,4 +1,4 @@
-// chat-shell / threads-api Integration Test - Design Doc: docs/features/chat-shell/design-threads-api.md (v1.4)
+// chat-shell / threads-api Integration Test - Design Doc: docs/features/chat-shell/design-threads-api.md (v1.8)
 // Generated: 2026-10-28 | Part: threads-api | Test type: integration (HTTP + real Postgres, mock LLMs)
 // File name follows the Design Doc Test Strategy ("threads.e2e-spec.ts"); picked up by vitest.config.e2e.ts
 // (include '**/*.e2e-spec.ts') and run with `pnpm --filter api test:e2e`.
@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ApiErrorSchema,
+  ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
   ThreadSummarySchema,
   type HistoryMessage,
@@ -35,6 +36,7 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from 'ai';
+import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
@@ -43,8 +45,14 @@ import {
   textStep,
   type AssistantStep,
 } from './support/mockModels.js';
-import { closeDb, rawMessageContents } from './support/db.js';
-import { cleanupUsers, newUser, seed } from './support/seed.js';
+import { closeDb, countMessages, rawMessageContents } from './support/db.js';
+import {
+  cleanupUsers,
+  descendingDates,
+  newUser,
+  seed,
+  seededThreadId,
+} from './support/seed.js';
 
 // Apps started by the current test; afterEach removes their users' threads and closes them.
 const started: { testApp: TestApp; users: Set<string> }[] = [];
@@ -78,7 +86,7 @@ afterEach(async () => {
   }
 });
 
-/** One seeded thread without messages owned by `resourceId` (POST /api/threads arrives in T3.3). */
+/** One seeded thread without messages owned by `resourceId`, updatedAt 2026-01-01T10:00:00.000Z. */
 async function seedThread(
   memory: TestApp['memory'],
   resourceId: string,
@@ -91,6 +99,33 @@ async function seedThread(
   const id = ids.get(1);
   if (!id) throw new Error('seed returned no thread id');
   return id;
+}
+
+/**
+ * Ownership shared Arrange: `userId` creates a thread via POST, renames it to
+ * 'Секрет A' via PATCH and has one chat exchange (2 messages). Needs an app
+ * started with one scripted assistant reply.
+ */
+async function createOwnedThread(
+  t: Awaited<ReturnType<typeof startApp>>,
+  userId: string,
+): Promise<string> {
+  const created = await t.http
+    .post('/api/threads')
+    .set('x-user-id', userId)
+    .expect(201);
+  const threadId = ThreadSummarySchema.parse(created.body).id;
+  await t.http
+    .patch(`/api/threads/${threadId}`)
+    .set('x-user-id', userId)
+    .send({ title: 'Секрет A' })
+    .expect(200);
+  await t.http
+    .post('/api/chat/assistant')
+    .set('x-user-id', userId)
+    .send({ id: threadId, messages: [userMessage('Привет от A')] })
+    .expect(200);
+  return threadId;
 }
 
 function userMessage(text: string) {
@@ -200,19 +235,41 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: core-functionality
     // @dependency: SessionGuard, ThreadsController, ThreadsService, Memory, PostgresStore
     // @complexity: medium
-    it.todo(
-      "AC-13.1: returns only the caller's 3 threads ordered by updatedAt DESC",
-      () => {
-        // Arrange: userA = 'e2e-'+uuid, userB = 'e2e-'+uuid.
-        //   seed A: 'a-1' (updatedAt 2026-01-01T10:00:00.000Z), 'a-2' (2026-01-03T10:00:00.000Z), 'a-3' (2026-01-02T10:00:00.000Z)
-        //   seed B: 'b-1' (2026-01-05T10:00:00.000Z), 'b-2' (2026-01-04T10:00:00.000Z)
-        //   (prefix ids with a per-test suffix to stay unique across runs)
-        // Act: GET /api/threads with x-user-id: userA
-        // Assert: 200; body passes ThreadListResponseSchema;
-        //   threads.map(t => t.id) toEqual ['a-2', 'a-3', 'a-1'] (literal order); no 'b-*' id present;
-        //   nextCursor === null
-      },
-    );
+    it("AC-13.1: returns only the caller's 3 threads ordered by updatedAt DESC", async () => {
+      // Arrange (adapted: seed ids are `${prefix}-t-<n>`; a-1..a-3 = A's t-001..t-003, b-1..b-2 = B's t-001..t-002)
+      const t = await startApp();
+      const userA = t.user();
+      const userB = t.user();
+      const a = await seed(t.memory, {
+        resourceId: userA,
+        threads: [
+          { updatedAt: new Date('2026-01-01T10:00:00.000Z') },
+          { updatedAt: new Date('2026-01-03T10:00:00.000Z') },
+          { updatedAt: new Date('2026-01-02T10:00:00.000Z') },
+        ],
+      });
+      const b = await seed(t.memory, {
+        resourceId: userB,
+        threads: [
+          { updatedAt: new Date('2026-01-05T10:00:00.000Z') },
+          { updatedAt: new Date('2026-01-04T10:00:00.000Z') },
+        ],
+      });
+
+      // Act
+      const res = await t.http.get('/api/threads').set('x-user-id', userA);
+
+      // Assert
+      expect(res.status).toBe(200);
+      const body = ThreadListResponseSchema.parse(res.body);
+      expect(body.threads.map((thread) => thread.id)).toEqual([
+        seededThreadId(a.prefix, 2),
+        seededThreadId(a.prefix, 3),
+        seededThreadId(a.prefix, 1),
+      ]);
+      expect(res.text).not.toContain(b.prefix);
+      expect(body.nextCursor).toBeNull();
+    });
 
     // AC-13.2: "When у пользователя 120 бесед и он последовательно запрашивает страницы, передавая nextCursor
     //   предыдущего ответа, the system shall вернуть 6 страниц по 20 бесед, объединение которых содержит все 120 id
@@ -224,18 +281,50 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: core-functionality
     // @dependency: ThreadsService.list, thread-cursor, PostgresStore
     // @complexity: medium
-    it.todo(
-      'AC-13.2: 120 threads are returned as 6 pages of 20 with no duplicates and nextCursor null at the end',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; seed 120 threads 't-001'..'t-120' with distinct updatedAt
-        //   (t-001 newest, each next 1 minute older)
-        // Act: GET /api/threads (no cursor), then GET /api/threads?cursor=<nextCursor> until nextCursor === null
-        // Assert: exactly 6 requests; each page threads.length === 20;
-        //   page 1 ids === 't-001'..'t-020', page 6 ids === 't-101'..'t-120' (literal);
-        //   union of ids has size 120 and equals the seeded set; pages 1..5 nextCursor is a non-empty string;
-        //   page 6 nextCursor === null
-      },
-    );
+    it('AC-13.2: 120 threads are returned as 6 pages of 20 with no duplicates and nextCursor null at the end', async () => {
+      // Arrange: 120 threads `${prefix}-t-001`..`-t-120`, t-001 newest, each next 1 minute older
+      const t = await startApp();
+      const user = t.user();
+      const { prefix } = await seed(t.memory, {
+        resourceId: user,
+        threads: descendingDates(120, new Date('2026-03-01T12:00:00.000Z')).map(
+          (updatedAt) => ({ updatedAt }),
+        ),
+      });
+      const idsFrom = (from: number, to: number) =>
+        Array.from({ length: to - from + 1 }, (_, i) =>
+          seededThreadId(prefix, from + i),
+        );
+
+      // Act: follow nextCursor until null (bounded, so a cursor loop fails instead of hanging)
+      const pages: { ids: string[]; nextCursor: string | null }[] = [];
+      let cursor: string | null = null;
+      do {
+        const req = t.http.get('/api/threads').set('x-user-id', user);
+        const res = await (cursor === null ? req : req.query({ cursor }));
+        expect(res.status).toBe(200);
+        const body = ThreadListResponseSchema.parse(res.body);
+        pages.push({
+          ids: body.threads.map((thread) => thread.id),
+          nextCursor: body.nextCursor,
+        });
+        cursor = body.nextCursor;
+      } while (cursor !== null && pages.length < 10);
+
+      // Assert
+      expect(pages).toHaveLength(6);
+      expect(pages.map((p) => p.ids.length)).toEqual([20, 20, 20, 20, 20, 20]);
+      expect(pages[0].ids).toEqual(idsFrom(1, 20));
+      expect(pages[5].ids).toEqual(idsFrom(101, 120));
+      for (const p of pages.slice(0, 5)) {
+        expect(p.nextCursor).not.toBeNull();
+        expect(p.nextCursor).not.toBe('');
+      }
+      expect(pages[5].nextCursor).toBeNull();
+      const union = pages.flatMap((p) => p.ids);
+      expect(new Set(union).size).toBe(120);
+      expect(union).toEqual(idsFrom(1, 120));
+    }, 60_000);
 
     // AC-13.2a: "If между запросами страниц беседа была удалена или поднялась в начало списка, then the system shall
     //   продолжить выдачу со следующей за курсором позиции; беседа, поднятая или созданная во время обхода, не
@@ -249,24 +338,74 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: edge-case
     // @dependency: ThreadsService.list, ThreadsService.delete, ThreadsService.rename, thread-cursor, PostgresStore
     // @complexity: high
-    it.todo(
-      'AC-13.2a: deleting a page-1 thread and raising a page-5 thread between pages 2 and 3 yields 119 unique ids with no duplicates',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; seed 120 threads 't-001'..'t-120' (t-001 newest, distinct updatedAt).
-        //   deletedId = 't-005' (page 1), raisedId = 't-085' (page 5, positions 81..100)
-        // Act: page1 = GET /api/threads; page2 = GET ?cursor=page1.nextCursor;
-        //   DELETE /api/threads/t-005 (204); PATCH /api/threads/t-085 { title: 'Поднятая' } (200, updatedAt = now());
-        //   page3..page6 = GET ?cursor=<previous nextCursor> until nextCursor === null
-        // Assert (literal):
-        //   - exactly 6 pages in the traversal
-        //   - raisedId 't-085' is absent from pages 3..6
-        //   - union of ids of pages 1..6 has size 119 = all 120 except 't-085'; no id appears twice
-        //   - deletedId 't-005' appears only on page 1 (served before deletion) and not on pages 3..6
-        //   - pages 3..6 together contain exactly 79 ids = original positions 41..120 minus 't-085'
-        //   - page 6 has 19 items and nextCursor === null
-        //   - a fresh GET /api/threads (no cursor) returns 't-085' as threads[0] with title 'Поднятая'
-      },
-    );
+    it('AC-13.2a: deleting a page-1 thread and raising a page-5 thread between pages 2 and 3 yields 119 unique ids with no duplicates', async () => {
+      // Arrange (adapted: ids are `${prefix}-t-<n>`): 120 threads, t-001 newest, each next 1 minute older;
+      //   deletedId = t-005 (page 1), raisedId = t-085 (page 5, positions 81..100)
+      const t = await startApp();
+      const user = t.user();
+      const { prefix } = await seed(t.memory, {
+        resourceId: user,
+        threads: descendingDates(120, new Date('2026-03-01T12:00:00.000Z')).map(
+          (updatedAt) => ({ updatedAt }),
+        ),
+      });
+      const deletedId = seededThreadId(prefix, 5);
+      const raisedId = seededThreadId(prefix, 85);
+      const getPage = async (cursor: string | null) => {
+        const req = t.http.get('/api/threads').set('x-user-id', user);
+        const res = await (cursor === null ? req : req.query({ cursor }));
+        expect(res.status).toBe(200);
+        const body = ThreadListResponseSchema.parse(res.body);
+        return {
+          ids: body.threads.map((thread) => thread.id),
+          nextCursor: body.nextCursor,
+        };
+      };
+
+      // Act: pages 1-2, then delete + raise, then follow nextCursor until null (bounded)
+      const pages = [await getPage(null)];
+      pages.push(await getPage(pages[0].nextCursor));
+      await t.http
+        .delete(`/api/threads/${deletedId}`)
+        .set('x-user-id', user)
+        .expect(204);
+      await t.http
+        .patch(`/api/threads/${raisedId}`)
+        .set('x-user-id', user)
+        .send({ title: 'Поднятая' })
+        .expect(200);
+      let cursor = pages[1].nextCursor;
+      while (cursor !== null && pages.length < 10) {
+        const page = await getPage(cursor);
+        pages.push(page);
+        cursor = page.nextCursor;
+      }
+
+      // Assert
+      expect(pages).toHaveLength(6);
+      const later = pages.slice(2).flatMap((p) => p.ids);
+      expect(later).not.toContain(raisedId);
+      expect(later).not.toContain(deletedId);
+      expect(pages[0].ids).toContain(deletedId);
+      const union = pages.flatMap((p) => p.ids);
+      expect(union).toHaveLength(119);
+      expect(new Set(union).size).toBe(119);
+      expect(union).not.toContain(raisedId);
+      const remaining = Array.from({ length: 80 }, (_, i) =>
+        seededThreadId(prefix, 41 + i),
+      ).filter((id) => id !== raisedId);
+      expect(later).toHaveLength(79);
+      expect(later).toEqual(remaining);
+      expect(pages[5].ids).toHaveLength(19);
+      expect(pages[5].nextCursor).toBeNull();
+      const fresh = await t.http
+        .get('/api/threads')
+        .set('x-user-id', user)
+        .expect(200);
+      expect(
+        ThreadListResponseSchema.parse(fresh.body).threads[0],
+      ).toMatchObject({ id: raisedId, title: 'Поднятая' });
+    }, 60_000);
 
     // Contract error (Contract Definitions: GET /api/threads -> 400 INVALID_CURSOR); supports AC-13.2 cursor handling.
     // ROI: 3.5 | Business Value: 4 | Frequency: 2 | Defect detection: 6
@@ -275,10 +414,49 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: edge-case
     // @dependency: ZodValidationPipe, thread-cursor
     // @complexity: low
-    it.todo('rejects an unparsable cursor with 400 INVALID_CURSOR', () => {
-      // Arrange: user = 'e2e-'+uuid
-      // Act: GET /api/threads?cursor=not-a-cursor
-      // Assert: 400; body passes ApiErrorSchema; body.errorCode === 'INVALID_CURSOR'
+    it('rejects an unparsable cursor with 400 INVALID_CURSOR', async () => {
+      // Arrange
+      const t = await startApp();
+      const user = t.user();
+
+      // Act
+      const res = await t.http
+        .get('/api/threads')
+        .query({ cursor: 'not-a-cursor' })
+        .set('x-user-id', user);
+
+      // Assert
+      expect(res.status).toBe(400);
+      expect(ApiErrorSchema.parse(res.body)).toEqual({
+        statusCode: 400,
+        message: 'Invalid cursor',
+        error: 'Bad Request',
+        errorCode: 'INVALID_CURSOR',
+      });
+    });
+
+    // Additional case outside the skeleton (work plan T3.1, failure mode "invalid option"):
+    // ThreadListQuerySchema caps the cursor at 512 characters, checked by the pipe before decoding.
+    // Behavior: 513-char cursor -> pipe rejects before decode -> 400 VALIDATION_FAILED (not INVALID_CURSOR)
+    // @category: edge-case
+    // @dependency: ZodValidationPipe, ThreadListQuerySchema
+    // @complexity: low
+    it('rejects a 513-character cursor with 400 VALIDATION_FAILED', async () => {
+      // Arrange
+      const t = await startApp();
+      const user = t.user();
+
+      // Act
+      const res = await t.http
+        .get('/api/threads')
+        .query({ cursor: 'a'.repeat(513) })
+        .set('x-user-id', user);
+
+      // Assert
+      expect(res.status).toBe(400);
+      const body = ApiErrorSchema.parse(res.body);
+      expect(body.errorCode).toBe('VALIDATION_FAILED');
+      expect(body.message).toEqual([expect.stringContaining('cursor')]);
     });
   });
 
@@ -294,17 +472,41 @@ describe('Threads API (integration, real Postgres)', () => {
   // @dependency: SessionGuard, ConfigService (NODE_ENV override), ThreadsController
   // @complexity: low
   describe('AC-13.3 production mode', () => {
-    it.todo(
-      'AC-13.3: every /api/threads* route answers 401 when NODE_ENV=production',
-      () => {
-        // Arrange: createTestApp with ConfigService overridden so get('NODE_ENV') === 'production';
-        //   request header x-user-id: 'e2e-'+uuid (must be ignored)
-        // Act: for each route:
-        //   GET /api/threads, POST /api/threads, GET /api/threads/any-id, GET /api/threads/any-id/messages,
-        //   PATCH /api/threads/any-id { title: 'x' }, DELETE /api/threads/any-id
-        // Assert: each response status === 401 (6 of 6)
-      },
-    );
+    it('AC-13.3: every /api/threads* route answers 401 when NODE_ENV=production', async () => {
+      // Arrange (adapted: the app's ConfigService is spied on instead of overridden in createTestApp,
+      //   which has no config option; SessionGuard reads this same instance)
+      const t = await startApp();
+      const config = t.app.get(ConfigService);
+      const realGet = config.get.bind(config);
+      const getSpy = vi
+        .spyOn(config, 'get')
+        .mockImplementation((key: string) =>
+          key === 'NODE_ENV' ? 'production' : realGet(key),
+        );
+      const user = t.user();
+
+      try {
+        // Act
+        const responses = await Promise.all([
+          t.http.get('/api/threads').set('x-user-id', user),
+          t.http.post('/api/threads').set('x-user-id', user),
+          t.http.get('/api/threads/any-id').set('x-user-id', user),
+          t.http.get('/api/threads/any-id/messages').set('x-user-id', user),
+          t.http
+            .patch('/api/threads/any-id')
+            .set('x-user-id', user)
+            .send({ title: 'x' }),
+          t.http.delete('/api/threads/any-id').set('x-user-id', user),
+        ]);
+
+        // Assert: 6 of 6
+        expect(responses.map((res) => res.status)).toEqual([
+          401, 401, 401, 401, 401, 401,
+        ]);
+      } finally {
+        getSpy.mockRestore();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -318,16 +520,35 @@ describe('Threads API (integration, real Postgres)', () => {
   // @dependency: ThreadsController, ThreadsService.create, PostgresStore
   // @complexity: low
   describe('POST /api/threads', () => {
-    it.todo(
-      'creates a thread with a server UUID and title null that is listed first',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; seed one older thread 'old-1' (updatedAt 2026-01-01T00:00:00.000Z)
-        // Act: POST /api/threads with body { id: 'client-id' } (body must be ignored)
-        // Assert: 201; body passes ThreadSummarySchema; body.title === null;
-        //   body.id matches /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ and !== 'client-id';
-        //   body.createdAt === body.updatedAt; GET /api/threads -> threads[0].id === body.id, threads[1].id === 'old-1'
-      },
-    );
+    it('creates a thread with a server UUID and title null that is listed first', async () => {
+      // Arrange (adapted: the older thread is seeded with a prefixed id instead of 'old-1')
+      const t = await startApp();
+      const user = t.user();
+      const oldId = await seedThread(t.memory, user);
+
+      // Act
+      const res = await t.http
+        .post('/api/threads')
+        .set('x-user-id', user)
+        .send({ id: 'client-id' });
+
+      // Assert
+      expect(res.status).toBe(201);
+      const body = ThreadSummarySchema.parse(res.body);
+      expect(body.title).toBeNull();
+      expect(body.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(body.id).not.toBe('client-id');
+      expect(body.createdAt).toBe(body.updatedAt);
+      const list = await t.http
+        .get('/api/threads')
+        .set('x-user-id', user)
+        .expect(200);
+      expect(
+        ThreadListResponseSchema.parse(list.body).threads.map((th) => th.id),
+      ).toEqual([body.id, oldId]);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -534,16 +755,44 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: core-functionality
     // @dependency: ZodValidationPipe, ThreadsService.rename, ThreadWriteLock, PostgresStore
     // @complexity: low
-    it.todo(
-      'AC-15.1: saves the trimmed title and returns it in the response and the list',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId
-        // Act: PATCH /api/threads/:threadId { title: '  Отчёт Q3  ' }
-        // Assert: 200; body passes ThreadSummarySchema; body.title === 'Отчёт Q3';
-        //   GET /api/threads -> thread with id threadId has title 'Отчёт Q3';
-        //   PATCH with title 'a'.repeat(200) -> 200 and title.length === 200 (upper boundary accepted)
-      },
-    );
+    it('AC-15.1: saves the trimmed title and returns it in the response and the list, and accepts the 200-character boundary', async () => {
+      // Arrange
+      const t = await startApp();
+      const user = t.user();
+      const created = await t.http
+        .post('/api/threads')
+        .set('x-user-id', user)
+        .expect(201);
+      const threadId = ThreadSummarySchema.parse(created.body).id;
+
+      // Act
+      const res = await t.http
+        .patch(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .send({ title: '  Отчёт Q3  ' });
+
+      // Assert
+      expect(res.status).toBe(200);
+      expect(ThreadSummarySchema.parse(res.body)).toMatchObject({
+        id: threadId,
+        title: 'Отчёт Q3',
+      });
+      const list = await t.http
+        .get('/api/threads')
+        .set('x-user-id', user)
+        .expect(200);
+      expect(
+        ThreadListResponseSchema.parse(list.body).threads.find(
+          (thread) => thread.id === threadId,
+        )?.title,
+      ).toBe('Отчёт Q3');
+      const longest = await t.http
+        .patch(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .send({ title: 'a'.repeat(200) });
+      expect(longest.status).toBe(200);
+      expect(ThreadSummarySchema.parse(longest.body).title).toHaveLength(200);
+    });
 
     // AC-15.2: "If title отсутствует, пустой, состоит из пробелов или длиннее 200 символов после обрезки, then the system
     //   shall ответить 400 VALIDATION_FAILED с описанием ошибки и не менять беседу."
@@ -554,16 +803,51 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: edge-case
     // @dependency: ZodValidationPipe, RenameThreadRequestSchema
     // @complexity: low
-    it.todo(
-      'AC-15.2: missing, empty, whitespace-only and 201-char titles are rejected with 400 VALIDATION_FAILED and the title is unchanged',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; PATCH { title: 'Исходный' } -> 200
-        // Act: PATCH /api/threads/:threadId with each body: {}, { title: '' }, { title: '   ' }, { title: 'a'.repeat(201) }
-        // Assert: each -> 400; body passes ApiErrorSchema; body.errorCode === 'VALIDATION_FAILED';
-        //   body.message is a non-empty string[] mentioning 'title';
-        //   afterwards GET /api/threads/:threadId -> title === 'Исходный'
-      },
-    );
+    it('AC-15.2: missing, empty, whitespace-only and 201-char titles are rejected with 400 VALIDATION_FAILED and the title is unchanged', async () => {
+      // Arrange
+      const t = await startApp();
+      const user = t.user();
+      const created = await t.http
+        .post('/api/threads')
+        .set('x-user-id', user)
+        .expect(201);
+      const threadId = ThreadSummarySchema.parse(created.body).id;
+      await t.http
+        .patch(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .send({ title: 'Исходный' })
+        .expect(200);
+      const invalidBodies = [
+        {},
+        { title: '' },
+        { title: '   ' },
+        { title: 'a'.repeat(201) },
+      ];
+
+      // Act
+      const responses = [];
+      for (const invalid of invalidBodies) {
+        responses.push(
+          await t.http
+            .patch(`/api/threads/${threadId}`)
+            .set('x-user-id', user)
+            .send(invalid),
+        );
+      }
+
+      // Assert
+      for (const res of responses) {
+        expect(res.status).toBe(400);
+        const body = ApiErrorSchema.parse(res.body);
+        expect(body.errorCode).toBe('VALIDATION_FAILED');
+        expect(body.message).toEqual([expect.stringContaining('title')]);
+      }
+      const after = await t.http
+        .get(`/api/threads/${threadId}`)
+        .set('x-user-id', user)
+        .expect(200);
+      expect(ThreadSummarySchema.parse(after.body).title).toBe('Исходный');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -581,20 +865,54 @@ describe('Threads API (integration, real Postgres)', () => {
     // @category: core-functionality
     // @dependency: ThreadsService.delete, PostgresStore, pg client on DATABASE_URL
     // @complexity: medium
-    it.todo(
-      'AC-16.1/AC-16.3: deleted thread disappears from the list, its routes answer 404, its messages are gone and a second DELETE is 404',
-      () => {
-        // Arrange: user = 'e2e-'+uuid; POST /api/threads -> threadId; one exchange via POST /api/chat/assistant
-        //   (2 messages stored); seed a second thread 'keep-1' for the same user
-        // Act: DELETE /api/threads/:threadId
-        // Assert: 204 with empty body;
-        //   GET /api/threads -> ids do not contain threadId and contain 'keep-1';
-        //   GET /api/threads/:threadId -> 404, errorCode 'THREAD_NOT_FOUND';
-        //   GET /api/threads/:threadId/messages -> 404, errorCode 'THREAD_NOT_FOUND';
-        //   pg: SELECT count(*) FROM mastra_messages WHERE thread_id = $1 [threadId] -> 0;
-        //   second DELETE /api/threads/:threadId -> 404, errorCode 'THREAD_NOT_FOUND' (not 500)
-      },
-    );
+    it('AC-16.1/AC-16.3: deleted thread disappears from the list, its routes answer 404, its messages are gone and a second DELETE is 404', async () => {
+      // Arrange (adapted: the kept thread is seeded with a prefixed id instead of 'keep-1')
+      const t = await startApp(textStep('Ответ'));
+      const user = t.user();
+      const created = await t.http
+        .post('/api/threads')
+        .set('x-user-id', user)
+        .expect(201);
+      const threadId = ThreadSummarySchema.parse(created.body).id;
+      await t.http
+        .post('/api/chat/assistant')
+        .set('x-user-id', user)
+        .send({ id: threadId, messages: [userMessage('Привет')] })
+        .expect(200);
+      const keepId = await seedThread(t.memory, user);
+      // precondition: messages exist, so count = 0 below is not vacuous
+      expect(await countMessages(threadId)).toBe(2);
+
+      // Act
+      const res = await t.http
+        .delete(`/api/threads/${threadId}`)
+        .set('x-user-id', user);
+
+      // Assert
+      expect(res.status).toBe(204);
+      expect(res.text).toBe('');
+      const list = await t.http
+        .get('/api/threads')
+        .set('x-user-id', user)
+        .expect(200);
+      expect(
+        ThreadListResponseSchema.parse(list.body).threads.map((th) => th.id),
+      ).toEqual([keepId]);
+      for (const path of [
+        `/api/threads/${threadId}`,
+        `/api/threads/${threadId}/messages`,
+      ]) {
+        const gone = await t.http.get(path).set('x-user-id', user);
+        expect(gone.status).toBe(404);
+        expect(ApiErrorSchema.parse(gone.body)).toEqual(NOT_FOUND_BODY);
+      }
+      expect(await countMessages(threadId)).toBe(0);
+      const second = await t.http
+        .delete(`/api/threads/${threadId}`)
+        .set('x-user-id', user);
+      expect(second.status).toBe(404);
+      expect(ApiErrorSchema.parse(second.body)).toEqual(NOT_FOUND_BODY);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -614,11 +932,12 @@ describe('Threads API (integration, real Postgres)', () => {
   // @complexity: medium
   describe('Ownership isolation (IDOR)', () => {
     // Shared Arrange for each case (per test, no shared state): userA, userB = 'e2e-'+uuid;
-    //   A: POST /api/threads -> threadA; PATCH { title: 'Секрет A' }; one chat exchange (2 messages);
+    //   A: POST /api/threads -> threadA; PATCH { title: 'Секрет A' }; one chat exchange (2 messages)
+    //   — createOwnedThread() (AC-15.3, AC-16.2); AC-14.2/AC-14.3 seeds the same titled thread instead;
     //   missingId = 'e2e-missing-' + uuid
 
     it('AC-14.2/AC-14.3: GET /api/threads/:id and /messages of a foreign thread answer the same 404 body as a missing id', async () => {
-      // Arrange (adapted: seed with title 'Секрет A' instead of POST + PATCH /api/threads, which arrive in T3.3/T3.4)
+      // Arrange (adapted: seed with title 'Секрет A' instead of POST + PATCH /api/threads; same resulting state)
       const t = await startApp(textStep('Ответ A'));
       const userA = t.user();
       const userB = t.user();
@@ -669,23 +988,73 @@ describe('Threads API (integration, real Postgres)', () => {
       ).toHaveLength(2);
     });
 
-    it.todo(
-      'AC-15.3: PATCH of a foreign or missing thread answers 404 THREAD_NOT_FOUND and the title is unchanged',
-      () => {
-        // Act: as B: PATCH /api/threads/{threadA} { title: 'Взлом' }; PATCH /api/threads/{missingId} { title: 'Взлом' }
-        // Assert: both 404 with identical bodies, errorCode 'THREAD_NOT_FOUND';
-        //   as A: GET /api/threads/{threadA} -> title === 'Секрет A'
-      },
-    );
+    it('AC-15.3: PATCH of a foreign or missing thread answers 404 THREAD_NOT_FOUND and the title is unchanged', async () => {
+      // Arrange
+      const t = await startApp(textStep('Ответ A'));
+      const userA = t.user();
+      const userB = t.user();
+      const threadA = await createOwnedThread(t, userA);
+      const missingId = `e2e-missing-${randomUUID()}`;
 
-    it.todo(
-      'AC-16.2: DELETE of a foreign thread answers 404 and the thread and its messages remain',
-      () => {
-        // Act: as B: DELETE /api/threads/{threadA}; DELETE /api/threads/{missingId}
-        // Assert: both 404 with identical bodies, errorCode 'THREAD_NOT_FOUND';
-        //   as A: GET /api/threads/{threadA} -> 200; GET /api/threads/{threadA}/messages -> messages.length === 2;
-        //   as B: GET /api/threads -> threads === []
-      },
-    );
+      // Act
+      const asB = (path: string) =>
+        t.http.patch(path).set('x-user-id', userB).send({ title: 'Взлом' });
+      const foreign = await asB(`/api/threads/${threadA}`);
+      const missing = await asB(`/api/threads/${missingId}`);
+
+      // Assert
+      for (const res of [foreign, missing]) {
+        expect(res.status).toBe(404);
+        expect(ApiErrorSchema.parse(res.body)).toEqual(NOT_FOUND_BODY);
+      }
+      expect(foreign.text).toBe(missing.text);
+      const own = await t.http
+        .get(`/api/threads/${threadA}`)
+        .set('x-user-id', userA)
+        .expect(200);
+      expect(ThreadSummarySchema.parse(own.body).title).toBe('Секрет A');
+    });
+
+    it('AC-16.2: DELETE of a foreign thread answers 404 and the thread and its messages remain', async () => {
+      // Arrange
+      const t = await startApp(textStep('Ответ A'));
+      const userA = t.user();
+      const userB = t.user();
+      const threadA = await createOwnedThread(t, userA);
+      const missingId = `e2e-missing-${randomUUID()}`;
+
+      // Act
+      const foreign = await t.http
+        .delete(`/api/threads/${threadA}`)
+        .set('x-user-id', userB);
+      const missing = await t.http
+        .delete(`/api/threads/${missingId}`)
+        .set('x-user-id', userB);
+
+      // Assert
+      for (const res of [foreign, missing]) {
+        expect(res.status).toBe(404);
+        expect(ApiErrorSchema.parse(res.body)).toEqual(NOT_FOUND_BODY);
+      }
+      expect(foreign.text).toBe(missing.text);
+      const ownThread = await t.http
+        .get(`/api/threads/${threadA}`)
+        .set('x-user-id', userA)
+        .expect(200);
+      expect(ThreadSummarySchema.parse(ownThread.body).title).toBe('Секрет A');
+      const ownMessages = await t.http
+        .get(`/api/threads/${threadA}/messages`)
+        .set('x-user-id', userA)
+        .expect(200);
+      expect(
+        ThreadMessagesResponseSchema.parse(ownMessages.body).messages,
+      ).toHaveLength(2);
+      expect(await countMessages(threadA)).toBe(2);
+      const listB = await t.http
+        .get('/api/threads')
+        .set('x-user-id', userB)
+        .expect(200);
+      expect(ThreadListResponseSchema.parse(listB.body).threads).toEqual([]);
+    });
   });
 });
