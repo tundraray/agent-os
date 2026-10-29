@@ -16,16 +16,22 @@ import type { Mastra } from '@mastra/core/mastra';
 import type { MessageListInput } from '@mastra/core/agent/message-list';
 import { toAISdkStream } from '@mastra/ai-sdk';
 import { createUIMessageStream, pipeUIMessageStreamToResponse } from 'ai';
+import { ChatMessageRefSchema } from '@agent-os/contracts';
 import { MASTRA } from '../mastra/mastra.constants.js';
 import { SessionGuard } from '../auth/session.guard.js';
 import type { AuthedRequest } from '../auth/auth.types.js';
+import { toStreamErrorText } from '../common/stream-error-text.js';
+import { ThreadsService } from '../threads/threads.service.js';
 import { ChatDto } from './chat.dto.js';
 
 @Controller('chat')
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
 
-  constructor(@Inject(MASTRA) private readonly mastra: Mastra) {}
+  constructor(
+    @Inject(MASTRA) private readonly mastra: Mastra,
+    private readonly threads: ThreadsService,
+  ) {}
 
   @Post(':agentId')
   @UseGuards(SessionGuard)
@@ -43,6 +49,19 @@ export class ChatController {
     }
     const threadId = body.threadId ?? body.id;
     if (!threadId) throw new BadRequestException('threadId or id is required');
+    await this.threads.getOwnedThread(threadId, req.user.id);
+
+    // AC-14.6: a regenerate resends the newest user message; its stored replies
+    // are discarded before the agent writes the new one. Only a last element
+    // parsed with role `user` is checked; anything else is an ordinary send.
+    const lastMessage = ChatMessageRefSchema.safeParse(body.messages.at(-1));
+    if (lastMessage.success && lastMessage.data.role === 'user') {
+      await this.threads.discardRepliesAfter({
+        threadId,
+        userId: req.user.id,
+        userMessageId: lastMessage.data.id,
+      });
+    }
 
     // Express has no req.signal: abort generation when the client disconnects (closed tab).
     const abort = new AbortController();
@@ -71,9 +90,9 @@ export class ChatController {
             version: 'v7',
             sendReasoning: true,
             // Log the full error server-side; never leak stack traces to the client.
-            onError: (error) => {
-              this.logger.error(`Agent ${agentId} stream failed`, error as Error);
-              return error instanceof Error && 'statusCode' in error ? `Model provider error (${String(error.statusCode)})` : 'Agent error';
+            onError: (error: unknown) => {
+              this.logger.error(`Agent ${agentId} stream failed`, error);
+              return toStreamErrorText(error);
             },
           }),
         ),
