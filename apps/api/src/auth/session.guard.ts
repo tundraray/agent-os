@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AuthedRequest } from './auth.types.js';
 
@@ -17,7 +22,10 @@ export class SessionGuard implements CanActivate {
       throw new UnauthorizedException('Authentication is not configured');
     }
     const header = req.headers['x-user-id'];
-    req.user = { id: typeof header === 'string' && header ? header : 'dev-user', roles: ['user'] };
+    req.user = {
+      id: typeof header === 'string' && header ? header : 'dev-user',
+      roles: ['user'],
+    };
     return true;
   }
 }

@@ -1,6 +1,10 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
-import { type ModelId, type ReasoningEffort, providerOptionsFor } from '../models.js';
+import {
+  type ModelId,
+  type ReasoningEffort,
+  providerOptionsFor,
+} from '../models.js';
 
 export function createAssistantAgent(model: ModelId, effort: ReasoningEffort) {
   return new Agent({

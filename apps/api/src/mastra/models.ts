@@ -12,7 +12,9 @@ export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export function parseModelId(value: string | undefined): ModelId {
   if (!value) return DEFAULT_MODEL;
   if (!/^[\w.-]+\/.+$/.test(value)) {
-    throw new Error(`Invalid model id "${value}": expected "<provider>/<model>", e.g. ${DEFAULT_MODEL}`);
+    throw new Error(
+      `Invalid model id "${value}": expected "<provider>/<model>", e.g. ${DEFAULT_MODEL}`,
+    );
   }
   return value as ModelId;
 }
@@ -34,6 +36,8 @@ export function providerOptionsFor(effort: ReasoningEffort) {
       cacheControl: { type: 'ephemeral' } as const,
     },
     // OpenAI reasoning models top out at "high".
-    openai: { reasoningEffort: effort === 'xhigh' || effort === 'max' ? 'high' : effort },
+    openai: {
+      reasoningEffort: effort === 'xhigh' || effort === 'max' ? 'high' : effort,
+    },
   };
 }

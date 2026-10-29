@@ -7,7 +7,9 @@ describe('parseModelId', () => {
   });
 
   it('accepts "<provider>/<model>" ids', () => {
-    expect(parseModelId('anthropic/claude-haiku-5-5')).toBe('anthropic/claude-haiku-5-5');
+    expect(parseModelId('anthropic/claude-haiku-5-5')).toBe(
+      'anthropic/claude-haiku-5-5',
+    );
     expect(parseModelId('openai/gpt-5-5')).toBe('openai/gpt-5-5');
   });
 
@@ -20,7 +22,10 @@ describe('providerOptionsFor', () => {
   it('passes effort, adaptive thinking and prompt caching to Anthropic', () => {
     const { anthropic } = providerOptionsFor('high');
     expect(anthropic.effort).toBe('high');
-    expect(anthropic.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(anthropic.thinking).toEqual({
+      type: 'adaptive',
+      display: 'summarized',
+    });
     expect(anthropic.cacheControl).toEqual({ type: 'ephemeral' });
   });
 
