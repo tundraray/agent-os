@@ -109,6 +109,39 @@ describe('AuditInterceptor threadId source', () => {
       },
     },
     {
+      name: 'POST /chat/:agentId with a 255-character body.threadId → recorded',
+      request: {
+        method: 'POST',
+        path: '/api/chat/assistant',
+        route: { path: '/api/chat/:agentId' },
+        params: { agentId: 'assistant' },
+        body: { threadId: 't'.repeat(255) },
+        user,
+      },
+      expected: {
+        type: 'POST /api/chat/:agentId',
+        agentId: 'assistant',
+        threadId: 't'.repeat(255),
+      },
+    },
+    {
+      // Risk: the interceptor runs before validation, so an oversized raw id would reach audit_events.thread_id.
+      name: 'POST /chat/:agentId drops a body thread id longer than 255 characters',
+      request: {
+        method: 'POST',
+        path: '/api/chat/assistant',
+        route: { path: '/api/chat/:agentId' },
+        params: { agentId: 'assistant' },
+        body: { threadId: 't'.repeat(256), id: 'i'.repeat(256) },
+        user,
+      },
+      expected: {
+        type: 'POST /api/chat/:agentId',
+        agentId: 'assistant',
+        threadId: undefined,
+      },
+    },
+    {
       name: 'POST /threads with body { id: "x" } → no threadId',
       request: {
         method: 'POST',

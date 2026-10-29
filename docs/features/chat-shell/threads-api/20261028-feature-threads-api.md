@@ -3,7 +3,7 @@ feature: chat-shell
 part: threads-api
 design: design-threads-api.md
 plan: 1 of 1
-status: active
+status: completed
 ---
 
 # План работ: chat-shell / `threads-api` — эндпоинты бесед, автозаголовок, контракты
@@ -760,13 +760,13 @@ flowchart LR
   - Зависимости: T5.1.
   - Completion: [x] perf 2/2 зелёные; [x] решение о скрипте записано.
 
-- [ ] **T6.2 Итоговые гейты качества и проверка всех AC**
+- [x] **T6.2 Итоговые гейты качества и проверка всех AC**
   - Target Files: нет изменений кода (исправления — в рамках файлов уже затронутых задач, отдельной единицей, готовой к коммиту (manual-стратегия))
   - Шаги: `pnpm --filter @agent-os/contracts build`; `pnpm --filter api lint`; `pnpm --filter api exec tsc --noEmit -p tsconfig.json`; `pnpm --filter api exec prettier --check "src/**/*.ts" "test/**/*.ts"`; `pnpm --filter api exec vitest run --coverage --coverage.include='src/threads/**' --coverage.include='src/common/**' --coverage.thresholds.lines=80` — исполняемый гейт покрытия: ненулевой код выхода = гейт не пройден; `pnpm --filter api test:e2e`; `pnpm --filter api build`; `pnpm test` (turbo, `^build`); `pnpm why -r ai` — `apps/api` `ai` 7.0.148, `apps/web` 7.0.155 (Проверка версий `ai` DD); `git diff main -- packages/contracts/src/index.ts` = одна строка; проверка атрибуции по всем коммитам, существующим на ветке на момент T6.2 (при manual-стратегии их может не быть — пустой диапазон считается пройденным): `git log --format=%B main..HEAD | grep -iE '^(co-authored-by|claude-session):|generated with claude'` — вывод пуст (код выхода `grep` = 1; при отсутствии коммитов вывод тоже пуст).
-  - Completion: [ ] гейт покрытия завершился с кодом 0; [ ] проверка атрибуции — пустой вывод; [ ] все AC из раздела EARS DD отмечены по результатам тестов (таблица ниже); [ ] нерешённых тестов: 0 (21/21 интеграционных из скелетов + 5/5 доп., 2/2 perf, все unit).
+  - Completion: [x] гейт покрытия завершился с кодом 0; [x] проверка атрибуции — пустой вывод; [x] все AC из раздела EARS DD отмечены по результатам тестов (таблица ниже); [x] нерешённых тестов: 0 (21/21 интеграционных из скелетов + 5/5 доп., 2/2 perf, все unit).
   - Если агрегат < 80 % из-за контроллера/сервиса, покрытых только e2e, — добавить unit-тесты `ThreadsService.list`/`listMessages`/`create`/`delete` с фейковым `Memory` (файлы T2.2/T3.x) отдельной единицей, готовой к коммиту (manual-стратегия).
 
-- [ ] **T6.3 Ручная L1-проверка с реальной моделью** (Verification: Certainty medium; метрики № 7 и № 10)
+- [ ] **T6.3 Ручная L1-проверка с реальной моделью** (Verification: Certainty medium; метрики № 7 и № 10) — **отложена пользователем** до браузерной проверки после `web-shell` (см. Notes)
   - Шаги: `pnpm --filter api dev` с реальными ключами; 20 бесед (рус./англ.) через `POST /api/threads` + `POST /api/chat/assistant` → заголовок ≤ 10 с, на языке сообщения, 1…80 символов (метрика № 7); при провале — сменить `TITLE_MODEL`/уточнить инструкции (через `update` плана); метрика № 10 — время до первого токена `POST /api/chat/assistant`, «до» и «после» на одном и том же промпте, по 5 прогонов на каждой стороне:
     - «До» — `main` (коммит 83fd532) в отдельном git worktree (`git worktree add <каталог вне репозитория> 83fd532`; в нём `pnpm install` и копия `apps/api/.env`); `pnpm --filter api dev` из worktree.
     - «После» — рабочее дерево `feature/chat-shell` после Phase 5; серверы запускаются по очереди на одном порту.
@@ -777,34 +777,34 @@ flowchart LR
 
 #### Проверка AC (заполняется в T6.2)
 
-| AC | Тест(ы) | Задача |
-|---|---|---|
-| AC-13.1 | e2e `AC-13.1` | T3.1 |
-| AC-13.2 | e2e `AC-13.2`, unit `thread-cursor.spec.ts` | T3.1 |
-| AC-13.2a | e2e `AC-13.2a`, unit `thread-cursor.spec.ts` | T3.4, T3.1 |
-| AC-13.3 | e2e `AC-13.3` | T3.4 |
-| AC-13.4 | perf `AC-13.4` | T6.1 |
-| AC-14.1 | e2e `AC-14.1`, `AC-14.1/AC-14.5 (output comparison)` | T2.2, T2.3 |
-| AC-14.2 / AC-14.3 | e2e IDOR GET | T2.2 |
-| AC-14.4 | perf `AC-14.4` | T6.1 |
-| AC-14.5 (a) | unit `stream-error-text.spec.ts`, `thread.mapper.spec.ts`; e2e `AC-14.1`, `AC-14.1/AC-14.5 (output comparison)` | T2.3 |
-| AC-14.5 (b) | unit `thread.mapper.spec.ts` (`maskHistoryErrors`: части `error`); e2e `AC-14.6`, шаг 1 | T2.5 |
-| AC-14.6 | e2e `AC-14.6`, `AC-14.6 (network drop)`, характеризация (ветка перегенерации) (`chat-threads.e2e-spec.ts`); unit `threads.service.spec.ts` (`discardRepliesAfter`) | T2.4, T2.5 |
-| AC-15.1 / 15.2 / 15.3 | e2e `AC-15.1`, `AC-15.2`, IDOR PATCH | T3.4 |
-| AC-16.1 | e2e `AC-16.1/AC-16.3` (threads), `AC-16.1` (chat) | T3.3, T5.1 (код проверки в чате — T2.5) |
-| AC-16.2 / AC-16.3 | e2e IDOR DELETE, `AC-16.1/AC-16.3` | T3.3 |
-| AC-17.1 / 17.2 / 17.3 | e2e 17.x, unit `thread-title.service.spec.ts` | T4.3, T4.2 |
-| AC-18.1 | `contracts.spec.ts`, сборка contracts | T1.1 |
-| AC-18.3 | `app.e2e-spec.ts` без правок | T1.2, T5.1, T6.2 |
+| AC | Тест(ы) | Задача | Результат (T6.2, 2026-10-29) |
+|---|---|---|---|
+| AC-13.1 | e2e `AC-13.1` | T3.1 | зелёный |
+| AC-13.2 | e2e `AC-13.2`, unit `thread-cursor.spec.ts` | T3.1 | зелёный |
+| AC-13.2a | e2e `AC-13.2a`, unit `thread-cursor.spec.ts` | T3.4, T3.1 | зелёный |
+| AC-13.3 | e2e `AC-13.3` | T3.4 | зелёный |
+| AC-13.4 | perf `AC-13.4` | T6.1 | зелёный (в полном `test:e2e`) |
+| AC-14.1 | e2e `AC-14.1`, `AC-14.1/AC-14.5 (output comparison)` | T2.2, T2.3 | зелёный |
+| AC-14.2 / AC-14.3 | e2e IDOR GET | T2.2 | зелёный |
+| AC-14.4 | perf `AC-14.4` | T6.1 | зелёный (в полном `test:e2e`) |
+| AC-14.5 (a) | unit `stream-error-text.spec.ts`, `thread.mapper.spec.ts`; e2e `AC-14.1`, `AC-14.1/AC-14.5 (output comparison)` | T2.3 | зелёный |
+| AC-14.5 (b) | unit `thread.mapper.spec.ts` (`maskHistoryErrors`: части `error`); e2e `AC-14.6`, шаг 1 | T2.5 | зелёный |
+| AC-14.6 | e2e `AC-14.6`, `AC-14.6 (network drop)`, характеризация (ветка перегенерации) (`chat-threads.e2e-spec.ts`); unit `threads.service.spec.ts` (`discardRepliesAfter`) | T2.4, T2.5 | зелёный |
+| AC-15.1 / 15.2 / 15.3 | e2e `AC-15.1`, `AC-15.2`, IDOR PATCH | T3.4 | зелёный |
+| AC-16.1 | e2e `AC-16.1/AC-16.3` (threads), `AC-16.1` (chat) | T3.3, T5.1 (код проверки в чате — T2.5) | зелёный |
+| AC-16.2 / AC-16.3 | e2e IDOR DELETE, `AC-16.1/AC-16.3` | T3.3 | зелёный |
+| AC-17.1 / 17.2 / 17.3 | e2e 17.x, unit `thread-title.service.spec.ts` | T4.3, T4.2 | зелёный |
+| AC-18.1 | `contracts.spec.ts`, сборка contracts | T1.1 | зелёный |
+| AC-18.3 | `app.e2e-spec.ts` без правок | T1.2, T5.1, T6.2 | зелёный, `git diff` пуст |
 
 #### Operational Verification Procedures
 Копия процедур Integration Points 1–4 DD (см. Phase 2, 3, 4, 5) — выполняются заново одним полным прогоном `test:e2e` и unit; плюс ручной старт `pnpm --filter api dev` отвечает на `/api/chat` и `/api/threads`.
 
 ### Quality Assurance
-- [ ] Поэтапные проверки качества (ai-development-guide): format → lint → static types → build → unit → coverage → integration → final gate
-- [ ] Все тесты проходят (unit, 21 интеграционный из скелетов + 5 доп., 2 perf, `app.e2e-spec.ts`)
-- [ ] Static check (tsc), lint (oxlint type-aware), format (prettier) — без ошибок
-- [ ] Build (`nest build`, contracts `tsc`) успешен
+- [x] Поэтапные проверки качества (ai-development-guide): format → lint → static types → build → unit → coverage → integration → final gate
+- [x] Все тесты проходят (unit, 21 интеграционный из скелетов + 5 доп., 2 perf, `app.e2e-spec.ts`)
+- [x] Static check (tsc), lint (oxlint type-aware), format (prettier) — без ошибок
+- [x] Build (`nest build`, contracts `tsc`) успешен
 
 ## Completion Criteria
 - [ ] Все фазы завершены
@@ -844,8 +844,8 @@ flowchart LR
 
 ### Phase 6
 - Start:
-- Complete:
-- Notes:
+- Complete: 2026-10-30
+- Notes: T6.1, T6.2 выполнены (2026-10-29); T6.3 отложена пользователем до браузерной проверки после `web-shell` — см. Notes
 
 ## Notes
 
@@ -870,7 +870,18 @@ flowchart LR
 - **Гейт G3 после «сброса хвоста»** (T2.5, 2026-10-29; `ai` 7.0.148, `@mastra/memory` 1.39.1, `@mastra/core` 1.80.0, `@mastra/ai-sdk` 1.11.2; Postgres `localhost:5433`): **пройден.** Зелёные: e2e `AC-14.6: regenerating a reply that failed mid-stream …` — шаг 1: SSE `error` `'Agent error'`, `/messages` `[['user', ['Вопрос']], ['assistant', ['Частичный']]]`, id ответа = `messageId` SSE `start`, типы частей ответа `['text']`, `safeValidateUIMessages` успешен, в теле `/messages` нет `'mock stream failure'`, строк 2; шаг 2 (литерал без изменений): `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк 2; `AC-14.6 (network drop): …` — тот же литерал, строк 2; характеризация — перегенерация `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк 2; правка `[['user', ['Вопрос']], ['assistant', ['Ответ 2']], ['user', ['Вопрос (изменён)']], ['assistant', ['Ответ 3']]]`, строк 4. Полный `test:e2e` зелёный (AC-14.1 с 12 сообщениями, сравнение со стримом, `app.e2e-spec.ts` без правок). Мутация (вызов `discardRepliesAfter` выключен) краснит все три кейса; мутация (часть `error` не удаляется) краснит шаг 1. Phase 3 и Phase 4 (включая T4.1) разблокированы.
 - **Хранимое состояние после обрыва сети** (T2.5, 2026-10-29; клиент обрывает HTTP-запрос после чанка `text-delta 'Частичный'`, mock-модель держит поток открытым до `abortSignal`): сервер передал обрыв модели (промис отмены сценария разрешился; `res.on('close')` → `abortSignal`). **После обрыва** (`countMessages` устоялся ≥ 1 000 мс; 3 прогона, одинаково): `/messages` — `[['user', ['Вопрос']], ['assistant', ['Частичный']]]`, типы частей ответа `['text']`, строк `mastra_messages` — **2**; сообщение пользователя сохранено (клиентский id); сырой `content` ответа — `{"format":2,"parts":[{"type":"text","text":"Частичный",…}],"content":"Частичный"}` (части `error` нет). Состояние того же класса, что после ошибки модели (частичный ответ записан до повторной отправки) — «сброс хвоста» его обрабатывает. **После перегенерации**: `[['user', ['Вопрос']], ['assistant', ['Ответ 2']]]`, строк **2**. Расхождения с DD «Контракт для `web-shell`», п. 6 нет.
 - **Решение о `test:perf`** (T6.1, 2026-10-29; Postgres `localhost:5433`, пустые ключи провайдеров): **perf остаётся в `test:e2e`**, скрипт `test:perf` не вводится, `package.json` и `vitest.config.e2e.ts` не менялись. Правило выноса не сработало: 4 из 4 полных прогонов `test:e2e` зелёные (30/30 тестов, 4 файла параллельно), изолированный прогон тоже зелёный. Метод: 5 прогревочных + 50 последовательных запросов, `performance.now()`, p95 = отсортированные `durations[47]`. Замеры p95: AC-13.4 (`GET /api/threads`, 200 бесед, страница 20) — 4.6 мс изолированно, 6.6 мс в полном прогоне (порог 300 мс); AC-14.4 (`GET /api/threads/:threadId/messages`, 100 сообщений format 2) — 6.4 мс изолированно, 6.0 мс в полном прогоне (порог 500 мс). Мутационная проверка: порог 1 мс краснит оба кейса (`expected 4.64 / 6.40 to be less than or equal to 1`).
-- **L1 / метрики № 7, № 10** (заполняется в T6.3): —
+- **Итоговые гейты** (T6.2, 2026-10-29; HEAD 34e0e5a, Postgres `localhost:5433`, пустые ключи провайдеров; изменений кода нет): lint, `tsc --noEmit`, `prettier --check` (полный glob `src/**/*.ts` + `test/**/*.ts`), `nest build`, contracts build, `pnpm test` (turbo) — код 0. Гейт покрытия `src/threads/**` + `src/common/**`, порог строк 80 % — **код 0**: Lines 87.09 % (162/186), Statements 87.19 %, Branches 93.13 %, Functions 81.15 %; запасные unit-тесты `ThreadsService` не понадобились (`threads.controller.ts`/`threads.module.ts` 0 %, `threads.service.ts` 65.78 % строк — покрыты e2e). Unit 118/118 (12 файлов). `test:e2e` — 30/30 (4 файла), **время прогона 9.05 с** (vitest Duration). `it.todo`/`it.skip`: 0. `pnpm why -r ai`: `apps/api` 7.0.148, `apps/web` 7.0.155. `index.ts` contracts — одна добавленная строка; `app.e2e-spec.ts` без правок. Атрибуция `main..HEAD` (4 коммита) — пустой вывод. Ручной старт `node dist/main`: `GET /api/threads` → 200, `POST /api/chat/assistant` `{}` → 400 (маршрут смонтирован). Замечание: `pnpm db:up` без `POSTGRES_PORT=5433` занимает 5432, на этой машине он занят сторонним контейнером.
+- **T6.3 отложена пользователем** (2026-10-29): метрика № 10 (время до первого токена `POST /api/chat/assistant`, «до»/«после») и метрика № 7 (автозаголовок с реальной моделью) требуют реальных ключей провайдеров; пользователь перенёс T6.3 в браузерную L1-проверку после реализации `web-shell`. В рамках T6.2 не выполнялась.
+- **L1 / метрики № 7, № 10** (заполняется в T6.3): — (отложено, см. выше)
+- **Закрытие плана** (2026-10-30):
+  - Задачи T1.1–T6.2 выполнены и приняты по качеству; T6.3 не отмечена — отложена до браузерной L1-проверки после `web-shell`.
+  - code-verifier: реализация согласована с документами, оценка 91.
+  - security-reviewer: `approved_with_notes`; три усиления внесены в `post-impl-fixes-20261030`.
+  - Усиление 1: пустой `userId` отклоняется в `ThreadsService.list` и `ThreadsService.getOwnedThread`.
+  - Усиление 2: `ChatDto.id` и `ChatDto.threadId` — `@MaxLength(255)`.
+  - Усиление 3: `AuditInterceptor` не пишет id из тела длиннее 255 символов.
+  - Остальные замечания ревью безопасности — технический долг в `design-threads-api.md` v1.9.
+  - Каталог задач `20261028-feature-threads-api/` удаляется как эфемерное рабочее состояние; файл плана сохраняется со статусом `completed`.
 
 ## Change History
 
@@ -884,3 +895,4 @@ flowchart LR
 | 2026-10-29 | Update по ревью плана (статус `active` сохранён; структурная правка до начала T2.3 по запросу оркестратора). T2.3 разделена: T2.3 — маскирование ошибок и сравнение со стримом (гейт G), T2.4 — проверка AC-14.6 (гейт G3), T2.4 зависит от T2.3; рёбра гейтов T3.1, T3.2, T3.5, T4.1 указывают на T2.4 (G3) и T2.3 (G). При провале гейта красный кейс остаётся красным, задача не готова к коммиту; критерий Phase 2 — гейты пройдены, при провале фаза не завершена. Уточнено, что остановка до шагов 4–8 строже таблицы Certainty DD. Передача хранимого состояния дополнена закрытием UXRD UXQ-7. Счётчики: 19 задач, 17–18 единиц, Phase 2 — 4 коммита; пересечения файлов, диаграммы, трассировка, Reference Contract Values, Failure Mode Checklist, Connection Map, таблица AC. `MockLanguageModelV4` в T1.3; отмечены выполненные пункты T1.2 и критерии Phase 1 (формулировка «закоммичены» → «готовы к коммиту»). Из тела убраны даты и ID ревью | work-planner |
 | 2026-10-29 | Update по Design Doc v1.8, PRD v1.5, UXRD v1.7, `design-web-shell.md` v1.5 (статус `active` сохранён; T1.1–T2.3 не изменены по содержанию, T2.3 отмечена выполненной). Добавлена T2.5 — «сброс хвоста» (`ChatMessageRefSchema`, `ThreadsService.discardRepliesAfter`, вызов в `ChatController.chat` после `getOwnedThread` и до `agent.stream`), `maskToolErrorText` → `maskHistoryErrors` с удалением частей `error` (AC-14.5 (b)), unit `threads.service.spec.ts` и кейсы mapper, e2e AC-14.6 с утверждениями шага 1, вариант «обрыв сети», новые литералы характеризации; гейт G3 перенесён на T2.5. T2.4 завершена как задача доказательств, её красный кейс принадлежит T2.5, T2.4 + T2.5 — одна единица коммита. Код проверки беседы в чате и `ChatModule.imports` перенесены из T5.1/T4.3 в T2.5; T5.1 — только e2e с мутационной проверкой. Удалена условная заметка о «сбросе хвоста» в Phase 5. Счётчики: 20 задач, доп. e2e 5. Обновлены Verification Strategy, QA Mechanisms, Traceability, Reference Contract Values (дословно DD v1.8), Failure Mode Checklist, Connection Map, риски, зависимости T3.x/T4.1, T6.3, таблица AC, Notes, диаграммы | work-planner |
 | 2026-10-29 | Update по ревью плана (статус `active` сохранён; T2.5 не начата). T6.3: «до» метрики № 10 — `main` 83fd532 в отдельном git worktree, по 5 прогонов «до» и «после», трассировка обновлена. T2.5 «обрыв сети»: сценарий `mockModels.ts` по `abortSignal` закрывает или завершает ошибкой поток и разрешает промис, который ждёт тест; затем опрос `countMessages` до неизменного значения ≥ 1 000 мс (максимум 5 000 мс); добавлено обязательство доказательства. Уточнены бюджет тестов T2.5 (ветки контроллера), критерий ссылок на `maskToolErrorText` (`src` и `test`), гейты `app.e2e-spec.ts` в рисках (+ T2.5), ссылка трассировки на «Отклонение от порядка DD». Тело приведено к текущему состоянию: «сброс хвоста» обязателен по DD, обычные перегенерация и правка скрыты в `web-shell` | work-planner |
+| 2026-10-30 | Закрытие плана: `status: active` → `completed`. T1.1–T6.2 выполнены и приняты по качеству; T6.3 оставлена не отмеченной — отложена до браузерной L1-проверки после `web-shell`. Пост-проверка: code-verifier — согласовано (91); security-reviewer — `approved_with_notes`, три усиления (`post-impl-fixes-20261030`): пустой `userId` в `ThreadsService.list`/`getOwnedThread`, `@MaxLength(255)` для `ChatDto.id`/`threadId`, отбрасывание id из тела > 255 в `AuditInterceptor`; остальные замечания — техдолг в DD v1.9. Каталог задач удаляется как эфемерное состояние; Notes дополнены записью о закрытии | work-planner |

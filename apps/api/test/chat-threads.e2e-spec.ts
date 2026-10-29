@@ -420,6 +420,26 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
       ).toBeNull();
       expect(t.assistant.doStreamCalls).toHaveLength(0);
     });
+
+    // Risk: an id longer than ThreadIdSchema's 255 characters passes ChatDto and reaches storage lookups.
+    it.each(['id', 'threadId'])(
+      'rejects a 256-character body %s with 400 before streaming',
+      async (field) => {
+        const t = await startApp();
+        const user = t.user();
+
+        const res = await t.http
+          .post('/api/chat/assistant')
+          .set('x-user-id', user)
+          .send({
+            [field]: 'x'.repeat(256),
+            messages: [clientUserMessage('Привет')],
+          });
+
+        expect(res.status).toBe(400);
+        expect(t.assistant.doStreamCalls).toHaveLength(0);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

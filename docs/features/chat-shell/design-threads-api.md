@@ -2,8 +2,8 @@
 
 | Поле | Значение |
 |------|----------|
-| Версия | 1.8 |
-| Дата | 2026-10-29 |
+| Версия | 1.9 |
+| Дата | 2026-10-30 |
 | Статус | Approved |
 | Фича | `chat-shell` |
 | PRD | [`prd.md`](./prd.md) v1.5 (AC-14.5 — обезличенный текст ошибки инструмента, без текста ошибки модели в истории; AC-14.6 — один ответ после перегенерации ответа с ошибкой; скрытие правки/ветвления/перегенерации успешных ответов в `web-shell`) |
@@ -66,7 +66,7 @@ unknowns:
 | Prettier | explicit | `apps/api/.prettierrc`, скрипт `format` | Форматирование нового кода |
 | Vitest: unit `**/*.spec.ts`, e2e `**/*.e2e-spec.ts` (отдельный конфиг), `globals: true` | explicit | `apps/api/vitest.config.ts`, `apps/api/vitest.config.e2e.ts` | Unit-тесты рядом с кодом (`*.spec.ts`), e2e в `apps/api/test/*.e2e-spec.ts` |
 | Turborepo `build`/`test` зависят от `^build`; `@agent-os/contracts` — ESM, публикуется из `dist` | explicit | `turbo.json`, `packages/contracts/package.json` | Новые схемы попадают в `apps/*` только после сборки contracts; прямой запуск vitest в `apps/api` требует предварительного `pnpm --filter @agent-os/contracts build` |
-| Глобальный префикс `api`, CORS `FRONTEND_ORIGIN` + credentials, глобальный `ValidationPipe({ whitelist, transform })` | explicit | `apps/api/src/main.ts:8-10` | Контроллер `@Controller('threads')` обслуживается как `/api/threads`; zod-валидация — параметрными пайпами, совместимыми с глобальным `ValidationPipe` |
+| Глобальный префикс `api`, CORS `FRONTEND_ORIGIN` + credentials, глобальный `ValidationPipe({ whitelist, transform })` | explicit | `apps/api/src/app.setup.ts` (`configureApp`) | Контроллер `@Controller('threads')` обслуживается как `/api/threads`; zod-валидация — параметрными пайпами, совместимыми с глобальным `ValidationPipe` |
 | PRD Security: валидация входа zod-схемами из `packages/contracts`, нет IDOR, нет утечки внутренних сообщений | explicit | `prd.md`, NFR Security | Отдельный `ZodValidationPipe`; проверка владельца в одном методе сервиса; 404 одинаков для чужих и несуществующих |
 | Nest-модуль на фичу: `@Module({ controllers })`, guard на маршруте через `@UseGuards(SessionGuard)` | implicit — подтверждён пользователем 2026-10-28 | `apps/api/src/chat/chat.module.ts`, `chat.controller.ts:30-31` | Новый `ThreadsModule`; `@UseGuards(SessionGuard)` на уровне класса контроллера |
 | Доступ к Mastra только через DI-токен `MASTRA` (`@Global` `MastraModule`) | implicit — подтверждён пользователем 2026-10-28 | `apps/api/src/mastra/mastra.constants.ts`, `mastra.module.ts` | Memory берётся из `MASTRA` фабрикой провайдера, а не создаётся заново |
@@ -85,7 +85,7 @@ Gate: 7 explicit, 4 implicit — порог (3/2) выполнен. Все 4 imp
 - [x] Ключевые решения KD-1…KD-5 → «Ключевые решения»
 
 #### Non-Scope (Explicitly not changing)
-- [x] `ChatRequestSchema` и `ChatDto` — без изменений (AC-18.3)
+- [x] `ChatRequestSchema` — без изменений (AC-18.3); `ChatDto` — без изменения полей и типов, добавлено только ограничение длины `id` и `threadId` (Security Considerations)
 - [x] Стриминг (`toAISdkStream` v7, `sendReasoning`), `res.on('close')`-отмена, лог `usage` — без изменений; тексты, которые возвращает `onError`, не меняются — правило выносится в общую функцию `toStreamErrorText` (`apps/api/src/common/stream-error-text.ts`), чтобы история использовала тот же источник
 - [x] `assistant.agent.ts` — не меняется (штатный `generateTitle` остаётся выключенным; см. KD-2)
 - [x] `SessionGuard`, `AuditService` — без изменений
@@ -192,11 +192,12 @@ FR-13…FR-18 PRD без изменений формулировок; AC пер�
 |------|------|-------------|
 | Existing | `apps/api/src/chat/chat.controller.ts` | `POST /api/chat/:agentId`; меняется разрешение треда и `onFinish`; после проверки владельца и до `agent.stream` — `ThreadsService.discardRepliesAfter` («сброс хвоста»); `onError` возвращает `toStreamErrorText(error)` |
 | Existing | `apps/api/src/chat/chat.module.ts` | Импортирует `ThreadsModule` |
-| Existing | `apps/api/src/audit/audit.interceptor.ts` | `threadId` из `params.threadId`; id из тела — только для маршрутов с `params.agentId` |
+| Existing | `apps/api/src/audit/audit.interceptor.ts` | `threadId` из `params.threadId`; id из тела — только для маршрутов с `params.agentId` и не длиннее 255 символов |
 | Existing | `apps/api/src/main.ts` | Настройка приложения выносится в `configureApp` |
+| Existing | `apps/api/src/chat/chat.dto.ts` | `@MaxLength(255)` на `id` и `threadId` |
 | Existing | `apps/api/src/app.module.ts` | `imports` дополняется `ThreadsModule` (Integration Point 5) |
 | Existing | `packages/contracts/src/index.ts` | Добавляется одна строка `export * from './threads.js'` |
-| Existing (unchanged) | `apps/api/src/mastra/agents/assistant.agent.ts`, `mastra.provider.ts`, `auth/session.guard.ts`, `audit/audit.service.ts`, `chat/chat.dto.ts` | Используются как есть |
+| Existing (unchanged) | `apps/api/src/mastra/agents/assistant.agent.ts`, `mastra.provider.ts`, `auth/session.guard.ts`, `audit/audit.service.ts` | Используются как есть |
 | New | `packages/contracts/src/threads.ts` | zod-схемы и типы бесед; `ChatMessageRefSchema` — структурная схема последнего элемента `body.messages` для «сброса хвоста» |
 | New | `apps/api/src/threads/threads.module.ts` | Модуль: контроллер, сервисы, провайдеры |
 | New | `apps/api/src/threads/threads.controller.ts` | Шесть маршрутов `/api/threads*` |
@@ -211,7 +212,7 @@ FR-13…FR-18 PRD без изменений формулировок; AC пер�
 | New | `apps/api/src/threads/thread-title.agent.ts` | Отдельный (не зарегистрированный в Mastra) агент заголовков, инструкции, нормализация |
 | New | `apps/api/src/common/zod-validation.pipe.ts` | Пайп валидации по zod-схеме из contracts |
 | New | `apps/api/src/app.setup.ts` | `configureApp(app)`: префикс, CORS, `ValidationPipe` — общий для `main.ts` и e2e |
-| New | `apps/api/test/support/*` | Тестовое приложение, mock-модели, сидирование |
+| New | `apps/api/test/support/*` | Тестовое приложение, mock-модели, сидирование; `db.ts` — прямое чтение `mastra_messages` через `pg` |
 | New | `apps/api/test/threads.e2e-spec.ts`, `chat-threads.e2e-spec.ts`, `threads.perf.e2e-spec.ts` | e2e на реальном Postgres |
 
 ### Integration Point Map
@@ -487,7 +488,8 @@ Direct Impact:
   - apps/api/src/chat/chat.controller.ts (проверка беседы перед agent.stream; schedule заголовка в onFinish)
   - apps/api/src/chat/chat.module.ts (imports: [ThreadsModule])
   - apps/api/src/app.module.ts (imports: ThreadsModule)
-  - apps/api/src/audit/audit.interceptor.ts (threadId из params.threadId)
+  - apps/api/src/audit/audit.interceptor.ts (threadId из params.threadId; id из тела длиннее 255 символов не пишется)
+  - apps/api/src/chat/chat.dto.ts (@MaxLength(255) на id и threadId)
   - apps/api/src/main.ts (вызов configureApp)
   - apps/api/package.json (dependency zod ^4.6.7)
   - apps/api/.env.example (TITLE_MODEL)
@@ -508,7 +510,7 @@ Indirect Impact:
   - mastra_messages — повторная отправка последнего сообщения пользователя удаляет хранимый ответ после него; один дополнительный recall (проверка владельца и выборка ≤ 20 строк) на каждую отправку
   - Контекст модели при перегенерации — без текста неудачной попытки (хвост удалён до загрузки истории агентом)
 No Ripple Effect:
-  - ChatRequestSchema / ChatDto / class-validator-валидация тела чата
+  - ChatRequestSchema; поля и типы ChatDto (добавлено только ограничение длины id и threadId)
   - Стриминг: toAISdkStream v7, sendReasoning, отмена по res.on('close'), лог usage; тексты onError-маскирования те же (правило вынесено в toStreamErrorText без изменения результатов)
   - История до этого релиза: хранимые данные не меняются; маскирование применяется при чтении, поэтому распространяется и на старые беседы
   - Обычная отправка (новое сообщение пользователя с новым id) и правка (новый id): хранимые сообщения не удаляются
@@ -841,7 +843,8 @@ flowchart LR
   - `rename(input: RenameThreadInput): Promise<ThreadSummary>`, где `type RenameThreadInput = { threadId: string; userId: string; title: string }` (внутренний тип `threads.service.ts`; объектный параметр вместо трёх позиционных)
   - `delete(threadId, userId): Promise<void>`
   - `discardRepliesAfter` — один объектный параметр `DiscardRepliesInput` (внутренний тип `threads.service.ts`; поля `threadId`, `userId`, `userMessageId` — Data Contract `discardRepliesAfter`), результата не возвращает
-- **Dependencies**: `THREAD_MEMORY` (`Memory` из `@mastra/memory`), `ThreadWriteLock`, `toAISdkMessages` (`@mastra/ai-sdk/ui`), `thread-cursor.ts`, `thread.mapper.ts` (`toThreadSummary`, `maskHistoryErrors`), `threads.errors.ts`.
+- **Пустой `userId`**: `list` и `getOwnedThread` отклоняют его до обращения к хранилищу — `PostgresStore.listThreads` при ложном `resourceId` не применяет фильтр владельца (Security Considerations).
+- **Dependencies**: `THREAD_MEMORY` (`Memory` из `@mastra/memory`), `ThreadWriteLock`, `toAISdkMessages` (`@mastra/ai-sdk/ui`), `thread-cursor.ts` (`sortThreadsForList`, `selectThreadPage`, курсор), `thread.mapper.ts` (`toThreadSummary`, `maskHistoryErrors`), `threads.errors.ts`.
 - **`listMessages`**: проверка владельца → `recall` (`perPage: false`, `createdAt ASC`) → `toAISdkMessages(…, { version: 'v7' })` → `ThreadMessagesResponseSchema.parse` → `maskHistoryErrors`. Маскирование выполняется после разбора схемой: части уже имеют тип контракта (`{ type: string }` со свободными полями), поэтому проверка `type` и `state` типобезопасна без `as`.
 - **`discardRepliesAfter` («сброс хвоста», AC-14.6)** — вызывается только из `ChatController.chat`, после `getOwnedThread` и до `agent.stream`:
   1. `ChatController` разбирает последний элемент `body.messages` схемой `ChatMessageRefSchema` (`safeParse`, без `as`). Не разобран, `role` не `'user'` или массив пуст — метод не вызывается, отправка обычная.
@@ -882,7 +885,7 @@ flowchart LR
 - **Interface**:
   - `schedule(input: { threadId: string; resourceId: string }): void` — синхронный; создаёт промис, хранит его в `Set` до завершения, все ошибки ловит и логирует. Текст первого сообщения читается из `Memory`, а не из тела запроса чата — сервис не зависит от того, какую часть истории клиент передал в `body.messages`.
   - `beforeApplicationShutdown(): Promise<void>` — `Promise.allSettled(pending)` (каждая задача ограничена таймаутом генерации).
-- **Dependencies**: `THREAD_MEMORY`, `THREAD_TITLE_AGENT` (`Agent`), `THREAD_TITLE_TIMEOUT_MS` (токен в `thread-title.service.ts`; `ThreadsModule` даёт `useValue: 8_000`, unit-тест — малое значение), `ThreadWriteLock`, `Logger`.
+- **Dependencies**: `THREAD_MEMORY`, `THREAD_TITLE_AGENT` через структурный интерфейс `ThreadTitleGenerator`, `THREAD_TITLE_TIMEOUT_MS` (токен в `thread-title.service.ts`; `ThreadsModule` даёт `useValue: 8_000`, unit-тест — малое значение), `ThreadWriteLock`, `Logger`.
 - **Алгоритм**:
   1. `thread = getThreadById({ threadId, resourceId })`; `null` или `thread.title !== ''` → выход (AC-17.2, без чтения истории и без вызова модели).
   2. `const { messages: [first] } = await memory.recall({ threadId, resourceId, perPage: 1, page: 0, orderBy: { field: 'createdAt', direction: 'ASC' }, includeTotal: false })` — **первое** сохранённое сообщение беседы (PRD FR-17). `first` отсутствует или `first.role !== 'user'` → `debug`, выход. `userText = extractUserText(first)` — конкатенация `first.content.parts` с `type === 'text'`, `trim`, обрезка до 2 000 символов; пусто → выход. Проверено по установленным пакетам (`@mastra/memory` 1.39.1, `@mastra/core` 1.80.0): при явном `orderBy` и числовом `perPage` `recall` передаёт в `listMessages` именно этот порядок и размер страницы (без «newest + reverse»), с `resourceId` — проверяет владельца; пользовательское сообщение сохраняет `MessageHistory.processOutputResult` (`get.input.db()` + `get.response.db()`), который выполняется до вызова `options.onFinish`, поэтому к моменту `schedule` оно видно.
@@ -891,23 +894,35 @@ flowchart LR
   5. Любая ошибка → `logger.warn('Title generation failed thread=<id> reason=<reason> [statusCode=<n>] [code=<c>]')`, где `reason = signal.aborted ? 'TimeoutError' : error.name` (сигнал создаётся до `generate` и виден в `catch`; до шага 3 сигнала нет — `reason = error.name`). Так таймаут логируется как `TimeoutError` и тогда, когда `generate` отклоняется обёрнутой ошибкой после прерывания; `statusCode`/`code` добавляются, когда присутствуют у ошибки; `error.message`, текст сообщений и текст заголовка в лог не пишутся (PII).
   6. Повтор: если генерация не записала заголовок (ошибка, таймаут, пустой результат), заголовок остаётся `''`, и шаги 1–5 выполняются заново при следующем `onFinish` той же беседы (AC-17.3) — отдельного механизма повторов нет.
 
+- **`ThreadTitleGenerator` и `ThreadTitleResult`** (`thread-title.service.ts`): сервис зависит только от метода `generate(message, { abortSignal })`, который возвращает `ThreadTitleResult` — `text` и `totalUsage` с необязательными `inputTokens`/`outputTokens`. Mastra `Agent` удовлетворяет интерфейсу; это проверяется на уровне типов при внедрении `THREAD_TITLE_AGENT`, без приведений.
+
 #### Title Agent (`apps/api/src/threads/thread-title.agent.ts`)
 
 - **Responsibility**: инструкции, модель, нормализация.
 - **Interface**: `createThreadTitleAgent(model: ModelId): Agent` (`id: 'thread-title'`, **не** регистрируется в `Mastra`, без памяти и инструментов, без `providerOptions` рассуждений); `THREAD_TITLE_INSTRUCTIONS`; `normalizeGeneratedTitle(text: string): string`.
 - Инструкции: «Сформулируй короткий заголовок беседы по сообщению пользователя: до 6 слов и не длиннее 80 символов, на том же языке, что и сообщение. Не повторяй сообщение дословно. Без кавычек, двоеточий, эмодзи и точки в конце. Ответь только заголовком.»
-- Провайдер `THREAD_TITLE_AGENT`: `useFactory: (config) => createThreadTitleAgent(parseModelId(config.get('TITLE_MODEL') ?? config.get('ASSISTANT_MODEL')))`.
+- Провайдер `THREAD_TITLE_AGENT`: `useFactory: createThreadTitleAgentFromConfig` — именованная функция `createThreadTitleAgentFromConfig(config: ConfigService): Agent`, которая вызывает `createThreadTitleAgent` с `parseModelId` от `TITLE_MODEL`, а при его отсутствии — от `ASSISTANT_MODEL` (оператор `??`). Модель разрешается лениво, без сетевых вызовов при старте.
 
 #### ThreadWriteLock (`apps/api/src/threads/thread-write-lock.ts`)
 
 - **Responsibility**: последовательное выполнение асинхронных функций с одним ключом в пределах процесса.
-- **Interface**: `run<T>(key: string, fn: () => Promise<T>): Promise<T>`; хвост цепочки по ключу удаляется после завершения (без утечки памяти).
+- **Interface**: `run<T>(key: string, fn: () => Promise<T>): Promise<T>`; хвост цепочки по ключу удаляется после завершения (без утечки памяти). `isHeld(key: string): boolean` — только чтение: выполняется ли или ждёт задача этого ключа; нужен тестам, на поведение не влияет.
 
 #### thread-cursor.ts
 
+- `sortThreadsForList(threads: StorageThreadType[]): StorageThreadType[]` — копия в каноническом порядке списка: `updatedAt` (мс) по убыванию, затем `id` по убыванию; её результат — вход `sorted` для `selectThreadPage`.
 - `encodeThreadCursor(t: { updatedAt: Date; id: string }): string` — base64url(`JSON.stringify({ u: t.updatedAt.getTime(), i: t.id })`).
 - `decodeThreadCursor(s: string): { u: number; i: string }` — ошибка разбора/формы → `BadRequestException('Invalid cursor', { errorCode: 'INVALID_CURSOR' })`.
 - `selectThreadPage(input: { sorted: StorageThreadType[]; cursor?: { u: number; i: string }; size?: number })` — чистая функция, `size` по умолчанию `THREAD_PAGE_SIZE`; `isAfter(t, c) = t.u < c.u || (t.u === c.u && t.i < c.i)`. Беседа, чей `updatedAt` сдвинулся выше курсора, оказывается «до» курсора и в этом обходе не выдаётся (AC-13.2a).
+
+#### THREAD_MEMORY (`apps/api/src/threads/thread-memory.provider.ts`)
+
+- `resolveThreadMemory(mastra: AgentMemorySource): Promise<Memory>` — `Memory` агента `assistant`; если это не `Memory` из `@mastra/memory`, инициализация модуля падает.
+- `AgentMemorySource` — структурная часть `Mastra`, которая нужна провайдеру (`getAgent('assistant').getMemory()`); реальный `Mastra` ей удовлетворяет. Фабрика провайдера получает `MASTRA` и вызывает `resolveThreadMemory`.
+
+#### ThreadsModule (`apps/api/src/threads/threads.module.ts`)
+
+- Экспортирует `THREAD_MEMORY`, `ThreadsService` и `ThreadTitleService`.
 
 #### ZodValidationPipe (`apps/api/src/common/zod-validation.pipe.ts`)
 
@@ -1368,9 +1383,10 @@ System Invariants:
 
 ## Security Considerations
 
-- **Authentication & Authorization**: все шесть маршрутов — `@UseGuards(SessionGuard)` на классе; в production — 401 (как чат). Авторизация — владение: `resourceId === req.user.id` проверяется в единственном методе `getOwnedThread` (SQL-фильтр `getThreadById`), до вызова `recall`/`updateThread`/`deleteThread`/`agent.stream`, у которых своей проверки нет. Список — `filter.resourceId`. Чужое и отсутствующее неразличимы: одинаковый статус, сообщение и `errorCode`. Курсор не подписан: подмена меняет только позицию в собственном списке пользователя. Агент заголовков не регистрируется в `Mastra`, поэтому недоступен через `POST /api/chat/:agentId`.
-- **Input Validation**: `:threadId` (`ThreadIdSchema`, 1…255), `cursor` (≤ 512, затем строгий разбор), тело PATCH (`trim`, 1…200) — zod-схемы из contracts через `ZodValidationPipe`; лишние поля тела отбрасываются (`z.object` по умолчанию). Идентификаторы попадают в БД только через параметризованные запросы `PostgresStore`. Текст пользователя в промпте заголовка обрезается до 2 000 символов; ответ модели нормализуется и ограничивается 80 символами; заголовок — недоверенный текст и выводится `web-shell` как текст, не HTML (NFR Security PRD). Prompt injection в заголовок может повлиять только на текст заголовка этой же беседы.
+- **Authentication & Authorization**: все шесть маршрутов — `@UseGuards(SessionGuard)` на классе; в production — 401 (как чат). Авторизация — владение: `resourceId === req.user.id` проверяется в единственном методе `getOwnedThread` (SQL-фильтр `getThreadById`), до вызова `recall`/`updateThread`/`deleteThread`/`agent.stream`, у которых своей проверки нет. Список — `filter.resourceId`. Пустой `userId` отклоняется в `ThreadsService.list` и `getOwnedThread` до обращения к хранилищу: `PostgresStore.listThreads` при ложном `resourceId` не применяет фильтр и вернул бы беседы всех пользователей. Чужое и отсутствующее неразличимы: одинаковый статус, сообщение и `errorCode`. Курсор не подписан: подмена меняет только позицию в собственном списке пользователя. Агент заголовков не регистрируется в `Mastra`, поэтому недоступен через `POST /api/chat/:agentId`.
+- **Input Validation**: `:threadId` (`ThreadIdSchema`, 1…255), `cursor` (≤ 512, затем строгий разбор), тело PATCH (`trim`, 1…200) — zod-схемы из contracts через `ZodValidationPipe`; лишние поля тела отбрасываются (`z.object` по умолчанию). `ChatDto.id` и `ChatDto.threadId` — `@MaxLength(255)`, как `ThreadIdSchema`; `AuditInterceptor` не пишет в аудит id из тела длиннее 255 символов. Идентификаторы попадают в БД только через параметризованные запросы `PostgresStore`. Текст пользователя в промпте заголовка обрезается до 2 000 символов; ответ модели нормализуется и ограничивается 80 символами; заголовок — недоверенный текст и выводится `web-shell` как текст, не HTML (NFR Security PRD). Prompt injection в заголовок может повлиять только на текст заголовка этой же беседы.
 - **Sensitive Data Handling**: ответы не содержат `resourceId` и `metadata` треда. История содержит `providerMetadata` (подпись рассуждения Anthropic — непрозрачный токен, не секрет; `mastra.createdAt`) — те же данные, что пользователь получает в живом стриме. Сырой текст ошибок инструментов и модели, хранимый Mastra, в историю не попадает: `errorText` заменяется тем же `AGENT_ERROR_TEXT`, что скрывает его в стриме, а часть `error` удаляется (AC-14.5). «Сброс хвоста» удаляет только сообщения беседы владельца: `Memory.deleteMessages` своей проверки не имеет, поэтому получает лишь `id` из `recall` с `resourceId` после `getOwnedThread`; `id` из тела запроса только сравнивается. Логи генерации заголовка не содержат текста сообщений и заголовков. Ошибки хранилища возвращаются как 500 без деталей. Аудит фиксирует `threadId` из маршрута (не из подменяемого тела).
+- **Known limitations**: ограничения частоты запросов и лимита бесед нет; это и другие известные ограничения — «Future Extensibility», «Known limitations (technical debt)».
 
 ## Test Boundaries
 
@@ -1462,6 +1478,11 @@ System Invariants:
   - Треды не привязаны к агенту: список общий для всех агентов (агент один — `assistant`; выбор агента — Won't).
   - Аудит `POST /api/threads` без `threadId` (id появляется в обработчике).
   - Неизвестные поля тела `POST /api/threads` игнорируются (тело не нужно).
+- **Known limitations (technical debt)** — фиксируются, здесь не проектируются:
+  - Нет ограничения частоты запросов и лимита числа бесед на пользователя; добавить до подключения настоящего OIDC-guard (например, `@nestjs/throttler`).
+  - Mastra `saveMessages` делает upsert по `id` сообщения и при конфликте переназначает `thread_id` и `resourceId` — поведение Mastra, существовавшее до этого изменения.
+  - Mastra `ConsoleLogger` при ошибках провайдера печатает объект `APICallError` целиком.
+  - `TITLE_MODEL`, заданный пустой строкой, даёт модель по умолчанию, а не `ASSISTANT_MODEL`: `??` не заменяет пустую строку. `.env.example` предупреждает не оставлять переменную пустой.
 
 ## Alternative Solutions
 
@@ -1564,3 +1585,4 @@ System Invariants:
 | 2026-10-29 | 1.6 | Согласование с PRD v1.4: AC-14.1a переименован в AC-14.6 (AC PRD); ссылки на удалённый список проектных решений PRD заменены собственными ID KD-1…KD-6, раздел переименован в «Ключевые решения»; ссылки на версию PRD обновлены; номер AC-14.5 подтверждён, Open Question 5 закрыт; провал проверки AC-14.6 — стоп и эскалация пользователю, «сброс хвоста» — подготовленный вариант по выбору пользователя; контракт `web-shell` п. 6: гарантия сервера — замаскированный `errorText` в `output-error`, клиент вправе показывать свой фиксированный текст; удалены продублированные строки таблицы Certainty: low под «сбросом хвоста». Поведение и контракты без изменений | technical-designer |
 | 2026-10-29 | 1.7 | Удалён код маскирования из фрагментов; уточнены AC-14.5, AC-14.6, условность гарантии AC-14.6; KD-6 заменён ссылками на `design-web-shell.md`; условные строки меры «сброс хвоста» в картах путей и влияния; лог `usage` модели заголовков; тексты `toStreamErrorText` и формат строки `usage` словами; `dynamic-tool` в AC-14.5; исходы ошибки модели в `web-shell` по TH-08; ссылка на UXRD v1.6 и E-8 вместо UXQ-2. Поведение и контракты без изменений | technical-designer |
 | 2026-10-29 | 1.8 | «Сброс хвоста» обязателен по итогу проверки AC-14.6; части ошибки модели удаляются из истории (AC-14.5, `maskHistoryErrors`); частичное хранимое состояние после ошибки записано в контракт `web-shell`; по итогу проверки AC-14.6 выбран вариант «оставить действие с исправлением хранения»; `recall` «сброса хвоста» — 20 самых новых сообщений от старых к новым, `includeTotal: false`, строки unit-таблицы в этом порядке; e2e AC-14.6 проверяет типы частей, `safeValidateUIMessages` и отсутствие сырого текста ошибки; обрыв сети (PRD v1.5) — тем же «сбросом хвоста», состояние после обрыва — Certainty на шаге 8; AC-14.5 разведён на ошибку инструмента и ошибку модели; удаление беседы до `recall` «сброса хвоста» — 500 до SSE; ссылки на PRD без версии, UXRD v1.7 | technical-designer |
+| 2026-10-30 | 1.9 | Источник настройки HTTP — `app.setup.ts`; названы мелкие дополнения реализации; усиление безопасности (пустой `userId`, длина id чата и аудита); известные ограничения. Поведение без изменений | technical-designer |

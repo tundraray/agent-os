@@ -37,6 +37,16 @@ type DiscardRepliesInput = {
 /** Number of newest stored messages `discardRepliesAfter` looks at. */
 const DISCARD_WINDOW = 20;
 
+/**
+ * Fails fast on an empty owner id. `PostgresStore.listThreads` skips the
+ * `resourceId` filter for a falsy value, so an empty id would read every
+ * user's threads. A plain Error (not an HttpException): this is a server
+ * defect, answered with 500.
+ */
+const assertUserId = (userId: string): void => {
+  if (!userId) throw new Error('ThreadsService: userId must not be empty');
+};
+
 @Injectable()
 export class ThreadsService {
   constructor(
@@ -52,6 +62,7 @@ export class ThreadsService {
     threadId: string,
     userId: string,
   ): Promise<StorageThreadType> {
+    assertUserId(userId);
     const thread = await this.memory.getThreadById({
       threadId,
       resourceId: userId,
@@ -67,6 +78,7 @@ export class ThreadsService {
    * An invalid cursor is rejected (400) before storage is read.
    */
   async list(userId: string, cursor?: string): Promise<ThreadListResponse> {
+    assertUserId(userId);
     const position =
       cursor === undefined ? undefined : decodeThreadCursor(cursor);
     const { threads } = await this.memory.listThreads({

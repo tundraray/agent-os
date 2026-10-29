@@ -11,12 +11,22 @@ import { AuditService } from './audit.service.js';
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
 
-/** `body.threadId ?? body.id` of a not-yet-validated request body. */
+/** Longest thread id accepted by validation (`ThreadIdSchema` in `@agent-os/contracts`: 1..255). */
+const MAX_THREAD_ID_LENGTH = 255;
+
+/**
+ * `body.threadId ?? body.id` of a not-yet-validated request body. An id longer
+ * than validation accepts is dropped rather than truncated: the request will be
+ * rejected with 400, and an oversized raw value must not reach the audit table.
+ */
 const bodyThreadId = (body: unknown): string | undefined => {
   if (typeof body !== 'object' || body === null) return undefined;
   const threadId = 'threadId' in body ? body.threadId : undefined;
   const id = 'id' in body ? body.id : undefined;
-  return asString(threadId ?? id);
+  const value = asString(threadId ?? id);
+  return value !== undefined && value.length <= MAX_THREAD_ID_LENGTH
+    ? value
+    : undefined;
 };
 
 /**

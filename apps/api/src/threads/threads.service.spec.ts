@@ -159,6 +159,48 @@ describe('ThreadsService.getOwnedThread', () => {
   });
 });
 
+// Risk: PostgresStore.listThreads drops the resourceId filter for a falsy value, so an empty
+// userId would list every user's threads; both owner-scoped entry points fail before storage is read.
+describe('ThreadsService rejects an empty userId in list and getOwnedThread', () => {
+  it.each<{
+    name: string;
+    call: (service: ThreadsService) => Promise<unknown>;
+  }>([
+    { name: 'list', call: (service) => service.list('') },
+    {
+      name: 'getOwnedThread',
+      call: (service) => service.getOwnedThread('t-1', ''),
+    },
+  ])(
+    '$name with an empty userId throws without reading storage',
+    async ({ call }) => {
+      const memory = new Memory({ options: { lastMessages: 20 } });
+      const foreignThreads = [thread('Чужая')];
+      const listThreads = vi.spyOn(memory, 'listThreads').mockResolvedValue({
+        threads: foreignThreads,
+        total: foreignThreads.length,
+        page: 0,
+        perPage: false,
+        hasMore: false,
+      });
+      const getThreadById = vi
+        .spyOn(memory, 'getThreadById')
+        .mockResolvedValue(thread('Чужая'));
+      const service = new ThreadsService(memory, new ThreadWriteLock());
+
+      const error: unknown = await call(service).then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(NotFoundException);
+      expect(listThreads).not.toHaveBeenCalled();
+      expect(getThreadById).not.toHaveBeenCalled();
+    },
+  );
+});
+
 // AC-15.1 / AC-15.3 and Failure Mode "unavailable boundary": rename maps only a vanished thread to 404.
 describe('ThreadsService.rename', () => {
   it('renaming to the same title again answers the same title (same-value)', async () => {
