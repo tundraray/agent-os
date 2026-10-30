@@ -5,7 +5,10 @@ import { AuditInterceptor } from './audit.interceptor.js';
 
 @Global()
 @Module({
-  providers: [AuditService, { provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
+  providers: [
+    AuditService,
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+  ],
   exports: [AuditService],
 })
 export class AuditModule {}

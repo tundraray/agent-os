@@ -10,19 +10,6 @@ export function useAttachmentState() {
 
   const isImage = useAuiState((s) => s.attachment.type === "image");
   const name = useAuiState((s) => s.attachment.name);
-  const typeLabel = useAuiState((s) => {
-    const type = s.attachment.type;
-    switch (type) {
-      case "image":
-        return "Image";
-      case "document":
-        return "Document";
-      case "file":
-        return "File";
-      default:
-        return type;
-    }
-  });
 
   // An attachment on a submission is still being prepared, whether or not the
   // adapter reports progress while it uploads.
@@ -42,7 +29,7 @@ export function useAttachmentState() {
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
     s.attachment.status.reason === "error"
-      ? (s.attachment.status.message ?? "Upload failed")
+      ? (s.attachment.status.message ?? "Не удалось загрузить файл")
       : undefined,
   );
 
@@ -51,7 +38,6 @@ export function useAttachmentState() {
     src,
     isImage,
     name,
-    typeLabel,
     isUploading,
     isError,
     errorMessage,

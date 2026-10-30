@@ -106,8 +106,8 @@ export function AudioPlayer({
         : { src, currentTime: 0, playing: false, hasError: false }),
       ...patch,
     }));
-  const displayTitle = title ?? "Audio";
-  const playbackLabel = title ? ` ${title}` : " audio";
+  const displayTitle = title ?? "Аудио";
+  const playbackLabel = title ? ` ${title}` : " аудио";
   const durationLabel =
     duration === undefined ? "--:--" : formatDuration(duration);
 
@@ -155,7 +155,7 @@ export function AudioPlayer({
       ) : null}
       <button
         type="button"
-        aria-label={`${playing ? "Pause" : "Play"}${playbackLabel}`}
+        aria-label={`${playing ? "Пауза" : "Воспроизвести"}${playbackLabel}`}
         disabled={hasError}
         onClick={togglePlayback}
         className={cn(
@@ -179,8 +179,8 @@ export function AudioPlayer({
           max={duration ?? 0}
           step={0.1}
           value={Math.min(currentTime, duration ?? 0)}
-          aria-label="Seek"
-          aria-valuetext={`${formatDuration(currentTime)} of ${durationLabel}`}
+          aria-label="Перемотка"
+          aria-valuetext={`${formatDuration(currentTime)} из ${durationLabel}`}
           disabled={hasError}
           onChange={(event) => {
             const nextTime = Number(event.currentTarget.value);
@@ -212,7 +212,7 @@ export function AudioPlayer({
       />
       {hasError ? (
         <span role="alert" className="text-muted-foreground text-xs">
-          Can&apos;t play this audio
+          Не удалось воспроизвести аудио
         </span>
       ) : null}
     </div>
@@ -259,7 +259,7 @@ export function VideoPlayer({
           controls
           playsInline
           preload="metadata"
-          aria-label={title ?? "Video"}
+          aria-label={title ?? "Видео"}
           className={cn(
             "block max-w-full",
             ratio !== "auto" && "h-full w-full object-contain",

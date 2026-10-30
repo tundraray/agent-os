@@ -16,6 +16,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { isRenderableImageSrc, linkPolicy } from "@/lib/markdown-policy";
 import { cn } from "@/lib/utils";
 
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
@@ -85,7 +86,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
       <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
         {language}
       </span>
-      <TooltipIconButton tooltip="Copy" onClick={onCopy}>
+      <TooltipIconButton tooltip="Копировать" onClick={onCopy}>
         {!isCopied && (
           <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
         )}
@@ -94,6 +95,38 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
         )}
       </TooltipIconButton>
     </div>
+  );
+};
+
+const NewTabHint: FC = () => (
+  <span className="sr-only"> (откроется в новой вкладке)</span>
+);
+
+type MarkdownImageFallbackProps = {
+  src: unknown;
+  alt: string | undefined;
+};
+
+/** Stands in for an image the browser must not fetch: a new-tab link when the source is a safe link, a placeholder otherwise. */
+const MarkdownImageFallback: FC<MarkdownImageFallbackProps> = ({ src, alt }) => {
+  const policy = linkPolicy(typeof src === "string" ? src : undefined);
+  if (policy.kind === "new-tab") {
+    return (
+      <a
+        href={policy.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="aui-md-a text-primary hover:text-primary/80 underline underline-offset-2"
+      >
+        {`Изображение: ${alt || "без описания"}`}
+        <NewTabHint />
+      </a>
+    );
+  }
+  return (
+    <span className="aui-md-img-unavailable text-muted-foreground">
+      {`[Изображение недоступно${alt ? `: ${alt}` : ""}]`}
+    </span>
   );
 };
 
@@ -161,15 +194,51 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  a: ({ className, ...props }) => (
-    <a
-      className={cn(
-        "aui-md-a text-primary hover:text-primary/80 underline underline-offset-2",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  a: ({ className, href, children, ...props }) => {
+    const policy = linkPolicy(href);
+    if (policy.kind === "unsafe") {
+      return (
+        <span
+          className={cn("aui-md-a-unsafe underline decoration-dotted", className)}
+        >
+          {children}
+        </span>
+      );
+    }
+    const newTab = policy.kind === "new-tab";
+    return (
+      <a
+        {...props}
+        href={policy.href}
+        target={newTab ? "_blank" : undefined}
+        rel={newTab ? "noopener noreferrer" : undefined}
+        className={cn(
+          "aui-md-a text-primary hover:text-primary/80 underline underline-offset-2",
+          className,
+        )}
+      >
+        {children}
+        {newTab && <NewTabHint />}
+      </a>
+    );
+  },
+  img: ({ src, alt, className, ...props }) => {
+    if (!isRenderableImageSrc(src)) {
+      return <MarkdownImageFallback src={src} alt={alt} />;
+    }
+    // next/image needs a host allowlist, and the model picks the host.
+    return (
+      <img
+        {...props}
+        src={src}
+        alt={alt ?? ""}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
+        className={cn("aui-md-img max-w-full rounded-md", className)}
+      />
+    );
+  },
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(

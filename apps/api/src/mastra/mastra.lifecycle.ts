@@ -1,4 +1,9 @@
-import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+} from '@nestjs/common';
 import type { Mastra } from '@mastra/core/mastra';
 import { MASTRA } from './mastra.constants.js';
 

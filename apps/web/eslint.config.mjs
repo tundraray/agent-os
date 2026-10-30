@@ -7,11 +7,14 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     // These components render user attachments and message images from arbitrary
-    // blob:, data: and remote URLs, which next/image cannot optimize.
+    // blob:, data: and remote URLs, which next/image cannot optimize. markdown-text.tsx
+    // renders https images from model answers; next/image would need a host allowlist,
+    // and the model picks the host.
     files: [
       "src/components/image.tsx",
       "src/components/media-player.tsx",
       "src/components/assistant-ui/elements/attachment.aui.tsx",
+      "src/components/markdown-text.tsx",
     ],
     rules: { "@next/next/no-img-element": "off" },
   },

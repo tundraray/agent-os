@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AuditEvent } from '@agent-os/contracts';
 import pg from 'pg';
@@ -15,7 +20,9 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
 
   constructor(config: ConfigService) {
-    this.pool = new pg.Pool({ connectionString: config.getOrThrow<string>('DATABASE_URL') });
+    this.pool = new pg.Pool({
+      connectionString: config.getOrThrow<string>('DATABASE_URL'),
+    });
   }
 
   async onModuleInit() {
@@ -39,7 +46,9 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
   }
 
   record(event: AuditEvent) {
-    this.logger.log(`audit ${event.type} user=${event.userId} agent=${event.agentId ?? '-'}`);
+    this.logger.log(
+      `audit ${event.type} user=${event.userId} agent=${event.agentId ?? '-'}`,
+    );
     this.buffer.push(event);
     if (this.buffer.length >= MAX_BATCH) void this.flush();
   }
@@ -50,7 +59,14 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     this.buffer = [];
     const values: unknown[] = [];
     const rows = batch.map((e, i) => {
-      values.push(e.type, e.userId, e.agentId ?? null, e.threadId ?? null, e.at, e.payload ?? null);
+      values.push(
+        e.type,
+        e.userId,
+        e.agentId ?? null,
+        e.threadId ?? null,
+        e.at,
+        e.payload ?? null,
+      );
       const o = i * 6;
       return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6})`;
     });
@@ -60,7 +76,10 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
         values,
       );
     } catch (err) {
-      this.logger.error(`Failed to write ${batch.length} audit events`, err as Error);
+      this.logger.error(
+        `Failed to write ${batch.length} audit events`,
+        err as Error,
+      );
       this.buffer.unshift(...batch);
     }
   }
