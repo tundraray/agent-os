@@ -750,7 +750,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T3.1 `ChatShell` (SH-01), `AppSidebar` без списка, граница ошибок, cookie сайдбара, правки `ui/sidebar.tsx`, `useMediaQuery`** (AC-07.1 механизм, AC-10.1–10.3 механизм, AC-21.1; Element 4; S-11 — C)
+- [x] **T3.1 `ChatShell` (SH-01), `AppSidebar` без списка, граница ошибок, cookie сайдбара, правки `ui/sidebar.tsx`, `useMediaQuery`** (AC-07.1 механизм, AC-10.1–10.3 механизм, AC-21.1; Element 4; S-11 — C)
   - Target Files: `apps/web/src/components/shell/chat-shell.tsx`, `apps/web/src/components/shell/app-sidebar.tsx` (new), `apps/web/src/app/(chat)/error.tsx` (new), `apps/web/src/app/(chat)/layout.tsx`, `apps/web/src/hooks/use-media-query.ts` (new), `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/shell/app-sidebar.test.tsx` (new)
   - Содержание:
     - `ChatShell` — `SidebarProvider defaultOpen={defaultSidebarOpen}`, `SidebarInset` как `main`, корень `h-dvh`; эффект: `!isMobile && openMobile` → `setOpenMobile(false)`; skip link «Перейти к сообщению» первым в Tab. Разметка спайка удаляется.
@@ -761,7 +761,8 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
   - Тесты (C): `app-sidebar.test.tsx` — 1 тест S-11: при мобильной ширине «Меню» открывает `role="dialog"` «История бесед», фокус на «Новый чат», Esc закрывает, фокус возвращается на «Меню» (AC-10.2 — механизм шторки; свайп — только L1-3).
   - Зависимости: T2.4.
   - Proof obligations: тест краснеет, если `finalFocus` шторки не задан (фокус уходит на `body`).
-  - Completion: [ ] тест зелёный; [ ] lint, tsc, build — 0; [ ] dev: свернуть сайдбар, F5 — полоса на первом кадре (быстрая проверка AC-21.1).
+  - Completion: [x] тест зелёный; [x] lint, tsc, build — 0; [x] dev: свернуть сайдбар, F5 — полоса на первом кадре (быстрая проверка AC-21.1).
+  - Notes (оркестратор, 2026-10-30, dev-сервер, desktop): сворачивание через «Боковая панель» пишет `sidebar_state=false`, после F5 остаётся полоса 48 px (`data-state=collapsed`); серверный HTML содержит `data-state="collapsed"` при Cookie `sidebar_state=false` и `"expanded"` при `true` — анимации раскрытия на первом кадре нет (AC-21.1 PASS).
 
 - [ ] **T3.2 Меню пользователя и тема (SB-11, TM-01)** (AC-09.1, AC-09.4; AC-12.1 — тема)
   - Target Files: `apps/web/src/components/shell/user-menu.tsx` (new), `apps/web/src/lib/dev-user.ts` (new), `apps/web/src/components/shell/user-menu.test.tsx` (new), `apps/web/src/components/shell/app-sidebar.tsx` (подключение `UserMenu`)
@@ -811,13 +812,13 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T4.1 `groupThreadsByDate` и `useNow`** (AC-01.1; AC-19.1 — монотонность; D-11; A-6)
+- [x] **T4.1 `groupThreadsByDate` и `useNow`** (AC-01.1; AC-19.1 — монотонность; D-11; A-6)
   - Target Files: `apps/web/src/lib/threads/group-threads-by-date.ts` (new), `apps/web/src/lib/threads/group-threads-by-date.test.ts` (new), `apps/web/src/hooks/use-now.ts` (new)
   - Содержание: по Reference Contract Values (метки, правило дней, сортировка, эффективное время `max(lastMessageAt, activityAt)`, нет обоих → `now`); `useNow()` обновляется при возврате во вкладку и в полночь.
   - Тесты (U, test-first, табличные): AC-01.1 (сегодня/вчера/5/40 дней → четыре группы по порядку, без пустых); границы 2/7/8/30/31 день; DST `Europe/Berlin` — 2026-03-29 (`activityAt` 2026-03-28 23:30, `now` 2026-03-29 12:00 → «Вчера»; 2026-03-29 00:30 → «Сегодня») и 2026-10-25 (`activityAt` 2026-10-24 23:30, `now` 2026-10-25 23:30 → «Вчера»; 2026-10-18 12:00 → «Предыдущие 7 дней»); страж окружения `new Date(2026, 2, 28).getTimezoneOffset() !== new Date(2026, 2, 30).getTimezoneOffset()`; сортировка с локальным поднятием; монотонность при склейке двух страниц; нет ключей сортировки → `now`; равные `activityAt` → исходный порядок.
   - Зависимости: T2.1.
   - Proof obligations: `Math.floor` вместо `round` краснит DST-кейсы; нестабильная сортировка краснит кейс равенства.
-  - Completion: [ ] тесты зелёные (≥ 4 — вклад в AC-12.1 «группировка»).
+  - Completion: [x] тесты зелёные (≥ 4 — вклад в AC-12.1 «группировка»).
 
 - [ ] **T4.2 Список бесед: `ThreadHistoryList` + `ThreadHistoryListView`, `ThreadHistoryItem` (отображение), `ThreadActivityTracker`, ↑/↓/Home/End; интеграционные `shell.list` и `shell.open-thread` (F5, AC-02.5)** (AC-01.1–01.7, AC-02.2 (F5), AC-02.5, AC-03.3 механизм, AC-22.2; AC-12.1 — состояния сайдбара; Open Questions п. 2)
   - Target Files: `apps/web/src/components/shell/thread-history-list.tsx` (new), `apps/web/src/components/shell/thread-history-item.tsx` (new), `apps/web/src/components/shell/thread-activity-tracker.tsx` (new), `apps/web/src/components/shell/thread-history-list.test.tsx` (new), `apps/web/src/components/shell/app-sidebar.tsx` (подключение), `apps/web/src/components/shell/chat-shell.tsx` (монтирование `ThreadActivityTracker`), `apps/web/src/components/shell/shell.list.int.test.tsx`, `apps/web/src/components/shell/shell.open-thread.int.test.tsx` (кейсы F5 и AC-02.5)

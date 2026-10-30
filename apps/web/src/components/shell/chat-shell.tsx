@@ -1,119 +1,89 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useAuiState } from '@assistant-ui/react';
+import { useEffect, type MouseEvent, type ReactNode } from 'react';
+import { MenuIcon } from 'lucide-react';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
-import { Sidebar, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
-import { parseRouteThreadId, threadPath } from '@/lib/threads/route-thread-id';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
+import { AppSidebar, MENU_BUTTON_ATTRIBUTE } from './app-sidebar';
 import { ChatRuntimeProvider } from './chat-runtime-provider';
-import { useShellActions, useShellStatus } from './shell-actions';
 
 type ChatShellProps = {
+  /** Sidebar state read by the `(chat)` layout from the `sidebar_state` cookie: the first frame matches it. */
   defaultSidebarOpen: boolean;
   children: ReactNode;
 };
 
-/**
- * Minimal runtime-spike layout: thread links in the shadcn sidebar (a swipeable drawer below 768 px),
- * history status line, «Новый чат» and the thread.
- * The production layout (sidebar, header, main view, workspace) replaces it.
- */
+/** SH-01: sidebar (built-in or drawer) and the main area, on the full height of the dynamic viewport. */
 export function ChatShell({ defaultSidebarOpen, children }: ChatShellProps) {
   return (
-    <ChatRuntimeProvider>
-      <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh">
-        <Sidebar>
-          <SpikeThreadList />
-        </Sidebar>
-        <main className="flex min-w-0 flex-1 flex-col">
-          <SpikeStatusLine />
+    <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
+      <ChatRuntimeProvider>
+        <SkipToComposerLink />
+        <AppSidebar />
+        <SidebarInset className="min-h-0 min-w-0">
+          <SidebarToggleBar />
           <div className="min-h-0 flex-1">
             <Thread />
           </div>
           {children}
-        </main>
-      </SidebarProvider>
-    </ChatRuntimeProvider>
+        </SidebarInset>
+        <CloseDrawerOnDesktop />
+      </ChatRuntimeProvider>
+    </SidebarProvider>
   );
 }
 
-function SpikeThreadList() {
-  const { newChat } = useShellActions();
-  const threadItems = useAuiState((s) => s.threads.threadItems);
-  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const isLoading = useAuiState((s) => s.threads.isLoading);
+const focusComposer = (event: MouseEvent<HTMLAnchorElement>): void => {
+  event.preventDefault();
+  document.querySelector<HTMLElement>('[data-shell-focus="composer"]')?.focus();
+};
 
+/** First stop in the Tab order; visible only while focused. */
+function SkipToComposerLink() {
   return (
-    <nav aria-label="Беседы" className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-      <Button onClick={() => newChat('button')}>Новый чат</Button>
-      {isLoading && <p className="text-muted-foreground text-sm">Загружаем беседы…</p>}
-      <ul className="flex flex-col gap-1 overflow-y-auto">
-        {threadItems.map((item) =>
-          item.remoteId === undefined ? null : (
-            <li key={item.id} className="flex items-center gap-1">
-              <Link
-                href={threadPath(item.remoteId)}
-                aria-current={item.id === mainThreadId ? 'page' : undefined}
-                className="min-w-0 flex-1 truncate rounded px-2 py-1 text-sm hover:bg-muted aria-[current=page]:bg-muted aria-[current=page]:font-medium"
-              >
-                {item.title ?? 'Новая беседа'}
-                {item.isRunning && ' •'}
-              </Link>
-            </li>
-          ),
-        )}
-      </ul>
-    </nav>
+    <a
+      href="#composer"
+      onClick={focusComposer}
+      className="bg-background text-foreground focus-visible:ring-ring sr-only z-50 rounded-md px-3 py-2 text-sm font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus-visible:ring-3"
+    >
+      Перейти к сообщению
+    </a>
   );
 }
 
-function SpikeStatusLine() {
-  const { retryHistory, retrySwitch } = useShellActions();
-  const { toggleSidebar } = useSidebar();
-  const routeThreadId = parseRouteThreadId(usePathname());
-  const mainRemoteId = useAuiState(
-    (s) => s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.remoteId,
-  );
-  const historyStatus = useShellStatus((s) =>
-    mainRemoteId === undefined ? undefined : s.history[mainRemoteId],
-  );
-  const switchError = useAuiState((s) => s.threads.switchError);
-  const listFailed = useAuiState((s) => s.threads.loadError !== undefined);
-  const routeSwitchError =
-    switchError !== undefined && switchError.threadId === routeThreadId ? switchError : undefined;
+/** HD-02 until the header (HD-01) lands: «Меню» opens the drawer below 768 px, «Боковая панель» toggles above. */
+function SidebarToggleBar() {
+  const { open, toggleSidebar } = useSidebar();
+  const menuButtonProps = { [MENU_BUTTON_ATTRIBUTE]: '' };
 
   return (
-    <div role="status" className="flex flex-wrap items-center gap-3 border-b px-4 py-2 text-xs">
+    <div className="flex h-(--header-height) shrink-0 items-center px-2 md:px-3">
       <Button
-        size="sm"
-        variant="outline"
-        className="md:hidden"
+        {...menuButtonProps}
+        variant="ghost"
+        size="icon"
+        className="size-11 md:hidden"
+        aria-label="Меню"
         aria-haspopup="dialog"
         onClick={toggleSidebar}
       >
-        Меню
+        <MenuIcon aria-hidden />
       </Button>
-      <span>route: {routeThreadId ?? '/'}</span>
-      <span>main: {mainRemoteId ?? '(new)'}</span>
-      <span>history: {historyStatus ?? '—'}</span>
-      {historyStatus === 'load_failed' && mainRemoteId !== undefined && (
-        <Button size="sm" variant="outline" onClick={() => retryHistory(mainRemoteId)}>
-          Повторить
-        </Button>
-      )}
-      {routeSwitchError !== undefined && (
-        <>
-          <span>switchError: {describeThreadsError(routeSwitchError.error).kind}</span>
-          <Button size="sm" variant="outline" onClick={() => retrySwitch(routeSwitchError.threadId)}>
-            Повторить
-          </Button>
-        </>
-      )}
-      {listFailed && <span>list: load error</span>}
+      <SidebarTrigger
+        className="hidden md:inline-flex"
+        aria-expanded={open}
+        aria-keyshortcuts="Control+B Meta+B"
+      />
     </div>
   );
+}
+
+/** Crossing to ≥ 768 px closes the drawer, so it does not reopen by itself when the window narrows again. */
+function CloseDrawerOnDesktop() {
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  useEffect(() => {
+    if (!isMobile && openMobile) setOpenMobile(false);
+  }, [isMobile, openMobile, setOpenMobile]);
+  return null;
 }

@@ -19,9 +19,9 @@ Metadata:
 Чистая функция группировки бесед по датам (метки, правило дней, сортировка, эффективное время) и хук `useNow()` (обновление при возврате во вкладку и в полночь). AC-01.1; AC-19.1 — монотонность; D-11; A-6.
 
 ## Target Files
-- [ ] `apps/web/src/lib/threads/group-threads-by-date.ts` (new)
-- [ ] `apps/web/src/lib/threads/group-threads-by-date.test.ts` (new)
-- [ ] `apps/web/src/hooks/use-now.ts` (new)
+- [x] `apps/web/src/lib/threads/group-threads-by-date.ts` (new)
+- [x] `apps/web/src/lib/threads/group-threads-by-date.test.ts` (new)
+- [x] `apps/web/src/hooks/use-now.ts` (new)
 
 ## Investigation Targets
 - DD «Contract Definitions» (`group-threads-by-date.ts`), «Field Propagation Map» (`updatedAt → время активности`)
@@ -43,19 +43,24 @@ Metadata:
 | Табличные тесты | одна табличная проверка на правило | testing-principles (Test Selection) |
 
 ## Investigation Notes
-(Подтвердить: `round`, а не `floor`; расчёт startOfDay в локальной TZ.)
+- Подтверждено: `Math.round` над разностью локальных `startOfDay` (`Date#setHours(0,0,0,0)` — TZ браузера); стабильность — встроенная стабильность `Array.prototype.sort` (ES2019) по копии входа.
+- Эффективное время (Field Propagation Map) вынесено в экспортируемый `entryActivityAt({ lastMessageAt, activityAt }, now)`: `max` из имеющихся, нет обоих → `now`. Контракт `groupThreadsByDate(entries, now)` и `ThreadListEntry` — без изменений (DD § Contract Definitions); потребитель T4.2 вызывает `entryActivityAt` при построении `ThreadListEntry`.
+- Кейсы DST из DD (03-28 23:30→03-29 12:00; 10-24 23:30→10-25 23:30; 10-18→10-25) дают разность ровно 24·n ч и `floor` не ловят. Добавлены кейсы, где сутки 23 ч попадают в разность: 03-29 12:00 при now 03-30 12:00 → «Вчера»; 03-24 при now 04-01 → «Предыдущие 30 дней»; плюс 25-часовые 10-25 23:30 при now 10-26 00:10 → «Вчера».
+- Мутации (временно, откачены): `Math.floor` → красные 2 кейса (23-часовые сутки 03-29→03-30 и 03-24→04-01); `[...entries].reverse().sort` (нестабильный порядок при равенстве) → красный кейс «равные activityAt → исходный порядок».
+- Reference Contracts: метки/границы/сортировка/без пустых групп — Y; `max(lastMessageAt, activityAt)`, нет обоих → now, календарный день в TZ браузера — Y.
+- `useNow()`: `useState(() => new Date())`; `visibilitychange` (visible) → новый `now`; `setTimeout` до следующей локальной полуночи, перепланируется при каждом обновлении `now`. Отдельного теста в Target Files нет; проверка проводки — T4.2/T4.3.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] U табличные: AC-01.1 (сегодня/вчера/5/40 дней → четыре группы по порядку, без пустых); границы 2/7/8/30/31 день; DST `Europe/Berlin` — 2026-03-29 (`activityAt` 2026-03-28 23:30, `now` 2026-03-29 12:00 → «Вчера»; 2026-03-29 00:30 → «Сегодня») и 2026-10-25 (`activityAt` 2026-10-24 23:30, `now` 2026-10-25 23:30 → «Вчера»; 2026-10-18 12:00 → «Предыдущие 7 дней»); страж окружения; сортировка с локальным поднятием; монотонность при склейке двух страниц; нет ключей сортировки → `now`; равные `activityAt` → исходный порядок
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] U табличные: AC-01.1 (сегодня/вчера/5/40 дней → четыре группы по порядку, без пустых); границы 2/7/8/30/31 день; DST `Europe/Berlin` — 2026-03-29 (`activityAt` 2026-03-28 23:30, `now` 2026-03-29 12:00 → «Вчера»; 2026-03-29 00:30 → «Сегодня») и 2026-10-25 (`activityAt` 2026-10-24 23:30, `now` 2026-10-25 23:30 → «Вчера»; 2026-10-18 12:00 → «Предыдущие 7 дней»); страж окружения; сортировка с локальным поднятием; монотонность при склейке двух страниц; нет ключей сортировки → `now`; равные `activityAt` → исходный порядок
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `group-threads-by-date.ts`, `use-now.ts`; тесты зелёные
+- [x] `group-threads-by-date.ts`, `use-now.ts`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; тесты зелёные
+- [x] Упростить; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest, ESLint, `tsc` — Type: `executable_check`
@@ -87,10 +92,10 @@ Metadata:
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Тесты зелёные (≥ 4 — вклад в AC-12.1 «группировка»); прогон содержательный
-- [ ] Мутации `Math.floor`/нестабильная сортировка краснят кейсы (записано в Notes)
-- [ ] lint, tsc — 0 ошибок
-- [ ] Reference Contracts — `Y`
+- [x] Тесты зелёные (≥ 4 — вклад в AC-12.1 «группировка»); прогон содержательный
+- [x] Мутации `Math.floor`/нестабильная сортировка краснят кейсы (записано в Notes)
+- [x] lint, tsc — 0 ошибок
+- [x] Reference Contracts — `Y`
 
 ## Notes
 - Impact scope: потребитель — `thread-history-list.tsx` (T4.2).

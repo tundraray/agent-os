@@ -19,13 +19,13 @@ Metadata:
 Заменить разметку спайка раскладкой SH-01: `SidebarProvider` с `defaultOpen` из cookie, `SidebarInset` как `main`, `AppSidebar` без списка (полоса/шторка), граница ошибок `(chat)/error.tsx`, `useMediaQuery`, правки `ui/sidebar.tsx` (`setOpen(value, { persist })`, переход ширины). Механизм AC-07.1, AC-10.1–10.3, AC-21.1, Element 4; S-11 (компонентный тест).
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/chat-shell.tsx`
-- [ ] `apps/web/src/components/shell/app-sidebar.tsx` (new)
-- [ ] `apps/web/src/app/(chat)/error.tsx` (new)
-- [ ] `apps/web/src/app/(chat)/layout.tsx`
-- [ ] `apps/web/src/hooks/use-media-query.ts` (new)
-- [ ] `apps/web/src/components/ui/sidebar.tsx`
-- [ ] `apps/web/src/components/shell/app-sidebar.test.tsx` (new)
+- [x] `apps/web/src/components/shell/chat-shell.tsx`
+- [x] `apps/web/src/components/shell/app-sidebar.tsx` (new)
+- [x] `apps/web/src/app/(chat)/error.tsx` (new)
+- [x] `apps/web/src/app/(chat)/layout.tsx` (проверен: уже читает cookie по контракту — изменений не потребовалось)
+- [x] `apps/web/src/hooks/use-media-query.ts` (new)
+- [x] `apps/web/src/components/ui/sidebar.tsx`
+- [x] `apps/web/src/components/shell/app-sidebar.test.tsx` (new)
 
 ## Investigation Targets
 - `apps/web/node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md`, `03-api-reference/03-file-conventions/dynamic-routes.md`
@@ -52,23 +52,34 @@ Metadata:
 | Свайп | Только L1-3 (T8.3) | План T3.1 |
 
 ## Investigation Notes
-(Планируемый подход, прочитанные доки, детали `finalFocus` для S-11.)
+- Прочитано: Next docs `03-file-conventions/error.md` (props `error: unknown`, `retry`; `error.tsx` НЕ оборачивает `layout.tsx` своего сегмента — ошибки рендера самого `ChatShell` (он в `(chat)/layout.tsx`) ловит только корневая граница/`global-error`; `(chat)/error.tsx` ловит ошибки страниц группы — остаток для ревью DD), `02-guides/preserving-ui-state.md`; DD «Тема, шрифт, токены», «Правки скопированных shadcn-компонентов», «Доступность — реализация», Element 4; UXRD 6.2, 6.3, 6.10, 6.11, 8.2, 7.2/7.3 (порядок Tab).
+- Reference Contract: `(chat)/layout.tsx` (T1.2) уже содержит `(await cookies()).get('sidebar_state')?.value !== 'false'` → `defaultSidebarOpen` → `SidebarProvider defaultOpen` — **Y**. `setOpen(value, { persist = true } = {})` в `ui/sidebar.tsx`: cookie пишется только при `persist !== false` — **Y**. Пользовательские переключения (`toggleSidebar`, `Ctrl/⌘+B`, `SidebarRail`) идут через `setOpen` без опций → cookie пишется.
+- S-11 / AC-10.2: `Sidebar` получил необязательные пропсы `initialFocus` / `finalFocus` (типы `Drawer.Popup.Props[...]`, применяются только в мобильной ветке `Drawer.Popup`). `AppSidebar`: `initialFocus={newChatRef}` (кнопка «Новый чат» в шторке), `finalFocus` — функция, возвращающая элемент с атрибутом `data-shell-menu-button` (константа `MENU_BUTTON_ATTRIBUTE` из `app-sidebar.tsx`). **T3.3: кнопка «Меню» в `ChatHeader` обязана нести этот атрибут** (сейчас его ставит временная полоса HD-02 `SidebarToggleBar` в `chat-shell.tsx`, которую T3.3 заменяет шапкой).
+- Найдено тестом: тултип `SidebarMenuButton` (невидимый в шторке) открывался по фокусу и перехватывал первый Esc — шторка не закрывалась с первого нажатия. В шторке тултипы не передаются (`tooltip={isMobile ? undefined : …}`).
+- Тест открывает шторку `fireEvent.click` (без переноса фокуса — как касание в мобильном Safari), иначе возврат фокуса по умолчанию («ранее сфокусированный элемент») маскировал бы отсутствие `finalFocus`.
+- Мутации (записаны): без `finalFocus` — тест красный на `expect(Меню).toHaveFocus()` (строка 33); без `initialFocus` — красный на фокусе «Новый чат» (строка 27); с тултипом в шторке — красный на закрытии по Esc. После восстановления — зелёный.
+- «Новый чат» в шторке закрывает шторку (`setOpenMobile(false)`) и вызывает `newChat('button')`; фокус после нового чата по правилу указателя — `lib/focus.ts` (T4.3).
+- Skip link «Перейти к сообщению» — первый элемент Tab, фокусирует `[data-shell-focus="composer"]`; атрибут композеру ставит T4.3 (до этого ссылка ничего не фокусирует).
+- `useMediaQuery` создан для T5.3 (рабочая область); закрытие шторки при ≥ 768 px использует `isMobile` из `useSidebar` (тот же брейкпоинт, что у ветки `Sidebar`).
+- Порядок провайдеров по DD (Component Hierarchy): `SidebarProvider` → `ChatRuntimeProvider`.
+- Подсказка `Ctrl Shift O` справа на SB-03 и символ платформы в тултипах — T6.2.
+- Свайп-закрытие — не проверяется здесь (L1-3, T8.3); `Drawer` сохранён.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] `app-sidebar.test.tsx` — 1 тест S-11: при мобильной ширине «Меню» открывает `role="dialog"` «История бесед», фокус на «Новый чат», Esc закрывает, фокус возвращается на «Меню» (AC-10.2 — механизм)
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] `app-sidebar.test.tsx` — 1 тест S-11: при мобильной ширине «Меню» открывает `role="dialog"` «История бесед», фокус на «Новый чат», Esc закрывает, фокус возвращается на «Меню» (AC-10.2 — механизм)
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `useMediaQuery`, правки `ui/sidebar.tsx`, `AppSidebar`, `ChatShell`, `error.tsx`, `layout.tsx` (если требуется доработка прокидывания `defaultSidebarOpen`)
-- [ ] Тест зелёный
+- [x] `useMediaQuery`, правки `ui/sidebar.tsx`, `AppSidebar`, `ChatShell`, `error.tsx`, `layout.tsx` (если требуется доработка прокидывания `defaultSidebarOpen`)
+- [x] Тест зелёный
 
 ### 3. Refactor Phase
-- [ ] Упростить; убедиться, что тест не проходит по построению
+- [x] Упростить; убедиться, что тест не проходит по построению
 
 ### 4. Быстрая проверка (оркестратор, `dev`)
-- [ ] Свернуть сайдбар, F5 — полоса на первом кадре (AC-21.1)
+- [x] Свернуть сайдбар, F5 — полоса на первом кадре (AC-21.1)
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL — Type: `executable_check`; ESLint, `tsc`, `next build` — `executable_check`
@@ -101,13 +112,14 @@ Metadata:
 - **Residual**: временное сворачивание — T5.3.
 
 ## Completion Criteria
-- [ ] Тест зелёный (содержательно)
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] dev: свернуть сайдбар, F5 — полоса на первом кадре (быстрая проверка AC-21.1)
-- [ ] Proof obligation: без `finalFocus` тест краснеет (мутация записана в Notes)
-- [ ] Reference Contract — `Y`; Resolved decisions применены
+- [x] Тест зелёный (содержательно)
+- [x] lint, tsc, build — 0 ошибок
+- [x] dev: свернуть сайдбар, F5 — полоса на первом кадре (быстрая проверка AC-21.1)
+- [x] Proof obligation: без `finalFocus` тест краснеет (мутация записана в Notes)
+- [x] Reference Contract — `Y`; Resolved decisions применены
 
 ## Notes
+- Браузерная проверка оркестратора (2026-10-30, dev-сервер, desktop): сворачивание через «Боковая панель» пишет `sidebar_state=false`, F5 сохраняет полосу 48 px (`data-state=collapsed`); серверный HTML содержит `data-state="collapsed"` при Cookie `sidebar_state=false` и `"expanded"` при `true` — анимации раскрытия на первом кадре нет (AC-21.1 PASS).
 - Из S-11 (T1.4, 2026-10-30), обязательные пункты:
   - Начальный фокус при открытии шторки — на «Новый чат» (AC-10.2): сейчас фокус попадает на сам элемент диалога; задать `initialFocus` у base-ui `Drawer` (в `ui/sidebar.tsx`), `finalFocus` — на «Меню».
   - Кнопка «×» «Закрыть меню» в шапке шторки (UXRD 761) отсутствует — добавить.
