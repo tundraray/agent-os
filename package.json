@@ -6,14 +6,18 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "turbo lint",
-    "db:up": "docker compose -f infra/docker-compose.yml up -d",
-    "test": "turbo test"
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "knip": "knip",
+    "check": "turbo lint typecheck build test && knip",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "private": true,
   "devDependencies": {
+    "knip": "^6.44.0",
     "turbo": "^2.11.10",
     "typescript": "^7.0.2"
   },
