@@ -9,7 +9,7 @@ let pool: pg.Pool | undefined;
  * `DATABASE_URL` as the app sees it: the process environment first, otherwise
  * `apps/api/.env` (the file `ConfigModule` reads). Throws when neither defines it.
  */
-export function databaseUrl(): string {
+function databaseUrl(): string {
   if (!process.env.DATABASE_URL) process.loadEnvFile(ENV_FILE);
   const url = process.env.DATABASE_URL;
   if (!url)

@@ -10,7 +10,7 @@ import { createThreadListAdapter, type OperationNotifier } from './thread-list-a
 import { threadsApiClient, type ThreadsApiClient } from './threads-api-client';
 
 /** The only agent the shell talks to: `POST /api/chat/:agentId`. */
-export const ASSISTANT_AGENT_ID = 'assistant';
+const ASSISTANT_AGENT_ID = 'assistant';
 
 export type ChatErrorContext = {
   error: Error;

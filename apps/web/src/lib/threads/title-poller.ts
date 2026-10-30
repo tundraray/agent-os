@@ -5,9 +5,9 @@ import { describeThreadsError, isThreadsApiError } from "./threads-api-error";
 import type { ShellStatusStore } from "./shell-status-store";
 
 /** At most one GET /api/threads/:id per interval. */
-export const TITLE_POLL_INTERVAL_MS = 1_000;
+const TITLE_POLL_INTERVAL_MS = 1_000;
 /** The poll stops once this window after the call has elapsed. */
-export const TITLE_POLL_WINDOW_MS = 15_000;
+const TITLE_POLL_WINDOW_MS = 15_000;
 
 export type TitlePollDeps = {
   api: Pick<ThreadsApiClient, "getThread">;

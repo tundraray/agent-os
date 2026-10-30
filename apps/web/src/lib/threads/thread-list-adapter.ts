@@ -22,7 +22,7 @@ export type ThreadListAdapterDeps = {
   history: { forget: (remoteId: string) => void };
 };
 
-export const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
+const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
   status: "regular",
   remoteId: thread.id,
   title: thread.title ?? undefined,

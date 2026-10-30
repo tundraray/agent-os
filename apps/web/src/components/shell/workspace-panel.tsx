@@ -13,7 +13,7 @@ export const WORKSPACE_ID = 'workspace-panel';
 export const WORKSPACE_PANEL_ID = 'workspace';
 
 /** Width limits (UXRD 6.22): the panel ≥ 360 px, the thread feed ≥ 480 px. */
-export const WORKSPACE_MIN_WIDTH = '360px';
+const WORKSPACE_MIN_WIDTH = '360px';
 export const FEED_MIN_WIDTH = '480px';
 
 /** Width the panel opens with until the user drags it: 40 % of the main area. */

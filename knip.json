@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": { "type": true, "interface": true },
+  "ignoreIssues": {
+    "apps/web/src/components/ui/**": ["exports", "types"],
+    "apps/web/src/components/assistant-ui/**": ["exports", "types"],
+    "apps/web/src/components/{file,image,media-player,surfaces}.tsx": ["exports", "types"]
+  },
+  "workspaces": {
+    "apps/api": {
+      "ignoreDependencies": ["@nestjs/mau"]
+    }
+  }
+}
