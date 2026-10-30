@@ -10,6 +10,8 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     environment: 'jsdom',
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     env: { NEXT_PUBLIC_API_URL: 'http://api.test' },

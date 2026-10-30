@@ -19,10 +19,10 @@ Metadata:
 Блок пользователя и меню в сайдбаре: `DropdownMenu` (side `top`), аватар «DU», «dev-user» / «Режим разработки» из `DEV_USER`, `DropdownMenuRadioGroup` «Тема» (`light`/`dark`/`system`) через `useTheme()`; нет «Выйти»/«Настройки». AC-09.1, AC-09.4; AC-12.1 — тема.
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/user-menu.tsx` (new)
-- [ ] `apps/web/src/lib/dev-user.ts` (new)
-- [ ] `apps/web/src/components/shell/user-menu.test.tsx` (new)
-- [ ] `apps/web/src/components/shell/app-sidebar.tsx` (подключение `UserMenu`)
+- [x] `apps/web/src/components/shell/user-menu.tsx` (new)
+- [x] `apps/web/src/lib/dev-user.ts` (new)
+- [x] `apps/web/src/components/shell/user-menu.test.tsx` (new)
+- [x] `apps/web/src/components/shell/app-sidebar.tsx` (подключение `UserMenu`)
 
 ## Investigation Targets
 - UXRD 6.9 (SB-11, TM-01); DD «Тема, шрифт, токены»
@@ -37,19 +37,24 @@ Metadata:
 | «Системная» тема | Класс `dark` по `matchMedia('(prefers-color-scheme: dark)')` | План T3.2 |
 
 ## Investigation Notes
-(Наблюдения по `DropdownMenuRadioGroup` base-ui.)
+- base-ui `Menu.RadioGroup` 1.9.0 рендерит `role="group"` и сам даёт `MenuGroupContext`: `DropdownMenuLabel` внутри него становится `aria-labelledby` группы → имя группы «Тема» без отдельного `DropdownMenuGroup`.
+- `onValueChange` группы типизирован как `any` → значение проверяется гардом `isThemeValue` (`unknown` → `'light'|'dark'|'system'`), без `as`.
+- `Menu.RadioItem` по умолчанию НЕ закрывает меню (`closeOnClick=false`); по UXRD 6.9 меню закрывается после выбора → `closeOnClick`. Фокус возвращается на триггер (проверено в тесте).
+- Триггер — `DropdownMenuTrigger render={<SidebarMenuButton size="lg" tooltip=…/>}`: тултип «dev-user» виден только в полосе (логика `SidebarMenuButton`); в полосе меню открывается `side="right"`, ширина `min-w-56`; иначе `side="top"`, ширина = ширине блока (`--anchor-width`).
+- Полифил `matchMedia` из `setup.ts` достаточен (next-themes слушает `change` через `addListener`); `setup.ts` не менялся.
+- Мутация: `onValueChange` → no-op ⇒ тест темы красный (`expected true to be false`, строка 45); восстановлено.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] `user-menu.test.tsx` (внутри `ThemeProvider`): «Тёмная» → `document.documentElement.classList.contains('dark')`; «Системная» → класс по `matchMedia('(prefers-color-scheme: dark)')`; нет «Выйти»/«Настройки», есть «dev-user» (2 теста)
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] `user-menu.test.tsx` (внутри `ThemeProvider`): «Тёмная» → `document.documentElement.classList.contains('dark')`; «Системная» → класс по `matchMedia('(prefers-color-scheme: dark)')`; нет «Выйти»/«Настройки», есть «dev-user» (2 теста)
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `dev-user.ts`, `user-menu.tsx`, подключение в `app-sidebar.tsx`; тесты зелёные
+- [x] `dev-user.ts`, `user-menu.tsx`, подключение в `app-sidebar.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; тесты зелёные
+- [x] Упростить; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc` — Type: `executable_check`
@@ -72,9 +77,9 @@ Metadata:
 - **Residual**: FOUC — L1-8.
 
 ## Completion Criteria
-- [ ] 2 теста зелёные (содержательно)
-- [ ] lint, tsc — 0 ошибок
-- [ ] Proof obligation: тест краснеет, если выбор темы не меняет класс (мутация записана)
+- [x] 2 теста зелёные (содержательно)
+- [x] lint, tsc — 0 ошибок
+- [x] Proof obligation: тест краснеет, если выбор темы не меняет класс (мутация записана)
 
 ## Notes
 - Impact scope: `app-sidebar.tsx` далее правят T4.2, T6.2.

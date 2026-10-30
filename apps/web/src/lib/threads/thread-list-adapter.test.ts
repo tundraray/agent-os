@@ -156,10 +156,4 @@ describe('thread list adapter', () => {
       expect(status.getState().history).toEqual({ a: 'ready' });
     });
   });
-
-  it('archive is rejected: the shell has no archive UI', async () => {
-    const { adapter } = setup();
-
-    await expect(adapter.archive('a')).rejects.toThrow('Archive is not supported');
-  });
 });

@@ -19,8 +19,8 @@ Metadata:
 Action bar сообщений: у ответов и сообщений пользователя только «Копировать» (без `Reload`, `ActionBarMorePrimitive`, `ExportMarkdown`, `autohide`, `hideWhenRunning`), видимость через CSS (без `display:none`/`visibility:hidden`), пустые ответы не рендерят строку, удалены `BranchPicker`, `EditComposer`, ветка `isEditing`. AC-08.6; D-13, TH-10.
 
 ## Target Files
-- [ ] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx`
-- [ ] `apps/web/src/components/assistant-ui/elements/message-actions.test.tsx` (new)
+- [x] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx`
+- [x] `apps/web/src/components/assistant-ui/elements/message-actions.test.tsx` (new)
 
 ## Investigation Targets
 - DD «Action bar и ошибки в ленте» (таблица видимости); UXRD 6.26 (TH-10), 7.3
@@ -47,17 +47,33 @@ Action bar сообщений: у ответов и сообщений поль�
 ## Investigation Notes
 (Правило 10 неприменимо — I-тестов нет. Зафиксировать структуру DOM до/после.)
 
+**Решение оркестратора (дословно):** "the test case 'error before the first token shows only the error block' depends on the MessageError block delivered by T7.3 — under execution rule 10 it MOVES to T7.3; do not stub it here." Кейс в `message-actions.test.tsx` не добавлен и не заглушён; здесь покрыт только структурный предок — ответ без частей не рендерит строку, а внутри корня остаётся лишь `<MessageError />` (его содержимое — T7.3).
+
+**DOM до:** `AssistantMessage` → корень → `aui_assistant-message-content` (части + `MessageError`) → `aui_assistant-message-footer` (`BranchPicker` + `ActionBarPrimitive.Root hideWhenRunning autohide="not-last"`: Copy «Copy», feedback, Reload, More → ExportMarkdown). `UserMessage` → пузырь + обёртка с `ActionBarPrimitive.Root hideWhenRunning autohide="not-last"` (Edit) + `BranchPicker`; `ThreadMessage` ветвит `isEditing` → `EditComposer`.
+
+**DOM после:** корни обоих сообщений получили `group/message`. Ответ: при `parts.length === 0` и статусе не `running` — корень содержит только `<MessageError />` (нет контента, подвала и отрицательного поля `-mb-7.5 pb-7.5`); иначе контент → подвал → `AuiIf(!running)` → `ActionBarPrimitive.Root` (без `autohide`/`hideWhenRunning`) → `AuiIf(hasVisibleText)` Copy «Копировать» → sr-only `role="status"` (всегда смонтирован, «Скопировано» при `isCopied`) → feedback (условно, `capabilities.feedback`). Пользователь: пузырь → обёртка → `ActionBarPrimitive.Root` (без флагов) → тот же `MessageCopy`. `BranchPicker`, `EditComposer`, ветка `isEditing`, `Reload`, `ActionBarMorePrimitive`, `ExportMarkdown` и неиспользуемые иконки/импорты удалены.
+
+**Видимость (TH-10):** `useActionBarVisibility` — у последнего сообщения классов нет (видна всегда); у прочих `opacity-0` + `group-hover/message:opacity-100` + `group-focus-within/message:opacity-100` + `pointer-coarse:opacity-100` (как «⋯» SB-07 в `thread-history-item.tsx`). Только прозрачность — кнопка остаётся в Tab и в дереве доступности. Обёртка `peer-empty:hidden` у action bar пользователя сохранена из каркаса: она срабатывает только при пустом пузыре (копировать нечего), к правилу видимости не относится.
+
+**Reference Contracts:**
+- derived-display (видимость): **Y** — прозрачность/CSS, без `display:none`/`visibility:hidden`; у генерируемого ответа панель не рендерится (`AuiIf` по `s.message.status?.type === 'running'`), у прежних остаётся (тест «during a run…»).
+- structure-order: **Y** — «Копировать» в DOM после содержимого реплики (подвал за контентом; у пользователя — за пузырём); Tab-порядок user#0 → assistant#1 → user#2 → assistant#3 подтверждён тестом.
+
+**Мутации (записано, затем откат):**
+- `autohide="not-last"` возвращён в оба `ActionBarPrimitive.Root` → 7 из 8 кейсов красные (в т.ч. порядок Tab и «во время прогона»).
+- `hideWhenRunning` возвращён в оба → краснеет «during a run the reply being generated has no «Копировать»; earlier messages keep theirs in Tab order…».
+
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] C `message-actions.test.tsx`: «Копировать» у каждого сообщения без наведения, запрещённых кнопок и «1 / 2» нет, двойной клик не открывает правку; порядок Tab к первому сообщению пользователя и первому ответу; во время прогона — «Копировать» у прежних есть и в Tab, у генерируемого нет, после завершения появляется; клик → `navigator.clipboard.writeText` + `status` «Скопировано» (оба типа); ответ только с инструментом / только с рассуждением — без «Копировать»; ответ без частей — без строки; ошибка до первого токена — только блок ошибки (последний кейс уточнить с T7.3: если блок ошибки поставляет T7.3 — этот кейс переносится в T7.3 через эскалацию, не заглушается)
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] C `message-actions.test.tsx`: «Копировать» у каждого сообщения без наведения, запрещённых кнопок и «1 / 2» нет, двойной клик не открывает правку; порядок Tab к первому сообщению пользователя и первому ответу; во время прогона — «Копировать» у прежних есть и в Tab, у генерируемого нет, после завершения появляется; клик → `navigator.clipboard.writeText` + `status` «Скопировано» (оба типа); ответ только с инструментом / только с рассуждением — без «Копировать»; ответ без частей — без строки; ошибка до первого токена — только блок ошибки (последний кейс уточнить с T7.3: если блок ошибки поставляет T7.3 — этот кейс переносится в T7.3 через эскалацию, не заглушается) — перенесён в T7.3 решением оркестратора (см. Investigation Notes)
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] Правки `thread.aui.tsx`; тесты зелёные
+- [x] Правки `thread.aui.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; тесты зелёные
+- [x] Упростить; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -89,10 +105,10 @@ Action bar сообщений: у ответов и сообщений поль�
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Тесты зелёные (содержательно)
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Мутации (`autohide="not-last"` возвращён; `hideWhenRunning`) краснят кейсы (записано)
-- [ ] Reference Contracts — `Y`
+- [x] Тесты зелёные (содержательно)
+- [x] lint, tsc, build — 0 ошибок
+- [x] Мутации (`autohide="not-last"` возвращён; `hideWhenRunning`) краснят кейсы (записано)
+- [x] Reference Contracts — `Y`
 
 ## Notes
 - Impact scope: `thread.aui.tsx` далее правят T7.3, T7.5.

@@ -19,12 +19,12 @@ Metadata:
 Диалог удаления `alertdialog` «Удалить беседу?», удаление открытой беседы (библиотека уходит с беседы → `syncUrlWithThread` → `router.replace('/')` → `focusAfterNewChat()`) и не открытой (фокус на следующую ссылку → предыдущую → SB-03), уведомления. Наполняет `shell.delete-open-thread`. AC-06.1–06.3; S-5, S-8; A-4.
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/delete-thread-dialog.tsx` (new)
-- [ ] `apps/web/src/components/shell/delete-thread-dialog.test.tsx` (new)
-- [ ] `apps/web/src/components/shell/thread-history-item.tsx`
-- [ ] `apps/web/src/components/shell/thread-history-list.tsx` (фокус после удаления не открытой)
-- [ ] `apps/web/src/components/shell/thread-history-list.test.tsx` (кейс AC-06.3)
-- [ ] `apps/web/src/components/shell/shell.delete-open-thread.int.test.tsx`
+- [x] `apps/web/src/components/shell/delete-thread-dialog.tsx` (new)
+- [x] `apps/web/src/components/shell/delete-thread-dialog.test.tsx` (new)
+- [x] `apps/web/src/components/shell/thread-history-item.tsx`
+- [x] `apps/web/src/components/shell/thread-history-list.tsx` (фокус после удаления не открытой)
+- [x] `apps/web/src/components/shell/thread-history-list.test.tsx` (кейс AC-06.3)
+- [x] `apps/web/src/components/shell/shell.delete-open-thread.int.test.tsx`
 
 ## Investigation Targets
 - UXRD 6.23 (DLG-01, вариант A-4), 7.4; DD «UI Action-API Contract Mapping», `focus.ts`
@@ -52,20 +52,28 @@ Metadata:
 
 ## Investigation Notes
 (Правило 10: Assert I-теста — «Чем могу помочь?» (T3.4), уведомление «Беседа удалена» (T1.2 `notify` + `<Toaster />` из T2.1) — подтвердить поставку.)
+- Правило 10: поставка подтверждена — `ThreadWelcome` «Чем могу помочь?» (T3.4), `shellNotify.deleted` → `toast('Беседа удалена')` в `lib/threads/shell-services.ts`, единственный `<Toaster />` в `test/render-with-runtime.tsx`.
+- Диалог: `DeleteThreadDialog` (props по DD) живёт в `ThreadHistoryListView`; строка вызывает `onRequestDelete` из `onClick` пункта меню (как «Переименовать» в T5.1 — без ожидания анимации закрытия меню). Подтверждение — `useShellActions().deleteThread(id)` в контейнере `ThreadHistoryList`, `item.delete()` напрямую не вызывается.
+- Фокус: «Отмена» — `initialFocus`; `finalFocus` — ref: «⋯» строки при отмене; при подтверждении не открытой — следующая ссылка → предыдущая → SB-03 (вычисляется до удаления); при подтверждении открытой ref пуст → диалог фокус не двигает, контейнер вызывает `focusAfterNewChat()` после перехода `pathname` на `/`. S-8 подтвердился (base-ui `initialFocus`/`finalFocus`), запасной путь не нужен.
+- I-тест: харнесс не трогает `window.location`, поэтому Arrange выставляет адресную строку `/chat/a` через `history.replaceState` (как после загрузки `/chat/a` в браузере) — иначе `syncUrlWithThread` не видит `/chat/`; `toast.dismiss()` в `afterEach` — sonner хранит уведомления в модуле, и строка `fine` иначе попадает в `Toaster` строки `coarse`.
+- Мутация `router.push('/')` вместо `router.replace('/')` в `syncUrlWithThread` (временная, с разрешения оркестратора): обе строки I красные (`expected "vi.fn()" to be called with arguments: [ '/' ]`); `url-sync.ts` восстановлен из копии в scratchpad, `cmp` — байт-в-байт идентичен.
+- Target Files расширены оркестратором: `thread-history-item.test.tsx` — только `onRequestDelete={vi.fn()}` в хелпере `renderItem` (обязательный prop по DD), утверждения не менялись.
+- Отклонение от DD (оркестратор выровняет DD): `ThreadHistoryListViewProps` получает обязательные `openThreadId: string | undefined` и `onDelete: (entry: ThreadListEntry) => void`; `renderItem` — второй аргумент `onRequestDelete: () => void`. Причина: диалог и фокус после удаления живут в `ThreadHistoryListView`, чтобы AC-06.3 проверялся компонентным тестом без рантайма.
+- Reference Contracts: «Беседа удалена» / «Не удалось удалить беседу. Попробуйте ещё раз.» — дословно в `shell-services.ts` (Y); `router.replace('/')`, `push` не вызван — I (Y).
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets; сверить Assert I-кейса (правило 10)
-- [ ] C `delete-thread-dialog.test.tsx` — `alertdialog`, название в «ёлочках», фокус на «Отмена», вариант A-4 (S-8)
-- [ ] C `thread-history-list.test.tsx` — новый кейс AC-06.3: после удаления не открытой фокус на следующей ссылке
-- [ ] I `shell.delete-open-thread.int.test.tsx` — 1 тест
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets; сверить Assert I-кейса (правило 10)
+- [x] C `delete-thread-dialog.test.tsx` — `alertdialog`, название в «ёлочках», фокус на «Отмена», вариант A-4 (S-8)
+- [x] C `thread-history-list.test.tsx` — новый кейс AC-06.3: после удаления не открытой фокус на следующей ссылке
+- [x] I `shell.delete-open-thread.int.test.tsx` — 1 тест
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `delete-thread-dialog.tsx`; правки `thread-history-item.tsx`, `thread-history-list.tsx`; тесты зелёные
+- [x] `delete-thread-dialog.tsx`; правки `thread-history-item.tsx`, `thread-history-list.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; интеграционные 7/10
+- [x] Упростить; интеграционные 7/10
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL + MSW, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -106,10 +114,10 @@ Metadata:
 - **Residual**: видимый откат в UI — L1-2.
 
 ## Completion Criteria
-- [ ] C и I зелёные; интеграционные 7/10
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Мутация `router.push` вместо `replace` краснит I (записано)
-- [ ] Reference Contracts — `Y`; Resolved decisions применены
+- [x] C и I зелёные; интеграционные 7/10
+- [x] lint, tsc, build — 0 ошибок
+- [x] Мутация `router.push` вместо `replace` краснит I (записано)
+- [x] Reference Contracts — `Y`; Resolved decisions применены
 
 ## Notes
 - Impact scope: `thread-history-item.tsx`, `thread-history-list.tsx` далее правит T6.1 (только список).

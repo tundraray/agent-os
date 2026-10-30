@@ -1,9 +1,10 @@
 'use client';
 
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAui, type AssistantClient } from '@assistant-ui/react';
 import { useStore } from 'zustand';
+import { focusAfterNewChat, focusShellTarget, isFinePointer } from '@/lib/focus';
 import type { ShellServices } from '@/lib/threads/shell-services';
 import type { ShellStatusState, ShellStatusStore } from '@/lib/threads/shell-status-store';
 
@@ -40,12 +41,31 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
   const router = useRouter();
   const pathname = usePathname();
   const aui = useAui();
+  const initialPathname = useRef(pathname);
+  // «Новый чат» away from `/` focuses once the route has reached `/` (UXRD 7.4).
+  const focusOnRoot = useRef(false);
+
+  // Cold load of `/`: the composer gets focus only with a fine pointer; `/chat/<id>` is left alone.
+  useEffect(() => {
+    if (initialPathname.current === '/' && isFinePointer()) focusShellTarget('composer');
+  }, []);
+
+  useEffect(() => {
+    const pending = focusOnRoot.current;
+    focusOnRoot.current = false;
+    if (pending && pathname === '/') focusAfterNewChat();
+  }, [pathname]);
 
   const actions = useMemo<ShellActions>(
     () => ({
-      // Focus handling after the transition belongs to the focus policy (lib/focus.ts).
+      // No network: the server thread is created by the first send (initialize), never by «Новый чат».
       newChat: () => {
-        if (pathname !== '/') router.push('/');
+        if (pathname === '/') {
+          focusAfterNewChat();
+          return;
+        }
+        focusOnRoot.current = true;
+        router.push('/');
       },
       retryHistory: (remoteId) => services.history.retry(remoteId),
       retrySwitch: (threadId) => aui.threads.switchToThread(threadId),

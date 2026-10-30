@@ -19,7 +19,7 @@ Metadata:
 Скрипт пишет через `Memory.saveThread`/`saveMessages` для resource `dev-user` в БД `localhost:5433` сообщения format 2. Закрывает известный пробел стенда: у ассистента `tools: {}` — нет способа воспроизвести инструмент и упавший инструмент в реальной ленте (L1-4, L1-10 C).
 
 ## Target Files
-- [ ] Нет в репозитории — скрипт `<scratchpad>/seed-l1.ts` в scratchpad сессии исполнителя (путь scratchpad определяется системным окружением сессии; указать полный абсолютный путь в отчёте)
+- [x] Нет в репозитории — скрипт `<scratchpad>/seed-l1.ts` в scratchpad сессии исполнителя (путь scratchpad определяется системным окружением сессии; указать полный абсолютный путь в отчёте)
 
 Любой файл внутри репозитория — нарушение; эскалация.
 
@@ -45,18 +45,25 @@ Metadata:
 ## Investigation Notes
 (Полный путь скрипта; результат пробных запусков.)
 
+- Скрипт: `D:/Temp/claude/D--git-github-ai-agent-os/9bee0586-b376-4f97-b39b-7eb4cd59a0ce/scratchpad/seed-l1.ts` (вне репозитория). Пакеты `@mastra/pg`, `@mastra/memory` — через `createRequire('D:/git/github/ai/agent-os/apps/api/package.json')` + `import(pathToFileURL(...))`; хранилище — `new PostgresStore({ connectionString })` + `new Memory({ storage, options: { lastMessages: 20 } })`.
+- Формат частей в БД (сверено с реальной строкой `mastra_messages` и `MessageList.toUIPart` в `@mastra/core` 1.80.0): рассуждение `{type:'reasoning', reasoning, details:[{type:'text',text}]}`; инструмент `{type:'tool-invocation', toolInvocation:{state:'result'|'output-error', toolCallId, toolName, args, result|errorText}}`. В БД хранится сырой `errorText: 'boom'`, сервер (`maskHistoryErrors`) отдаёт `'Agent error'`.
+- Режимы: без аргументов — `SEED-RICH` (12 сообщений) и `SEED-TOOL-ERROR` (6); `--remove` — удаляет их; `--pages` / `--pages --remove` — `SEED-PAGE-001…120`, шаг 12 ч, повторный `saveThread` после `saveMessages`. Удаление проверяет владельца (`dev-user`), чужие беседы не трогаются.
+- Прогон 2026-10-30: без аргументов → `--remove` (GET /messages → 404) → снова без аргументов. `GET /api/threads/SEED-RICH/messages` → 200: reasoning:done+text; tool-getWeather:output-available+text; таблица; блок кода ```ts на 86 строк; ссылки/картинки L1-4; итог. `GET .../SEED-TOOL-ERROR/messages` → 200: tool-failing:output-error (errorText `Agent error`)+text; только tool-getWeather:output-available; только reasoning:done. `boom` в телах ответов — 0 вхождений. Обе беседы видны в `GET /api/threads` с заданным `updatedAt`.
+- `--pages` по указанию оркестратора запускался в T8.3 (2026-10-30): `--pages` → проверка FR-19 → `--pages --remove`; после удаления `SEED-PAGE-*` — 0 в `GET /api/threads` и 0 в `mastra_threads`.
+- Дополнительно (по запросу оркестратора): `--long` — беседа `SEED-LONG` («SEED-LONG: 50 сообщений»), 50 сообщений user/assistant попеременно, ответы 460–630 символов со списком, блок кода ```ts в каждом 5-м ответе (каждые 10 сообщений, всего 5); тот же порядок saveThread → saveMessages → saveThread, `dev-user`. `--long --remove` — удаляет её. Прогон 2026-10-30: `GET /api/threads/SEED-LONG/messages` → 200, 50 сообщений; беседа видна в `GET /api/threads`.
+
 ## Implementation Steps (dev-скрипт; TDD неприменим — проверка запросами к API)
 ### 1. Подготовка
-- [ ] Прочитать Investigation Targets; убедиться, что БД на 5433 и API на 4000 запущены
+- [x] Прочитать Investigation Targets; убедиться, что БД на 5433 и API на 4000 запущены
 
 ### 2. Скрипт
-- [ ] Написать `<scratchpad>/seed-l1.ts` по Decisions
-- [ ] Прогнать без аргументов; прогнать `--pages`, затем `--pages --remove`
+- [x] Написать `<scratchpad>/seed-l1.ts` по Decisions
+- [x] Прогнать без аргументов; прогнать `--pages`, затем `--pages --remove` (`--pages`/`--pages --remove` — в T8.3)
 
 ### 3. Проверка
-- [ ] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`
-- [ ] После `--pages` → `--pages --remove` в `GET /api/threads` не остаётся `SEED-PAGE-*`
-- [ ] `git status` не показывает новых файлов от T8.2
+- [x] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`
+- [x] После `--pages` → `--pages --remove` в `GET /api/threads` не остаётся `SEED-PAGE-*` (и в `mastra_threads` — 0)
+- [x] `git status` не показывает новых файлов от T8.2
 
 ## Quality Assurance Mechanisms
 - Проверка через публичный API (`/messages`, список) — Type: `executable_check` (ручная)
@@ -79,10 +86,10 @@ Metadata:
 - **Residual**: отображение в ленте — L1-4/L1-10 (T8.3).
 
 ## Completion Criteria
-- [ ] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`
-- [ ] Пробный прогон `--pages`, затем `--pages --remove` — в `GET /api/threads` не остаётся `SEED-PAGE-*`
-- [ ] `git status` не показывает новых файлов от T8.2
-- [ ] Полный абсолютный путь скрипта передан оркестратору
+- [x] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`
+- [x] Пробный прогон `--pages`, затем `--pages --remove` — в `GET /api/threads` не остаётся `SEED-PAGE-*`
+- [x] `git status` не показывает новых файлов от T8.2
+- [x] Полный абсолютный путь скрипта передан оркестратору
 
 ## Notes
 - Impact scope: данные dev-БД (`dev-user`); `apps/api` без изменений.

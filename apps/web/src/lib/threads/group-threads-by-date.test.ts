@@ -77,17 +77,6 @@ describe('groupThreadsByDate', () => {
     expect(keyOf(activity, now)).toBe(expected);
   });
 
-  it('sorts by activity time descending inside and across groups; a locally lifted thread moves to the top', () => {
-    const now = local(2026, 10, 30, 15);
-    const lastMessageAt = { a: local(2026, 10, 30, 9), b: local(2026, 10, 30, 11), c: local(2026, 10, 27, 10) };
-    const lifted: Partial<Record<keyof typeof lastMessageAt, number>> = { c: now.getTime() - 60_000 };
-    const entries = (['a', 'b', 'c'] as const).map((id) =>
-      entry(id, entryActivityAt({ lastMessageAt: lastMessageAt[id], activityAt: lifted[id] }, now)),
-    );
-
-    expect(shape(entries, now)).toEqual([['Сегодня', ['c', 'b', 'a']]]);
-  });
-
   it('keeps the original order of threads with equal activity time', () => {
     const now = local(2026, 10, 30, 15);
     const same = local(2026, 10, 30, 10);
@@ -108,8 +97,35 @@ describe('groupThreadsByDate', () => {
     ]);
   });
 
-  it('returns no groups for an empty list', () => {
-    expect(groupThreadsByDate([], local(2026, 10, 30))).toEqual([]);
+  describe('ordering', () => {
+    const now = local(2026, 10, 30, 15);
+    const lastMessageAt = { a: local(2026, 10, 30, 9), b: local(2026, 10, 30, 11), c: local(2026, 10, 27, 10) };
+    const lifted: Partial<Record<keyof typeof lastMessageAt, number>> = { c: now.getTime() - 60_000 };
+
+    it.each<{ readonly name: string; readonly entries: readonly ThreadListEntry[]; readonly expected: Array<[string, string[]]> }>([
+      {
+        name: 'an empty list yields no groups',
+        entries: [],
+        expected: [],
+      },
+      {
+        name: 'sorts by activity time descending inside and across groups; a locally lifted thread moves to the top',
+        entries: (['a', 'b', 'c'] as const).map((id) =>
+          entry(id, entryActivityAt({ lastMessageAt: lastMessageAt[id], activityAt: lifted[id] }, now)),
+        ),
+        expected: [['Сегодня', ['c', 'b', 'a']]],
+      },
+      {
+        name: 'a thread without sort keys lands at the top of "Сегодня" instead of disappearing',
+        entries: [
+          entry('known', local(2026, 10, 30, 9)),
+          entry('fresh', entryActivityAt({ lastMessageAt: undefined, activityAt: undefined }, now)),
+        ],
+        expected: [['Сегодня', ['fresh', 'known']]],
+      },
+    ])('$name', ({ entries, expected }) => {
+      expect(shape(entries, now)).toEqual(expected);
+    });
   });
 });
 
@@ -124,14 +140,5 @@ describe('entryActivityAt', () => {
     { name: 'neither key → now', input: { lastMessageAt: undefined, activityAt: undefined }, expected: now.getTime() },
   ])('$name', ({ input, expected }) => {
     expect(entryActivityAt(input, now)).toBe(expected);
-  });
-
-  it('a thread without sort keys lands at the top of "Сегодня" instead of disappearing', () => {
-    const entries = [
-      entry('known', local(2026, 10, 30, 9)),
-      entry('fresh', entryActivityAt({ lastMessageAt: undefined, activityAt: undefined }, now)),
-    ];
-
-    expect(shape(entries, now)).toEqual([['Сегодня', ['fresh', 'known']]]);
   });
 });

@@ -1,4 +1,5 @@
 import { AssistantChatTransport } from '@assistant-ui/ai-sdk';
+import { ApiErrorSchema } from '@agent-os/contracts';
 import { AuiConfig, type AssistantClient } from '@assistant-ui/react';
 import { APICallError, type UIMessage } from 'ai';
 import { toast } from 'sonner';
@@ -49,6 +50,40 @@ const describeChatError = (error: Error): { name: string; statusCode: number | u
   statusCode: APICallError.isInstance(error) ? error.statusCode : undefined,
 });
 
+/** The JSON value of a response body; undefined when the body is absent or not JSON. */
+const parseJsonBody = (body: string | undefined): unknown => {
+  if (body === undefined) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    // A non-JSON body (proxy page, empty text) is not the API error contract: the failure stays a generic TH-08 error.
+    return undefined;
+  }
+};
+
+/**
+ * E-8: the chat endpoint answers 404 THREAD_NOT_FOUND before SSE when the thread was deleted elsewhere.
+ * Only that error code counts — any other 404 (or status) stays a generic reply error.
+ */
+const isThreadNotFound = (error: Error): boolean => {
+  if (!APICallError.isInstance(error) || error.statusCode !== 404) return false;
+  const body = ApiErrorSchema.safeParse(parseJsonBody(error.responseBody));
+  return body.success && body.data.errorCode === 'THREAD_NOT_FOUND';
+};
+
+export type ChatErrorReport = {
+  error: Error;
+  /** Remote id of the thread whose request failed; undefined before the thread exists on the server. */
+  remoteId: string | undefined;
+  status: ShellStatusStore;
+};
+
+/** Logs a chat failure without its body and marks the thread `deleted` on 404 THREAD_NOT_FOUND (E-8). */
+export function reportChatError({ error, remoteId, status }: ChatErrorReport): void {
+  console.error('[web-shell] chat request failed', { remoteId, ...describeChatError(error) });
+  if (remoteId !== undefined && isThreadNotFound(error)) status.getState().setHistory(remoteId, 'deleted');
+}
+
 /** Builds the shell's dependencies once per provider mount. Pure wiring, no React. */
 export function createShellServices(): ShellServices {
   const apiClient = threadsApiClient;
@@ -68,11 +103,6 @@ export function createShellServices(): ShellServices {
     transport,
     notify,
     auiConfig: AuiConfig({}),
-    handleChatError: ({ error, aui }) => {
-      console.error('[web-shell] chat request failed', {
-        remoteId: remoteIdOf(aui),
-        ...describeChatError(error),
-      });
-    },
+    handleChatError: ({ error, aui }) => reportChatError({ error, remoteId: remoteIdOf(aui), status }),
   };
 }

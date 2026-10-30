@@ -1,7 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.10)
 // File: shell.deleted-thread.int.test.tsx — Test Strategy, "Integration Tests (I)"
-// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
-// Budget after the plan merges: 10 it.todo in 7 files (plan «Решение по бюджету интеграционных тестов»).
+// Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
@@ -11,13 +11,15 @@
 //   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
 // Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
 //   ShellStatus, handleChatError, components — real. Do NOT mock lib/threads/* or @assistant-ui/*.
-// Imports for implementation (added when the case is filled; an it.todo case imports nothing):
-//   import { screen, within } from '@testing-library/react';
-//   import { http, HttpResponse } from 'msw';
-//   import { server } from '@/test/msw-server';
-//   import { renderWithRuntime } from '@/test/render-with-runtime';
-//   import { threadSummary } from '@/test/fixtures';
-import { describe, it } from 'vitest';
+import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it, vi } from 'vitest';
+import { historyMessages, threadList, threadSummary } from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+const API = 'http://api.test';
 
 describe('Shell: sending into a thread deleted elsewhere (AC-08.5e, UXRD E-8 / TH-07 "Deleted while open")', () => {
   // AC-08.5e: "If отправка получила 404 THREAD_NOT_FOUND (беседу удалили в другой вкладке), then the system shall
@@ -37,34 +39,83 @@ describe('Shell: sending into a thread deleted elsewhere (AC-08.5e, UXRD E-8 / T
   // @category: edge-case
   // @dependency: ChatRuntimeProvider.handleChatError, ShellStatus (deleted), Thread (composer hidden), MessageError + DeletedNotice slot, MSW
   // @complexity: high
-  it.todo('AC-08.5e: 404 THREAD_NOT_FOUND on send shows the inline «Беседа удалена» notice instead of the error block, hides the composer, keeps the feed' /*
-    Arrange:
-      - GET /api/threads → 200 { threads: [threadSummary({ id: 'a', title: 'Беседа A' })], nextCursor: null }
-      - GET /api/threads/a/messages → 200 { messages: [user "Первый вопрос", assistant "Первый ответ"] }
-      - POST /api/chat/assistant → 404 JSON { statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' } (no SSE; handler records the call)
-      - POST /api/threads handler counts calls (must stay 0)
-      - const { router, setPathname } = renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' })
-      - await screen.findByText('Первый ответ')
-    Act:
-      - type "Ещё вопрос" into textbox "Сообщение"; press Enter
-      - await screen.findByText('Беседа удалена')
-    Assert (notice, in place of the TH-08 block):
-      - text "Её удалили в другой вкладке или окне." visible
-      - the notice follows the user message "Ещё вопрос" in document order (compareDocumentPosition FOLLOWING)
-      - heading role absent for «Беседа удалена» (inline notice, not a screen: queryByRole('heading', { name: 'Беседа удалена' }) === null)
-      - button "Новый чат" inside the notice container has accessible description "Её удалили в другой вкладке или окне." (aria-describedby)
-      - queryAllByRole('button', { name: 'Перегенерировать' }).length === 0
-      - text "Не удалось получить ответ" (regex) absent; text "Thread not found" absent
-    Assert (feed and composer):
-      - queryByRole('textbox', { name: 'Сообщение' }) === null (composer hidden)
-      - "Первый вопрос", "Первый ответ", "Ещё вопрос" visible
-      - container.querySelectorAll('[data-role="assistant"]').length === 1 (only the restored "Первый ответ"; no stub row for the failed reply)
-      - getAllByRole('button', { name: 'Копировать' }).length === 3 (two user messages + the restored reply; none for the stub)
-    Assert (no resurrection):
-      - POST /api/chat/assistant called exactly once; POST /api/threads call count === 0
-    Act 2 (continuation of the same test):
-      - click button "Новый чат" inside the notice
-    Assert 2:
-      - router.push called with '/'; after setPathname('/'): text "Чем могу помочь?" visible and textbox "Сообщение" present
-  */);
+  it('AC-08.5e: 404 THREAD_NOT_FOUND on send shows the inline «Беседа удалена» notice instead of the error block, hides the composer, keeps the feed', async () => {
+    // Arrange
+    let chatCalls = 0;
+    let createCalls = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'a', title: 'Беседа A' })]))),
+      http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' }))),
+      http.get(`${API}/api/threads/a/messages`, () =>
+        HttpResponse.json({
+          messages: historyMessages([
+            { role: 'user', text: 'Первый вопрос' },
+            { role: 'assistant', text: 'Первый ответ' },
+          ]),
+        }),
+      ),
+      http.post(`${API}/api/chat/assistant`, () => {
+        chatCalls += 1;
+        return HttpResponse.json(
+          { statusCode: 404, message: 'Thread not found', error: 'Not Found', errorCode: 'THREAD_NOT_FOUND' },
+          { status: 404 },
+        );
+      }),
+      http.post(`${API}/api/threads`, () => {
+        createCalls += 1;
+        return HttpResponse.json(threadSummary({ id: 'resurrected', title: null }), { status: 201 });
+      }),
+    );
+    // handleChatError logs the failure; keep the test output clean.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const user = userEvent.setup();
+    const { container, router, setPathname } = renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' });
+    await screen.findByText('Первый ответ');
+
+    // Act
+    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Ещё вопрос{Enter}');
+    const title = await screen.findByText('Беседа удалена');
+
+    // Assert (notice, in place of the TH-08 block)
+    const reason = screen.getByText('Её удалили в другой вкладке или окне.');
+    expect(screen.getByText('Ещё вопрос').compareDocumentPosition(title)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // An inline notice in the feed, not a screen: h2 under the header's h1 (design ThreadNotice `deleted`).
+    // h2 per DD v1.10 §ThreadNotice (skeleton expected no heading)
+    expect(screen.queryByRole('heading', { level: 1, name: 'Беседа удалена' })).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Беседа удалена' })).toBe(title);
+    expect(screen.getByRole('alert')).toBe(reason);
+    const notice = title.closest<HTMLElement>('section');
+    if (notice === null) throw new Error('«Беседа удалена» is not inside its notice section');
+    const newChat = within(notice).getByRole('button', { name: 'Новый чат' });
+    expect(newChat).toHaveAccessibleDescription('Её удалили в другой вкладке или окне.');
+    expect(screen.queryAllByRole('button', { name: 'Перегенерировать' })).toHaveLength(0);
+    expect(container).not.toHaveTextContent(/Не удалось получить ответ/);
+    expect(container).not.toHaveTextContent('Thread not found');
+    expect(container.querySelector('[data-slot="message-error"]')).toBeNull();
+
+    // Assert (feed and composer)
+    expect(screen.queryByRole('textbox', { name: 'Сообщение' })).toBeNull();
+    for (const text of ['Первый вопрос', 'Первый ответ', 'Ещё вопрос']) {
+      expect(screen.getByText(text)).toBeInTheDocument();
+    }
+    // The failed reply has no row: only the restored reply renders content and a footer.
+    expect(container.querySelectorAll('[data-slot="aui_assistant-message-content"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-slot="aui_assistant-message-footer"]')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Копировать' })).toHaveLength(3);
+    // Focus was in the composer that is now hidden: it moves to «Новый чат» (UXRD 7.4).
+    expect(newChat).toHaveFocus();
+
+    // Assert (no resurrection)
+    expect(chatCalls).toBe(1);
+    expect(createCalls).toBe(0);
+
+    // Act 2
+    await user.click(newChat);
+
+    // Assert 2
+    expect(router.push).toHaveBeenCalledWith('/');
+    setPathname('/');
+    expect(await screen.findByText('Чем могу помочь?')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Сообщение' })).toBeInTheDocument();
+  });
 });

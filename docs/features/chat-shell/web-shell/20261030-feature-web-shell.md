@@ -343,7 +343,7 @@ T7.2 начинается после T4.3 (обе правят `thread.aui.tsx`)
 |---|---|
 | AC-01.7 + AC-01.5 (`shell.list`) | Библиотека глотает ошибку списка, а невалидный ответ ломает композер; «Повторить» не вызывает `threads.reload()` |
 | AC-03.2 (`shell.new-chat`) | «Новый чат» создаёт беседу на сервере до первой отправки |
-| AC-04.1 + AC-03.3 (`shell.new-chat`) | Порядок `POST /api/threads` → `POST /api/chat`, `body.id`, `replaceState`; поднятие новой беседы не подключено |
+| AC-04.1 + AC-03.3 (`shell.new-chat`) | Порядок `POST /api/threads` → `POST /api/chat`, `body.id`, `replaceState`; новая беседа не попадает в список активной. Дефект «поднятие беседы не подключено» этот тест не ловит: беседа без `lastMessageAt` и так встаёт первой в «Сегодня» (`group-threads-by-date.ts:35`); его ловит `thread-activity-tracker.test.tsx` |
 | AC-02.2 + AC-04.3 (`shell.open-thread`) | Приветствие вместо скелетона при прямой ссылке; `switchError` не доходит до TH-06 |
 | AC-02.2 F5 (`shell.open-thread`) | Гонка правила 4: приветствие мелькает, когда список отвечает после истории |
 | AC-02.5 (`shell.open-thread`) | Ошибка истории не видна (библиотека глотает) или «Повторить» не освобождает `RetryGate` |
@@ -351,6 +351,14 @@ T7.2 начинается после T4.3 (обе правят `thread.aui.tsx`)
 | AC-08.5b (`shell.message-error`) | Блок ошибки и «Перегенерировать» остаются у старого ответа после новой отправки |
 | AC-06.2 (`shell.delete-open-thread`) | `router.push` вместо `replace`; URL остаётся `/chat/a` после удаления открытой беседы |
 | AC-11.3 + AC-11.1 (`shell.workspace`) | Фокус теряется на `body` при закрытии «×»; панель открыта по умолчанию |
+
+**Полностековые компонентные тесты сверх исключения 10 (для внимания пользователя).** `test-auditor` (T8.1) отметил три теста уровня интеграции без суффикса `.int`: они рендерят полную оболочку или реальный рантайм, но по имени остаются компонентными. Оркестратор решил сохранить их — у каждого свой дефект, которого не ловит ни один из десяти интеграционных тестов:
+
+| Тест (файл) | Дефект, который ловит только он |
+|---|---|
+| `app-sidebar.test.tsx` (шторка S-11, AC-10.2) | Выбор беседы или «Новый чат» в мобильной шторке не закрывает её либо оставляет фокус на «Меню» вместо `h1` страницы |
+| `thread-activity-tracker.test.tsx` (D-11) | Поднятие беседы при начале ответа не подключено: беседа из «Предыдущие 7 дней» не поднимается наверх «Сегодня», пока ответ идёт |
+| `i18n.test.tsx` «new chat and the conversation menus» | Подписи «Нового чата» и меню беседы не локализованы — английские тексты библиотеки просачиваются в оболочку |
 
 Фоновый стриминг (AC-02.6, AC-03.4) намеренно без автотеста — S-1 и L1-6 (обоснование DD «Integration Tests»). Слияния выполняет T2.1 при переносе скелетов: слитые `it.todo` удаляются, их Arrange/Act/Assert-комментарии переносятся в принимающий кейс.
 
@@ -379,7 +387,7 @@ T7.2 начинается после T4.3 (обе правят `thread.aui.tsx`)
 | design-web-shell.md | Implementation Order, шаг 2 | `package.json`: точная фиксация `ai` 7.0.155 в `apps/web` | prerequisite | T1.1, T8.1 (проверка) | gap | Решение пользователя: остаётся `^7.0.155`; lock-файл разрешает 7.0.155; `pnpm why -r ai` — в T1.1 и T8.1. Закрыто подтверждением пользователя |
 | design-web-shell.md | Implementation Path Mapping | shadcn add `sidebar, sheet, dropdown-menu, alert-dialog, input, separator, sonner` + `use-mobile` | prerequisite | T1.4 | covered | |
 | design-web-shell.md | Implementation Path Mapping | `app/(chat)/layout.tsx` (Suspense + `cookies()`), страницы `null` | impl-target | T1.2, T3.1 | covered | |
-| design-web-shell.md | Implementation Path Mapping | `app/(chat)/error.tsx` | impl-target | T3.1 | covered | |
+| design-web-shell.md | Implementation Path Mapping | `app/error.tsx` | impl-target | T3.1 | covered | Перенесено по DD v1.7 |
 | design-web-shell.md | Implementation Path Mapping | `components/theme-provider.tsx` | impl-target | T2.4 | covered | |
 | design-web-shell.md | Implementation Path Mapping | `hooks/use-media-query.ts`, `use-now.ts`, `use-global-shortcuts.ts` | impl-target | T3.1, T4.1, T6.2 | covered | |
 | design-web-shell.md | Main Components | `ChatShell` | impl-target | T1.2, T3.1, T5.3 | covered | |
@@ -764,21 +772,21 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
   - Completion: [x] тест зелёный; [x] lint, tsc, build — 0; [x] dev: свернуть сайдбар, F5 — полоса на первом кадре (быстрая проверка AC-21.1).
   - Notes (оркестратор, 2026-10-30, dev-сервер, desktop): сворачивание через «Боковая панель» пишет `sidebar_state=false`, после F5 остаётся полоса 48 px (`data-state=collapsed`); серверный HTML содержит `data-state="collapsed"` при Cookie `sidebar_state=false` и `"expanded"` при `true` — анимации раскрытия на первом кадре нет (AC-21.1 PASS).
 
-- [ ] **T3.2 Меню пользователя и тема (SB-11, TM-01)** (AC-09.1, AC-09.4; AC-12.1 — тема)
+- [x] **T3.2 Меню пользователя и тема (SB-11, TM-01)** (AC-09.1, AC-09.4; AC-12.1 — тема)
   - Target Files: `apps/web/src/components/shell/user-menu.tsx` (new), `apps/web/src/lib/dev-user.ts` (new), `apps/web/src/components/shell/user-menu.test.tsx` (new), `apps/web/src/components/shell/app-sidebar.tsx` (подключение `UserMenu`)
   - Содержание: `DropdownMenu` (side `top`), аватар «DU», «dev-user» / «Режим разработки» из `DEV_USER`, `DropdownMenuRadioGroup` «Тема» (`light`/`dark`/`system`) через `useTheme()`; нет «Выйти»/«Настройки».
   - Тесты (C, test-first): `user-menu.test.tsx` — внутри `ThemeProvider` выбор «Тёмная» → `document.documentElement.classList.contains('dark')`; «Системная» → класс по `matchMedia('(prefers-color-scheme: dark)')`; нет «Выйти»/«Настройки», есть «dev-user» (2 теста — AC-12.1 «тема»).
   - Зависимости: T3.1.
-  - Completion: [ ] 2 теста зелёные; [ ] lint, tsc — 0.
+  - Completion: [x] 2 теста зелёные; [x] lint, tsc — 0.
 
-- [ ] **T3.3 Шапка: `ChatHeader` (контейнер) + `ChatHeaderView`** (AC-07.1, AC-07.2, AC-07.3; AC-12.1 — шапка; Element 6)
+- [x] **T3.3 Шапка: `ChatHeader` (контейнер) + `ChatHeaderView`** (AC-07.1, AC-07.2, AC-07.3; AC-12.1 — шапка; Element 6)
   - Target Files: `apps/web/src/components/shell/chat-header.tsx` (new), `apps/web/src/components/shell/chat-header.test.tsx` (new), `apps/web/src/components/shell/chat-shell.tsx` (подключение)
   - Содержание: HD-02 — `md:hidden` «Меню» (`aria-haspopup="dialog"`) и `hidden md:inline-flex` «Боковая панель» (`aria-expanded`, `aria-controls`, `aria-keyshortcuts="Control+B Meta+B"`); HD-03 `h1 tabIndex={-1}` `data-shell-focus="page-title"` по `HeaderTitle` (`hidden` → sr-only «Новый чат», `loading` → скелетон 160×16, `text` + `pending` → «Новая беседа» в `ShimmerLabel`); HD-04 `hidden lg:inline-flex` «Рабочая область» (`aria-expanded`; панель — T5.3); HD-05 `md:hidden`; граница снизу по `data-scrolled`. Контейнер читает рантайм (`mainThreadId`, `threadItems`, `isRunning`) и `ShellStatus.titleWaiting`.
   - Тесты (C, test-first): `chat-header.test.tsx` — `text` → `h1` с названием; `pending` → «Новая беседа»; `hidden` → sr-only «Новый чат»; `loading` → скелетон; кнопка рабочей области `aria-expanded` (4 теста AC-12.1, кейсы — строки таблицы); AC-07.1 — внутри `SidebarProvider defaultOpen` + `Sidebar collapsible="icon"`, `(min-width: 768px)` = true: «Боковая панель» `aria-expanded="true"` → клик → `"false"`, у сайдбара `data-state="collapsed"`, `data-collapsible="icon"`.
   - Зависимости: T3.1.
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc — 0.
 
-- [ ] **T3.4 `MainView` + `resolveMainView`, `ThreadNotice` (TH-06, TH-07), лента 48rem, скелетон, заголовок приветствия и подпись композера; интеграционный `shell.open-thread` (AC-02.2 + AC-04.3)** (AC-02.2, AC-04.3; AC-02.5, AC-04.2 — механизм)
+- [x] **T3.4 `MainView` + `resolveMainView`, `ThreadNotice` (TH-06, TH-07), лента 48rem, скелетон, заголовок приветствия и подпись композера; интеграционный `shell.open-thread` (AC-02.2 + AC-04.3)** (AC-02.2, AC-04.3; AC-02.5, AC-04.2 — механизм)
   - Target Files: `apps/web/src/lib/threads/resolve-main-view.ts` (new), `apps/web/src/lib/threads/resolve-main-view.test.ts` (new), `apps/web/src/components/shell/main-view.tsx` (new), `apps/web/src/components/shell/thread-notice.tsx` (new), `apps/web/src/components/shell/thread-notice.test.tsx` (new), `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (`--thread-max-width: 48rem`, `export ThreadHistorySkeleton`, заголовок приветствия, подпись и placeholder композера), `apps/web/src/components/shell/chat-shell.tsx` (подключение `MainView`), `apps/web/src/components/shell/shell.open-thread.int.test.tsx`
   - Содержание:
     - `resolveMainView` — правила 1–5 дословно (Reference Contract Values); `MainView` → `Thread` (`autoFocus={false}`), `ThreadNotice` или `ThreadHistorySkeleton`.
@@ -791,13 +799,13 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - I `shell.open-thread.int.test.tsx` — 1 тест из трёх в файле: AC-02.2 + AC-04.3 (скелетон «Загружаем беседу…» при удержанном `GET /api/threads/x`, приветствия «Чем могу помочь?» нет; затем 404 → «Беседа не найдена», фокус на `h1`, поля «Сообщение» нет). Кейсы F5 и AC-02.5 — T4.2 (утверждают ссылку сайдбара «Отчёт»).
   - Зависимости: T3.1, T3.3 (общий `chat-shell.tsx`; и T2.1 — обвязка).
   - Proof obligations: правило 2 удалено (`switching` → `thread`) → краснеет I (приветствие при прямой ссылке); `switchError` не доходит до `ThreadNotice` → краснеет I (нет «Беседа не найдена»); правило 4 удалено → краснеет U-кейс правила 4.
-  - Completion: [ ] U, C, I зелёные; интеграционные 1/10; [ ] утверждения о «Чем могу помочь?» и «Сообщение» проверяют строки, которые есть в рендере (правило выполнения 10); [ ] lint, tsc, build — 0.
+  - Completion: [x] U, C, I зелёные; интеграционные 1/10; [x] утверждения о «Чем могу помочь?» и «Сообщение» проверяют строки, которые есть в рендере (правило выполнения 10); [x] lint, tsc, build — 0.
 
 #### Phase Completion Criteria
-- [ ] T3.1–T3.4 готовы к коммиту
-- [ ] Интеграционные тесты: 1/10 (todo: 9)
+- [x] T3.1–T3.4 готовы к коммиту
+- [x] Интеграционные тесты: 1/10 (todo: 9)
 - [ ] AC-12.1 частично: тема 2, шапка 4
-- [ ] lint, tsc, test, build — 0 ошибок
+- [x] lint, tsc, test, build — 0 ошибок
 
 #### Operational Verification Procedures
 1. L1-1 (раскладка, без списка): 1440 px, сайдбар развёрнут/свёрнут, полоса 48 px, `aria-expanded="false"`; F5 — свёрнут на первом кадре.
@@ -820,7 +828,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
   - Proof obligations: `Math.floor` вместо `round` краснит DST-кейсы; нестабильная сортировка краснит кейс равенства.
   - Completion: [x] тесты зелёные (≥ 4 — вклад в AC-12.1 «группировка»).
 
-- [ ] **T4.2 Список бесед: `ThreadHistoryList` + `ThreadHistoryListView`, `ThreadHistoryItem` (отображение), `ThreadActivityTracker`, ↑/↓/Home/End; интеграционные `shell.list` и `shell.open-thread` (F5, AC-02.5)** (AC-01.1–01.7, AC-02.2 (F5), AC-02.5, AC-03.3 механизм, AC-22.2; AC-12.1 — состояния сайдбара; Open Questions п. 2)
+- [x] **T4.2 Список бесед: `ThreadHistoryList` + `ThreadHistoryListView`, `ThreadHistoryItem` (отображение), `ThreadActivityTracker`, ↑/↓/Home/End; интеграционные `shell.list` и `shell.open-thread` (F5, AC-02.5)** (AC-01.1–01.7, AC-02.2 (F5), AC-02.5, AC-03.3 механизм, AC-22.2; AC-12.1 — состояния сайдбара; Open Questions п. 2)
   - Target Files: `apps/web/src/components/shell/thread-history-list.tsx` (new), `apps/web/src/components/shell/thread-history-item.tsx` (new), `apps/web/src/components/shell/thread-activity-tracker.tsx` (new), `apps/web/src/components/shell/thread-history-list.test.tsx` (new), `apps/web/src/components/shell/app-sidebar.tsx` (подключение), `apps/web/src/components/shell/chat-shell.tsx` (монтирование `ThreadActivityTracker`), `apps/web/src/components/shell/shell.list.int.test.tsx`, `apps/web/src/components/shell/shell.open-thread.int.test.tsx` (кейсы F5 и AC-02.5)
   - Содержание:
     - Контейнер: `useAuiState` → `threadItems` (`status === 'regular'`), `isLoading`, `loadError`, `hasMore`, `isLoadingMore`, `mainThreadId`; `ShellStatus` → `activityAt`, `loadMoreFailed`, `titleWaiting`; `useNow()`; «Повторить» SB-09 → `threads.reload()`; при возврате во вкладку `reload()` только если загружена одна страница, иначе — только пересчёт групп.
@@ -834,9 +842,10 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - I `shell.open-thread.int.test.tsx` — 2 оставшихся теста: AC-02.2 F5 (список отвечает после истории, `MutationObserver` — «Чем могу помочь?» не появлялся, ссылка сайдбара «Отчёт» с `aria-current="page"`); AC-02.5 (невалидная история → «Не удалось загрузить беседу», ссылка «Отчёт» в сайдбаре на месте, «Повторить» → сообщения).
   - Зависимости: T4.1, T3.4 (`MainView`, `ThreadNotice`, заголовок приветствия; T3.1 позади).
   - Proof obligations: «Повторить» как no-op краснит `shell.list`; `aria-current="true"` вместо `"page"` краснит C; правило 4 `resolveMainView` удалено → краснеет тест F5; `retryHistory` не вызывает `retry` → краснеет AC-02.5.
-  - Completion: [ ] C и I зелёные; интеграционные 4/10; [ ] lint, tsc, build — 0.
+  - Completion: [x] C и I зелёные; интеграционные 4/10; [x] lint, tsc, build — 0.
+  - Notes (T4.2, 2026-10-30): исправление мелькания приветствия при F5 сделано в `MainView`: охранник `bodyLoading` (`thread.isLoading && messages.length === 0`) расширяет `historyPending` для маршрутных бесед. Тест F5 написан с удержанным `GET /api/threads/:id/messages`. Правило 4 `resolveMainView` доказывается его юнит-строками: кейс F5 его больше не различает, потому что охранник покрывает ту же ситуацию. Гейты: eslint и `tsc --noEmit` — 0; `vitest run` ×3 — 133 passed, 6 todo, без нестабильности; `next build` — успешно.
 
-- [ ] **T4.3 Новый чат, фокус-политика, приветствие и подсказки, композер, `DocumentTitle`; интеграционный `shell.new-chat`** (AC-03.1, AC-03.2, AC-03.3, AC-04.1, AC-08.2; S-7, S-9; UX-04)
+- [x] **T4.3 Новый чат, фокус-политика, приветствие и подсказки, композер, `DocumentTitle`; интеграционный `shell.new-chat`** (AC-03.1, AC-03.2, AC-03.3, AC-04.1, AC-08.2; S-7, S-9; UX-04)
   - Target Files: `apps/web/src/lib/focus.ts` (new), `apps/web/src/lib/focus.test.ts` (new), `apps/web/src/lib/welcome-suggestions.ts` (new), `apps/web/src/components/shell/shell-welcome.tsx` (new), `apps/web/src/components/shell/document-title.tsx` (new), `apps/web/src/components/shell/thread-welcome.test.tsx` (new), `apps/web/src/components/shell/shell-actions.tsx` (`newChat`), `apps/web/src/components/shell/chat-runtime-provider.tsx` (`Suggestions(WELCOME_SUGGESTIONS)` через `auiConfig`), `apps/web/src/components/shell/main-view.tsx` (`Welcome: ShellWelcome`), `apps/web/src/components/shell/thread-history-item.tsx` (фокус по клику), `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (прочие тексты приветствия кроме заголовка из T3.4, подсказки 2×2 без «>», кнопка вложений удалена, `AttachmentDropzone` → `div`, `addAttachmentOnPaste={false}`, `data-shell-focus="composer"`, `pb-[max(1rem,env(safe-area-inset-bottom))]`, композер внизу на < 768 px), `apps/web/src/components/shell/shell.new-chat.int.test.tsx`
   - Содержание: `lib/focus.ts` по DD (`isFinePointer`, `focusShellTarget`, `focusAfterNewChat`); `newChat(source)`: `pathname === '/'` → только фокус, иначе `router.push('/')` и фокус; холодная загрузка `/` — фокус только при точном указателе; `DocumentTitle` — форматы UX-04 (Reference Contract Values), эффект `document.title`.
   - Тесты (test-first):
@@ -845,13 +854,14 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - I `shell.new-chat.int.test.tsx` — 2 теста: AC-03.2 (на `/chat/a` «Новый чат» → `/` → ссылка b → ноль `POST /api/threads`, список не изменился); AC-04.1 + AC-03.3 (на `/` Enter → `POST /api/threads` (201 `{id:'t-1'}`) раньше `POST /api/chat/assistant` с `body.id='t-1'`, `replaceState` на `/chat/t-1`, первая ссылка «Сегодня» — «Новая беседа» с `aria-current="page"` выше беседы с `updatedAt` сегодня 09:00).
   - Зависимости: T4.2.
   - Proof obligations: `initialize` при «Новом чате» краснит AC-03.2; отключённый `ThreadActivityTracker` краснит утверждения AC-03.3.
-  - Completion: [ ] U, C, I зелёные; интеграционные 6/10; [ ] lint, tsc, build — 0.
+  - Completion: [x] U, C, I зелёные; интеграционные 6/10; [x] lint, tsc, build — 0.
+  - Notes (T4.3, 2026-10-30): решение по `ThreadActivityTracker`: поднятие существующей беседы при начале ответа (D-11) доказывается отдельным юнит-тестом `thread-activity-tracker.test.tsx` (беседа из «Предыдущие 7 дней» поднимается наверх «Сегодня», пока ответ идёт), а `shell.new-chat` покрывает путь новой беседы (AC-03.3 + AC-04.1). Усиления по ревью интеграционных тестов: `afterEach` сбрасывает URL окна (`replaceState(null, '', '/')`); в AC-03.2 клик по ссылке «Беседа B» гасит `preventDefault`, что убирает шум jsdom «navigation to another Document» без ослабления утверждений; заголовки `shell.*.int.test.tsx` обновлены до DD v1.9 / «10 skeletons». Гейты: eslint, `tsc --noEmit` — 0; `vitest run` ×3 — 140 passed, 4 todo, без нестабильности; `next build` — успешно; CR в изменённых файлах — 0.
 
 #### Phase Completion Criteria
-- [ ] T4.1–T4.3 готовы к коммиту
-- [ ] Интеграционные тесты: 6/10
-- [ ] AC-12.1: ≥ 8 тестов в четырёх областях выполнено (группировка 4+, состояния сайдбара 4, тема 2, шапка 4)
-- [ ] lint, tsc, test, build — 0 ошибок
+- [x] T4.1–T4.3 готовы к коммиту
+- [x] Интеграционные тесты: 6/10 (после T4.3, todo: 4)
+- [x] AC-12.1: ≥ 8 тестов в четырёх областях выполнено (группировка 4+, состояния сайдбара 4, тема 2, шапка 4)
+- [x] lint, tsc, test, build — 0 ошибок
 
 #### Operational Verification Procedures
 1. L1-1 (часть): новый чат на 1440 px — колонка 768 px; подсказка № 1 → Network `POST /api/threads` → `POST /api/chat/assistant` (`id` совпадает), адресная строка `/chat/<id>`, «Новая беседа» первой в «Сегодня» с мерцанием и `aria-current="page"`; заголовок ≤ 15 с в сайдбаре, шапке, вкладке.
@@ -865,14 +875,14 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T5.1 Переименование: меню «⋯» (SB-07), `ThreadTitleField` (SB-08), уведомление об ошибке** (AC-05.1–05.4, AC-01.6)
+- [x] **T5.1 Переименование: меню «⋯» (SB-07), `ThreadTitleField` (SB-08), уведомление об ошибке** (AC-05.1–05.4, AC-01.6)
   - Target Files: `apps/web/src/components/shell/thread-title-field.tsx` (new), `apps/web/src/components/shell/thread-history-item.tsx`, `apps/web/src/components/shell/thread-history-item.test.tsx` (new)
   - Содержание: `SidebarMenuAction` «⋯» (`aria-label="Действия с беседой «{название}»"`, `aria-haspopup="menu"`) + `DropdownMenu` «Переименовать», «Удалить» (пункт «Удалить» — `data-highlighted:bg-destructive data-highlighted:text-destructive-foreground`); поле `input aria-label="Название беседы" maxLength={200}`, `data-shortcuts-blocked`; Enter сохраняет обрезанное, Esc отменяет, пусто + Enter → `aria-invalid="true"` и «Введите название» без запроса; фокус после сохранения/отмены — ссылка беседы; ошибка `PATCH` — откат библиотеки + уведомление из адаптера.
   - Тесты (C, test-first): `thread-history-item.test.tsx` — Enter сохраняет обрезанное; Esc отменяет; пусто + Enter → `aria-invalid` и «Введите название» без `onRename`; `maxLength=200`; «Новая беседа» при `title: undefined`; тултип при обрезке.
   - Зависимости: T4.2.
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc — 0.
 
-- [ ] **T5.2 Удаление: `DeleteThreadDialog` (DLG-01), удаление открытой и не открытой беседы, фокус; интеграционный `shell.delete-open-thread`** (AC-06.1–06.3; S-5, S-8; A-4)
+- [x] **T5.2 Удаление: `DeleteThreadDialog` (DLG-01), удаление открытой и не открытой беседы, фокус; интеграционный `shell.delete-open-thread`** (AC-06.1–06.3; S-5, S-8; A-4)
   - Target Files: `apps/web/src/components/shell/delete-thread-dialog.tsx` (new), `apps/web/src/components/shell/delete-thread-dialog.test.tsx` (new), `apps/web/src/components/shell/thread-history-item.tsx`, `apps/web/src/components/shell/thread-history-list.tsx` (фокус после удаления не открытой), `apps/web/src/components/shell/thread-history-list.test.tsx` (кейс AC-06.3), `apps/web/src/components/shell/shell.delete-open-thread.int.test.tsx`
   - Содержание: `alertdialog` «Удалить беседу?» с названием в «ёлочках», «Отмена» (`initialFocus`), «Удалить» — `Button variant="destructive"`; при `isRunning` — абзац A-4; `finalFocus` = «⋯»; удаление открытой → библиотека уходит с беседы → `syncUrlWithThread` → `router.replace('/')` → `focusAfterNewChat()`; удаление не открытой — фокус на следующую ссылку, нет — предыдущую, нет — SB-03 (вычисляется до удаления); уведомления «Беседа удалена» / «Не удалось удалить беседу. Попробуйте ещё раз.».
   - Тесты (test-first):
@@ -881,21 +891,21 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - I `shell.delete-open-thread.int.test.tsx` — 1 тест (строки: точный → композер, грубый → `h1`): `DELETE /api/threads/a`; ссылки `a` нет; `router.replace('/')`, `push` не вызван; «Чем могу помочь?»; уведомление «Беседа удалена».
   - Зависимости: T5.1.
   - Proof obligations: `router.push` вместо `replace` краснит I.
-  - Completion: [ ] C и I зелёные; интеграционные 7/10; [ ] lint, tsc, build — 0.
+  - Completion: [x] C и I зелёные; интеграционные 7/10; [x] lint, tsc, build — 0.
 
-- [ ] **T5.3 Рабочая область (WS-01…WS-03), HD-04, временная свёртка сайдбара; интеграционный `shell.workspace`** (AC-11.1–11.4; Element 4; S-10)
+- [x] **T5.3 Рабочая область (WS-01…WS-03), HD-04, временная свёртка сайдбара; интеграционный `shell.workspace`** (AC-11.1–11.4; Element 4; S-10)
   - Target Files: `apps/web/src/components/shell/workspace-panel.tsx` (new), `apps/web/src/components/shell/chat-shell.tsx`, `apps/web/src/components/shell/chat-header.tsx` (HD-04 обработчик), `apps/web/src/components/shell/shell.workspace.int.test.tsx`
   - Investigation Targets: `apps/web/node_modules/react-resizable-panels/dist/react-resizable-panels.d.ts` (`collapsible`, `panelRef`, единицы `px`/`%`); `apps/web/src/components/ui/resizable.tsx`.
   - Содержание: `ResizablePanelGroup` в `SidebarInset`: панель чата + `collapsible` панель рабочей области (`collapsedSize={0}`, `minSize="360px"`, лента ≥ 480 px, открытие 40 %); `workspaceOpen` (`useState`) × `useMediaQuery('(min-width: 1024px)')`; основная область < 840 px → `setOpen(false, { persist: false })` и разворачивание при закрытии; `aside aria-label="Рабочая область"`, шапка 56 px с «×»; `Separator` `aria-label="Изменить ширину рабочей области"`, ←/→ ±16 px, Shift ±64 px, Home/End; закрытие → фокус на HD-04; плейсхолдер.
   - Тесты (test-first): I `shell.workspace.int.test.tsx` — 1 тест (AC-11.3 + AC-11.1): после загрузки `complementary` «Рабочая область» нет, HD-04 `aria-expanded="false"`; клик HD-04 → панель, `"true"`; «×» → панели нет, фокус на HD-04; повторный клик HD-04 открывает, ещё клик закрывает — фокус на HD-04.
   - Зависимости: T3.3.
   - Proof obligations: закрытие «×» без переноса фокуса краснит I; `workspaceOpen` по умолчанию `true` краснит первое утверждение.
-  - Completion: [ ] I зелёный; интеграционные 8/10; [ ] lint, tsc, build — 0.
+  - Completion: [x] I зелёный; интеграционные 8/10; [x] lint, tsc, build — 0.
 
 #### Phase Completion Criteria
-- [ ] T5.1–T5.3 готовы к коммиту
-- [ ] Интеграционные тесты: 8/10
-- [ ] lint, tsc, test, build — 0 ошибок
+- [x] T5.1–T5.3 готовы к коммиту
+- [x] Интеграционные тесты: 8/10
+- [x] lint, tsc, test, build — 0 ошибок
 
 #### Operational Verification Procedures
 1. L1-2: переименование «Отчёт Q3» + Enter, Esc, пусто + Enter (нет `PATCH`), F5 — сохранено; удаление не открытой (URL не изменился, фокус на соседней ссылке), открытой (URL `/`, Назад не возвращает на удалённую). S-6 — временная ошибка `PATCH` через обёртку `fetch` → откат и уведомление.
@@ -909,23 +919,23 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T6.1 Подгрузка: SB-10 «Показать ещё», автоподгрузка, ошибка подгрузки** (AC-19.1)
+- [x] **T6.1 Подгрузка: SB-10 «Показать ещё», автоподгрузка, ошибка подгрузки** (AC-19.1)
   - Target Files: `apps/web/src/components/shell/thread-history-list.tsx`, `apps/web/src/components/shell/thread-history-list.test.tsx`
   - Содержание: SB-10 — кнопка `ghost sm` при `hasMore`; `IntersectionObserver` с `rootMargin: '0px 0px 200px 0px'`; `isLoadingMore` → 3 строки-скелетона, `role="status"` «Загружаем ещё беседы…»; `loadMoreFailed` → «Не удалось загрузить ещё беседы» в `role="alert"` + «Повторить» → `loadMore()`; загруженные остаются.
   - Тесты (C, test-first): `thread-history-list.test.tsx` — SB-10 Error: текст в `alert`, «Повторить» вызывает `onLoadMore`, загруженные элементы на месте (монотонность групп — U T4.1).
   - Зависимости: T4.2.
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc — 0.
 
-- [ ] **T6.2 Горячие клавиши: `isShortcutBlocked`, `Ctrl/⌘+Shift+O`, `Ctrl/⌘+B` с охраной, символ платформы в тултипах** (AC-22.1)
+- [x] **T6.2 Горячие клавиши: `isShortcutBlocked`, `Ctrl/⌘+Shift+O`, `Ctrl/⌘+B` с охраной, символ платформы в тултипах** (AC-22.1)
   - Target Files: `apps/web/src/lib/keyboard-shortcuts.ts` (new), `apps/web/src/lib/keyboard-shortcuts.test.ts` (new), `apps/web/src/hooks/use-global-shortcuts.ts` (new), `apps/web/src/hooks/use-global-shortcuts.test.tsx` (new), `apps/web/src/components/ui/sidebar.tsx` (охрана `Ctrl/⌘+B`), `apps/web/src/components/shell/chat-shell.tsx` (подключение хука), `apps/web/src/components/shell/app-sidebar.tsx`, `apps/web/src/components/shell/chat-header.tsx` (тултипы «⌘»/«Ctrl»)
   - Содержание: по DD «Клавиатура»: `isShortcutBlocked(event)` — `true` внутри `[data-shortcuts-blocked]` или при открытом `[role="alertdialog"]`, `[role="menu"]`, `[role="dialog"][aria-modal="true"]`; для `Ctrl/⌘+B` — исключение, открытая шторка закрывается; `event.code === 'KeyO'`; символ — `navigator.platform`/`userAgentData` → «⌘» на macOS, иначе «Ctrl».
   - Тесты (test-first): U `keyboard-shortcuts.test.ts` — таблица блокировок (поле переименования, `alertdialog`, `menu`, модальный `dialog`, исключение `Ctrl+B` при шторке); C `use-global-shortcuts.test.tsx` — 1 тест проводки: `Ctrl+Shift+O` вызывает `newChat` и `preventDefault`, внутри `[data-shortcuts-blocked]` — нет.
   - Зависимости: T5.1 (поле переименования с `data-shortcuts-blocked`).
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc, build — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc, build — 0.
 
 #### Phase Completion Criteria
-- [ ] T6.1, T6.2 готовы к коммиту
-- [ ] lint, tsc, test, build — 0 ошибок
+- [x] T6.1, T6.2 готовы к коммиту
+- [x] lint, tsc, test, build — 0 ошибок
 
 #### Operational Verification Procedures
 1. FR-19 в браузере здесь не проверяется: 120 бесед засорили бы стенд для L1 и все попали бы в «Сегодня». Проверка — в T8.3 после сида T8.2 (беседы с разнесённым `updatedAt`, удаляются после проверки); в Phase 6 — C-тесты T6.1.
@@ -939,53 +949,56 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T7.1 Политика ссылок и изображений markdown** (Security «Недоверенный markdown»; IP7)
+- [x] **T7.1 Политика ссылок и изображений markdown** (Security «Недоверенный markdown»; IP7)
   - Target Files: `apps/web/src/lib/markdown-policy.ts` (new), `apps/web/src/lib/markdown-policy.test.ts` (new), `apps/web/src/components/markdown-text.tsx`, `apps/web/src/components/markdown-text.test.tsx` (new), `apps/web/eslint.config.mjs`
   - Содержание: `linkPolicy`, `isRenderableImageSrc` по фрагменту DD поверх `safeHref` (`apps/web/src/utils/href.ts` не меняется); `a`/`img` в `markdown-text.tsx` по фрагменту DD (стиль файла — двойные кавычки без `;`), `MarkdownImageFallback`; `Copy` → «Копировать»; `src/components/markdown-text.tsx` добавить в список `files` переопределения `@next/next/no-img-element` с дополнением комментария; `rehype-raw` не подключать, `urlTransform` не трогать.
   - Тесты (test-first): U `markdown-policy.test.ts` — таблица DD (`javascript:alert(1)`, ` JAVASCRIPT:…`, `data:text/html,…`, `vbscript:…`, `''` → `unsafe`; `https://…`, `http://…`, `/chat/x`, `./a`, `?q` → `new-tab`; `#user-content-fn-1` → `fragment`; `mailto:a@b.c` → `mail`; `isRenderableImageSrc` — `https` → `true`, прочие → `false`); C `markdown-text.test.tsx` — пять случаев DD.
   - Зависимости: T2.1 (может идти параллельно с Phase 3–6).
-  - Completion: [ ] тесты зелёные; [ ] lint (без inline-отключений), tsc — 0.
+  - Completion: [x] тесты зелёные; [x] lint (без inline-отключений), tsc — 0.
 
-- [ ] **T7.2 Action bar: только «Копировать» у ответов и сообщений пользователя, видимость CSS, пустые ответы, удаление `BranchPicker` и `EditComposer`** (AC-08.6; D-13, TH-10)
+- [x] **T7.2 Action bar: только «Копировать» у ответов и сообщений пользователя, видимость CSS, пустые ответы, удаление `BranchPicker` и `EditComposer`** (AC-08.6; D-13, TH-10)
   - Target Files: `apps/web/src/components/assistant-ui/elements/thread.aui.tsx`, `apps/web/src/components/assistant-ui/elements/message-actions.test.tsx` (new)
   - Содержание: по таблице DD «Action bar и ошибки в ленте»: `AssistantActionBar` — `Copy` (+ условный отзыв каркаса), без `Reload`, `ActionBarMorePrimitive`, `ExportMarkdown`, без `autohide` и `hideWhenRunning`, `AuiIf` по `s.message.status?.type === 'running'`, «Копировать» только при непробельной текстовой части; `UserActionBar` — `Copy` вместо `Edit`; `AssistantMessage` без частей и не в прогоне — без строки; `BranchPicker`, `EditComposer`, ветка `isEditing` удалены; видимость — Reference Contract Values (прозрачность, без `display: none`/`visibility: hidden`); постоянно смонтированный sr-only `role="status"` «Скопировано».
-  - Тесты (C, test-first): `message-actions.test.tsx` — по DD: «Копировать» у каждого сообщения без наведения, запрещённых кнопок и «1 / 2» нет, двойной клик не открывает правку; порядок Tab к первому сообщению пользователя и первому ответу; во время прогона — «Копировать» у прежних есть и в Tab, у генерируемого нет, после завершения появляется; клик → `navigator.clipboard.writeText` + `status` «Скопировано» (оба типа); ответ только с инструментом / только с рассуждением — без «Копировать»; ответ без частей — без строки; ошибка до первого токена — только блок ошибки.
+  - Тесты (C, test-first): `message-actions.test.tsx` — по DD: «Копировать» у каждого сообщения без наведения, запрещённых кнопок и «1 / 2» нет, двойной клик не открывает правку; порядок Tab к первому сообщению пользователя и первому ответу; во время прогона — «Копировать» у прежних есть и в Tab, у генерируемого нет, после завершения появляется; клик → `navigator.clipboard.writeText` + `status` «Скопировано» (оба типа); ответ только с инструментом / только с рассуждением — без «Копировать»; ответ без частей — без строки. Случай «ошибка до первого токена — только блок ошибки» перенесён в T7.3 (решение оркестратора, правило 10): блока ошибки до T7.3 нет.
   - Зависимости: T4.3.
   - Proof obligations: возврат `autohide="not-last"` краснит порядок Tab; `hideWhenRunning` краснит кейс «во время прогона».
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc, build — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc, build — 0.
 
-- [ ] **T7.3 Блок ошибки ответа с «Перегенерировать», выключатель `regenerateAfterError`, слот `DeletedNotice`, классификация 404 `THREAD_NOT_FOUND`; интеграционные `shell.message-error` и `shell.deleted-thread`** (AC-08.5, AC-08.5a–e; Element 2; E-8; IP1 404)
+- [x] **T7.3 Блок ошибки ответа с «Перегенерировать», выключатель `regenerateAfterError`, слот `DeletedNotice`, классификация 404 `THREAD_NOT_FOUND`; интеграционные `shell.message-error` и `shell.deleted-thread`** (AC-08.5, AC-08.5a–e; Element 2; E-8; IP1 404)
   - Target Files: `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (`MessageError`, слот `DeletedNotice` в `ThreadComponents`, скрытие композера при слоте), `apps/web/src/lib/config.ts` (`regenerateAfterError = true`), `apps/web/src/lib/threads/shell-services.ts` (`handleChatError`: `APICallError` 404 + `ApiErrorSchema` `THREAD_NOT_FOUND` → `status.setHistory(remoteId, 'deleted')`), `apps/web/src/components/shell/thread-notice.tsx` (вариант `deleted`, экспорт `DeletedNotice`), `apps/web/src/components/shell/thread-notice.test.tsx` (строка E-8), `apps/web/src/components/shell/main-view.tsx` (`DeletedNotice: deleted ? DeletedNotice : undefined`), `apps/web/src/components/assistant-ui/elements/message-error.test.tsx` (new), `apps/web/src/lib/threads/shell-services.test.ts` (new), `apps/web/src/components/shell/shell.message-error.int.test.tsx`, `apps/web/src/components/shell/shell.deleted-thread.int.test.tsx`
   - Investigation Targets: `@assistant-ui/ai-sdk` `runtime/useAISDKRuntime.js:219-226, 648`; `@assistant-ui/core` `runtime/utils/external-message-conversion.js:257-285`; `ai` `dist/index.js:20244-20293` (`APICallError`).
   - Содержание: блок — `data-slot="message-error"`, текст в `role="alert"` с `id` из `useId()` (`text-foreground`, рамка/иконка `--destructive`), тексты по выключателю (Reference Contract Values); «Перегенерировать» — `Button variant="outline" size="sm"` через `render` у `ActionBarPrimitive.Reload`, `pressable`, `pointer-coarse:h-11`, `aria-describedby`, только у последнего (`AuiIf` по `s.message.isLast`); после нажатия — `focusAfterNewChat()`; слот задан → вместо блока рендерится `DeletedNotice` (`h2` «Беседа удалена», текст в `role="alert"`, «Новый чат», фокус на «Новый чат» только если он был в скрытом композере), композер не рендерится; `responseBody` в ленту не попадает.
   - Тесты (test-first):
     - C `message-error.test.tsx` — случаи 1–6 DD (`useLocalRuntime` с адаптером модели, бросающим ошибку с английским текстом).
+    - C `message-error.test.tsx` — плюс случай, перенесённый из T7.2: ошибка до первого токена — в ленте только блок ошибки, без пустой строки ответа и «Копировать».
     - C `thread-notice.test.tsx` — строка E-8 (тексты, «Новый чат»).
     - I `shell.message-error.int.test.tsx` — 1 тест AC-08.5b (первый ответ «Частичный» + ошибка, новая отправка → у первого ответа нет блока и кнопки, «Частичный» виден, ни одной «Перегенерировать»).
     - I `shell.deleted-thread.int.test.tsx` — 1 тест AC-08.5e (404 `THREAD_NOT_FOUND` до SSE → уведомление под сообщением, нет TH-08 и «Перегенерировать», нет композера, нет пустой строки ответа и «Копировать»; «Новый чат» → `/` с приветствием и композером).
     - U `shell-services.test.ts` — таблица `handleChatError`: `APICallError` 404 + `errorCode: 'THREAD_NOT_FOUND'` → статус `deleted`; 404 с другим `errorCode`, 404 с неразбираемым `responseBody`, 500, не `APICallError` → статус не меняется (дефект, который I-тест не видит: любой 404 превращается в «Беседа удалена»).
   - Зависимости: T7.2.
   - Proof obligations: классификация только по `statusCode` краснит U-строку «404 с другим `errorCode`»; выключатель, не влияющий на кнопку, краснит случай 4 `message-error.test.tsx`.
-  - Completion: [ ] C и I зелёные; интеграционные 10/10; [ ] lint, tsc, build — 0.
+  - Completion: [x] C и I зелёные; интеграционные 10/10; [x] lint, tsc, build — 0.
+  - Notes (T7.3, 2026-10-30): по ревью интеграционных тестов — глобально `testTimeout`/`hookTimeout` 20 с в `vitest.config.ts` (причина таймаутов 5 с на 6–8 интеграционных тестах под нагрузкой машины) и `configure({ asyncUtilTimeout: 3000 })` в `src/test/setup.ts`; семантика тестов не меняется. Заголовки `shell.message-error`/`shell.deleted-thread` обновлены до DD v1.10; у утверждения про h2 — пометка «h2 per DD v1.10 §ThreadNotice (skeleton expected no heading)». Гейты: eslint и `tsc --noEmit` — 0; `vitest run` ×3 — 36 файлов, 251 passed, без нестабильности; `next build` — успешно; CR в изменённых файлах — 0.
+  - Notes (оркестратор, 2026-10-30, dev-сервер): T7.2 — у каждого из 4 сообщений ровно одна «Копировать», у непоследних opacity 0 в покое, у последнего 1, доверенный клик → `status` «Скопировано». T7.3 L1-7 «удалена при открытой в другой вкладке» — PASS: сообщение осталось, «Беседа удалена» (h2) + «Её удалили в другой вкладке или окне.» (alert) + «Новый чат», композера нет, «Перегенерировать» нет, фокус на «Новый чат», `POST /api/chat/assistant` → 404, `POST /api/threads` нет. Примечание: удалённая беседа остаётся в списке сайдбара вкладки A до перезагрузки списка (синхронизации между вкладками нет — ожидаемо).
 
-- [ ] **T7.4 Ошибка инструмента: ветвление `ToolFallbackImpl` по `isError`, фиксированный текст `ToolFallbackError`, строки `tool-fallback.aui.tsx`** (AC-14.5 клиент; D-15; IP8; Cross-Layer Assumption 8)
+- [x] **T7.4 Ошибка инструмента: ветвление `ToolFallbackImpl` по `isError`, фиксированный текст `ToolFallbackError`, строки `tool-fallback.aui.tsx`** (AC-14.5 клиент; D-15; IP8; Cross-Layer Assumption 8)
   - Target Files: `apps/web/src/components/assistant-ui/elements/tool-fallback.aui.tsx`, `apps/web/src/components/assistant-ui/elements/tool-fallback-error.test.tsx` (new)
   - Содержание: по таблице DD: при `isError: true` — статус `incomplete`/`error` для триггера и `ToolFallbackError`, без `ToolFallbackResult`; «Ошибка:» + «Не удалось выполнить инструмент.» независимо от `status.error`; `cancelled` — «Причина отмены:» и исходная причина; без `role="alert"`; локальный `pressable` не трогать; все пользовательские строки файла (`Reply queued, not sent yet`, `Cancelled tool`/`Failed tool`, `Approved by user`, `Allow`/`Always allow`/`Deny`/`Always deny`, `Answered`/`Allowed`/`Dismissed`/`Denied` и др.) — на русском.
   - Тесты (C, test-first): `tool-fallback-error.test.tsx` — часть с `isError: true` и `{ error: 'boom' }`: подпись неудавшегося инструмента, «Ошибка:», «Не удалось выполнить инструмент.»; нет «boom», `"error"`, «Result:» и перевода; нет `alert`; `incomplete`/`error` с `'Agent error'` и с пустой ошибкой → тот же текст; `cancelled` → «Причина отмены:».
   - Зависимости: T2.1 (может идти параллельно с Phase 3–6).
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc — 0.
 
-- [ ] **T7.5 Локализация каркаса, reduced motion, аудит ARIA; `plural-ru`, `i18n.test.ts`** (UXRD 10.2, 7.2, 7.7; fact `i18n:scaffold-strings`)
+- [x] **T7.5 Локализация каркаса, reduced motion, аудит ARIA; `plural-ru`, `i18n.test.ts`** (UXRD 10.2, 7.2, 7.7; fact `i18n:scaffold-strings`)
   - Target Files: `apps/web/src/lib/i18n/plural-ru.ts` (new), `apps/web/src/lib/i18n/plural-ru.test.ts` (new), `apps/web/src/lib/i18n/i18n.test.tsx` (new), `apps/web/src/components/assistant-ui/elements/reasoning.tsx`, `apps/web/src/components/assistant-ui/elements/tool-group.aui.tsx`, `apps/web/src/components/assistant-ui/elements/attachment.aui.tsx`, `apps/web/src/components/ui/dialog.tsx`, `apps/web/src/components/image.tsx`, `apps/web/src/components/file.tsx`, `apps/web/src/components/media-player.tsx`, `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (оставшиеся строки: «Отправить», «Остановить», TH-09 «К последнему сообщению» и др.; заголовок приветствия, подпись и placeholder композера уже поставлены в T3.4)
   - Содержание: таблица DD «Локализация» (`Рассуждения (N с)`, `pluralRu(N, ['вызов инструмента', 'вызова инструментов', 'вызовов инструментов'])` через `Intl.PluralRules('ru-RU')`, «Закрыть», aria-строки); `motion-reduce:transition-none`/`motion-reduce:animate-none` на всех переходах оболочки; вставка/удаление элементов списка — `@starting-style` с отключением при `prefers-reduced-motion`; сверка ARIA с таблицей UXRD 7.2.
   - Тесты (test-first): U `plural-ru.test.ts` — 1, 2, 5, 11, 21, 22, 25 (таблица); `i18n.test.tsx` — рендер ключевых экранов (новый чат, беседа с инструментом из фикстуры, меню) не содержит слов стоп-листа (`Send`, `Copy`, `Close`, `Toggle`, `Loading`, `Reasoning`, `tool call`).
   - Зависимости: T7.3, T7.4.
-  - Completion: [ ] тесты зелёные; [ ] lint, tsc, build — 0.
+  - Completion: [x] тесты зелёные; [x] lint, tsc, build — 0.
 
 #### Phase Completion Criteria
-- [ ] T7.1–T7.5 готовы к коммиту
-- [ ] Интеграционные тесты: 10/10 (todo: 0)
-- [ ] lint, tsc, test, build — 0 ошибок
+- [x] T7.1–T7.5 готовы к коммиту
+- [x] Интеграционные тесты: 10/10 (todo: 0)
+- [x] lint, tsc, test, build — 0 ошибок
 
 #### Operational Verification Procedures
 1. L1-7 (часть): во второй вкладке удалить беседу, открытую в первой, отправить — сообщение видно, «Беседа удалена» / «Её удалили в другой вкладке или окне.», «Новый чат», нет «Перегенерировать», нет композера.
@@ -1000,98 +1013,100 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T8.1 Итоговые гейты, проверка AC, аудит тестов** (все AC; Migration Strategy)
+- [x] **T8.1 Итоговые гейты, проверка AC, аудит тестов** (все AC; Migration Strategy)
   - Target Files: только исправления (по находкам), иначе изменений нет
   - Содержание: `pnpm --filter web lint`, `pnpm --filter web exec tsc --noEmit`, `pnpm --filter web test`, `pnpm --filter web build`, `pnpm build`, `pnpm test` (turbo) — 0 ошибок; `it.todo`/`it.skip` в `apps/web` — 0 (поиск по `apps/web/src`); `pnpm why -r ai` — `apps/web` 7.0.155, `apps/api` 7.0.148; точные версии `@assistant-ui/*`, `assistant-stream`; поиск `components/assistant` и `app/page.tsx` пуст; бюджет тестов (Test Selection): 10 интеграционных, ни один тест не дублирует дефект другого (при сомнении — `test-auditor`); атрибуция `git log main..HEAD` без `Co-Authored-By`/`Claude`; таблица AC ниже заполнена.
     - Код-ревью инварианта Element 1: состояние `ShellStatus` (`apps/web/src/lib/threads/shell-status-store.ts`) содержит ровно `history`, `loadMoreFailed`, `titleWaiting`, `activityAt` и их сеттеры — без списка, заголовков, сообщений, `isRunning` и текущей беседы.
   - Зависимости: T7.1–T7.5.
-  - Completion: [ ] все гейты — 0; [ ] инвариант Element 1 проверен ревью; [ ] таблица «Проверка AC» заполнена; [ ] результаты в Notes.
+  - Completion: [x] все гейты — 0; [x] инвариант Element 1 проверен ревью; [x] таблица «Проверка AC» заполнена; [x] результаты в Notes; [x] отчёт `test-auditor` исполнен по решению оркестратора (Phase 8 Notes).
 
-- [ ] **T8.2 Dev-only seed для L1-4 и L1-10 (не в репозитории)** (известный пробел стенда: у ассистента `tools: {}`)
+- [x] **T8.2 Dev-only seed для L1-4 и L1-10 (не в репозитории)** (известный пробел стенда: у ассистента `tools: {}`)
   - Target Files: нет в репозитории — скрипт в scratchpad сессии исполнителя
   - Investigation Targets: `apps/api/test/support/seed.ts` (только текстовые части — образец), `apps/api/src/mastra/mastra.provider.ts` (как строится `PostgresStore`/`Memory`), `apps/api/src/threads/thread.mapper.ts` (что уходит в `/messages`, `maskHistoryErrors`), `apps/api/src/mastra/agents/assistant.agent.ts`.
   - Содержание: скрипт пишет через `Memory.saveThread`/`saveMessages` для resource `dev-user` в БД `localhost:5433` сообщения format 2: `SEED-RICH` — 12 сообщений; ответ с частью рассуждения; ответ с частью инструмента `output-available` и результатом; ответ с таблицей; ответ с блоком кода 80+ строк. `SEED-TOOL-ERROR` — сообщение пользователя, ответ с частью инструмента `output-error`, `errorText: 'boom'`; сообщение пользователя, ответ **только** с частью инструмента; сообщение пользователя, ответ **только** с рассуждением. Повторный запуск идемпотентен (фиксированные id `SEED-RICH`, `SEED-TOOL-ERROR`, удаление перед записью).
     - Режим страниц для FR-19 (вызывается из T8.3): `--pages` создаёт 120 бесед `SEED-PAGE-001…120` с `updatedAt` по образцу `descendingDates` из `apps/api/test/support/seed.ts` с шагом 12 ч (охват 60 дней — все пять групп, включая «Старше»), по 2 текстовых сообщения; после `saveMessages` повторно вызвать `saveThread` с исходным `updatedAt` (как `seed()` в `apps/api/test/support/seed.ts`, строки 85-88) — `saveMessages` сбрасывает `updatedAt` беседы на `now()`; `--pages --remove` удаляет их.
     - Запуск: `node <scratchpad>/seed-l1.ts [--pages [--remove]]` на Node 24.11 — снятие типов встроено, `tsx` не нужен и не установлен. Скрипт пишется только стираемым синтаксисом TS (без `enum`, `namespace`, parameter properties; типы — `import type`). Голые спецификаторы из scratchpad не разрешаются (ESM ищет пакеты от импортирующего файла), поэтому пакеты берутся от `apps/api`: `const require = createRequire('<abs>/apps/api/package.json')`, затем `await import(pathToFileURL(require.resolve('@mastra/memory')).href)` и так же `@mastra/pg` (`createRequire` — `node:module`, `pathToFileURL` — `node:url`).
   - Зависимости: T1.3 (стенд работает).
-  - Completion: [ ] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`; [ ] пробный прогон `--pages`, затем `--pages --remove` — в `GET /api/threads` не остаётся `SEED-PAGE-*`; [ ] `git status` не показывает новых файлов от T8.2.
+  - Completion: [x] `GET /api/threads/SEED-RICH/messages` и `.../SEED-TOOL-ERROR/messages` → 200, части нужных типов, в теле нет `boom`; [x] пробный прогон `--pages`, затем `--pages --remove` — в `GET /api/threads` не остаётся `SEED-PAGE-*` (и в `mastra_threads` — 0); [x] `git status` не показывает новых файлов от T8.2.
 
-- [ ] **T8.3 L1-сценарии L1-1…L1-10, производительность, Lighthouse — выполняет оркестратор через Claude-in-Chrome** (все AC с L1; S-1…S-11; Performance Tests)
+- [x] **T8.3 L1-сценарии L1-1…L1-10, производительность, Lighthouse — выполняет оркестратор через Claude-in-Chrome** (все AC с L1; S-1…S-11; Performance Tests)
   - Target Files: `docs/features/chat-shell/web-shell/l1-browser-scenarios.md` (только Evidence, отметки и Sign-off); исправления кода — отдельной задачей через `update` плана, если найдены дефекты
   - Предусловия: T8.1, T8.2; окружение по правилу выполнения 3; `pnpm --filter web build && pnpm --filter web start` (L1-8 — дополнительно `pnpm --filter web dev` для консоли); ключ `ANTHROPIC_API_KEY` из `apps/api/.env` разрешён пользователем (Открытые вопросы, п. 1).
   - Содержание: чек-лист `l1-browser-scenarios.md` по порядку; шаги **[DevTools — user]** — оркестратор останавливается и просит пользователя (группами); невыполненная проверка — «not executed» с причиной.
     - FR-19 (вне чек-листа, после L1-1…L1-10, чтобы 120 бесед не мешали сценариям): `node <scratchpad>/seed-l1.ts --pages` → прокрутка к SB-10 подгружает по 20, порядок групп монотонен, вторая страница без дублей; блокировка запроса подгрузки (`[DevTools — user]` или обёртка `fetch`) → «Не удалось загрузить ещё беседы», «Повторить» подгружает; затем `--pages --remove`, в списке нет `SEED-PAGE-*`. Результат — в Notes «Метрики и L1». Performance: метрика № 2 (≤ 1,5 с до последнего из 50 сообщений, 10 прогонов), LCP `/chat/<id>` ≤ 2,5 с (5 прогонов), CLS ≤ 0,1 при сайдбаре и рабочей области, Lighthouse Accessibility ≥ 95 (`/` и `/chat/<id>` × обе темы × десктоп/мобильный). Расхождения с UXRD (Open Questions DD п. 1, 3–6; AC-08.5b возврат в беседу) — заметки UX-владельцу в Notes.
   - Зависимости: T8.1, T8.2.
-  - Completion: [ ] Sign-off L1-1…L1-10 заполнен (pass / fail / not executed + причина); [ ] FR-19 проверен, сид страниц удалён; [ ] любой fail остановил приёмку соответствующего AC и записан; [ ] метрики записаны в Notes.
+  - Completion: [x] Sign-off L1-1…L1-10 заполнен (pass / fail / not executed + причина); [x] FR-19 проверен, сид страниц удалён; [x] любой fail остановил приёмку соответствующего AC и записан (fail нет; дефект шторки исправлен в ходе T8.3); [x] метрики записаны в Notes.
 
-- [ ] **T8.4 Отложенные проверки `threads-api` T6.3-a (метрика № 10) и T6.3-b (метрика № 7)** (требуют реальных ключей провайдера)
+- [x] **T8.4 Отложенные проверки `threads-api` T6.3-a (метрика № 10) и T6.3-b (метрика № 7)** (требуют реальных ключей провайдера)
   - Target Files: `docs/features/chat-shell/web-shell/l1-browser-scenarios.md` (Evidence, Sign-off); результаты переносятся в Notes плана `threads-api` («L1 / метрики № 7, № 10») через `update` этого плана оркестратором (статус `completed` сохраняется)
   - Предусловия: ключ `ANTHROPIC_API_KEY` из `apps/api/.env` разрешён пользователем (Открытые вопросы, п. 1); production-сборка (T8.1); T8.3 завершена — стенд свободен.
   - Содержание: по разделу «Deferred from `threads-api` T6.3» чек-листа: T6.3-a — «до» `main` `83fd532` в git worktree вне репозитория, по разогреву и 5 прогонов на каждую сторону, median(after) − median(before) ≤ 50 мс, иначе эскалация с десятью значениями; worktree удалён. T6.3-b — 20 новых бесед (10 RU, 10 EN), ≥ 19 из 20 заголовков 1…80 символов без кавычек и переносов, на языке первого сообщения, видны ≤ 15 с; лог `apps/api` — ≤ 10 с; провал — эскалация.
   - Зависимости: T8.1, T8.3 (стенд свободен: T6.3-a останавливает API на порту 4000 ради worktree `83fd532`).
-  - Completion: [ ] десять значений и медианы записаны; [ ] таблица 20 бесед записана; [ ] `git worktree list` — только основной.
+  - Completion: [x] десять значений и медианы записаны; [x] таблица 20 бесед записана; [x] `git worktree list` — только основной.
 
 #### Проверка AC (заполняется в T8.1 и T8.3)
 
 | AC | Проверка | Задача | Результат |
 |---|---|---|---|
-| AC-01.1 | U `group-threads-by-date`, C | T4.1, T4.2 | [ ] |
-| AC-01.2 | C, L1-1 | T4.2, T8.3 | [ ] |
-| AC-01.3 / 01.4 | C | T4.2 | [ ] |
-| AC-01.5 / 01.7 | C, I `shell.list` | T4.2 | [ ] |
-| AC-01.6 | C | T4.2, T5.1 | [ ] |
-| AC-02.1 / 02.3 / 02.4 | U, L1-4 | T2.2, T8.3 | [ ] |
-| AC-02.2 | U, I `shell.open-thread` (прямая ссылка; F5) | T3.4, T4.2 | [ ] |
-| AC-02.5 | U, C, I `shell.open-thread` | T2.2, T3.4, T4.2 | [ ] |
-| AC-02.6 / 03.4 | S-1, L1-6 (без автотеста) | T1.3, T8.3 | [ ] |
-| AC-03.1 | U, C, L1-1, L1-3 | T4.3, T8.3 | [ ] |
-| AC-03.2 / 03.3 / 04.1 | I `shell.new-chat`, U, L1-1 | T2.3, T4.3, T8.3 | [ ] |
-| AC-04.2 / 04.4 | S-2, L1-5 | T1.3, T8.3 | [ ] |
-| AC-04.3 | U, I, L1-7 | T2.2, T3.4, T8.3 | [ ] |
-| AC-05.1…05.3 | C, L1-2 | T5.1, T8.3 | [ ] |
-| AC-05.4 | U, S-6 (L1-2) | T2.2, T8.3 | [ ] |
-| AC-06.1 / 06.3 | C, L1-2 | T5.2, T8.3 | [ ] |
-| AC-06.2 | I `shell.delete-open-thread`, L1-2 | T5.2, T8.3 | [ ] |
-| AC-06.4 | L1-7 | T8.3 | [ ] |
-| AC-07.1…07.3 | C `chat-header`, L1-1 | T3.3, T8.3 | [ ] |
-| AC-08.1 / 08.3 / 08.4 | L1-1, L1-4, L1-6 | T8.3 | [ ] |
-| AC-08.2 | C, L1-1 | T4.3, T8.3 | [ ] |
-| AC-08.5 / 08.5a / 08.5c / 08.5d | C `message-error`, L1-10 | T7.3, T8.3 | [ ] |
-| AC-08.5b | I `shell.message-error`, L1-10 | T7.3, T8.3 | [ ] |
-| AC-08.5e | C, I `shell.deleted-thread`, L1-7 | T7.3, T8.3 | [ ] |
-| AC-08.6 | C `message-actions`, L1-10 | T7.2, T8.3 | [ ] |
-| AC-14.5 (клиент) | C `tool-fallback-error`, L1-10 | T7.4, T8.3 | [ ] |
-| AC-14.6 (клиентская сторона) | L1-10 | T8.3 | [ ] |
-| AC-09.1…09.4 | C `user-menu`, L1-8 | T3.2, T8.3 | [ ] |
-| AC-10.1…10.4 | C (S-11), L1-3 | T3.1, T8.3 | [ ] |
-| AC-11.1 / 11.3 | I `shell.workspace`, L1-1 | T5.3, T8.3 | [ ] |
-| AC-11.2 / 11.4 | L1-1 | T8.3 | [ ] |
-| AC-12.1 / 12.2 | `pnpm --filter web test` ≥ 8 тестов в 4 областях, без API | T2.1–T4.2, T8.1 | [ ] |
-| AC-19.1 | U, C, браузер (сид страниц) | T4.1, T6.1, T8.3 | [ ] |
-| AC-20.1 | U, L1-1 | T2.3, T8.3 | [ ] |
-| AC-21.1 | L1-1 | T8.3 | [ ] |
-| AC-22.1 / 22.2 | U, C, L1-9 | T4.2, T6.2, T8.3 | [ ] |
-| Метрики № 7, № 10 (`threads-api` T6.3) | T6.3-b, T6.3-a | T8.4 | [ ] |
+| AC-01.1 | U `group-threads-by-date`, C | T4.1, T4.2 | [x] авто: `group-threads-by-date.test.ts` («AC-01.1: … four labelled groups»), `thread-history-list.test.tsx` (Ready: h2 по порядку) |
+| AC-01.2 | C, L1-1 | T4.2, T8.3 | [x] авто ✓ `thread-history-list.test.tsx` (Ready: `aria-current` только у активной); L1-1 и L1-5 — pass |
+| AC-01.3 / 01.4 | C | T4.2 | [x] авто: `thread-history-list.test.tsx` (Loading «Загружаем беседы…», Empty «Пока нет бесед») |
+| AC-01.5 / 01.7 | C, I `shell.list` | T4.2 | [x] авто: `thread-history-list.test.tsx` (Error + «Повторить»), `shell.list.int.test.tsx` (AC-01.7 + AC-01.5), `threads-api-client.test.ts` (классификация `invalid_response`) |
+| AC-01.6 | C | T4.2, T5.1 | [x] авто: `thread-history-item.test.tsx` (тултип усечённого названия, влезающее название — без тултипа, «Новая беседа») |
+| AC-02.1 / 02.3 / 02.4 | U, L1-4 | T2.2, T8.3 | [x] авто ✓ `thread-history-adapter.test.ts` (линейная цепочка parentId/headId); L1-4 — pass: 02.1 (рассуждения, инструмент), 02.3 на production (12 → 14 сообщений, после F5 — 14), 02.4 (рендер markdown; «Копировать» блока кода меняет значок на галочку) |
+| AC-02.2 | U, I `shell.open-thread` (прямая ссылка; F5) | T3.4, T4.2 | [x] авто: `resolve-main-view.test.ts`, `shell.open-thread.int.test.tsx` («AC-02.2 + AC-04.3», «AC-02.2 (F5)») |
+| AC-02.5 | U, C, I `shell.open-thread` | T2.2, T3.4, T4.2 | [x] авто: `thread-history-adapter.test.ts` (500 → `load_failed`, retry), `thread-notice.test.tsx` (load-error), `shell.open-thread.int.test.tsx` («AC-02.5») |
+| AC-02.6 / 03.4 | S-1, L1-6 (без автотеста) | T1.3, T8.3 | [x] S-1 подтверждён в T1.3 (гейт G1); L1-6 — pass (повторно подтверждён в T8.3) |
+| AC-03.1 | U, C, L1-1, L1-3 | T4.3, T8.3 | [x] авто ✓ `focus.test.ts` (правило указателя), `shell.delete-open-thread.int.test.tsx` (фокус по типу указателя); L1-3 — pass (HD-05, выбор беседы и SB-03 в шторке → `h1`) |
+| AC-03.2 / 03.3 / 04.1 | I `shell.new-chat`, U, L1-1 | T2.3, T4.3, T8.3 | [x] авто ✓ `shell.new-chat.int.test.tsx` (AC-03.2; AC-04.1 + AC-03.3), `url-sync.test.ts`, `thread-activity-tracker.test.tsx`; L1-1 — pass |
+| AC-04.2 / 04.4 | S-2, L1-5 | T1.3, T8.3 | [x] S-2 подтверждён в T1.3; L1-5 — pass |
+| AC-04.3 | U, I, L1-7 | T2.2, T3.4, T8.3 | [x] авто ✓ `thread-history-adapter.test.ts` (404 → `not_found`), `thread-notice.test.tsx` (not-found, фокус на h1), `shell.open-thread.int.test.tsx`; L1-7 — pass |
+| AC-05.1…05.3 | C, L1-2 | T5.1, T8.3 | [x] авто ✓ `thread-history-item.test.tsx` (SB-08: Enter/Esc/пусто/без изменений/blur/200 символов); L1-2 — pass |
+| AC-05.4 | U, S-6 (L1-2) | T2.2, T8.3 | [x] авто ✓ `thread-list-adapter.test.ts` (PATCH 500 → `renameFailed` + отказ для отката); L1-2 — pass (откат + уведомление) |
+| AC-06.1 / 06.3 | C, L1-2 | T5.2, T8.3 | [x] авто ✓ `delete-thread-dialog.test.tsx` (DLG-01), `thread-history-list.test.tsx` (удаление не открытой, фокус на соседнюю); L1-2 — pass (Esc в диалоге → «⋯») |
+| AC-06.2 | I `shell.delete-open-thread`, L1-2 | T5.2, T8.3 | [x] авто ✓ `shell.delete-open-thread.int.test.tsx`; L1-2 — pass |
+| AC-06.4 | L1-7 | T8.3 | [x] L1-7 — pass: экран «Беседа не найдена» на `/chat/does-not-exist` (Phase 4); адрес удалённой беседы идёт тем же путём 404 |
+| AC-07.1…07.3 | C `chat-header`, L1-1 | T3.3, T8.3 | [x] авто ✓ `chat-header.test.tsx` (HD-02, HD-03 по `HeaderTitle`); L1-1 и L1-5 — pass |
+| AC-08.1 / 08.3 / 08.4 | L1-1, L1-4, L1-6 | T8.3 | [x] production: колонка 768 px при 1440×900 (08.1); «К последнему сообщению» видна после прокрутки вверх и возвращает ленту вниз (08.3); 08.4 — L1-6 pass |
+| AC-08.2 | C, L1-1 | T4.3, T8.3 | [x] авто ✓ `thread-welcome.test.tsx`; L1-1 — pass |
+| AC-08.5 / 08.5a / 08.5c / 08.5d | C `message-error`, L1-10 | T7.3, T8.3 | [x] авто ✓ `message-error.test.tsx` (случаи 1–5; 08.5d — только C); L1-10 B — pass |
+| AC-08.5b | I `shell.message-error`, L1-10 | T7.3, T8.3 | [ ] авто ✓ `shell.message-error.int.test.tsx`; возврат в беседу с блоком ошибки (L1-10 B, шаги 3 и 6) — not executed |
+| AC-08.5e | C, I `shell.deleted-thread`, L1-7 | T7.3, T8.3 | [x] авто ✓ `message-error.test.tsx` (случай 6), `thread-notice.test.tsx` (deleted), `shell.deleted-thread.int.test.tsx`, `shell-services.test.ts`; L1-7 — pass |
+| AC-08.6 | C `message-actions`, L1-10 | T7.2, T8.3 | [x] авто ✓ `message-actions.test.tsx`; L1-10 A — pass |
+| AC-14.5 (клиент) | C `tool-fallback-error`, L1-10 | T7.4, T8.3 | [x] авто ✓ `tool-fallback-error.test.tsx`; L1-10 C — pass (живой стрим — not executed: на стенде нет инструментов) |
+| AC-14.6 (клиентская сторона) | L1-10 | T8.3 | [x] L1-10 B — pass: после F5 один ответ (серверная часть — владелец `threads-api`) |
+| AC-09.1…09.4 | C `user-menu`, L1-8 | T3.2, T8.3 | [x] авто ✓ `user-menu.test.tsx` (09.1, 09.3 «Системная», 09.4); L1-8 на production — pass: 09.2 (FOUC нет), 09.3 (тема ОС переключается без перезагрузки, сохранённая тема — `null`) |
+| AC-10.1…10.4 | C (S-11), L1-3 | T3.1, T8.3 | [x] авто ✓ `app-sidebar.test.tsx` (10.2, выбор беседы и SB-03 → `h1`); L1-3 — pass: 10.2, 10.3; на production 10.1 (нет горизонтального скролла при 375 и 360 px) и 10.4 (при 360 px прокручивается только блок кода); свайп S-11 (UXRD 8.2, не AC) — not executed (реальное касание, пользователь) |
+| AC-11.1 / 11.3 | I `shell.workspace`, L1-1 | T5.3, T8.3 | [x] авто ✓ `shell.workspace.int.test.tsx`; L1-1 — pass |
+| AC-11.2 / 11.4 | L1-1 | T8.3 | [x] L1-1 — pass (браузерная проверка оркестратора, Phase 5, T5.3) |
+| AC-12.1 / 12.2 | `pnpm --filter web test` ≥ 8 тестов в 4 областях, без API | T2.1–T4.2, T8.1 | [x] T8.1: `vitest run` — 38 файлов, 259 passed (после аудита тестов), 0 todo/skip; сеть — только MSW (`http://api.test`), API не нужен |
+| AC-19.1 | U, C, браузер (сид страниц) | T4.1, T6.1, T8.3 | [x] авто ✓ `group-threads-by-date.test.ts` («AC-19.1: … monotonic»), `thread-history-list.test.tsx` (SB-10), `thread-list-adapter.test.ts` (`loadMoreFailed`); браузер с сидом страниц — pass (FR-19, Notes «Метрики и L1») |
+| AC-20.1 | U, L1-1 | T2.3, T8.3 | [x] авто ✓ `title-poller.test.ts`; L1-1 — pass |
+| AC-21.1 | L1-1 | T8.3 | [x] L1-1 — pass (браузерная проверка оркестратора, Phase 3) |
+| AC-22.1 / 22.2 | U, C, L1-9 | T4.2, T6.2, T8.3 | [x] авто ✓ `keyboard-shortcuts.test.ts`, `use-global-shortcuts.test.tsx`, `thread-history-list.test.tsx` (↑/↓, Home/End); L1-9 — pass (`Ctrl+Shift+O`, `Ctrl+B`, блокировка при открытом меню) |
+| Метрики № 7, № 10 (`threads-api` T6.3) | T6.3-b, T6.3-a | T8.4 | [x] T8.4 — pass: № 10 Δ медиан −208 мс; № 7 19/20 после исправления заголовков |
 
 #### Operational Verification Procedures
 
 Копия раздела DD «L1-сценарии» — выполняется по `l1-browser-scenarios.md` (L1-1…L1-10, T6.3-a, T6.3-b) на `next build && next start` против реального API: каждый сценарий фиксирует скриншоты, консоль, ключевые запросы Network; проверка, которая не выполнялась, не считается пройденной. Integration Verification Points DD: первая отправка — порядок запросов и `body.id` (I + L1-1); прямая ссылка, 404 и ошибки истории (I + L1-7); фоновый стрим (S-1 + L1-6) — только реальный браузер и реальный API.
 
 ### Quality Assurance
-- [ ] Поэтапные проверки качества (ai-development-guide): lint → tsc → build → unit/C → интеграционные
-- [ ] Все тесты проходят; `it.todo` — 0
-- [ ] Статическая проверка (tsc) — 0
-- [ ] Lint — 0
-- [ ] Сборка `apps/web` и всего монорепо — успешна
+- [x] Поэтапные проверки качества (ai-development-guide): lint → tsc → build → unit/C → интеграционные
+- [x] Все тесты проходят; `it.todo` — 0
+- [x] Статическая проверка (tsc) — 0
+- [x] Lint — 0
+- [x] Сборка `apps/web` и всего монорепо — успешна (полный `pnpm build` заменён по решению оркестратора, Phase 8 Notes)
 
 ## Completion Criteria
-- [ ] Все фазы завершены; гейт G1 пройден
-- [ ] Операционные проверки каждой фазы выполнены
-- [ ] AC Design Doc выполнены (таблица «Проверка AC»)
-- [ ] Поэтапные проверки качества — 0 ошибок
-- [ ] Все тесты проходят; интеграционные 10/10
-- [ ] L1 Sign-off заполнен; T6.3-a/b выполнены или записаны как «not executed» с причиной по решению пользователя
-- [ ] Notes дополнены результатами ранней точки проверки, мутационных проверок и метрик
+- [x] Все фазы завершены; гейт G1 пройден
+- [ ] Операционные проверки каждой фазы выполнены — остаётся свайп S-11 (L1-3, реальное касание — пользователь)
+- [ ] AC Design Doc выполнены (таблица «Проверка AC») — открыта строка AC-08.5b: возврат в беседу с блоком ошибки (L1-10 B, шаги 3 и 6) не выполнялся
+- [x] Поэтапные проверки качества — 0 ошибок
+- [x] Все тесты проходят; интеграционные 10/10
+- [x] L1 Sign-off заполнен; T6.3-a/b выполнены или записаны как «not executed» с причиной по решению пользователя
+- [x] Notes дополнены результатами ранней точки проверки, мутационных проверок и метрик
+- [x] Пост-реализационная проверка всей реализации выполнена — code-verifier: drift, 0 critical / 0 major / 9 minor (D001–D004, D007, D009 — design-web-shell v1.11; D005, D006, D008 — в коде); security-reviewer: approved_with_notes, 15/15, 4 усиления применены; quality-fixer: web 268/268 ×3, api 149 unit + 34 e2e, покрытие строк 88,37 %
+- [ ] Изменения закоммичены (manual, по решению пользователя)
 - [ ] Ревью пользователя получено
 
 ## Progress Tracking
@@ -1114,11 +1129,17 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 - Start:
 - Complete:
 - Notes:
+  - Проверка оркестратора в браузере (2026-10-30, свежий dev-сервер) — PASS: `/` показывает «Чем могу помочь?», подзаголовок, 4 подсказки 2×2, композер в фокусе (точный указатель), кнопки вложений нет, `document.title` «Новый чат — Agent OS». Клик по подсказке 1 → `POST /api/threads` 201 → `POST /api/chat/assistant` 200, адрес `/chat/<id>` без навигации документа, «Новая беседа» первой в «Сегодня» с `aria-current`, вкладка «Новая беседа — Agent OS»; автозаголовок «План встречи по запуску проекта» появился в списке и во вкладке за ~16 с. Группы по датам в сайдбаре, заголовок шапки, тёмная тема в меню пользователя, `/chat/does-not-exist` (заметка, фокус на `h1`, композера нет, заголовок шапки пуст) — PASS.
+  - НЕ проверено в dev: возврат фокуса на кнопку меню пользователя (портал оверлея Next dev лежит поверх кнопки и забирает фокус) → перепроверить на production-сборке в T8.3.
+  - Остаточный риск 2 (T4.3): `finalFocus` шторки против фокуса на заголовке страницы → T8.3 L1-3.
 
 ### Phase 5
 - Start:
 - Complete:
 - Notes:
+  - Проверка оркестратора в браузере (2026-10-30, dev-сервер) — T5.1 переименование: пусто + Enter → «Введите название», `PATCH` не отправлен; валидное название → один `PATCH` 200, новое название в сайдбаре, шапке и во вкладке, фокус вернулся на ссылку строки; `PATCH` 500 → откат названия + уведомление. Задержка фокуса поля исправлена: ~1065 мс → ~190 мс (первое открытие в dev ~600 мс, перепроверить на production в T8.3).
+  - T5.2 удаление: диалог «Удалить беседу?» с названием в «ёлочках», фокус на «Отмена», Esc → фокус на «⋯»; удаление не открытой → фокус на следующую ссылку + уведомление; удаление открытой → `replace` на `/`, длина истории не изменилась, приветствие + фокус на композере, «Назад» к удалённой не возвращает; удаление во время ответа → показан абзац A-4, запрос чата прерван до `DELETE`, сервер отвечает 404 при 0 сообщений, строки расхода нет.
+  - T5.3 рабочая область: открывается на ~40 % (441 из 1103 px); сайдбар остаётся развёрнутым, пока основная область ≥ 840 px; ←/→ ±16, Shift ±64, End → 360, Home → максимум с лентой 480; «×» закрывает с фокусом на HD-04, cookie не изменилась. При 1050 px сайдбар временно сворачивается при открытии и восстанавливается при закрытии без записи cookie; при 900 px панель и HD-04 скрыты, при возврате к 1440 px панель снова открыта.
 
 ### Phase 6
 - Start:
@@ -1129,11 +1150,28 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 - Start:
 - Complete:
 - Notes:
+  - T7.5 (2026-10-30): гейты — eslint и `tsc --noEmit` — 0; `vitest run` ×3 — 38 файлов, 262 passed, без нестабильности; `next build` — успешно; CR в изменённых файлах — 0; новых `as` (кроме `as const`) нет. `typeLabel` удалён без остаточных ссылок. Стоп-лист `i18n.test.tsx` не проходит на пустом рендере: перед каждой проверкой `englishLeaks()` утверждается наличие русских элементов экрана.
+  - Оркестратор, L1-10 B (2026-10-30, dev-сервер, реальная модель, обёртка `fetch` вставляет SSE-чанк ошибки после 64 текстовых дельт и отменяет реальный поток): частичный текст сохранён + блок «Не удалось получить ответ. Попробуйте перегенерировать.» с кнопкой «Перегенерировать», сырой текст ошибки не показан; «Перегенерировать» → блок исчез, новый ответ на месте прежнего, без ‹1/2›, фокус в композере; F5 → ровно одно сообщение пользователя и один ответ, блока нет; сервер `/messages` = user:text | assistant:reasoning+text (хвост сброшен). Часть (b) L1-10 B (ошибка → новое сообщение → возврат в той же вкладке → F5) покрыта `shell.message-error.int.test.tsx` и остаётся для T8.3.
 
 ### Phase 8
-- Start:
-- Complete:
+- Start: 2026-10-30
+- Complete: 2026-10-30 — T8.1–T8.4; пост-реализационная проверка и коммит открыты
 - Notes:
+  - T8.1 (2026-10-30), гейты — все 0 ошибок: `pnpm --filter web lint` — 0; `tsc --noEmit` — 0; `pnpm --filter web test` — 38 файлов, 262 passed; `pnpm --filter web build` — успешно (маршруты `/`, `/chat/[threadId]`); `pnpm test` (turbo) — 3/3 задачи (api 14 файлов / 138 passed, web 262 passed); `pnpm --filter api test:e2e` (`DATABASE_URL` 5433, пустые ключи провайдеров) — 4 файла, 34 passed; `pnpm build --filter=web...` (contracts + web) — успешно. Полный `pnpm build` не запускался: `nest build` с `deleteOutDir` удалил бы `apps/api/dist`, из которого работает dev-сервер API на :4000. Вместо этого `tsc -p tsconfig.build.json --noEmit` для `apps/api` — 0.
+  - Версии: `pnpm why -r ai` — web 7.0.155, api 7.0.148; `apps/web` держит `ai` `^7.0.155` (решение пользователя); `@assistant-ui/ai-sdk` 0.0.16, `@assistant-ui/react` 0.15.32, `@assistant-ui/react-markdown` 0.14.24, `assistant-stream` 0.3.55 — точные. `it.todo`/`it.skip`/`xit` в `apps/web/src` — 0 (устаревшая строка-комментарий «10 it.todo in 7 files» в заголовках 7 файлов `shell.*.int.test.tsx` обновлена по решению оркестратора). `components/assistant` (без `-ui`) — не найдено; `src/app/page.tsx` нет (есть `app/(chat)/page.tsx`).
+  - Element 1 (код-ревью `shell-status-store.ts`) — **Y**: состояние — `history`, `loadMoreFailed`, `titleWaiting`, `activityAt`; сеттеры `setHistory`, `setLoadMoreFailed`, `setTitleWaiting` (записанный дополнительный сеттер), `bumpActivity` (сеттер `activityAt`, DD § ThreadActivityTracker), `forgetThread` (очистка трёх карт, DD § history.forget / DELETE). Списка, заголовков, сообщений, `isRunning` и текущей беседы нет.
+  - Атрибуция: `git log main..HEAD` (10 коммитов, включая `threads-api` — сливаются в `main` вместе, Migration Strategy) — нет `Co-Authored-By`/`Claude`. Ветка `feature/chat-shell`.
+  - Бюджет тестов: 10 интеграционных тестов (12 случаев с учётом двух `it.each`) в 7 файлах `*.int.test.tsx`, каждый ловит отдельный дефект. Отчёт `test-auditor` (только отчёт, тесты не менялись), решение оркестратора — в следующем пункте Notes: (1) дубли в `thread-history-list.test.tsx` (describe «ThreadHistoryItem — title»): «a truncated title shows the full title…» и «a thread without a title reads «Новая беседа»» повторяют тесты `thread-history-item.test.tsx`; «a title that fits shows no tooltip» уникален → перенести в файл элемента; (2) кандидаты на удаление: `delete-thread-dialog` «Esc is «Отмена»» (поведение base-ui), `retry-gate` «drop after release…» (не может покраснеть), `thread-list-adapter` «archive is rejected» (заглушка); (3) слияния: `chat-header` «pending…» → «text…», `message-error` случай 3 строка Space, `group-threads-by-date` (пустой список; сортировка; без ключей), строка `coarse` в `shell.delete-open-thread` (компромисс: она ловит жёстко прописанный `composer.focus()`); (4) табличные слияния без потери покрытия: `message-actions` (буфер обмена), `tool-fallback-error`, `markdown-policy`, пара AC-06.3; (5) 3 теста уровня интеграции без суффикса `.int`: `app-sidebar.test.tsx`, `thread-activity-tracker.test.tsx`, `i18n.test.tsx` «new chat and the conversation menus» — фактически 13 интеграционных при утверждённом исключении 10; (6) в таблице дефектов плана тест «AC-04.1 + AC-03.3» вряд ли ловит «поднятие новой беседы не подключено»: новая беседа без `lastMessageAt` и так попадает первой (`group-threads-by-date.ts:35`); поднятие доказывает `thread-activity-tracker.test.tsx`.
+  - T8.1, решение по аудиту тестов. Orchestrator decision on the T8.1 test-budget audit (verbatim):
+    > APPLY:
+    > 1. Confirmed duplicates: in thread-history-list.test.tsx (describe 'ThreadHistoryItem — title') delete 'a truncated title shows the full title in a tooltip on hover' and 'a thread without a title reads «Новая беседа»' (covered in thread-history-item.test.tsx); MOVE 'a title that fits shows no tooltip' into thread-history-item.test.tsx.
+    > 2. Drops: delete-thread-dialog 'Esc is «Отмена»' (base-ui default behaviour — but FIRST confirm the Esc→focus-back-to-«⋯» behaviour is asserted elsewhere; if this test is the only proof of focus return on Esc, keep it and say so); retry-gate 'drop after release leaves the already resolved waiter resolved' (cannot fail); thread-list-adapter 'archive is rejected' (asserts a stub).
+    > 3. Lossless table merges: message-actions clipboard pair, tool-fallback-error pair, markdown-policy cases, AC-06.3 pair; chat-header 'pending…' into 'text…' as a table row; three group-threads-by-date tests (empty list, sorting, no sort keys) into one table; message-error case 3 Space row may stay as a table row (cheap, AC-08.5a keyboard).
+    > KEEP: the coarse row of shell.delete-open-thread (only case that catches a hard-coded composer.focus()); app-sidebar.test.tsx, thread-activity-tracker.test.tsx and the i18n 'new chat and the conversation menus' case (full-stack component tests, each with a unique defect) — record them in the plan's budget section as full-stack component tests beyond the 10 integration exception, with their unique defects, for the user's attention.
+    > ALSO: fix the plan's defect table — the 'AC-04.1 + AC-03.3' integration test does not catch 'new-thread lifting not wired' (a new thread with no lastMessageAt lands first anyway, group-threads-by-date.ts:35); that defect is caught by thread-activity-tracker.test.tsx. Update the outdated '10 it.todo in 7 files' header comment in the 7 shell.*.int.test.tsx files to reflect they are filled. Record that the full `pnpm build` substitute (pnpm build --filter=web... + api tsc -p tsconfig.build.json --noEmit) is accepted because nest build deleteOutDir would delete the running API's dist; the full build runs when the stand is stopped.
+  - T8.1, исполнение решения (2026-10-30, Fix Mode): (1) из `thread-history-list.test.tsx` удалён describe «ThreadHistoryItem — title» (2 дубля), «a title that fits shows no tooltip on hover» перенесён в `thread-history-item.test.tsx` (те же заглушки `scrollWidth`/`clientWidth` 120/200, то же утверждение); (2) «Esc is «Отмена»» удалён: проверка показала, что он **не** утверждал возврат фокуса на «⋯» (только закрытие и отсутствие `onConfirm`), то есть не был доказательством возврата фокуса по Esc; возврат фокуса через `finalFocus` доказывает ««Отмена» closes without confirming and returns focus to «⋯»», а возврат именно по Esc автотестом нигде не утверждается — остаётся за L1-2 (T8.3); удалены `retry-gate` «drop after release…» и `thread-list-adapter` «archive is rejected»; (3) табличные слияния `it.each` (каждая строка — отдельный случай; утверждения не ослаблены, часть строк получила утверждения соседа): `message-actions` буфер обмена (2 строки), `tool-fallback-error` incomplete/error (2 строки; строка без значения ошибки теперь также проверяет отсутствие `alert`), `markdown-policy` (`linkPolicy` — 13 строк, `isRenderableImageSrc` — 5 строк), AC-06.3 (2 строки; строка «последняя ссылка» теперь также проверяет имя диалога и `onDelete` ровно один раз с `{id, title}`), `chat-header` text/pending (строка pending теперь также проверяет `tabindex=-1` и `data-shell-focus`), `group-threads-by-date` «ordering» (пустой список, сортировка, без ключей — 3 строки); `message-error` случай 3 уже был `it.each` — без изменений; строка `coarse` `shell.delete-open-thread` сохранена; (4) заголовки 7 файлов `shell.*.int.test.tsx`: «10 tests in 7 files, all implemented — no it.todo left». `thread-list-adapter.test.ts` хранился в репозитории с CRLF — при правке переведён в LF. Счёт тестов: до — 264 случая в 38 файлах (рабочее дерево на момент правок; запись T8.1 выше — 262, разница — два случая в `app-sidebar.test.tsx`, изменённом параллельно), после — 259 (−5: 2 дубля, 3 удаления; перенос и табличные слияния счёт не меняют). Гейты после правок: eslint — 0; `tsc --noEmit` — 0; `vitest run` ×2 — 38 файлов, 259 passed, без нестабильности (предыдущая пара прогонов дала 2 падения в `app-sidebar.test.tsx` во время параллельной правки `app-sidebar.tsx`/теста в 16:53–16:54, которых T8.1 не касалась; после её завершения — зелёный); `next build` — успешно; CR в изменённых файлах — 0; `as` (кроме `as const`) — 0. Полный `pnpm build` заменён на `pnpm build --filter=web...` + `tsc -p tsconfig.build.json --noEmit` для api — замена принята оркестратором (`nest build` с `deleteOutDir` удалил бы `dist` работающего API на :4000); полный `pnpm build` — когда стенд остановлен.
+  - Таблица «Проверка AC»: 37 строк — 7 закрыты автотестами полностью, 22 с зелёной автоматической частью ждут L1 (T8.3), 7 только L1 (T8.3), 1 — метрики (T8.4). Пробелов нет: все AC DD сопоставлены; AC-23.1/24.1 вне scope (DD); AC-16.x/17.1 принадлежат `threads-api` (клиентская часть AC-16.3 — `thread-list-adapter.test.ts` «DELETE 404 counts as success»).
+  - Известный открытый вопрос (не исправлялся, расследуется отдельно): в одном сохранённом ответе ассистента найдено повреждение U+FFFD.
 
 ## Открытые вопросы
 
@@ -1168,7 +1206,18 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - Находки для T3.1 (внесены в `task-T3.1.md`): (1) AC-10.2 требует начальный фокус на «Новый чат» при открытии шторки — сейчас фокус попадает на сам элемент диалога (использовать `initialFocus` у `Drawer`); (2) кнопки «×» «Закрыть меню» в шапке шторки (UXRD 761) пока нет.
     - Гейты (quality-fixer, 2026-10-30; dev-сервер :3000 работал, `next build` не запускался — код не менялся с успешной сборки исполнителя): `eslint src` — 0, `tsc --noEmit` — 0; `git diff HEAD` по `ui/button.tsx`, `ui/skeleton.tsx`, `ui/tooltip.tsx` — пусто; `pnpm install --frozen-lockfile --offline --ignore-scripts` принят («Lockfile is up to date»), `pnpm-lock.yaml` не изменился.
 - **Мутационные проверки** (заполняются в T2.2, T2.3 и задачах с Proof obligations): T2.2 — 9 мутаций (M1–M9), T2.3 — 6 (M1–M6), каждая краснит названный кейс; таблицы в `task-T2.2.md` и `task-T2.3.md` (Investigation Notes). Модули T1.1 не менялись.
-- **Метрики и L1** (заполняются в T8.3, T8.4): —
+- **Метрики и L1** (T8.3, T8.4; 2026-10-30, оркестратор, Claude-in-Chrome + эмуляция chrome-devtools, dev-сервер, если не указано иное):
+  - **L1-1…L1-10 — pass**, fail нет; Evidence и Sign-off — `l1-browser-scenarios.md`. Not executed: закрытие шторки свайпом влево (L1-3; нужно реальное касание, оставлено пользователю, `[DevTools — user]`); живой стрим с упавшим инструментом (L1-10 C; у ассистента на стенде нет инструментов). Наблюдения без записанного результата помечены в чек-листе «not recorded»; после проверки на production открыта одна строка таблицы «Проверка AC» — AC-08.5b (возврат в беседу с блоком ошибки, L1-10 B, шаги 3 и 6, не выполнялся).
+  - **Проверка на production после пост-реализационных исправлений** (оркестратор, `next start` :3000, финальная сборка после исправлений security и code-verifier, 268 тестов `apps/web` зелёные): AC-08.1 — колонка 768 px при 1440×900; AC-08.3 — «К последнему сообщению» после прокрутки вверх, клик возвращает ленту вниз; AC-02.4 — «Копировать» блока кода меняет значок на галочку; AC-02.3 — в `SEED-RICH` (12) отправлено «Ответь одним словом: столица Италии?» → «Рим», 14 сообщений, после F5 — 14; AC-09.3 — без сохранённой темы страница следует за темой ОС (тёмная → `html.dark`, светлая — без перезагрузки), сохранённая тема остаётся `null`; AC-10.1 / 10.4 — при 375×812 и 360×740 горизонтального скролла нет, `pre` с `overflow-x: auto` прокручивается сам и заканчивается на x = 336; высота оболочки 740 px (`h-dvh`), viewport `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content`.
+  - **Пост-реализационная проверка** (оркестратор, 2026-10-30): code-verifier — статус drift, 0 critical, 0 major, 9 minor; документные D001–D004, D007, D009 исправлены в `design-web-shell.md` v1.11; кодовые: D005 — удалён `ui/sheet.tsx`, D006 — подсказки переведены, D008 — `shell-actions.test.tsx` (3 теста, мутационная проверка). security-reviewer — approved_with_notes, 15/15 требований, 4 усиления применены. Итоговый quality-fixer: `apps/web` 268/268 ×3, `apps/api` 149 unit + 34 e2e, покрытие строк 88,37 %.
+  - **Заголовки безопасности** (`GET /chat/SEED-RICH`, production): `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`.
+  - **Дефект T8.3, исправлен**: `finalFocus` шторки возвращал фокус на «Меню» после выбора беседы и SB-03 «Новый чат» в шторке (остаточный риск 2 T4.3). Исправление — `apps/web/src/components/shell/app-sidebar.tsx` (ref `actionOwnsFocus`: действие, которое само переносит фокус, пропускает `finalFocus`) + 2 теста в `app-sidebar.test.tsx`; перепроверено в эмуляции. Правка шла параллельно с T8.1; итоговый прогон гейтов T8.1 (259 passed) сделан после неё.
+  - **Попутные правки доступности (L1-8)**: у композера `name="message"`; инициалы аватара в кнопке меню пользователя — `aria-hidden`.
+  - **Закрыты отложенные пункты Phase 4–5**: возврат фокуса на кнопку меню пользователя проверен на production; поле переименования получает фокус через ~190 мс в dev и сразу на production.
+  - **FR-19**: после `seed-l1.ts --pages` — 135 бесед, подгрузка по 20, группы по порядку, без дублей. Запрос страницы, оборванный перезапуском API в режиме watch, показал «Не удалось загрузить ещё беседы» + «Повторить»; повтор подгрузил остаток. После `--pages --remove` `SEED-PAGE-*` — 0 в `GET /api/threads` и в `mastra_threads`.
+  - **Производительность и Lighthouse** (production): FOUC нет — скрипт темы в `<body>` перед `<main>`, CLS 0 при CPU ×4; предупреждений о `<script>` и гидратации нет; Lighthouse accessibility 100 (десктоп и мобильный), best practices 100, SEO 100. Метрика № 2 (≤ 1,5 с до последнего из 50 сообщений, 10 прогонов) — **pass**: беседа `SEED-LONG` (50 сообщений, `seed-l1.ts --long`), время от начала навигации до 50 узлов сообщений — 644, 620, 580, 617, 618, 681, 644, 567, 620, 576 мс, медиана 619 мс, максимум 681 мс; все 50 узлов были на месте уже при первой проверке после загрузки, поэтому значения — верхние оценки. LCP `/chat/SEED-RICH` (≤ 2,5 с, 5 прогонов, десктоп, без замедления) — **pass**: 872 мс (трасса производительности, CLS 0,00), затем 548, 532, 568, 528 мс (PerformanceObserver), медиана 548 мс, максимум 872 мс.
+  - **Известные замечания, оставлены**: axe `label-content-name-mismatch` (не влияет на счёт) у кнопки меню пользователя — видимый текст «DU dev-user» против `aria-label` «Меню пользователя dev-user» из UXRD; Chrome issue «form field without id or name» — только скрытая измерительная textarea `react-textarea-autosize`; удалённая беседа остаётся в списке другой вкладки до перезагрузки (синхронизации вкладок нет по дизайну); U+FFFD в одном сохранённом ответе — вне `apps/web`, Notes плана 2 `threads-api`.
+  - **T8.4 — метрики `threads-api`**: № 10 — точное перемеривание (обе стороны `node dist/main.js`, 15 чередующихся прогонов): медиана TTFT 886,9 мс после против 1094,9 мс до, Δ −208 мс ≤ 50 мс; проверка владения ≈ 0,7 мс (безмодельная проба). № 7 — после исправления заголовков (`threads-api` v1.11) 19/20 (№ 5 без ответа: `Overloaded` провайдера). Первые прогоны (+453 мс; 10/20) эскалированы; подробности — `task-T8.4.md` и `l1-browser-scenarios.md`.
 
 ## Change History
 
@@ -1178,3 +1227,6 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 | 2026-10-30 | Ревизия по ревью и ответам пользователя: T3.4 ставит заголовок приветствия, подпись и placeholder композера; кейсы F5 и AC-02.5 `shell.open-thread` перенесены в T4.2 (прогресс 1/10 после Phase 3); правило выполнения 10; закрыты вопросы о ключе, `ai` (строка `gap`), каталоге тестов и лимите (исключение 10 при лимите 5); T1.4 после гейта G1; запуск сида через `node` с `createRequire`; проверка FR-19 перенесена в T8.3 с сидом страниц T8.2; инвариант Element 1 — ревью в T8.1; T8.4 после T8.3; SB-14 — `gap`; `shadcn add --yes`; T1.3 — порядок обёртки `fetch`, временная кнопка удаления | work-planner |
 | 2026-10-30 | T2.1: `deferred()` в `fixtures.ts`, `<Toaster />` в `renderWithRuntime`; T8.2: повторный `saveThread` после `saveMessages` в режиме страниц; схема фаз — S-11 в узле Phase 1; T3.4 зависит от T3.3 (ребро на схеме); снапшот — «все четыре закрыты»; даты убраны из тела | work-planner |
 | 2026-10-30 | План утверждён пользователем, статус active | work-planner |
+| 2026-10-30 | Итоги T8.2–T8.4: отмечены задачи, строки «Проверка AC», Quality Assurance; Notes «Метрики и L1» (L1, FR-19, дефект шторки, Lighthouse, метрики № 7 и № 10); в Completion Criteria добавлены пост-реализационная проверка и коммит; статус active | work-planner |
+| 2026-10-30 | Проверка оркестратора на production после пост-реализационных исправлений: отмечены AC-02.1/02.3/02.4, AC-08.1/08.3/08.4, AC-09.1…09.4, AC-10.1…10.4; метрика № 2 и LCP — pass; заголовки безопасности в Notes; открыты AC-08.5b и свайп S-11; статус active | work-planner |
+| 2026-10-30 | Пост-реализационная проверка выполнена (code-verifier, security-reviewer, quality-fixer) — критерий отмечен, итоги в Notes; открыты AC-08.5b, свайп S-11, коммит и ревью пользователя; статус active | work-planner |

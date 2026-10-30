@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 
-type ChatErrorProps = {
+type ShellErrorProps = {
   error: unknown;
   retry: () => void;
 };
@@ -11,10 +11,14 @@ type ChatErrorProps = {
 const digestOf = (error: unknown): string | undefined =>
   error instanceof Error && 'digest' in error && typeof error.digest === 'string' ? error.digest : undefined;
 
-/** Error boundary of the `(chat)` group: a fixed message and a page reload. */
-export default function ChatError({ error }: ChatErrorProps) {
+/**
+ * Root error boundary: sits inside the root layout (theme, fonts, global styles stay active) and
+ * outside `(chat)/layout.tsx`, so render errors of the shell itself land here. Only the digest is
+ * logged; the error text and stack are neither shown nor logged.
+ */
+export default function ShellError({ error }: ShellErrorProps) {
   useEffect(() => {
-    console.error('chat shell: render failed', { digest: digestOf(error) }, error);
+    console.error('chat shell: render failed', { digest: digestOf(error) });
   }, [error]);
 
   return (

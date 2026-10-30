@@ -2,7 +2,7 @@
 
 | Поле | Значение |
 |------|----------|
-| Версия | 1.6 |
+| Версия | 1.11 |
 | Дата | 2026-10-30 |
 | Статус | Approved |
 | Фича | `chat-shell` |
@@ -175,7 +175,7 @@ FR-01…FR-12, FR-19…FR-22 PRD v1.5 без изменения формулир
 ### FR-02 Открытие беседы
 
 - [ ] **AC-02.1** **When** пользователь открывает беседу из 12 сообщений с рассуждением и инструментом, the system shall показать все 12 в исходном порядке; рассуждение свёрнуто и раскрывается; инструмент — с результатом. (адаптер истории + каркас; U, L1-4)
-- [ ] **AC-02.2** **While** история загружается (или ещё разрешается беседа по прямой ссылке), the system shall показывать скелетон ленты, а не приветствие. (`resolveMainView` `switching`, в т. ч. правило 4 «история беседы из URL ещё не загружена» — F5 при `threads.isLoading`; U, I)
+- [ ] **AC-02.2** **While** история загружается (или ещё разрешается беседа по прямой ссылке), the system shall показывать скелетон ленты, а не приветствие; композер виден, отправка доступна только после загрузки (UXRD 6.17). (`resolveMainView` `switching` → `Thread` с `historyPending`, в т. ч. правило 4 «история беседы из URL ещё не загружена» — F5 при `threads.isLoading`; на `/chat/<id>` скелетон держится и пока сообщения ещё не попали в тред рантайма — страж `MainView`; U, I)
 - [ ] **AC-02.3** **When** в восстановленной беседе из `N` сообщений пользователь отправляет сообщение, the system shall стримить ответ в ту же беседу (`body.id` = её id), и после завершения в ленте `N+2` сообщения. (L1-4)
 - [ ] **AC-02.4** **When** открыта беседа с длинным markdown (таблица, код 80+ строк), the system shall отрендерить его как при живом стриме, «Копировать» у блока кода работает. (каркас; L1-4)
 - [ ] **AC-02.5** **If** ответ `GET /api/threads/:id/messages` не проходит `ThreadMessagesResponseSchema` или `safeValidateUIMessages`, **then** the system shall показать TH-07 с «Повторить» и «Новый чат», а сайдбар и шапка останутся работоспособны. (адаптер истории + статус-стор; U, I)
@@ -292,18 +292,20 @@ FR-14 принадлежит `threads-api`; здесь — только отоб
 | Existing → delete | `apps/web/src/components/assistant.tsx` | `useChatRuntime` без адаптеров; заменяется `components/shell/chat-runtime-provider.tsx` |
 | Existing → modify | `apps/web/src/app/layout.tsx` | Шрифты latin+cyrillic, `ThemeProvider` (из `components/theme-provider.tsx`), `Toaster`, theme-color, `suppressHydrationWarning`, `viewport` (`viewportFit: 'cover'`, `interactiveWidget: 'resizes-content'`), `preconnect` к `apiBaseUrl`, метаданные на русском |
 | Existing → modify | `apps/web/src/app/globals.css` | `--font-sans`, кольцо фокуса, `--destructive-foreground`, токены оболочки и движения |
-| Existing → modify | `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` | 48rem, тексты, вложения скрыты, подсказки 2×2, приветствие, слот `DeletedNotice`, экспорт `ThreadHistorySkeleton`; action bar (раздел «Action bar и ошибки в ленте»): `AssistantActionBar` без `Reload`/`More`/`ExportMarkdown`, `UserActionBar` — `Copy` вместо `Edit`, оба без `autohide` (видимость — CSS `:hover`/`:focus-within`, всегда при `pointer: coarse`), «Копировать» только при видимом тексте, удаление `BranchPicker` и `EditComposer`, `MessageError` с кнопкой «Перегенерировать» у последнего ответа по флагу `regenerateAfterError`, ответ без частей не рендерит строку (у заглушки ошибки — только блок ошибки) |
+| Existing → modify | `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` | 48rem, тексты, вложения скрыты, подсказки 2×2, приветствие, слот `DeletedNotice`, проп `historyPending` (скелетон и композер без отправки в `switching`); action bar (раздел «Action bar и ошибки в ленте»): `AssistantActionBar` без `Reload`/`More`/`ExportMarkdown`, `UserActionBar` — `Copy` вместо `Edit`, оба без `autohide` (видимость — CSS `:hover`/`:focus-within`, всегда при `pointer: coarse`), «Копировать» только при видимом тексте, удаление `BranchPicker` и `EditComposer`, `MessageError` с кнопкой «Перегенерировать» у последнего ответа по флагу `regenerateAfterError`, ответ без частей не рендерит строку (у заглушки ошибки — только блок ошибки) |
 | Existing → modify | `apps/web/src/components/assistant-ui/elements/tool-fallback.aui.tsx` | `ToolFallbackImpl`: ветвление по `isError` части (статус ошибки для триггера и `ToolFallbackError`, без `ToolFallbackResult`); `ToolFallbackError`: фиксированный текст ошибки (D-15); строки — раздел «Локализация» |
 | Existing → modify (строки) | `attachment.aui.tsx`, `reasoning.tsx`, `tool-group.aui.tsx`, `ui/dialog.tsx`, `image.tsx`, `file.tsx`, `media-player.tsx` | Локализация (раздел «Локализация») |
 | Existing → modify | `apps/web/src/components/markdown-text.tsx` | «Копировать»; переопределения `a` и `img` по политике «Недоверенный markdown» — **намеренное изменение поведения каркаса** (решение пользователя 2026-10-28) |
 | Existing → modify | `apps/web/src/components/ui/button.tsx` | Непрозрачное кольцо фокуса; вариант `destructive` — сплошная заливка (вариант нигде не используется) |
 | Existing → modify | `apps/web/eslint.config.mjs` | **Изменение реализации**: `src/components/markdown-text.tsx` добавлен в существующий список `files` переопределения `@next/next/no-img-element: "off"` (комментарий блока дополняется: изображения ответов модели с произвольных https-хостов); inline `eslint-disable` в `markdown-text.tsx` не используется |
 | Existing → modify | `apps/web/package.json` | Зависимости, скрипты `test`, `test:watch`; точные версии `@assistant-ui/*`, `ai` |
-| Existing (unchanged) | `next.config.ts`, `components.json`, `surfaces.tsx`, `utils/href.ts` (`safeHref` — переиспользуется политикой ссылок), `tooltip-icon-button.tsx`, `ui/{avatar,skeleton,tooltip,resizable,textarea}.tsx`, `follow-up-suggestions.aui.tsx`, `reasoning.aui.tsx`, `tool-group.aui.tsx` (кроме строки) | Используются как есть |
-| New (shadcn add) | `apps/web/src/components/ui/{sidebar,sheet,dropdown-menu,alert-dialog,input,separator,sonner}.tsx`, `apps/web/src/hooks/use-mobile.ts` | base-nova; после добавления в `sidebar.tsx` вносятся правки из раздела «Правки скопированных компонентов» |
+| Existing → modify | `apps/web/next.config.ts` | Заголовки ответа для всех маршрутов (раздел «Security Considerations», «Заголовки ответа»); `cacheComponents` и прочие настройки не меняются |
+| Existing (unchanged) | `components.json`, `surfaces.tsx`, `utils/href.ts` (`safeHref` — переиспользуется политикой ссылок), `tooltip-icon-button.tsx`, `ui/{avatar,skeleton,tooltip,resizable,textarea}.tsx`, `follow-up-suggestions.aui.tsx`, `reasoning.aui.tsx`, `tool-group.aui.tsx` (кроме строки) | Используются как есть |
+| New (shadcn add) | `apps/web/src/components/ui/{sidebar,dropdown-menu,alert-dialog,input,separator,sonner}.tsx`, `apps/web/src/hooks/use-mobile.ts` | base-nova; после добавления в `sidebar.tsx` вносятся правки из раздела «Правки скопированных компонентов» |
+| Delete | `apps/web/src/components/ui/sheet.tsx` | Приходит зависимостью `sidebar`; после замены мобильной ветки на base-ui `Drawer` потребителей нет |
 | New | `apps/web/src/app/(chat)/layout.tsx` | Серверный layout: `<Suspense>` + чтение cookie `sidebar_state` → `ChatShell` |
 | New | `apps/web/src/app/(chat)/page.tsx`, `apps/web/src/app/(chat)/chat/[threadId]/page.tsx` | Возвращают `null` (UI живёт в layout) |
-| New | `apps/web/src/app/(chat)/error.tsx` | `'use client'` граница ошибок Next группы `(chat)`: «Что-то пошло не так» + «Обновить страницу», `console.error` с `digest` |
+| New | `apps/web/src/app/error.tsx` | `'use client'` граница ошибок Next корневого сегмента — оборачивает `(chat)/layout.tsx` и `ChatShell`: «Что-то пошло не так» + «Обновить страницу», `console.error` только с `digest` |
 | New | `apps/web/src/components/theme-provider.tsx` | `'use client'` обёртка `NextThemesProvider` с `scriptProps` по шаблону `InlineScript` (раздел «Тема, шрифт, токены») |
 | New | `apps/web/src/hooks/{use-media-query,use-now,use-global-shortcuts}.ts` | `useMediaQuery(query)` (`useSyncExternalStore` над `matchMedia`; рабочая область ≥ 1024 px), `useNow()` (метка «сейчас» для группировки: обновляется при возврате во вкладку и в полночь — A-6), `useGlobalShortcuts()` (`Ctrl/⌘+Shift+O` с охраной `isShortcutBlocked`) |
 | New | `apps/web/src/components/shell/*.tsx` | `chat-shell`, `chat-runtime-provider`, `shell-actions` (`ShellActionsProvider`, `useShellActions`), `shell-welcome` (`ShellWelcome` — TH-02/TH-03 для слота `Welcome`), `app-sidebar`, `thread-history-list`, `thread-history-item`, `thread-title-field`, `delete-thread-dialog`, `user-menu`, `chat-header`, `main-view`, `thread-notice` (`ThreadNotice` и `DeletedNotice` — обёртка `variant="deleted"` для слота `DeletedNotice`), `workspace-panel`, `thread-activity-tracker`, `document-title`, `shell-fallback` |
@@ -502,11 +504,11 @@ fields:
 | contract:RemoteThreadMetadata-vs-ThreadSummary | Adapter ↔ contract mapping | transform | `toRemoteMetadata`: `{ status: 'regular', remoteId: id, title: title ?? undefined, lastMessageAt: new Date(updatedAt) }`; `list({after})` → `?cursor=after`, `nextCursor: null` → `undefined`; `archive` отклоняется (UI архивирования нет), `generateTitle` — опросчик FR-20; `DELETE` 404 = успех (AC-16.3); группировка по `lastMessageAt` (= `updatedAt`) | runtimeApiFacts[aui:RemoteThreadListAdapter]; design-threads-api.md: Contract Definitions (схемы `packages/contracts/src/threads.ts`), Data Contract «ThreadsService.delete», «Контракт для `web-shell`», п. 1–9 | packages/contracts/src/threads.ts, apps/web/src/lib/threads/thread-list-adapter.ts |
 | list:loadMore-error | SB-10 pagination error state | transform | Адаптер при ошибке `list({after})` ставит `ShellStatus.loadMoreFailed = true` и пробрасывает ошибку; при успехе — сбрасывает. SB-10 Error читает флаг; «Повторить» → `threads.loadMore()` | stateDisplay[Thread list].unsupportedStates | @assistant-ui/core dist/react/client/RemoteThreadList.js:602-630, apps/web/src/lib/threads/shell-status-store.ts |
 | list:ordering-D11 | Move thread to top of 'Сегодня' at send (D-11) and regroup (A-6) | transform | `ThreadActivityTracker` пишет `activityAt[itemId] = Date.now()` при фронте `isRunning` false→true любой беседы; `groupThreadsByDate` сортирует по `max(lastMessageAt, activityAt)` — поднятие мгновенно, порядок групп монотонен по построению (AC-19.1); `now` пересчитывается при фокусе вкладки и в полночь (A-6) | stateDisplay[Thread list].unsupportedStates | @assistant-ui/core dist/react/client/RemoteThreadList.js:95-98, apps/web/src/components/shell/thread-activity-tracker.tsx, apps/web/src/lib/threads/group-threads-by-date.ts |
-| apps/web/src/components/assistant-ui/elements/thread.aui.tsx:ThreadRoot | Thread column, Welcome, suggestions, composer (TH-01..TH-04) | transform | `--thread-max-width: 48rem`; `Welcome` — TH-02; подсказки из `Suggestions(...)` в сетке 2×2 (≥ 640 px) без «>»; кнопка вложений удалена, `AttachmentDropzone` заменён обычным `div`, `addAttachmentOnPaste={false}`; `autoFocus={false}` (фокус — политика указателя); новый слот `DeletedNotice`; на < 768 px композер внизу и в пустой беседе (D-10); экспорт `ThreadHistorySkeleton`; задержка скелетона 150 мс сохраняется | componentStructure[name=Thread], [name=ThreadWelcome], [name=ThreadSuggestions], [name=Composer] | apps/web/src/components/assistant-ui/elements/thread.aui.tsx |
+| apps/web/src/components/assistant-ui/elements/thread.aui.tsx:ThreadRoot | Thread column, Welcome, suggestions, composer (TH-01..TH-04) | transform | `--thread-max-width: 48rem`; `Welcome` — TH-02; подсказки из `Suggestions(...)` в сетке 2×2 (≥ 640 px) без «>»; кнопка вложений удалена, `AttachmentDropzone` заменён обычным `div`, `addAttachmentOnPaste={false}`; `autoFocus={false}` (фокус — политика указателя); новый слот `DeletedNotice`; на < 768 px композер внизу и в пустой беседе (D-10); проп `historyPending` — скелетон вместо ленты, композер виден, отправка заблокирована; задержка скелетона 150 мс сохраняется | componentStructure[name=Thread], [name=ThreadWelcome], [name=ThreadSuggestions], [name=Composer] | apps/web/src/components/assistant-ui/elements/thread.aui.tsx |
 | i18n:scaffold-strings | Localisation of scaffold strings (UXRD 10.2) | transform | Все строки UXRD 10.2 + найденные сверх: `reasoning.tsx` « (N с)», `tool-group.aui.tsx` плюрализация через `Intl.PluralRules('ru-RU')`, строки `tool-fallback.aui.tsx`, «Копировать» в `markdown-text.tsx`, «Закрыть» в `ui/dialog.tsx`, aria-строки `image/file/media-player`, `metadata.description`, «Боковая панель» вместо «Toggle Sidebar» в `ui/sidebar.tsx` | i18n.localeGaps | thread.aui.tsx, attachment.aui.tsx, reasoning.tsx, tool-group.aui.tsx, tool-fallback.aui.tsx, markdown-text.tsx, ui/dialog.tsx, image.tsx, file.tsx, media-player.tsx, layout.tsx |
 | theme:no-provider | Theme (FR-09, AC-09.2 no FOUC) | transform | `next-themes` 0.4.6: `attribute="class"`, `defaultTheme="system"`, `enableSystem`, `disableTransitionOnChange`, `enableColorScheme`, `scriptProps` по шаблону `InlineScript` из документации Next — внутри клиентской обёртки `components/theme-provider.tsx` (в серверном компоненте `typeof window` всегда `'undefined'`, и клиент получил бы `text/javascript`); `<script>` next-themes 0.4.6 уже несёт `suppressHydrationWarning` (проверено по `dist/index.mjs`), поэтому расхождение `type` принимается; `<html suppressHydrationWarning>`; inline-скрипт `theme-color`; cookies для темы не читаются (корневой layout остаётся статическим) | externalResources.guidelines (preventing-flash-before-hydration.md); externalResources.designSystem (sonner requires next-themes); componentStructure[name=RootLayout] | apps/web/src/app/layout.tsx, apps/web/src/components/theme-provider.tsx, apps/web/package.json |
 | next:cacheComponents | Routing /chat/[threadId] under Cache Components | transform | `cacheComponents`/`partialPrefetching` сохраняются. Новая группа `(chat)`: layout — серверный, `<Suspense>` вокруг чтения `cookies()`; обе страницы возвращают `null` и не читают `params` (нет требования Suspense для params, нет `generateStaticParams`); id беседы клиент берёт из `usePathname()`; Activity скрывает пустые страницы — дублирования рантайма нет (он в layout) | externalResources.guidelines; apps/web/next.config.ts:5-6 | apps/web/next.config.ts, apps/web/src/app/page.tsx, apps/web/src/app/(chat)/layout.tsx, apps/web/src/app/(chat)/chat/[threadId]/page.tsx |
-| shadcn:sidebar-registry | Sidebar/sheet/menu/dialog/input/toast components | transform | Добавляются `sidebar, sheet, dropdown-menu, alert-dialog, input, separator, sonner` (+ `use-mobile`). Правки скопированного `sidebar.tsx`: русские подписи, `setOpen(value, { persist })` (временное сворачивание без записи cookie), охрана сочетаний `isShortcutBlocked`, кривая `--ease-panel`. Состояние на первом кадре — cookie `sidebar_state` через `cookies()` (FR-21). ↑/↓ — собственный обработчик (shadcn его не даёт) | externalResources.designSystem | apps/web/components.json, apps/web/src/components/ui/*, apps/web/src/hooks/use-mobile.ts |
+| shadcn:sidebar-registry | Sidebar/sheet/menu/dialog/input/toast components | transform | Добавляются `sidebar, dropdown-menu, alert-dialog, input, separator, sonner` (+ `use-mobile`); пришедший зависимостью `sheet` удаляется после замены шторки на `Drawer`. Правки скопированного `sidebar.tsx`: русские подписи, `setOpen(value, { persist })` (временное сворачивание без записи cookie), охрана сочетаний `isShortcutBlocked`, кривая `--ease-panel`. Состояние на первом кадре — cookie `sidebar_state` через `cookies()` (FR-21). ↑/↓ — собственный обработчик (shadcn его не даёт) | externalResources.designSystem | apps/web/components.json, apps/web/src/components/ui/*, apps/web/src/hooks/use-mobile.ts |
 | aui:ThreadListItem-aria | Active item semantics and link behavior (SB-06, AC-01.2) | transform | `ThreadListItemPrimitive.Root/Trigger` не используются: элемент — `li > SidebarMenuButton render={<Link href="/chat/<id>">}` с `aria-current="page"`; Ctrl/⌘/средний клик — новая вкладка; состояние берётся из `useAuiState(s => s.threads.threadItems)` | accessibility[ThreadListItemPrimitive.Root] | @assistant-ui/react dist/primitives/threadListItem/ThreadListItemRoot.js, ThreadListItemTrigger.js, apps/web/src/components/shell/thread-history-item.tsx |
 | surfaces:unused-exports | Motion tokens reuse (pressable, collapsePanel, ShimmerLabel) | preserve | `surfaces.tsx` не меняется; получает первых потребителей: `ShimmerLabel` (плейсхолдер в ожидании заголовка), `pressable` (SB-03, HD-кнопки, карточки подсказок); кривая `collapsePanel` выносится в токен `--ease-panel` для сайдбара/шторки/рабочей области. Локальный `pressable` в `tool-fallback.aui.tsx` — вне объёма (рендер инструментов не меняется) | componentStructure[name=surfaces utilities] | apps/web/src/components/surfaces.tsx, apps/web/src/components/assistant-ui/elements/tool-fallback.aui.tsx |
 | tests:tooling | Test infrastructure (FR-12) | transform | `vitest` ^4.1.12 (та же линия, что `apps/api`), `vite` ^8.0.0, `@vitejs/plugin-react` ^6.1.2, `jsdom` ^29.1.1 (не 30.x: локальный Node 24.11 < 24.15), `@testing-library/react` ^16.3.3, `@testing-library/dom` ^10.4.2, `@testing-library/jest-dom` ^7.0.1, `@testing-library/user-event` ^14.6.8, `msw` ^2.15.0 (3.x — мажор месячной давности, не берётся). Скрипты `test: vitest run`, `test:watch: vitest` | analysisScope.uiConventions.testRunner; npm registry query 2026-10-28 | apps/web/package.json, apps/api/package.json, apps/api/vitest.config.ts, turbo.json |
@@ -548,14 +550,15 @@ Direct Impact:
   - apps/web/src/components/assistant.tsx (удаляется → components/shell/chat-runtime-provider.tsx)
   - apps/web/src/app/layout.tsx (шрифты, ThemeProvider, Toaster, theme-color)
   - apps/web/src/app/globals.css (токены шрифта, фокуса, destructive-foreground, оболочки)
-  - apps/web/src/components/assistant-ui/elements/thread.aui.tsx (ширина, тексты, вложения, подсказки, слот, экспорт скелетона; AssistantActionBar, UserActionBar (без autohide), MessageError, AssistantMessage изменены; BranchPicker, EditComposer удалены)
+  - apps/web/src/components/assistant-ui/elements/thread.aui.tsx (ширина, тексты, вложения, подсказки, слот, проп historyPending; AssistantActionBar, UserActionBar (без autohide), MessageError, AssistantMessage изменены; BranchPicker, EditComposer удалены)
   - apps/web/src/components/assistant-ui/elements/tool-fallback.aui.tsx (ToolFallbackImpl — ветвление по isError; ToolFallbackError — фиксированный текст ошибки; строки)
   - apps/web/src/components/ui/button.tsx (кольцо фокуса, destructive)
   - строки: attachment.aui.tsx, reasoning.tsx, tool-group.aui.tsx, ui/dialog.tsx, image.tsx, file.tsx, media-player.tsx
   - apps/web/src/components/markdown-text.tsx («Копировать»; компоненты a и img — политика «Недоверенный markdown»)
   - apps/web/eslint.config.mjs (markdown-text.tsx в списке files переопределения @next/next/no-img-element)
   - apps/web/package.json (зависимости, скрипты)
-  - новые: app/(chat)/** (в т. ч. error.tsx), components/theme-provider.tsx, components/shell/**, components/ui/{sidebar,sheet,dropdown-menu,alert-dialog,input,separator,sonner}.tsx, hooks/{use-mobile,use-media-query,use-now,use-global-shortcuts}.ts, lib/threads/**, lib/*.ts, vitest.config.ts, src/test/**
+  - apps/web/next.config.ts (заголовки ответа: frame-ancestors, X-Frame-Options, nosniff, Referrer-Policy)
+  - новые: app/error.tsx, app/(chat)/**, components/theme-provider.tsx, components/shell/**, components/ui/{sidebar,dropdown-menu,alert-dialog,input,separator,sonner}.tsx, hooks/{use-mobile,use-media-query,use-now,use-global-shortcuts}.ts, lib/threads/**, lib/*.ts, vitest.config.ts, src/test/**
 Indirect Impact:
   - Все кнопки ui/button: кольцо фокуса становится непрозрачным (видимое изменение для всех кнопок)
   - Все элементы с outline-ring: непрозрачный outline
@@ -563,12 +566,13 @@ Indirect Impact:
   - Корневые маршруты становятся динамическими (cookies() в layout группы) — первый кадр показывает фон ShellFallback до потока динамической части
   - pnpm test (turbo) теперь выполняет тесты apps/web
   - Ответы модели: ссылки (кроме #фрагмента и mailto:) открываются в новой вкладке, опасные схемы не кликабельны, изображения не-https не загружаются — намеренное изменение каркаса
-  - next build падает, если NEXT_PUBLIC_API_URL не задан или не абсолютный http(s) URL (lib/config.ts импортируется корневым layout)
+  - next build падает, если NEXT_PUBLIC_API_URL не задан или не абсолютный http(s) URL, а в production — и если это http не на loopback (lib/config.ts импортируется корневым layout)
+  - Страницы приложения нельзя встроить во фрейм (frame-ancestors 'none', X-Frame-Options DENY)
   - Лента: у всех сообщений только «Копировать», всегда в порядке Tab; правка, ветки, «Ещё»/«Экспорт» и перегенерация успешного ответа недоступны; перегенерация — запрос чата с trigger regenerate-message только из блока ошибки последнего ответа
 No Ripple Effect:
   - apps/api, packages/contracts (только потребление), ChatRequestSchema
   - Рендер сообщений, рассуждений, инструментов (кроме текста ошибки инструмента), markdown (кроме политики ссылок и изображений), follow-up подсказок (поведение каркаса)
-  - utils/href.ts (переиспользуется без изменений), surfaces.tsx, tooltip-icon-button.tsx, ui/{avatar,skeleton,tooltip,resizable,textarea}.tsx, next.config.ts, components.json
+  - utils/href.ts (переиспользуется без изменений), surfaces.tsx, tooltip-icon-button.tsx, ui/{avatar,skeleton,tooltip,resizable,textarea}.tsx, components.json
 ```
 
 ### Interface Change Matrix
@@ -576,9 +580,8 @@ No Ripple Effect:
 | Existing | New | Conversion Required | Wrapper Required | Compatibility Method |
 |---|---|---|---|---|
 | `<Assistant agentId="assistant" />` | `<ChatRuntimeProvider>` в `ChatShell` (агент — константа `ASSISTANT_AGENT_ID = 'assistant'`) | Да | Нет | Единственный вызов (`page.tsx`) удаляется вместе с файлом |
-| `Thread` props `{ components?, autoFocus? = true }` | Те же props; `MainView` передаёт `autoFocus={false}` | Нет | Нет | Значение по умолчанию сохраняется |
+| `Thread` props `{ components?, autoFocus? = true }` | + `historyPending?: boolean` (по умолчанию `false`); `MainView` передаёт `autoFocus={false}` и `historyPending` в `switching` | Нет | Нет | Новый необязательный проп; без него — прежний `Thread` |
 | `ThreadComponents { AssistantMessage, Welcome, ToolFallback, ToolGroup, ReasoningGroup, TaskGroup, ComposerExtra }` | + `DeletedNotice?: ComponentType` | Нет | Нет | Необязательный слот; без него — прежний композер |
-| `ThreadHistorySkeleton` (внутренний) | `export` | Нет | Нет | Добавление экспорта |
 | `AssistantActionBar`, `UserActionBar`, `BranchPicker`, `EditComposer`, `MessageError` (внутренние) | Сокращённый состав кнопок; `autohide` снят; `BranchPicker` и `EditComposer` удалены; кнопка «Перегенерировать» в `MessageError` по флагу; `MessageError` рендерит слот `DeletedNotice`, если он задан | Нет | Нет | Не экспортируются; вызовы — только внутри `thread.aui.tsx` |
 | `ToolFallbackImpl`, `ToolFallbackError` (`ToolFallback.Error`) props `{ status, className, … }` | Те же props; `ToolFallbackImpl` читает уже существующее поле `isError` части; текст ошибки фиксированный | Нет | Нет | Сигнатуры не меняются |
 | `Button` `variant="destructive"` (тонированный) | Сплошной `bg-destructive text-destructive-foreground` | Нет | Нет | Вариант не используется ни одним вызовом (grep) |
@@ -708,6 +711,23 @@ No Ripple Effect:
 
 **Step 5**: B, C — не выполняют A-4; D — стоимость тестов.
 
+#### Element 8: Проп `Thread.historyPending`
+
+**Step 1**: AC-02.2 и UXRD 6.17 — пока беседа разрешается или грузится её история, вместо ленты скелетон TH-05, а композер TH-04 виден; отправка становится доступна после загрузки. Состояние `switching` знает только оболочка (`resolveMainView`): библиотека блокирует отправку лишь по `isDisabled`, `canSend` и `isRunning` (`@assistant-ui/core` 0.3.32 `dist/store/primitive-predicates.js:7`), а пока идёт `fetch` беседы главным остаётся прежний тред (`dist/react/runtimes/RemoteThreadListThreadListRuntimeCore.js:526-559`).
+
+**Steps 2–3**
+
+| Alternative | Requirements covered | New persistent state | New props / slots | Crosses component boundary | Breaking | Notes |
+|---|---|---|---|---|---|---|
+| A. Необязательный проп `historyPending` у `Thread`: скелетон вместо ленты, композер прижат к низу, отправка заблокирована (выбрано) | AC-02.2, 6.17 | 0 | 1 проп | да (Thread ↔ shell) | нет | Тот же элемент на той же позиции в `MainView` — поле ввода не перемонтируется при `switching → thread` |
+| B. `MainView` собирает скелетон и экспортированный `Composer` сам | AC-02.2, 6.17 | 0 | 1 экспорт | да | нет | Вторая копия каркаса ленты (корень, viewport, подвал, переменные композера); при переходе в `thread` поле перемонтируется — фокус и введённый текст теряются |
+| C. Блокировать через рантайм (`thread.isDisabled`) | 6.17 частично | 0 | 0 | да (оболочка → рантайм) | нет | Отключает и поле ввода (`composerInputDisabled`); в правиле 2 главный тред — ещё прежний |
+| D. Скелетон без композера | AC-02.2 | 0 | 0 | нет | нет | Нарушает UXRD 6.17 |
+
+**Step 4**: **Selected** A — наименьшее среди выполняющих. Блокировка без изменения рантайма: кнопка «Отправить» получает `disabled` (`@assistant-ui/react` 0.15.32 `dist/utils/createActionButton.js:19` — `primitiveProps.disabled || !callback`), а `ComposerPrimitive.Root` — `onSubmit` с `preventDefault`. Enter в поле вызывает `form.requestSubmit()` (`dist/primitives/composer/ComposerInput.js:86-101`), а внутренняя отправка корня пропускается при `defaultPrevented` (`ComposerRoot.js:105`, `composeEventHandlers` из Radix).
+
+**Step 5**: B — дублирование каркаса и потеря фокуса; C — блокирует ввод и привязан к не тому треду; D — требование.
+
 ### Architecture Overview
 
 ```mermaid
@@ -782,7 +802,7 @@ graph TD
     ChatPanel --> MainView
     MainView --> Thread["Thread (thread.aui.tsx) TH-01..05,08,09,10"]
     MainView --> Notice["ThreadNotice TH-06 / TH-07"]
-    MainView --> Skeleton["ThreadHistorySkeleton (switching)"]
+    Thread --> Skeleton["ThreadHistorySkeleton (historyPending)"]
     Thread -. "слот DeletedNotice" .-> DeletedNotice["ThreadNotice variant=deleted (E-8)"]
 ```
 
@@ -796,9 +816,9 @@ apps/web/
     │   ├── layout.tsx                                (modify)
     │   ├── globals.css                               (modify)
     │   ├── page.tsx                                  (delete)
+    │   ├── error.tsx                                 (new, client — граница ошибок над (chat)/layout)
     │   └── (chat)/
     │       ├── layout.tsx                            (new, server)
-    │       ├── error.tsx                             (new, client — граница ошибок группы)
     │       ├── page.tsx                              (new → null)
     │       └── chat/[threadId]/page.tsx              (new → null)
     ├── components/
@@ -818,13 +838,15 @@ apps/web/
     │   │   ├── delete-thread-dialog.tsx              DLG-01
     │   │   ├── user-menu.tsx                         SB-11, TM-01
     │   │   ├── chat-header.tsx                       контейнер + ChatHeaderView
-    │   │   ├── main-view.tsx                         resolveMainView → Thread / ThreadNotice / skeleton
+    │   │   ├── main-view.tsx                         useMainViewState, resolveMainView → Thread / ThreadNotice
     │   │   ├── thread-notice.tsx                     ThreadNotice (TH-06, TH-07, E-8) + DeletedNotice
     │   │   ├── workspace-panel.tsx                   WS-01..03
     │   │   ├── thread-activity-tracker.tsx           D-11
     │   │   ├── document-title.tsx                    UX-04
     │   │   └── shell-fallback.tsx                    фон до потока динамической части
-    │   └── ui/{sidebar,sheet,dropdown-menu,alert-dialog,input,separator,sonner}.tsx  (shadcn add)
+    │   └── ui/
+    │       ├── {sidebar,dropdown-menu,alert-dialog,input,separator,sonner}.tsx  (shadcn add)
+    │       └── {avatar,skeleton,resizable}.tsx       (unchanged — аватар SB-11, скелетоны, WS-01/WS-02)
     ├── hooks/
     │   ├── use-mobile.ts                             (shadcn add)
     │   └── use-media-query.ts  use-now.ts  use-global-shortcuts.ts   (new)
@@ -937,7 +959,7 @@ sequenceDiagram
   - `remoteId === undefined` и путь начинается с `/chat/` → `router.replace('/')` (библиотека сама ушла с беседы — удаление открытой беседы, UX-03 «заменяет запись»).
 - **Переходы между беседами** — `next/link` (запись в истории, AC-04.4); `prefetch` по умолчанию (пустые страницы). Назад/Вперёд меняют `pathname` → controlled `threadId`.
 - **«Новый чат»**: `pathname === '/'` → только фокус (A-3, A-10); иначе `router.push('/')`, затем фокус по правилу указателя.
-- **Заголовок вкладки** (`DocumentTitle`): эффект `document.title = …` по UX-04 («{Название} — Agent OS» / «Новый чат — Agent OS» / «Новая беседа — Agent OS» / «Беседа не найдена — Agent OS»); `metadata.title` корня — «Agent OS» (статический шелл). Анонсер маршрутов Next читает `document.title` (UXRD 7.5).
+- **Заголовок вкладки** (`DocumentTitle`): эффект `document.title = …` по UX-04 («{Название} — Agent OS» / «Новый чат — Agent OS» / «Новая беседа — Agent OS» / «Беседа не найдена — Agent OS» / «Agent OS» на TH-07); `metadata.title` корня — «Agent OS» (статический шелл). Анонсер маршрутов Next читает `document.title` (UXRD 7.5).
 
 ### Main Components
 
@@ -947,13 +969,13 @@ sequenceDiagram
 - **Dependencies**: `ChatRuntimeProvider`, `AppSidebar`, `ChatHeader`, `MainView`, `WorkspacePanel`, `useGlobalShortcuts` (`hooks/use-global-shortcuts.ts`), `useMediaQuery` (`hooks/use-media-query.ts`), `useSidebar`.
 
 #### ChatRuntimeProvider (`components/shell/chat-runtime-provider.tsx`, client)
-- **Responsibility**: единственное место создания рантайма; `ShellServices`; controlled `threadId`; `onThreadIdChange` → `syncUrlWithThread`; подсказки `Suggestions(WELCOME_SUGGESTIONS)` через `config` провайдера; классификация ошибок чата (E-8); уведомления операций.
+- **Responsibility**: единственное место создания рантайма; `ShellServices`; controlled `threadId`; `onThreadIdChange` → `syncUrlWithThread`; подсказки `Suggestions(WELCOME_SUGGESTIONS)` — `AuiConfig` собирается в `useMemo` из `services.auiConfig` и передаётся в `config` провайдера; монтирует `DocumentTitle`; классификация ошибок чата (E-8); уведомления операций.
 - **Interface**: `type ChatRuntimeProviderProps = { children: ReactNode }`; оборачивает детей в `ShellActionsProvider` (`components/shell/shell-actions.tsx`), контекст `ShellActionsContext` → `{ newChat(source): void; retryHistory(remoteId): void; retrySwitch(threadId): void; deleteThread(threadId): Promise<void> }` (хук `useShellActions`; props `ShellActionsProvider` — `services`, `children` — не меняются).
 - **Dependencies**: `@assistant-ui/react` (`useRemoteThreadListRuntime`, `AssistantRuntimeProvider`, `useAui`, `Suggestions`, `AuiConfig`), `@assistant-ui/ai-sdk` (`useChatRuntime`, `AssistantChatTransport`), `ai`, `lib/threads/*`, `sonner`.
 
 #### Удаление беседы с идущим ответом (`ShellActions.deleteThread`)
 
-Путь удаления по умолчанию стрим браузера не останавливает (Key Findings, п. 11), поэтому `deleteThread(threadId)` сначала отменяет прогон, затем удаляет элемент. `DeleteThreadDialog` при подтверждении вызывает это действие, а не `delete()` элемента напрямую.
+Путь удаления по умолчанию стрим браузера не останавливает (Key Findings, п. 11), поэтому `deleteThread(threadId)` сначала отменяет прогон, затем удаляет элемент. Подтверждение в `DeleteThreadDialog` доходит до контейнера `ThreadHistoryList` через `onDelete`, и тот вызывает это действие, а не `delete()` элемента напрямую.
 
 1. Элемент не в прогоне (`isRunning === false`) — сразу шаг 5.
 2. Открытая беседа (`mainThreadId` совпадает с id элемента) — `aui.threads.thread("main").cancelRun()` (не устаревший вызов; `aui.thread()` помечен deprecated в 0.15.32).
@@ -980,21 +1002,26 @@ sequenceDiagram
 
 #### Title poller (`lib/threads/title-poller.ts`)
 - **Interface**: `createTitlePollStream(input: { remoteId: string; messages: readonly ThreadMessage[]; deps: TitlePollDeps }): AssistantStream`; константы `TITLE_POLL_INTERVAL_MS = 1_000`, `TITLE_POLL_WINDOW_MS = 15_000`.
-- **Behaviour**: нет сообщения с `role === 'assistant'` → поток закрывается сразу; иначе `titleWaiting[remoteId] = true`, опрос до непустого `title` (дописывается текстом в поток) или окна; `not_found` — прекратить; прочие ошибки опроса — `console.warn` с `remoteId` и `kind`, продолжить; `finally` — снять ожидание.
+- **Непустой заголовок обеспечен контрактом API**: пустого заголовка сервер не хранит — нормализация автозаголовка, вернувшая `''`, ничего не пишет, и `title` остаётся `null` (`design-threads-api.md`, автозаголовок и проекция `ThreadSummary`). Поэтому проверки `title !== null` достаточно.
+- **Behaviour**: нет сообщения с `role === 'assistant'` → поток закрывается сразу; иначе `titleWaiting[remoteId] = true`, опрос до `title !== null` (дописывается текстом в поток) или окна; `not_found` — прекратить; прочие ошибки опроса — `console.warn` с `remoteId`, `kind` и `status`, продолжить; `finally` — снять ожидание.
 
 #### AppSidebar, ThreadHistoryList, ThreadHistoryItem, ThreadTitleField, DeleteThreadDialog, UserMenu
-- **AppSidebar**: shadcn `Sidebar collapsible="icon"` + `SidebarRail`; `nav aria-label="История бесед"` вокруг списка; в шторке — «×» «Закрыть меню»; кнопки SB-03 (полная / иконочная в полосе). Список в полосе не рендерится (D-02).
-- **ThreadHistoryList** (контейнер): `useAuiState` → `threadItems` (`status === 'regular'`), `isLoading`, `loadError`, `hasMore`, `isLoadingMore`, `mainThreadId`; `ShellStatus` → `activityAt`, `loadMoreFailed`, `titleWaiting`; `useNow()` (`hooks/use-now.ts`); тексты ошибок SB-09 и SB-10 — в `role="alert"` (UXRD 7.2, SB-09 Error), Loading — `role="status"`; группирует и отдаёт в `ThreadHistoryListView`. Автоподгрузка — `IntersectionObserver` на SB-10 с `rootMargin: '0px 0px 200px 0px'`. ↑/↓/Home/End — `onKeyDown` на контейнере списка по `a[data-thread-link]`.
-- **ThreadHistoryItem**: `li > SidebarMenuButton render={<Link href={threadPath(remoteId)} …/>}` + `SidebarMenuAction` «⋯» (`DropdownMenu`, пункты «Переименовать», «Удалить»); переименование на месте (`ThreadTitleField`); удаление — `DeleteThreadDialog`, подтверждение вызывает `useShellActions().deleteThread(id)`. **Цвет текста строки (UXRD 7.6):** в состояниях hover, active (`data-active`) и открытого меню весь текст строки — название, «Новая беседа» в `ShimmerLabel` — только `text-sidebar-accent-foreground` (штатные классы `SidebarMenuButton`: `hover:text-sidebar-accent-foreground data-active:text-sidebar-accent-foreground`); `text-muted-foreground` внутри строки не используется (`--muted-foreground` / `--sidebar-accent` = 4,34:1 — Fail в светлой).
-- **UserMenu**: `DropdownMenu` (side `top`), `DropdownMenuRadioGroup` «Тема» (`light`/`dark`/`system`), заголовок «dev-user» / «Режим разработки» из `DEV_USER`.
+- **AppSidebar**: shadcn `Sidebar collapsible="icon"` + `SidebarRail`; `nav aria-label="История бесед"` вокруг списка; в шторке — «×» «Закрыть меню»; `finalFocus` шторки зависит от причины закрытия: после выбора беседы или SB-03 — `false` (флаг `actionOwnsFocus`), и фокус ставит само действие (`focusShellTarget('page-title')`, `focusAfterNewChat()`); после Esc, «×», затемнения или свайпа — кнопка «Меню» (`MENU_BUTTON_ATTRIBUTE`). Причина: base-ui выполняет `finalFocus` после анимации закрытия — позже фокуса действия в следующем кадре — и иначе перевёл бы фокус на «Меню»; кнопки SB-03 (полная / иконочная в полосе). Список в полосе не рендерится (D-02).
+- **ThreadHistoryList** (контейнер): `useAuiState` → `threadItems` (`status === 'regular'`), `isLoading`, `loadError`, `hasMore`, `isLoadingMore`, `mainThreadId`; `ShellStatus` → `activityAt`, `loadMoreFailed`, `titleWaiting`; `useNow()` (`hooks/use-now.ts`); время активности строки — `entryActivityAt({ lastMessageAt, activityAt }, now)`; тексты ошибок SB-09 и SB-10 — в `role="alert"` (UXRD 7.2, SB-09 Error), Loading — `role="status"`; группирует и отдаёт в `ThreadHistoryListView`; активную строку выбирает сам в `renderItem` (`isActive` — `entry.id === mainThreadId`), вид её не знает. Переименование — `onRename` строки вызывает `aui.threads.item({ id }).rename(title)`: отказ библиотека сама пишет в консоль (`handleRuntimeAction` → `task.catch(console.error)`), уведомление и откат названия даёт адаптер списка. Удаление — `onDelete` вида вызывает `useShellActions().deleteThread(id)`, никогда `item.delete()`; для открытой беседы контейнер запоминает это и вызывает `focusAfterNewChat()`, когда `usePathname()` стал `/`. Автоподгрузка — `IntersectionObserver` на SB-10 с `rootMargin: '0px 0px 200px 0px'`. ↑/↓/Home/End — `onKeyDown` на контейнере списка по `a[data-thread-link]`.
+- **ThreadHistoryListView**: держит `DeleteThreadDialog` и правило фокуса после удаления, чтобы их можно было проверить без рантайма. `renderItem` получает вторым аргументом `onRequestDelete` строки. При подтверждении цель фокуса вычисляется до исчезновения строки: следующая ссылка, иначе предыдущая, иначе «Новый чат» (SB-03); «Отмена» и Esc возвращают фокус на «⋯» строки. Для открытой беседы (`openThreadId`) вид фокус не трогает — его ведёт смена маршрута в контейнере.
+- **ThreadHistoryItem**: `li > SidebarMenuButton render={<Link href={threadPath(remoteId)} …/>}` + `SidebarMenuAction` «⋯» (`DropdownMenu`, пункты «Переименовать», «Удалить»); переименование на месте (`ThreadTitleField`); «Удалить» вызывает `onRequestDelete`, диалог открывает вид списка. Оба пункта действуют из `onClick` элемента меню, а не из `onOpenChangeComplete` у `DropdownMenu`: `useAnimationsFinished` в base-ui ждёт конца анимации закрытия попапа (около 1 с), и введённые за это время символы терялись. **Цвет текста строки (UXRD 7.6):** в состояниях hover, active (`data-active`) и открытого меню весь текст строки — название, «Новая беседа» в `ShimmerLabel` — только `text-sidebar-accent-foreground` (штатные классы `SidebarMenuButton`: `hover:text-sidebar-accent-foreground data-active:text-sidebar-accent-foreground`); `text-muted-foreground` внутри строки не используется (`--muted-foreground` / `--sidebar-accent` = 4,34:1 — Fail в светлой).
+- **UserMenu**: кнопка `aria-label="Меню пользователя dev-user"`, `Avatar` (`ui/avatar.tsx`) с инициалами — `aria-hidden` (декоративный); `DropdownMenu` (side `top`), `DropdownMenuRadioGroup` «Тема» (`light`/`dark`/`system`), заголовок «dev-user» / «Режим разработки» из `DEV_USER`.
 
 #### ChatHeader, MainView, ThreadNotice, WorkspacePanel, ThreadActivityTracker, DocumentTitle
-- **ChatHeader**: HD-02 — две кнопки, различаемые CSS: `md:hidden` «Меню» (`aria-haspopup="dialog"`) и `hidden md:inline-flex` «Боковая панель» (`aria-expanded`, `aria-controls`); HD-03 `h1 tabIndex={-1}` с `data-shell-focus="page-title"`; HD-04 `hidden lg:inline-flex`; HD-05 `md:hidden`. Граница снизу при прокрутке ленты — `ThreadPrimitive.Viewport` `onScroll` → `data-scrolled`.
-- **MainView**: `resolveMainView` → `Thread` (с `autoFocus={false}`, `components={{ Welcome: ShellWelcome, DeletedNotice: deleted ? DeletedNotice : undefined }}`; `ShellWelcome` — `components/shell/shell-welcome.tsx`, `DeletedNotice` — экспорт `thread-notice.tsx`), `ThreadNotice` или `ThreadHistorySkeleton`.
+- **ChatHeader**: HD-02 — две кнопки, различаемые CSS: `md:hidden` «Меню» (`aria-haspopup="dialog"`) и `hidden md:inline-flex` «Боковая панель» (`aria-expanded`, `aria-controls`); HD-03 `h1 tabIndex={-1}` с `data-shell-focus="page-title"`; HD-04 `hidden lg:inline-flex`; HD-05 `md:hidden`. Граница снизу при прокрутке ленты: контейнер `ChatHeader` слушает `scroll` на `document` в фазе перехвата (событие не всплывает) и берёт только вьюпорт ленты (`[data-slot="aui_thread-viewport"]`, им владеет `Thread`); `scrollTop > 0` → проп `scrolled` → `data-scrolled` у `header` → `border-border` вместо прозрачной границы. `Thread` для этого не меняется.
+- **Название HD-03 (контейнер `ChatHeader`)** выводится из того же `useMainViewState()`, что и `MainView`, поэтому шапка и основная область не расходятся. `/` → `hidden`; `not-found` и `load-error` → `empty`; `switching` или метаданные открытой беседы ещё не получены → `loading`; иначе `text` (без заголовка — «Новая беседа», `pending` при `isRunning` или ожидании заголовка).
+- **MainView**: `useMainViewState()` (маршрут, рантайм, `ShellStatus` → `resolveMainView`; экспорт `main-view.tsx`, его же читает `ChatHeader`). `thread` и `switching` → один и тот же `Thread` (`autoFocus={false}`, `historyPending` — `switching` или открыт `/chat/<id>`, а тело беседы ещё грузится: `thread.isLoading` при пустом `thread.messages`, `components={{ Welcome: ShellWelcome, DeletedNotice: deleted ? DeletedNotice : undefined }}`; `ShellWelcome` — `components/shell/shell-welcome.tsx`, `DeletedNotice` — экспорт `thread-notice.tsx`); `not-found` / `load-error` → `ThreadNotice` без композера.
+- **Страж от вспышки приветствия на F5**: адаптер истории ставит `history[id] = 'ready'` до того, как рантайм положил сообщения в тред, поэтому `resolveMainView` уже отдаёт `thread`, а лента ещё пуста — без стража на один кадр мелькнуло бы приветствие. Пока на `/chat/<id>` тело беседы грузится и сообщений нет, `MainView` держит `historyPending`; элемент `Thread` остаётся тем же, композер не перемонтируется. На `/` страж не действует.
+- **`Thread` с `historyPending`**: в ленте только `ThreadHistorySkeleton` (без приветствия, сообщений, follow-up и подсказок), композер прижат к низу и привязан к текущему главному треду. Поле ввода доступно, кнопка «Отправить» недоступна, Enter не отправляет (Minimal Surface, Element 8). Текст, введённый, пока беседа по ссылке ещё не разрешена (правило 2), остаётся у прежнего главного треда и в открытую беседу не переносится — как черновик при уходе с беседы (UXRD D-12).
 - **ThreadNotice**: варианты `not-found` / `load-error` / `deleted`; `h1 tabIndex={-1}`, фокус на нём при появлении. Вариант `deleted` — встроенное в ленту уведомление на месте блока TH-08: `h2` «Беседа удалена» (на странице уже есть `h1` шапки), текст «Её удалили в другой вкладке или окне.» в `role="alert"`, кнопка «Новый чат» (`newChat`), без «Перегенерировать»; фокус переносится на «Новый чат», только если он был в скрытом композере.
-- **WorkspacePanel**: `aside aria-label="Рабочая область"`, шапка 56 px с WS-03 «×»; `Separator` с `aria-label="Изменить ширину рабочей области"`, `onKeyDown` ←/→ ±16 px, Shift ±64 px, Home/End — к пределам через `panelRef.resize(...)`.
+- **WorkspacePanel**: `aside aria-label="Рабочая область"`, шапка 56 px с WS-03 «×»; `ResizableHandle` (`ui/resizable.tsx`) с `aria-label="Изменить ширину рабочей области"`. В `onKeyDownCapture` (раньше процентного обработчика библиотеки) ←/→ — ±16 px, с Shift — ±64 px, End — к минимуму 360 px через `panelRef.resize(...)`. Home — штатный обработчик react-resizable-panels: панель расширяется до предела, лента сохраняет 480 px.
 - **ThreadActivityTracker**: подписка на `threadItems`, запоминает предыдущий `isRunning` по `id`, на фронте false→true — `status.bumpActivity(id, Date.now())`. Не рендерит разметку.
-- **DocumentTitle**: эффект `document.title` (UX-04).
+- **DocumentTitle**: эффект `document.title` (UX-04), монтируется в `ChatRuntimeProvider`, разметки не рендерит. `/` → «Новый чат — Agent OS»; TH-06 → «Беседа не найдена — Agent OS»; TH-07 → «Agent OS» (UX-04 этот случай не задаёт); открытая беседа → «{Название} — Agent OS» или «Новая беседа — Agent OS». Пока беседа из URL разрешается, прежний заголовок остаётся.
 
 ### Contract Definitions
 
@@ -1014,6 +1041,12 @@ export class ThreadsApiError extends Error {
 
 export const isThreadsApiError = (value: unknown): value is ThreadsApiError =>
   value instanceof ThreadsApiError;
+
+/** Log-safe description of a failure: classification only, never response bodies or user text. */
+export const describeThreadsError = (
+  error: unknown,
+): { kind: ThreadsApiErrorKind | 'unknown'; status: number | undefined } =>
+  isThreadsApiError(error) ? { kind: error.kind, status: error.status } : { kind: 'unknown', status: undefined };
 ```
 
 ```typescript
@@ -1124,6 +1157,7 @@ export function createThreadListAdapter({ api, status, notify, history }: Thread
         if (isNextPage) status.getState().setLoadMoreFailed(false);
         return { threads: page.threads.map(toRemoteMetadata), nextCursor: page.nextCursor ?? undefined };
       } catch (error) {
+        console.error('[web-shell] thread list load failed', { nextPage: isNextPage, ...describeThreadsError(error) });
         if (isNextPage) status.getState().setLoadMoreFailed(true);
         throw error;
       }
@@ -1142,6 +1176,7 @@ export function createThreadListAdapter({ api, status, notify, history }: Thread
       try {
         await api.renameThread({ threadId: remoteId, title: newTitle });
       } catch (error) {
+        console.error('[web-shell] thread rename failed', { remoteId, ...describeThreadsError(error) });
         notify.renameFailed();
         throw error;
       }
@@ -1151,6 +1186,7 @@ export function createThreadListAdapter({ api, status, notify, history }: Thread
         await api.deleteThread(remoteId);
       } catch (error) {
         if (!(isThreadsApiError(error) && error.kind === 'not_found')) {
+          console.error('[web-shell] thread delete failed', { remoteId, ...describeThreadsError(error) });
           notify.deleteFailed();
           throw error;
         }
@@ -1194,7 +1230,7 @@ export function createHistoryAdapterFactory({ api, status }: HistoryAdapterDeps)
           status.getState().setHistory(remoteId, 'not_found');
           throw error;
         }
-        console.error('[web-shell] thread history load failed', { remoteId, kind: isThreadsApiError(error) ? error.kind : 'unknown' });
+        console.error('[web-shell] thread history load failed', { remoteId, ...describeThreadsError(error) });
         status.getState().setHistory(remoteId, 'load_failed');
         await gate.wait(remoteId);
       }
@@ -1271,9 +1307,9 @@ export function createRetryGate(): RetryGate {
 ```typescript
 // components/shell/chat-runtime-provider.tsx (фрагмент)
 'use client';
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { AssistantRuntimeProvider, useAui, useRemoteThreadListRuntime } from '@assistant-ui/react';
+import { AssistantRuntimeProvider, AuiConfig, Suggestions, useAui, useRemoteThreadListRuntime } from '@assistant-ui/react';
 import { useChatRuntime } from '@assistant-ui/ai-sdk';
 import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 
@@ -1283,6 +1319,11 @@ export function ChatRuntimeProvider({ children }: ChatRuntimeProviderProps) {
   const router = useRouter();
   const threadId = parseRouteThreadId(usePathname());
   const [services] = useState(createShellServices); // api, status, listAdapter, history factory, transport, notify
+  // TH-03 starter suggestions feed ThreadPrimitive.Suggestions through the provider's root scope.
+  const config = useMemo(
+    () => AuiConfig({ ...services.auiConfig, suggestions: Suggestions(WELCOME_SUGGESTIONS) }),
+    [services],
+  );
 
   // Runs inside assistant-ui tap resources: only assistant-ui hooks are allowed here.
   const runtimeHook = useCallback(
@@ -1306,8 +1347,11 @@ export function ChatRuntimeProvider({ children }: ChatRuntimeProviderProps) {
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime} config={services.auiConfig}>
-      <ShellActionsProvider services={services}>{children}</ShellActionsProvider>
+    <AssistantRuntimeProvider runtime={runtime} config={config}>
+      <ShellActionsProvider services={services}>
+        <DocumentTitle />
+        {children}
+      </ShellActionsProvider>
     </AssistantRuntimeProvider>
   );
 }
@@ -1334,6 +1378,17 @@ export const DATE_GROUP_LABELS = {
   previous30: 'Предыдущие 30 дней',
   older: 'Старше',
 } as const satisfies Record<DateGroupKey, string>;
+
+export type ActivitySources = {
+  /** Server activity time (ThreadSummary.updatedAt). */
+  lastMessageAt: Date | undefined;
+  /** Local lift written when a reply starts (D-11). */
+  activityAt: number | undefined;
+};
+
+/** Effective activity time: the later of the available sources; a thread with neither counts as active now. */
+export function entryActivityAt(sources: ActivitySources, now: Date): number;
+// контейнер ThreadHistoryList вычисляет так activityAt каждой строки до groupThreadsByDate
 
 /** Calendar-day difference in the browser time zone; DST-safe via rounding. */
 export function groupThreadsByDate(entries: readonly ThreadListEntry[], now: Date): ThreadGroup[];
@@ -1366,6 +1421,8 @@ export function resolveMainView(input: MainViewInput): MainView;
 //    F5 на /chat/<id>: пока threads.isLoading, isNewChatView каркаса (messages.length === 0 && threads.isLoading)
 //    показал бы Welcome; до вызова load() статус ещё undefined, во время — 'loading'. Беседа, созданная
 //    в этой вкладке, получает 'ready' в initialize() до replaceState, поэтому правило её не задевает.
+//    'ready' ставится раньше, чем сообщения попадают в тред рантайма: этот промежуток закрывает страж MainView
+//    (thread.isLoading при пустом thread.messages → historyPending), а не resolveMainView.
 // 5) иначе thread { deleted: historyStatus === 'deleted' }
 ```
 
@@ -1493,9 +1550,15 @@ img: ({ src, alt, className, ...props }) => {
 // Props презентационных компонентов
 type ThreadHistoryListViewProps = {
   state: { kind: 'loading' } | { kind: 'error'; onRetry: () => void } | { kind: 'ready'; groups: readonly ThreadGroup[] };
-  activeThreadId: string | undefined;
+  // добавляется в T6.1 (SB-10 «Показать ещё»)
   pagination: { hasMore: boolean; isLoadingMore: boolean; loadMoreFailed: boolean; onLoadMore: (source: 'keyboard' | 'pointer' | 'viewport') => void };
-  renderItem: (entry: ThreadListEntry) => ReactNode;
+  // активную строку выбирает контейнер: renderItem передаёт ThreadHistoryItem isActive;
+  // onRequestDelete открывает DLG-01 для этой строки
+  renderItem: (entry: ThreadListEntry, onRequestDelete: () => void) => ReactNode;
+  // открытая беседа: после её удаления фокус ведёт смена маршрута, а не список
+  openThreadId: string | undefined;
+  // удаление, подтверждённое в DLG-01
+  onDelete: (entry: ThreadListEntry) => void;
 };
 
 type ThreadHistoryItemProps = {
@@ -1506,13 +1569,20 @@ type ThreadHistoryItemProps = {
   onRequestDelete: () => void;
 };
 
-type HeaderTitle = { kind: 'hidden' } | { kind: 'loading' } | { kind: 'text'; text: string; pending: boolean };
+// hidden — `/`: пустой h1 со sr-only «Новый чат»; loading — скелетон, aria-busy;
+// empty — TH-06/TH-07: пустой h1 без скелетона, без aria-busy и без sr-only текста; text — название или «Новая беседа».
+type HeaderTitle =
+  | { kind: 'hidden' }
+  | { kind: 'loading' }
+  | { kind: 'empty' }
+  | { kind: 'text'; text: string; pending: boolean };
 
 type ChatHeaderViewProps = {
   title: HeaderTitle;
   workspaceOpen: boolean;
   onToggleWorkspace: () => void;
   onNewChat: () => void;
+  scrolled?: boolean; // лента прокручена от верха: граница снизу у шапки; по умолчанию false
 };
 
 type DeleteThreadDialogProps = {
@@ -1610,14 +1680,14 @@ On Error: not_found — прекратить; прочие ошибки запр
 | Приветствие TH-02 | extend | слот `Welcome` (`ThreadComponents`) | Новое содержимое через существующий слот |
 | Подсказки TH-03 | extend | `ThreadSuggestions` / `SuggestionPrimitive` | Сетка 2×2, без «>»; данные — `Suggestions(...)` |
 | Композер TH-04 | extend | `Composer` в `thread.aui.tsx` | Тексты, контраст placeholder, без вложений, `addAttachmentOnPaste={false}` |
-| Скелетон истории TH-05 | extend | `ThreadHistorySkeleton` | Экспорт для состояния `switching` |
+| Скелетон истории TH-05 | extend | `ThreadHistorySkeleton` в `Thread` | Показывается и по пропу `historyPending` (состояние `switching`) |
 | Ошибка ответа TH-08 | extend | `MessageError` + `ActionBarPrimitive.Reload` | Фиксированный русский текст вместо `error.message`; кнопка «Перегенерировать» у последнего ответа (D-14); выключатель `regenerateAfterError` — только для отката |
 | Иконочная кнопка с тултипом | reuse | `tooltip-icon-button.tsx` | HD-02/04/05, WS-03, полоса SB-12 (размер — `className`) |
 | Кнопка | extend | `ui/button.tsx` | Кольцо фокуса, сплошной `destructive` |
 | Тултип, скелетон, аватар | reuse | `ui/tooltip.tsx`, `ui/skeleton.tsx`, `ui/avatar.tsx` | — |
 | Нажатие, мерцание | reuse | `surfaces.tsx` `pressable`, `ShimmerLabel` | Первые потребители |
 | Рабочая область | extend | `ui/resizable.tsx` + плейсхолдер из `page.tsx` | `collapsible` панель, скрыта по умолчанию |
-| Сайдбар / полоса / шторка | new | shadcn `sidebar` (+ `sheet`) | В `components/ui` нет; ai-chatbot использует тот же компонент |
+| Сайдбар / полоса / шторка | new | shadcn `sidebar`; шторка — base-ui `Drawer` | В `components/ui` нет; ai-chatbot использует тот же компонент; `ui/sheet.tsx` удалён — потребителей нет |
 | Меню «⋯» и меню пользователя | new | shadcn `dropdown-menu` | `ActionBarMorePrimitive` привязан к сообщению, для сайдбара не подходит (UXRD 3) |
 | Диалог удаления | new | shadcn `alert-dialog` | `ui/dialog.tsx` не даёт `role="alertdialog"`; base-ui AlertDialog даёт |
 | Поле переименования | new | shadcn `input` | `textarea` многострочный |
@@ -1632,8 +1702,8 @@ On Error: not_found — прекратить; прочие ошибки запр
 | ThreadHistoryList (SB-04/09) | Группы с заголовками `h2` + `ul` | 1 полоса + 7 строк-скелетонов, `role="status"` «Загружаем беседы…» (`threads.isLoading`) | «Пока нет бесед» / «Начните новый чат — он появится здесь.» | «Не удалось загрузить беседы» + «Повторить» → `threads.reload()` (`threads.loadError`, в т. ч. невалидный ответ AC-01.7) | SB-10 «Показать ещё» (`hasMore`) |
 | SB-10 «Показать ещё» | Кнопка `ghost sm` | 3 строки-скелетона, `role="status"` «Загружаем ещё беседы…» (`isLoadingMore`) | N/A — при `hasMore=false` не рендерится | «Не удалось загрузить ещё беседы» + «Повторить» → `loadMore()` (`loadMoreFailed`) | — это и есть partial |
 | ThreadHistoryItem (SB-06) | Название, «⋯» по hover/фокусу | N/A — существует только с данными | N/A | Операции: откат + TST-01 | Title pending: «Новая беседа» + `ShimmerLabel` при `isRunning \|\| titleWaiting` |
-| ChatHeader HD-03 | Название | Скелетон 160×16 (`switching` или метаданные беседы ещё не получены) | `/`: sr-only «Новый чат» | TH-06/07: пусто | Title pending: «Новая беседа» + мерцание |
-| MainView | `Thread` (лента; на пустой — приветствие и подсказки) | `switching` → `ThreadHistorySkeleton`; загрузка истории → скелетон каркаса (задержка 150 мс) | Приветствие TH-02 + TH-03 | TH-06 (`not-found`), TH-07 (`load-error`); E-8 — слот `DeletedNotice` на месте TH-08, композер скрыт; TH-08 — `MessageError` | Прерванный стрим — как в каркасе |
+| ChatHeader HD-03 | Название | Скелетон 160×16 (`switching` или метаданные беседы ещё не получены) | `/`: sr-only «Новый чат» | TH-06/07: пустой `h1` (`empty`), без скелетона и `aria-busy` | Title pending: «Новая беседа» + мерцание |
+| MainView | `Thread` (лента; на пустой — приветствие и подсказки) | `switching`, а на `/chat/<id>` и пока сообщения ещё не в треде (`thread.isLoading`, лента пуста) → `Thread` с `historyPending`: `ThreadHistorySkeleton` вместо ленты, композер TH-04 виден, «Отправить» недоступна до загрузки; скелетон проявляется с задержкой 150 мс | Приветствие TH-02 + TH-03 | TH-06 (`not-found`), TH-07 (`load-error`); E-8 — слот `DeletedNotice` на месте TH-08, композер скрыт; TH-08 — `MessageError` | Прерванный стрим — как в каркасе |
 | UserMenu (SB-11) | Аватар «DU», «dev-user», шеврон | N/A — пользователь известен сразу | N/A | N/A | N/A |
 | WorkspacePanel | Плейсхолдер | N/A | Плейсхолдер = empty | N/A | N/A |
 | DeleteThreadDialog | Заголовок, текст с названием, кнопки | N/A — оптимистичное удаление | N/A | После закрытия: TST-01 + возврат элемента | Вариант A-4 при `isRunning` |
@@ -1669,6 +1739,8 @@ On Error: not_found — прекратить; прочие ошибки запр
 | `MessageError` | При заданном слоте `DeletedNotice` (статус беседы `deleted` после 404 `THREAD_NOT_FOUND`) рендерит слот вместо блока TH-08; иначе фиксированный текст вместо `ErrorPrimitive.Message`; при включённом флаге `regenerateAfterError` внутри блока — текстовая кнопка «Перегенерировать» (`ActionBarPrimitive.Reload`) у последнего сообщения (`AuiIf` по `s.message.isLast`) | AC-08.5, AC-08.5a, AC-08.5d, AC-08.5e; D-14, TH-08, TH-08 Rollback, E-8 |
 | `ToolFallbackImpl` (`tool-fallback.aui.tsx`) | Читает `isError` части: при `true` триггер и `ToolFallbackError` получают статус ошибки (`incomplete`, причина `error`) вместо `complete`, `ToolFallbackResult` не рендерится | AC-14.5; D-15 |
 | `ToolFallbackError` (`tool-fallback.aui.tsx`) | Для статуса `incomplete` с причиной, отличной от `cancelled`, — «Ошибка:» и «Не удалось выполнить инструмент.» независимо от `status.error` (в том числе пустого или отсутствующего); отмена (`cancelled`) — прежний вывод причины под «Причина отмены:» | AC-14.5; D-15 |
+
+`SpokenActionBar` (озвучивание) — вне объёма: в оболочке недостижим. Кнопки отзыва не рендерятся (`capabilities.feedback` = false), их тултипы всё равно переводятся: «Полезный ответ» / «Неполезный ответ».
 
 **«Копировать» (оба action bar).** Доступное имя — «Копировать» (`tooltip` у `TooltipIconButton`). Рядом с кнопкой постоянно смонтирован визуально скрытый `role="status"`, в который при `s.message.isCopied` попадает «Скопировано»: живая область существует до изменения текста, поэтому скринридер объявляет его надёжно. Порядок Tab внутри реплики не меняется: содержимое → «Перегенерировать» (если есть) → «Копировать» (UXRD 7.3).
 
@@ -1754,7 +1826,7 @@ sequenceDiagram
 - **theme-color.** Inline-скрипт в `<head>` (как ai-chatbot): `<meta name="theme-color">` синхронизируется с вычисленным `--background` по `MutationObserver` на `html.class`.
 - **Сайдбар без «прыжка».** cookie `sidebar_state` (пишет shadcn при пользовательском переключении) читается сервером в layout группы → `SidebarProvider defaultOpen` — первый кадр уже в нужном состоянии (AC-21.1); временное сворачивание (рабочая область) — `setOpen(false, { persist: false })`.
 - **Мобильный первый кадр.** Десктоп-контейнер сайдбара — `hidden md:block` (shadcn); кнопки шапки различаются CSS-брейкпоинтами, поэтому до гидратации на 375 px нет десктопной раскладки.
-- **Шторка: закрытие свайпом (UXRD 8.2, Flow «Мобильная шторка»).** Шторка shadcn построена на base-ui `Dialog` (через `sheet`), у которого нет жестов. base-ui 1.9.0 содержит `Drawer` с `swipeDirection` (`@base-ui/react/drawer`, причина закрытия `swipe`) и теми же гарантиями модальности (ловушка фокуса, `role="dialog"`, Esc, затемнение). Решение: в мобильной ветке скопированного `ui/sidebar.tsx` `Sheet` заменяется на `Drawer.Root swipeDirection="left"` с теми же классами панели (288 px, `max-w-[85vw]`); открытие свайпом от края не добавляется (UXRD 8.2). Порог срабатывания — библиотечный, не обязательно 30 % ширины UXRD — заметка UX-владельцу (Open Questions, п. 4). Certainty: medium → S-11; запасной путь — `Sheet` + обработчик `pointerdown/pointerup` на панели: смещение влево ≥ 30 % ширины → `setOpenMobile(false)`.
+- **Шторка: закрытие свайпом (UXRD 8.2, Flow «Мобильная шторка»).** Шторка shadcn построена на base-ui `Dialog` (через `sheet`), у которого нет жестов. base-ui 1.9.0 содержит `Drawer` с `swipeDirection` (`@base-ui/react/drawer`, причина закрытия `swipe`) и теми же гарантиями модальности (ловушка фокуса, `role="dialog"`, Esc, затемнение). Решение: в мобильной ветке скопированного `ui/sidebar.tsx` `Sheet` заменяется на `Drawer.Root swipeDirection="left"` с теми же классами панели (288 px, `max-w-[85vw]`); открытие свайпом от края не добавляется (UXRD 8.2); `ui/sheet.tsx` после замены не используется и удаляется. Порог срабатывания — библиотечный, не обязательно 30 % ширины UXRD — заметка UX-владельцу (Open Questions, п. 4). Certainty: medium → S-11; запасной путь — `Sheet` + обработчик `pointerdown/pointerup` на панели: смещение влево ≥ 30 % ширины → `setOpenMobile(false)`.
 - **Переход через 768 px при открытой шторке** (UXRD 8): `ChatShell` в эффекте по `isMobile` закрывает шторку `setOpenMobile(false)` при переходе на ≥ 768 px; встроенный сайдбар показывается в сохранённом состоянии (cookie). Без этого `openMobile` оставался бы `true` и шторка открылась бы сама при обратном сужении.
 - **Безопасная зона и виртуальная клавиатура** (UXRD 8.2): `export const viewport` в `app/layout.tsx` — `viewportFit: 'cover'`, `interactiveWidget: 'resizes-content'` (раскладка ужимается над клавиатурой, поле ввода остаётся видимым); корень оболочки — `h-dvh` (динамический вьюпорт вместо `100vh`); подвал композера — `pb-[max(1rem,env(safe-area-inset-bottom))]`; шапка шторки — `pt-[env(safe-area-inset-top)]`.
 - **Шрифт (UXQ-3 — решение).** `Geist({ variable: '--font-geist-sans', subsets: ['latin', 'cyrillic'] })`, `Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin', 'cyrillic'] })`; `@theme inline { --font-sans: var(--font-geist-sans); --font-heading: var(--font-geist-sans); }`. Проверка — L1-8.
@@ -1780,13 +1852,14 @@ export const focusAfterNewChat = (): void => focusShellTarget(isFinePointer() ? 
 
 | Событие (UXRD 7.4) | Реализация |
 |---|---|
-| «Новый чат» (кнопка/сочетание/HD-05/шторка) | `focusAfterNewChat()` после перехода |
+| «Новый чат» (кнопка/сочетание/HD-05/шторка) | `focusAfterNewChat()` после перехода; из шторки её `finalFocus` возвращает `false` |
 | Открытие беседы кликом, точный указатель | `onClick` ссылки: `event.detail > 0 && isFinePointer()` → `focusShellTarget('composer')` |
-| Открытие касанием / из шторки | `focusShellTarget('page-title')`; шторка закрывается `setOpenMobile(false)` с `finalFocus` на `h1` |
+| Открытие касанием / из шторки | `focusShellTarget('page-title')`; шторка закрывается `setOpenMobile(false)`, её `finalFocus` возвращает `false` — фокус остаётся за действием |
+| Шторка закрыта без действия (Esc, «×», затемнение, свайп) | `finalFocus` шторки → кнопка «Меню» (`MENU_BUTTON_ATTRIBUTE`) |
 | Enter на ссылке (встроенный сайдбар) | `event.detail === 0` → фокус не трогается |
 | Холодная загрузка `/` | `focusAfterNewChat()` только при точном указателе; `/chat/<id>` — не трогается |
 | TH-06/TH-07 появились | `h1` экрана (`useEffect` при монтировании) |
-| Удаление открытой | `focusAfterNewChat()` |
+| Удаление открытой | `focusAfterNewChat()`, когда маршрут стал `/` |
 | Удаление не открытой | следующая ссылка списка; нет — предыдущая; нет — SB-03 (вычисляется до удаления) |
 | Сохранение/отмена переименования | ссылка этой беседы |
 | Закрытие меню / «Отмена» диалога | вызвавший элемент (`finalFocus` = «⋯») |
@@ -1798,7 +1871,9 @@ export const focusAfterNewChat = (): void => focusShellTarget(isFinePointer() ? 
 - `Ctrl/⌘+Shift+O` (`event.code === 'KeyO'`, чтобы раскладка не мешала) → `preventDefault()` + новый чат; `Ctrl/⌘+B` — обработчик скопированного `sidebar.tsx` с той же охраной. Символ в тултипах — `navigator.platform`/`userAgentData` → «⌘» на macOS, иначе «Ctrl».
 - ↑/↓/Home/End (AC-22.2): `onKeyDown` контейнера списка; если `event.target` — `a[data-thread-link]`, фокус на соседнюю/первую/последнюю ссылку в DOM-порядке (через границы групп), `preventDefault()`. Tab-порядок не меняется (ссылка → «⋯» → следующая ссылка, UXRD 7.3).
 
-**ARIA** — по таблице UXRD 7.2: `nav aria-label="История бесед"`; SB-09 Loading — `role="status"`, SB-09 Error и SB-10 Error — текст ошибки в `role="alert"` (объявляется при появлении), кнопка «Повторить» — вне `alert`; группы — `h2` (через `render` у `SidebarGroupLabel`) + `ul`; ссылки — `aria-current="page"` у активной; «⋯» — `aria-label="Действия с беседой «{название}»"`, `aria-haspopup="menu"`; SB-08 — `input aria-label="Название беседы" maxLength={200} aria-invalid aria-describedby`; HD-02 десктоп — `aria-label="Боковая панель" aria-expanded aria-controls aria-keyshortcuts="Control+B Meta+B"`; HD-02 мобильный — `aria-label="Меню" aria-haspopup="dialog"`; SB-03/HD-05 — `aria-keyshortcuts="Control+Shift+O Meta+Shift+O"`; шторка — `role="dialog" aria-modal="true" aria-label="История бесед"`; DLG-01 — `alertdialog` с `aria-describedby`; WS-01 — `aside`; WS-02 — `separator` библиотеки (`aria-value*` в % основной области) с `aria-label`; skip link «Перейти к сообщению» — первый в Tab, видим при фокусе.
+**ARIA** — по таблице UXRD 7.2: `nav aria-label="История бесед"`; SB-09 Loading — `role="status"`, SB-09 Error и SB-10 Error — текст ошибки в `role="alert"` (объявляется при появлении), кнопка «Повторить» — вне `alert`; группы — `h2` (через `render` у `SidebarGroupLabel`) + `ul`; ссылки — `aria-current="page"` у активной; «⋯» — `aria-label="Действия с беседой «{название}»"`, `aria-haspopup="menu"`; SB-08 — `input aria-label="Название беседы" maxLength={200} aria-invalid aria-describedby`; HD-02 десктоп — `aria-label="Боковая панель" aria-expanded aria-controls aria-keyshortcuts="Control+B Meta+B"`; HD-02 мобильный — `aria-label="Меню" aria-haspopup="dialog"`; SB-03/HD-05 — `aria-keyshortcuts="Control+Shift+O Meta+Shift+O"`; шторка — `role="dialog" aria-modal="true" aria-label="История бесед"`; DLG-01 — `alertdialog` с `aria-describedby`; WS-01 — `aside`; WS-02 — `separator` библиотеки (`aria-value*` в % основной области) с `aria-label`; skip link «Перейти к сообщению» — первый в Tab, видим при фокусе; SB-11 — `aria-label="Меню пользователя dev-user"`, `Avatar` с инициалами — `aria-hidden`; поле композера — `textarea name="message"`.
+
+Остаётся известное незачётное замечание axe `label-content-name-mismatch` у SB-11: axe считает видимым текстом инициалы «DU», хотя аватар скрыт от дерева доступности.
 
 **Reduced motion.** Все переходы — `motion-reduce:transition-none`/`motion-reduce:animate-none`; `ShimmerLabel` уже учитывает; вставка/удаление элементов списка — CSS `@starting-style` с отключением при `prefers-reduced-motion`.
 
@@ -1818,7 +1893,7 @@ export const focusAfterNewChat = (): void => focusShellTarget(isFinePointer() ? 
 | `layout.tsx:18` | `description: 'Agent OS workspace'` | `Рабочее пространство Agent OS` |
 | `ui/sidebar.tsx` (после `shadcn add`) | `Toggle Sidebar` | `Боковая панель` |
 
-Контроль: тест `i18n.test.ts` ищет в отрендеренных ключевых экранах (новый чат, беседа с инструментом из фикстуры, меню) латинские слова из стоп-списка (`Send`, `Copy`, `Close`, `Toggle`, `Loading`, `Reasoning`, `tool call`).
+Контроль: тест `i18n.test.tsx` ищет в отрендеренных ключевых экранах (новый чат, беседа с инструментом из фикстуры, меню) латинские слова — в видимом тексте и в озвучиваемых атрибутах (`aria-label`, `title`, `placeholder`, `alt`, `aria-valuetext`). Список — стоп-слова (`Send`, `Copy`, `Close`, `Toggle`, `Loading`, `Reasoning`, `tool call`) и дополнительные слова каркаса (`Stop`, `Scroll`, `Assistant`, `Resume`, `Play`, `Pause`, `Seek`, `Download`, `Preview`, `Image`, `Audio`, `Unnamed`, `attachment`).
 
 ### Правки скопированных shadcn-компонентов
 
@@ -1851,7 +1926,7 @@ System Invariants:
   - URL — единственный вход для выбора беседы (controlled threadId); рантайм пишет в URL только устоявшийся remote id
   - Беседа создаётся на сервере только при первой отправке (initialize); «Новый чат» сетевых запросов не делает
   - В тело чата не уходит клиентский id: body.id = remoteId из POST /api/threads
-  - Основная область никогда не показывает приветствие для /chat/<id> до разрешения беседы (switching → скелетон)
+  - Основная область никогда не показывает приветствие для /chat/<id>, пока беседа не разрешена и её сообщения не попали в тред рантайма (switching или тело ещё грузится → скелетон; композер виден, отправка недоступна)
   - Ответы API используются только после zod-валидации; невалидный ответ — состояние ошибки, не исключение в рендере
   - Заголовок беседы рендерится как текст (React), никогда через dangerouslySetInnerHTML
   - Элемент списка не перемещается при переименовании и приходе автозаголовка до перезагрузки списка
@@ -1874,16 +1949,30 @@ System Invariants:
 | Переименование/удаление | адаптер | откат библиотеки + TST-01 |
 | Беседа удалена во время ответа (эта вкладка, фон, другая вкладка) | стрим заканчивается чанком `abort` без `error` | как отмена: частичный текст без блока ошибки и без «Перегенерировать» |
 | Отмена прогона перед удалением не завершилась за 2 с или рантайм фонового тела недоступен | `deleteThread` | `console.warn`, удаление продолжается; сервер прерывает прогон сам |
-| Ошибка рендера компонента оболочки | `app/(chat)/error.tsx` (граница ошибок Next) | «Что-то пошло не так» + «Обновить страницу»; лог `console.error` |
-| `NEXT_PUBLIC_API_URL` не задан или не абсолютный `http(s)` URL | `lib/config.ts` при загрузке модуля (`z.url`) | `next build` падает на пререндере корневого layout (импорт `apiBaseUrl` для `preconnect`); в dev — ошибка при первом рендере (fail fast) |
+| Ошибка рендера оболочки: `ChatShell` и всё под ним, серверная часть `(chat)/layout` (`cookies()`) | `app/error.tsx` — граница корневого сегмента | «Что-то пошло не так» + «Обновить страницу» (перезагрузка) в теме приложения; без текста и стека ошибки; `console.error` только с `digest` |
+| Ошибка рендера корневого `app/layout.tsx` | встроенный `global-error` Next | стандартная страница Next по теме ОС; свой `global-error.tsx` не вводится |
+| `NEXT_PUBLIC_API_URL` не задан, не абсолютный `http(s)` URL или в production — `http` не на loopback | `lib/config.ts` при загрузке модуля (`z.url`, проверка протокола при `NODE_ENV=production`) | `next build` падает на пререндере корневого layout (импорт `apiBaseUrl` для `preconnect`); в dev — ошибка при первом рендере (fail fast) |
 | Ссылка из ответа модели с опасной схемой (`javascript:`, `data:`, `vbscript:` …) | `linkPolicy` (`safeHref`) | текст ссылки без `href` (`span`), не фокусируется и не кликается; не ошибка |
 | Изображение из ответа модели не по `https` | `isRenderableImageSrc` | запроса нет; ссылка «Изображение: …» (если `safeHref` пропускает) или заглушка «[Изображение недоступно]» |
 
 Фоллбэков, подменяющих данные значением по умолчанию, нет: каждая ошибка либо отображается состоянием, либо пробрасывается. Единственное ожидание без исключения — `RetryGate` истории (ждёт явного «Повторить», состояние видно как TH-07).
 
+#### Граница ошибок оболочки
+
+Граница ошибок Next (`error.tsx`) оборачивает страницы и вложенные layout-ы своего сегмента, но не `layout.tsx` того же сегмента. Поэтому граница стоит в корневом сегменте — `app/error.tsx`: она внутри корневого `app/layout.tsx` (тема, шрифты, `globals.css` действуют) и снаружи `(chat)/layout.tsx`, то есть ловит ошибки рендера `ChatShell` и серверной части layout-а группы. `app/(chat)/error.tsx` удаляется: страницы группы возвращают `null`, и вторая граница с тем же UI ничего не добавляет. Компонент, тексты и лог переносятся без изменений: без текста и стека ошибки на экране, `console.error` только с `digest`.
+
+| Вариант | Почему не выбран |
+|---|---|
+| `app/global-error.tsx` | заменяет корневой layout: свои `<html>`/`<body>`, без глобальных стилей и темы; нужен только для ошибок корневого layout-а |
+| граница внутри `ChatShell` (`catchError` из `next/error`) | новый компонент-обёртка; не ловит серверную часть `(chat)/layout` над `ChatShell` |
+| оставить `app/(chat)/error.tsx` | не ловит ошибку самого `ChatShell` |
+
+Реализация — доводка задачи T3.1 (перенос файла, удаление `app/(chat)/error.tsx`). Проверка: при ошибке рендера в `ChatShell` пользователь видит «Что-то пошло не так» и «Обновить страницу» в текущей теме, в консоли — запись с `digest`, без стека на странице; нажатие перезагружает страницу.
+
 ### Logging and Monitoring
 
-- Клиентские логи — `console.error`/`console.warn` с контекстом `{ remoteId, kind, status }`, без текста сообщений и заголовков. Библиотека дополнительно пишет свои `console.error` (загрузка списка/истории) — не подавляются.
+- Клиентские логи — `console.error`/`console.warn` без текста сообщений, заголовков и тел ответов. Классификацию ошибки даёт `describeThreadsError(error)` → `{ kind, status }` (`lib/threads/threads-api-error.ts`; не `ThreadsApiError` → `kind: 'unknown'`).
+- Контекст записи: загрузка истории, переименование и удаление — `{ remoteId, kind, status }`; страница списка — `{ nextPage, kind, status }`; сбой опроса заголовка — `console.warn` с `{ remoteId, kind, status }`; неожиданный отказ `deleteThread` в контейнере списка — `{ threadId, kind, status }`. Библиотека дополнительно пишет свои `console.error` (загрузка списка/истории) — не подавляются.
 - L1-проверка включает чтение консоли браузера: допустимы только ожидаемые записи сценариев с ошибками (404/500, подставленные намеренно).
 - Серверные метрики и аудит — `threads-api`; клиент не шлёт телеметрию.
 
@@ -1898,15 +1987,15 @@ System Invariants:
 ### Technical Dependencies and Implementation Order
 
 1. **Спайк рантайма (S-1…S-5)** — `ChatRuntimeProvider` + адаптеры + `url-sync` на голой разметке. *Prerequisites*: `threads-api` шаги 1–5 и 8 на ветке (контракты собраны, эндпоинты отвечают, чат принимает только существующие беседы). *Verification*: L1 по критериям «Early Verification Point». Код спайка становится production-кодом этих модулей.
-2. **Зависимости и инструменты**: `next-themes` ^0.4.6, `sonner` ^2.0.8, `assistant-stream` 0.3.55 (точно), `zustand` (уже есть), точные версии `@assistant-ui/react` 0.15.32, `@assistant-ui/ai-sdk` 0.0.16, `@assistant-ui/react-markdown` 0.14.24, `ai` 7.0.155, `zod` ^4.6.7 (как в `@agent-os/contracts`; раньше только транзитивная); dev — Vitest-стек; `shadcn add sidebar sheet dropdown-menu alert-dialog input separator sonner`; правки скопированных компонентов. L3 (build, lint) + L2 (первый тест).
+2. **Зависимости и инструменты**: `next-themes` ^0.4.6, `sonner` ^2.0.8, `assistant-stream` 0.3.55 (точно), `zustand` (уже есть), точные версии `@assistant-ui/react` 0.15.32, `@assistant-ui/ai-sdk` 0.0.16, `@assistant-ui/react-markdown` 0.14.24, `ai` 7.0.155, `zod` ^4.6.7 (как в `@agent-os/contracts`; раньше только транзитивная); dev — Vitest-стек; `shadcn add sidebar dropdown-menu alert-dialog input separator sonner` (пришедший зависимостью `sheet` удаляется после замены шторки на `Drawer`); правки скопированных компонентов. L3 (build, lint) + L2 (первый тест).
 3. **Тема, шрифт, токены** (`components/theme-provider.tsx`, `layout.tsx` с `viewport` и `preconnect`, `lib/config.ts`, `globals.css`, `button.tsx`). L1-8 (FOUC, шрифт, контраст, консоль без предупреждений о `<script>`).
-4. **Маршруты и каркас оболочки**: `(chat)/layout` с `Suspense`+`cookies()`, `(chat)/error.tsx`, страницы `null`, `ChatShell` (+ `use-media-query`, закрытие шторки при ≥ 768 px, шторка на `Drawer` — S-11), `ChatHeader`, `AppSidebar` (без списка), `MainView`, `ThreadNotice`. L1-1 (раскладка), L1-3 (мобильный).
+4. **Маршруты и каркас оболочки**: `(chat)/layout` с `Suspense`+`cookies()`, граница ошибок `app/error.tsx` (раздел «Граница ошибок оболочки»), страницы `null`, `ChatShell` (+ `use-media-query`, закрытие шторки при ≥ 768 px, шторка на `Drawer` — S-11), `ChatHeader`, `AppSidebar` (без списка), `MainView`, `ThreadNotice`. L1-1 (раскладка), L1-3 (мобильный).
 5. **Список**: `groupThreadsByDate`, `ThreadHistoryList(View)`, `ThreadHistoryItem`, `ThreadActivityTracker`, ↑/↓. L2 + L1-1.
 6. **Открытие и новый чат**: фокус-политика, подсказки, приветствие, `DocumentTitle`. L2 + L1-1, L1-5.
 7. **Переименование и удаление**: `ThreadTitleField`, `DeleteThreadDialog` (подтверждение → `deleteThread`), уведомления. L2 + L1-2.
 8. **Рабочая область**. L2 (`shell.workspace.int.test.tsx`) + L1-1.
 9. **Should**: FR-19 (подгрузка), FR-20 (опрос заголовка), FR-21 (уже на шаге 4 — проверка), FR-22 (сочетания). L2 + L1.
-10. **Локализация каркаса, доступность и политика markdown** (строки, ARIA, контраст, reduced motion; `lib/markdown-policy.ts` + `a`/`img` в `markdown-text.tsx`). L2 (`i18n.test.ts`, `markdown-policy.test.ts`, `markdown-text.test.tsx`) + L1-4, L1-9.
+10. **Локализация каркаса, доступность и политика markdown** (строки, ARIA, контраст, reduced motion; `lib/markdown-policy.ts` + `a`/`img` в `markdown-text.tsx`). L2 (`i18n.test.tsx`, `markdown-policy.test.ts`, `markdown-text.test.tsx`) + L1-4, L1-9.
 10a. **Action bar и ошибки в ленте** (раздел «Action bar и ошибки в ленте»). Шаг ничего не ждёт: AC-14.6 обеспечивает `threads-api`, `regenerateAfterError` поставляется со значением `true`. L2 (`message-error.test.tsx`, `message-actions.test.tsx`, `tool-fallback-error.test.tsx`, `shell.message-error.int.test.tsx`, `shell.deleted-thread.int.test.tsx`) + L1-7; L1-10 — на стенде вместе с серверной частью `threads-api`.
 11. **QA**: `pnpm --filter web lint`, `pnpm --filter web test`, `pnpm build`, полный прогон L1-сценариев на `next build && next start`, Lighthouse a11y ≥ 95 (4 конфигурации).
 
@@ -1954,14 +2043,14 @@ System Invariants:
 ### Unit Tests (U)
 
 - `group-threads-by-date.test.ts` — AC-01.1 (4 группы из сегодня/вчера/5/40 дней, порядок, без пустых), границы 2/7/8/30/31 день, DST-переходы в `Europe/Berlin` (у `Europe/Moscow` перехода нет — такой тест ничего не проверял бы): 23-часовые сутки 2026-03-29 (`activityAt` = 2026-03-28 23:30, `now` = 2026-03-29 12:00 → «Вчера»; `activityAt` = 2026-03-29 00:30 → «Сегодня») и 25-часовые сутки 2026-10-25 (`activityAt` = 2026-10-24 23:30, `now` = 2026-10-25 23:30 → «Вчера»; 2026-10-18 12:00 → «Предыдущие 7 дней» ровно на границе 7), плюс страж окружения `new Date(2026, 2, 28).getTimezoneOffset() !== new Date(2026, 2, 30).getTimezoneOffset()`, сортировка по `activityAt` с локальным поднятием (D-11), монотонность групп при склейке двух страниц (AC-19.1).
-- `resolve-main-view.test.ts` — все ветви таблицы `resolveMainView`, включая правило 4 (AC-02.2): `{ routeThreadId: 'x', mainRemoteId: 'x', historyStatus: undefined }` и `'loading'` → `switching`; `{ routeThreadId: 'x', mainRemoteId: 'x', historyStatus: 'ready' }` → `thread`; `{ routeThreadId: undefined, historyStatus: undefined }` → `thread` (новый чат на `/`).
+- `resolve-main-view.test.ts` — все ветви таблицы `resolveMainView`, включая правило 4 (AC-02.2): `{ routeThreadId: 'x', mainRemoteId: 'x', historyStatus: undefined }` и `'loading'` → `switching`; `{ routeThreadId: 'x', mainRemoteId: 'x', historyStatus: 'ready' }` → `thread`; `{ routeThreadId: undefined, historyStatus: undefined }` → `thread` (новый чат на `/`). Правило 4 доказывается только этими строками: в F5-случае интеграционного теста его перекрывает страж `MainView`.
 - `route-thread-id.test.ts`, `url-sync.test.ts` — `/chat/a%2Fb`, `/`, `/foo`, `/chat/`, `/chat/a/b`, `/chat/%E0` (сырой сегмент); round-trip `parseRouteThreadId(threadPath(id)) === id` для `'abc'`, `'a/b'`, `'с пробелом'`, `'%'`, `'?#&'`, UUID; `replaceState(null, '', threadPath(id))` при новом id, `router.replace('/')` при `undefined`, ничего при `location.pathname === threadPath(id)` (в т. ч. для id с `/`).
 - `threads-api-client.test.ts` (MSW) — 200/невалидно → `invalid_response`; 404 и 400 на `:threadId` → `not_found` (Cross-Layer Assumption 7); сеть → `network`; `safeValidateUIMessages`-провал → `invalid_response`; пустой `messages` → `[]` без ошибки (пустая беседа не уходит в TH-07).
 - `thread-list-adapter.test.ts` (MSW) — маппинг `ThreadSummary` → метаданные; `initialize` → `history[id] === 'ready'` до возврата `remoteId`; `nextCursor: null` → `undefined`; `loadMoreFailed` ставится/снимается; `DELETE` 404 → успех + `deleted`; `PATCH` 500 → `renameFailed` + отказ.
 - `thread-history-adapter.test.ts` (MSW) — цепочка `parentId`/`headId`; 404 → `not_found` + отказ; 500 → `load_failed`, затем `retry` → `ready` и разрешение промиса; 500 → `load_failed`, затем `forget` → промис `load()` отклонён `ThreadsApiError('not_found')`, второго запроса `/messages` нет, статус беседы удалён; не-`ai-sdk/v6` формат → ошибка конфигурации.
 - `retry-gate.test.ts` — `release` разрешает ожидание; `drop` отклоняет его `ThreadsApiError` с `kind: 'not_found'`; `release`/`drop` без ожидающего — без ошибок; после `release` повторный `drop` ничего не делает.
 - `markdown-policy.test.ts` — `javascript:alert(1)`, ` JAVASCRIPT:…`, `data:text/html,…`, `vbscript:…`, пустая строка → `unsafe`; `https://example.com` и `http://…` → `new-tab`; `/chat/x`, `./a`, `?q` → `new-tab`; `#user-content-fn-1` → `fragment`; `mailto:a@b.c` → `mail`; `isRenderableImageSrc`: `https://…` → `true`, `http://…`, `data:image/png;base64,…`, `/img.png`, `undefined` → `false`.
-- `config.test.ts` — `vi.stubEnv` + `vi.resetModules()`: не задан, `'localhost:4000'`, `'ftp://x'` → исключение при импорте; `'http://api.test/'` → `apiBaseUrl === 'http://api.test'`.
+- `config.test.ts` — `vi.stubEnv` + `vi.resetModules()`: не задан, `'localhost:4000'`, `'ftp://x'` → исключение при импорте; `'http://api.test/'` → `apiBaseUrl === 'http://api.test'`; при `NODE_ENV=production` `http://` на удалённый хост → исключение, `http://localhost`, `http://127.0.0.1`, `http://[::1]` и `https://…` принимаются.
 - `title-poller.test.ts` (фейковые таймеры) — без ответа ассистента запросов нет; заголовок на 3-м запросе → поток с текстом, `titleWaiting` снят; окно 15 с → 15 запросов и пустой поток; 404 → остановка.
 - `plural-ru.test.ts`, `keyboard-shortcuts.test.ts` (`isShortcutBlocked`), `focus.test.ts` (точный/грубый указатель).
 
@@ -1971,7 +2060,7 @@ System Invariants:
 - `thread-history-item.test.tsx` — переименование: Enter сохраняет обрезанное, Esc отменяет, пусто + Enter → `aria-invalid` и «Введите название» без вызова `onRename`, `maxLength=200`; «Новая беседа» при `title: undefined`; тултип при обрезке.
 - `delete-thread-dialog.test.tsx` — `alertdialog`, название в «ёлочках», фокус на «Отмена», вариант A-4.
 - `user-menu.test.tsx` — **AC-12.1 (тема)**: внутри `ThemeProvider` выбор «Тёмная» → `document.documentElement.classList.contains('dark')`; «Системная» → класс по `matchMedia('(prefers-color-scheme: dark)')`; нет «Выйти»/«Настройки», есть «dev-user».
-- `chat-header.test.tsx` — **AC-12.1 (шапка)**: `text` → `h1` с названием; `pending` → «Новая беседа»; `hidden` → sr-only «Новый чат»; `loading` → скелетон; кнопка рабочей области `aria-expanded`. **AC-07.1**: `ChatHeaderView` внутри `SidebarProvider defaultOpen` (+ `Sidebar collapsible="icon"`), `matchMedia('(min-width: 768px)')` = true: кнопка «Боковая панель» имеет `aria-expanded="true"`; клик → `aria-expanded="false"` и у сайдбара `data-state="collapsed"`, `data-collapsible="icon"` (ширина полосы 48 px — L1-1).
+- `chat-header.test.tsx` — **AC-12.1 (шапка)**: `text` → `h1` с названием; `pending` → «Новая беседа»; `hidden` → sr-only «Новый чат»; `loading` → скелетон и `aria-busy="true"`; `empty` → пустой `h1` без скелетона, без `aria-busy` и без текста «Новый чат»; кнопка рабочей области `aria-expanded`. **AC-07.1**: `ChatHeaderView` внутри `SidebarProvider defaultOpen` (+ `Sidebar collapsible="icon"`), `matchMedia('(min-width: 768px)')` = true: кнопка «Боковая панель» имеет `aria-expanded="true"`; клик → `aria-expanded="false"` и у сайдбара `data-state="collapsed"`, `data-collapsible="icon"` (ширина полосы 48 px — L1-1).
 - `thread-notice.test.tsx` — тексты TH-06/TH-07/E-8, фокус на заголовке.
 - `message-error.test.tsx` — **AC-08.5, AC-08.5a, AC-08.5c, AC-08.5d, AC-08.5e**: `Thread` на `useLocalRuntime` с адаптером модели, бросающим ошибку с английским текстом; флаг `regenerateAfterError` включён, если не сказано иное. (1, AC-08.5) Под репликой `alert` с текстом «Не удалось получить ответ. Попробуйте перегенерировать.»; исходный текст ошибки не отображается. (2, AC-08.5a) Кнопка `getByRole('button', { name: 'Перегенерировать' })` находится **внутри** блока ошибки (`within(alert.closest('[data-slot="message-error"]'))`), её `aria-describedby` указывает на `id` текста ошибки; в action bar этой реплики кнопки «Перегенерировать» нет. (3, AC-08.5a) Фокус с клавиатуры + Enter (и отдельно Space) вызывает адаптер модели повторно; после успешного ответа блока и кнопки нет, в ленте один ответ ассистента, кнопки переключения вариантов нет; при точном указателе фокус в композере. (4, AC-08.5d) **Аварийный выключатель**: флаг выключен — в `alert` ровно «Не удалось получить ответ.», текста «Попробуйте перегенерировать» и кнопки «Перегенерировать» нет, ни у одного элемента блока нет `aria-describedby`. (5, AC-08.5c) Ответ из начальных сообщений рантайма (как после F5, без статуса ошибки) — блока ошибки и кнопки нет. (6, AC-08.5e) **Удалённая беседа**: тот же `Thread` со слотом `DeletedNotice` и ошибкой ответа — под сообщением пользователя уведомление «Беседа удалена» / «Её удалили в другой вкладке или окне.» и кнопка «Новый чат», текста TH-08 и «Перегенерировать» нет, поля композера (`textbox`) нет.
 - `message-actions.test.tsx` — **AC-08.6**: `Thread` на `useLocalRuntime` с начальными сообщениями «пользователь → ответ → пользователь → ответ». У каждого сообщения пользователя и каждого ответа есть кнопка с именем «Копировать» без наведения; кнопок с именами «Изменить», «Перегенерировать», «Ещё», «Экспорт в Markdown», «Предыдущий»/«Следующий» и текста вида «1 / 2» нет ни у одного сообщения; двойной клик по пузырю пользователя не открывает поле правки (`textbox` в ленте нет). **Порядок Tab**: последовательные нажатия Tab без событий мыши приводят фокус на «Копировать» первого (не последнего) сообщения пользователя и первого (не последнего) ответа ассистента. **Во время прогона**: после начальных сообщений «пользователь → ответ» отправлено новое сообщение, адаптер модели отдал первый фрагмент и не завершает поток; пока ответ генерируется, у первого сообщения пользователя и у завершённого ответа «Копировать» есть в дереве доступности и Tab без событий мыши доводит до неё фокус, а у генерируемого ответа «Копировать» нет; после завершения потока она у него появляется. Клик «Копировать» у сообщения пользователя кладёт его текст в буфер (шпион `navigator.clipboard.writeText`) и даёт `role="status"` с текстом «Скопировано»; то же для ответа ассистента. **Пустые ответы**: ответ только с частью инструмента и ответ только с рассуждением отрисованы (видны блок инструмента и «Рассуждения»), но «Копировать» у них нет; завершённый ответ без частей не даёт строки (между двумя сообщениями пользователя нет элемента `data-role="assistant"`, кнопок у него нет); ответ с ошибкой до первого токена (заглушка рантайма) показывает только блок ошибки — без «Копировать» и без пустого контейнера текста.
@@ -1987,11 +2076,12 @@ System Invariants:
 
 - `shell.list.int.test.tsx` — AC-01.5/01.7: невалидный ответ списка → SB-09 Error, композер доступен и отправка нового чата работает.
 - `shell.new-chat.int.test.tsx` — AC-03.2: «Новый чат» и уход без отправки → нет `POST /api/threads`; AC-04.1/03.3: отправка → `POST /api/threads`, затем `POST /api/chat/assistant` с `id` из ответа, `replaceState('/chat/<id>')`, новый элемент первым в «Сегодня».
-- `shell.open-thread.int.test.tsx` — AC-02.2: `pathname=/chat/x` до ответа `fetch` → скелетон, не приветствие; **F5-случай**: беседа `x` есть в первой странице, MSW отвечает на `/api/threads/x/messages` сразу, а на `GET /api/threads` — с задержкой, превышающей ответ истории (управляемый `deferred`); `MutationObserver` на контейнере записывает, появлялся ли текст «Чем могу помочь?» — после разрешения списка и истории запись пуста, лента показывает сообщения беседы; AC-04.3: `fetch` 404 → «Беседа не найдена»; AC-02.5: история невалидна → «Не удалось загрузить беседу», «Повторить» → история загружена.
+- `shell.open-thread.int.test.tsx` — AC-02.2: `pathname=/chat/x` до ответа `fetch` → скелетон, не приветствие; поле «Сообщение» (`textbox`) есть, после ввода текста кнопка «Отправить» недоступна, а Enter не даёт запросов `POST /api/threads` и `POST /api/chat/assistant`; после 404 поля «Сообщение» нет, а `h1` шапки пуст (AC-04.3); **F5-случай**: беседа `x` есть в первой странице; `GET /api/threads` и `/api/threads/x/messages` удерживаются управляемыми `deferred` (ответ, отданный сразу, разрешился бы в той же задаче, что и переключение, и не оставил бы кадра для наблюдения); когда на экране скелетон «Загружаем беседу…», отпускается история, после появления сообщений — список. `MutationObserver` на контейнере записывает любое появление «Чем могу помочь?» и любой кадр без скелетона и без сообщений — обе записи пусты, лента показывает сообщения, ссылка беседы получает `aria-current="page"`. Случай ловит уход со скелетона до того, как сообщения попали в тред (страж `MainView`); правило 4 он не различает; AC-04.3: `fetch` 404 → «Беседа не найдена»; AC-02.5: история невалидна → «Не удалось загрузить беседу», «Повторить» → история загружена.
 - `shell.deleted-thread.int.test.tsx` — **AC-08.5e (E-8)**: открытая беседа, отправка → MSW отвечает на `POST /api/chat/assistant` 404 с `THREAD_NOT_FOUND` до SSE. Сообщение пользователя видно в ленте; сразу под ним — «Беседа удалена» и «Её удалили в другой вкладке или окне.» с кнопкой «Новый чат»; текста «Не удалось получить ответ» и кнопки «Перегенерировать» нет; поля композера нет; пустой строки ответа и «Копировать» у заглушки нет. Клик «Новый чат» → `/` с приветствием и композером. Прямое открытие удалённой беседы по-прежнему даёт TH-06 (покрыто `shell.open-thread.int.test.tsx`).
 - `shell.message-error.int.test.tsx` — **AC-08.5b, только последний ответ**: реальный `useChatRuntime` через `renderWithRuntime`; MSW: первый `POST /api/chat/assistant` отдаёт часть текста «Частичный» и обрывает поток ошибкой, второй — успешный ответ. После первой отправки под ответом блок ошибки с «Перегенерировать»; пользователь отправляет новое сообщение → у первого ответа блока ошибки и кнопки нет, текст «Частичный» виден, в ленте нет ни одной кнопки «Перегенерировать».
 - `shell.delete-open-thread.int.test.tsx` — **AC-06.2**: `pathname=/chat/a`, беседа `a` открыта; «⋯» → «Удалить» → «Удалить» в `alertdialog` → `DELETE /api/threads/a`; ссылки `a` в списке нет; вызван `router.replace('/')` (а не `push`, `history.length` не вырос); после смены `pathname` на `/` — «Чем могу помочь?»; при точном указателе фокус в композере, при грубом — на `h1` шапки; уведомление «Беседа удалена».
 - `shell.workspace.int.test.tsx` — **AC-11.1/11.3**: `ChatShell` через `renderWithRuntime` (MSW: пустой список), `matchMedia('(min-width: 1024px)')` = true: после загрузки нет `complementary` «Рабочая область»; клик HD-04 → панель есть, `aria-expanded="true"`; клик «×» (WS-03) → панели нет, `document.activeElement` — HD-04; повторный клик HD-04 открывает, клик HD-04 закрывает — фокус остаётся на HD-04.
+- Отмена прогона перед удалением (`ShellActions.deleteThread`, Element 7, UXRD A-4) — компонентный/интеграционный тест в дополнение к L1 и спайку S-5: у беседы идёт ответ, пользователь подтверждает удаление → прогон отменён раньше, чем уходит `DELETE /api/threads/:id`, затем строка исчезает.
 
 **Почему фоновый стриминг (AC-02.6, AC-03.4) проверяется спайком S-1 и L1-6, а не автотестом.** Свойство, которое нужно доказать, — «HTTP-поток беседы X не отменяется и продолжает дописывать ответ, пока смонтировано другое главное тело» — живёт на стыке трёх реальных механизмов: монтирования фоновых тел `backgroundThreads` (React + tap-ресурсы), чтения `ReadableStream` в `fetch` браузера и отмены по `AbortSignal` при размонтировании. В jsdom + MSW поток — синтетический `ReadableStream` в процессе Node без сетевого слоя, отмена не видна как «canceled» в Network, а тайминг монтирования тел зависит от планировщика jsdom; зелёный тест доказывал бы только поведение мока. Поэтому критерий приёмки — S-1 (до основной работы) и L1-6 на production-сборке с реальным API: Network показывает, что запрос X не `canceled`, а после возврата в X ответ дописан. Регрессию после обновления `@assistant-ui/*` ловит повтор L1-6 (версии зафиксированы точно, обновление — отдельная задача с полным L1-прогоном).
 
@@ -2020,7 +2110,8 @@ System Invariants:
 
 - **Authentication & Authorization**: клиент не управляет доступом — все запросы с `credentials: 'include'` к `SessionGuard`-маршрутам; чужая беседа неотличима от несуществующей (TH-06 одинаков). В production до OIDC история недоступна (401 → SB-09/TH-07) — ограничение PRD.
 - **Input Validation**: каждый ответ API — `unknown` → zod-схемы `@agent-os/contracts` (+ `safeValidateUIMessages` для сообщений) до использования; URL-параметр `threadId` кодируется `encodeURIComponent` в путях запросов; название беседы обрезается и ограничивается 200 символами на клиенте и повторно валидируется сервером.
-- **Public configuration**: все переменные `NEXT_PUBLIC_*` встраиваются в клиентский бандл на сборке и видны любому посетителю; `NEXT_PUBLIC_API_URL` — адрес API, не секрет. Секреты (ключи модели, сессии) в `apps/web` не попадают и под префиксом `NEXT_PUBLIC_` не заводятся.
+- **Public configuration**: все переменные `NEXT_PUBLIC_*` встраиваются в клиентский бандл на сборке и видны любому посетителю; `NEXT_PUBLIC_API_URL` — адрес API, не секрет. Секреты (ключи модели, сессии) в `apps/web` не попадают и под префиксом `NEXT_PUBLIC_` не заводятся. В production `NEXT_PUBLIC_API_URL` обязан быть `https`; `http` допускается только для loopback (`localhost`, `127.0.0.1`, `[::1]`), иначе `lib/config.ts` бросает при импорте и `next build` падает.
+- **Заголовки ответа** (`next.config.ts`, все маршруты): `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. Полного CSP для скриптов нет (раздел «Известные ограничения»).
 - **Sensitive Data Handling**: секретов на клиенте нет; заголовки бесед и сообщения рендерятся как текст (сгенерированный моделью заголовок — недоверенный); `dangerouslySetInnerHTML` — только в статических inline-скриптах темы/theme-color без пользовательских данных; логи клиента без текста сообщений и заголовков; сырой `responseBody` ошибок чата не выводится пользователю.
 
 ### Недоверенный markdown
@@ -2113,7 +2204,7 @@ N/A для серверного вывода (новый клиент, преж�
 | AC-01.6 | ThreadHistoryItem (тултип) | C |
 | AC-01.7 | threads-api-client → `loadError` | U, I |
 | AC-02.1 / 02.4 | history adapter + каркас | U, L1-4 |
-| AC-02.2 | `resolveMainView` switching (правила 2 и 4), `initialize` → `ready`, скелетон | U (`resolve-main-view.test.ts`), I (`shell.open-thread.int.test.tsx`, F5-случай с задержанным списком) |
+| AC-02.2 | `resolveMainView` switching (правила 2 и 4), `initialize` → `ready`, страж `MainView`, `Thread` с `historyPending` (скелетон, композер без отправки) | U (`resolve-main-view.test.ts`), I (`shell.open-thread.int.test.tsx`, F5-случай с удержанными историей и списком) |
 | AC-02.3 | транспорт + history | L1-4 |
 | AC-02.5 | history adapter, `ShellStatus`, TH-07 | U, I |
 | AC-02.6 | KD-1 (вариант A), `backgroundThreads` | S-1, L1-6 (без автотеста — обоснование в «Integration Tests») |
@@ -2146,7 +2237,7 @@ N/A для серверного вывода (новый клиент, преж�
 | AC-14.5 (клиент) | `ToolFallbackImpl` по `isError`, `ToolFallbackError` — фиксированный текст | C (`tool-fallback-error.test.tsx`), L1-10 |
 | AC-14.6 | Контракт `threads-api` п. 6; клиент шлёт `regenerate-message` | Владелец `threads-api`; клиентская сторона — L1-10 |
 | AC-09.1…09.4 | Тема, UserMenu | C, L1-8 |
-| AC-10.1…10.4 | AppSidebar (шторка на `Drawer`, закрытие при ≥ 768 px), ChatHeader, фокус, `h-dvh`/safe-area | L1-3 |
+| AC-10.1…10.4 | AppSidebar (шторка на `Drawer`, закрытие при ≥ 768 px), ChatHeader, фокус, `h-dvh`/safe-area | C (фокус шторки, AC-10.2/10.3), L1-3 |
 | AC-11.1 / 11.3 | WorkspacePanel, ChatShell, фокус на HD-04 | I (`shell.workspace.int.test.tsx`), L1-1 |
 | AC-11.2 / 11.4 | WorkspacePanel (размеры, брейкпоинт 1024 px) | L1-1 |
 | AC-12.1 / 12.2 | Test Strategy | CI |
@@ -2227,10 +2318,18 @@ UXQ-3 (кириллица) — **закрыт** этим дизайном (ра�
 | Изменение кольца фокуса и `outline-ring` затрагивает все компоненты визуально | Low | High | Намеренно (UXRD 7.6); L1-8/L1-9 |
 | `shadcn add` перезаписывает изменённые `ui/*` | Low | Medium | Порядок: `shadcn add` до правок; `button.tsx` правится после добавления |
 | jsdom/base-ui несовместимости в тестах (порталы, pointer events) | Medium (сроки) | Medium | Полифилы в `setup.ts`; презентационные компоненты тестируются без порталов, где возможно |
+| Действие из `onOpenChangeComplete` меню base-ui ждёт анимации закрытия, ввод за это время теряется | Medium (AC-05.1) | High при таком подключении | Поле и диалог открываются из `onClick` пункта меню; проверка в браузере (L1-2) |
 | Перегенерация ответа с ошибкой оставляет в истории не один ответ (склейка или дубль) | Medium (AC-08.5a) | Low | Закрыто как риск дизайна: правка, ветки и перегенерация успешного ответа скрыты (PRD Won't Have, AC-08.6); исход перегенерации после ошибки гарантирует `threads-api` отбрасыванием упавшего хвоста на сервере (AC-14.6, Cross-Layer Assumption 4). Кнопка поставляется; при регрессии гарантии — откат выключателем `regenerateAfterError` без правки компонентов |
 | Lighthouse a11y < 95 из-за каркаса (цели касания 24 px action bar — вне объёма) | Medium | Low | 24 px проходит WCAG 2.1 AA; L1 + Lighthouse на шаге 11 |
 | Утечка данных через `https`-изображение в ответе модели (prompt injection кладёт данные в URL картинки) | Medium | Low–Medium | `https`-only, `referrerPolicy="no-referrer"`, `rehype-raw` не подключён, штатный `urlTransform` сохранён; риск снижен, не устранён — прокси/allowlist/показ по клику вне объёма (раздел «Недоверенный markdown») |
 | Ссылки из ответа модели на тот же origin открываются в новой вкладке (непривычно) | Low | Medium | Осознанная цена сохранения фоновых стримов (решение пользователя); заметка UX-владельцу (Open Questions, п. 5) |
+
+### Известные ограничения
+
+- **Удаление в другой вкладке**: строка удалённой беседы остаётся в списках других вкладок до перезагрузки — синхронизации между вкладками нет. Открытие такой беседы даёт TH-06, отправка в неё — «Беседа удалена» (E-8).
+- **U+FFFD в сохранённом ответе**: в 1 из 84 сохранённых ответов два символа U+FFFD стоят на месте одной кириллической буквы. Источник — выше по потоку, у провайдера модели; клиент не меняется (заметки плана `threads-api/20261030-fix-threads-api-delete-title.md`).
+- **Скрытое: изображения вне markdown**: части ответа ассистента с изображением или файлом (`MessageFile` → `MessageImage`, `File`) и иконки `ImageSource` пока не применяют политику изображений (`https`-only, `referrerPolicy="no-referrer"`). API сегодня таких частей не отдаёт; политику нужно применить до того, как начнёт.
+- **Нет полного CSP для скриптов**: нужны хэши inline-скриптов темы (theme-color) и next-themes. Пока действуют только заголовки из раздела Security Considerations.
 
 ## References
 
@@ -2241,7 +2340,7 @@ UXQ-3 (кириллица) — **закрыт** этим дизайном (ра�
 - [assistant-ui: Persistence adapters](https://www.assistant-ui.com/docs/api-reference/adapters/persistence) — `ThreadHistoryAdapter`, `withFormat`.
 - [assistant-ui: ThreadListRuntime](https://www.assistant-ui.com/docs/api-reference/runtimes/ThreadListRuntime) — состояние и методы `threads`.
 - [AI SDK: Chatbot message persistence](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-message-persistence) — восстановление `UIMessage`, `validateUIMessages`.
-- Next.js 16.4.3 (встроенные документы `apps/web/node_modules/next/dist/docs/01-app/`): `02-guides/preventing-flash-before-hydration.md` (inline-скрипты, тема, cookies под Cache Components), `02-guides/preserving-ui-state.md` (Activity), `02-guides/single-page-applications.md` (pushState/replaceState и роутер), `03-api-reference/03-file-conventions/dynamic-routes.md` (params под Cache Components).
+- Next.js 16.4.3 (встроенные документы `apps/web/node_modules/next/dist/docs/01-app/`): `02-guides/preventing-flash-before-hydration.md` (inline-скрипты, тема, cookies под Cache Components), `02-guides/preserving-ui-state.md` (Activity), `02-guides/single-page-applications.md` (pushState/replaceState и роутер), `03-api-reference/03-file-conventions/dynamic-routes.md` (params под Cache Components), `03-api-reference/03-file-conventions/error.md` (`error.js` не оборачивает `layout.js` своего сегмента; `global-error` рендерит свои `<html>`/`<body>` без глобальных стилей и темы), `01-getting-started/02-project-structure.md` — «Component hierarchy» (`layout` → `template` → `error` → … → вложенный `layout`).
 - [next-themes README](https://github.com/pacocoursey/next-themes) — `attribute`, `enableColorScheme`, `disableTransitionOnChange`, `scriptProps`; опубликованный пакет `next-themes@0.4.6` (`npm pack`, `dist/index.mjs`) — `<script>` рендерится с `{...scriptProps, suppressHydrationWarning: true}`.
 - [react-markdown: Security и `urlTransform`](https://github.com/remarkjs/react-markdown#security) — сырой HTML не рендерится без `rehype-raw`, `defaultUrlTransform` пропускает только безопасные протоколы.
 - [MDN: `rel="noopener"`/`noreferrer`](https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/rel/noopener), [MDN: `referrerPolicy` у `img`](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/img#referrerpolicy) — политика ссылок и изображений.
@@ -2266,3 +2365,8 @@ UXQ-3 (кириллица) — **закрыт** этим дизайном (ра�
 | 2026-10-29 | 1.4 | Согласование с UXRD v1.6 и `design-threads-api.md` v1.7: ошибки инструмента и ответа, видимость «Копировать», пустые ответы, E-8, флаг перегенерации; «Копировать» прежних сообщений остаётся во время стрима (без `hideWhenRunning`, скрытие только у ответа в прогоне); AC-08.5 разбит на AC-08.5…AC-08.5e; ссылка на контракт перегенерации без версии; заметка об отказе одобрения инструмента | technical-designer-frontend |
 | 2026-10-29 | 1.5 | «Перегенерировать» после ошибки поставляется безусловно (AC-14.6 — сброс хвоста на сервере), выключатель дремлет; PRD v1.5, UXRD v1.7, `design-threads-api.md` v1.8. Уточнения текста: ошибки модели удаляются из истории сервером (только инструменты маскируются), перегенерация распознаётся сервером по повторной отправке последнего сообщения пользователя без `trigger`; AC-08.5 и поток перегенерации охватывают обрыв сети; AC-14.5 различает ошибки инструмента и модели; текст аварийного отката — UXRD TH-08 Rollback; AC-08.5c и L1-10 — без текста ошибки модели после F5; закрытые Open Questions удалены, ссылки на строки upstream заменены названиями разделов; пустая история возвращается без `safeValidateUIMessages` (он отклоняет пустой массив) | technical-designer-frontend |
 | 2026-10-30 | 1.6 | Upstream `design-threads-api.md` v1.10: удаление во время ответа обрабатывает сервер, прерванный стрим — отмена без блока ошибки (Cross-Layer Assumption 9); итог спайка S-5 — путь удаления по умолчанию стрим не останавливает, добавлено действие `ShellActions.deleteThread` (отмена прогона, ожидание ≤ 2 с, удаление), `DeleteThreadDialog` вызывает его; риск внутреннего API `@assistant-ui/core`; отмена открытой беседы через `aui.threads.thread("main").cancelRun()` вместо устаревшего `aui.thread()` | technical-designer-frontend |
+| 2026-10-30 | 1.7 | Граница ошибок оболочки перенесена в `app/error.tsx` (по документации Next 16.4.3 `error.tsx` не оборачивает `layout.tsx` своего сегмента, поэтому `(chat)/error.tsx` не ловил ошибки `ChatShell`); `app/(chat)/error.tsx` удаляется; новый подраздел «Граница ошибок оболочки», строка для корневого layout-а (встроенный `global-error`); реализация — доводка T3.1. Одобрено пользователем 2026-10-30 | technical-designer-frontend |
+| 2026-10-30 | 1.8 | Выравнивание по утверждённому UXRD, без нового поведения; статус Approved сохраняется. `HeaderTitle` + `{ kind: 'empty' }` — пустой HD-03 на TH-06/TH-07 по матрице состояний и UXRD 5.7, `ChatHeader` выводит вид из общего `useMainViewState()`; в `switching` композер виден с заблокированной отправкой (UXRD 6.17) — проп `Thread.historyPending` (Minimal Surface, Element 8), экспорт `ThreadHistorySkeleton` больше не нужен | technical-designer-frontend |
+| 2026-10-30 | 1.9 | Выравнивание с кодом T3.3/T4.2, без нового поведения; статус Approved сохраняется. Страж `MainView` от вспышки приветствия на F5 (`thread.isLoading` при пустой ленте → `historyPending`), F5-случай теста с удержанной историей; `ChatHeaderView.scrolled` и граница шапки по `scroll` в фазе перехвата; `ThreadHistoryListView` без `activeThreadId`, отложенные пропы помечены задачами T6.1/T5.1/T5.2 | technical-designer-frontend |
+| 2026-10-30 | 1.10 | Выравнивание с кодом T5.1/T5.2, без нового поведения; статус Approved сохраняется. `ThreadHistoryListViewProps` + `openThreadId`, `onDelete`, второй аргумент `renderItem` — `onRequestDelete`; `DeleteThreadDialog` и правило фокуса после удаления — в виде списка; подключение `rename`/`deleteThread` в контейнере; пункты меню действуют из `onClick`, а не из `onOpenChangeComplete` (риск добавлен) | technical-designer-frontend |
+| 2026-10-30 | 1.11 | Выравнивание с кодом после проверки реализации и ревью безопасности, без нового поведения; статус Approved сохраняется. `finalFocus` шторки по причине закрытия; ARIA меню пользователя и `name` композера; `describeThreadsError` и контекст логов; `entryActivityAt`, конфиг в `useMemo` и `DocumentTitle` в провайдере, заголовок вкладки на TH-07; `ui/sheet.tsx` удалён; клавиатура WS-02; `SpokenActionBar` и тултипы отзыва; `i18n.test.tsx`, тест отмены перед удалением, условие опроса заголовка; заголовки ответа, `https` для API в production; раздел «Известные ограничения» | technical-designer-frontend |

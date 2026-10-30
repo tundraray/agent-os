@@ -1,7 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.9)
 // File: shell.open-thread.int.test.tsx — Test Strategy, "Integration Tests (I)"
-// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
-// Budget after the plan merges: 10 it.todo in 7 files (plan «Решение по бюджету интеграционных тестов»).
+// Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
@@ -13,13 +13,15 @@
 //   deferred(): controllable promise used to hold an MSW response (design: "управляемый deferred").
 // Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
 //   ShellStatus, components — real. Do NOT mock lib/threads/* or @assistant-ui/*.
-// Imports for implementation (added when the case is filled; an it.todo case imports nothing):
-//   import { screen, within, waitFor } from '@testing-library/react';
-//   import { http, HttpResponse } from 'msw';
-//   import { server } from '@/test/msw-server';
-//   import { renderWithRuntime } from '@/test/render-with-runtime';
-//   import { threadSummary, historyMessages, deferred } from '@/test/fixtures';
-import { describe, it } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { deferred, historyMessages, threadList, threadSummary } from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+const API = 'http://api.test';
 
 describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-04.3)', () => {
   // AC-02.2: "While история загружается (или ещё разрешается беседа по прямой ссылке), the system shall показывать
@@ -38,50 +40,137 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // @category: core-functionality
   // @dependency: resolveMainView, MainView, ThreadListAdapter.fetch (switchError), ThreadNotice, MSW
   // @complexity: medium
-  it.todo('AC-02.2 + AC-04.3: a direct link shows the feed skeleton, not the welcome, while the thread is resolving; a 404 then shows «Беседа не найдена» with focus on its h1' /*
-    Arrange:
-      - GET /api/threads → 200 { threads: [], nextCursor: null }
-      - const fetchGate = deferred(); GET /api/threads/x → await fetchGate.promise →
-        404 { statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' }
-      - no handler for GET /api/threads/x/messages (a request there fails the test: MSW onUnhandledRequest 'error')
-      - renderWithRuntime({ pathname: '/chat/x' })
-    Act:
-      - wait until GET /api/threads/x is pending (server.events 'request:start'); inspect DOM; then fetchGate.resolve()
-      - await screen.findByRole('heading', { level: 1, name: 'Беседа не найдена' })
-    Assert (while pending, AC-02.2):
-      - getByRole('status', { name: 'Загружаем беседу…' }) present; queryByText('Чем могу помочь?') === null
-        (skeleton appears after 150 ms — advance timers / use findByRole)
-    Assert (after the 404, AC-04.3):
-      - text "Возможно, её удалили или ссылка указана неверно." visible
-      - button "Новый чат" inside the notice
-      - document.activeElement is the h1 "Беседа не найдена"
-      - queryByRole('textbox', { name: 'Сообщение' }) === null
-      - text "Thread not found" absent; queryByText('Чем могу помочь?') === null
-  */);
+  it('AC-02.2 + AC-04.3: a direct link shows the feed skeleton, not the welcome, while the thread is resolving; a 404 then shows «Беседа не найдена» with focus on its h1', async () => {
+    // Arrange
+    server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+    const fetchGate = deferred();
+    const fetchStarted = deferred();
+    server.use(
+      http.get(`${API}/api/threads/x`, async () => {
+        fetchStarted.resolve();
+        await fetchGate.promise;
+        return HttpResponse.json(
+          { statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' },
+          { status: 404 },
+        );
+      }),
+    );
+    // No handler for GET /api/threads/x/messages or any POST: such a request fails the test (onUnhandledRequest: 'error').
+    const requests: string[] = [];
+    const recordRequest = ({ request }: { request: Request }) => {
+      requests.push(`${request.method} ${new URL(request.url).pathname}`);
+    };
+    server.events.on('request:start', recordRequest);
+    onTestFinished(() => {
+      server.events.removeListener('request:start', recordRequest);
+    });
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/chat/x' });
+
+    // Act: GET /api/threads/x is held
+    await fetchStarted.promise;
+
+    // Assert (while pending, AC-02.2)
+    expect(await screen.findByRole('status', { name: 'Загружаем беседу…' })).toBeInTheDocument();
+    expect(screen.queryByText('Чем могу помочь?')).toBeNull();
+
+    // Assert (while pending, UXRD 6.17): the composer is visible and editable, sending is blocked
+    const composer = screen.getByRole('textbox', { name: 'Сообщение' });
+    await user.type(composer, 'Привет');
+    expect(composer).toHaveValue('Привет');
+    expect(screen.getByRole('button', { name: 'Отправить' })).toBeDisabled();
+    await user.keyboard('{Enter}');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(composer).toHaveValue('Привет');
+    expect(requests.filter((entry) => entry.startsWith('POST '))).toEqual([]);
+
+    // Act: release the 404
+    fetchGate.resolve();
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Беседа не найдена' });
+
+    // Assert (after the 404, AC-04.3)
+    expect(screen.getByText('Возможно, её удалили или ссылка указана неверно.')).toBeInTheDocument();
+    const notice = screen.getByRole('region', { name: 'Беседа не найдена' });
+    expect(within(notice).getByRole('button', { name: 'Новый чат' })).toBeInTheDocument();
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(screen.queryByRole('textbox', { name: 'Сообщение' })).toBeNull();
+    expect(screen.queryByText('Thread not found')).toBeNull();
+    expect(screen.queryByText('Чем могу помочь?')).toBeNull();
+    expect(screen.queryByRole('status', { name: 'Загружаем беседу…' })).toBeNull();
+    // HD-03 on TH-06 (DD State × Display Matrix «TH-06/07: пусто»): neither the loading skeleton nor «Новый чат».
+    const pageTitle = screen.getAllByRole('heading', { level: 1 }).find((h) => h !== heading);
+    expect(pageTitle).toHaveTextContent('');
+    expect(pageTitle).not.toHaveAttribute('aria-busy');
+    expect(requests.filter((entry) => entry.startsWith('POST '))).toEqual([]);
+  });
 
   // AC-02.2 rule 4 (F5 case; also backs AC-04.2): list slower than history — welcome must never flash.
   // ROI: 5.9 | Business Value: 7 | Frequency: 8 (every F5 on a thread) | Legal: false | Defect Detection: 9 (race from review I001)
-  // Behavior: pathname /chat/x, x is in page 1; /messages answers immediately, GET /api/threads held by a deferred;
-  //   MutationObserver records any appearance of «Чем могу помочь?» → record stays empty; feed shows messages
-  // Fails when: the view is resolved as 'thread' before history status is 'ready' for the URL thread (F5 flashes welcome)
+  // Behavior: pathname /chat/x, x is in page 1; GET /api/threads held by a deferred; GET /api/threads/x/messages held until
+  //   the history load is observed (skeleton on screen), then released before the list. A response sent at once settles in
+  //   the same task as the switch and would leave no frame to observe. MutationObserver records any appearance of
+  //   «Чем могу помочь?» → record stays empty; the skeleton stays until the messages render.
+  // Fails when: the main area leaves the skeleton before the URL thread's messages are in the runtime — the history
+  //   adapter reports 'ready' one task before the messages land (MainView loading guard). Rule 4 of resolveMainView
+  //   is proven by its rows in resolve-main-view.test.ts; here the loading guard also covers it, so removing rule 4
+  //   alone leaves this case green.
   // @category: edge-case
   // @dependency: resolveMainView (rule 4), ShellStatus.history, ThreadHistoryAdapter, MSW
   // @complexity: high
-  it.todo('AC-02.2 (F5): the welcome never appears when the list resolves after the history' /*
-    Arrange:
-      - const listGate = deferred(); GET /api/threads → await listGate.promise → 200 { threads: [threadSummary({ id: 'x', title: 'Отчёт' })], nextCursor: null }
-      - GET /api/threads/x → 200 threadSummary({ id: 'x', title: 'Отчёт' })
-      - GET /api/threads/x/messages → 200 immediately { messages: [user "Вопрос", assistant "Ответ"] }
-      - const seenWelcome: string[] = []; MutationObserver on the render container (subtree, childList, characterData)
-        pushes a record whenever container.textContent includes 'Чем могу помочь?'
-      - renderWithRuntime({ pathname: '/chat/x' })
-    Act:
-      - await the /messages response; then listGate.resolve(); await screen.findByText('Ответ')
-    Assert:
-      - seenWelcome.length === 0
-      - getByText('Вопрос'), getByText('Ответ') visible
-      - sidebar link "Отчёт" has aria-current="page"
-  */);
+  it('AC-02.2 (F5): the welcome never appears when the list resolves after the history', async () => {
+    // Arrange
+    const listGate = deferred();
+    const messagesStarted = deferred();
+    const messagesGate = deferred();
+    server.use(
+      http.get(`${API}/api/threads`, async () => {
+        await listGate.promise;
+        return HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]));
+      }),
+      http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
+      http.get(`${API}/api/threads/x/messages`, async () => {
+        messagesStarted.resolve();
+        await messagesGate.promise;
+        return HttpResponse.json({
+          messages: historyMessages([
+            { role: 'user', text: 'Вопрос' },
+            { role: 'assistant', text: 'Ответ' },
+          ]),
+        });
+      }),
+    );
+    const seenWelcome: string[] = [];
+    const skeletonGoneEarly: string[] = [];
+    const { container } = renderWithRuntime({ pathname: '/chat/x' });
+    const record = () => {
+      const text = container.textContent ?? '';
+      if (text.includes('Чем могу помочь?')) seenWelcome.push(text);
+      if (!text.includes('Ответ') && !text.includes('Загружаем беседу…')) skeletonGoneEarly.push(text);
+    };
+    record();
+    const observer = new MutationObserver(record);
+    observer.observe(container, { subtree: true, childList: true, characterData: true });
+    onTestFinished(() => observer.disconnect());
+
+    // Act: the history load is in flight while the list is held; the history answers first, then the list
+    await messagesStarted.promise;
+    expect(await screen.findByRole('status', { name: 'Загружаем беседу…' })).toBeInTheDocument();
+    messagesGate.resolve();
+    await screen.findByText('Ответ');
+    listGate.resolve();
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    const link = await within(history).findByRole('link', { name: 'Отчёт' });
+
+    // Assert
+    expect(seenWelcome).toEqual([]);
+    expect(skeletonGoneEarly).toEqual([]);
+    expect(screen.getByText('Вопрос')).toBeInTheDocument();
+    expect(screen.getByText('Ответ')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Загружаем беседу…' })).toBeNull();
+    await waitFor(() => expect(link).toHaveAttribute('aria-current', 'page'));
+  });
 
   // AC-02.5: "If ответ GET /api/threads/:id/messages не проходит ThreadMessagesResponseSchema или safeValidateUIMessages,
   //   then the system shall показать TH-07 с «Повторить» и «Новый чат», а сайдбар и шапка останутся работоспособны."
@@ -92,21 +181,48 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // @category: core-functionality
   // @dependency: ThreadHistoryAdapter, RetryGate, ShellStatus, ThreadNotice, ShellActions.retryHistory, MSW
   // @complexity: high
-  it.todo('AC-02.5: invalid history shows «Не удалось загрузить беседу»; «Повторить» loads the messages' /*
-    Arrange:
-      - GET /api/threads → 200 { threads: [threadSummary({ id: 'x', title: 'Отчёт' })], nextCursor: null }
-      - GET /api/threads/x/messages → call 1: 200 { messages: [{ id: 'm1', role: 'robot', parts: [] }] } (fails schema);
-                                       call 2: 200 { messages: [user "Вопрос", assistant "Ответ"] }
-      - renderWithRuntime({ pathname: '/chat/x' })
-    Act:
-      - await screen.findByRole('heading', { level: 1, name: 'Не удалось загрузить беседу' })
-      - click button "Повторить"
-    Assert (before retry):
-      - text "Проверьте подключение и попробуйте ещё раз." visible; buttons "Повторить" and "Новый чат" present
-      - queryByText('Чем могу помочь?') === null
-      - sidebar link "Отчёт" still present
-    Assert (after retry):
-      - GET /api/threads/x/messages called exactly 2 times
-      - getByText('Вопрос'), getByText('Ответ') visible; heading "Не удалось загрузить беседу" gone
-  */);
+  it('AC-02.5: invalid history shows «Не удалось загрузить беседу»; «Повторить» loads the messages', async () => {
+    // Arrange
+    let messageCalls = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]))),
+      // The runtime resolves the URL thread before page 1 arrives.
+      http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
+      http.get(`${API}/api/threads/x/messages`, () => {
+        messageCalls += 1;
+        if (messageCalls === 1) return HttpResponse.json({ messages: [{ id: 'm1', role: 'robot', parts: [] }] });
+        return HttpResponse.json({
+          messages: historyMessages([
+            { role: 'user', text: 'Вопрос' },
+            { role: 'assistant', text: 'Ответ' },
+          ]),
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithRuntime({ pathname: '/chat/x' });
+
+    // Act: the invalid history surfaces TH-07
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Не удалось загрузить беседу' });
+
+    // Assert (before retry)
+    expect(screen.getByText('Проверьте подключение и попробуйте ещё раз.')).toBeInTheDocument();
+    const notice = screen.getByRole('region', { name: 'Не удалось загрузить беседу' });
+    expect(within(notice).getByRole('button', { name: 'Новый чат' })).toBeInTheDocument();
+    const retry = within(notice).getByRole('button', { name: 'Повторить' });
+    expect(screen.queryByText('Чем могу помочь?')).toBeNull();
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    expect(within(history).getByRole('link', { name: 'Отчёт' })).toHaveAttribute('href', '/chat/x');
+
+    // Act: retry
+    await user.click(retry);
+    await screen.findByText('Ответ');
+
+    // Assert (after retry)
+    expect(messageCalls).toBe(2);
+    expect(screen.getByText('Вопрос')).toBeInTheDocument();
+    expect(heading).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Не удалось загрузить беседу' })).toBeNull();
+    expect(within(history).getByRole('link', { name: 'Отчёт' })).toBeInTheDocument();
+  });
 });

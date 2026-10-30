@@ -19,16 +19,16 @@ Metadata:
 Блок ошибки ответа (TH-08) с «Перегенерировать» у последнего ответа, выключатель `regenerateAfterError`, слот `ThreadComponents.DeletedNotice` («Беседа удалена», E-8), классификация 404 `THREAD_NOT_FOUND` до SSE. Наполняет `shell.message-error` и `shell.deleted-thread` (интеграционные 10/10). AC-08.5, AC-08.5a–e; Element 2; E-8; IP1 404.
 
 ## Target Files
-- [ ] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (`MessageError`, слот `DeletedNotice` в `ThreadComponents`, скрытие композера при слоте)
-- [ ] `apps/web/src/lib/config.ts` (`regenerateAfterError = true`)
-- [ ] `apps/web/src/lib/threads/shell-services.ts` (`handleChatError`: `APICallError` 404 + `ApiErrorSchema` `THREAD_NOT_FOUND` → `status.setHistory(remoteId, 'deleted')`)
-- [ ] `apps/web/src/components/shell/thread-notice.tsx` (вариант `deleted`, экспорт `DeletedNotice`)
-- [ ] `apps/web/src/components/shell/thread-notice.test.tsx` (строка E-8)
-- [ ] `apps/web/src/components/shell/main-view.tsx` (`DeletedNotice: deleted ? DeletedNotice : undefined`)
-- [ ] `apps/web/src/components/assistant-ui/elements/message-error.test.tsx` (new)
-- [ ] `apps/web/src/lib/threads/shell-services.test.ts` (new)
-- [ ] `apps/web/src/components/shell/shell.message-error.int.test.tsx`
-- [ ] `apps/web/src/components/shell/shell.deleted-thread.int.test.tsx`
+- [x] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (`MessageError`, слот `DeletedNotice` в `ThreadComponents`, скрытие композера при слоте)
+- [x] `apps/web/src/lib/config.ts` (`regenerateAfterError = true`)
+- [x] `apps/web/src/lib/threads/shell-services.ts` (`handleChatError`: `APICallError` 404 + `ApiErrorSchema` `THREAD_NOT_FOUND` → `status.setHistory(remoteId, 'deleted')`)
+- [x] `apps/web/src/components/shell/thread-notice.tsx` (вариант `deleted`, экспорт `DeletedNotice`)
+- [x] `apps/web/src/components/shell/thread-notice.test.tsx` (строка E-8)
+- [x] `apps/web/src/components/shell/main-view.tsx` (`DeletedNotice: deleted ? DeletedNotice : undefined`)
+- [x] `apps/web/src/components/assistant-ui/elements/message-error.test.tsx` (new)
+- [x] `apps/web/src/lib/threads/shell-services.test.ts` (new)
+- [x] `apps/web/src/components/shell/shell.message-error.int.test.tsx`
+- [x] `apps/web/src/components/shell/shell.deleted-thread.int.test.tsx`
 
 ## Investigation Targets
 - `@assistant-ui/ai-sdk` `runtime/useAISDKRuntime.js:219-226, 648`
@@ -63,21 +63,33 @@ Metadata:
 ## Investigation Notes
 (Правило 10: Assert `shell.message-error` («Частичный», «Перегенерировать», блок ошибки) — T7.3; Assert `shell.deleted-thread` («Беседа удалена», «Новый чат», приветствие «Чем могу помочь?» (T3.4), композер «Сообщение» (T3.4), «Копировать» отсутствует (T7.2)) — подтвердить поставку.)
 
+- Правило 10 сверено: все строки Assert обоих I-кейсов поставлены T3.4/T7.2/T7.3; отрицательные утверждения («Перегенерировать», «Не удалось получить ответ», `[data-slot="message-error"]`, `textbox`) проверены против поставленных в этой задаче элементов — мутации их краснят.
+- `ai` 7.0.155 `createUIApiCallError`: не-ok ответ чата → `APICallError { statusCode, responseBody, message: responseBody }` — сырой JSON попадает в `error.message`, поэтому лента читает только фиксированный текст, а лог — только `{ remoteId, name, statusCode }`.
+- Классификация вынесена в экспорт `reportChatError({ error, remoteId, status })` (`shell-services.ts`); `handleChatError` вызывает его с `remoteIdOf(aui)` — U-тест работает с реальным `ShellStatusStore` и реальным `APICallError` без подделки `AssistantClient`.
+- `MainView`: `DeletedNotice` передаётся отдельной константой `DELETED_THREAD_COMPONENTS` (`view.kind === 'thread' && view.deleted`), `Thread` остаётся одним элементом (композер не перемонтируется в `switching`/`thread`).
+- `DeletedNotice` (вариант `deleted` у `ThreadNotice`): `section` с `h2` «Беседа удалена», текст в `role="alert"`, «Новый чат» `size="sm"`, `pointer-coarse:h-11`, `aria-describedby` → текст (UXRD 7.2 TH-07 Deleted while open). Фокус переносится на «Новый чат» при монтировании, только если активен `<body>` — фокус выпал из скрытого композера; при фокусе в другом месте (сайдбар) не трогается.
+- «Перегенерировать»: класс `pressable` в проекте не определён (только локальная константа в `tool-fallback.aui.tsx` со scale 0.98) — использован `active:scale-[0.96]` по UXRD 6.20 + `motion-reduce` + `pointer-coarse:h-11`.
+- Отклонения от текста скелета `shell.deleted-thread` (по DD v1.10, который старше скелета v1.9): (1) скелет требовал «нет heading» — DD `ThreadNotice` `deleted` задаёт `h2` «Беседа удалена»; ассерт заменён на «нет `h1` „Беседа удалена“, есть `h2`»; (2) скелет требовал `[data-role="assistant"]` ровно 1 — заглушка ошибки по T7.2 остаётся корнем `data-role="assistant"` без строки (на этом стоит `message-actions.test.tsx`, его не менять), поэтому «нет строки у заглушки» проверяется как ровно один `aui_assistant-message-content` и один `aui_assistant-message-footer`.
+- Случай «ошибка до первого токена — только блок ошибки» (перенесён из T7.2) — `message-error.test.tsx` case 1a.
+- Мутации (записано): `isThreadNotFound` → `return true` (классификация только по `statusCode`/любой ошибке) — 4 из 9 тестов `shell-services.test.ts` красные; `regenerateAfterError || true` (выключатель не влияет на кнопку) — case 4 `message-error.test.tsx` красный. Возвращено.
+- Reference Contracts: строка 1 (тексты/кнопка/`aria-describedby` в обоих значениях выключателя) — Y (case 1, 2, 4); строка 2 (DOM: «Перегенерировать» между содержимым и «Копировать») — Y (case 2, `compareDocumentPosition`); строка 3 (E-8, композер скрыт) — Y (case 6, I `shell.deleted-thread`); строка 4 (только 404 + `THREAD_NOT_FOUND` → `deleted`) — Y (`shell-services.test.ts`).
+- Гейты: eslint 0, `tsc --noEmit` 0, `vitest run` 36 файлов / 251 тест зелёные (первые два прогона дали таймауты 5 с у 6–8 I-тестов, в том числе не связанных с задачей, — нагрузка машины; третий прогон зелёный), `next build` — успешно. Интеграционные 10/10, `it.todo` — 0.
+
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets; сверить Assert I-кейсов (правило 10)
-- [ ] C `message-error.test.tsx` — случаи 1–6 DD
-- [ ] C `thread-notice.test.tsx` — строка E-8 (тексты, «Новый чат»)
-- [ ] U `shell-services.test.ts` — таблица `handleChatError`
-- [ ] I `shell.message-error.int.test.tsx` — AC-08.5b
-- [ ] I `shell.deleted-thread.int.test.tsx` — AC-08.5e
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets; сверить Assert I-кейсов (правило 10)
+- [x] C `message-error.test.tsx` — случаи 1–6 DD
+- [x] C `thread-notice.test.tsx` — строка E-8 (тексты, «Новый чат»)
+- [x] U `shell-services.test.ts` — таблица `handleChatError`
+- [x] I `shell.message-error.int.test.tsx` — AC-08.5b
+- [x] I `shell.deleted-thread.int.test.tsx` — AC-08.5e
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `config.ts` (`regenerateAfterError`), `shell-services.ts` (`handleChatError`), `thread.aui.tsx` (`MessageError`, слот), `thread-notice.tsx`, `main-view.tsx`; тесты зелёные
+- [x] `config.ts` (`regenerateAfterError`), `shell-services.ts` (`handleChatError`), `thread.aui.tsx` (`MessageError`, слот), `thread-notice.tsx`, `main-view.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; интеграционные 10/10 (todo: 0)
+- [x] Упростить; интеграционные 10/10 (todo: 0)
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL + MSW, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -128,10 +140,10 @@ Metadata:
 - **Residual**: L1-10.
 
 ## Completion Criteria
-- [ ] C, U, I зелёные; интеграционные 10/10
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Мутации (классификация только по `statusCode`; выключатель не влияет на кнопку) краснят тесты (записано)
-- [ ] Reference Contracts — `Y`; Resolved decisions применены
+- [x] C, U, I зелёные; интеграционные 10/10
+- [x] lint, tsc, build — 0 ошибок
+- [x] Мутации (классификация только по `statusCode`; выключатель не влияет на кнопку) краснят тесты (записано)
+- [x] Reference Contracts — `Y`; Resolved decisions применены
 
 ## Notes
 - Impact scope: `thread.aui.tsx` далее правит T7.5; `shell-services.ts`, `main-view.tsx`, `thread-notice.tsx`, `config.ts` — последние правки.

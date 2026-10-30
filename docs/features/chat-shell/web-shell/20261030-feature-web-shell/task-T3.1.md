@@ -16,12 +16,12 @@ Metadata:
 - Правила 1–10 из `_overview.md` обязательны.
 
 ## Implementation Content
-Заменить разметку спайка раскладкой SH-01: `SidebarProvider` с `defaultOpen` из cookie, `SidebarInset` как `main`, `AppSidebar` без списка (полоса/шторка), граница ошибок `(chat)/error.tsx`, `useMediaQuery`, правки `ui/sidebar.tsx` (`setOpen(value, { persist })`, переход ширины). Механизм AC-07.1, AC-10.1–10.3, AC-21.1, Element 4; S-11 (компонентный тест).
+Заменить разметку спайка раскладкой SH-01: `SidebarProvider` с `defaultOpen` из cookie, `SidebarInset` как `main`, `AppSidebar` без списка (полоса/шторка), граница ошибок `app/error.tsx` (перенесено по DD v1.7), `useMediaQuery`, правки `ui/sidebar.tsx` (`setOpen(value, { persist })`, переход ширины). Механизм AC-07.1, AC-10.1–10.3, AC-21.1, Element 4; S-11 (компонентный тест).
 
 ## Target Files
 - [x] `apps/web/src/components/shell/chat-shell.tsx`
 - [x] `apps/web/src/components/shell/app-sidebar.tsx` (new)
-- [x] `apps/web/src/app/(chat)/error.tsx` (new)
+- [x] `apps/web/src/app/error.tsx` (new; перенесено по DD v1.7, было `(chat)/error.tsx`)
 - [x] `apps/web/src/app/(chat)/layout.tsx` (проверен: уже читает cookie по контракту — изменений не потребовалось)
 - [x] `apps/web/src/hooks/use-media-query.ts` (new)
 - [x] `apps/web/src/components/ui/sidebar.tsx`
@@ -46,7 +46,7 @@ Metadata:
 | `ChatShell` | `SidebarProvider defaultOpen={defaultSidebarOpen}`, `SidebarInset` как `main`, корень `h-dvh`; эффект: `!isMobile && openMobile` → `setOpenMobile(false)`; skip link «Перейти к сообщению» первым в Tab; разметка спайка удаляется | План T3.1 |
 | `AppSidebar` | `Sidebar collapsible="icon"` + `SidebarRail`; SB-02 марка; SB-03 «Новый чат» (полная/иконочная, `aria-keyshortcuts="Control+Shift+O Meta+Shift+O"`); в шторке «×» «Закрыть меню», шапка шторки `pt-[env(safe-area-inset-top)]`; `nav aria-label="История бесед"` — место для списка (T4.2); в полосе список не рендерится | План T3.1 |
 | `ui/sidebar.tsx` | `setOpen(value, options?: { persist?: boolean })` (по умолчанию `persist: true`; `false` — без записи cookie); `transition-[width,left,right]` с `ease-(--ease-panel) duration-(--duration-panel) motion-reduce:transition-none` | План T3.1 |
-| `(chat)/error.tsx` | `'use client'`: «Что-то пошло не так» + «Обновить страницу», `console.error` с `digest` | План T3.1 |
+| `app/error.tsx` (перенесено по DD v1.7) | `'use client'`: «Что-то пошло не так» + «Обновить страницу», `console.error` с `digest` | План T3.1 |
 | `useMediaQuery(query)` | `useSyncExternalStore` над `matchMedia` | План T3.1 |
 | Охрана `Ctrl/⌘+B` | Не здесь — T6.2 | План T6.2 |
 | Свайп | Только L1-3 (T8.3) | План T3.1 |
@@ -64,6 +64,7 @@ Metadata:
 - Порядок провайдеров по DD (Component Hierarchy): `SidebarProvider` → `ChatRuntimeProvider`.
 - Подсказка `Ctrl Shift O` справа на SB-03 и символ платформы в тултипах — T6.2.
 - Свайп-закрытие — не проверяется здесь (L1-3, T8.3); `Drawer` сохранён.
+- Доработка по DD v1.7 («Граница ошибок оболочки»): граница перенесена в корневой сегмент `apps/web/src/app/error.tsx` (внутри `app/layout.tsx` — тема/шрифты/`globals.css` действуют; снаружи `(chat)/layout.tsx` — ловит ошибки рендера `ChatShell`), `app/(chat)/error.tsx` удалён. UI без изменений («Что-то пошло не так», «Обновить страницу» → `window.location.reload()`); `console.error('chat shell: render failed', { digest })` — объект ошибки больше не передаётся, текст и стек не показываются и не логируются. Свой `global-error.tsx` не создавался (встроенный Next). Тест `apps/web/src/app/error.test.tsx`: ошибка с `digest` → заголовок и кнопка на месте, текста ошибки на экране нет, `console.error` вызван ровно один раз и только с `digest` (мутация «вернуть аргумент `error`» → красный на `toHaveBeenCalledWith`). Проверка в браузере (ошибка рендера в `ChatShell` в текущей теме, перезагрузка) — на L1.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase

@@ -19,8 +19,8 @@ Metadata:
 Подгрузка страниц списка: кнопка «Показать ещё» при `hasMore`, автоподгрузка `IntersectionObserver`, скелетоны и `role="status"` во время подгрузки, ошибка подгрузки с «Повторить». FR-19 браузерно не проверяется здесь (120 бесед засорили бы стенд) — проверка в T8.3 после сида T8.2. AC-19.1.
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/thread-history-list.tsx`
-- [ ] `apps/web/src/components/shell/thread-history-list.test.tsx`
+- [x] `apps/web/src/components/shell/thread-history-list.tsx`
+- [x] `apps/web/src/components/shell/thread-history-list.test.tsx`
 
 ## Investigation Targets
 - UXRD 6.8 (SB-10); DD State × Display Matrix (SB-10)
@@ -42,19 +42,24 @@ Metadata:
 | Тесты | Один C-кейс SB-10 Error; монотонность групп — U T4.1 (не дублировать) | План T6.1 |
 
 ## Investigation Notes
-(Наблюдения.)
+- `RemoteThreadList.loadMore()` (core 0.3.32 :602-630) никогда не отклоняется (ошибку пишет в консоль), дедуплицирует повторный вызов через `loadMorePromise`; `isLoadingMore` — pending-трансформ `OptimisticState`, после отказа возвращается к `false`, курсор остаётся → `hasMore` остаётся `true`. Адаптер ставит `loadMoreFailed` до отказа — во время повтора приоритет у Loading, затем Error.
+- Props вида — по DD v1.10: `pagination: { hasMore; isLoadingMore; loadMoreFailed; onLoadMore(source: 'keyboard' | 'pointer' | 'viewport') }` (тип `ThreadListPagination`). Источник клика: `event.detail === 0` → `keyboard`.
+- Автоподгрузка: `IntersectionObserver` на кнопке, `root` — `[data-sidebar="content"]` (скролл-контейнер сайдбара; при `root: null` клип промежуточным скроллером съел бы 200 px запаса), `rootMargin: '0px 0px 200px 0px'`. Кнопка размонтируется на время загрузки и монтируется заново → новое наблюдение продолжает подгрузку, пока конец виден. В Error-состоянии наблюдателя нет — автоповторов нет.
+- UXRD 6.8 Loaded: запуск с клавиатуры → фокус на первую строку, которой не было до загрузки (по `data-thread-row`); при ошибке — на «Повторить» SB-10. Прокрутка/указатель фокус не трогают.
+- SR-имя кнопки «Показать ещё беседы» (UXRD 7.2) — видимое «Показать ещё» + `sr-only` « беседы» (label-in-name).
+- Reference Contract: `role="status"` «Загружаем ещё беседы…»; «Не удалось загрузить ещё беседы» в `role="alert"`, «Повторить» вне `alert` → `onLoadMore` → `threads.loadMore()` — `Y`.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] C `thread-history-list.test.tsx` — SB-10 Error: текст в `alert`, «Повторить» вызывает `onLoadMore`, загруженные элементы на месте
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] C `thread-history-list.test.tsx` — SB-10 Error: текст в `alert`, «Повторить» вызывает `onLoadMore`, загруженные элементы на месте
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] Реализовать SB-10 в `thread-history-list.tsx`; тест зелёный
+- [x] Реализовать SB-10 в `thread-history-list.tsx`; тест зелёный
 
 ### 3. Refactor Phase
-- [ ] Упростить; тесты зелёные
+- [x] Упростить; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc` — Type: `executable_check`
@@ -77,9 +82,9 @@ Metadata:
 - **Residual**: порядок групп/дубли страниц — U T4.1 + браузер T8.3.
 
 ## Completion Criteria
-- [ ] Тест зелёный (содержательно)
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Reference Contract — `Y`
+- [x] Тест зелёный (содержательно)
+- [x] lint, tsc, build — 0 ошибок
+- [x] Reference Contract — `Y`
 
 ## Notes
 - Impact scope: `thread-history-list.tsx` больше не правится после.

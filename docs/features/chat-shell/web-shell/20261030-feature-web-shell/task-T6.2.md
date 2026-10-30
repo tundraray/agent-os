@@ -19,14 +19,14 @@ Metadata:
 Глобальные сочетания: `Ctrl/⌘+Shift+O` («Новый чат»), `Ctrl/⌘+B` (сайдбар) с охраной от срабатывания в полях/диалогах/меню, символ платформы («⌘»/«Ctrl») в тултипах. AC-22.1.
 
 ## Target Files
-- [ ] `apps/web/src/lib/keyboard-shortcuts.ts` (new)
-- [ ] `apps/web/src/lib/keyboard-shortcuts.test.ts` (new)
-- [ ] `apps/web/src/hooks/use-global-shortcuts.ts` (new)
-- [ ] `apps/web/src/hooks/use-global-shortcuts.test.tsx` (new)
-- [ ] `apps/web/src/components/ui/sidebar.tsx` (охрана `Ctrl/⌘+B`)
-- [ ] `apps/web/src/components/shell/chat-shell.tsx` (подключение хука)
-- [ ] `apps/web/src/components/shell/app-sidebar.tsx`
-- [ ] `apps/web/src/components/shell/chat-header.tsx` (тултипы «⌘»/«Ctrl»)
+- [x] `apps/web/src/lib/keyboard-shortcuts.ts` (new)
+- [x] `apps/web/src/lib/keyboard-shortcuts.test.ts` (new)
+- [x] `apps/web/src/hooks/use-global-shortcuts.ts` (new)
+- [x] `apps/web/src/hooks/use-global-shortcuts.test.tsx` (new)
+- [x] `apps/web/src/components/ui/sidebar.tsx` (охрана `Ctrl/⌘+B`)
+- [x] `apps/web/src/components/shell/chat-shell.tsx` (подключение хука)
+- [x] `apps/web/src/components/shell/app-sidebar.tsx`
+- [x] `apps/web/src/components/shell/chat-header.tsx` (тултипы «⌘»/«Ctrl»)
 
 ## Investigation Targets
 - DD «Клавиатура» (`isShortcutBlocked`, `Ctrl/⌘+Shift+O`, `Ctrl/⌘+B`); UXRD 7.3
@@ -43,20 +43,25 @@ Metadata:
 | Тесты | U — таблица блокировок; C — 1 тест проводки хука (`Ctrl+Shift+O` вызывает `newChat` и `preventDefault`, внутри `[data-shortcuts-blocked]` — нет) | План T6.2 |
 
 ## Investigation Notes
-(Как shadcn перехватывает `Ctrl/⌘+B`; где ставить охрану.)
+- shadcn `SidebarProvider` вешал на `window` `keydown`: `event.key === "b"` + Ctrl/⌘ → `toggleSidebar()` без каких-либо условий (срабатывал и в SB-08, и при открытом меню/диалоге, и с Shift — перехватывая Ctrl+Shift+B браузера). Охрана поставлена в том же обработчике `ui/sidebar.tsx`: `matchShortcut(event) !== "toggle-sidebar" || isShortcutBlocked(event)` → выход. Константа `SIDEBAR_KEYBOARD_SHORTCUT` удалена.
+- `Ctrl/⌘+B` сопоставляется по `event.code === 'KeyB'` (как `KeyO` для нового чата по DD), иначе в русской раскладке (`key === 'и'`) сочетание не работало бы; лишние модификаторы (Shift, Alt) — другое сочетание, остаётся браузеру («перехватываются только перечисленные сочетания», UXRD 7.3).
+- Модальные слои: меню base-ui рендерит `role="menu"`, DLG-01 — `role="alertdialog"`; `Dialog` base-ui сам `aria-modal` не ставит — единственный `[role="dialog"][aria-modal="true"]` в оболочке — шторка (`ui/sidebar.tsx` задаёт атрибуты явно, плюс `data-slot="sidebar" data-mobile="true"`), по ним и делается исключение для `Ctrl/⌘+B`. Шторка + открытое в ней меню → `Ctrl/⌘+B` блокируется.
+- `useGlobalShortcuts()` (без аргументов, как в DD) берёт `newChat` из `useShellActions()` и вызывает `newChat('shortcut')`; подключён компонентом `GlobalShortcuts` внутри `ChatRuntimeProvider` в `chat-shell.tsx`. В тесте граница `ShellActions` подменена `vi.mock('@/components/shell/shell-actions')` (шпион `newChat`).
+- Символ платформы: `isApplePlatform({ platform, userAgentData })` — `userAgentData.platform`, иначе `navigator.platform`; `/mac|iphone|ipad|ipod/i` → «⌘». Хук `useShortcutLabel(shortcut)` (`useSyncExternalStore`, на сервере «Ctrl») — подписи «Ctrl+Shift+O»/«⌘+Shift+O», «Ctrl+B»/«⌘+B».
+- Тултипы: SB-03 в полосе SB-12 — «Новый чат · Ctrl+Shift+O»; приглушённая подсказка «Ctrl Shift O» («⌘ Shift O») справа в полной кнопке SB-03 — только ≥ 1024 px с точным указателем (`aria-hidden`, имя кнопки не меняется); шапка — «Меню · Ctrl+B», «Боковая панель · Ctrl+B», «Новый чат · Ctrl+Shift+O» (тултип снизу).
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] U `keyboard-shortcuts.test.ts` — таблица блокировок (поле переименования, `alertdialog`, `menu`, модальный `dialog`, исключение `Ctrl+B` при шторке)
-- [ ] C `use-global-shortcuts.test.tsx` — 1 тест проводки
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] U `keyboard-shortcuts.test.ts` — таблица блокировок (поле переименования, `alertdialog`, `menu`, модальный `dialog`, исключение `Ctrl+B` при шторке)
+- [x] C `use-global-shortcuts.test.tsx` — 1 тест проводки
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `keyboard-shortcuts.ts`, `use-global-shortcuts.ts`, охрана в `ui/sidebar.tsx`, подключение в `chat-shell.tsx`, тултипы в `app-sidebar.tsx` и `chat-header.tsx`; тесты зелёные
+- [x] `keyboard-shortcuts.ts`, `use-global-shortcuts.ts`, охрана в `ui/sidebar.tsx`, подключение в `chat-shell.tsx`, тултипы в `app-sidebar.tsx` и `chat-header.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; тесты зелёные
+- [x] Упростить; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -88,9 +93,9 @@ Metadata:
 - **Residual**: нет.
 
 ## Completion Criteria
-- [ ] Тесты зелёные (содержательно)
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Resolved decisions применены
+- [x] Тесты зелёные (содержательно)
+- [x] lint, tsc, build — 0 ошибок
+- [x] Resolved decisions применены
 
 ## Notes
 - Impact scope: `chat-shell.tsx`, `app-sidebar.tsx`, `chat-header.tsx`, `ui/sidebar.tsx` — последние правки.

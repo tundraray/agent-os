@@ -1,7 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.9)
 // File: shell.workspace.int.test.tsx — Test Strategy, "Integration Tests (I)" (replaced workspace-panel.test.tsx in v1.2, N003)
-// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
-// Budget after the plan merges: 10 it.todo in 7 files (plan «Решение по бюджету интеграционных тестов»).
+// Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
@@ -12,12 +12,16 @@
 //   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env).
 // Mock boundary: network only (MSW, empty list) + next/navigation. ChatShell, WorkspacePanel, ChatHeader,
 //   react-resizable-panels — real. Panel widths (40 %, 360 px / 480 px limits) are NOT asserted here (jsdom has no layout) → L1-1.
-// Imports for implementation (added when the case is filled; an it.todo case imports nothing):
-//   import { screen } from '@testing-library/react';
-//   import { http, HttpResponse } from 'msw';
-//   import { server } from '@/test/msw-server';
-//   import { renderWithRuntime } from '@/test/render-with-runtime';
-import { describe, it } from 'vitest';
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it } from 'vitest';
+import { threadList } from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+const API = 'http://api.test';
+const PLACEHOLDER = 'Здесь появятся артефакты инструментов: таблицы, документы, графики.';
 
 describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   // AC-11.3: "When нажата та же кнопка или «×», the system shall скрыть панель, фокус — на кнопку в шапке."
@@ -38,23 +42,38 @@ describe('Shell: workspace panel (FR-11, AC-11.1 / AC-11.3)', () => {
   //   | closer                                   | focus before close | focus after close            |
   //   | button "Закрыть рабочую область" (WS-03) | on «×» (in panel)  | button "Рабочая область" (HD-04) |
   //   | button "Рабочая область" (HD-04)         | on HD-04           | button "Рабочая область" (HD-04) |
-  it.todo('AC-11.3 + AC-11.1: the workspace is hidden on load; closing it by «×» or by the header button hides it and leaves focus on the header button' /*
-    Arrange:
-      - GET /api/threads → 200 { threads: [], nextCursor: null }
-      - renderWithRuntime({ pathname: '/', media: { '(min-width: 1024px)': true, '(min-width: 768px)': true } })
-    Act 1 (load):
-      - await screen.findByText('Пока нет бесед')
-    Assert 1 (AC-11.1, before the first click):
-      - queryByRole('complementary', { name: 'Рабочая область' }) === null
-      - getByRole('button', { name: 'Рабочая область' }) has aria-expanded="false"
-    Act 2:
-      - click button "Рабочая область" (open)
-      - (intermediate) getByRole('complementary', { name: 'Рабочая область' }) present; button aria-expanded="true";
-        text "Здесь появятся артефакты инструментов: таблицы, документы, графики." visible
-      - click the row's closer
-    Assert 2:
-      - queryByRole('complementary', { name: 'Рабочая область' }) === null
-      - button "Рабочая область" has aria-expanded="false"
-      - document.activeElement === getByRole('button', { name: 'Рабочая область' })
-  */);
+  it.each([
+    { closer: 'Закрыть рабочую область' },
+    { closer: 'Рабочая область' },
+  ])(
+    'AC-11.3 + AC-11.1: the workspace is hidden on load; closing it by "$closer" hides it and leaves focus on the header button',
+    async ({ closer }) => {
+      // Arrange
+      server.use(http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))));
+      const user = userEvent.setup();
+      renderWithRuntime({ pathname: '/', media: { '(min-width: 1024px)': true, '(min-width: 768px)': true } });
+
+      // Act 1: load
+      await screen.findByText('Пока нет бесед');
+
+      // Assert 1 (AC-11.1): hidden by default, HD-04 not pressed
+      const toggle = screen.getByRole('button', { name: 'Рабочая область' });
+      expect(screen.queryByRole('complementary', { name: 'Рабочая область' })).toBeNull();
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+      // Act 2: open
+      await user.click(toggle);
+      const panel = screen.getByRole('complementary', { name: 'Рабочая область' });
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(panel).toHaveTextContent(PLACEHOLDER);
+
+      // Act 3: close by the row's closer
+      await user.click(screen.getByRole('button', { name: closer }));
+
+      // Assert 2 (AC-11.3)
+      expect(screen.queryByRole('complementary', { name: 'Рабочая область' })).toBeNull();
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(toggle).toHaveFocus();
+    },
+  );
 });

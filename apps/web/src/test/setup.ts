@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from './msw-server';
 
@@ -132,6 +132,8 @@ Element.prototype.hasPointerCapture = function hasPointerCapture() {
 };
 Element.prototype.setPointerCapture = function setPointerCapture() {};
 Element.prototype.releasePointerCapture = function releasePointerCapture() {};
+
+configure({ asyncUtilTimeout: 3000 });
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });

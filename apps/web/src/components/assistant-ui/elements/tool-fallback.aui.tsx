@@ -110,11 +110,12 @@ const statusIconMap: Record<ToolStatus, React.ElementType> = {
 };
 
 const formatToolDuration = (ms: number) => {
-  if (ms < 1000) return "<1s";
+  if (ms < 1000) return "<1 с";
   const seconds = ms / 1000;
-  if (seconds < 10) return `${(Math.floor(seconds * 10) / 10).toFixed(1)}s`;
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+  if (seconds < 10)
+    return `${(Math.floor(seconds * 10) / 10).toFixed(1).replace(".", ",")} с`;
+  if (seconds < 60) return `${Math.floor(seconds)} с`;
+  return `${Math.floor(seconds / 60)} мин ${Math.floor(seconds % 60)} с`;
 };
 
 function ToolFallbackDuration({
@@ -157,14 +158,16 @@ function ToolFallbackTrigger({
   const Icon = statusIconMap[statusType];
   const label =
     responseDeliveryStatus === "queued"
-      ? "Reply queued, not sent yet"
+      ? "Ответ в очереди, ещё не отправлен"
       : statusType === "running"
-        ? "Running tool"
+        ? "Выполняется инструмент"
         : statusType === "requires-action"
-          ? "Waiting on tool"
+          ? "Ожидание инструмента"
           : statusType === "incomplete"
-            ? `${isCancelled ? "Cancelled" : "Failed"} tool`
-            : "Used tool";
+            ? isCancelled
+              ? "Отменён инструмент"
+              : "Сбой инструмента"
+            : "Использован инструмент";
 
   return (
     <CollapsibleTrigger
@@ -277,7 +280,7 @@ const formatUnknownValue = (value: unknown, space?: number): string => {
   try {
     return String(value);
   } catch {
-    return "[Unserializable value]";
+    return "[Значение не сериализуется]";
   }
 };
 
@@ -297,7 +300,7 @@ function ToolFallbackResult({
       {...props}
     >
       <p className="aui-tool-fallback-result-header text-muted-foreground text-xs font-medium">
-        Result:
+        Результат:
       </p>
       <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground/90 mt-1 rounded-md p-2.5 text-xs break-words whitespace-pre-wrap">
         {formatUnknownValue(result, 2)}
@@ -306,6 +309,14 @@ function ToolFallbackResult({
   );
 }
 
+const TOOL_ERROR_TEXT = "Не удалось выполнить инструмент.";
+const TOOL_CANCELLED_TEXT = "Вызов инструмента отменён.";
+
+/**
+ * A failed or cancelled tool always reads as a fixed text, so the raw error or
+ * cancellation reason never reaches the feed and a live failure looks the same
+ * as a restored one.
+ */
 function ToolFallbackError({
   status,
   className,
@@ -315,14 +326,17 @@ function ToolFallbackError({
 }) {
   if (status?.type !== "incomplete") return null;
 
+  const isCancelled = status.reason === "cancelled";
   const error = status.error;
-  const errorText =
-    error === undefined || error === null ? null : formatUnknownValue(error);
+  const errorText = !isCancelled
+    ? TOOL_ERROR_TEXT
+    : error === undefined || error === null
+      ? null
+      : TOOL_CANCELLED_TEXT;
 
   if (!errorText) return null;
 
-  const isCancelled = status.reason === "cancelled";
-  const headerText = isCancelled ? "Cancelled reason:" : "Error:";
+  const headerText = isCancelled ? "Причина отмены:" : "Ошибка:";
 
   return (
     <div
@@ -340,14 +354,15 @@ function ToolFallbackError({
   );
 }
 
-const APPROVED_RESULT = "Approved by user";
-const DENIED_RESULT = "User denied tool execution";
+const APPROVED_RESULT = "Одобрено пользователем";
+const DENIED_RESULT = "Пользователь запретил выполнение инструмента";
+const APPROVAL_SEND_ERROR_TEXT = "Не удалось отправить ответ. Попробуйте ещё раз.";
 
 const APPROVAL_OPTION_DEFAULT_LABELS: Record<string, string> = {
-  "allow-once": "Allow",
-  "allow-always": "Always allow",
-  "reject-once": "Deny",
-  "reject-always": "Always deny",
+  "allow-once": "Разрешить",
+  "allow-always": "Всегда разрешать",
+  "reject-once": "Запретить",
+  "reject-always": "Всегда запрещать",
 };
 
 const isKnownKind = (kind: string) =>
@@ -408,8 +423,8 @@ const approvalReceipt = (
       outcome: "closed",
       label:
         approval.resolution === "cancelled"
-          ? "Cancelled before a decision"
-          : "Expired before a decision",
+          ? "Отменено до решения"
+          : "Истекло до решения",
     };
 
   const chosen =
@@ -424,17 +439,17 @@ const approvalReceipt = (
         : approval.optionId;
   const answered =
     isQuestion(approval) || (chosen !== undefined && !isKnownKind(chosen.kind));
-  const automatic = approval.isAutomatic ? " automatically" : "";
+  const automatic = approval.isAutomatic ? " автоматически" : "";
 
   if (approval.approved)
     return {
       outcome: "allowed",
-      label: `${answered ? "Answered" : "Allowed"}${automatic}`,
+      label: `${answered ? "Отвечено" : "Разрешено"}${automatic}`,
       option,
     };
   return {
     outcome: "refused",
-    label: `${answered ? "Dismissed" : "Denied"}${automatic}`,
+    label: `${answered ? "Отклонено" : "Запрещено"}${automatic}`,
     option,
   };
 };
@@ -656,8 +671,8 @@ function ToolFallbackApprovalQuestions({
                 aria-label={question.prompt}
                 placeholder={
                   question.options?.length
-                    ? "Or type an answer"
-                    : "Type your answer"
+                    ? "Или введите ответ"
+                    : "Введите ответ"
                 }
               />
             ) : null}
@@ -671,7 +686,7 @@ function ToolFallbackApprovalQuestions({
           onClick={send}
           disabled={locked || !complete}
         >
-          Send
+          Отправить
         </Button>
         {dismissible ? (
           <Button
@@ -681,7 +696,7 @@ function ToolFallbackApprovalQuestions({
             onClick={onDismiss}
             disabled={locked}
           >
-            Dismiss
+            Отклонить
           </Button>
         ) : null}
       </div>
@@ -876,9 +891,11 @@ function ToolFallbackApprovalImpl({
       } catch (sendError) {
         if (attemptRef.current !== attempt) return;
         setSubmitted(false);
-        setError(
-          sendError instanceof Error ? sendError.message : String(sendError),
-        );
+        // The raw message may carry host or server details, so only its class is logged.
+        console.error("[web-shell] tool approval response failed", {
+          name: sendError instanceof Error ? sendError.name : typeof sendError,
+        });
+        setError(APPROVAL_SEND_ERROR_TEXT);
       }
     })();
   };
@@ -958,7 +975,7 @@ function ToolFallbackApprovalImpl({
       onClick={dismiss}
       disabled={locked}
     >
-      Dismiss
+      Отклонить
     </Button>
   ) : null;
 
@@ -977,9 +994,9 @@ function ToolFallbackApprovalImpl({
         value={answer}
         onChange={(event) => setAnswer(event.target.value)}
         disabled={locked}
-        aria-label={question ? (approval?.prompt ?? "Answer") : "Note"}
+        aria-label={question ? (approval?.prompt ?? "Ответ") : "Примечание"}
         placeholder={
-          question ? "Type your answer" : "Add a note to your decision"
+          question ? "Введите ответ" : "Добавьте примечание к решению"
         }
       />
       {question && (
@@ -990,7 +1007,7 @@ function ToolFallbackApprovalImpl({
             onClick={submitAnswer}
             disabled={locked}
           >
-            Send
+            Отправить
           </Button>
           {dismissButton}
         </div>
@@ -1065,7 +1082,7 @@ function ToolFallbackApprovalImpl({
             onClick={() => respondWithOption(confirming)}
             disabled={locked}
           >
-            Confirm
+            Подтвердить
           </Button>
           <Button
             size="sm"
@@ -1077,7 +1094,7 @@ function ToolFallbackApprovalImpl({
             }}
             disabled={locked}
           >
-            Back
+            Назад
           </Button>
         </div>
       </div>
@@ -1125,7 +1142,7 @@ function ToolFallbackApprovalImpl({
               onClick={() => respond(false)}
               disabled={locked}
             >
-              Deny
+              Запретить
             </Button>
           )}
           {!acceptsText && dismissButton}
@@ -1179,7 +1196,7 @@ function ToolFallbackApprovalImpl({
           onClick={() => respond(true)}
           disabled={locked}
         >
-          Allow
+          Разрешить
         </Button>
         <Button
           size="sm"
@@ -1188,7 +1205,7 @@ function ToolFallbackApprovalImpl({
           onClick={() => respond(false)}
           disabled={locked}
         >
-          Deny
+          Запретить
         </Button>
       </div>
       {answerField}
@@ -1197,10 +1214,16 @@ function ToolFallbackApprovalImpl({
   );
 }
 
+const TOOL_ERROR_STATUS = {
+  type: "incomplete",
+  reason: "error",
+} as const satisfies ToolCallMessagePartStatus;
+
 const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   toolName,
   argsText,
   result,
+  isError,
   status,
   responseDeliveryStatus,
   addResult,
@@ -1209,8 +1232,12 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   approval,
   respondToApproval,
 }) => {
+  // A part that settled with an error shows as a failed tool, not a completed
+  // one, and its result (the raw error payload) is never rendered.
+  const displayStatus = isError ? TOOL_ERROR_STATUS : status;
   const isCancelled =
-    status?.type === "incomplete" && status.reason === "cancelled";
+    displayStatus?.type === "incomplete" &&
+    displayStatus.reason === "cancelled";
   const isRequiresAction = status?.type === "requires-action";
   const shouldRenderApproval =
     approval != null ||
@@ -1253,11 +1280,11 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     <ToolFallbackRoot open={open} onOpenChange={setOpen}>
       <ToolFallbackTrigger
         toolName={toolName}
-        status={status}
+        status={displayStatus}
         responseDeliveryStatus={responseDeliveryStatus}
       />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
+        <ToolFallbackError status={displayStatus} />
         <ToolFallbackArgs
           argsText={argsText}
           className={cn(isCancelled && "opacity-60")}
@@ -1292,7 +1319,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             }}
           />
         )}
-        <ToolFallbackResult result={result} />
+        {!isError && <ToolFallbackResult result={result} />}
       </ToolFallbackContent>
     </ToolFallbackRoot>
   );

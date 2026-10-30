@@ -19,10 +19,10 @@ Metadata:
 Рабочая область: `ResizablePanelGroup` в `SidebarInset` (панель чата + `collapsible` панель), `workspaceOpen` × `useMediaQuery('(min-width: 1024px)')`, временная свёртка сайдбара (`setOpen(false, { persist: false })`), `Separator` с клавиатурой, возврат фокуса на HD-04. Наполняет `shell.workspace` (AC-11.3 + AC-11.1). AC-11.1–11.4; Element 4; S-10.
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/workspace-panel.tsx` (new)
-- [ ] `apps/web/src/components/shell/chat-shell.tsx`
-- [ ] `apps/web/src/components/shell/chat-header.tsx` (HD-04 обработчик)
-- [ ] `apps/web/src/components/shell/shell.workspace.int.test.tsx`
+- [x] `apps/web/src/components/shell/workspace-panel.tsx` (new)
+- [x] `apps/web/src/components/shell/chat-shell.tsx`
+- [x] `apps/web/src/components/shell/chat-header.tsx` (HD-04 обработчик)
+- [x] `apps/web/src/components/shell/shell.workspace.int.test.tsx`
 
 ## Investigation Targets
 - `apps/web/node_modules/react-resizable-panels/dist/react-resizable-panels.d.ts` (`collapsible`, `panelRef`, единицы `px`/`%`)
@@ -50,18 +50,28 @@ Metadata:
 
 ## Investigation Notes
 (Правило 10: Assert — `complementary` «Рабочая область» (T5.3), HD-04 `aria-expanded` (T3.3 + T5.3).)
+- Правило 10 сверено: все строки Assert поставляет T5.3 (`aside aria-label="Рабочая область"`, WS-03 «Закрыть рабочую область», плейсхолдер) или T3.3 (HD-04, `aria-expanded`); «Пока нет бесед» — T4.1.
+- Раскладка: `ShellMain` (внутри `chat-shell.tsx`, нужен `useSidebar` под `SidebarProvider`) — `SidebarInset` → `ResizablePanelGroup` (horizontal): панель `chat` (`minSize="480px"`, внутри HD-01 + MainView) и, только пока `workspaceOpen && useMediaQuery('(min-width: 1024px)')`, `WorkspacePanel` (фрагмент `Separator` + `Panel`, прямые дети группы). Панель `collapsible`, `collapsedSize={0}`, `minSize="360px"`, `defaultSize` — 40 % или ширина, выбранная перетаскиванием в этой вкладке (`onLayoutChanged` группы с `isUserInteraction`, `useState` в оболочке, передаётся как `"N%"` — число библиотека трактует как px).
+- S-10: панель монтируется условно (решение «S-10 не подтвердился» и Failure response задачи), без анимации; `collapsible` сохранён — перетаскивание до свёрнутого размера закрывает рабочую область (`onResize`: было > 0 px, стало 0) с фокусом на HD-04, чтобы не оставалось «открытой» панели нулевой ширины. Анимация 200 мс (UXRD 6.22) не реализована — по решению S-10.
+- < 1024 px: панель размонтирована, намерение `workspaceOpen` сохраняется → при ≥ 1024 px панель возвращается (AC-11.4); HD-04 скрыт классами T3.3.
+- Временная свёртка: при открытии, если ширина `main` (`getBoundingClientRect`) < 840 px и сайдбар развёрнут → `setOpen(false, { persist: false })` + флаг; при закрытии по флагу → `setOpen(true, { persist: false })`. Если пользователь сам развернул сайдбар, пока панель открыта, флаг сбрасывается. Reference Contract: **Y** — обе записи с `persist: false`, cookie не пишется (проверка cookie — L1-1).
+- Фокус: закрытие («×», HD-04, свёртка перетаскиванием) → `[data-shell-focus="workspace-toggle"]` (атрибут на HD-04) получает фокус синхронно в обработчике; открытие фокус не переносит (остаётся на HD-04). HD-04 получил `aria-controls="workspace-panel"` только в открытом состоянии (UXRD 7.2).
+- WS-02: `aria-label="Изменить ширину рабочей области"`; ←/→ ±16 px, Shift ±64 px, End → 360 px — `onKeyDownCapture` (срабатывает раньше нативного обработчика библиотеки, `preventDefault` его отменяет), через `panelRef.resize("Npx")`; Home — штатный обработчик библиотеки (к максимуму с учётом `minSize` ленты). `aria-value*` — библиотечные.
+- WS-03 — переиспользован `TooltipIconButton` (DD «Иконочная кнопка с тултипом»), 32×32.
+- Мутации (записано): удаление `focusWorkspaceToggle()` из закрытия → обе строки I красные (`toHaveFocus`); `useState(true)` по умолчанию → обе строки красные (первое утверждение AC-11.1). Исходный код восстановлен, I зелёный.
+- Гейты: `eslint` 0, `tsc --noEmit` 0, `vitest run` 161 passed / 2 todo (интеграционные 8/10), `next build` успешно.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets; сверить Assert (правило 10)
-- [ ] I `shell.workspace.int.test.tsx` — 1 тест
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets; сверить Assert (правило 10)
+- [x] I `shell.workspace.int.test.tsx` — 1 тест
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `workspace-panel.tsx`; правки `chat-shell.tsx`, `chat-header.tsx`; тест зелёный
+- [x] `workspace-panel.tsx`; правки `chat-shell.tsx`, `chat-header.tsx`; тест зелёный
 
 ### 3. Refactor Phase
-- [ ] Упростить; интеграционные 8/10
+- [x] Упростить; интеграционные 8/10
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -93,10 +103,10 @@ Metadata:
 - **Residual**: проверяется только в браузере.
 
 ## Completion Criteria
-- [ ] I зелёный; интеграционные 8/10
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Мутации («×» без переноса фокуса; `workspaceOpen=true` по умолчанию) краснят I (записано)
-- [ ] Reference Contract — `Y`; Resolved decisions применены
+- [x] I зелёный; интеграционные 8/10
+- [x] lint, tsc, build — 0 ошибок
+- [x] Мутации («×» без переноса фокуса; `workspaceOpen=true` по умолчанию) краснят I (записано)
+- [x] Reference Contract — `Y`; Resolved decisions применены
 
 ## Notes
 - Impact scope: `chat-shell.tsx`, `chat-header.tsx` далее правит T6.2.

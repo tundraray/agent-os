@@ -71,6 +71,13 @@ describe('createThreadTitleAgent on a mock model', () => {
     expect(userTexts).toEqual([
       '<message>\nОтветь одним словом: столица Франции?\n</message>',
     ]);
+    // Finding 19: the language rule is stated explicitly, so the title follows the message, not the instructions.
+    const systemTexts = call.prompt.flatMap((message) =>
+      message.role === 'system' ? [message.content] : [],
+    );
+    expect(systemTexts.join('\n')).toContain(
+      "Language rule: write the title in the same language as the user's message.",
+    );
   });
 });
 
@@ -106,6 +113,46 @@ describe('normalizeGeneratedTitle', () => {
       `${'a'.repeat(79)} ${'b'.repeat(40)}`,
       'a'.repeat(79),
     ],
+    // AC-17.1, finding 19: quotes are removed anywhere, paired or not; an apostrophe between letters stays.
+    [
+      'removes an unpaired opening « inside the title',
+      'Значение и происхождение выражения «водить за нос',
+      'Значение и происхождение выражения водить за нос',
+    ],
+    ['removes a leading unpaired «', '«Trip to Baikal', 'Trip to Baikal'],
+    ['removes a trailing unpaired »', 'Trip to Baikal»', 'Trip to Baikal'],
+    [
+      'removes an unpaired « before Latin words',
+      'Фраза «break the ice означает',
+      'Фраза break the ice означает',
+    ],
+    [
+      'removes a balanced inner «» pair',
+      'Значение выражения «водить за нос» в русском',
+      'Значение выражения водить за нос в русском',
+    ],
+    [
+      'removes a balanced inner “” pair',
+      'Meaning of “break the ice” idiom',
+      'Meaning of break the ice idiom',
+    ],
+    ['removes a „“ pair', '„Тест“ модели', 'Тест модели'],
+    [
+      "removes a '' pair",
+      "Meaning of 'break the ice'",
+      'Meaning of break the ice',
+    ],
+    [
+      'removes spaced « » and collapses the gaps',
+      'Фраза « водить за нос » значение',
+      'Фраза водить за нос значение',
+    ],
+    [
+      'keeps an apostrophe between two letters',
+      "Why JavaScript doesn't print it’s value",
+      "Why JavaScript doesn't print it’s value",
+    ],
+    ['only quotes → empty', '«»', ''],
     ['whitespace only → empty', '  \n\t  \n', ''],
     ['only a <think> block → empty', '<think>hmm</think>', ''],
   ])('%s', (_case, input, expected) => {

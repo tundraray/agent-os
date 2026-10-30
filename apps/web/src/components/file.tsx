@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { AudioPlayer, VideoPlayer } from "./media-player";
 
 const fileVariants = cva(
-  "aui-file-root inline-flex items-center gap-3 rounded-lg transition-colors",
+  "aui-file-root inline-flex items-center gap-3 rounded-lg transition-colors motion-reduce:transition-none",
   {
     variants: {
       variant: {
@@ -141,19 +141,19 @@ function getFileLabel(mimeType: string): string {
   const subtype = /^[^/;]+\/(?:x-)?(?:[^;+]*\.)?([^;+.\s]+)/.exec(
     mimeType.toLowerCase(),
   )?.[1];
-  if (!subtype || subtype === "octet-stream") return "File";
-  if (subtype === "plain") return "Text file";
-  return `${subtype.toUpperCase()} file`;
+  if (!subtype || subtype === "octet-stream") return "Файл";
+  if (subtype === "plain") return "Текстовый файл";
+  return `Файл ${subtype.toUpperCase()}`;
 }
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
-    return `${bytes} B`;
+    return `${bytes} Б`;
   }
   if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024).toFixed(1)} КБ`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 export type FileRootProps = React.ComponentProps<"div"> &
@@ -214,7 +214,7 @@ function FileName({
       className={cn("min-w-0 flex-1 truncate font-medium", className)}
       {...props}
     >
-      {children || "Unnamed file"}
+      {children || "Файл без названия"}
     </span>
   );
 }
@@ -263,10 +263,10 @@ function FileDownload({
       download={filename || "download"}
       {...(kind === "url" && { target: "_blank", rel: "noopener noreferrer" })}
       className={cn(
-        "text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors",
+        "text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors motion-reduce:transition-none",
         className,
       )}
-      aria-label={!children ? `Download ${filename || "file"}` : undefined}
+      aria-label={!children ? `Скачать ${filename || "файл"}` : undefined}
       {...props}
     >
       {children || <DownloadIcon className="size-4" />}

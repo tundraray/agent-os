@@ -19,18 +19,19 @@ Metadata:
 «Новый чат» (`newChat(source)`), фокус-политика (`lib/focus.ts`), приветствие и подсказки 2×2, композер (вложения скрыты, отступ safe-area), заголовок вкладки `DocumentTitle`. Наполняет `shell.new-chat` (2 теста). AC-03.1, AC-03.2, AC-03.3, AC-04.1, AC-08.2; S-7, S-9; UX-04.
 
 ## Target Files
-- [ ] `apps/web/src/lib/focus.ts` (new)
-- [ ] `apps/web/src/lib/focus.test.ts` (new)
-- [ ] `apps/web/src/lib/welcome-suggestions.ts` (new)
-- [ ] `apps/web/src/components/shell/shell-welcome.tsx` (new)
-- [ ] `apps/web/src/components/shell/document-title.tsx` (new)
-- [ ] `apps/web/src/components/shell/thread-welcome.test.tsx` (new)
-- [ ] `apps/web/src/components/shell/shell-actions.tsx` (`newChat`)
-- [ ] `apps/web/src/components/shell/chat-runtime-provider.tsx` (`Suggestions(WELCOME_SUGGESTIONS)` через `auiConfig`)
-- [ ] `apps/web/src/components/shell/main-view.tsx` (`Welcome: ShellWelcome`)
-- [ ] `apps/web/src/components/shell/thread-history-item.tsx` (фокус по клику)
-- [ ] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (прочие тексты приветствия кроме заголовка из T3.4, подсказки 2×2 без «>», кнопка вложений удалена, `AttachmentDropzone` → `div`, `addAttachmentOnPaste={false}`, `data-shell-focus="composer"`, `pb-[max(1rem,env(safe-area-inset-bottom))]`, композер внизу на < 768 px)
-- [ ] `apps/web/src/components/shell/shell.new-chat.int.test.tsx`
+- [x] `apps/web/src/lib/focus.ts` (new)
+- [x] `apps/web/src/lib/focus.test.ts` (new)
+- [x] `apps/web/src/lib/welcome-suggestions.ts` (new)
+- [x] `apps/web/src/components/shell/shell-welcome.tsx` (new)
+- [x] `apps/web/src/components/shell/document-title.tsx` (new)
+- [x] `apps/web/src/components/shell/thread-welcome.test.tsx` (new)
+- [x] `apps/web/src/components/shell/shell-actions.tsx` (`newChat`)
+- [x] `apps/web/src/components/shell/chat-runtime-provider.tsx` (`Suggestions(WELCOME_SUGGESTIONS)` через `auiConfig`)
+- [x] `apps/web/src/components/shell/main-view.tsx` (`Welcome: ShellWelcome`)
+- [x] `apps/web/src/components/shell/thread-history-item.tsx` (фокус по клику)
+- [x] `apps/web/src/components/assistant-ui/elements/thread.aui.tsx` (прочие тексты приветствия кроме заголовка из T3.4, подсказки 2×2 без «>», кнопка вложений удалена, `AttachmentDropzone` → `div`, `addAttachmentOnPaste={false}`, `data-shell-focus="composer"`, `pb-[max(1rem,env(safe-area-inset-bottom))]`, композер внизу на < 768 px)
+- [x] `apps/web/src/components/shell/shell.new-chat.int.test.tsx`
+- [x] `apps/web/src/components/shell/thread-activity-tracker.test.tsx` (new; добавлен решением оркестратора, 2026-10-30)
 
 ## Investigation Targets
 - DD «Доступность — реализация» (`lib/focus.ts`, таблица событий), «Маршрутизация, `DocumentTitle`», UXRD 6.3, 6.15, 6.16, UX-04, 8.2
@@ -62,19 +63,33 @@ Metadata:
 ## Investigation Notes
 (Правило 10: сверка Assert обоих I-тестов с поставкой T4.3 и ранее; уточнить «Новая беседа» в сайдбаре — T4.2 + T4.3.)
 
+**Правило 10 (сверка Assert, 2026-10-30).** Оба кейса `shell.new-chat` заполнены строго по скелету; все Assert опираются на поставку T1.2–T4.3: порядок `POST /api/threads` → `POST /api/chat/assistant`, `body.id`, `replaceState` — рантайм и `url-sync` (T1.2, T2.3); «Новая беседа», `aria-current="page"`, группа «Сегодня» — T4.1/T4.2; «Чем могу помочь?» и ноль `POST /api/threads` при «Новом чате» — T3.4 + `newChat` (T4.3). До реализации T4.3 оба теста падали только на добавленных утверждениях заголовка вкладки (UX-04, `document.title` пуст) — остальная проводка уже поставлена T1.2–T4.2. В каждый тест добавлено одно утверждение `document.title` (Reference Contract UX-04), комментарий Behavior дополнен.
+
+**S-9 подтвердился.** `AssistantRuntimeProvider config={AuiConfig({ suggestions: Suggestions(WELCOME_SUGGESTIONS) })}` наполняет `ThreadPrimitive.Suggestions` (корневая область `s.suggestions`); запасной путь не нужен. В `chat-runtime-provider.tsx` конфиг собирается `useMemo` из `services.auiConfig` + `suggestions` (сам `shell-services.ts` вне Target Files не менялся).
+
+**S-7.** Основной путь — эффект `document.title` в `DocumentTitle` (смонтирован в `ChatRuntimeProvider` внутри `ShellActionsProvider`, без разметки); `metadata.title` корня уже «Agent OS». Перезапись метаданными Next при мягких переходах проверяется только в браузере (L1-5, оркестратор); при провале — запасной путь `<title>` React 19.
+
+**Фокус-политика.** `lib/focus.ts` — по DD; `focusShellTarget` ждёт кадр и, если цели ещё нет (переход на `/` с TH-06/TH-07, где композера нет), повторяет до 30 кадров, затем `console.warn`. `newChat`: на `/` — сразу `focusAfterNewChat()`; иначе флаг + `router.push('/')`, фокус — эффектом, когда `pathname` стал `/` (флаг сбрасывается при любом другом переходе). Холодная загрузка `/` — `focusShellTarget('composer')` только при точном указателе (эффект монтирования `ShellActionsProvider`). Ссылка SB-06: шторка (`isMobile`) → `setOpenMobile(false)` + `page-title`; `detail === 0` (Enter) — фокус не трогается; иначе по указателю. Ручная проверка (временные утверждения, удалены): после «Новый чат» с `/chat/a` и после клика по ссылке «Беседа B» фокус в композере при точном указателе.
+
+**Расширение Target Files (решение оркестратора, 2026-10-30).** Мутация «отключённый `ThreadActivityTracker`» не краснила AC-03.3 (новая беседа первая и без трекера — см. Notes). Решение: закрыть остаток сфокусированным тестом, не L1. Добавлен `thread-activity-tracker.test.tsx` (настоящий рантайм через `renderWithRuntime`): существующая беседа из «Предыдущие 7 дней» (`updatedAt` 3 дня назад), ответ удерживается `deferred` (беседа выполняется) → беседа первая в «Сегодня» выше беседы с `updatedAt` сегодня 09:00, группа «Предыдущие 7 дней» исчезла; после ответа подъём сохраняется. `ShellStatus.activityAt[id]` проверяется через наблюдаемое: попасть в «Сегодня» выше беседы 09:00 можно только при `activityAt` из интервала (09:00, 12:00] = «сейчас» замороженных часов; стор наружу из `renderWithRuntime` не отдаётся, а внутренности не мокаются. Мутации: вызов `bumpActivity` удалён → красный (`expected ['Свежая беседа'] to deeply equal ['Старая беседа', 'Свежая беседа']`); монтирование трекера удалено из `chat-shell.tsx` → красный; оба файла восстановлены байт в байт (`cmp`).
+
+**`DocumentTitle` для TH-07 = «Agent OS»** — решение исполнителя: UX-04 этот случай не описывает (DD будет выровнен позже).
+
+**Приветствие.** `ShellWelcome` (TH-02: заголовок + подзаголовок, проявление 8 px/300 мс, подзаголовок +80 мс); подсказки TH-03 остаются под композером (`ThreadSuggestions` в `thread.aui.tsx`): `role="group" aria-label="Подсказки"`, 1 колонка < 640 px, 2×2 от 640 px, карточки с рамкой, `rounded-xl`, `min-h-14`, каскад 40 мс, без «>». Каркасный `ThreadWelcome` получил тот же подзаголовок (прочие тексты приветствия).
+
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets; сверить Assert (правило 10)
-- [ ] U `focus.test.ts` — точный указатель → `composer`, грубый → `page-title` (таблица)
-- [ ] C `thread-welcome.test.tsx` — «Чем могу помочь?», 4 подсказки, клик отправляет склеенный текст (S-9)
-- [ ] I `shell.new-chat.int.test.tsx` — 2 теста (см. Decisions)
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets; сверить Assert (правило 10)
+- [x] U `focus.test.ts` — точный указатель → `composer`, грубый → `page-title` (таблица)
+- [x] C `thread-welcome.test.tsx` — «Чем могу помочь?», 4 подсказки, клик отправляет склеенный текст (S-9)
+- [x] I `shell.new-chat.int.test.tsx` — 2 теста (см. Decisions)
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `focus.ts`, `welcome-suggestions.ts`, `shell-welcome.tsx`, `document-title.tsx`; правки `shell-actions.tsx`, `chat-runtime-provider.tsx`, `main-view.tsx`, `thread-history-item.tsx`, `thread.aui.tsx`; тесты зелёные
+- [x] `focus.ts`, `welcome-suggestions.ts`, `shell-welcome.tsx`, `document-title.tsx`; правки `shell-actions.tsx`, `chat-runtime-provider.tsx`, `main-view.tsx`, `thread-history-item.tsx`, `thread.aui.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Упростить; интеграционные 6/10
+- [x] Упростить; интеграционные 6/10
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL + MSW, ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -116,11 +131,15 @@ Metadata:
 - **Residual**: фокус в ленте/диалогах — T5.x, T7.3.
 
 ## Completion Criteria
-- [ ] U, C, I зелёные; интеграционные 6/10
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] Мутации (`initialize` при «Новом чате» краснит AC-03.2; отключённый `ThreadActivityTracker` краснит AC-03.3) записаны в Notes
-- [ ] Reference Contracts — `Y`; Resolved decisions применены
+- [x] U, C, I зелёные; интеграционные 6/10
+- [x] lint, tsc, build — 0 ошибок
+- [x] Мутации (`initialize` при «Новом чате» краснит AC-03.2; отключённый `ThreadActivityTracker` краснит AC-03.3) записаны в Notes — вторая мутация НЕ краснит, см. Notes
+- [x] Reference Contracts — `Y`; Resolved decisions применены
 
 ## Notes
 - Impact scope: `thread.aui.tsx` далее правят T7.2, T7.3, T7.5; `main-view.tsx` — T7.3; `shell-actions.tsx`/`chat-runtime-provider.tsx` — не меняются после.
 - Scope boundary: вне Target Files не менять; вложения скрыты, не удалять компоненты каркаса сверх перечисленного.
+- Мутации (2026-10-30): (1) `void services.listAdapter.initialize('local')` в `newChat` → AC-03.2 красный (`expected 1 to be +0`). (2) Удалён `<ThreadActivityTracker />` из `chat-shell.tsx` → AC-04.1 + AC-03.3 **остаётся зелёным**: у беседы, созданной в этой вкладке, нет `lastMessageAt`, и `entryActivityAt` (T4.1) считает такую беседу активной «сейчас» — она первая в «Сегодня» и без трекера. Трекер нужен для подъёма уже существующей беседы при ответе (D-11). Скелет (правило 10) не менялся; остаток закрыт `thread-activity-tracker.test.tsx` (решение оркестратора; мутации краснят — см. Investigation Notes).
+- Reference Contracts (итог): UX-04 — `Y` (`DocumentTitle`: `/` → «Новый чат — Agent OS», TH-06 → «Беседа не найдена — Agent OS», беседа → «{Название} — Agent OS» / «Новая беседа — Agent OS»; TH-07 → «Agent OS»; пока URL-беседа разрешается — прежний заголовок); `lib/focus.ts` — `Y` (сигнатуры и селекторы DD); state-lifecycle-negative — `Y` (`newChat` без сети, AC-03.2 зелёный; `body.id = 't-1'` из `POST /api/threads`).
+- Остаток для шторки: при выборе беседы в шторке `focusShellTarget('page-title')` может быть перебит `finalFocus` шторки (`focusMenuButton` в `app-sidebar.tsx`, вне Target Files) — проверить в L1-3; при перебивании `finalFocus` должен выбирать `h1`, когда шторка закрыта выбором беседы или «Новым чатом».
+- Гейты (2026-10-30): eslint и `tsc --noEmit` — 0; `vitest run` — 140 passed, 4 todo (22 файла + 4 со всеми todo); `next build` — успешно.

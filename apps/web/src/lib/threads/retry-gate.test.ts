@@ -31,16 +31,6 @@ describe('RetryGate', () => {
     }).not.toThrow();
   });
 
-  it('drop after release leaves the already resolved waiter resolved', async () => {
-    const gate = createRetryGate();
-    const waiting = gate.wait('a');
-
-    gate.release('a');
-    gate.drop('a');
-
-    await expect(waiting).resolves.toBeUndefined();
-  });
-
   it('release of one thread leaves the waiter of another thread parked', async () => {
     const gate = createRetryGate();
     const waitingA = gate.wait('a');

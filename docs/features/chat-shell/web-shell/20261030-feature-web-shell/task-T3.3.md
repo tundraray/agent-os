@@ -19,9 +19,9 @@ Metadata:
 Шапка: HD-02 («Меню» на мобильном, «Боковая панель» на десктопе), HD-03 заголовок `h1` по `HeaderTitle` (hidden/loading/text/pending), HD-04 «Рабочая область» (обработчик — T5.3), HD-05 «Новый чат» на мобильном; граница снизу по `data-scrolled`. Контейнер читает рантайм (`mainThreadId`, `threadItems`, `isRunning`) и `ShellStatus.titleWaiting`. AC-07.1–07.3; AC-12.1 — шапка; Element 6.
 
 ## Target Files
-- [ ] `apps/web/src/components/shell/chat-header.tsx` (new)
-- [ ] `apps/web/src/components/shell/chat-header.test.tsx` (new)
-- [ ] `apps/web/src/components/shell/chat-shell.tsx` (подключение)
+- [x] `apps/web/src/components/shell/chat-header.tsx` (new)
+- [x] `apps/web/src/components/shell/chat-header.test.tsx` (new)
+- [x] `apps/web/src/components/shell/chat-shell.tsx` (подключение)
 
 ## Investigation Targets
 - UXRD 6.10, 6.13, 6.25 (HD-01…HD-05, UX-07); DD Element 6 (контейнер / вид), State × Display Matrix
@@ -40,20 +40,26 @@ Metadata:
 | Горячие клавиши и тултипы платформы | Не здесь — T6.2 | План |
 
 ## Investigation Notes
-(Детали подписки на рантайм.)
+- Контейнер `ChatHeader`: `useAuiState` → элемент `threads.threadItems`, у которого `id` или `remoteId` равен `threads.mainThreadId` (рантайм всегда включает main в `threadItems`, см. `collectItemOrder` в `@assistant-ui/core` RemoteThreadList); `ShellStatus.titleWaiting[remoteId]`; `usePathname` → `parseRouteThreadId`.
+- `HeaderTitle`: `/` → `hidden`; `/chat/<id>`, пока main-элемента нет или его `remoteId` ≠ id маршрута → `loading`; есть непустой `title` → `text`; иначе `text` «Новая беседа» с `pending = isRunning || titleWaiting`.
+- `data-scrolled`: прокрутка не всплывает — слушатель `scroll` на `document` в фазе захвата, фильтр по `[data-slot="aui_thread-viewport"]` (вьюпорт принадлежит `thread.aui.tsx`, вне Target Files). В `ChatHeaderViewProps` добавлен необязательный `scrolled`.
+- Состояние рабочей области (`workspaceOpen`) — `useState` в `ChatShell` (DD «Композиция рантайма»); панель — T5.3.
+- `SidebarToggleBar` удалён; «Меню» несёт `MENU_BUTTON_ATTRIBUTE` (финальный фокус шторки), `app-sidebar.test.tsx` зелёный.
+- Мутация AC-07.1: `aria-expanded={true}` вместо `{open}` → тест AC-07.1 красный; откачено.
+- Остатки: (1) `aria-controls={SIDEBAR_ID}` (`'shell-sidebar'`) — у SB-01 в `app-sidebar.tsx` пока нет `id` (вне Target Files, правит T3.2); (2) TH-06/TH-07 (not found / load error) — до T3.4 (`resolveMainView`) заголовок остаётся в `loading`, т.к. контейнер не читает `switchError`/`history`.
 
 ## Implementation Steps (TDD: Red-Green-Refactor)
 ### 1. Red Phase
-- [ ] Прочитать Investigation Targets
-- [ ] `chat-header.test.tsx` (кейсы — строки таблицы `HeaderTitle`): `text` → `h1` с названием; `pending` → «Новая беседа»; `hidden` → sr-only «Новый чат»; `loading` → скелетон; кнопка рабочей области `aria-expanded` (4 теста AC-12.1)
-- [ ] AC-07.1: внутри `SidebarProvider defaultOpen` + `Sidebar collapsible="icon"`, `(min-width: 768px)` = true: «Боковая панель» `aria-expanded="true"` → клик → `"false"`, у сайдбара `data-state="collapsed"`, `data-collapsible="icon"`
-- [ ] Запустить, увидеть падение
+- [x] Прочитать Investigation Targets
+- [x] `chat-header.test.tsx` (кейсы — строки таблицы `HeaderTitle`): `text` → `h1` с названием; `pending` → «Новая беседа»; `hidden` → sr-only «Новый чат»; `loading` → скелетон; кнопка рабочей области `aria-expanded` (4 теста AC-12.1)
+- [x] AC-07.1: внутри `SidebarProvider defaultOpen` + `Sidebar collapsible="icon"`, `(min-width: 768px)` = true: «Боковая панель» `aria-expanded="true"` → клик → `"false"`, у сайдбара `data-state="collapsed"`, `data-collapsible="icon"`
+- [x] Запустить, увидеть падение
 
 ### 2. Green Phase
-- [ ] `ChatHeaderView` + контейнер `ChatHeader`; подключение в `chat-shell.tsx`; тесты зелёные
+- [x] `ChatHeaderView` + контейнер `ChatHeader`; подключение в `chat-shell.tsx`; тесты зелёные
 
 ### 3. Refactor Phase
-- [ ] Разделение контейнер/вид; тесты зелёные
+- [x] Разделение контейнер/вид; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest + RTL, ESLint, `tsc` — Type: `executable_check`
@@ -85,9 +91,9 @@ Metadata:
 - **Residual**: обновление заголовка живьём — L1-1.
 
 ## Completion Criteria
-- [ ] Тесты зелёные (содержательно)
-- [ ] lint, tsc — 0 ошибок
-- [ ] Proof obligations: тест AC-07.1 краснеет при рассинхроне `aria-expanded` (мутация записана)
+- [x] Тесты зелёные (содержательно)
+- [x] lint, tsc — 0 ошибок
+- [x] Proof obligations: тест AC-07.1 краснеет при рассинхроне `aria-expanded` (мутация записана)
 
 ## Notes
 - Impact scope: `chat-header.tsx` далее правят T5.3, T6.2.

@@ -1,7 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.10)
 // File: shell.message-error.int.test.tsx — Test Strategy, "Integration Tests (I)" (new in v1.3, AC-08.5b)
-// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
-// Budget after the plan merges: 10 it.todo in 7 files (plan «Решение по бюджету интеграционных тестов»).
+// Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, REAL useChatRuntime / AI SDK Chat — not useLocalRuntime)
 //
@@ -18,13 +18,22 @@
 //   Config flag regenerateAfterError stays at its shipped value (true).
 // Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
 //   ShellStatus, MessageError, components — real. Do NOT mock lib/threads/*, lib/config.ts or @assistant-ui/*.
-// Imports for implementation (added when the case is filled; an it.todo case imports nothing):
-//   import { screen, within, waitFor } from '@testing-library/react';
-//   import { http, HttpResponse } from 'msw';
-//   import { server } from '@/test/msw-server';
-//   import { renderWithRuntime } from '@/test/render-with-runtime';
-//   import { threadSummary, sseFromChunks } from '@/test/fixtures';
-import { describe, it } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it, vi } from 'vitest';
+import { assistantTextChunks, historyMessages, sseFromChunks, threadList, threadSummary } from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+const API = 'http://api.test';
+
+/** The `messages` and `trigger` of a chat request body. */
+function chatRequestOf(body: unknown): { lastMessage: unknown; trigger: unknown } {
+  if (typeof body !== 'object' || body === null) return { lastMessage: undefined, trigger: undefined };
+  const messages = 'messages' in body && Array.isArray(body.messages) ? body.messages : [];
+  return { lastMessage: messages.at(-1), trigger: 'trigger' in body ? body.trigger : undefined };
+}
 
 describe('Shell: an errored reply loses its error block once the user sends a new message (AC-08.5b)', () => {
   // AC-08.5b (first sentence): "When после ответа с ошибкой пользователь отправил новое сообщение, the system shall убрать
@@ -42,33 +51,75 @@ describe('Shell: an errored reply loses its error block once the user sends a ne
   // @category: core-functionality
   // @dependency: ChatRuntimeProvider, AssistantChatTransport, useChatRuntime (real), MessageError, ThreadMessage list, MSW (SSE v7)
   // @complexity: high
-  it.todo('AC-08.5b: after an errored reply, sending a new message removes the error block and button from the old reply and keeps its partial text' /*
-    Arrange:
-      - GET /api/threads → 200 { threads: [threadSummary({ id: 'a', title: 'Беседа A' })], nextCursor: null }
-      - GET /api/threads/a/messages → 200 { messages: [user "Первый вопрос", assistant "Первый ответ"] }
-      - POST /api/chat/assistant (handler with a call counter; records each JSON body):
-          call 1 → SSE v7 from chunks [ start { messageId: 'm-err' }, text-start, text-delta "Частичный", { type: 'error', errorText: 'Agent error' } ]
-          call 2 → SSE v7 from chunks [ start { messageId: 'm-ok' }, text-start, text-delta "Ответ 2", text-end, finish ]
-      - renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' })
-      - await screen.findByText('Первый ответ')
-    Act 1:
-      - type "Вопрос" into textbox "Сообщение"; press Enter
-      - const alert = await screen.findByRole('alert')
-    Assert 1 (error state, so the later absence is meaningful):
-      - alert has text "Не удалось получить ответ. Попробуйте перегенерировать."
-      - button "Перегенерировать" is inside alert.closest('[data-slot="message-error"]')
-      - text "Частичный" visible; text "Agent error" absent
-      - the restored reply "Первый ответ" has no block: exactly 1 element with [data-slot="message-error"] in the feed
-    Act 2:
-      - type "Второй вопрос" into textbox "Сообщение"; press Enter
-      - await screen.findByText('Ответ 2')
-    Assert 2:
-      - POST /api/chat/assistant called exactly 2 times; call 2 body.messages: last item role 'user' with text "Второй вопрос";
-        body.trigger !== 'regenerate-message' (a new send, not a regeneration)
-      - container.querySelectorAll('[data-slot="message-error"]').length === 0
-      - queryAllByRole('button', { name: 'Перегенерировать' }).length === 0 (not on any reply in the feed)
-      - queryByRole('alert') === null
-      - text "Частичный" still visible (partial text of the failed reply is kept, as after F5); "Ответ 2" visible
-      - feed order: "Вопрос", "Частичный", "Второй вопрос", "Ответ 2"
-  */);
+  it('AC-08.5b: after an errored reply, sending a new message removes the error block and button from the old reply and keeps its partial text', async () => {
+    // Arrange
+    const chatBodies: unknown[] = [];
+    server.use(
+      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'a', title: 'Беседа A' })]))),
+      http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' }))),
+      http.get(`${API}/api/threads/a/messages`, () =>
+        HttpResponse.json({
+          messages: historyMessages([
+            { role: 'user', text: 'Первый вопрос' },
+            { role: 'assistant', text: 'Первый ответ' },
+          ]),
+        }),
+      ),
+      http.post(`${API}/api/chat/assistant`, async ({ request }) => {
+        chatBodies.push(await request.json());
+        if (chatBodies.length === 1) {
+          return sseFromChunks([
+            { type: 'start', messageId: 'm-err' },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'Частичный' },
+            { type: 'error', errorText: 'Agent error' },
+          ]);
+        }
+        return sseFromChunks(assistantTextChunks('Ответ 2', 'm-ok'));
+      }),
+    );
+    // handleChatError logs the failure; keep the test output clean.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const user = userEvent.setup();
+    const { container } = renderWithRuntime({ pathname: '/chat/a', pointer: 'fine' });
+    await screen.findByText('Первый ответ');
+
+    // Act 1
+    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Вопрос{Enter}');
+    const alert = await screen.findByRole('alert');
+
+    // Assert 1: the error state, so the later absence is meaningful
+    expect(alert).toHaveTextContent('Не удалось получить ответ. Попробуйте перегенерировать.');
+    const block = alert.closest<HTMLElement>('[data-slot="message-error"]');
+    if (block === null) throw new Error('the alert is not inside [data-slot="message-error"]');
+    expect(block).toContainElement(screen.getByRole('button', { name: 'Перегенерировать' }));
+    expect(screen.getByText('Частичный')).toBeInTheDocument();
+    expect(container).not.toHaveTextContent('Agent error');
+    expect(container.querySelectorAll('[data-slot="message-error"]')).toHaveLength(1);
+
+    // Act 2
+    await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Второй вопрос{Enter}');
+    await screen.findByText('Ответ 2');
+
+    // Assert 2
+    expect(chatBodies).toHaveLength(2);
+    const second = chatRequestOf(chatBodies[1]);
+    expect(second.lastMessage).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'Второй вопрос' }] });
+    expect(second.trigger).not.toBe('regenerate-message');
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="message-error"]')).toHaveLength(0));
+    expect(screen.queryAllByRole('button', { name: 'Перегенерировать' })).toHaveLength(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Частичный')).toBeInTheDocument();
+    const feed = Array.from(container.querySelectorAll<HTMLElement>('[data-role="user"], [data-role="assistant"]')).map(
+      (root) => root.textContent ?? '',
+    );
+    expect(feed.map((text) => text.replace('Копировать', '').trim())).toEqual([
+      'Первый вопрос',
+      'Первый ответ',
+      'Вопрос',
+      'Частичный',
+      'Второй вопрос',
+      'Ответ 2',
+    ]);
+  });
 });
