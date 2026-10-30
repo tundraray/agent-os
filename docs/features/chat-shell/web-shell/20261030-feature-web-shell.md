@@ -653,7 +653,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
   - Зависимости: T1.2.
   - Completion: [x] шаги 1–6 выполнены с доказательствами (скриншоты, Network, консоль, лог API); [x] S-1 подтверждён — иначе план остановлен; [x] временная инструментовка удалена (`git diff` не содержит `console.count`, счётчика `load` и кнопки удаления спайка); [x] гейты T1.2 повторно зелёные (`eslint`, `tsc --noEmit`, `next build`).
 
-- [ ] **T1.4 shadcn add семи компонентов, шторка на base-ui `Drawer` в `ui/sidebar.tsx`, русские подписи сайдбара — S-11** (AC-10.2 — механизм; UXRD 8.2)
+- [x] **T1.4 shadcn add семи компонентов, шторка на base-ui `Drawer` в `ui/sidebar.tsx`, русские подписи сайдбара — S-11** (AC-10.2 — механизм; UXRD 8.2)
   - Target Files: `apps/web/src/components/ui/{sidebar,sheet,dropdown-menu,alert-dialog,input,separator,sonner}.tsx` (new, CLI), `apps/web/src/hooks/use-mobile.ts` (new, CLI), `apps/web/package.json`, `pnpm-lock.yaml`, `apps/web/src/components/shell/chat-shell.tsx` (обернуть спайк в `SidebarProvider` + `Sidebar`)
   - Investigation Targets: `apps/web/components.json` (base-nova, `@base-ui/react`); `apps/web/node_modules/@base-ui/react/drawer/root/DrawerRoot.d.ts`; DD «Тема, шрифт, токены» (абзац «Шторка: закрытие свайпом»), «Правки скопированных shadcn-компонентов».
   - Содержание:
@@ -662,7 +662,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - `ui/sidebar.tsx`: в мобильной ветке `Sheet` заменить на `Drawer.Root swipeDirection="left"` с теми же классами панели (288 px, `max-w-[85vw]`), открытие свайпом от края не добавлять; `role="dialog" aria-modal="true" aria-label="История бесед"`; русские `aria-label`/`title`/sr-only («Боковая панель» вместо «Toggle Sidebar»). Остальные правки `sidebar.tsx` — T3.1 и T6.2.
   - Проверка S-11 (оркестратор, `pnpm --filter web dev`, 375 px): шторка открывается, `role="dialog"`, фокус внутри (ловушка), Esc закрывает, свайп влево закрывает (`[DevTools — user: touch emulation]`), фокус возвращается на кнопку открытия. Не подтвердилось → запасной путь `Sheet` + `pointerdown/pointerup` (смещение влево ≥ 30 % ширины → `setOpenMobile(false)`), запись в Notes. Компонентный тест шторки — T3.1.
   - Зависимости: T1.3 (гейт G1); оболочка для монтирования — из T1.2.
-  - Completion: [ ] гейты lint, tsc, build — 0 ошибок; [ ] три существующих `ui/*` не изменены; [ ] проверка S-11 записана в Notes.
+  - Completion: [x] гейты lint, tsc, build — 0 ошибок; [x] три существующих `ui/*` не изменены; [x] проверка S-11 записана в Notes (свайп влево не выполнен — перенесён в T8.3 L1-3).
 
 #### Phase Completion Criteria
 - [ ] T1.1, T1.2, T1.4 готовы к коммиту (manual); T1.3 выполнена, результаты в Notes
@@ -1157,6 +1157,15 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - Шаг 5 / S-5, критерий 5 — **подтверждён с запасным путём (5) и серверным исправлением**. Первый прогон: удаление по умолчанию не остановило стрим в браузере; серверный `DELETE` вернул 204 (сетевая панель расширения ошибочно показывала 503, Resource Timing — 204), а сохранение Mastra в конце прогона воссоздало беседу. Применён запасной путь — `ShellActions.deleteThread` (v1 использовал `aui.threads.__internal_getThreadBody`, которого нет у scope `threads` приложения в 0.15.32; v2 — пути main/background, DD v1.6). Браузер: основная беседа → fetch прерван до `DELETE`, строки `usage` нет, беседа 404; фоновая беседа → путь отмены сработал, но `DELETE` всё равно опережал закрытие fetch → беседа воскресала до серверного исправления threads-api v1.10 (`ThreadRunRegistry`, план 2 из 2); после исправления тот же фоновый сценарий → 404, 0 сообщений, нет `usage`, нет «Run outlived».
     - Шаг 6 / S-4 — **подтверждён**: заголовок пришёл опросом `GET`, без `PATCH`, за ~6 с. Найден дефект качества заголовка (мета-рассуждение) → исправлен в threads-api v1.10 KD-7; повторная проверка: «Столица Франции: вопрос на одно слово».
     - Очистка: временная инструментовка T1.3 удалена (`console.count` монтирования, обёртка счётчика `load` в `shell-services.ts`, кнопка «×» спайка в `chat-shell.tsx`, `console.debug` пути отмены в `shell-actions.tsx`); production-`ShellActions.deleteThread` оставлен (DD v1.6). Гейты `apps/web`: `eslint`, `tsc --noEmit` — зелёные; `next build` — зелёные (dev-сервер остановлен).
+  - **T1.4 — S-11 (шторка base-ui `Drawer`), 2026-10-30, оркестратор, chrome-devtools, эмуляция 375×812, mobile, touch**:
+    - При 375 px сайдбар скрыт, показана кнопка «Меню» (`aria-haspopup="dialog"`) — подтверждено.
+    - «Меню» открывает модальный диалог «История бесед»: ширина 288 px, `left: 0`; основное содержимое исключено из дерева доступности — подтверждено.
+    - Ловушка фокуса: Shift+Tab из диалога → последняя ссылка, Tab → «Новый чат» (цикл) — подтверждено.
+    - Esc закрывает, фокус возвращается на «Меню» — подтверждено.
+    - Нажатие на подложку закрывает, фокус возвращается на «Меню» — подтверждено.
+    - **НЕ ВЫПОЛНЕНО: закрытие свайпом влево.** Синтетические pointer-события и drag-инструмент DevTools не воспринимаются как свайп (недоверенный ввод / нативное перетаскивание ссылки). Пользователь решил проверить позже → перепроверить в **T8.3 L1-3** (`[DevTools — user]`). Решение: `Drawer` оставлен; запасной путь (`Sheet` + pointer-обработчик) не применялся.
+    - Находки для T3.1 (внесены в `task-T3.1.md`): (1) AC-10.2 требует начальный фокус на «Новый чат» при открытии шторки — сейчас фокус попадает на сам элемент диалога (использовать `initialFocus` у `Drawer`); (2) кнопки «×» «Закрыть меню» в шапке шторки (UXRD 761) пока нет.
+    - Гейты (quality-fixer, 2026-10-30; dev-сервер :3000 работал, `next build` не запускался — код не менялся с успешной сборки исполнителя): `eslint src` — 0, `tsc --noEmit` — 0; `git diff HEAD` по `ui/button.tsx`, `ui/skeleton.tsx`, `ui/tooltip.tsx` — пусто; `pnpm install --frozen-lockfile --offline --ignore-scripts` принят («Lockfile is up to date»), `pnpm-lock.yaml` не изменился.
 - **Мутационные проверки** (заполняются в T2.2, T2.3 и задачах с Proof obligations): —
 - **Метрики и L1** (заполняются в T8.3, T8.4): —
 

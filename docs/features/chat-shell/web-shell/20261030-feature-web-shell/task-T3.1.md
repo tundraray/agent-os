@@ -108,5 +108,8 @@ Metadata:
 - [ ] Reference Contract — `Y`; Resolved decisions применены
 
 ## Notes
+- Из S-11 (T1.4, 2026-10-30), обязательные пункты:
+  - Начальный фокус при открытии шторки — на «Новый чат» (AC-10.2): сейчас фокус попадает на сам элемент диалога; задать `initialFocus` у base-ui `Drawer` (в `ui/sidebar.tsx`), `finalFocus` — на «Меню».
+  - Кнопка «×» «Закрыть меню» в шапке шторки (UXRD 761) отсутствует — добавить.
 - Impact scope: `chat-shell.tsx`, `app-sidebar.tsx`, `ui/sidebar.tsx` правятся далее (см. «Пересечения файлов»).
 - Scope boundary: `apps/web/src/components/ui/button.tsx` и прочие `ui/*` вне Target Files не менять.

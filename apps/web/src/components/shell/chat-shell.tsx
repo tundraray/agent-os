@@ -7,6 +7,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { Toaster } from 'sonner';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
+import { Sidebar, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { parseRouteThreadId, threadPath } from '@/lib/threads/route-thread-id';
 import { describeThreadsError } from '@/lib/threads/threads-api-error';
 import { ChatRuntimeProvider } from './chat-runtime-provider';
@@ -18,14 +19,17 @@ type ChatShellProps = {
 };
 
 /**
- * Minimal runtime-spike layout: thread links, history status line, «Новый чат» and the thread.
+ * Minimal runtime-spike layout: thread links in the shadcn sidebar (a swipeable drawer below 768 px),
+ * history status line, «Новый чат» and the thread.
  * The production layout (sidebar, header, main view, workspace) replaces it.
  */
 export function ChatShell({ defaultSidebarOpen, children }: ChatShellProps) {
   return (
     <ChatRuntimeProvider>
-      <div className="flex h-dvh w-full" data-default-sidebar-open={defaultSidebarOpen}>
-        <SpikeThreadList />
+      <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh">
+        <Sidebar>
+          <SpikeThreadList />
+        </Sidebar>
         <main className="flex min-w-0 flex-1 flex-col">
           <SpikeStatusLine />
           <div className="min-h-0 flex-1">
@@ -33,7 +37,7 @@ export function ChatShell({ defaultSidebarOpen, children }: ChatShellProps) {
           </div>
           {children}
         </main>
-      </div>
+      </SidebarProvider>
       {/* SPIKE: the root layout gets the shared Toaster later; until then notify() renders here. */}
       <Toaster position="bottom-center" />
     </ChatRuntimeProvider>
@@ -47,7 +51,7 @@ function SpikeThreadList() {
   const isLoading = useAuiState((s) => s.threads.isLoading);
 
   return (
-    <nav aria-label="Беседы" className="flex w-64 shrink-0 flex-col gap-2 border-r p-3">
+    <nav aria-label="Беседы" className="flex min-h-0 flex-1 flex-col gap-2 p-3">
       <Button onClick={() => newChat('button')}>Новый чат</Button>
       {isLoading && <p className="text-muted-foreground text-sm">Загружаем беседы…</p>}
       <ul className="flex flex-col gap-1 overflow-y-auto">
@@ -72,6 +76,7 @@ function SpikeThreadList() {
 
 function SpikeStatusLine() {
   const { retryHistory, retrySwitch } = useShellActions();
+  const { toggleSidebar } = useSidebar();
   const routeThreadId = parseRouteThreadId(usePathname());
   const mainRemoteId = useAuiState(
     (s) => s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.remoteId,
@@ -86,6 +91,15 @@ function SpikeStatusLine() {
 
   return (
     <div role="status" className="flex flex-wrap items-center gap-3 border-b px-4 py-2 text-xs">
+      <Button
+        size="sm"
+        variant="outline"
+        className="md:hidden"
+        aria-haspopup="dialog"
+        onClick={toggleSidebar}
+      >
+        Меню
+      </Button>
       <span>route: {routeThreadId ?? '/'}</span>
       <span>main: {mainRemoteId ?? '(new)'}</span>
       <span>history: {historyStatus ?? '—'}</span>
