@@ -154,11 +154,6 @@ export function partialTextUntilAbortStep(partialText: string): AbortableStep {
   return { step: stepFor, aborted };
 }
 
-/** Scenario "model error": the model call rejects with this error. */
-export function modelErrorStep(message = 'mock model failure'): Error {
-  return new Error(message);
-}
-
 /**
  * Mock assistant model answering model calls from a queue, in order, one entry
  * per `doStream` call; multi-turn conversations queue one entry per turn
@@ -184,7 +179,7 @@ export function assistantModel(...steps: AssistantStep[]): MockLanguageModelV4 {
 }
 
 /** Title every e2e app gets unless a test scripts the title model. */
-export const DEFAULT_TEST_TITLE = 'Тестовый заголовок';
+const DEFAULT_TEST_TITLE = 'Тестовый заголовок';
 
 /** One `doGenerate` result of the mock title model. */
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;

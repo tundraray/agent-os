@@ -10,7 +10,7 @@ export type ThreadListEntry = {
 
 export type ThreadGroup = { key: DateGroupKey; label: string; entries: ThreadListEntry[] };
 
-export const DATE_GROUP_LABELS = {
+const DATE_GROUP_LABELS = {
   today: 'Сегодня',
   yesterday: 'Вчера',
   previous7: 'Предыдущие 7 дней',

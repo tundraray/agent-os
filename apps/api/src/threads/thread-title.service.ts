@@ -19,7 +19,7 @@ import { ThreadWriteLock } from './thread-write-lock.js';
 export const THREAD_TITLE_TIMEOUT_MS = Symbol('THREAD_TITLE_TIMEOUT_MS');
 
 /** At most this many characters of the first user message reach the title model. */
-export const TITLE_SOURCE_MAX_LENGTH = 2_000;
+const TITLE_SOURCE_MAX_LENGTH = 2_000;
 
 /**
  * The part of a `generate` result the service reads; Mastra's `FullOutput` satisfies it.
