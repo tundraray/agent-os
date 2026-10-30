@@ -191,7 +191,7 @@ type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
 
 /**
- * What the title model does on each call until switched: answer `title`
+ * What the title model does on each call until switched: answer `{"title": title}`
  * (after `delayMs`, when given), or reject with `error`.
  */
 export type TitleScenario =
@@ -228,9 +228,10 @@ function promptUserText(prompt: GenerateOptions['prompt']): string {
     .join('');
 }
 
+/** A structured answer: the JSON text `{"title":"…"}` the title agent's schema parses. */
 function titleResult(title: string): GenerateResult {
   return {
-    content: [{ type: 'text', text: title }],
+    content: [{ type: 'text', text: JSON.stringify({ title }) }],
     finishReason: { unified: 'stop', raw: 'stop' },
     usage: USAGE,
     warnings: [],

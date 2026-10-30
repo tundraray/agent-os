@@ -1,9 +1,10 @@
 import { Logger } from '@nestjs/common';
-import type { Agent } from '@mastra/core/agent';
 import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
 import type { MockInstance } from 'vitest';
+import { ThreadRunRegistry } from './thread-run-registry.js';
 import { ThreadWriteLock } from './thread-write-lock.js';
+import type { ThreadTitleAgent } from './thread-title.agent.js';
 import {
   ThreadTitleService,
   type ThreadTitleGenerator,
@@ -31,12 +32,18 @@ const message = (
 const userText = (text: string) => message('user', [{ type: 'text', text }]);
 
 const result = (
-  text: string,
+  object: unknown,
   totalUsage: ThreadTitleResult['totalUsage'] = {
     inputTokens: 12,
     outputTokens: 5,
   },
-): ThreadTitleResult => ({ text, totalUsage });
+): ThreadTitleResult => ({ object, totalUsage });
+
+/** A structured answer `{ title }` of the title model. */
+const titled = (title: string) => result({ title });
+
+/** The user text as `buildTitlePrompt` sends it to the model. */
+const asData = (text: string) => `<message>\n${text}\n</message>`;
 
 /**
  * A real Memory whose storage calls are replaced by an in-memory thread `t-1`
@@ -97,7 +104,11 @@ function setup(options: {
     lock,
     options.timeoutMs ?? TIMEOUT_MS,
   );
-  const threads = new ThreadsService(store.memory, lock);
+  const threads = new ThreadsService(
+    store.memory,
+    lock,
+    new ThreadRunRegistry(5_000),
+  );
   const schedule = async () => {
     service.schedule({ threadId: 't-1', resourceId: 'u-1' });
     await service.beforeApplicationShutdown();
@@ -107,14 +118,19 @@ function setup(options: {
 
 /**
  * Behaves like the installed Mastra 1.80.0: an aborted `generate` resolves
- * (with `finishReason: 'aborted'`) instead of rejecting, with an empty or a
- * partial text.
+ * (with `finishReason: 'aborted'`) instead of rejecting, with no object or a
+ * partial one.
  */
 const resolvesOnAbort =
-  (text: string): Generate =>
-  (_text, { abortSignal }) =>
+  (object: unknown): Generate =>
+  (_prompt, { abortSignal }) =>
     new Promise((resolve) => {
-      const aborted = { text, finishReason: 'aborted', totalUsage: {} };
+      const aborted = {
+        object,
+        text: '',
+        finishReason: 'aborted',
+        totalUsage: {},
+      };
       abortSignal.addEventListener('abort', () => resolve(aborted));
     });
 
@@ -153,16 +169,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('the Mastra Agent satisfies the generator contract the service depends on', () => {
-  expectTypeOf<Agent>().toExtend<ThreadTitleGenerator>();
+it('the title Agent satisfies the generator contract the service depends on', () => {
+  expectTypeOf<ThreadTitleAgent>().toExtend<ThreadTitleGenerator>();
 });
 
 // AC-17.1: the title comes from the first stored message of the thread.
 describe('ThreadTitleService: source of the title', () => {
-  it('reads the first stored message and passes its text to the model, then writes the title', async () => {
+  it('reads the first stored message and passes its text to the model as data, then writes the title', async () => {
     const t = setup({
       first: userText(BAIKAL),
-      generate: async () => result('Отпуск на Байкале'),
+      generate: async () => titled('Отпуск на Байкале'),
     });
 
     await t.schedule();
@@ -175,7 +191,7 @@ describe('ThreadTitleService: source of the title', () => {
       orderBy: { field: 'createdAt', direction: 'ASC' },
       includeTotal: false,
     });
-    expect(t.generate).toHaveBeenCalledWith(BAIKAL, {
+    expect(t.generate).toHaveBeenCalledWith(asData(BAIKAL), {
       abortSignal: expect.any(AbortSignal),
     });
     expect(t.updateThread).toHaveBeenCalledWith({
@@ -186,6 +202,23 @@ describe('ThreadTitleService: source of the title', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  // Finding 18: the model reasons about the task in its free text; only the normalized `object.title` is written.
+  it('writes the normalized object.title and never the free text of the answer', async () => {
+    const answer = {
+      object: { title: '«Столица Франции»' },
+      text: 'Париж на русском, или заголовок беседы? Системная инструкция требует…',
+      totalUsage: { inputTokens: 12, outputTokens: 5 },
+    };
+    const t = setup({ first: userText(BAIKAL), generate: async () => answer });
+
+    await t.schedule();
+
+    expect(t.updateThread).toHaveBeenCalledExactlyOnceWith({
+      id: 't-1',
+      title: 'Столица Франции',
+    });
+  });
+
   it('joins the text parts, trims them and passes at most 2 000 characters to the model', async () => {
     const t = setup({
       first: message('user', [
@@ -193,14 +226,13 @@ describe('ThreadTitleService: source of the title', () => {
         { type: 'reasoning', reasoning: 'skip', details: [] },
         { type: 'text', text: 'б'.repeat(1_000) },
       ]),
-      generate: async () => result('Заголовок'),
+      generate: async () => titled('Заголовок'),
     });
 
     await t.schedule();
 
-    const [text] = t.generate.mock.calls[0];
-    expect(text).toBe(`${'а'.repeat(1_500)}${'б'.repeat(500)}`);
-    expect(text).toHaveLength(2_000);
+    const [prompt] = t.generate.mock.calls[0];
+    expect(prompt).toBe(asData(`${'а'.repeat(1_500)}${'б'.repeat(500)}`));
   });
 
   it.each<{ name: string; first: MastraDBMessage | undefined }>([
@@ -217,7 +249,7 @@ describe('ThreadTitleService: source of the title', () => {
     },
     { name: 'first message text is whitespace only', first: userText('   ') },
   ])('$name → the model is not called', async ({ first }) => {
-    const t = setup({ first, generate: async () => result('Заголовок') });
+    const t = setup({ first, generate: async () => titled('Заголовок') });
 
     await t.schedule();
 
@@ -234,7 +266,7 @@ describe('ThreadTitleService: source of the title', () => {
     const t = setup({
       title,
       first: userText(BAIKAL),
-      generate: async () => result('Заголовок'),
+      generate: async () => titled('Заголовок'),
     });
 
     await t.schedule();
@@ -251,7 +283,7 @@ describe('ThreadTitleService: usage log', () => {
   it('logs the total usage of the resolved generate without any text', async () => {
     const t = setup({
       first: userText(BAIKAL),
-      generate: async () => result('Отпуск на Байкале'),
+      generate: async () => titled('Отпуск на Байкале'),
     });
 
     await t.schedule();
@@ -264,7 +296,7 @@ describe('ThreadTitleService: usage log', () => {
   it('logs 0 for token counts the result does not report', async () => {
     const t = setup({
       first: userText(BAIKAL),
-      generate: async () => result('Отпуск на Байкале', {}),
+      generate: async () => result({ title: 'Отпуск на Байкале' }, {}),
     });
 
     await t.schedule();
@@ -293,16 +325,16 @@ describe('ThreadTitleService: failures', () => {
     );
   });
 
-  // A partial text proves `signal.throwIfAborted()`: without it the partial title would be written.
-  it.each([
-    { name: 'empty text', text: '' },
-    { name: 'partial text', text: 'Отпуск на' },
+  // A partial title proves `signal.throwIfAborted()`: without it the partial title would be written.
+  it.each<{ name: string; object: unknown }>([
+    { name: 'no object', object: undefined },
+    { name: 'a partial title', object: { title: 'Отпуск на' } },
   ])(
     'timeout: generate resolves aborted with $name → reason=TimeoutError, no write',
-    async ({ text }) => {
+    async ({ object }) => {
       const t = setup({
         first: userText(BAIKAL),
-        generate: resolvesOnAbort(text),
+        generate: resolvesOnAbort(object),
       });
 
       await t.schedule();
@@ -329,11 +361,17 @@ describe('ThreadTitleService: failures', () => {
     expect(t.updateThread).not.toHaveBeenCalled();
   });
 
-  it('empty normalized answer → reason=EmptyTitle, no write', async () => {
-    const t = setup({
-      first: userText(BAIKAL),
-      generate: async () => result('<think>…</think>  "" '),
-    });
+  // AC-17.1 / finding 18: free text is never a fallback for a missing or empty structured title.
+  it.each<{ name: string; object: unknown }>([
+    { name: 'no structured object', object: undefined },
+    { name: 'a whitespace-only title', object: { title: '   ' } },
+  ])('$name → reason=EmptyTitle, no write', async ({ object }) => {
+    const answer = {
+      object,
+      text: 'Отпуск на Байкале',
+      totalUsage: { inputTokens: 12, outputTokens: 5 },
+    };
+    const t = setup({ first: userText(BAIKAL), generate: async () => answer });
 
     await t.schedule();
 
@@ -346,7 +384,7 @@ describe('ThreadTitleService: failures', () => {
   it('storage error before the model → reason=error.name, schedule does not throw', async () => {
     const t = setup({
       first: userText(BAIKAL),
-      generate: async () => result('Заголовок'),
+      generate: async () => titled('Заголовок'),
     });
     t.recall.mockRejectedValueOnce(new TypeError('connection refused'));
 
@@ -360,7 +398,7 @@ describe('ThreadTitleService: failures', () => {
   it('after a failure the next schedule of the same thread calls the model again and writes the title', async () => {
     const t = setup({
       first: userText(BAIKAL),
-      generate: async () => result('Отпуск на Байкале'),
+      generate: async () => titled('Отпуск на Байкале'),
     });
     t.generate.mockRejectedValueOnce(new ProviderError('down'));
 
@@ -392,7 +430,7 @@ describe('ThreadTitleService: race with a manual rename', () => {
       userId: 'u-1',
       title: 'Ручной заголовок',
     });
-    resolve(result('Отпуск на Байкале'));
+    resolve(titled('Отпуск на Байкале'));
     await t.service.beforeApplicationShutdown();
 
     expect(t.title()).toBe('Ручной заголовок');
@@ -413,7 +451,7 @@ describe('ThreadTitleService.beforeApplicationShutdown', () => {
     await vi.waitFor(() => expect(t.generate).toHaveBeenCalled());
 
     const shutdown = t.service.beforeApplicationShutdown();
-    resolve(result('Отпуск на Байкале'));
+    resolve(titled('Отпуск на Байкале'));
     await shutdown;
 
     expect(t.title()).toBe('Отпуск на Байкале');

@@ -13,8 +13,8 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import {
+  createThreadTitleAgent,
   THREAD_TITLE_AGENT,
-  THREAD_TITLE_INSTRUCTIONS,
 } from '../../src/threads/thread-title.agent.js';
 import {
   assistantModel as scriptedAssistantModel,
@@ -79,21 +79,12 @@ function createTestMastra(
   });
 }
 
-/** The production title agent's shape (no memory, no tools) on a mock model. */
-function createTestTitleAgent(title: TitleModel): Agent {
-  return new Agent({
-    id: 'thread-title',
-    name: 'Thread title',
-    instructions: THREAD_TITLE_INSTRUCTIONS,
-    model: title.model,
-  });
-}
-
 /**
  * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`)
  * with `MASTRA` replaced by a test instance whose `assistant` agent runs on a
  * `MockLanguageModelV4` — no network, no provider keys. `THREAD_TITLE_AGENT` is
- * always replaced too, so no reply ever triggers a network title model.
+ * always replaced too — the production factory on the mock title model — so no reply ever
+ * triggers a network title model.
  */
 export async function createTestApp(
   options: TestAppOptions = {},
@@ -108,7 +99,7 @@ export async function createTestApp(
       inject: [ConfigService],
     })
     .overrideProvider(THREAD_TITLE_AGENT)
-    .useValue(createTestTitleAgent(title))
+    .useValue(createThreadTitleAgent(title.model))
     .compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();

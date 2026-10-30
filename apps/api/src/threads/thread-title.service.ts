@@ -8,6 +8,8 @@ import type { MastraDBMessage } from '@mastra/core/memory';
 import type { Memory } from '@mastra/memory';
 import { THREAD_MEMORY } from './thread-memory.provider.js';
 import {
+  buildTitlePrompt,
+  GeneratedTitleSchema,
   normalizeGeneratedTitle,
   THREAD_TITLE_AGENT,
 } from './thread-title.agent.js';
@@ -19,9 +21,12 @@ export const THREAD_TITLE_TIMEOUT_MS = Symbol('THREAD_TITLE_TIMEOUT_MS');
 /** At most this many characters of the first user message reach the title model. */
 export const TITLE_SOURCE_MAX_LENGTH = 2_000;
 
-/** The part of a `generate` result the service reads; Mastra's `FullOutput` satisfies it. */
+/**
+ * The part of a `generate` result the service reads; Mastra's `FullOutput` satisfies it.
+ * `object` is parsed with `GeneratedTitleSchema`; the free text and reasoning are never read.
+ */
 export interface ThreadTitleResult {
-  text: string;
+  object: unknown;
   totalUsage: { inputTokens?: number; outputTokens?: number };
 }
 
@@ -35,7 +40,7 @@ export interface ThreadTitleGenerator {
 
 type ScheduleInput = { threadId: string; resourceId: string };
 
-/** Raised when the normalized model answer is empty; logged as `reason=EmptyTitle`. */
+/** Raised when the structured answer has no usable title; logged as `reason=EmptyTitle`. */
 class EmptyTitleError extends Error {
   override name = 'EmptyTitle';
 }
@@ -88,16 +93,18 @@ export class ThreadTitleService implements BeforeApplicationShutdown {
         return;
       }
       signal = AbortSignal.timeout(this.timeoutMs);
-      const result = await this.agent.generate(userText, {
+      const result = await this.agent.generate(buildTitlePrompt(userText), {
         abortSignal: signal,
       });
       this.logger.log(
         `usage agent=thread-title thread=${threadId} ` +
           `input=${result.totalUsage.inputTokens ?? 0} output=${result.totalUsage.outputTokens ?? 0}`,
       );
-      // The installed Mastra resolves an aborted generate with an empty text.
+      // The installed Mastra resolves an aborted generate instead of rejecting it.
       signal.throwIfAborted();
-      const title = normalizeGeneratedTitle(result.text);
+      const answer = GeneratedTitleSchema.safeParse(result.object);
+      if (!answer.success) throw new EmptyTitleError();
+      const title = normalizeGeneratedTitle(answer.data.title);
       if (title === '') throw new EmptyTitleError();
       await this.writeIfUntitled({ threadId, resourceId, title });
     } catch (error) {

@@ -2,7 +2,7 @@
 feature: chat-shell
 part: threads-api
 design: design-threads-api.md
-plan: 1 of 1
+plan: 1 of 2
 status: completed
 ---
 
@@ -882,6 +882,7 @@ flowchart LR
   - Усиление 3: `AuditInterceptor` не пишет id из тела длиннее 255 символов.
   - Остальные замечания ревью безопасности — технический долг в `design-threads-api.md` v1.9.
   - Каталог задач `20261028-feature-threads-api/` удаляется как эфемерное рабочее состояние; файл плана сохраняется со статусом `completed`.
+- **Продолжение части**: шаги 10–11 Design Doc v1.10 (KD-6, KD-7) — план 2 of 2 `20261030-fix-threads-api-delete-title.md`.
 
 ## Change History
 

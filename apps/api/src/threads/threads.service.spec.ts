@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
+import { ThreadRunRegistry } from './thread-run-registry.js';
 import { ThreadWriteLock } from './thread-write-lock.js';
 import { threadNotFound } from './threads.errors.js';
 import { ThreadsService } from './threads.service.js';
@@ -91,13 +92,15 @@ describe('ThreadsService.discardRepliesAfter', () => {
   ])('$name', async ({ messages, userMessageId, deleted }) => {
     const { memory, recall, deleteMessages } = fakeMemory(messages);
 
-    await new ThreadsService(memory, new ThreadWriteLock()).discardRepliesAfter(
-      {
-        threadId: 't-1',
-        userId: 'u-1',
-        userMessageId,
-      },
-    );
+    await new ThreadsService(
+      memory,
+      new ThreadWriteLock(),
+      new ThreadRunRegistry(5_000),
+    ).discardRepliesAfter({
+      threadId: 't-1',
+      userId: 'u-1',
+      userMessageId,
+    });
 
     expect(recall).toHaveBeenCalledWith({
       threadId: 't-1',
@@ -134,7 +137,11 @@ const fakeThreadMemory = () => {
   const memory = new Memory({ options: { lastMessages: 20 } });
   const getThreadById = vi.spyOn(memory, 'getThreadById');
   const updateThread = vi.spyOn(memory, 'updateThread');
-  const service = new ThreadsService(memory, new ThreadWriteLock());
+  const service = new ThreadsService(
+    memory,
+    new ThreadWriteLock(),
+    new ThreadRunRegistry(5_000),
+  );
   return { service, getThreadById, updateThread };
 };
 
@@ -186,7 +193,11 @@ describe('ThreadsService rejects an empty userId in list and getOwnedThread', ()
       const getThreadById = vi
         .spyOn(memory, 'getThreadById')
         .mockResolvedValue(thread('Чужая'));
-      const service = new ThreadsService(memory, new ThreadWriteLock());
+      const service = new ThreadsService(
+        memory,
+        new ThreadWriteLock(),
+        new ThreadRunRegistry(5_000),
+      );
 
       const error: unknown = await call(service).then(
         () => undefined,
@@ -265,5 +276,61 @@ describe('ThreadsService.rename', () => {
         response: threadNotFound().getResponse(),
       });
     }
+  });
+});
+
+// AC-16.2 and KD-6: delete checks the owner before touching runs, then deletes inside cancelRunsThen under the lock.
+describe('ThreadsService.delete', () => {
+  const setup = () => {
+    const memory = new Memory({ options: { lastMessages: 20 } });
+    const lock = new ThreadWriteLock();
+    const runs = new ThreadRunRegistry(5_000);
+    const journal: string[] = [];
+    const getThreadById = vi.spyOn(memory, 'getThreadById');
+    const deleteThread = vi
+      .spyOn(memory, 'deleteThread')
+      .mockImplementation((threadId: string) => {
+        journal.push(
+          `deleteThread ${threadId} locked=${lock.isHeld(threadId)}`,
+        );
+        return Promise.resolve();
+      });
+    const cancelRunsThen = vi
+      .spyOn(runs, 'cancelRunsThen')
+      .mockImplementation(async (threadId, action) => {
+        journal.push(`cancelRunsThen ${threadId} start`);
+        await action();
+        journal.push(`cancelRunsThen ${threadId} end`);
+      });
+    const service = new ThreadsService(memory, lock, runs);
+    return { service, journal, getThreadById, deleteThread, cancelRunsThen };
+  };
+
+  it('a missing or foreign thread → NotFoundException; runs are not cancelled and nothing is deleted', async () => {
+    const { service, getThreadById, deleteThread, cancelRunsThen } = setup();
+    getThreadById.mockResolvedValue(null);
+
+    const result = service.delete('t-1', 'u-2');
+
+    await expect(result).rejects.toBeInstanceOf(NotFoundException);
+    expect(getThreadById).toHaveBeenCalledWith({
+      threadId: 't-1',
+      resourceId: 'u-2',
+    });
+    expect(cancelRunsThen).not.toHaveBeenCalled();
+    expect(deleteThread).not.toHaveBeenCalled();
+  });
+
+  it('an own thread is deleted only inside the cancelRunsThen action and under the thread lock', async () => {
+    const { service, journal, getThreadById } = setup();
+    getThreadById.mockResolvedValue(thread('Отчёт Q3'));
+
+    await service.delete('t-1', 'u-1');
+
+    expect(journal).toEqual([
+      'cancelRunsThen t-1 start',
+      'deleteThread t-1 locked=true',
+      'cancelRunsThen t-1 end',
+    ]);
   });
 });

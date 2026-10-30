@@ -265,6 +265,49 @@ async function chatAndDisconnect(options: {
   return received;
 }
 
+/**
+ * Sends a chat request over a real socket, reads the SSE body until it
+ * contains `marker` and keeps the connection open (a tab still showing the
+ * reply). `ended` resolves when the server ends the response (reader `done`);
+ * `close` drops the connection.
+ */
+async function chatKeepOpen(options: {
+  baseUrl: string;
+  userId: string;
+  body: object;
+  marker: string;
+}): Promise<{ ended: Promise<void>; close: () => void }> {
+  const connection = new AbortController();
+  const res = await fetch(`${options.baseUrl}/api/chat/assistant`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-user-id': options.userId,
+    },
+    body: JSON.stringify(options.body),
+    signal: connection.signal,
+  });
+  expect(res.status).toBe(200);
+  if (!res.body) throw new Error('chat response has no body');
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let received = '';
+  while (!received.includes(options.marker)) {
+    const { done, value } = await reader.read();
+    if (done)
+      throw new Error(`SSE ended before ${options.marker}: ${received}`);
+    received += value;
+  }
+  const ended = (async () => {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) return;
+    }
+  })();
+  // A drop by `close` after the test gave up waiting must not surface as an unhandled rejection.
+  ended.catch(() => undefined);
+  return { ended, close: () => connection.abort() };
+}
+
 /** Resolves `'settled'` when `promise` resolves within `ms`, otherwise `'timed out'`. */
 function settlesWithin(promise: Promise<unknown>, ms: number) {
   return Promise.race([
@@ -344,6 +387,110 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
       ).toBeNull();
       expect(t.assistant.doStreamCalls).toHaveLength(modelCallsBefore);
     });
+
+    // AC-16.1 (b): "If беседа удаляется, пока по ней идёт ответ ассистента ..., then the system shall прервать этот
+    //   ответ, ответить на DELETE 204, и с момента ответа 204 — в том числе после того, как прерванный стрим
+    //   завершился, — беседа не возвращается в списке, GET :id и GET :id/messages отвечают 404, а в mastra_messages
+    //   нет строк с её id (KD-6)."
+    // Defect caught (no unit sees it): Mastra's end-of-run save of the interrupted reply re-creates the deleted
+    //   thread (finding 16) — on the real Mastra write path to Postgres.
+    // Row 1 "SSE open": the reply is still streaming to an open tab when DELETE arrives.
+    // Row 2 "client dropped the chat": the client aborts the chat and sends DELETE right away (failed on the stand).
+    // The limits (2 000 ms, 3 s) separate "run released" from "settle timeout 5 000 ms"; they are not latency checks.
+    // @category: core-functionality
+    // @dependency: ChatController, ThreadRunRegistry, ThreadsService.delete, ThreadWriteLock, Memory, PostgresStore
+    // @complexity: high
+    // Red-first proof is row 1 (deterministic). Row 2 is a regression row: on code that does not wait for the run
+    //   it fails only when Mastra's existence check before its save runs after the delete commits (a race; PG
+    //   saveMessages rejects writes into a deleted thread) — orchestrator decision 2026-10-30.
+    it.each([
+      {
+        row: 'SSE open',
+        startChat: (chat: {
+          baseUrl: string;
+          userId: string;
+          body: object;
+          aborted: Promise<void>;
+        }) => chatKeepOpen({ ...chat, marker: '"delta":"Частичный"' }),
+      },
+      {
+        row: 'client dropped the chat',
+        startChat: async (chat: {
+          baseUrl: string;
+          userId: string;
+          body: object;
+          aborted: Promise<void>;
+        }) => {
+          await chatAndDisconnect({ ...chat, marker: '"delta":"Частичный"' });
+          return { ended: chat.aborted, close: () => undefined };
+        },
+      },
+    ])(
+      'AC-16.1 (b) $row: deleting a thread while its reply streams answers 204 and the thread never comes back',
+      async ({ startChat }) => {
+        // Arrange: the model streams 'Частичный' and holds the stream open until its abortSignal fires.
+        const cutOff = partialTextUntilAbortStep('Частичный');
+        const t = await startApp(cutOff.step);
+        const user = t.user();
+        const threadId = await createThread(t.http, user);
+        await t.app.listen(0, '127.0.0.1');
+        const baseUrl = await t.app.getUrl();
+        const warn = vi.spyOn(Logger.prototype, 'warn');
+        const expectThreadGone = async () => {
+          expect(
+            await t.memory.getThreadById({ threadId, resourceId: user }),
+          ).toBeNull();
+          expect(await listedThreadIds(t.http, user)).not.toContain(threadId);
+          await t.http
+            .get(`/api/threads/${threadId}`)
+            .set('x-user-id', user)
+            .expect(404);
+          await t.http
+            .get(`/api/threads/${threadId}/messages`)
+            .set('x-user-id', user)
+            .expect(404);
+          expect(await countMessages(threadId)).toBe(0);
+        };
+        const chat = await startChat({
+          baseUrl,
+          userId: user,
+          body: {
+            id: threadId,
+            trigger: 'submit-message',
+            messages: [clientUserMessage('Вопрос')],
+          },
+          aborted: cutOff.aborted,
+        });
+
+        try {
+          // Act: delete the thread while its reply is in flight.
+          const startedAt = Date.now();
+          await t.http
+            .delete(`/api/threads/${threadId}`)
+            .set('x-user-id', user)
+            .expect(204);
+          const deleteMs = Date.now() - startedAt;
+
+          // Assert 1: answered after the run was released (not by the settle timeout); gone right after 204.
+          expect(deleteMs).toBeLessThan(2_000);
+          await expectThreadGone();
+
+          // Assert 2: the interrupted stream ends, and its end-of-run save does not resurrect the thread.
+          if ((await settlesWithin(chat.ended, 3_000)) !== 'settled') {
+            throw new Error('chat stream did not end after delete');
+          }
+          await delay(500);
+          await expectThreadGone();
+          expect(
+            warn.mock.calls.map(([message]: unknown[]) => message),
+          ).not.toContain(`Run outlived thread delete thread=${threadId}`);
+        } finally {
+          chat.close();
+          warn.mockRestore();
+        }
+      },
+      20_000,
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -488,8 +635,9 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
       expect(title).not.toMatch(/^["'«]|["'»]$/);
       expect(title).not.toBe('Помоги составить план отпуска на Байкал в июле');
       expect(t.titleModel.prompts).toHaveLength(1);
-      expect(t.titleModel.prompts[0]).toContain(
-        'Помоги составить план отпуска на Байкал в июле',
+      // KD-7: the message reaches the title model as data, inside <message> tags.
+      expect(t.titleModel.prompts[0]).toBe(
+        '<message>\nПомоги составить план отпуска на Байкал в июле\n</message>',
       );
     }, 20_000);
 
@@ -607,8 +755,7 @@ describe('POST /api/chat/:agentId with threads (integration, real Postgres)', ()
         expect(retried).toBe('План отпуска на Байкал');
         expect(title.prompts).toHaveLength(callsBeforeRetry + 1);
         const retryPrompt = title.prompts[callsBeforeRetry];
-        expect(retryPrompt).toContain(firstText);
-        expect(retryPrompt).not.toContain('А что взять с собой?');
+        expect(retryPrompt).toBe(`<message>\n${firstText}\n</message>`);
         expect(await history()).toHaveLength(4);
       } finally {
         warn.mockRestore();
