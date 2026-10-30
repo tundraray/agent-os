@@ -1,6 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.2)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
 // File: shell.open-thread.int.test.tsx — Test Strategy, "Integration Tests (I)"
-// Generated: 2026-10-28 | Budget Used: 6/3 integration files (design-mandated, see generation report), 0/2 E2E (L1 checklist instead)
+// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
 // Harness (planned, src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
@@ -23,7 +24,7 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // AC-02.2: "While история загружается (или ещё разрешается беседа по прямой ссылке), the system shall показывать
   //   скелетон ленты, а не приветствие."
   // EARS: While (state: thread not yet resolved)
-  // ROI: 7.0 | Business Value: 7 (no misleading empty chat) | Frequency: 8 | Legal: false | Defect Detection: 8
+  // ROI: 5.8 | Business Value: 7 (no misleading empty chat) | Frequency: 8 | Legal: false | Defect Detection: 8
   // Behavior: pathname /chat/x, x not in page 1, GET /api/threads/x held by a deferred → skeleton
   //   (role="status" «Загружаем беседу…»), never «Чем могу помочь?»; after release → messages
   // Fails when: resolveMainView returns 'thread' while switching (welcome flashes for a direct link)
@@ -45,7 +46,7 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   */);
 
   // AC-02.2 rule 4 (F5 case; also backs AC-04.2): list slower than history — welcome must never flash.
-  // ROI: 7.3 | Business Value: 7 | Frequency: 8 (every F5 on a thread) | Legal: false | Defect Detection: 9 (race from review I001)
+  // ROI: 5.9 | Business Value: 7 | Frequency: 8 (every F5 on a thread) | Legal: false | Defect Detection: 9 (race from review I001)
   // Behavior: pathname /chat/x, x is in page 1; /messages answers immediately, GET /api/threads held by a deferred;
   //   MutationObserver records any appearance of «Чем могу помочь?» → record stays empty; feed shows messages
   // Fails when: the view is resolved as 'thread' before history status is 'ready' for the URL thread (F5 flashes welcome)
@@ -71,7 +72,7 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // AC-04.3: "If /chat/<id> чужой или несуществующей беседы, then the system shall показать TH-06 «Беседа не найдена»
   //   с «Новый чат», фокус на h1 экрана."
   // EARS: If-then (404 branch; the 200 branch is covered by the tests above)
-  // ROI: 7.7 | Business Value: 8 (no data leak, clear dead end) | Frequency: 3 | Legal: false | Defect Detection: 9
+  // ROI: 3.0 | Business Value: 8 (no data leak, clear dead end) | Frequency: 3 | Legal: false | Defect Detection: 9
   // Behavior: GET /api/threads/does-not-exist → 404 THREAD_NOT_FOUND → focused h1 «Беседа не найдена» + «Новый чат»; no composer
   // Fails when: 404 shows the welcome/empty feed, the server message leaks into UI, or focus stays on body
   // @category: core-functionality
@@ -95,7 +96,7 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
   // AC-02.5: "If ответ GET /api/threads/:id/messages не проходит ThreadMessagesResponseSchema или safeValidateUIMessages,
   //   then the system shall показать TH-07 с «Повторить» и «Новый чат», а сайдбар и шапка останутся работоспособны."
   // EARS: If-then (invalid branch → retry → valid branch)
-  // ROI: 7.5 | Business Value: 8 | Frequency: 2 | Legal: false | Defect Detection: 10 (library swallows history errors; only ShellStatus surfaces them)
+  // ROI: 2.4 | Business Value: 8 | Frequency: 2 | Legal: false | Defect Detection: 10 (library swallows history errors; only ShellStatus surfaces them)
   // Behavior: /messages call 1 → 200 invalid body → TH-07; click «Повторить» → call 2 → valid → messages rendered
   // Fails when: invalid history renders the welcome (swallowed error), «Повторить» does not re-request, or the sidebar breaks
   // @category: core-functionality

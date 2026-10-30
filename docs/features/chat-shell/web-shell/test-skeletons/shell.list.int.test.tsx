@@ -1,6 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.2)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
 // File: shell.list.int.test.tsx — Test Strategy, "Integration Tests (I)"
-// Generated: 2026-10-28 | Budget Used: 6/3 integration files (design-mandated, see generation report), 0/2 E2E (L1 checklist instead)
+// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
 // Harness (planned, src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
@@ -24,7 +25,7 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
   // AC-01.5: "If запрос первой страницы завершился ошибкой, then the system shall показать
   //   «Не удалось загрузить беседы» и «Повторить», нажатие которой перезапрашивает первую страницу."
   // EARS: If-then (branch: invalid payload path; valid path covered by shell.new-chat / C tests)
-  // ROI: 7.5 | Business Value: 8 (shell must stay usable when list fails) | Frequency: 2 (rare) | Legal: false | Defect Detection: 9 (library swallows errors; adapter must map to loadError)
+  // ROI: 2.3 | Business Value: 8 (shell must stay usable when list fails) | Frequency: 2 (rare) | Legal: false | Defect Detection: 9 (library swallows errors; adapter must map to loadError)
   // Behavior: GET /api/threads → 200 with body failing schema → sidebar SB-09 Error in role="alert";
   //   composer still accepts input and first send creates a new thread
   // Fails when: the adapter passes the invalid payload through / throws into the React tree / blocks the composer
@@ -51,7 +52,7 @@ describe('Shell: thread list errors (FR-01, AC-01.5 / AC-01.7)', () => {
   */);
 
   // AC-01.5 (retry branch): "…нажатие которой перезапрашивает первую страницу."
-  // ROI: 7.2 | Business Value: 7 | Frequency: 2 | Legal: false | Defect Detection: 8 (retry must call threads.reload, not no-op)
+  // ROI: 2.0 | Business Value: 7 | Frequency: 2 | Legal: false | Defect Detection: 8 (retry must call threads.reload, not no-op)
   // Behavior: first GET /api/threads → 500; click «Повторить» → second GET /api/threads (no cursor) → 200 → list rendered
   // Fails when: «Повторить» does not re-request page 1, requests with a cursor, or error state persists after success
   // @category: core-functionality

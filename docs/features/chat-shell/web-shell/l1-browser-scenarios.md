@@ -2,24 +2,32 @@
 
 | Field | Value |
 |-------|-------|
-| Source | [`design-web-shell.md`](../design-web-shell.md) v1.2, Test Strategy → «L1-сценарии (реальный браузер, Claude-in-Chrome)»; Early Verification Point (S-1…S-11) |
-| PRD / UXRD | [`prd.md`](../prd.md) v1.2 (FR-01…FR-12, FR-19…FR-22), [`uxrd.md`](../uxrd.md) v1.3 |
+| Source | [`design-web-shell.md`](../design-web-shell.md) v1.5, Test Strategy → «L1-сценарии (реальный браузер, Claude-in-Chrome)» and «Performance Tests»; Early Verification Point (S-1…S-11) |
+| PRD / UXRD | [`prd.md`](../prd.md) v1.5 (FR-01…FR-12, FR-19…FR-22; metrics № 7, № 10), [`uxrd.md`](../uxrd.md) v1.7 |
+| Upstream | [`design-threads-api.md`](../design-threads-api.md) v1.9, implemented and committed; plan [`threads-api/20261028-feature-threads-api.md`](../threads-api/20261028-feature-threads-api.md), task T6.3 (deferred into the two «T6.3» checks below) |
 | Type | E2E-level acceptance, executed manually by an agent through the Claude-in-Chrome extension. **Not** an automated runner (no Playwright) |
 | When | Final phase, after all web-shell tasks are complete and every unit/component/integration test passes |
-| Generated | 2026-10-28 (skeleton: every check is unticked; fill in Evidence while executing) |
+| Generated | 2026-10-30 (regenerated from design v1.5; every check is unticked; fill in Evidence while executing) |
 
 ## How to execute
 
 **Environment (design, L1 section):**
 
-1. `pnpm db:up`
-2. `apps/api` running on `http://localhost:4000` (dev mode, `dev-user`, real model)
+1. `pnpm db:up` (on this machine with `POSTGRES_PORT=5433`, see the threads-api plan notes)
+2. `apps/api` running on `http://localhost:4000` (dev mode, `dev-user`, real model, real provider keys in `apps/api/.env`)
 3. `pnpm --filter web build && pnpm --filter web start` (production build: FOUC and LCP checks are only valid there). L1-8 additionally uses `pnpm --filter web dev` for the console check
 4. Chrome tab with DevTools open (Console, Network)
 
-**Tool mapping (Claude-in-Chrome):** `navigate` (open URLs, F5 = navigate to the same URL), `computer` (click, type, keys, screenshots), `find` / `read_page` (accessibility tree: roles, names, `aria-*`), `javascript_tool` (`getBoundingClientRect`, `getComputedStyle`, `document.activeElement`, `location`, `history.length`, `document.title`), `read_network_requests` (request order, bodies, status, `canceled`), `read_console_messages`, `resize_window` (viewport widths), `gif_creator` (L1-6 recording).
+**Seed data (needed because the stand's assistant has no tools — `assistant.agent.ts` has `tools: {}` — and no way to reproduce a failed tool):** a throwaway script (not committed, in the scratchpad) that writes format-2 messages through `Memory.saveThread` / `Memory.saveMessages` for resource `dev-user`, modeled on `apps/api/test/support/seed.ts` (which only emits text parts; the script adds the other part types):
 
-**Steps the extension cannot drive** — DevTools-only features: CPU throttling ×4 + Performance frame screenshots (L1-8), `prefers-color-scheme` / `prefers-reduced-motion` emulation (L1-8, L1-9), touch device emulation and swipe (L1-3), Network request blocking (L1-3). Mark these **[DevTools — user]**: the agent stops and asks the user to toggle the setting, or records the check as *not executed* with the reason. A check that was not run is never reported as passed.
+| Thread | Content | Used by |
+|--------|---------|---------|
+| `SEED-RICH` | 12 messages; one reply with a reasoning part; one with a tool part `output-available` and a result; one with a table; one with an 80+ line code block | L1-4 |
+| `SEED-TOOL-ERROR` | user message, then a reply with a tool part in state `output-error`, `errorText: 'boom'`; user message, then a reply that has **only** a tool part (no text); user message, then a reply that has **only** a reasoning part | L1-10 A (tool-only and reasoning-only replies) and C |
+
+**Tool mapping (Claude-in-Chrome):** `navigate` (open URLs, F5 = navigate to the same URL), `computer` (click, type, keys including Tab / Enter / Space, screenshots), `find` / `read_page` (accessibility tree: roles, names, `aria-*`), `get_page_text`, `javascript_tool` (`getBoundingClientRect`, `getComputedStyle`, `document.activeElement`, `location`, `history.length`, `document.title`, `navigator.clipboard.readText()`, installing the fetch wrapper in L1-10), `read_network_requests` (request order, status, bodies where exposed), `read_console_messages`, `resize_window` (viewport widths), `gif_creator` (L1-6 recording).
+
+**Steps the extension cannot drive** — DevTools-only features: CPU throttling ×4 + Performance frame screenshots (L1-8), `prefers-color-scheme` / `prefers-reduced-motion` emulation (L1-8, L1-9), touch device emulation, `pointer: coarse` and swipe (L1-3, L1-10), Network request blocking (L1-3), the Network «Offline» switch (fallback in L1-10), and request details the extension does not expose (`canceled` status in L1-6, the `Referer` header in L1-4). Mark these **[DevTools — user]**: the agent stops and asks the user to toggle the setting, or records the check as *not executed* with the reason. A check that was not run is never reported as passed.
 
 **Evidence per scenario:** screenshot(s), console entries, key Network requests (method, URL, status, request body where stated). Paste them under each scenario's **Evidence** line.
 
@@ -35,9 +43,12 @@
 | L1-4 | AC-02.1, AC-02.3, AC-02.4, AC-08.3, markdown policy (Security) | AC-02.3, AC-02.4, AC-08.3 |
 | L1-5 | AC-04.2, AC-04.4 (S-2, S-7) | AC-04.2, AC-04.4 |
 | L1-6 | AC-02.6, AC-03.4, AC-08.4 (S-1) | **AC-02.6, AC-03.4** (intentionally no autotest — design «Integration Tests»), AC-08.4 |
-| L1-7 | AC-04.3, AC-06.4, E-8 | AC-06.4 |
+| L1-7 | AC-04.3, AC-06.4, AC-08.5e (E-8) | AC-06.4 |
 | L1-8 | AC-09.1…AC-09.3, UXRD 7.6 contrast, UXQ-3 font | AC-09.2, AC-09.3 |
 | L1-9 | AC-22.1, AC-22.2, UXRD 7.3 / reduced motion | — |
+| L1-10 | AC-08.5, AC-08.5a, AC-08.5b (return to the thread), AC-08.5c, AC-08.6, AC-14.5 (client), AC-14.6 (client side) | **AC-08.5b second sentence** (return to the thread in the same tab), AC-14.6 client side |
+| T6.3-a | PRD metric № 10 (no regression of the first token) | metric № 10 |
+| T6.3-b | PRD metric № 7, AC-17.1 / AC-20.1 on the real model | metric № 7 |
 
 ---
 
@@ -79,7 +90,7 @@ Evidence: _screenshots, Network rows (POST /api/threads → POST /api/chat/assis
 
 ## L1-2 — Rename and delete
 
-**Backs:** AC-05.1, AC-05.2, AC-05.3, AC-05.4 (S-6), AC-06.2, AC-06.3
+**Backs:** AC-05.1, AC-05.2, AC-05.3, AC-05.4 (S-6), AC-06.1, AC-06.2, AC-06.3
 **Preconditions:** at least 3 threads; one of them open.
 
 Steps:
@@ -144,11 +155,11 @@ Evidence: _…_
 ## L1-4 — Restored thread and untrusted markdown
 
 **Backs:** AC-02.1, AC-02.3, AC-02.4, AC-08.3, Security «Недоверенный markdown»
-**Preconditions:** a thread with reasoning, a tool call with result, a table and an 80+ line code block (N messages).
+**Preconditions:** thread `SEED-RICH` (see Seed data): 12 messages with reasoning, a tool call with result, a table and an 80+ line code block.
 
 Steps:
 
-1. Open the thread; count messages.
+1. Open `SEED-RICH`; count messages (N = 12).
 2. Expand the reasoning block.
 3. Click «Копировать» on the code block; read the clipboard via `javascript_tool` (`navigator.clipboard.readText()`).
 4. Scroll up; observe the composer and «К последнему сообщению».
@@ -159,14 +170,14 @@ Steps:
 
 Expected observations:
 
-- [ ] Steps 1–2: all N messages in the original order; reasoning collapsed and expands; tool shown with its result (AC-02.1)
+- [ ] Steps 1–2: all 12 messages in the original order; reasoning collapsed and expands; tool shown with its result (AC-02.1)
 - [ ] Step 3: table rendered as in a live stream; clipboard equals the code block text (AC-02.4)
 - [ ] Step 4: welcome hidden, composer pinned to the bottom, «К последнему сообщению» visible when scrolled away (AC-08.3)
-- [ ] Step 5: Network `POST /api/chat/assistant` body `id` = the open thread id; feed has N+2 messages after the reply (AC-02.3)
+- [ ] Step 5: Network `POST /api/chat/assistant` body `id` = the open thread id; feed has N+2 = 14 messages after the reply (AC-02.3)
 - [ ] «опасная» is not a link (`read_page`: no `link` with that name, element has no `href`); clicking does nothing; no `alert` dialog
 - [ ] «внешняя» and «внутренняя»: `target="_blank"`, `rel="noopener noreferrer"`; click opens a new tab; the original tab and its stream stay
 - [ ] http image: rendered as link «Изображение: картинка»; Network has **no** request to `example.com/a.png`
-- [ ] https image loads; its request has no `Referer` header
+- [ ] https image loads; its request has no `Referer` header (**[DevTools — user]** if the extension does not expose request headers)
 - [ ] Step 8: the same markdown results after reload; message count and order unchanged
 
 Evidence: _…_
@@ -213,7 +224,7 @@ Steps:
 Expected observations:
 
 - [ ] Step 1: «Остановить» shown instead of «Отправить» while streaming (AC-08.4)
-- [ ] Network: the `POST /api/chat/assistant` of X is **not** `canceled` (pending, then 200) through steps 2–4 (AC-02.6)
+- [ ] Network: the `POST /api/chat/assistant` of X is **not** `canceled` (pending, then 200) through steps 2–4 (AC-02.6); **[DevTools — user]** if the extension does not expose `canceled`
 - [ ] Step 2: Y shows only Y's messages; no fragment of X's reply (AC-02.6)
 - [ ] Step 3: `/` with «Чем могу помочь?»; no fragment of X's reply; X's stream continues (AC-03.4)
 - [ ] Step 4: X shows the continuing stream with «Остановить», or the complete reply (AC-02.6)
@@ -226,27 +237,30 @@ Evidence: _GIF, Network row of X's chat request with final status_
 
 ## L1-7 — Deleted and non-existent thread
 
-**Backs:** AC-04.3, AC-06.4, E-8
+**Backs:** AC-04.3, AC-06.4, AC-08.5e (E-8)
 **Preconditions:** a disposable thread D; two tabs.
 
 Steps:
 
 1. Copy D's URL; delete D; `navigate` to the copied URL.
 2. `navigate` `/chat/does-not-exist`.
-3. Open thread E in tab 1; in tab 2 delete E; in tab 1 send «Ещё вопрос».
+3. Open thread E (with at least one exchange) in tab 1; in tab 2 delete E; in tab 1 send «Ещё вопрос».
+4. In tab 1 click «Новый чат» inside the notice.
 
 Expected observations:
 
 - [ ] Steps 1–2: h1 «Беседа не найдена», text «Возможно, её удалили или ссылка указана неверно.», button «Новый чат»; `document.activeElement` is that `h1`; tab title «Беседа не найдена — Agent OS» (AC-04.3, AC-06.4)
-- [ ] Step 3: the composer is replaced by «Беседа удалена» / «Её удалили в другой вкладке или окне.» / «Новый чат»; «Ещё вопрос» remains visible in the feed; no English server text (E-8)
+- [ ] Step 3: the feed stays; «Ещё вопрос» stays visible; directly under it an inline notice «Беседа удалена» / «Её удалили в другой вкладке или окне.» with button «Новый чат» (`read_page`: the text is announced as `alert`, the button's description is the second line; **no** heading with that name); the composer (`textbox` «Сообщение») is **not** in the tree (AC-08.5e)
+- [ ] Step 3: no «Перегенерировать», no «Не удалось получить ответ…», no English server text («Thread not found»); no empty assistant row and no «Копировать» under the notice; Network shows one `POST /api/chat/assistant` → 404 and **no** `POST /api/threads` (AC-08.5e)
+- [ ] Step 4: `/` with «Чем могу помочь?» and the composer back (AC-08.5e, FR-03)
 
-Evidence: _…_
+Evidence: _screenshot of the notice, Network rows_
 
 ---
 
 ## L1-8 — Dark theme, FOUC, font, contrast
 
-**Backs:** AC-09.1, AC-09.2, AC-09.3, UXRD 7.6, UXQ-3
+**Backs:** AC-09.1, AC-09.2, AC-09.3, AC-09.4, UXRD 7.6, UXQ-3
 **Preconditions:** production build; a thread open so the active SB-06 row exists.
 
 Steps:
@@ -275,12 +289,12 @@ Evidence: _…_
 ## L1-9 — Keyboard only and reduced motion
 
 **Backs:** AC-22.1, AC-22.2, UXRD 7.3, reduced motion
-**Preconditions:** ≥ 2 date groups in the list; **[DevTools — user]** emulate `prefers-reduced-motion: reduce` for the last step.
+**Preconditions:** ≥ 2 date groups in the list; a thread with at least two exchanges open; **[DevTools — user]** emulate `prefers-reduced-motion: reduce` for the last step.
 
 Steps:
 
 1. From the address bar press Tab: first stop is the skip link «Перейти к сообщению»; Enter.
-2. Tab through: brand → «Новый чат» → thread links (link → its «⋯» → next link) → «Показать ещё беседы» → user block → «Боковая панель» → «Рабочая область» → feed → composer.
+2. Tab through: brand → «Новый чат» → thread links (link → its «⋯» → next link) → «Показать ещё беседы» → user block → «Боковая панель» → «Рабочая область» → feed (inside every user message «Копировать»; inside every reply the content, then «Перегенерировать» if the error block is present, then «Копировать») → composer.
 3. On a thread link press ↓ / ↑ across a group boundary, then Home / End; press Enter.
 4. `Ctrl+Shift+O`; `Ctrl+B` (twice).
 5. Open «⋯» with keyboard; navigate the menu; open the delete dialog; Esc.
@@ -291,7 +305,7 @@ Steps:
 Expected observations:
 
 - [ ] Step 1: skip link visible on focus and moves focus to the composer
-- [ ] Step 2: Tab order matches UXRD 7.3; focus is always visible
+- [ ] Step 2: Tab order matches UXRD 7.3 (including «Копировать» of non-last messages); focus is always visible
 - [ ] Step 3: ↓/↑ move to next/previous loaded thread across group headings; Home/End to first/last; Enter opens the thread and focus stays on the link (AC-22.2)
 - [ ] Step 4: `Ctrl+Shift+O` opens a new chat at `/`; `Ctrl+B` toggles the sidebar (AC-22.1)
 - [ ] Step 5: menu and dialog fully operable by keyboard; Esc closes and returns focus to «⋯»
@@ -300,6 +314,185 @@ Expected observations:
 - [ ] Step 8: panels change without animation; shimmer is off
 
 Evidence: _…_
+
+---
+
+## L1-10 — Message actions, error → regenerate → F5, tool error
+
+**Backs:** AC-08.5, AC-08.5a, AC-08.5b (second sentence: return to the thread), AC-08.5c, AC-08.6, AC-14.5 (client side), AC-14.6 (client side: what the user sees after regeneration and F5)
+**Preconditions:** thread M with at least 3 exchanges (real model); thread Y (any other); thread `SEED-TOOL-ERROR` (see Seed data); production build.
+
+### Fetch wrapper (used by part B to produce a mid-stream failure)
+
+Run in the page with `javascript_tool` right before sending; it cuts the chat stream after the first text chunk and cancels the real reader, so the server sees a client disconnect (the AC-14.6 «network drop» path):
+
+```js
+(() => {
+  if (window.__origFetch) return 'already installed';
+  window.__origFetch = window.fetch;
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const res = await window.__origFetch(input, init);
+    if (!url.endsWith('/api/chat/assistant') || !res.body) return res;
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let cut = false;
+    const body = new ReadableStream({
+      async pull(ctrl) {
+        const { done, value } = await reader.read();
+        if (done) return ctrl.close();
+        ctrl.enqueue(value);
+        if (!cut && dec.decode(value, { stream: true }).includes('"text-delta"')) {
+          cut = true;
+          setTimeout(() => { reader.cancel(); ctrl.error(new TypeError('network error')); }, 0);
+        }
+      },
+    });
+    return new Response(body, { status: res.status, headers: res.headers });
+  };
+  return 'installed';
+})()
+```
+
+Restore with `window.fetch = window.__origFetch; delete window.__origFetch;`. If the chat request does not go through the wrapper (Network shows it, but the stream is not cut), fall back to **[DevTools — user]**: Network → Offline switched on while the reply streams. Record which method was used.
+
+### Part A — action bar (AC-08.6)
+
+Steps:
+
+1. In M, walk the feed with Tab only (no mouse movement; record `document.activeElement`'s accessible name and its message after every Tab).
+2. Move the mouse over a non-last user message and a non-last reply; then away.
+3. Send a long request (e.g. «Напиши подробный план на 1500 слов»); while the reply streams, walk the feed with Tab only again; wait for the reply to finish.
+4. **[DevTools — user]** emulate `pointer: coarse` (touch device); screenshot the feed.
+5. Click «Копировать» on a user message; read `navigator.clipboard.readText()`; read `[role="status"]` text.
+6. Double-click a user bubble.
+7. Open `SEED-TOOL-ERROR`: look at the reply with only a tool part and the reply with only a reasoning part.
+
+Expected observations:
+
+- [ ] Every message has exactly one action: «Копировать». No «Изменить», «Перегенерировать», «Ещё», «Экспорт в Markdown», no «‹ 1/2 ›» branch picker anywhere in the feed (`find` / `read_page`) (AC-08.6)
+- [ ] Step 1: Tab reaches «Копировать» of the first (not last) user message and of the first (not last) reply without hover; when focused the button is visible (computed `opacity` 1) (AC-08.6)
+- [ ] Step 2: the last message's action bar is visible without hover; a non-last message's bar is transparent (`opacity` 0) until hover or focus inside the message; never `display: none` / `visibility: hidden` (`getComputedStyle`) (AC-08.6)
+- [ ] Step 3: while streaming, «Копировать» of every earlier message stays in the accessibility tree and in the Tab order; the reply being generated has none until it finishes, then it appears (AC-08.6)
+- [ ] Step 4 (**[DevTools — user]**): with a coarse pointer «Копировать» is visible on every message
+- [ ] Step 5: clipboard equals the message text; a `role="status"` element with text «Скопировано» appears (AC-08.6)
+- [ ] Step 6: no edit field opens (no `textbox` in the feed besides the composer) (AC-08.6)
+- [ ] Step 7: the tool-only and reasoning-only replies are rendered (tool block / «Рассуждения» visible) and have no «Копировать»; a reply with no parts is not rendered as a row (AC-08.6)
+
+### Part B — model error → regenerate → F5 (AC-08.5, AC-08.5a, AC-08.5b, AC-08.5c, AC-14.6)
+
+Steps:
+
+1. In M install the fetch wrapper; send «Расскажи подробно о Токио». Read the error block.
+2. Tab into the reply: record the order of stops inside it.
+3. Open Y from the sidebar, then return to M (same tab, no reload).
+4. Restore `window.fetch`. Tab to «Перегенерировать»; press Enter. Wait for the reply to finish.
+5. Wait 3 s; F5.
+6. Install the wrapper again; send «Расскажи о Париже»; when the error block appears, **do not** regenerate: restore `window.fetch` and send «Ещё вопрос»; wait for the reply.
+7. Wait 3 s; F5.
+8. **Error before the first token** (user action: restart `apps/api` with an invalid `ANTHROPIC_API_KEY`): in M send «Привет». Afterwards restore the valid key and restart the API.
+
+Expected observations:
+
+- [ ] Step 1: under the reply a block (`data-slot="message-error"`) with ⚠ and the text «Не удалось получить ответ. Попробуйте перегенерировать.» in an element with `role="alert"`; the partial text stays above it; no text from the server or the model («network error», «Agent error», any English) anywhere (AC-08.5)
+- [ ] Step 1: block border colour equals `--destructive`; the text colour equals `--foreground` (computed `color` of the text equals that of body text); the sidebar, the header and the composer stay operable (AC-08.5)
+- [ ] Step 1: button «Перегенерировать» is inside the block; its `aria-describedby` points to the `id` of the alert text; no «Перегенерировать» in the action bar (AC-08.5a)
+- [ ] Step 2: Tab order inside the reply: content → «Перегенерировать» → «Копировать» (UXRD 7.3)
+- [ ] Step 3: after returning, the block with «Перегенерировать» is visible again on the failed reply (AC-08.5b, second sentence; UXRD A-1). If it is not: record it and note the discrepancy to the UX owner (design: «расхождение фиксируется заметкой UX-владельцу»), this is not a blocker for the other items
+- [ ] Step 4, Network: `POST /api/chat/assistant` with `trigger: 'regenerate-message'` and the last item of `messages` being the same user message (same `id` as in the failed turn) (AC-08.5a)
+- [ ] Step 4: the new reply takes the place of the failed one; no «‹ 1/2 ›»; block and button are gone; focus is in the composer with a fine pointer (AC-08.5a). With a coarse pointer focus goes to the header `h1`, without the on-screen keyboard (**[DevTools — user]**, optional)
+- [ ] Step 5: after F5 there is exactly one assistant reply after that user message; no block, no button, no error text (AC-14.6, AC-08.5c)
+- [ ] Step 6: right after the new message the failed reply shows only its partial text: no block, no button; there is no «Перегенерировать» anywhere in the feed (AC-08.5b)
+- [ ] Step 7: after F5 the failed reply is shown as an ordinary reply with its saved partial text, with «Копировать», without block, without button, without any model error text; order: «Расскажи о Париже», partial text, «Ещё вопрос», its reply (AC-08.5c, AC-14.5)
+- [ ] Step 8: only the block appears under the user message «Привет»; no empty assistant row and no «Копировать» for it; after F5 no assistant reply follows «Привет» (AC-08.6, AC-08.5c defensive case)
+
+### Part C — tool error (AC-14.5)
+
+Steps:
+
+1. Open `SEED-TOOL-ERROR`; look at the failed tool block; F5 and look again.
+2. Network: read the body of `GET /api/threads/<id>/messages`.
+
+Expected observations:
+
+- [ ] The failed tool block shows the tool's trigger label, «Ошибка:» and «Не удалось выполнить инструмент.»; there is no «Result:» / result section; neither «boom» nor `{"error"` appears anywhere on the page (`get_page_text`); the block is not announced as `alert` (`read_page`) (AC-14.5)
+- [ ] The same after F5 (AC-14.5)
+- [ ] The `/messages` response has no `boom` (server-side masking, owned by `threads-api`; a free cross-check)
+- [ ] Live-stream half of AC-14.5 (a tool failing during a stream): **not executable on this stand** — the assistant has no tools. Record as *not executed* with that reason (covered by the component test `tool-fallback-error.test.tsx`), unless the user adds a throwaway failing tool to the agent locally
+
+Evidence: _screenshots of the action bar states, the error block (with computed colours), Network rows of the regenerate request, `/messages` after F5, console_
+
+---
+
+## Deferred from `threads-api` T6.3 (metrics № 10 and № 7)
+
+These two checks need real provider keys and were moved by the user from `threads-api` task T6.3 into the browser verification after `web-shell`. Results go back into the `threads-api` plan, Notes, section «L1 / метрики № 7, № 10» (and tick the three Completion boxes of T6.3 there).
+
+### T6.3-a — time to first token, before / after (PRD metric № 10, threads-api Verification)
+
+**Criterion:** the time to the first token of `POST /api/chat/assistant` is not worse than the current skeleton + 50 ms. The difference measures the whole work added to each send: `getOwnedThread` (one SELECT by PK) and `recall` of ≤ 20 rows of the tail reset.
+
+**Method:** 5 runs on the same prompt on each side, servers started one after another on port 4000.
+
+Steps (shell steps are done by the agent in Bash or by the user; the measurement runs in the browser):
+
+1. **«Before»** — `main` commit `83fd532` in a separate git worktree outside the repository: `git worktree add <dir outside repo> 83fd532`; in it `pnpm install` and copy `apps/api/.env`; stop any other API on port 4000; `pnpm --filter api dev` **from the worktree**.
+2. In a tab opened on `http://localhost:3000` (the allowed CORS origin; the web app itself is not under test), run the measurement below once as a warm-up (discard it), then 5 times; record the 5 values. With the «before» API, `id` is any fresh string.
+3. Stop the «before» API. **«After»** — the working tree of `feature/chat-shell`: `pnpm --filter api dev`; warm-up once (discarded), then 5 runs. With the «after» API each run first creates a thread (`POST /api/threads`) and sends the chat request with the returned `id`; only the chat request is timed.
+4. Remove the worktree: `git worktree remove <dir>`.
+
+The warm-up request per server start is an addition to the plan, so that a cold start is not compared with a warm server; apply it to both sides.
+
+Measurement (`javascript_tool`; the same prompt on both sides; `x-user-id` keeps the benchmark threads out of the `dev-user` list; «first token» = the first SSE chunk whose `type` ends with `-delta`, text or reasoning, on both sides):
+
+```js
+(async (after) => {
+  const api = 'http://localhost:4000';
+  const headers = { 'content-type': 'application/json', 'x-user-id': 'ttft-bench' };
+  let id = crypto.randomUUID();
+  if (after) id = (await (await fetch(api + '/api/threads', { method: 'POST', headers })).json()).id;
+  const body = JSON.stringify({ id, messages: [{ id: crypto.randomUUID(), role: 'user',
+    parts: [{ type: 'text', text: 'Назови три столицы Европы одним предложением.' }] }] });
+  const t0 = performance.now();
+  const res = await fetch(api + '/api/chat/assistant', { method: 'POST', headers, body });
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { ms: null, note: 'stream ended without a delta chunk', status: res.status };
+    buf += dec.decode(value, { stream: true });
+    if (/"type"\s*:\s*"[a-z-]*-delta"/.test(buf)) { const ms = Math.round(performance.now() - t0); reader.cancel(); return { ms, status: res.status }; }
+  }
+})(/* false for «before», true for «after» */ true)
+```
+
+Expected observations:
+
+- [ ] 5 values «before» (`83fd532`) recorded, each with HTTP status 200
+- [ ] 5 values «after» recorded, each with HTTP status 200
+- [ ] median(after) − median(before) ≤ 50 ms (the PRD does not fix the aggregation; the median is used and all ten values are kept). If the difference is above 50 ms, **escalate to the user** with the ten values; do not decide by repeating runs
+- [ ] The worktree is removed (`git worktree list` shows only the main one)
+
+Evidence: _ten values, medians, worktree commit and branch HEAD_
+
+### T6.3-b — automatic titles on the real model (PRD metric № 7, AC-17.1, AC-20.1)
+
+**Criterion:** ≥ 95 % of 20 new conversations (≥ 19 of 20) get a non-empty title of 1…80 characters, without quotes or line breaks, in the language of the first message, visible in the sidebar within 15 s after the reply ends (10 s server generation, AC-17.1 + up to 5 s client refresh, AC-20.1).
+
+Steps:
+
+1. In the production build create 20 new chats (new chat → first message → wait for the reply to end): 10 in Russian, 10 in English; vary the first message: a short question, a long request over 200 characters, a request with code, a request with quotes in the text, a one-word message.
+2. For each chat, right after the reply ends poll with `javascript_tool` every 500 ms until the sidebar link of the thread (and `document.title`) stops reading «Новая беседа», up to 20 s; record the elapsed seconds and the title text.
+3. In the `apps/api` log (user) check for each chat that the title was written within 10 s after the reply ended (AC-17.1 server side).
+
+Expected observations (record a table: № · language · first message (short) · title · length · seconds to appear):
+
+- [ ] ≥ 19 of 20 titles are non-empty, 1…80 characters, without quotes or line breaks
+- [ ] ≥ 19 of 20 titles are written in the language of the first message
+- [ ] ≥ 19 of 20 titles are visible in the sidebar, the header `h1` and the tab title within 15 s after the reply ends
+- [ ] The `apps/api` log shows the title written within 10 s for ≥ 19 of 20 chats (AC-17.1)
+- [ ] If the criterion fails: record the failing chats and **escalate to the user**; the planned remedies are a faster `TITLE_MODEL` or sharper title instructions through `update` of the threads-api plan
+
+Evidence: _the 20-row table, API log excerpt_
 
 ---
 
@@ -316,3 +509,6 @@ Evidence: _…_
 | L1-7 | | | |
 | L1-8 | | | |
 | L1-9 | | | |
+| L1-10 | | | |
+| T6.3-a (metric № 10) | | | |
+| T6.3-b (metric № 7) | | | |

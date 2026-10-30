@@ -1,6 +1,7 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.2)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
 // File: shell.new-chat.int.test.tsx — Test Strategy, "Integration Tests (I)"
-// Generated: 2026-10-28 | Budget Used: 6/3 integration files (design-mandated, see generation report), 0/2 E2E (L1 checklist instead)
+// Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
 //
 // Harness (planned, src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
@@ -22,7 +23,7 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
   // AC-03.2: "If пользователь открыл «Новый чат» и ушёл в другую беседу, ничего не отправив, then the system
   //   shall не создавать беседу и не показывать её в списке (запросов POST /api/threads нет)."
   // EARS: If-then (no-send branch; the send branch is the next two tests)
-  // ROI: 7.9 | Business Value: 8 (no junk empty threads in history) | Frequency: 9 | Legal: false | Defect Detection: 7
+  // ROI: 7.2 | Business Value: 8 (no junk empty threads in history) | Frequency: 9 | Legal: false | Defect Detection: 7
   // Behavior: on /chat/a click «Новый чат» → / welcome → click link of thread b → zero POST /api/threads, list unchanged
   // Fails when: «Новый чат» eagerly creates a server thread, or a local empty thread leaks into the list
   // @category: core-functionality
@@ -48,7 +49,7 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
   // AC-04.1: "When первое сообщение отправлено с /, the system shall заменить URL на /chat/<id> (id из POST /api/threads)
   //   без перезагрузки и без нового запроса страницы."
   // Design sequence: POST /api/threads → onThreadIdChange → history.replaceState → POST /api/chat/assistant { id }
-  // ROI: 8.5 | Business Value: 10 (thread persistence + addressable URL) | Frequency: 9 | Legal: false | Defect Detection: 9
+  // ROI: 9.0 | Business Value: 10 (thread persistence + addressable URL) | Frequency: 9 | Legal: false | Defect Detection: 9
   // Behavior: on / type + Enter → POST /api/threads (201 {id:'t-1'}) precedes POST /api/chat/assistant with body.id='t-1';
   //   window.history.replaceState called with '/chat/t-1'; router.push / router.replace not called
   // Fails when: chat request is sent before initialize, carries a local id, URL changes via push/navigation, or URL not updated
@@ -75,7 +76,7 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
 
   // AC-03.3: "When отправлено первое сообщение нового чата, the system shall сразу показать новую беседу первой
   //   в «Сегодня», активной, с «Новая беседа»."
-  // ROI: 7.7 | Business Value: 8 | Frequency: 9 | Legal: false | Defect Detection: 7 (ThreadActivityTracker + grouping by local activity)
+  // ROI: 7.2 | Business Value: 8 | Frequency: 9 | Legal: false | Defect Detection: 7 (ThreadActivityTracker + grouping by local activity)
   // Behavior: existing thread updated today 09:00 → first send at 12:00 → «Сегодня» first link = «Новая беседа», aria-current="page"
   // Fails when: new item lands below older ones (grouping by stale server time only), is not active, or shows an empty title
   // @category: core-functionality
