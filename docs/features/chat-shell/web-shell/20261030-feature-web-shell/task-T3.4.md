@@ -117,3 +117,4 @@ Metadata:
 ## Notes
 - Impact scope: `thread.aui.tsx` далее правят T4.3, T7.2, T7.3, T7.5; `thread-notice.tsx` — T7.3; `main-view.tsx` — T4.3, T7.3.
 - Scope boundary: второй и третий `it.todo` файла `shell.open-thread` не трогать.
+- Из T2.4: `thread.aui.tsx:230` локально задаёт `["--thread-max-width" as string]: "44rem"` и перекрывает глобальный токен `--thread-max-width: 48rem` из `globals.css` (UXRD 11.2) — убрать локальное значение, чтобы колонка ленты брала токен.

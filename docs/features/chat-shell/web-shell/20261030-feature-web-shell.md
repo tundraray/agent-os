@@ -684,7 +684,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
 
 #### Tasks
 
-- [ ] **T2.1 Vitest 4 + RTL + MSW 2 + jsdom 29, обвязка `src/test/`, перенос и слияние скелетов, `config.test.ts`** (FR-12: AC-12.2; Reference: `vitest.config.ts`, `lib/config.ts`)
+- [x] **T2.1 Vitest 4 + RTL + MSW 2 + jsdom 29, обвязка `src/test/`, перенос и слияние скелетов, `config.test.ts`** (FR-12: AC-12.2; Reference: `vitest.config.ts`, `lib/config.ts`)
   - Target Files: `apps/web/package.json`, `pnpm-lock.yaml`, `apps/web/vitest.config.ts` (new), `apps/web/src/test/setup.ts` (new), `apps/web/src/test/msw-server.ts` (new), `apps/web/src/test/fixtures.ts` (new), `apps/web/src/test/render-with-runtime.tsx` (new), `apps/web/src/lib/config.test.ts` (new), `apps/web/src/components/shell/{shell.list,shell.new-chat,shell.open-thread,shell.deleted-thread,shell.message-error,shell.delete-open-thread,shell.workspace}.int.test.tsx` (new — перенос), `docs/features/chat-shell/web-shell/test-skeletons/*.int.test.tsx` (delete — 7 файлов, каталог удаляется)
   - Investigation Targets: DD «Инструменты и версии», абзац о `vitest.config.ts` и `setup.ts`; `apps/api/vitest.config.ts` (та же линия Vitest 4 / Vite 8); комментарии «Harness» в скелетах; `turbo.json`.
   - Содержание:
@@ -696,9 +696,9 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - `config.test.ts` — `vi.stubEnv` + `vi.resetModules()`: не задан, `'localhost:4000'`, `'ftp://x'` → исключение при импорте; `'http://api.test/'` → `apiBaseUrl === 'http://api.test'` (одна табличная проверка).
   - Зависимости: T1.4 (общие `package.json`, `pnpm-lock.yaml`; гейт G1 к этому моменту пройден).
   - Proof obligations: `config.test.ts` краснеет, если убрать срез `/` в конце или проверку протокола.
-  - Completion: [ ] `pnpm --filter web test` — `config.test.ts` зелёный, 10 `it.todo` учтены как todo; [ ] `pnpm test` из корня (turbo) выполняет тесты `apps/web`; [ ] в `apps/web/src/components/shell/` 7 файлов `*.int.test.tsx`, в `docs/.../test-skeletons/` файлов нет; [ ] lint, tsc, build — 0 ошибок.
+  - Completion: [x] `pnpm --filter web test` — `config.test.ts` зелёный, 10 `it.todo` учтены как todo; [x] `pnpm test` из корня (turbo) выполняет тесты `apps/web`; [x] в `apps/web/src/components/shell/` 7 файлов `*.int.test.tsx`, в `docs/.../test-skeletons/` файлов нет; [x] lint, tsc, build — 0 ошибок.
 
-- [ ] **T2.2 Unit-тесты клиента API, адаптеров списка и истории, `RetryGate` (характеризация с мутациями)** (AC-01.7, AC-02.5, AC-04.3, AC-05.4 (S-6), AC-16.3 клиент; Cross-Layer Assumption 7)
+- [x] **T2.2 Unit-тесты клиента API, адаптеров списка и истории, `RetryGate` (характеризация с мутациями)** (AC-01.7, AC-02.5, AC-04.3, AC-05.4 (S-6), AC-16.3 клиент; Cross-Layer Assumption 7)
   - Target Files: `apps/web/src/lib/threads/threads-api-client.test.ts` (new), `apps/web/src/lib/threads/thread-list-adapter.test.ts` (new), `apps/web/src/lib/threads/thread-history-adapter.test.ts` (new), `apps/web/src/lib/threads/retry-gate.test.ts` (new); исправления в модулях T1.1, если тест вскрыл дефект
   - Тесты (MSW; кейсы — строки таблиц):
     - `threads-api-client.test.ts` — 200/невалидно → `invalid_response`; 404 и 400 на `:threadId` → `not_found`; сеть → `network`; провал `safeValidateUIMessages` → `invalid_response`; пустой `messages` → `[]` без ошибки.
@@ -707,9 +707,9 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - `retry-gate.test.ts` — `release` разрешает; `drop` отклоняет `kind: 'not_found'`; без ожидающего — без ошибок; повторный `drop` после `release` — ничего.
   - Зависимости: T2.1.
   - Proof obligations: мутации — 400 перестаёт трактоваться как 404; `initialize` ставит `ready` после возврата; `forget` не вызывает `drop`; `withFormat` пропускает чужой формат — каждая краснит хотя бы один кейс (записать в Notes).
-  - Completion: [ ] 4 файла зелёные; [ ] мутационная проверка записана; [ ] lint, tsc — 0 ошибок.
+  - Completion: [x] 4 файла зелёные; [x] мутационная проверка записана; [x] lint, tsc — 0 ошибок.
 
-- [ ] **T2.3 Unit-тесты `route-thread-id`, `url-sync`, опросчика заголовка (характеризация с мутациями)** (AC-04.1, AC-04.3, AC-20.1; S-2, S-4 — правила)
+- [x] **T2.3 Unit-тесты `route-thread-id`, `url-sync`, опросчика заголовка (характеризация с мутациями)** (AC-04.1, AC-04.3, AC-20.1; S-2, S-4 — правила)
   - Target Files: `apps/web/src/lib/threads/route-thread-id.test.ts` (new), `apps/web/src/lib/threads/url-sync.test.ts` (new), `apps/web/src/lib/threads/title-poller.test.ts` (new); исправления в модулях T1.1 при дефекте
   - Тесты:
     - `route-thread-id.test.ts` — `/chat/a%2Fb`, `/`, `/foo`, `/chat/`, `/chat/a/b`, `/chat/%E0` (сырой сегмент); round-trip для `'abc'`, `'a/b'`, `'с пробелом'`, `'%'`, `'?#&'`, UUID.
@@ -717,9 +717,9 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - `title-poller.test.ts` (фейковые таймеры) — без ответа ассистента запросов нет; заголовок на 3-м запросе → поток с текстом, `titleWaiting` снят; окно 15 с → 15 запросов и пустой поток; 404 → остановка.
   - Зависимости: T2.1.
   - Proof obligations: мутации — `push` вместо `replaceState`; опрос без проверки ответа ассистента; интервал 500 мс — каждая краснит кейс.
-  - Completion: [ ] 3 файла зелёные; [ ] мутационная проверка записана.
+  - Completion: [x] 3 файла зелёные; [x] мутационная проверка записана.
 
-- [ ] **T2.4 Тема без FOUC, шрифт с кириллицей, токены контраста и движения, `Toaster`, кнопка** (FR-09: AC-09.1–09.3 механизм; UXQ-3; UXRD 7.6; Element 3; IP4, IP5)
+- [x] **T2.4 Тема без FOUC, шрифт с кириллицей, токены контраста и движения, `Toaster`, кнопка** (FR-09: AC-09.1–09.3 механизм; UXQ-3; UXRD 7.6; Element 3; IP4, IP5)
   - Target Files: `apps/web/src/components/theme-provider.tsx` (new), `apps/web/src/app/layout.tsx`, `apps/web/src/app/globals.css`, `apps/web/src/components/ui/button.tsx`, `apps/web/src/components/ui/sonner.tsx`
   - Investigation Targets: `apps/web/node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md` («Understanding suppressHydrationWarning», `InlineScript`); DD «Тема, шрифт, токены», фрагмент `theme-provider.tsx`; `next-themes` 0.4.6 `dist/index.mjs`.
   - Содержание:
@@ -730,10 +730,10 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - `ui/sonner.tsx` — `position="bottom-right"`, `closeButton`.
   - Тесты: компонентный тест темы — T3.2 (`user-menu.test.tsx`); FOUC, шрифт, контраст — L1-8 (T8.3).
   - Зависимости: T1.4 (`ui/sonner.tsx`, `next-themes`).
-  - Completion: [ ] lint, tsc, build — 0 ошибок; [ ] `pnpm --filter web dev`: `localStorage.theme = 'dark'` + F5 → класс `dark` на `html`; в консоли нет предупреждений о `<script>` и гидратации; [ ] `document.fonts.check('14px Geist', 'Жё')` → `true`.
+  - Completion: [x] lint, tsc, build — 0 ошибок; [x] `pnpm --filter web dev` (оркестратор, Chrome, 2026-10-30): `localStorage.theme = 'dark'` + reload → `html.dark`, `color-scheme: dark`, `--background` `lab(2.75% 0 0)`, meta `theme-color` = `--background`; `'light'` → светлая, `theme-color` `lab(100% 0 0)`; переключение класса `dark` обновляет `theme-color` (MutationObserver работает); ключ удалён → system (ОС светлая) → светлая; `html lang=ru`; ровно один регион sonner `Toaster`; в консоли нет предупреждений о `<script>` и гидратации; [x] `document.fonts.check('14px Geist', 'Жё')` → `true`; `body` font-family `Geist, "Geist Fallback"`; [ ] отсутствие FOUC на production-сборке — не выполнено: `next start` не смог занять :3000 (занят dev-сервером) → перенесено в T8.3 L1-8 (production build).
 
 #### Phase Completion Criteria
-- [ ] T2.1–T2.4 готовы к коммиту
+- [x] T2.1–T2.4 готовы к коммиту
 - [ ] `pnpm --filter web test` зелёный (U: 8 файлов); 10 `it.todo`
 - [ ] lint, tsc, build — 0 ошибок; `pnpm test` (turbo) зелёный
 - [ ] Интеграционные тесты: 0/10
@@ -1166,7 +1166,7 @@ ADR нет: каталога `docs/adr/` не существует, Prerequisite
     - **НЕ ВЫПОЛНЕНО: закрытие свайпом влево.** Синтетические pointer-события и drag-инструмент DevTools не воспринимаются как свайп (недоверенный ввод / нативное перетаскивание ссылки). Пользователь решил проверить позже → перепроверить в **T8.3 L1-3** (`[DevTools — user]`). Решение: `Drawer` оставлен; запасной путь (`Sheet` + pointer-обработчик) не применялся.
     - Находки для T3.1 (внесены в `task-T3.1.md`): (1) AC-10.2 требует начальный фокус на «Новый чат» при открытии шторки — сейчас фокус попадает на сам элемент диалога (использовать `initialFocus` у `Drawer`); (2) кнопки «×» «Закрыть меню» в шапке шторки (UXRD 761) пока нет.
     - Гейты (quality-fixer, 2026-10-30; dev-сервер :3000 работал, `next build` не запускался — код не менялся с успешной сборки исполнителя): `eslint src` — 0, `tsc --noEmit` — 0; `git diff HEAD` по `ui/button.tsx`, `ui/skeleton.tsx`, `ui/tooltip.tsx` — пусто; `pnpm install --frozen-lockfile --offline --ignore-scripts` принят («Lockfile is up to date»), `pnpm-lock.yaml` не изменился.
-- **Мутационные проверки** (заполняются в T2.2, T2.3 и задачах с Proof obligations): —
+- **Мутационные проверки** (заполняются в T2.2, T2.3 и задачах с Proof obligations): T2.2 — 9 мутаций (M1–M9), T2.3 — 6 (M1–M6), каждая краснит названный кейс; таблицы в `task-T2.2.md` и `task-T2.3.md` (Investigation Notes). Модули T1.1 не менялись.
 - **Метрики и L1** (заполняются в T8.3, T8.4): —
 
 ## Change History

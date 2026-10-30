@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
-import { Toaster } from 'sonner';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
 import { Sidebar, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
@@ -38,8 +37,6 @@ export function ChatShell({ defaultSidebarOpen, children }: ChatShellProps) {
           {children}
         </main>
       </SidebarProvider>
-      {/* SPIKE: the root layout gets the shared Toaster later; until then notify() renders here. */}
-      <Toaster position="bottom-center" />
     </ChatRuntimeProvider>
   );
 }

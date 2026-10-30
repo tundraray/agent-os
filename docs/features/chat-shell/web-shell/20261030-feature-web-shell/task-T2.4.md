@@ -19,11 +19,11 @@ Metadata:
 Тема без вспышки (next-themes), шрифт Geist с кириллицей (UXQ-3), токены контраста и движения, `Toaster`, непрозрачное кольцо и сплошной `destructive` у кнопки (Element 3). Механизм AC-09.1–09.3; UXRD 7.6; IP4, IP5.
 
 ## Target Files
-- [ ] `apps/web/src/components/theme-provider.tsx` (new)
-- [ ] `apps/web/src/app/layout.tsx`
-- [ ] `apps/web/src/app/globals.css`
-- [ ] `apps/web/src/components/ui/button.tsx`
-- [ ] `apps/web/src/components/ui/sonner.tsx`
+- [x] `apps/web/src/components/theme-provider.tsx` (new)
+- [x] `apps/web/src/app/layout.tsx`
+- [x] `apps/web/src/app/globals.css`
+- [x] `apps/web/src/components/ui/button.tsx`
+- [x] `apps/web/src/components/ui/sonner.tsx`
 
 ## Investigation Targets
 - `apps/web/node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md` («Understanding suppressHydrationWarning», `InlineScript`)
@@ -49,22 +49,31 @@ Metadata:
 | `theme-provider.tsx` | `scriptProps` по `typeof window` (фрагмент DD) | План T2.4 |
 
 ## Investigation Notes
-(Прочитанные разделы Next-доков, наблюдения по `next-themes`.)
+- `preventing-flash-before-hydration.md`: inline-скрипт в root layout допустим (пример темы в доке — `<script dangerouslySetInnerHTML>` в `<head>` серверного layout); приём `InlineScript` (`text/javascript` на сервере / `text/plain` на клиенте + `suppressHydrationWarning`) применён в `theme-provider.tsx` по фрагменту DD.
+- `next-themes` 0.4.6 `dist/index.mjs`: `scriptProps` прокидывается в `createElement("script", {...scriptProps, suppressHydrationWarning: true, …})` — подтверждено.
+- Сборка (`.next/server/app/index.html`): `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">` (умолчания Next сохраняются), `<link rel="preconnect" href="http://localhost:4000" crossorigin="use-credentials">`, `<script type="text/javascript">` next-themes — первый элемент `<body>`; в CSS есть `@font-face` Geist с `unicode-range` кириллицы (`U+400-45F…`), `font-family: Geist, Geist Fallback`.
+- Reference Contract: Y — все токены дословно в `globals.css` (`--ring`/`--sidebar-ring` светлые `oklch(0.556 0 0)`, `* { @apply border-border outline-ring; }`, `--destructive-foreground` светлая/тёмная + `--color-destructive-foreground`, размеры и движение в `:root`).
+- `--ease-out` в `:root` (вне слоя) переопределяет одноимённую переменную Tailwind → утилита `ease-out` использует кривую UXRD 11.2 (`cubic-bezier(0.23, 1, 0.32, 1)`) — соответствует назначению токена.
+- `ui/sonner.tsx`: CSS-переменные тоста перенесены из `style={… as React.CSSProperties}` в классы Tailwind с `!` (стили sonner `[data-sonner-toaster][data-sonner-theme=…]` специфичнее класса), тема — через type guard вместо `as`; `position="bottom-right"`, `closeButton` стоят до `{...props}` (место вызова может переопределить).
+- `button.tsx` `destructive`: сплошной `bg-destructive text-destructive-foreground hover:bg-destructive/90`; переопределения кольца `ring-destructive/20` убраны — у варианта действует общее непрозрачное `ring-ring`.
+- Target Files расширены оркестратором на `apps/web/src/components/shell/chat-shell.tsx` ровно для одной правки: удалены спайковые `import { Toaster } from 'sonner';` и комментарий SPIKE + `<Toaster position="bottom-center" />`. Теперь ровно один `Toaster` в `RootLayout` и один в `renderWithRuntime` (ChatShell своего не рендерит).
+- `thread.aui.tsx:230` локально задаёт `--thread-max-width: 44rem` и перекрывает токен 48rem — передано в Notes `task-T3.4.md` (T3.4 владеет `thread.aui.tsx`).
 
 ## Implementation Steps
 Новых тестов нет (см. Decisions).
 ### 1. Подготовка
-- [ ] Прочитать `preventing-flash-before-hydration.md` и остальные Investigation Targets
+- [x] Прочитать `preventing-flash-before-hydration.md` и остальные Investigation Targets
 
 ### 2. Реализация
-- [ ] `theme-provider.tsx`, `layout.tsx`, `globals.css`, `button.tsx`, `ui/sonner.tsx` по Decisions и Reference Contracts
+- [x] `theme-provider.tsx`, `layout.tsx`, `globals.css`, `button.tsx`, `ui/sonner.tsx` по Decisions и Reference Contracts
 
 ### 3. Refactor
-- [ ] Только семантические токены; никаких жёстких цветов в новых правилах
+- [x] Только семантические токены; никаких жёстких цветов в новых правилах
 
 ### 4. Проверка (оркестратор, `pnpm --filter web dev`)
-- [ ] `localStorage.theme = 'dark'` + F5 → класс `dark` на `html`; в консоли нет предупреждений о `<script>` и гидратации
-- [ ] `document.fonts.check('14px Geist', 'Жё')` → `true`
+- [x] `localStorage.theme = 'dark'` + F5 → класс `dark` на `html`; в консоли нет предупреждений о `<script>` и гидратации
+- [x] `document.fonts.check('14px Geist', 'Жё')` → `true`
+- [ ] No-FOUC на production-сборке — не выполнено (`next start` не смог занять :3000, занят dev-сервером) → T8.3 L1-8
 
 ## Quality Assurance Mechanisms
 - ESLint, `tsc`, `next build` — Type: `executable_check`
@@ -88,10 +97,19 @@ Metadata:
 - **Residual**: контраст — L1-8.
 
 ## Completion Criteria
-- [ ] lint, tsc, build — 0 ошибок
-- [ ] `dev`: `localStorage.theme = 'dark'` + F5 → класс `dark` на `html`; в консоли нет предупреждений о `<script>` и гидратации
-- [ ] `document.fonts.check('14px Geist', 'Жё')` → `true`
-- [ ] Reference Contract (`globals.css`) — `Y`; Resolved decisions применены
+- [x] lint, tsc, build — 0 ошибок
+- [x] `dev`: `localStorage.theme = 'dark'` + F5 → класс `dark` на `html`; в консоли нет предупреждений о `<script>` и гидратации
+- [x] `document.fonts.check('14px Geist', 'Жё')` → `true`
+- [x] Reference Contract (`globals.css`) — `Y`; Resolved decisions применены
+
+## Browser Verification Results (оркестратор, dev-сервер, Chrome, 2026-10-30)
+- `localStorage.theme='dark'` + reload: `html.dark`, `color-scheme: dark`, `--background` = `lab(2.75% 0 0)`, meta `theme-color` равен `--background`.
+- `'light'`: светлая тема, `theme-color` = `lab(100% 0 0)`.
+- Переключение класса `dark` обновляет `theme-color` (MutationObserver работает).
+- Ключ `theme` удалён: system (ОС светлая) → светлая тема.
+- `document.fonts.check('14px Geist', 'Жё') === true`; `body` font-family `Geist, "Geist Fallback"`.
+- `html lang=ru`; ровно один регион sonner `Toaster`; в консоли нет предупреждений о `<script>` и гидратации.
+- Не выполнено: no-FOUC на production-сборке (`next start` не смог занять :3000, порт держит dev-сервер) → отложено в T8.3 L1-8 (production build).
 
 ## Notes
 - Impact scope: `app/layout.tsx` ещё раз проверяется в T7.5 (только строки); `ui/button.tsx` — только здесь.

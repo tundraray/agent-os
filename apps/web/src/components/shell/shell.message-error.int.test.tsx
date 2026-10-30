@@ -1,6 +1,7 @@
 // chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.5)
 // File: shell.message-error.int.test.tsx — Test Strategy, "Integration Tests (I)" (new in v1.3, AC-08.5b)
 // Generated: 2026-10-30 | Budget Used: 14 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
+// Budget after the plan merges: 10 it.todo in 7 files (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
 // Test Type: Integration (Vitest + RTL + MSW 2, jsdom, REAL useChatRuntime / AI SDK Chat — not useLocalRuntime)
 //
@@ -9,7 +10,7 @@
 //   message and reset by the next send (design "Action bar и ошибки в ленте", «Только последний ответ»). Only the real runtime
 //   can turn red when that assumption breaks after an @assistant-ui / ai upgrade.
 //
-// Harness (planned, src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
+// Harness (src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
 //   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy).
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'
 //   (sseFromChunks builds SSE v7 from a chunk list; a chunk { type: 'error', errorText } ends the stream with a model error).
@@ -17,7 +18,7 @@
 //   Config flag regenerateAfterError stays at its shipped value (true).
 // Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
 //   ShellStatus, MessageError, components — real. Do NOT mock lib/threads/*, lib/config.ts or @assistant-ui/*.
-// Planned imports for implementation (not imported yet: modules do not exist before the plan runs):
+// Imports for implementation (added when the case is filled; an it.todo case imports nothing):
 //   import { screen, within, waitFor } from '@testing-library/react';
 //   import { http, HttpResponse } from 'msw';
 //   import { server } from '@/test/msw-server';

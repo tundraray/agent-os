@@ -19,10 +19,10 @@ Metadata:
 Характеризационные тесты правил URL беседы (`threadPath`/`parseRouteThreadId`, `syncUrlWithThread`) и опросчика автозаголовка (фейковые таймеры). Покрывает AC-04.1, AC-04.3, AC-20.1; S-2, S-4 (правила).
 
 ## Target Files
-- [ ] `apps/web/src/lib/threads/route-thread-id.test.ts` (new)
-- [ ] `apps/web/src/lib/threads/url-sync.test.ts` (new)
-- [ ] `apps/web/src/lib/threads/title-poller.test.ts` (new)
-- [ ] Исправления в `route-thread-id.ts`, `url-sync.ts`, `title-poller.ts` (T1.1) — только при вскрытом дефекте
+- [x] `apps/web/src/lib/threads/route-thread-id.test.ts` (new)
+- [x] `apps/web/src/lib/threads/url-sync.test.ts` (new)
+- [x] `apps/web/src/lib/threads/title-poller.test.ts` (new)
+- [x] Исправления в `route-thread-id.ts`, `url-sync.ts`, `title-poller.ts` (T1.1) — только при вскрытом дефекте (дефектов не вскрыто, модули не менялись)
 
 ## Investigation Targets
 - `apps/web/src/lib/threads/{route-thread-id,url-sync,title-poller,shell-status-store}.ts`
@@ -45,26 +45,38 @@ Metadata:
 | Мутации | `push` вместо `replaceState`; опрос без проверки ответа ассистента; интервал 500 мс — каждая краснит кейс | План T2.3 |
 
 ## Investigation Notes
-(Таблица мутаций.)
+- Дефектов в T1.1-модулях не вскрыто: все 25 кейсов зелёные с первого прогона; `route-thread-id.ts`, `url-sync.ts`, `title-poller.ts` не менялись.
+- `title-poller.test.ts`: `vi.useFakeTimers({ toFake: ['setTimeout','clearTimeout','Date'] })` (сеть MSW не зависит от фейковых таймеров), реальный `threadsApiClient` + MSW на `http://api.test/api/threads/t-1`; `ThreadMessage` строится через `fromThreadMessageLike` (без `as`); `titleWaiting` фиксируется подпиской на store. Стабильность: 5 прогонов подряд — зелёные.
+- Reference Contracts: round-trip + сырой `%E0` — Y; `replaceState(null,'',…)`, `router.replace('/')`, отсутствие вызовов при равном пути (в т. ч. `a/b`) — Y; 15 запросов в окне 15 с с шагом 1000 мс, остановка на 404, без ответа ассистента запросов нет — Y.
+
+### Мутационные проверки (откат копией из бэкапа, sha256 исходников совпал)
+| # | Мутация | Красные кейсы |
+|---|---|---|
+| M1 | `url-sync.ts`: `history.pushState` вместо `replaceState` | url-sync: 3 кейса «replaces the entry …» |
+| M2 | `title-poller.ts`: проверка ответа ассистента отключена (`false && …`) | title-poller: «closes at once without requests …» |
+| M3 | `title-poller.ts`: `TITLE_POLL_INTERVAL_MS = 500` | title-poller: «third request, one second apart», «15 requests in the 15 s window» |
+| M4 | `title-poller.ts`: 404 не останавливает опрос | title-poller: «stops on 404» |
+| M5 | `route-thread-id.ts`: `undefined` вместо сырого сегмента | route-thread-id: «parses '/chat/%E0' as '%E0'» |
+| M6 | `url-sync.ts`: снята проверка равенства пути | url-sync: 2 кейса «does nothing … already matches» |
 
 ## Implementation Steps (TDD: Red-Green-Refactor, характеризация)
 ### 1. Red Phase
-- [ ] `route-thread-id.test.ts`: `/chat/a%2Fb`, `/`, `/foo`, `/chat/`, `/chat/a/b`, `/chat/%E0` (сырой сегмент); round-trip для `'abc'`, `'a/b'`, `'с пробелом'`, `'%'`, `'?#&'`, UUID (табличный)
-- [ ] `url-sync.test.ts`: `replaceState(null, '', threadPath(id))` при новом id; `router.replace('/')` при `undefined` на `/chat/…`; ничего при `location.pathname === threadPath(id)` (в т. ч. id с `/`)
-- [ ] `title-poller.test.ts` (фейковые таймеры): без ответа ассистента запросов нет; заголовок на 3-м запросе → поток с текстом, `titleWaiting` снят; окно 15 с → 15 запросов и пустой поток; 404 → остановка
-- [ ] Запустить; дефекты модулей — исправить
+- [x] `route-thread-id.test.ts`: `/chat/a%2Fb`, `/`, `/foo`, `/chat/`, `/chat/a/b`, `/chat/%E0` (сырой сегмент); round-trip для `'abc'`, `'a/b'`, `'с пробелом'`, `'%'`, `'?#&'`, UUID (табличный)
+- [x] `url-sync.test.ts`: `replaceState(null, '', threadPath(id))` при новом id; `router.replace('/')` при `undefined` на `/chat/…`; ничего при `location.pathname === threadPath(id)` (в т. ч. id с `/`)
+- [x] `title-poller.test.ts` (фейковые таймеры): без ответа ассистента запросов нет; заголовок на 3-м запросе → поток с текстом, `titleWaiting` снят; окно 15 с → 15 запросов и пустой поток; 404 → остановка
+- [x] Запустить; дефекты модулей — исправить
 
 ### 2. Green Phase
-- [ ] Минимальные исправления модулей, тесты зелёные
+- [x] Минимальные исправления модулей, тесты зелёные
 
 ### 3. Мутационная проверка (обязательна)
-- [ ] `push` вместо `replaceState` → краснеет
-- [ ] опрос без проверки ответа ассистента → краснеет
-- [ ] интервал 500 мс → краснеет
-- [ ] Откатить мутации; записать в Notes
+- [x] `push` вместо `replaceState` → краснеет
+- [x] опрос без проверки ответа ассистента → краснеет
+- [x] интервал 500 мс → краснеет
+- [x] Откатить мутации; записать в Notes
 
 ### 4. Refactor Phase
-- [ ] Свести дубли; тесты зелёные
+- [x] Свести дубли; тесты зелёные
 
 ## Quality Assurance Mechanisms
 - Vitest (fake timers) — Type: `executable_check`
@@ -106,10 +118,10 @@ Metadata:
 - **Residual**: видимый заголовок — L1-1.
 
 ## Completion Criteria
-- [ ] 3 файла зелёные, прогон содержательный
-- [ ] Мутационная проверка записана в Notes
-- [ ] lint, tsc — 0 ошибок
-- [ ] Reference Contracts — `Y`
+- [x] 3 файла зелёные, прогон содержательный
+- [x] Мутационная проверка записана в Notes
+- [x] lint, tsc — 0 ошибок
+- [x] Reference Contracts — `Y`
 
 ## Notes
 - Impact scope: правки T1.1-модулей при дефекте.
