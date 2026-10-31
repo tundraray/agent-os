@@ -36,9 +36,9 @@
 
 Отвергнуты JSON с путём в env, проверка в `onApplicationBootstrap` и аннотации `tools/list`.
 
-#### KD-5: Каждая страница — отдельное evidence `page-NNNN` с checkpoint после неё, а срез закреплён во входной ссылке
+#### KD-5: Каждая страница — отдельное evidence `page-NNNN` с checkpoint между страницами, а срез закреплён во входной ссылке
 
-Число страниц ограничено лимитом. Срез читает `SourceAdapter.currentSnapshot` вне резерва задачи, а содержимое страницы — канонический JSON без времени. Так восстановление продолжает с checkpoint, повтор страницы даёт тот же `sha256`, а срез хранится как метаданные.
+Число страниц ограничено лимитом. Срез читает `SourceAdapter.currentSnapshot` вне резерва задачи, а содержимое страницы — канонический JSON без времени. Так восстановление продолжает с checkpoint, повтор страницы даёт тот же `sha256`, а срез хранится как метаданные. После последней страницы checkpoint не пишется: следом сохраняется итог задачи.
 
 Отвергнуты одно evidence на все страницы, слияние срезов, время в содержимом и чтение среза инструментом в бюджете задачи.
 
@@ -82,6 +82,7 @@ Backoff — full jitter, и сигнал прерывает задержку; з
 - Пометку `stale` (FR-22) PRD отложил.
 - `ThreadsService`, `ChatController`, `mastraProvider`, `AuditService` и `apps/web` не меняются, и `packages/contracts` эта часть тоже не меняет.
 - Отложены Streamable HTTP-адаптер для реальных источников (KD-1), `currentSnapshot` через инструмент с бюджетом, если реальный источник не даёт ресурс, и общий кеш ответов между расследованиями (PRD, Won't Have).
+- Источник без среза отложен до первого такого адаптера. Порт `SourceAdapter` его не выражает: `NormalizedPage.snapshot` — обязательная строка, `currentSnapshot` возвращает строку, а `InputRef.snapshot` обязателен, поэтому срез закреплён всегда. Ветка provenance `unpinned:<unpinnedAt ISO>` не реализована, а `FetchCheckpoint.unpinnedAt` остаётся null.
 
 **Ограничения**
 
@@ -392,7 +393,7 @@ sequenceDiagram
         A->>F: tools/call search_logs (args, cursor)
         F-->>A: срез, записи, totalMatched, nextCursor
         Note over A: срез страницы равен S1
-        A->>P: putEvidence page-N, saveCheckpoint
+        A->>P: putEvidence page-N, saveCheckpoint кроме последней
     end
     A->>P: итог succeeded, coverage
     A-->>C: TaskSucceeded, outputRefs
@@ -405,6 +406,7 @@ sequenceDiagram
 - Отказ резерва → по [Error Handling](#error-handling); на странице N > 1 `continuation` — курсор следующей страницы (AC-17.2).
 - Достигнут `SOURCE_MAX_PAGES` → как отказ резерва на странице N > 1, без резерва и вызова (AC-MS-9).
 - Гибель процесса между страницами → новая попытка продолжает с checkpoint; страница, сохранённая без checkpoint, получается снова с тем же ключом (AC-MS-8).
+- Гибель процесса между последней страницей и итогом → checkpoint после последней страницы не пишется, поэтому новая попытка получает её снова с тем же ключом и `sha256` (AC-MS-8).
 - `fenced` или `not_current_attempt` → `stopped` ([ToolExecutor.execute](#toolexecutorexecute), AC-MS-6).
 
 #### Flow 2: временный сбой и повтор
@@ -679,13 +681,13 @@ sequenceDiagram
 | `sourceId`, `toolName` | string | 1..100 | источник и инструмент (`FetchInput`, проверка при приёме) |
 | `args` | JSON object | канонический JSON в лимите `provenance.normalizedArgs` за вычетом лимита `Coverage.continuation` | аргументы без курсора; курсор входит в `normalizedArgs` |
 | `workflowType` | string | тип вызывающего обработчика | ключ allowlist |
-| `pin` | string | срез входной ссылки `{kind: "source", ref: sourceId}` | ожидаемый срез; ссылки нет — `snapshot_pin_missing` |
+| `pin` | string | срез входной ссылки `{kind: "source", ref: sourceId}` | ожидаемый срез; ссылки нет — `validation_rejected` (`snapshot_pin_missing`) |
 | `completeness` | enum (`all`, `sample`) | из `expectedOutput` | до исчерпания или одна страница |
 | `resume` | `FetchCheckpoint` или null | из `ctx.checkpoint` | продолжение |
 
 `ToolOutcome`: `kind` (`completed`, `failed`, `stopped`), `evidenceRefs`, `coverage`, `failure`, `warnings` — поля `HandlerResult`. `stopped` — `fenced`, `not_current_attempt`, `shutdown` или `lease_lost`: `FetchHandler` бросает `AttemptStoppedError` с кодом причины; судьбу исключения определяют гарантии [Dispatcher: итог попытки](./design-runtime.md#dispatcher-итог-попытки).
 
-`FetchCheckpoint`: `nextPage`, `cursor`, `unpinnedAt` (время первой страницы источника без среза или null), `evidenceIds` сохранённых страниц, `returned`, `totalMatched`, `totalRelation`. `TaskContext` не ищет evidence по `evidenceKey`, поэтому id хранятся, а `SOURCE_MAX_PAGES` держит их список в лимите checkpoint runtime.
+`FetchCheckpoint`: `nextPage`, `cursor`, `unpinnedAt` (время первой страницы источника без среза; отложено вместе с таким источником, см. [Вне рамок части](#part), и пока всегда null), `evidenceIds` сохранённых страниц, `returned`, `totalMatched`, `totalRelation`. `TaskContext` не ищет evidence по `evidenceKey`, поэтому id хранятся, а `SOURCE_MAX_PAGES` держит их список в лимите checkpoint runtime.
 
 #### SourceDescriptor и allowlist
 
@@ -719,7 +721,7 @@ sequenceDiagram
 |---|---|
 | `evidenceKey` | `page-0001`, `page-0002`, … |
 | `provenance.normalizedArgs` | канонический JSON аргументов после `argsSchema` и курсор страницы |
-| `provenance.snapshot` | срез страницы; у источника без среза — `unpinned:<unpinnedAt ISO>` |
+| `provenance.snapshot` | срез страницы; у источника без среза — `unpinned:<unpinnedAt ISO>` (отложено до первого адаптера без среза, [Вне рамок части](#part)) |
 | `coverage` | охват страницы: её `returned`, `truncated` = есть `nextCursor`, `continuation` = `nextCursor` |
 | `content` | `application/json`: канонический JSON `NormalizedPage` и номер страницы, без времени |
 
@@ -810,7 +812,7 @@ sequenceDiagram
 | K-13 | любой другой `SdkError`, включая коды новее 2.4.0 | `transport_protocol` | `unclassified_client_error` | нет |
 | K-14 | исключение не из SDK (не `ProtocolError`, `SdkError`, `SdkHttpError`) | не классифицируется: дефект, исключение; runtime пишет `internal` | — | нет |
 
-До вызова: инструмент вне allowlist — `allowlist_rejected` (`tool_not_allowlisted`), аргументы не прошли `argsSchema` — `validation_rejected` (`tool_args_invalid`); резерв не берётся. Срез страницы не равен закреплённому — `snapshot_changed`, без повтора.
+До вызова: инструмент вне allowlist — `allowlist_rejected` (`tool_not_allowlisted`), аргументы не прошли `argsSchema` — `validation_rejected` (`tool_args_invalid`), входной ссылки со срезом нет — `validation_rejected` (`snapshot_pin_missing`); резерв не берётся. Срез страницы не равен закреплённому — `snapshot_changed`, без повтора.
 
 Отказ резерва: `tool_calls_exhausted` до первой страницы — `failed` `budget_exhausted`; на странице N > 1 — `succeeded` с `partial`; `retries_exhausted` или `tool_calls_exhausted` на повторе — `failed` с классом последнего сбоя; `cancel_requested` — `cancelled`; `not_current_attempt` — `stopped`.
 
@@ -982,7 +984,7 @@ sequenceDiagram
 | `apps/api/package.json:mcp-client-dependency` | transform — клиент 2.4.0 в зависимостях `@agent-os/sources` | KD-1 |
 | `mcp-client-error-taxonomy` | preserve — коды как есть; (a)–(c) закрыты | KD-2, Error Handling |
 | `mcp-fixture-server-behaviour` | transform — низкоуровневый `Server`, обёртка транспорта | KD-6, Отказы fixture |
-| `packages/contracts/src/research.ts:TaskContext-port` | preserve; (a), (c) — контракт runtime; (b) — `unpinned:`; (h) — `TaskContext` в памяти | Контракт runtime, Test Boundaries |
+| `packages/contracts/src/research.ts:TaskContext-port` | preserve; (a), (c) — контракт runtime; (b) — `unpinned:`, отложено; (h) — `TaskContext` в памяти | Контракт runtime, Test Boundaries |
 | `prd.md:FR-13-FR-14-classification` | preserve — счёт вызовов из правила резерва | Flow 2, Flow 3, K-n |
 | `prd.md:FR-11-allowlist-config` | transform — TS-модуль и проверка в фабрике | KD-4, Flow 5 |
 | `prd.md:FR-12-FR-17-evidence-and-pagination` | transform — evidence на страницу, правило полноты | KD-5, Пагинация и охват |
@@ -1031,3 +1033,4 @@ sequenceDiagram
 | 1.5 | 2026-10-31 | Порты `Clock` и `SourcesLogger` во входе `createSources`; `@agent-os/db` в devDependencies sources и процесс восстановления UC-E11 в Test Boundaries; задача CI `e2e-runtime` и lint пакета sources в карте влияния; UC-9 о связывании в `apps/api`; поведение без установленной fixture |
 | 1.6 | 2026-10-31 | `warn` при старте без установленной fixture; без fixture `SourcesModule` предоставляет пустой `SourceRegistry`, `currentSnapshot` отвечает исключением «нет адаптера» |
 | 1.7 | 2026-10-31 | Приведено к текущему шаблону: порядок и состав разделов, Snapshot с обзором, Key Decisions с отвергнутыми вариантами, Terms, критерии по требованиям; решения, контракты, критерии и use cases не менялись |
+| 1.8 | 2026-11-01 | По итогам T3.2: источник без среза, ветка `unpinned:` и `FetchCheckpoint.unpinnedAt` отложены до первого адаптера без среза, так как порт `SourceAdapter` требует срез (YAGNI); после последней страницы checkpoint не пишется (AC-MS-8 сохраняется); отсутствие закреплённого среза — `validation_rejected` (`snapshot_pin_missing`) |
