@@ -13,12 +13,92 @@
 //   FIXTURE_CALL_LOG file in a temp dir. No shared journal, no test order dependency.
 // - The independent counter is the fixture call log (JSONL, only `tools/call`). Assert `log lines === toolCallsUsed` wherever calls happen.
 //
-// All cases are `it.todo`. Implement each following its Arrange/Act/Assert notes when its task lands. Do not convert a todo into a passing stub.
+// Cases whose task has not landed are `it.todo`. Implement each following its Arrange/Act/Assert notes when its task lands. Do not convert a todo into a passing stub.
 //
 // Budget: integration 4 of 5 (limit 3; the 4th names a defect no other test catches - see INT-4). Pure rules are proven at unit level, see the
 // "Proven at unit level" block at the end of this file; do not re-check their variants here.
 
-import { describe, it } from 'vitest';
+import type { Clock } from '@agent-os/runtime';
+import { afterEach, describe, expect, it } from 'vitest';
+import { FIXTURE_SOURCE_ID } from '../src/fixture/fixture-source.adapter.js';
+import { createSourceRegistry } from '../src/source-registry.js';
+import { ToolExecutor, type ToolOutcome } from '../src/tool-executor.js';
+import { startFixture, fixtureArgsHash, type CallLogLine, type FixtureFaultRule, type FixtureHarness } from './support/fixtureHarness.js';
+import { InMemoryTaskContext } from './support/inMemoryTaskContext.js';
+
+const WORKFLOW_TYPE = 'source.fetch';
+const SEARCH_LOGS = 'search_logs';
+/** `get_trace` is a fixture tool, but `source.fetch` may not call it. */
+const ALLOWLIST = { [WORKFLOW_TYPE]: [{ sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS }] };
+const PAGE_SIZE = 5;
+/** Metric 4: each failure class is injected 30 times. */
+const METRIC_4_REPEAT = 30;
+const BOUNDED_WAIT_MS = 300;
+
+const harnesses: FixtureHarness[] = [];
+afterEach(async () => {
+  await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
+});
+
+function fixture(options: Parameters<typeof startFixture>[0]): FixtureHarness {
+  const harness = startFixture(options);
+  harnesses.push(harness);
+  return harness;
+}
+
+/** The real clock with a fixed jitter: backoff is `random × min(cap, base × 2^n)`. */
+function clockWithJitter(random: number): Clock {
+  return {
+    now: () => new Date(),
+    random: () => random,
+    setTimer: (ms, callback) => {
+      const timer = setTimeout(callback, ms);
+      return () => clearTimeout(timer);
+    },
+  };
+}
+
+function executorFor(harness: FixtureHarness, random = 0.5): ToolExecutor {
+  return new ToolExecutor({
+    registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: ALLOWLIST }),
+    settings: harness.settings,
+    clock: clockWithJitter(random),
+    logger: harness.logger,
+  });
+}
+
+/**
+ * A query of its own for each execution (`seed`): ten minutes of the v1 window, one page of five records.
+ * Rules match `argsHash: '*'`, so every query counts its own occurrences in the call log.
+ */
+function searchArgs(seed: number): Record<string, unknown> {
+  const from = new Date(Date.UTC(2026, 8, 14, 1, 0) + seed * 10 * 60_000);
+  const to = new Date(from.getTime() + 10 * 60_000);
+  return { from: from.toISOString(), to: to.toISOString(), pageSize: PAGE_SIZE };
+}
+
+function searchRequest(args: Record<string, unknown>) {
+  return { workflowType: WORKFLOW_TYPE, sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS, args };
+}
+
+function linesOf(harness: FixtureHarness, args: Record<string, unknown>): CallLogLine[] {
+  return harness.readCallLog().filter((line) => line.argsHash === fixtureArgsHash(args));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function failureOf(outcome: ToolOutcome): { class: string; code: string } | null {
+  return outcome.kind === 'failed' ? { class: outcome.failure.class, code: outcome.failure.code } : null;
+}
+
+/** Codes of the retry warnings of one task, in order. */
+function retryCodes(harness: FixtureHarness, ctx: InMemoryTaskContext): unknown[] {
+  return harness.logger.records
+    .filter((record) => record.level === 'warn' && record.fields.taskId === ctx.taskId)
+    .map((record) => record.fields.code);
+}
 
 describe('research-runtime / mcp-source - integration (fixture process, in-memory TaskContext)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -79,9 +159,288 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   // - Fixture call log line count equals toolCallsUsed; handshake never appears in the log
   // - On crash rows: the `pid` column of the log changes between calls, `occurrence` keeps counting 1, 2, 3 across the restart
   // - No evidence with 0 matches exists for any malformed / invalid / contract-violation row
-  it.todo(
-    'INT-1: every injected fault lands in its class, retries stay inside the reservation rule, and the fixture log equals toolCallsUsed',
-  );
+  describe('INT-1: every injected fault lands in its class, retries stay inside the reservation rule, and the fixture log equals toolCallsUsed', () => {
+    it.each([
+      {
+        name: 'get_trace is not in the source.fetch allowlist (UC-E1, AC-11.1)',
+        toolName: 'get_trace',
+        args: { traceId: '0123456789abcdef0123456789abcdef' },
+        expected: { class: 'allowlist_rejected', code: 'tool_not_allowlisted' },
+      },
+      {
+        name: 'search_logs with pageSize 0 breaks argsSchema (UC-E1, AC-11.2)',
+        toolName: SEARCH_LOGS,
+        args: { ...searchArgs(0), pageSize: 0 },
+        expected: { class: 'validation_rejected', code: 'tool_args_invalid' },
+      },
+    ])('pre-call: $name - no reservation, no source call', async ({ toolName, args, expected }) => {
+      const harness = fixture({});
+      const ctx = new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5 });
+
+      const outcome = await executorFor(harness).execute(ctx, { ...searchRequest(args), toolName });
+
+      expect(failureOf(outcome)).toEqual(expected);
+      expect(ctx.reservations).toEqual([]);
+      expect(harness.readCallLog()).toEqual([]);
+    });
+
+    interface FaultRow {
+      readonly name: string;
+      readonly rule: Pick<FixtureFaultRule, 'occurrences' | 'mode'> & Readonly<Record<string, unknown>>;
+      readonly limits: { readonly maxRetries: number; readonly maxToolCalls: number };
+      /** Executions, each with its own query; 30 is the metric 4 run of the row's class. */
+      readonly repeat: number;
+      /** Crash rows run one execution at a time: a crash drops every call in flight on the shared process. */
+      readonly sequential?: boolean;
+      readonly expected: {
+        readonly failure: { readonly class: string; readonly code: string } | null;
+        readonly message?: string;
+        /** Source calls: fixture log lines of the query, granted reservations and `toolCallsUsed`. */
+        readonly calls: number;
+        /** Codes of the failures that were retried, in order. */
+        readonly retried: readonly string[];
+        /** `returned` of the stored page; absent when no evidence may exist. */
+        readonly returned?: number;
+        /** K-3 / K-9 / K-13 are logged at `error`. */
+        readonly errorLogged?: boolean;
+      };
+    }
+
+    const CONFIG_MISMATCH = { class: 'transport_protocol', code: 'config_or_protocol_mismatch' };
+    const CONNECTION_LOST = { class: 'transport_protocol', code: 'connection_lost' };
+    const LIMITS_3_5 = { maxRetries: 3, maxToolCalls: 5 };
+    const LATE_MS = 1_500;
+
+    const rows: FaultRow[] = [
+      {
+        name: 'tool_error [3/5] (UC-E3, AC-13.2)',
+        rule: { occurrences: [1], mode: 'tool_error', message: 'fixture says no' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: {
+          failure: { class: 'tool_error', code: 'tool_error' },
+          message: 'fixture says no',
+          calls: 1,
+          retried: [],
+        },
+      },
+      {
+        name: 'tool_error_args [3/5] (UC-E3, AC-14.4 second half)',
+        rule: { occurrences: [1], mode: 'tool_error_args' },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: { class: 'tool_error', code: 'tool_error' }, calls: 1, retried: [] },
+      },
+      {
+        name: 'jsonrpc_error -32601 [3/5] (UC-E5, AC-14.4)',
+        rule: { occurrences: [1], mode: 'jsonrpc_error', code: -32601 },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: CONFIG_MISMATCH, calls: 1, retried: [], errorLogged: true },
+      },
+      {
+        name: 'jsonrpc_error -32602 [3/5] (UC-E5)',
+        rule: { occurrences: [1], mode: 'jsonrpc_error', code: -32602 },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: CONFIG_MISMATCH, calls: 1, retried: [], errorLogged: true },
+      },
+      {
+        name: 'jsonrpc_error -32600 [3/5] (UC-E5)',
+        rule: { occurrences: [1], mode: 'jsonrpc_error', code: -32600 },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: CONFIG_MISMATCH, calls: 1, retried: [], errorLogged: true },
+      },
+      {
+        name: 'crash_process on occurrences 1-2, then success [3/5] (UC-E4, AC-14.1, AC-MS-5, AC-MS-7)',
+        rule: { occurrences: [1, 2], mode: 'crash_process' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        sequential: true,
+        expected: { failure: null, calls: 3, retried: ['connection_lost', 'connection_lost'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'crash_process on every call [2/5] (UC-E4, AC-14.2)',
+        rule: { occurrences: 'all', mode: 'crash_process' },
+        limits: { maxRetries: 2, maxToolCalls: 5 },
+        repeat: 1,
+        sequential: true,
+        expected: { failure: CONNECTION_LOST, calls: 3, retried: ['connection_lost', 'connection_lost'] },
+      },
+      {
+        name: 'crash_process on every call [5/2] (UC-E4, AC-14.3)',
+        rule: { occurrences: 'all', mode: 'crash_process' },
+        limits: { maxRetries: 5, maxToolCalls: 2 },
+        repeat: 1,
+        sequential: true,
+        expected: { failure: CONNECTION_LOST, calls: 2, retried: ['connection_lost'] },
+      },
+      {
+        name: 'malformed_json, then success (UC-E6, AC-MS-2, AC-13.4)',
+        rule: { occurrences: [1], mode: 'malformed_json' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'invalid_result, then success (UC-E6, AC-13.4)',
+        rule: { occurrences: [1], mode: 'invalid_result' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: null, calls: 2, retried: ['invalid_result'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'contract_violation, then success (UC-E6, AC-MS-2)',
+        rule: { occurrences: [1], mode: 'contract_violation' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: null, calls: 2, retried: ['result_contract_violation'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'contract_violation with no retry left [0/5]: failed, and no "not found" evidence (AC-MS-2)',
+        rule: { occurrences: 'all', mode: 'contract_violation' },
+        limits: { maxRetries: 0, maxToolCalls: 5 },
+        repeat: 1,
+        expected: { failure: { class: 'transport_protocol', code: 'result_contract_violation' }, calls: 1, retried: [] },
+      },
+      {
+        name: 'drop_connection, then success (UC-E7, AC-15.4)',
+        rule: { occurrences: [1], mode: 'drop_connection' },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        sequential: true,
+        expected: { failure: null, calls: 2, retried: ['connection_lost'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'jsonrpc_error -32603, then success (UC-E7)',
+        rule: { occurrences: [1], mode: 'jsonrpc_error', code: -32603 },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: null, calls: 2, retried: ['server_internal_error'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'late_response after the call timeout, then success (UC-E7)',
+        rule: { occurrences: [1], mode: 'late_response', ms: LATE_MS },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'delay_ms below the call timeout (UC-E7)',
+        rule: { occurrences: [1], mode: 'delay_ms', ms: 50 },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: null, calls: 1, retried: [], returned: PAGE_SIZE },
+      },
+      {
+        name: 'delay_ms above the call timeout, then success (UC-E7)',
+        rule: { occurrences: [1], mode: 'delay_ms', ms: LATE_MS },
+        limits: LIMITS_3_5,
+        repeat: 1,
+        expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
+      },
+      {
+        name: 'empty page: K-12, stored with 0 matches (UC-E7)',
+        rule: { occurrences: [1], mode: 'empty' },
+        limits: LIMITS_3_5,
+        repeat: METRIC_4_REPEAT,
+        expected: { failure: null, calls: 1, retried: [], returned: 0 },
+      },
+    ];
+
+    it.each(rows)(
+      '$name',
+      async ({ rule, limits, repeat, sequential, expected }) => {
+        const harness = fixture({ rules: [{ tool: SEARCH_LOGS, argsHash: '*', ...rule }] });
+        const executor = executorFor(harness);
+        const runOne = async (seed: number) => {
+          const ctx = new InMemoryTaskContext(limits);
+          const args = searchArgs(seed);
+          const outcome = await executor.execute(ctx, searchRequest(args));
+          return { ctx, args, outcome };
+        };
+        const seeds = Array.from({ length: repeat }, (_, seed) => seed);
+        const runs: Awaited<ReturnType<typeof runOne>>[] = [];
+        if (sequential === true) {
+          for (const seed of seeds) runs.push(await runOne(seed));
+        } else {
+          runs.push(...(await Promise.all(seeds.map(runOne))));
+        }
+
+        for (const { ctx, args, outcome } of runs) {
+          expect(failureOf(outcome)).toEqual(expected.failure);
+          if (expected.message !== undefined) {
+            expect(outcome.kind === 'failed' ? outcome.failure.message : null).toBe(expected.message);
+          }
+          // A retry only after reserveToolCall(retry: true); every granted reservation is one logged source call.
+          expect(ctx.reservations.filter((record) => record.grant.granted).map((record) => record.retry)).toEqual(
+            Array.from({ length: expected.calls }, (_, call) => call > 0),
+          );
+          expect(ctx.toolCalls).toBe(expected.calls);
+          expect(linesOf(harness, args)).toHaveLength(expected.calls);
+          expect(retryCodes(harness, ctx)).toEqual(expected.retried);
+          // A malformed, invalid or contract-violating reply is never stored, not even as "not found".
+          expect(ctx.evidence.map((record) => [record.input.evidenceKey, record.input.coverage.returned])).toEqual(
+            expected.returned === undefined ? [] : [['page-0001', expected.returned]],
+          );
+          const errors = harness.logger.records.filter(
+            (record) => record.level === 'error' && record.fields.taskId === ctx.taskId,
+          );
+          expect(errors.map((record) => record.fields.code)).toEqual(
+            expected.errorLogged === true ? [expected.failure?.code] : [],
+          );
+        }
+        // Logs carry identifiers and classes only: no arguments and no text of isError.
+        const logged = JSON.stringify(harness.logger.records.filter((record) => record.level !== 'debug'));
+        expect(logged).not.toContain(String(searchArgs(0).from));
+        expect(logged).not.toContain('fixture says no');
+      },
+      60_000,
+    );
+
+    it('crash_process: the next call goes to a new process, the handshake is not logged, and occurrences keep counting (AC-MS-5, AC-MS-7)', async () => {
+      const harness = fixture({
+        rules: [{ tool: SEARCH_LOGS, argsHash: '*', occurrences: [1, 2], mode: 'crash_process' }],
+      });
+      const ctx = new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5 });
+      const args = searchArgs(0);
+      expect(harness.readCallLog()).toEqual([]);
+
+      const outcome = await executorFor(harness).execute(ctx, searchRequest(args));
+
+      expect(outcome.kind).toBe('completed');
+      const lines = linesOf(harness, args);
+      expect(lines.map((line) => [line.occurrence, line.mode])).toEqual([
+        [1, 'crash_process'],
+        [2, 'crash_process'],
+        [3, null],
+      ]);
+      expect(new Set(lines.map((line) => line.pid)).size).toBe(3);
+      expect(harness.readCallLog()).toHaveLength(ctx.toolCalls);
+    }, 30_000);
+
+    it('two calls in flight through one adapter share one restart after crash_process (Failure Mode: shared-state dependency)', async () => {
+      const args = searchArgs(0);
+      const harness = fixture({
+        rules: [{ tool: SEARCH_LOGS, argsHash: fixtureArgsHash(args), occurrences: [1], mode: 'crash_process' }],
+      });
+      // Both calls go over one running process, so the crash drops both and both reconnect at once.
+      await harness.adapter.currentSnapshot(new AbortController().signal);
+      const executor = executorFor(harness);
+      const contexts = [0, 1].map(() => new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5 }));
+
+      const outcomes = await Promise.all(contexts.map((ctx) => executor.execute(ctx, searchRequest(args))));
+
+      expect(outcomes.map((outcome) => outcome.kind)).toEqual(['completed', 'completed']);
+      const lines = harness.readCallLog();
+      const crashAt = lines.findIndex((line) => line.mode === 'crash_process');
+      const afterCrash = lines.slice(crashAt + 1);
+      expect(afterCrash).toHaveLength(2);
+      expect(new Set(afterCrash.map((line) => line.pid)).size).toBe(1);
+      expect(afterCrash[0].pid).not.toBe(lines[crashAt].pid);
+    }, 30_000);
+  });
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2  Pagination, coverage and stop conditions of a fetch task
@@ -153,9 +512,69 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   // - FailureReason.class is `deadline` (never `transport_protocol`) for the three deadline rows
   // - Fixture call log count unchanged after the abort (wait a bounded interval, re-read the log)
   // - The late response of an aborted `hang` call is dropped (no evidence, no outcome change)
-  it.todo(
-    'INT-3: a deadline or cancellation during a call is reported by signal.reason, not as a transport failure, and is never retried',
-  );
+  describe('INT-3: a deadline or cancellation during a call is reported by signal.reason, not as a transport failure, and is never retried', () => {
+    /** A long call timeout: only the signal or the deadline can end a `hang` call early. */
+    const LONG_CALL_TIMEOUT = { SOURCE_CALL_TIMEOUT_MS: '30000' };
+    const HANG = { tool: SEARCH_LOGS, argsHash: '*', occurrences: 'all', mode: 'hang' } as const;
+
+    /** Starts the process before the timed part: an abort during the process start never reaches the fixture. */
+    async function warmed(harness: FixtureHarness): Promise<FixtureHarness> {
+      await harness.adapter.currentSnapshot(new AbortController().signal);
+      return harness;
+    }
+
+    it.each([
+      { name: 'deadline (UC-E8, AC-19.3, AC-MS-1)', kind: 'deadline', expected: { class: 'deadline', code: 'deadline_exceeded' } },
+      { name: 'cancelled (AC-MS-1)', kind: 'cancelled', expected: { class: 'cancelled', code: 'cancel_requested' } },
+    ] as const)('hang, abort reason $name: the outcome comes from signal.reason, no retry', async ({ kind, expected }) => {
+      const harness = await warmed(fixture({ rules: [HANG], env: LONG_CALL_TIMEOUT }));
+      const ctx = new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5 });
+      const args = searchArgs(0);
+
+      const pending = executorFor(harness).execute(ctx, searchRequest(args));
+      await delay(200);
+      ctx.abort(kind);
+      const outcome = await pending;
+
+      expect(failureOf(outcome)).toEqual(expected);
+      expect(ctx.reservations.map((record) => record.retry)).toEqual([false]);
+      await delay(BOUNDED_WAIT_MS);
+      expect(linesOf(harness, args)).toHaveLength(1);
+    }, 15_000);
+
+    it('hang with the call timeout cut to the rest of the deadline: failed deadline_in_call (K-2), no retry (UC-E8)', async () => {
+      const harness = await warmed(fixture({ rules: [HANG], env: LONG_CALL_TIMEOUT }));
+      const ctx = new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5, deadlineInMs: 400 });
+      const args = searchArgs(0);
+
+      const outcome = await executorFor(harness).execute(ctx, searchRequest(args));
+
+      expect(failureOf(outcome)).toEqual({ class: 'deadline', code: 'deadline_in_call' });
+      expect(ctx.reservations.map((record) => record.retry)).toEqual([false]);
+      expect(linesOf(harness, args)).toHaveLength(1);
+    }, 15_000);
+
+    it('retryable fault whose backoff is not shorter than the rest of the deadline: failed deadline with no next call (UC-E8, AC-MS-3)', async () => {
+      const harness = await warmed(
+        fixture({
+          rules: [{ tool: SEARCH_LOGS, argsHash: '*', occurrences: 'all', mode: 'jsonrpc_error', code: -32603 }],
+          env: { SOURCE_RETRY_BASE_MS: '10000', SOURCE_RETRY_CAP_MS: '10000' },
+        }),
+      );
+      // Jitter 0.9 of 10 000 ms against a 5 000 ms deadline.
+      const ctx = new InMemoryTaskContext({ maxRetries: 3, maxToolCalls: 5, deadlineInMs: 5_000 });
+      const args = searchArgs(0);
+      const startedAt = Date.now();
+
+      const outcome = await executorFor(harness, 0.9).execute(ctx, searchRequest(args));
+
+      expect(failureOf(outcome)).toEqual({ class: 'deadline', code: 'deadline_before_retry' });
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      expect(ctx.reservations.map((record) => record.retry)).toEqual([false]);
+      await delay(BOUNDED_WAIT_MS);
+      expect(linesOf(harness, args)).toHaveLength(1);
+    }, 15_000);
+  });
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-4  Fixture dataset: determinism, scenario signal, ground truth, versions

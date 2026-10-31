@@ -1,4 +1,10 @@
-import { Client, type CallToolResult, type ReadResourceResult } from '@modelcontextprotocol/client';
+import {
+  Client,
+  SdkError,
+  SdkErrorCode,
+  type CallToolResult,
+  type ReadResourceResult,
+} from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { TransportFailure } from '../source-adapter.js';
 import { classifyMcpError } from './mcp-error-classifier.js';
@@ -46,6 +52,23 @@ function assertFixtureEnv(env: Readonly<Record<string, string>>): void {
 }
 
 /**
+ * Waits for the shared process start but stops waiting when this call's signal aborts, reporting it as the SDK
+ * reports an aborted request (RequestTimeout); the caller reads the signal first (K-1). The start itself goes on
+ * for the other calls that share it.
+ */
+function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  const aborted = (): SdkError => new SdkError(SdkErrorCode.RequestTimeout, 'The call was aborted while the source process started');
+  if (signal.aborted) {
+    return Promise.reject(aborted());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(aborted());
+    signal.addEventListener('abort', onAbort, { once: true });
+    pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/**
  * One long-lived source process per client, started on the first call. After the connection
  * drops, the next call starts a new process; concurrent calls share that single start.
  */
@@ -62,11 +85,17 @@ export class McpSourceClient {
    * `isError`, is returned as is for the adapter. A non-SDK exception (K-14) propagates.
    */
   async callTool(request: McpToolRequest, options: McpRequestOptions): Promise<McpToolResponse> {
+    const startedAt = performance.now();
     try {
-      const { client } = await this.connect(options);
+      const { client } = await untilAborted(this.connect(options), options.signal);
+      // `timeoutMs` bounds the whole call, process start included: the caller caps it by the deadline (K-2).
+      const timeout = options.timeoutMs - (performance.now() - startedAt);
+      if (timeout <= 0) {
+        throw new SdkError(SdkErrorCode.RequestTimeout, 'The call timeout elapsed while the source process started');
+      }
       const result = await client.callTool(
         { name: request.name, arguments: { ...request.arguments } },
-        { timeout: options.timeoutMs, signal: options.signal },
+        { timeout, signal: options.signal },
       );
       return { kind: 'result', result };
     } catch (error) {
