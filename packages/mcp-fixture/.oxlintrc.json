@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "env": {
+    "node": true
+  },
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+            "message": "ADR-0004: import an @agent-os package only through its '.' entry (or './testing')."
+          }
+        ]
+      }
+    ]
+  }
+}
