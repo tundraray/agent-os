@@ -628,7 +628,7 @@ const ReplyErrorBlock: FC = () => {
   return (
     <div
       data-slot="message-error"
-      className="border-destructive bg-destructive/10 dark:bg-destructive/5 mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
+      className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
     >
       <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
       <div className="flex min-w-0 flex-col items-start gap-2">

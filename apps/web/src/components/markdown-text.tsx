@@ -134,7 +134,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
-        "aui-md-h1 mt-5 mb-2 scroll-m-20 text-xl font-semibold first:mt-0 last:mb-0",
+        "aui-md-h1 max-w-(--prose-max-width) mt-5 mb-2 scroll-m-20 text-xl font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -143,7 +143,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h2: ({ className, ...props }) => (
     <h2
       className={cn(
-        "aui-md-h2 mt-5 mb-2 scroll-m-20 text-lg font-semibold first:mt-0 last:mb-0",
+        "aui-md-h2 max-w-(--prose-max-width) mt-5 mb-2 scroll-m-20 text-lg font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -152,7 +152,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h3: ({ className, ...props }) => (
     <h3
       className={cn(
-        "aui-md-h3 mt-4 mb-1.5 scroll-m-20 text-base font-semibold first:mt-0 last:mb-0",
+        "aui-md-h3 max-w-(--prose-max-width) mt-4 mb-1.5 scroll-m-20 text-base font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -161,7 +161,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h4: ({ className, ...props }) => (
     <h4
       className={cn(
-        "aui-md-h4 mt-3.5 mb-1 scroll-m-20 text-base font-medium first:mt-0 last:mb-0",
+        "aui-md-h4 max-w-(--prose-max-width) mt-3.5 mb-1 scroll-m-20 text-base font-medium first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -170,7 +170,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h5: ({ className, ...props }) => (
     <h5
       className={cn(
-        "aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0",
+        "aui-md-h5 max-w-(--prose-max-width) mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -179,7 +179,7 @@ const defaultComponents = memoizeMarkdownComponents({
   h6: ({ className, ...props }) => (
     <h6
       className={cn(
-        "aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0",
+        "aui-md-h6 max-w-(--prose-max-width) mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -188,7 +188,7 @@ const defaultComponents = memoizeMarkdownComponents({
   p: ({ className, ...props }) => (
     <p
       className={cn(
-        "aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0",
+        "aui-md-p max-w-(--prose-max-width) my-3 leading-relaxed first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -242,7 +242,7 @@ const defaultComponents = memoizeMarkdownComponents({
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(
-        "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4",
+        "aui-md-blockquote max-w-(--prose-max-width) border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4",
         className,
       )}
       {...props}
@@ -251,7 +251,7 @@ const defaultComponents = memoizeMarkdownComponents({
   ul: ({ className, ...props }) => (
     <ul
       className={cn(
-        "aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1",
+        "aui-md-ul max-w-(--prose-max-width) marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1",
         className,
       )}
       {...props}
@@ -260,7 +260,7 @@ const defaultComponents = memoizeMarkdownComponents({
   ol: ({ className, ...props }) => (
     <ol
       className={cn(
-        "aui-md-ol marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1",
+        "aui-md-ol max-w-(--prose-max-width) marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1",
         className,
       )}
       {...props}
@@ -328,7 +328,7 @@ const defaultComponents = memoizeMarkdownComponents({
   pre: ({ className, ...props }) => (
     <pre
       className={cn(
-        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
+        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-sm leading-5.5",
         className,
       )}
       {...props}

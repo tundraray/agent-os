@@ -125,7 +125,7 @@ function ToolGroupTrigger({
       {active && (
         <LoaderIcon
           data-slot="tool-group-trigger-loader"
-          className="aui-tool-group-trigger-loader size-3 shrink-0 animate-spin [animation-duration:0.6s] motion-reduce:animate-none"
+          className="aui-tool-group-trigger-loader size-3 shrink-0 animate-spin motion-reduce:animate-none"
         />
       )}
       <span

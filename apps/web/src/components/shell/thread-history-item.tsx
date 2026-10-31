@@ -124,7 +124,12 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
       <Tooltip open={tooltipOpen} onOpenChange={(open) => setTooltipOpen(open && isTruncated())}>
         <SidebarMenuButton
           isActive={isActive}
-          className={cn('pointer-coarse:h-11', isMobile ? 'h-11' : 'h-9')}
+          className={cn(
+            'pointer-coarse:h-11',
+            isMobile ? 'h-11' : 'h-9',
+            // Selected-thread marker (design system, Color → Accent): the --sidebar-accent background alone is below 3:1.
+            'relative data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-0.75 data-active:before:rounded-full data-active:before:bg-sidebar-primary',
+          )}
           render={<TooltipTrigger delay={TOOLTIP_DELAY_MS} render={target} />}
         >
           <ShimmerLabel ref={labelRef} active={entry.title === undefined && titlePending}>
