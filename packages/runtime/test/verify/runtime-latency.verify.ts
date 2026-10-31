@@ -8,7 +8,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUser } from '../support/new-user.js';
 import { RECOVERY_TARGET_MS, runScenario } from '../support/runtimeChild.js';
-import { closeRuntimeDb, query } from '../support/runtimeDb.js';
+import {
+  closeRuntimeDb,
+  query,
+  runtimeWorkSettled,
+} from '../support/runtimeDb.js';
 import {
   createRuntimeHarness,
   type RuntimeHarness,
@@ -87,24 +91,6 @@ async function dependentStartMs(
   return row.ms;
 }
 
-/** Waits until no delivery of the investigation's events is pending. */
-async function deliveriesDrained(investigationId: string): Promise<void> {
-  const deadline = Date.now() + PAIR_MS;
-  while (Date.now() < deadline) {
-    const [row] = await query<{ pending: number }>(
-      `SELECT count(*)::int AS pending FROM app.research_event_deliveries d
-         JOIN app.research_events e ON e.event_id = d.event_id
-        WHERE e.investigation_id = $1 AND d.status = 'pending'`,
-      [investigationId],
-    );
-    if (row.pending === 0) return;
-    await delay(POLL_MS);
-  }
-  throw new Error(
-    `Deliveries of investigation ${investigationId} still pending after ${PAIR_MS} ms`,
-  );
-}
-
 afterAll(async () => {
   await closeRuntimeDb();
 });
@@ -121,7 +107,6 @@ describe('UC-N1: dependent task start with RUNTIME_NOTIFY=off', () => {
   const dependentAdmitted = new Map<string, Latch>();
   let upstream: RuntimeHarness | undefined;
   let downstream: RuntimeHarness | undefined;
-  let investigationId: string | undefined;
 
   beforeAll(async () => {
     upstream = await createRuntimeHarness({
@@ -148,22 +133,22 @@ describe('UC-N1: dependent task start with RUNTIME_NOTIFY=off', () => {
     // The last pairs' events are still being delivered to `runtime.scheduler` when the
     // measurement ends: closing now would leave them pending, and the kill matrix of UC-N2
     // refuses a database with pending runtime deliveries.
-    if (investigationId) await deliveriesDrained(investigationId);
+    await runtimeWorkSettled([dependencyType, dependentType], PAIR_MS);
     await downstream?.close();
     await upstream?.close();
-  }, PAIR_MS);
+  }, 2 * PAIR_MS);
 
   it(
     `p95 over ${PAIRS} pairs is within the PRD target (${DEPENDENT_START_TARGET_MS} ms)`,
     async () => {
       if (!upstream || !downstream) throw new Error('Apps did not start');
       const threadId = await upstream.createThread(resourceId);
-      ({ investigationId } = await upstream.investigations.create({
+      const { investigationId } = await upstream.investigations.create({
         resourceId,
         threadId,
         query: 'UC-N1',
         budget: { maxTasks: 2 * PAIRS, maxToolCalls: 4 * PAIRS },
-      }));
+      });
 
       const latencies: number[] = [];
       for (let pair = 0; pair < PAIRS; pair += 1) {

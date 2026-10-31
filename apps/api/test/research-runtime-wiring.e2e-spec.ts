@@ -29,7 +29,7 @@ import {
 
 describe('research-runtime / runtime - wiring of ResearchModule (in-process Nest + real Postgres)', () => {
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-5  Thread boundary: owner isolation and deletion of a thread's investigations   [EXTRA: budget slot 5 of 5]
+  // INT-5  Thread boundary: owner isolation and deletion of a thread's investigations   [EXTRA: budget slot 5 of 5, shared with the package's INT-5]
   // ---------------------------------------------------------------------------------------------------------------
   // Unique defect no other test catches: the only test that crosses ThreadsService.delete (stop -> cancelRunsThen -> purge -> deleteThread) and ThreadsService.withOwnedThread
   // behind the ThreadOwnership port - a wrong-owner create or delete, a source call after deletion, a stale row reappearing, or a failed purge that still deletes the thread.
@@ -462,6 +462,8 @@ describe('research-runtime / runtime - wiring of ResearchModule (in-process Nest
   // ---------------------------------------------------------------------------------------------------------------
   // UC-E8  Nest phases of ResearchModule: workers start and stop with the application, the pool closes after them
   // ---------------------------------------------------------------------------------------------------------------
+  // Budget: a sixth integration group beyond the limit of 5, required by the design (Test Strategy: UC-E8); the plan records it as an accepted
+  // budget exception.
   // Unique defect no other test catches: the order of `runtime.stop()` and the pool's `close()` in the Nest phases (KD-7). The package's INT-3 R7 calls
   // `stop()` then `close()` itself; only the real module can close the pool too early or start workers under RUNTIME_WORKERS=off.
   // Covers: AC-RT-5 ("stop returns running tasks to queued"), Use case UC-E8. Design: KD-7, "Функции сборки и порты".

@@ -1,6 +1,9 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { createDatabase } from '@agent-os/db';
 import type pg from 'pg';
 import { databaseUrl } from './database-url.js';
+
+const SETTLE_POLL_MS = 25;
 
 let pool: pg.Pool | undefined;
 
@@ -81,6 +84,42 @@ export async function query<Row extends pg.QueryResultRow>(
 }
 
 /** Closes the test's connections; call from `afterAll`. */
+/**
+ * Waits until no investigation holding a task of these workflow types has a `running` task or a
+ * pending delivery, both in one snapshot. Call before closing a runtime: closing while an event is
+ * still being delivered leaves its delivery pending, and the kill matrix refuses a database with
+ * pending `runtime.scheduler` deliveries.
+ */
+export async function runtimeWorkSettled(
+  workflowTypes: string[],
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let left = { running: 0, pending: 0 };
+  while (Date.now() < deadline) {
+    const { rows } = await db().query<{ running: number; pending: number }>(
+      `WITH suite AS (
+         SELECT DISTINCT investigation_id FROM app.research_tasks
+          WHERE workflow_type = ANY($1::text[]))
+       SELECT (SELECT count(*)::int FROM app.research_tasks
+                WHERE investigation_id IN (SELECT investigation_id FROM suite)
+                  AND status = 'running') AS running,
+              (SELECT count(*)::int FROM app.research_event_deliveries d
+                 JOIN app.research_events e ON e.event_id = d.event_id
+                WHERE e.investigation_id IN (SELECT investigation_id FROM suite)
+                  AND d.status = 'pending') AS pending`,
+      [workflowTypes],
+    );
+    left = rows[0];
+    if (left.running === 0 && left.pending === 0) return;
+    await delay(SETTLE_POLL_MS);
+  }
+  throw new Error(
+    `Runtime work of ${workflowTypes.join(', ')} not settled after ${timeoutMs} ms: ` +
+      `${left.running} running tasks, ${left.pending} pending deliveries`,
+  );
+}
+
 export async function closeRuntimeDb(): Promise<void> {
   const current = pool;
   pool = undefined;

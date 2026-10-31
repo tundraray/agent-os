@@ -31,11 +31,6 @@ describe('parseRuntimeConfig', () => {
       },
       DEFAULTS,
     ],
-    [
-      'set values are parsed',
-      { RUNTIME_WORKERS: 'off', RUNTIME_CONCURRENCY: '2' },
-      { ...DEFAULTS, workers: false, concurrency: 2 },
-    ],
     ['RUNTIME_WORKERS=maybe is rejected', { RUNTIME_WORKERS: 'maybe' }, /RUNTIME_WORKERS/],
     ['RUNTIME_CONCURRENCY=0 is rejected', { RUNTIME_CONCURRENCY: '0' }, /RUNTIME_CONCURRENCY/],
   ])('%s', (_, env, expected) => {

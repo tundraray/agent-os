@@ -37,8 +37,8 @@ describe('research-runtime / runtime - E2E (real Postgres, child processes)', ()
   // ---------------------------------------------------------------------------------------------------------------
   // E2E-1  Exactly-once effects under process death and a second instance (kill matrix)
   // ---------------------------------------------------------------------------------------------------------------
-  // User journey: an investigation of three tasks (B depends on A, a subscriber waits on A, C independent) is running when the api process dies at a chosen point; after it is started again
-  // (or while a second api instance competes for the same work) the investigation reaches the same end as an uninterrupted run, without double effects.
+  // User journey: an investigation of three tasks (B depends on A, a subscriber waits on A, C independent) is running when the runtime process dies at a chosen point; after it is started again
+  // (or while a second runtime instance competes for the same work) the investigation reaches the same end as an uninterrupted run, without double effects.
   // Covers (original statements):
   // AC-08.1: "Given расследование из нескольких задач исполняется, When процесс apps/api принудительно убит после записи событий и до их доставки и затем запущен снова, Then каждое ожидавшее событие доставлено и все задачи достигли тех же конечных состояний, что и в прогоне без сбоя. Намеренное исключение — задача, чей дедлайн истёк до восстановления (AC-19.2)."
   // AC-08.2: "Given тот же сценарий, Then evidence каждой fetch-задачи сохранено ровно один раз, ни одно состояние не перешло дважды, ни один подписчик не уведомлён дважды."
@@ -51,7 +51,7 @@ describe('research-runtime / runtime - E2E (real Postgres, child processes)', ()
   // ROI: 2.1 (raw formula: (10 x 7 + 0 + 10) / 38) | Business Value: 10 (the part's correctness definition) | Frequency: 7 (every restart / deploy) | Legal: false | Defect Detection: 10
   // Behavior: perturbation (process killed at point P, or a second instance) -> end state equals the uninterrupted reference run; each effect counted once
   // @category: e2e
-  // @dependency: full-system (AppModule, RuntimeLifecycle, Dispatcher, OutboxRelay, RecoverySweeper, CrashPoints, Postgres, child process harness)
+  // @dependency: full-system (a child process running createDatabase + createRuntime through test/support/runtimeChildMain.ts: Dispatcher, OutboxRelay, RecoverySweeper, CrashPoints; Postgres)
   // @complexity: high
   //
   // Verification items (table-driven by perturbation; every row first runs, or reuses for the same scenario script, the reference run without perturbation and compares to it):
@@ -69,7 +69,7 @@ describe('research-runtime / runtime - E2E (real Postgres, child processes)', ()
   //   (`recovery_count` accounts for the extra TaskQueued(recovered)/TaskStarted); every delivery `done`; the subscriber is marked with exactly one eventId; no task remains `running`
   // - A task `running` at the kill is executed again to its end within the recovery harness timeout (AC-08.4); a repeated handler call is allowed
   // - Exception stated by the AC: the deadline-passed-while-down case is not in this table; it is INT-3 row R4
-  describe('E2E-1: killing the api process at each runtime crash point, or running a second instance, ends in the same end state as an uninterrupted run with every effect applied exactly once', () => {
+  describe('E2E-1: killing the runtime process at each runtime crash point, or running a second instance, ends in the same end state as an uninterrupted run with every effect applied exactly once', () => {
     /** Boot of two children, the wait for the crash and the recovery within the PRD target. */
     const ROW_TIMEOUT_MS = 180_000;
 

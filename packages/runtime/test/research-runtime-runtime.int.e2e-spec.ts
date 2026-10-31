@@ -16,17 +16,20 @@
 // - Support: test/support/runtimeHarness.ts (createDatabase + createRuntime with test handlers, a ThreadOwnership double, a clock and a recording RuntimeLogger),
 //   test/support/runtimeDb.ts (read-only snapshots of research_* rows, row-version snapshot for "no row changed" checks), test/support/testHandlers.ts.
 //
-// All cases are `it.todo`. Do not convert a todo into a passing stub.
-//
 // Budget: Integration 5 of 3, extended to 5 under the integration-e2e-testing rule ("up to 5 only when each extra test names the defect no other test catches").
-//   INT-1..INT-3 are the core budget. INT-4 and INT-5 are the two extras; each states its unique defect below.
+//   INT-1..INT-3 are the core budget. INT-4 and INT-5 are the two extras; each states its unique defect below. INT-5 shares its slot with
+//   apps/api/test/research-runtime-wiring.e2e-spec.ts (the rows that cross ThreadsService). That file also holds UC-E8, a sixth group the design
+//   requires (the binding of the runtime to the Nest phases); the plan records it as an accepted budget exception.
 // ROI note: scores use the raw skill formula (Business Value x Frequency + Legal x 10 + Defect Detection) / (Create 3 + Execute 5 + Maintain 3 = 11).
 //
-// Proven elsewhere (not in this file; see the generation report `acProof`):
-// - unit: AC-02.1, AC-02.2 (TaskSpecSchema + registry lookup table), AC-06.3, AC-06.5, AC-06.6 (dedup key table + property test), AC-03.4 (EvidenceInput schema), AC-RT-7 (Mastra provider spec + lint rule)
-// - child-process file: AC-08.1, AC-08.2, AC-08.4, AC-RT-4 (kill matrix), AC-10.1, AC-10.2, AC-RT-3, AC-RT-8 (boot against database states)
+// Proven elsewhere (not in this file; see the plan's Appendix: Traceability, "AC -> доказывающий тест"):
+// - unit, packages/runtime/src: AC-02.1, AC-02.2 (task-spec.spec.ts), AC-06.3, AC-06.5, AC-06.6 (dedup-key.spec.ts), AC-03.4 (contracts.spec.ts);
+//   AC-RT-7: apps/api/src/mastra/mastra.provider.spec.ts and the packages' lint rule against `@mastra/*`
+// - child-process file research-runtime-runtime.e2e-spec.ts: AC-08.1, AC-08.2, AC-08.4, AC-RT-4 (kill matrix)
+// - packages/db/test/migrations.e2e-spec.ts: AC-10.1, AC-10.2, AC-RT-8; apps/api/test/research-runtime-boot.e2e-spec.ts: AC-RT-3 (boot against database states)
+// - apps/api/test/research-runtime-wiring.e2e-spec.ts: AC-23.1-AC-23.3, AC-23.5 (thread deletion), the 404 of `create` on another user's thread, UC-E8
 // - existing chat-shell e2e suite run unchanged at acceptance: AC-01.2, AC-23.4
-// - on-demand scripts, not in the suite: UC-N1, UC-N2 (latency, recovery time)
+// - on-demand script test/verify/runtime-latency.verify.ts, not in the suite: UC-N1, UC-N2 (latency, recovery time)
 
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -57,6 +60,7 @@ import {
   eventsOf,
   knowledgeStatusesOf,
   query,
+  runtimeWorkSettled,
   tasksOf,
 } from './support/runtimeDb.js';
 import {
@@ -74,7 +78,7 @@ import {
   within,
 } from './support/testHandlers.js';
 
-describe('research-runtime / runtime - integration (in-process Nest + real Postgres)', () => {
+describe('research-runtime / runtime - integration (in-process runtime + real Postgres)', () => {
   // ---------------------------------------------------------------------------------------------------------------
   // INT-1  Admission under the investigation lock
   // ---------------------------------------------------------------------------------------------------------------
@@ -153,9 +157,13 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
 
     afterAll(async () => {
       for (const open of opened) open.release();
-      await runtime?.close();
-      await closeRuntimeDb();
-    });
+      try {
+        await runtimeWorkSettled([workflowType], LATCH_MS);
+      } finally {
+        await runtime?.close();
+        await closeRuntimeDb();
+      }
+    }, 2 * LATCH_MS);
 
     async function newInvestigation(
       label: string,
@@ -859,9 +867,13 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
 
     afterAll(async () => {
       for (const open of Object.values(gate)) open.release();
-      await runtime?.close();
-      await closeRuntimeDb();
-    });
+      try {
+        await runtimeWorkSettled([workflowType], LATCH_MS);
+      } finally {
+        await runtime?.close();
+        await closeRuntimeDb();
+      }
+    }, 2 * LATCH_MS);
 
     async function propose(
       investigationId: string,
@@ -1071,7 +1083,7 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
   // ROI: 6.5 | Business Value: 9 (exactly-once effects) | Frequency: 7 | Legal: false | Defect Detection: 9
   // Behavior: a running attempt is stopped by cause X -> the task ends in the status and class designated for X, every later write by that attempt changes zero rows, an independent sibling task is unaffected
   // @category: core-functionality
-  // @dependency: Dispatcher, RecoverySweeper, TaskContext (fenced API), InvestigationService.cancel, RuntimeLifecycle, injected clock, Postgres
+  // @dependency: Dispatcher, RecoverySweeper, TaskContext (fenced API), InvestigationService.cancel, Runtime.stop, injected clock, Postgres
   // @complexity: high
   //
   // Verification items (table of causes; each row: stop cause -> final status/class -> late writes -> sibling):
@@ -1137,9 +1149,13 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
 
     afterAll(async () => {
       for (const open of opened) open.release();
-      await runtime?.close();
-      await closeRuntimeDb();
-    });
+      try {
+        await runtimeWorkSettled([workflowType], LATCH_MS);
+      } finally {
+        await runtime?.close();
+        await closeRuntimeDb();
+      }
+    }, 2 * LATCH_MS);
 
     async function newInvestigation(
       label: string,
@@ -1816,7 +1832,7 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
   // - All remaining deliveries of the investigation are `done` after the relay drains
   // - Wake-up (the only test of this path): a task `waiting` on another returns to `queued` (`TaskQueued (woken)`) once the awaited task's TaskSucceeded is delivered,
   //   runs its next attempt, and the awaited task's subscriber is marked with that event's id
-  // Time: runtimeApp injects no clock yet, so the backoff is checked against the system clock's window and the test moves `next_attempt_at` back instead of waiting it out.
+  // Time: INT-4 runs on the harness's default system clock, so the backoff is checked against the system clock's window and the test moves `next_attempt_at` back instead of waiting it out.
   describe('INT-4', () => {
     const LATCH_MS = 15_000;
     const MAX_ATTEMPTS = 3;
@@ -1908,9 +1924,13 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
 
     afterAll(async () => {
       for (const open of Object.values(gate)) open.release();
-      await runtime?.close();
-      await closeRuntimeDb();
-    });
+      try {
+        await runtimeWorkSettled([workflowType], LATCH_MS);
+      } finally {
+        await runtime?.close();
+        await closeRuntimeDb();
+      }
+    }, 2 * LATCH_MS);
 
     async function newInvestigation(label: string): Promise<string> {
       const { investigationId } = await runtime.investigations.create({
@@ -2355,7 +2375,7 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
   });
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-5  Thread boundary: owner isolation of a thread's investigations   [EXTRA: budget slot 5 of 5]
+  // INT-5  Thread boundary: owner isolation of a thread's investigations   [EXTRA: budget slot 5 of 5, shared with INT-5 of apps/api]
   // ---------------------------------------------------------------------------------------------------------------
   // Unique defect no other test catches: the (resourceId, threadId) filter of listForThread - a wrong-owner read.
   // The rows that cross ThreadsService (deletion of a thread over HTTP, AC-23.1-AC-23.3, AC-23.5, and `create` on another user's thread) prove the
@@ -2396,9 +2416,13 @@ describe('research-runtime / runtime - integration (in-process Nest + real Postg
     });
 
     afterAll(async () => {
-      await runtime?.close();
-      await closeRuntimeDb();
-    });
+      try {
+        await runtimeWorkSettled([workflowType], LATCH_MS);
+      } finally {
+        await runtime?.close();
+        await closeRuntimeDb();
+      }
+    }, 2 * LATCH_MS);
 
     async function newInvestigation(
       resourceId: string,

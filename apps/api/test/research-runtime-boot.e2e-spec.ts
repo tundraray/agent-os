@@ -5,8 +5,9 @@
 // Covers (original statements):
 // AC-RT-3: "When apps/api стартует при неприменённых миграциях или без схемы app, система завершает старт ошибкой с именами миграций до приёма запросов."
 // Use cases: UC-14, UC-E6. EARS: When.
-// Primary failure mode (turns red when): the startup check of ResearchModule lets an unapplied or edited migration through, does not name the files,
-// or runs after the api binds its port; or the api does not start on a migrated database.
+// Primary failure mode (turns red when): the startup check of ResearchModule lets an unapplied migration through, does not name the files,
+// or runs after the api binds its port; or the api does not start on a migrated database. Which files count as pending (an edited applied
+// file, a file timestamped before the last applied one) is the rule of packages/db/src/pending-migrations.spec.ts.
 // Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the api runs from `dist/main.js`
 // (`pnpm --filter api test:e2e:runtime` builds it first). Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
 
@@ -48,7 +49,7 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
     const POLL_MS = 200;
 
     const JournalSchema = z.object({
-      entries: z.array(z.object({ tag: z.string(), when: z.number() })),
+      entries: z.array(z.object({ tag: z.string() })),
     });
     /** Migration files in journal order, read here independently of the app's reader. */
     const MIGRATIONS = JournalSchema.parse(
@@ -242,7 +243,6 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
     // Refusal rows: each in its own scratch database, the api's port held by the test.
     // -------------------------------------------------------------------------------------------
     const lastMigration = MIGRATIONS[MIGRATIONS.length - 1];
-    const firstMigration = MIGRATIONS[0];
     const REFUSALS: {
       state: string;
       prepare: (url: string) => Promise<void>;
@@ -257,21 +257,6 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
         state: 'newest migration not applied',
         prepare: (url) => applyFirstMigrations(url, MIGRATIONS.length - 1),
         pending: [fileOf(lastMigration.tag)],
-      },
-      {
-        // The journal keeps the hash of the file as it was applied; the file on disk differs now.
-        state: 'applied migration edited afterwards',
-        prepare: async (url) => {
-          await applyFirstMigrations(url, MIGRATIONS.length);
-          const edited = await withDatabase(url, (client) =>
-            client.query(
-              `UPDATE app.__drizzle_migrations SET hash = 'before-edit-' || hash WHERE created_at = $1`,
-              [firstMigration.when],
-            ),
-          );
-          expect(edited.rowCount).toBe(1);
-        },
-        pending: [fileOf(firstMigration.tag)],
       },
     ];
 

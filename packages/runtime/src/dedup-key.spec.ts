@@ -27,31 +27,10 @@ describe('computeDedupKey — dedup key canonicalization (AC-06.3, AC-06.5, AC-0
     expect(computeDedupKey(base)).toBe(expected);
   });
 
-  it.each<{ name: string; other: DedupKeySource; same: boolean }>([
-    {
-      name: 'object keys in another order at every depth (AC-06.3) → same key',
-      other: {
-        inputRefs: base.inputRefs,
-        expectedOutput: { completeness: 'all', description: 'all matches' },
-        input: {
-          ids: [1, 2],
-          filters: { to: '2027', from: '2026' },
-          query: 'q',
-        },
-        workflowVersion: 1,
-        workflowType: 'fetch',
-      },
-      same: true,
-    },
-    {
-      name: 'inputRefs in another order → same key',
-      other: { ...base, inputRefs: [...base.inputRefs].reverse() },
-      same: true,
-    },
+  it.each<{ name: string; other: DedupKeySource }>([
     {
       name: 'another handler version (AC-06.5) → another key',
       other: { ...base, workflowVersion: 2 },
-      same: false,
     },
     {
       name: 'completeness sample instead of all (AC-06.6) → another key',
@@ -59,10 +38,9 @@ describe('computeDedupKey — dedup key canonicalization (AC-06.3, AC-06.5, AC-0
         ...base,
         expectedOutput: { ...base.expectedOutput, completeness: 'sample' },
       },
-      same: false,
     },
     {
-      name: 'another snapshot of an input ref (AC-06.4) → another key',
+      name: 'another snapshot of an input ref → another key (the key half of AC-06.4; the admission is INT-1 B6)',
       other: {
         ...base,
         inputRefs: [
@@ -70,18 +48,13 @@ describe('computeDedupKey — dedup key canonicalization (AC-06.3, AC-06.5, AC-0
           ...base.inputRefs.slice(1),
         ],
       },
-      same: false,
     },
     {
       name: 'array elements of input in another order → another key',
       other: { ...base, input: { ...base.input, ids: [2, 1] } },
-      same: false,
     },
-  ])('$name', ({ other, same }) => {
-    const [left, right] = [computeDedupKey(base), computeDedupKey(other)];
-
-    if (same) expect(right).toBe(left);
-    else expect(right).not.toBe(left);
+  ])('$name', ({ other }) => {
+    expect(computeDedupKey(other)).not.toBe(computeDedupKey(base));
   });
 
   it('does not depend on the order of object keys at any depth, nor on the order of inputRefs (property)', () => {
