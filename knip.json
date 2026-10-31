@@ -8,6 +8,11 @@
   },
   "workspaces": {
     "apps/api": {
+      "entry": [
+        "src/main.ts",
+        "src/database/migrate-cli.ts",
+        "test/support/runtimeChildMain.ts"
+      ],
       "ignoreDependencies": ["@nestjs/mau"]
     }
   }

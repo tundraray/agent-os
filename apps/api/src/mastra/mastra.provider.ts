@@ -21,5 +21,8 @@ export const mastraProvider: Provider = {
         id: 'agent-os',
         connectionString: config.getOrThrow<string>('DATABASE_URL'),
       }),
+      // ADR-0001: the research runtime owns recovery; Mastra must never
+      // resume workflow or durable-agent runs on boot.
+      recovery: { workflows: 'off', durableAgents: 'off' },
     }),
 };

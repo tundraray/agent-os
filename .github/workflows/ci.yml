@@ -29,4 +29,64 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
       - run: pnpm turbo lint typecheck build test
+      # The model of schema `app` imports @agent-os/contracts from dist, built by the step above.
+      - name: Migrations match the schema model
+        run: |
+          pnpm db:generate
+          changes="$(git status --porcelain -- apps/api/migrations)"
+          if [ -n "$changes" ]; then
+            echo "::error::drizzle-kit generate produced migration changes; run pnpm db:generate and commit them"
+            echo "$changes"
+            exit 1
+          fi
+      - name: drizzle-kit check (snapshot collisions)
+        run: pnpm --filter api exec drizzle-kit check
+      - name: Migration journal timestamps strictly increase
+        run: |
+          node -e '
+            const { entries } = JSON.parse(require("fs").readFileSync("apps/api/migrations/meta/_journal.json", "utf8"));
+            for (let i = 1; i < entries.length; i++) {
+              if (entries[i].when <= entries[i - 1].when) {
+                console.error(`::error::journal "when" of ${entries[i].tag} (${entries[i].when}) is not after ${entries[i - 1].tag} (${entries[i - 1].when}); regenerate the migration after rebase`);
+                process.exit(1);
+              }
+            }
+            console.log(`journal order ok: ${entries.length} entries`);
+          '
       - run: pnpm knip
+
+  # Research runtime against a real Postgres 16 (design-runtime.md, Verification Strategy): the
+  # in-process INT file and the child-process kill matrix. The chat-shell e2e suite and the
+  # on-demand measurements (test:verify) are not part of CI.
+  e2e-runtime:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent_os"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://agent:agent@localhost:5432/agent_os
+      # RUNTIME_WORKERS stays unset: the harness defaults to off, and runtimeApp and the child
+      # process turn the workers on themselves.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Contracts first (turbo ^build), then apps/api, whose dist holds the migration CLI.
+      - run: pnpm turbo build --filter=api...
+      - run: pnpm --filter api db:migrate
+      - run: pnpm --filter api test:e2e:runtime

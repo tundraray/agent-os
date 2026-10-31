@@ -208,7 +208,7 @@ services:
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent_os
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 volumes:
@@ -231,6 +231,13 @@ proxy_http_version 1.1;
 pnpm install
 pnpm db:up
 pnpm dev
+```
+
+Хост-порт Postgres задаётся переменной `POSTGRES_PORT` (по умолчанию 5432). Если 5432 занят, поднимите базу на другом порту и укажите тот же порт в `DATABASE_URL` в `apps/api/.env`:
+
+```bash
+POSTGRES_PORT=5433 pnpm db:up
+# apps/api/.env: DATABASE_URL=postgres://agent:agent@localhost:5433/agent_os
 ```
 
 Проверка: открыть `http://localhost:3000`, отправить сообщение, увидеть стриминг. В логах `apps/api` должна появиться запись аудита.

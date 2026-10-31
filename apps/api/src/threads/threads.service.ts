@@ -15,8 +15,12 @@ import {
   selectThreadPage,
   sortThreadsForList,
 } from './thread-cursor.js';
+import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
 import { THREAD_MEMORY } from './thread-memory.provider.js';
-import { ThreadRunRegistry } from './thread-run-registry.js';
+import {
+  THREAD_RUN_SETTLE_TIMEOUT_MS,
+  ThreadRunRegistry,
+} from './thread-run-registry.js';
 import { ThreadWriteLock } from './thread-write-lock.js';
 import { maskHistoryErrors, toThreadSummary } from './thread.mapper.js';
 import { isMastraUserError, threadNotFound } from './threads.errors.js';
@@ -54,6 +58,9 @@ export class ThreadsService {
     @Inject(THREAD_MEMORY) private readonly memory: Memory,
     private readonly lock: ThreadWriteLock,
     private readonly runs: ThreadRunRegistry,
+    private readonly deletionHooks: ThreadDeletionHooks,
+    @Inject(THREAD_RUN_SETTLE_TIMEOUT_MS)
+    private readonly settleTimeoutMs: number,
   ) {}
 
   /**
@@ -71,6 +78,24 @@ export class ThreadsService {
     });
     if (!thread) throw threadNotFound();
     return thread;
+  }
+
+  /**
+   * Runs `fn` under the thread's `ThreadWriteLock` after the ownership check
+   * made under the same lock, so a write tied to the thread (an investigation
+   * of `research`) is serialised with the thread's delete: it either sees the
+   * thread gone (404) or lands before the delete's purge. Missing and foreign
+   * threads raise the ownership 404 and `fn` is not called.
+   */
+  async withOwnedThread<T>(
+    threadId: string,
+    userId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    return this.lock.run(threadId, async () => {
+      await this.getOwnedThread(threadId, userId);
+      return fn();
+    });
   }
 
   /**
@@ -147,17 +172,27 @@ export class ThreadsService {
 
   /**
    * Deletes an own thread with its messages (one PG transaction in
-   * `PostgresStore.deleteThread`). Foreign, missing and already deleted
-   * threads raise the ownership 404 before any run is touched. The thread's
-   * runs are cancelled and awaited first (KD-6): Mastra's end-of-run save
-   * would otherwise re-create the deleted thread (AC-16.1 (b)). The wait runs
-   * outside the lock; the delete itself runs under the thread's lock.
+   * `PostgresStore.deleteThread`) and the data of the deletion hooks, in two
+   * phases (KD-5). Foreign, missing and already deleted threads raise the
+   * ownership 404 before anything is touched. Phase one, outside the lock: the
+   * hooks stop the thread's work, the thread's runs are cancelled (KD-6:
+   * Mastra's end-of-run save would otherwise re-create the deleted thread,
+   * AC-16.1 (b)), and both are awaited within one settle window. Phase two,
+   * under the thread's lock: the hooks purge, then the thread is deleted. A
+   * hook error answers 500 and keeps the thread (AC-23.5).
    */
   async delete(threadId: string, userId: string): Promise<void> {
     await this.getOwnedThread(threadId, userId);
-    await this.runs.cancelRunsThen(threadId, () =>
-      this.lock.run(threadId, () => this.memory.deleteThread(threadId)),
-    );
+    const ref = { threadId, resourceId: userId };
+    const window = AbortSignal.timeout(this.settleTimeoutMs);
+    const { settled } = await this.deletionHooks.stopAll(ref, window);
+    await this.runs.cancelRunsThen(threadId, async () => {
+      await settled;
+      await this.lock.run(threadId, async () => {
+        await this.deletionHooks.purgeAll(ref);
+        await this.memory.deleteThread(threadId);
+      });
+    });
   }
 
   /** Every stored message of the thread (no `lastMessages` cap), oldest first, as AI SDK v7 UIMessages. */

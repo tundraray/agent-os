@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
+import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
 import { ThreadRunRegistry } from './thread-run-registry.js';
 import { ThreadWriteLock } from './thread-write-lock.js';
 import { threadNotFound } from './threads.errors.js';
@@ -96,6 +97,8 @@ describe('ThreadsService.discardRepliesAfter', () => {
       memory,
       new ThreadWriteLock(),
       new ThreadRunRegistry(5_000),
+      new ThreadDeletionHooks(),
+      5_000,
     ).discardRepliesAfter({
       threadId: 't-1',
       userId: 'u-1',
@@ -141,6 +144,8 @@ const fakeThreadMemory = () => {
     memory,
     new ThreadWriteLock(),
     new ThreadRunRegistry(5_000),
+    new ThreadDeletionHooks(),
+    5_000,
   );
   return { service, getThreadById, updateThread };
 };
@@ -197,6 +202,8 @@ describe('ThreadsService rejects an empty userId in list and getOwnedThread', ()
         memory,
         new ThreadWriteLock(),
         new ThreadRunRegistry(5_000),
+        new ThreadDeletionHooks(),
+        5_000,
       );
 
       const error: unknown = await call(service).then(
@@ -302,7 +309,13 @@ describe('ThreadsService.delete', () => {
         await action();
         journal.push(`cancelRunsThen ${threadId} end`);
       });
-    const service = new ThreadsService(memory, lock, runs);
+    const service = new ThreadsService(
+      memory,
+      lock,
+      runs,
+      new ThreadDeletionHooks(),
+      5_000,
+    );
     return { service, journal, getThreadById, deleteThread, cancelRunsThen };
   };
 

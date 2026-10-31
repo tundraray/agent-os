@@ -210,7 +210,7 @@ FR-13…FR-18 PRD без изменений формулировок; AC пер�
 | Existing | `apps/api/src/chat/chat.dto.ts` | `@MaxLength(255)` на `id` и `threadId` |
 | Existing | `apps/api/src/app.module.ts` | `imports` дополняется `ThreadsModule` (Integration Point 5) |
 | Existing | `packages/contracts/src/index.ts` | Добавляется одна строка `export * from './threads.js'` |
-| Existing (unchanged) | `apps/api/src/mastra/agents/assistant.agent.ts`, `mastra.provider.ts`, `auth/session.guard.ts`, `audit/audit.service.ts` | Используются как есть |
+| Existing (unchanged) | `apps/api/src/mastra/agents/assistant.agent.ts`, `mastra.provider.ts`, `auth/session.guard.ts`, `audit/audit.service.ts` | Используются как есть; `mastra.provider.ts` позже меняется в `research-runtime`: восстановление run выключено (ADR-0001, `design-runtime.md`) |
 | New | `packages/contracts/src/threads.ts` | zod-схемы и типы бесед; `ChatMessageRefSchema` — структурная схема последнего элемента `body.messages` для «сброса хвоста» |
 | New | `apps/api/src/threads/threads.module.ts` | Модуль: контроллер, сервисы, провайдеры |
 | New | `apps/api/src/threads/threads.controller.ts` | Шесть маршрутов `/api/threads*` |
@@ -567,7 +567,7 @@ No Ripple Effect:
   - Стриминг: toAISdkStream v7, sendReasoning, отмена по res.on('close') (тот же эффект, теперь через ThreadRunHandle.abort), лог usage; тексты onError-маскирования те же (правило вынесено в toStreamErrorText без изменения результатов)
   - История до этого релиза: хранимые данные не меняются; маскирование применяется при чтении, поэтому распространяется и на старые беседы
   - Обычная отправка (новое сообщение пользователя с новым id) и правка (новый id): хранимые сообщения не удаляются
-  - SessionGuard, AuditService (формат события, батчинг), MastraLifecycle, mastra.provider.ts, assistant.agent.ts, models.ts
+  - SessionGuard, AuditService (формат события, батчинг), MastraLifecycle, mastra.provider.ts (позже меняется в research-runtime: восстановление run выключено, ADR-0001, design-runtime.md), assistant.agent.ts, models.ts
   - Остальные маршруты /api/threads* и ThreadsService.rename/list/create/listMessages — реестр прогонов затрагивает только delete и чат
   - ThreadWriteLock — без изменения интерфейса (delete становится ещё одним его пользователем)
   - Существующие тесты: test/app.e2e-spec.ts, src/mastra/models.spec.ts
@@ -1864,3 +1864,4 @@ System Invariants:
 | 2026-10-30 | 1.9 | Источник настройки HTTP — `app.setup.ts`; названы мелкие дополнения реализации; усиление безопасности (пустой `userId`, длина id чата и аудита); известные ограничения. Поведение без изменений | technical-designer |
 | 2026-10-30 | 1.10 | Изменения, одобренные пользователем: удаление во время ответа больше не воскрешает беседу — реестр прогонов `ThreadRunRegistry`, AC-16.1 (b), KD-6, находки 16–17; автозаголовок по структурному ответу, сообщение как данные — AC-17.1, KD-7, находка 18; Minimal Surface 9–10, тесты, риски, ограничения. По ревью: сигнал завершения прогона — `consumeStream()`, а не `finishReason`; `release()` не ждёт отправки SSE; e2e AC-16.1 (b) — две строки, предел времени `DELETE` и окончания стрима; окончание прерванного стрима — чанк `abort`; пустой `TITLE_MODEL` даёт `ASSISTANT_MODEL` (`||`); краткие KD-6/KD-7. Одобрено пользователем 2026-10-30 после ревью (approved_with_conditions, условия применены) | technical-designer |
 | 2026-10-30 | 1.11 | Изменение по результатам L1 T6.3-b, одобрено пользователем 2026-10-30 (статус Approved): находка 19; KD-7 дополнен — `THREAD_TITLE_INSTRUCTIONS` на английском с явным правилом языка (текст дословно в «Title Agent»), `normalizeGeneratedTitle` снимает все кавычки, а не только обрамляющие; Minimal Surface Element 10 «Язык заголовка»; шаг 12; unit-строки нормализации и проверка правила языка в промпте; Certainty разделена на время и язык; риск языка и кавычек. AC-17.1 без изменений | technical-designer |
+| 2026-10-31 | 1.12 | Пометка: `mastra.provider.ts` позже меняется в `research-runtime` (восстановление run выключено, ADR-0001). Поведение и контракты без изменений | technical-designer |

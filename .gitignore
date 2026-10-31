@@ -9,3 +9,7 @@ dist/
 
 # Claude Code agent memory (local)
 .claude/agent-memory/
+.playwright-mcp
+docs/features/*/*/*.md
+docs/features/*/*/*/*.md
+agent-memory

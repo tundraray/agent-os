@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# Migration hashes are taken over raw bytes: no line-ending conversion.
+migrations/** -text
