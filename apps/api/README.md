@@ -50,12 +50,22 @@ $ pnpm run start:prod
 # unit tests
 $ pnpm run test
 
-# e2e tests
+# e2e tests (Postgres)
 $ pnpm run test:e2e
+
+# research runtime wiring e2e only (builds the app first)
+$ pnpm run test:e2e:runtime
 
 # test coverage
 $ pnpm run test:cov
 ```
+
+### e2e tests and the database
+
+- The e2e suites run against the Postgres in `DATABASE_URL` (process environment first, otherwise `apps/api/.env`). The app refuses to start on pending migrations, so the suite's global setup (`test/support/migrate.global-setup.ts`) applies them once before any test file boots the app, through the same `applyMigrations` from `@agent-os/db` as `pnpm db:migrate`.
+- The harness defaults to `RUNTIME_WORKERS=off`, so chat and threads tests never start runtime workers. Tests that need workers boot the app through `test/support/runtimeApp.ts`, which sets the runtime variables explicitly.
+- Only the wiring of the runtime into the app is tested here (`research-runtime-boot`, `research-runtime-wiring`). The runtime's own integration tests, the process-kill matrix and the on-demand timing checks live in `packages/runtime` (`pnpm --filter @agent-os/runtime test:e2e`, `test:verify`); migration tests live in `packages/db`.
+- Run Postgres suites one at a time, never in parallel against the same database: runtime workers (relay, reaper) touch rows of other tests.
 
 ## Deployment
 

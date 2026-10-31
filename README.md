@@ -23,6 +23,8 @@ agent-os/
     api/              NestJS + Mastra
   packages/
     contracts/        общие типы: инструменты, события, DTO
+    db/               модель схемы `app` (Drizzle), миграции, мигратор, createDatabase
+    runtime/          durable runtime исследований без NestJS: createRuntime, порты, порт обработчика
   infra/
     docker-compose.yml
     nginx.conf
@@ -242,11 +244,45 @@ POSTGRES_PORT=5433 pnpm db:up
 
 Проверка: открыть `http://localhost:3000`, отправить сообщение, увидеть стриминг. В логах `apps/api` должна появиться запись аудита.
 
+## База данных, миграции и runtime
+
+Таблицы приложения живут в схеме `app`; модель и миграции — в пакете `@agent-os/db` (ADR-0003, ADR-0004). Приложение при старте только сверяет миграции с журналом и не мигрирует само: на базе с неприменёнными миграциями `apps/api` завершается до открытия порта и называет файлы.
+
+| Команда | Что делает |
+|---|---|
+| `pnpm db:migrate` | применяет миграции из `packages/db/migrations/` к базе `DATABASE_URL` из `apps/api/.env`; нужна собранная `apps/api` (`pnpm build`) |
+| `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema.ts` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
+
+Тесты с Postgres поднимают базу `DATABASE_URL` (из окружения, иначе из `apps/api/.env`) и сами применяют миграции один раз до набора. Запускайте их **по одному**, не параллельно против одной базы: воркеры runtime (relay, reaper) трогают чужие строки.
+
+| Команда | Что проверяет |
+|---|---|
+| `pnpm --filter @agent-os/db test:e2e` | миграции и домены CHECK схемы `app` |
+| `pnpm --filter @agent-os/runtime test:e2e` | интеграционные тесты runtime и матрицу убийств процесса (собирает пакет и дочерний процесс) |
+| `pnpm --filter api test:e2e:runtime` | связывание runtime с `apps/api`: старт против состояний базы, фазы Nest, порт владельца беседы, хук удаления |
+| `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (чат, беседы, связывание runtime) |
+| `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
+
+Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — `docs/features/research-runtime/design-runtime.md`, Runtime Settings). Неверное значение останавливает старт с именем переменной.
+
+| Переменная | По умолчанию |
+|---|---|
+| `RUNTIME_WORKERS` | `on` (`off` — без воркеров) |
+| `RUNTIME_CONCURRENCY` | 4 |
+| `RUNTIME_POLL_MS` | 500 |
+| `RUNTIME_NOTIFY` | `on` |
+| `RUNTIME_LEASE_MS` / `RUNTIME_HEARTBEAT_MS` / `RUNTIME_REAPER_MS` | 30000 / 10000 / 5000 |
+| `RUNTIME_MAX_RECOVERIES` | 3 |
+| `RUNTIME_DELIVERY_MAX_ATTEMPTS` | 5 |
+| `RUNTIME_SHUTDOWN_GRACE_MS` | 5000 |
+| `DB_POOL_MAX` | 10 |
+| `RUNTIME_CRASH_AT` | не задана (только для тестов) |
+
 ## Проверки качества
 
 | Команда | Что делает |
 |---|---|
-| `pnpm lint` | oxlint (`api`, `contracts`) и ESLint (`web`); любое предупреждение — ошибка |
+| `pnpm lint` | oxlint (`api` и пакеты в `packages/`) и ESLint (`web`); любое предупреждение — ошибка |
 | `pnpm typecheck` | `tsc --noEmit` по всем пакетам, включая тесты (`web` сначала генерирует типы роутов `next typegen`) |
 | `pnpm build` | сборка всех пакетов |
 | `pnpm knip` | неиспользуемые файлы, экспорты и зависимости ([knip](https://knip.dev)); настройки в `knip.json` |
