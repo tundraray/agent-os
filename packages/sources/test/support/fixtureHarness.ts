@@ -54,6 +54,11 @@ export interface FixtureHarness {
   readonly logger: RecordingLogger;
   /** The call log in file order; empty before the first `tools/call`. */
   readCallLog(): CallLogLine[];
+  /**
+   * Starts the process through a snapshot read (not a `tools/call`, so not logged): the timed part of a test then
+   * runs on a started process.
+   */
+  warmUp(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -66,9 +71,20 @@ export function fixtureArgsHash(args: Readonly<Record<string, unknown>>): string
 }
 
 /**
+ * Room for a process start (spawn and `initialize`) on a loaded machine. The call timeout bounds the start of the
+ * process too, and a start that outlives it fails the call: idle a start takes ~0.2 s, with every core busy
+ * 1.2–1.9 s, and with the cores oversubscribed twice up to 9 s (measured on the 16-core dev machine) — as when
+ * turbo runs the package test suites side by side in CI `check`.
+ */
+const PROCESS_START_TIMEOUT_MS = 30_000;
+
+/**
  * A fixture source of its own: a temp dir with the rules file and call log, and an adapter whose process is
- * started by `fixtureServerPath` of `@agent-os/mcp-fixture` on its first call. `env` overrides the settings
- * (`SOURCE_CALL_TIMEOUT_MS` and the backoff are short by default so failure rows stay fast).
+ * started by `fixtureServerPath` of `@agent-os/mcp-fixture` on its first call. `env` overrides the settings; the
+ * backoff is short by default so failure rows stay fast. `settings` (the executor's) keep
+ * {@link PROCESS_START_TIMEOUT_MS} as the call timeout unless `env` sets a shorter one for a row that waits for
+ * it; such a row calls `warmUp()` first, since the adapter reads the snapshot within
+ * {@link PROCESS_START_TIMEOUT_MS} whatever the call timeout.
  */
 export function startFixture(options: { rules?: readonly FixtureFaultRule[]; env?: SourcesEnv } = {}): FixtureHarness {
   const dir = mkdtempSync(join(tmpdir(), 'agent-os-sources-int-'));
@@ -76,7 +92,7 @@ export function startFixture(options: { rules?: readonly FixtureFaultRule[]; env
   const callLogPath = join(dir, 'calls.jsonl');
   writeFileSync(faultsPath, JSON.stringify(options.rules ?? []), 'utf8');
   const settings = parseSourcesSettings({
-    SOURCE_CALL_TIMEOUT_MS: '500',
+    SOURCE_CALL_TIMEOUT_MS: String(PROCESS_START_TIMEOUT_MS),
     SOURCE_RETRY_BASE_MS: '1',
     SOURCE_RETRY_CAP_MS: '5',
     ...options.env,
@@ -84,12 +100,19 @@ export function startFixture(options: { rules?: readonly FixtureFaultRule[]; env
     FIXTURE_CALL_LOG: callLogPath,
   });
   const logger = new RecordingLogger();
-  const adapter = new FixtureSourceAdapter({ serverPath: fixtureServerPath, settings, logger });
+  const adapter = new FixtureSourceAdapter({
+    serverPath: fixtureServerPath,
+    settings: { ...settings, callTimeoutMs: Math.max(settings.callTimeoutMs, PROCESS_START_TIMEOUT_MS) },
+    logger,
+  });
 
   return {
     adapter,
     settings,
     logger,
+    async warmUp() {
+      await adapter.currentSnapshot(new AbortController().signal);
+    },
     readCallLog() {
       if (!existsSync(callLogPath)) {
         return [];

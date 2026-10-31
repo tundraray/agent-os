@@ -57,8 +57,9 @@ jobs:
 
   # Research runtime against a real Postgres 16 (design-runtime.md, Part constraints): the
   # packages are built along the turbo graph, then each package's Postgres suite runs in turn —
-  # db (migrations), runtime (in-process INT file and the child-process kill matrix) — and then
-  # the apps/api wiring and boot tests. One suite at a time: the relay and the reaper of one
+  # db (migrations), runtime (in-process INT file and the child-process kill matrix), sources
+  # (E2E against the fixture process, recovery in a child process) — and then the apps/api
+  # wiring and boot tests. One suite at a time: the relay and the reaper of one
   # suite would touch another's rows. The chat-shell e2e suite and the on-demand measurements
   # (test:verify) are not part of CI.
   e2e-runtime:
@@ -94,4 +95,5 @@ jobs:
       - run: pnpm --filter api db:migrate
       - run: pnpm --filter @agent-os/db test:e2e
       - run: pnpm --filter @agent-os/runtime test:e2e
+      - run: pnpm --filter @agent-os/sources test:e2e
       - run: pnpm --filter api test:e2e:runtime

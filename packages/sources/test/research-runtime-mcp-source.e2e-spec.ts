@@ -14,12 +14,32 @@
 // - Backoff jitter and clock injected; no LLM, no network.
 // - The Design Doc lists UC-7 (stub adapter) under e2e-runtime; it needs no database and is proven at unit level instead (see the int skeleton file).
 //
-// All cases are `it.todo`. Do not convert a todo into a passing stub.
+// Cases whose task has not landed are `it.todo` (E2E-1: T4.2). Do not convert a todo into a passing stub.
 //
 // Budget: E2E 2 of 2. Raw-formula ROI is low for both because the formula divides by an E2E cost of 38; they are kept because the Design Doc and PRD make them the
 // acceptance gates (metrics 1, 3) and nothing at a lower level can prove Postgres-backed fencing, recovery and storage.
 
-import { describe, it } from 'vitest';
+import { createHash, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { Task } from '@agent-os/contracts';
+import { fixtureServerPath } from '@agent-os/mcp-fixture';
+import { McpSourceClient, parseSourcesSettings } from '@agent-os/sources';
+import type { CallToolResult } from '@modelcontextprotocol/client';
+import { describe, expect, it } from 'vitest';
+import { CRASH_EXIT_CODE, runFetchRecovery } from './support/fetchChild.js';
+import {
+  createSourcesHarness,
+  type FetchArgs,
+  type FetchRequest,
+  type FixtureFaultRule,
+  type FixtureFiles,
+  fixtureFiles,
+  proposeFetch,
+  type ProposedFetch,
+  SEARCH_LOGS,
+  type SourcesHarness,
+  TEST_SOURCES_ENV,
+} from './support/runtimeHarness.js';
 
 describe('research-runtime / mcp-source - E2E (real Postgres, real fixture)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -89,7 +109,154 @@ describe('research-runtime / mcp-source - E2E (real Postgres, real fixture)', ()
   // - Recovery row compares sha256 values captured before the kill against the post-recovery rows, not recomputed from the implementation
   // - Cancel row: wait is bounded (no sleep-until-quiet loops); assert on the fixture call log, the independent counter
   // - Oversize row: the page above 1 MiB travels without the `text` duplicate and within half of the stdio buffer, so it must not close the transport
-  it.todo(
-    'E2E-2: recovery resumes from the checkpoint with identical page keys and hashes, cancel stops all source calls, and a 10 MB page round-trips unchanged',
-  );
+  describe('E2E-2: recovery resumes from the checkpoint with identical page keys and hashes, cancel stops all source calls, and a 10 MB page round-trips unchanged', () => {
+    /** A window of exactly 2 500 `v1` records (counted from the generator): five pages of 500. */
+    const FIVE_PAGES = { from: '2026-09-14T07:00:00.000Z', to: '2026-09-14T08:00:01.000Z', pageSize: 500 };
+    const PAGE_KEYS = ['page-0001', 'page-0002', 'page-0003', 'page-0004', 'page-0005'];
+    /** The result size of AC-12.4. */
+    const TEN_MB = 10 * 1024 * 1024;
+    /** Room for a retry or a next page to reach the fixture after the task ended: the backoff is 10-50 ms. */
+    const BOUNDED_WAIT_MS = 500;
+    const TASK_END_MS = 60_000;
+    const POLL_MS = 50;
+
+    const newResourceId = (): string => `e2e-${randomUUID()}`;
+    const ended = (task: Task): boolean => ['succeeded', 'failed', 'cancelled'].includes(task.status);
+
+    /** The in-process assembly over fixture files of its own; both are closed after `run`. */
+    async function withHarness<T>(
+      rules: readonly FixtureFaultRule[],
+      run: (harness: SourcesHarness, files: FixtureFiles) => Promise<T>,
+    ): Promise<T> {
+      const files = fixtureFiles(rules);
+      const harness = createSourcesHarness({ sources: parseSourcesSettings({ ...TEST_SOURCES_ENV, ...files.env }) });
+      try {
+        return await run(harness, files);
+      } finally {
+        try {
+          await harness.close();
+        } finally {
+          files.remove();
+        }
+      }
+    }
+
+    /** Polls `condition` until it yields a value; a guard on state, not an ordering sleep. */
+    async function until<T>(what: string, condition: () => Promise<T | undefined>): Promise<T> {
+      const startedAt = Date.now();
+      for (;;) {
+        const value = await condition();
+        if (value !== undefined) return value;
+        if (Date.now() - startedAt > TASK_END_MS) throw new Error(`No ${what} within ${TASK_END_MS} ms`);
+        await delay(POLL_MS);
+      }
+    }
+
+    /** The task through the runtime's public view, once it ended. */
+    function taskEnd(harness: SourcesHarness, request: FetchRequest, proposed: ProposedFetch): Promise<Task> {
+      return until(`end of task ${proposed.taskId}`, async () => {
+        const [investigation] = await harness.runtime.investigations.listForThread(request.resourceId, proposed.threadId);
+        const task = investigation?.tasks?.find((known) => known.taskId === proposed.taskId);
+        return task !== undefined && ended(task) ? task : undefined;
+      });
+    }
+
+    /** The fixture's own answer to the call under the rule, read by a bare client of a fixture process of its own. */
+    async function rawSearch(rule: FixtureFaultRule, args: FetchArgs): Promise<CallToolResult> {
+      const files = fixtureFiles([rule]);
+      const client = new McpSourceClient({
+        serverPath: fixtureServerPath,
+        fixtureEnv: { FIXTURE_DATASET: 'v1', ...files.env },
+        logger: { debug: () => undefined },
+      });
+      try {
+        const response = await client.callTool(
+          { name: SEARCH_LOGS, arguments: args },
+          { timeoutMs: TASK_END_MS, signal: new AbortController().signal },
+        );
+        if (response.kind !== 'result') throw new Error(`Raw fixture call failed: ${JSON.stringify(response)}`);
+        return response.result;
+      } finally {
+        await client.close();
+        files.remove();
+      }
+    }
+
+    /** `records` of a `search_logs` result as the fixture sent it. */
+    function recordsOf(result: CallToolResult): unknown {
+      const structured = result.structuredContent;
+      return typeof structured === 'object' && structured !== null && 'records' in structured ? structured.records : undefined;
+    }
+
+    it('recovery (UC-E11, AC-MS-8): killed after the evidence of page 2, the restarted process continues from the checkpoint; pages 1-2 keep their rows and sha256, 6 source calls', async () => {
+      const run = await runFetchRecovery({ resourceId: newResourceId(), args: FIVE_PAGES });
+
+      expect(run.firstExitCode).toBe(CRASH_EXIT_CODE);
+      // The dead attempt stored pages 1-2; its checkpoint still points at page 2.
+      expect(run.atKill.task).toMatchObject({ status: 'running', attempt: 1, checkpointNextPage: 2 });
+      expect(run.atKill.pages.map((page) => [page.evidenceKey, page.writtenByAttempt])).toEqual([
+        ['page-0001', 1],
+        ['page-0002', 1],
+      ]);
+      // The recovered attempt ends the task with five pages, one row each; its 4 calls (pages 2-5) are the task's,
+      // since a lost attempt carries no counters over (design-runtime.md, reservation rule).
+      expect(run.end.task).toMatchObject({ status: 'succeeded', attempt: 2, recoveryCount: 1, toolCallsUsed: 4 });
+      expect(run.end.pages.map((page) => page.evidenceKey)).toEqual(PAGE_KEYS);
+      expect(run.end.task.outputRefs).toEqual(run.end.pages.map((page) => page.evidenceId));
+      // Page 2 fetched again gives the same key and sha256: the rows captured before the kill are the ones kept.
+      expect(run.end.pages.slice(0, 2)).toEqual(run.atKill.pages);
+      expect(run.end.pages.slice(2).map((page) => page.writtenByAttempt)).toEqual([2, 2, 2]);
+      // The independent counter: pages 1-2 by the dead process, pages 2-5 by the restarted one - 6 calls, not 7.
+      expect(run.callLog).toHaveLength(6);
+      expect(new Set(run.callLog.map((line) => line.pid)).size).toBe(2);
+      expect(run.restartExitCode).toBe(0);
+    }, 180_000);
+
+    it('cancel during a hanging call (UC-E9, AC-20.2): the task ends cancelled, and the fixture log does not grow after cancel returns', async () => {
+      const hang: FixtureFaultRule = { tool: SEARCH_LOGS, argsHash: '*', occurrences: 'all', mode: 'hang' };
+      await withHarness([hang], async (harness, files) => {
+        const request: FetchRequest = { resourceId: newResourceId(), args: FIVE_PAGES, completeness: 'all' };
+        const proposed = await proposeFetch(harness, request);
+        // The task is running and waits for the source: its first call reached the fixture.
+        await until('first source call', async () => (files.readCallLog().length > 0 ? true : undefined));
+
+        await harness.runtime.investigations.cancel(proposed.investigationId, request.resourceId);
+        const linesAtCancel = files.readCallLog().length;
+
+        const task = await taskEnd(harness, request, proposed);
+        expect(task.status).toBe('cancelled');
+        expect(task.outputRefs).toEqual([]);
+        await delay(BOUNDED_WAIT_MS);
+        expect(linesAtCancel).toBe(1);
+        expect(files.readCallLog()).toHaveLength(linesAtCancel);
+      });
+    }, 120_000);
+
+    it('oversize (UC-4, AC-12.4): a 10 MB page travels without the text duplicate, is stored, and reads back unchanged', async () => {
+      const oversize: FixtureFaultRule = { tool: SEARCH_LOGS, argsHash: '*', occurrences: [1], mode: 'oversize', bytes: TEN_MB };
+      const sent = await rawSearch(oversize, FIVE_PAGES);
+      // Above 1 MiB the fixture leaves `content` empty, so the line stays within half of the 32 MiB stdio buffer.
+      expect(sent.content).toEqual([]);
+
+      await withHarness([oversize], async (harness, files) => {
+        const request: FetchRequest = { resourceId: newResourceId(), args: FIVE_PAGES, completeness: 'sample' };
+        const proposed = await proposeFetch(harness, request);
+
+        const task = await taskEnd(harness, request, proposed);
+
+        expect(task.status).toBe('succeeded');
+        // One call: the transport stayed open, so nothing was retried.
+        expect(files.readCallLog()).toHaveLength(1);
+        expect(task.outputRefs).toHaveLength(1);
+        const stored = await harness.runtime.evidence.get(task.outputRefs[0], request.resourceId);
+        expect(stored.record.evidenceKey).toBe('page-0001');
+        expect(stored.bytes.byteLength).toBe(stored.record.byteSize);
+        expect(stored.bytes.byteLength).toBeGreaterThan(TEN_MB);
+        expect(createHash('sha256').update(stored.bytes).digest('hex')).toBe(stored.record.sha256);
+        const page = JSON.parse(new TextDecoder().decode(stored.bytes)) as { pageNumber: number; items: unknown };
+        expect(page.pageNumber).toBe(1);
+        expect(page.items).toEqual(recordsOf(sent));
+      });
+    }, 120_000);
+  });
 });

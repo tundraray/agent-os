@@ -8,7 +8,8 @@
 // - TaskContext is an in-memory fake that implements the runtime reservation rule (retry / call limits, deadline, injectable
 //   `fenced` / `not_current_attempt` / `cancel_requested`). Postgres-only behaviour (guarded UPDATE, fencing, recovery) lives in
 //   packages/sources/test/research-runtime-mcp-source.e2e-spec.ts.
-// - Backoff jitter and clock are injected; SOURCE_CALL_TIMEOUT_MS is set to a few hundred ms so hang / malformed_json rows stay fast.
+// - Backoff jitter and clock are injected. SOURCE_CALL_TIMEOUT_MS leaves room for a process start on a loaded machine (fixtureHarness.ts,
+//   PROCESS_START_TIMEOUT_MS); only rows that wait for the timeout shorten it, on a process started before the timed call.
 // - Isolation (Design Doc Risks): every test builds its own fixture rules keyed by argsHash, with its own window/filter and its own
 //   FIXTURE_CALL_LOG file in a temp dir. No shared journal, no test order dependency.
 // - The independent counter is the fixture call log (JSONL, only `tools/call`). Assert `log lines === toolCallsUsed` wherever calls happen.
@@ -35,6 +36,7 @@ import {
 } from '../src/fixture/fixture-tools.schema.js';
 import type { McpRequestOptions, McpSourceClient } from '../src/mcp/mcp-source-client.js';
 import { createSourceRegistry } from '../src/source-registry.js';
+import type { SourcesEnv } from '../src/sources.settings.js';
 import { ToolExecutor, type ToolOutcome, type ToolRequest } from '../src/tool-executor.js';
 import {
   fixtureArgsHash,
@@ -185,7 +187,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   //   contract_violation           | occurrence 1, then success                       | first call transport_protocol result_contract_violation | no "not found" evidence (UC-E6, AC-MS-2)
   //   rest of the mode catalogue   | drop_connection, jsonrpc_error -32603, late_response, delay_ms vs timeout, empty (K-12) | each lands in its class from the Error Handling table
   //                                  | 0 retries outside a reservation, 0 retries of K-3 / K-9 / K-13                                   (UC-E7, AC-15.4)
-  // Metric 4 acceptance run: each class repeated 30 times (a `repeat` column or loop around the row); the short-timeout setting keeps this fast.
+  // Metric 4 acceptance run: each class repeated 30 times (a `repeat` column or loop around the row); the short-timeout setting of the timeout rows keeps this fast.
   //
   // Verification items:
   // - Row outcome: kind, FailureReason.class, FailureReason.code, message truncated to the FailureReason limit
@@ -224,6 +226,8 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       readonly limits: { readonly maxRetries: number; readonly maxToolCalls: number };
       /** Executions, each with its own query; 30 is the metric 4 run of the row's class. */
       readonly repeat: number;
+      /** `SOURCE_CALL_TIMEOUT_MS` of a row that waits for the call timeout; the process is started before the row. */
+      readonly env?: SourcesEnv;
       /** Crash rows run one execution at a time: a crash drops every call in flight on the shared process. */
       readonly sequential?: boolean;
       readonly expected: {
@@ -243,7 +247,9 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
     const CONFIG_MISMATCH = { class: 'transport_protocol', code: 'config_or_protocol_mismatch' };
     const CONNECTION_LOST = { class: 'transport_protocol', code: 'connection_lost' };
     const LIMITS_3_5 = { maxRetries: 3, maxToolCalls: 5 };
-    const LATE_MS = 1_500;
+    /** A row waits for this call timeout on a started process; a process start never has to fit into it. */
+    const SHORT_CALL_TIMEOUT = { SOURCE_CALL_TIMEOUT_MS: '1000' };
+    const LATE_MS = 3_000;
 
     const rows: FaultRow[] = [
       {
@@ -313,6 +319,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       {
         name: 'malformed_json, then success (UC-E6, AC-MS-2, AC-13.4)',
         rule: { occurrences: [1], mode: 'malformed_json' },
+        env: SHORT_CALL_TIMEOUT,
         limits: LIMITS_3_5,
         repeat: METRIC_4_REPEAT,
         expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
@@ -356,6 +363,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       {
         name: 'late_response after the call timeout, then success (UC-E7)',
         rule: { occurrences: [1], mode: 'late_response', ms: LATE_MS },
+        env: SHORT_CALL_TIMEOUT,
         limits: LIMITS_3_5,
         repeat: 1,
         expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
@@ -363,6 +371,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       {
         name: 'delay_ms below the call timeout (UC-E7)',
         rule: { occurrences: [1], mode: 'delay_ms', ms: 50 },
+        env: SHORT_CALL_TIMEOUT,
         limits: LIMITS_3_5,
         repeat: 1,
         expected: { failure: null, calls: 1, retried: [], returned: PAGE_SIZE },
@@ -370,6 +379,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       {
         name: 'delay_ms above the call timeout, then success (UC-E7)',
         rule: { occurrences: [1], mode: 'delay_ms', ms: LATE_MS },
+        env: SHORT_CALL_TIMEOUT,
         limits: LIMITS_3_5,
         repeat: 1,
         expected: { failure: null, calls: 2, retried: ['timeout'], returned: PAGE_SIZE },
@@ -385,8 +395,9 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
 
     it.each(rows)(
       '$name',
-      async ({ rule, limits, repeat, sequential, expected }) => {
-        const harness = fixture({ rules: [{ tool: SEARCH_LOGS, argsHash: '*', ...rule }] });
+      async ({ rule, env, limits, repeat, sequential, expected }) => {
+        const harness = fixture({ rules: [{ tool: SEARCH_LOGS, argsHash: '*', ...rule }], env });
+        if (env !== undefined) await harness.warmUp();
         const executor = executorFor(harness);
         const runOne = async (seed: number) => {
           const ctx = new InMemoryTaskContext(limits);
@@ -430,7 +441,9 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
         expect(logged).not.toContain(String(searchArgs(0).from));
         expect(logged).not.toContain('fixture says no');
       },
-      60_000,
+      // Not a timing check: the 30 sequential crash executions start 60 processes, ~14 s idle and ~100 s with the
+      // cores oversubscribed twice (PROCESS_START_TIMEOUT_MS in fixtureHarness.ts).
+      300_000,
     );
 
     it('crash_process: the next call goes to a new process, the handshake is not logged, and occurrences keep counting (AC-MS-5, AC-MS-7)', async () => {
@@ -873,7 +886,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
 
     /** Starts the process before the timed part: an abort during the process start never reaches the fixture. */
     async function warmed(harness: FixtureHarness): Promise<FixtureHarness> {
-      await harness.adapter.currentSnapshot(new AbortController().signal);
+      await harness.warmUp();
       return harness;
     }
 

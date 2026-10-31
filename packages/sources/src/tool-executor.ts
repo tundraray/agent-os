@@ -14,6 +14,7 @@ import { coverageOf } from './completeness.js';
 import type { FetchCheckpoint } from './fetch-input.js';
 import type { NormalizedPage, SourceAdapter, SourceToolDescriptor, TransportFailure } from './source-adapter.js';
 import type { SourceRegistry } from './source-registry.js';
+import type { SourcesLogger } from './sources-logger.js';
 import type { SourcesSettings } from './sources.settings.js';
 
 /** Max length of `FailureReason.message` (design-runtime.md, FailureReason). */
@@ -21,16 +22,6 @@ const FAILURE_MESSAGE_MAX = 2_000;
 const PAGE_KEY_DIGITS = 4;
 const EVIDENCE_MEDIA_TYPE = 'application/json';
 const utf8 = new TextEncoder();
-
-/**
- * Logger port of the sources package (design-mcp-source.md, Logging and Monitoring). Fields carry identifiers,
- * classes, codes and durations only — never arguments, records or the text of `isError`.
- */
-export interface SourcesLogger {
-  debug(message: string, fields: Readonly<Record<string, unknown>>): void;
-  warn(message: string, fields: Readonly<Record<string, unknown>>): void;
-  error(message: string, fields: Readonly<Record<string, unknown>>): void;
-}
 
 /**
  * The tool calls of a task (design-mcp-source.md, FetchInput и ToolRequest), checked against the allowlist of

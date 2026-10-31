@@ -8,6 +8,8 @@
     "web#typecheck": { "dependsOn": ["^build", "build"] },
     "@agent-os/runtime#typecheck": { "dependsOn": ["^build", "build"] },
     "@agent-os/runtime#lint": { "dependsOn": ["^build", "build"] },
+    "@agent-os/sources#typecheck": { "dependsOn": ["^build", "build"] },
+    "@agent-os/sources#lint": { "dependsOn": ["^build", "build"] },
     "test": { "dependsOn": ["^build"] }
   }
 }

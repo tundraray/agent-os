@@ -4,7 +4,9 @@
  * `snapshot_changed`, `stopped`; `error` — K-3, K-9, K-13; `debug` — a late answer and the fixture's stderr. Fields
  * carry `taskId`, `attempt`, `sourceId`, `toolName`, `callIndex`, class, code and duration — never arguments,
  * records or the text of `isError`.
- *
- * The interface is declared next to its first consumer, `ToolExecutor`; this module is the port's public name.
  */
-export type { SourcesLogger } from './tool-executor.js';
+export interface SourcesLogger {
+  debug(message: string, fields: Readonly<Record<string, unknown>>): void;
+  warn(message: string, fields: Readonly<Record<string, unknown>>): void;
+  error(message: string, fields: Readonly<Record<string, unknown>>): void;
+}

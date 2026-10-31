@@ -25,7 +25,7 @@
       "entry": ["src/server.ts", "src/generate-ground-truth.ts"]
     },
     "packages/sources": {
-      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts"]
+      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/fetchChildMain.ts"]
     }
   }
 }

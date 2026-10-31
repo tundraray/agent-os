@@ -14,7 +14,9 @@
     "dev": "tsc -p tsconfig.build.json --watch",
     "lint": "oxlint --type-aware --deny-warnings src/ test/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:child": "tsc -p tsconfig.child.json",
+    "test:e2e": "pnpm build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts"
   },
   "dependencies": {
     "@agent-os/contracts": "workspace:*",
@@ -23,6 +25,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@agent-os/db": "workspace:*",
     "@agent-os/mcp-fixture": "workspace:*",
     "@types/node": "^24.0.0",
     "oxlint": "^1.58.0",
