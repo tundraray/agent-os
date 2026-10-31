@@ -1,8 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { argsHash, fixtureServerPath } from '@agent-os/mcp-fixture';
+import { dirname, join } from 'node:path';
+import { argsHash, fixtureServerPath, type DatasetVersion } from '@agent-os/mcp-fixture';
 import { FixtureSourceAdapter } from '../../src/fixture/fixture-source.adapter.js';
+import { McpSourceClient } from '../../src/mcp/mcp-source-client.js';
 import { parseSourcesSettings, type SourcesEnv, type SourcesSettings } from '../../src/sources.settings.js';
 
 /** A `FIXTURE_FAULTS` rule (design-mcp-source.md, Отказы fixture); mode parameters sit next to `mode`. */
@@ -103,4 +104,26 @@ export function startFixture(options: { rules?: readonly FixtureFaultRule[]; env
       rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
+}
+
+/** A bare client over a fixture process of its own: raw `CallToolResult`s and resources, no rules and no call log. */
+export interface FixtureClient {
+  readonly client: McpSourceClient;
+  close(): Promise<void>;
+}
+
+/** Each call starts another fixture process (on its first request) serving `dataset`. */
+export function openFixtureClient(dataset: DatasetVersion): FixtureClient {
+  const client = new McpSourceClient({
+    serverPath: fixtureServerPath,
+    fixtureEnv: { FIXTURE_DATASET: dataset },
+    logger: new RecordingLogger(),
+  });
+  return { client, close: () => client.close() };
+}
+
+/** The committed ground truth of `version`, `ground-truth/<version>.json` next to the fixture package's `dist`. */
+export function readGroundTruthFile(version: DatasetVersion): unknown {
+  const file = join(dirname(fixtureServerPath), '..', 'ground-truth', `${version}.json`);
+  return JSON.parse(readFileSync(file, 'utf8'));
 }

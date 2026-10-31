@@ -19,15 +19,33 @@
 // "Proven at unit level" block at the end of this file; do not re-check their variants here.
 
 import { HandlerResultSchema, type EvidenceInput } from '@agent-os/contracts';
+import { DATASET_VERSIONS, generateGroundTruth, type DatasetVersion } from '@agent-os/mcp-fixture';
 import type { Clock } from '@agent-os/runtime';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AttemptStoppedError } from '../src/attempt-stopped.error.js';
 import { FetchHandler } from '../src/fetch.handler.js';
 import { FetchCheckpointSchema, type FetchCheckpoint } from '../src/fetch-input.js';
 import { FIXTURE_SOURCE_ID } from '../src/fixture/fixture-source.adapter.js';
+import {
+  AggregateLogsResultSchema,
+  GetTraceResultSchema,
+  SearchLogsResultSchema,
+  SourceInfoSchema,
+} from '../src/fixture/fixture-tools.schema.js';
+import type { McpRequestOptions, McpSourceClient } from '../src/mcp/mcp-source-client.js';
 import { createSourceRegistry } from '../src/source-registry.js';
 import { ToolExecutor, type ToolOutcome, type ToolRequest } from '../src/tool-executor.js';
-import { startFixture, fixtureArgsHash, type CallLogLine, type FixtureFaultRule, type FixtureHarness } from './support/fixtureHarness.js';
+import {
+  fixtureArgsHash,
+  openFixtureClient,
+  readGroundTruthFile,
+  startFixture,
+  type CallLogLine,
+  type FixtureClient,
+  type FixtureFaultRule,
+  type FixtureHarness,
+} from './support/fixtureHarness.js';
 import { InMemoryTaskContext } from './support/inMemoryTaskContext.js';
 
 const WORKFLOW_TYPE = 'source.fetch';
@@ -947,9 +965,195 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   // Verification items:
   // - Byte-equality compares the serialized `result`, not a parsed-and-reserialized copy
   // - The 100 000 floor is read from the fixture's own resource, not recomputed
-  it.todo(
-    'INT-4: one dataset version answers byte-identically, the release shows the timeout signal, and ground truth matches regeneration',
-  );
+  describe('INT-4: one dataset version answers byte-identically, the release shows the timeout signal, and ground truth matches regeneration', () => {
+    const V1_WINDOW = { from: '2026-09-14T00:00:00.000Z', to: '2026-09-16T00:00:00.000Z' };
+    /** The hour `v2` appends after the `v1` window: 2 000 records. */
+    const V2_EXTRA_HOUR = { from: '2026-09-16T00:00:00.000Z', to: '2026-09-16T01:00:00.000Z' };
+    const RELEASE_AT_MS = Date.parse('2026-09-15T00:00:00.000Z');
+    /** Metric 5: 100 requests of one dataset version. */
+    const DETERMINISM_REQUESTS = 100;
+    /** AC-15.3 floor; the count itself is read from `fixture://source-info`. */
+    const RECORD_COUNT_FLOOR = 100_000;
+    const LOCAL_TIMEOUT_AFTER_RELEASE_MS = 1_500;
+    const GROUND_TRUTH_WORKFLOW = 'test.ground_truth';
+    /** A test allowlist: `source.fetch` may not call these tools, the ground-truth check does. */
+    const GROUND_TRUTH_ALLOWLIST = {
+      [GROUND_TRUTH_WORKFLOW]: [
+        { sourceId: FIXTURE_SOURCE_ID, toolName: 'aggregate_logs' },
+        { sourceId: FIXTURE_SOURCE_ID, toolName: 'get_trace' },
+      ],
+    };
+    /** Whole-window aggregates and the first trace lookup (which indexes every trace) outlast the short call timeout. */
+    const LONG_CALL_TIMEOUT_MS = 30_000;
+
+    const clients: FixtureClient[] = [];
+    afterEach(async () => {
+      await Promise.all(clients.splice(0).map((client) => client.close()));
+    });
+
+    /** Another fixture process serving `dataset`, started on its first request. */
+    function processOf(dataset: DatasetVersion): McpSourceClient {
+      const opened = openFixtureClient(dataset);
+      clients.push(opened);
+      return opened.client;
+    }
+
+    function rawOptions(): McpRequestOptions {
+      return { timeoutMs: LONG_CALL_TIMEOUT_MS, signal: new AbortController().signal };
+    }
+
+    async function callRaw(client: McpSourceClient, name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+      const response = await client.callTool({ name, arguments: args }, rawOptions());
+      if (response.kind !== 'result') {
+        throw new Error(`${name} failed in transport: ${response.code}`);
+      }
+      return response.result;
+    }
+
+    /** The `result` exactly as the fixture serialized it: the JSON text block, not a re-serialized `structuredContent`. */
+    function serialized(result: CallToolResult): string {
+      const [block] = result.content;
+      if (block?.type !== 'text') {
+        throw new Error('the fixture returned no JSON text block');
+      }
+      return block.text;
+    }
+
+    async function sourceInfo(client: McpSourceClient): Promise<ReturnType<typeof SourceInfoSchema.parse>> {
+      const resource = await client.readResource('fixture://source-info', rawOptions());
+      const [content] = resource.contents;
+      if (content === undefined || !('text' in content)) {
+        throw new Error('fixture://source-info returned no text content');
+      }
+      return SourceInfoSchema.parse(JSON.parse(content.text));
+    }
+
+    /** Request `index` of the determinism run: its own 30 minutes of the `v1` window, every second one filtered. */
+    function determinismArgs(index: number): Record<string, unknown> {
+      const from = new Date(Date.parse(V1_WINDOW.from) + index * 28 * 60_000);
+      const to = new Date(from.getTime() + 30 * 60_000);
+      const filter = index % 2 === 0 ? {} : { service: 'provider-adapter' };
+      return { from: from.toISOString(), to: to.toISOString(), pageSize: 50, ...filter };
+    }
+
+    /** A fetch through the executor that must complete; returns the items of its single stored page. */
+    async function fetchComplete(harness: FixtureHarness, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+      const executor = new ToolExecutor({
+        registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: GROUND_TRUTH_ALLOWLIST }),
+        settings: harness.settings,
+        clock: clockWithJitter(0.5),
+        logger: harness.logger,
+      });
+      const ctx = new InMemoryTaskContext({ maxRetries: 0, maxToolCalls: 1, completeness: 'all' });
+      const outcome = await executor.execute(ctx, {
+        workflowType: GROUND_TRUTH_WORKFLOW,
+        sourceId: FIXTURE_SOURCE_ID,
+        toolName,
+        args,
+        pin: V1_SNAPSHOT,
+        completeness: 'all',
+        resume: null,
+      });
+      const [page] = ctx.evidence;
+      if (outcome.kind !== 'completed' || outcome.coverage.completeness !== 'complete' || page === undefined) {
+        throw new Error(`${toolName} ${JSON.stringify(args)} did not complete: ${JSON.stringify(outcome)}`);
+      }
+      const content = JSON.parse(new TextDecoder().decode(page.input.content.bytes)) as { items: unknown };
+      return content.items;
+    }
+
+    it('determinism: two v1 processes answer 100 identical search_logs requests byte-identically, and no call changes the data (UC-5, AC-15.1, AC-15.3, metric 5)', async () => {
+      const first = processOf('v1');
+      const second = processOf('v1');
+      const firstArgs = determinismArgs(0);
+      const before = serialized(await callRaw(first, SEARCH_LOGS, firstArgs));
+      const mismatches: number[] = [];
+      let recordsSeen = 0;
+
+      for (let index = 0; index < DETERMINISM_REQUESTS; index += 1) {
+        const args = determinismArgs(index);
+        const [left, right] = await Promise.all([callRaw(first, SEARCH_LOGS, args), callRaw(second, SEARCH_LOGS, args)]);
+        if (serialized(left) !== serialized(right)) {
+          mismatches.push(index);
+        }
+        recordsSeen += SearchLogsResultSchema.parse(left.structuredContent).records.length;
+      }
+
+      expect(mismatches).toEqual([]);
+      expect(recordsSeen).toBeGreaterThan(0);
+      // Read-only data: the first request answers the same after the other 200 calls.
+      expect(serialized(await callRaw(first, SEARCH_LOGS, firstArgs))).toBe(before);
+    }, 60_000);
+
+    it('size and versions: v1 holds at least 100 000 records under a fx-v1-<8 hex> snapshot; v2 adds the hour after the window and changes the snapshot (UC-6, AC-15.3, AC-15.5)', async () => {
+      const v1 = processOf('v1');
+      const v2 = processOf('v2');
+      const extraHour = { ...V2_EXTRA_HOUR, pageSize: 1 };
+
+      const [v1Info, v2Info] = await Promise.all([sourceInfo(v1), sourceInfo(v2)]);
+      const [v1Extra, v2Extra] = await Promise.all([callRaw(v1, SEARCH_LOGS, extraHour), callRaw(v2, SEARCH_LOGS, extraHour)]);
+      // The snapshot provenance records, read the way the executor pins it: through the adapter of a v2 source.
+      const v2Snapshot = await fixture({ env: { FIXTURE_DATASET: 'v2' } }).adapter.currentSnapshot(new AbortController().signal);
+
+      expect(v1Info.recordCount).toBeGreaterThanOrEqual(RECORD_COUNT_FLOOR);
+      expect({ v1: v1Info.recordCount, v2: v2Info.recordCount }).toEqual({ v1: 120_000, v2: 122_000 });
+      expect(v1Info.snapshot).toMatch(/^fx-v1-[0-9a-f]{8}$/);
+      expect(v1Info.snapshot).toBe(V1_SNAPSHOT);
+      expect(v2Info.snapshot).toMatch(/^fx-v2-[0-9a-f]{8}$/);
+      expect(v2Snapshot).toBe(v2Info.snapshot);
+      expect({
+        v1: SearchLogsResultSchema.parse(v1Extra.structuredContent).totalMatched,
+        v2: SearchLogsResultSchema.parse(v2Extra.structuredContent).totalMatched,
+      }).toEqual({ v1: 0, v2: 2_000 });
+    }, 30_000);
+
+    it('scenario: provider timeouts rise after the release, counted from aggregate_logs fetched complete (UC-5, AC-15.2)', async () => {
+      const harness = fixture({ env: { SOURCE_CALL_TIMEOUT_MS: String(LONG_CALL_TIMEOUT_MS) } });
+
+      const items = await fetchComplete(harness, 'aggregate_logs', {
+        ...V1_WINDOW,
+        service: 'provider-adapter',
+        status: 'timeout',
+        groupBy: 'status',
+        bucket: '1h',
+      });
+
+      const timeouts = { beforeRelease: 0, afterRelease: 0 };
+      for (const bucket of AggregateLogsResultSchema.shape.buckets.parse(items)) {
+        timeouts[Date.parse(bucket.start) < RELEASE_AT_MS ? 'beforeRelease' : 'afterRelease'] += bucket.count;
+      }
+      expect(timeouts.beforeRelease).toBeGreaterThan(0);
+      expect(timeouts.afterRelease).toBeGreaterThan(timeouts.beforeRelease);
+    }, 30_000);
+
+    it('ground truth: ground-truth/<version>.json equals regeneration, and every affected trace is found complete with a provider response later than the local timeout (UC-5, AC-15.2, AC-21.1)', async () => {
+      for (const version of DATASET_VERSIONS) {
+        expect(readGroundTruthFile(version), `ground-truth/${version}.json`).toEqual(generateGroundTruth(version));
+      }
+      const groundTruth = generateGroundTruth('v1');
+      expect(groundTruth.snapshot).toBe(V1_SNAPSHOT);
+      expect(groundTruth.affectedTraceIds.length).toBeGreaterThan(0);
+      const harness = fixture({ env: { SOURCE_CALL_TIMEOUT_MS: String(LONG_CALL_TIMEOUT_MS) } });
+      const violations: string[] = [];
+
+      for (const traceId of groundTruth.affectedTraceIds) {
+        const records = GetTraceResultSchema.shape.records.parse(await fetchComplete(harness, 'get_trace', { traceId }));
+        const timeout = records.find((record) => record.event === 'provider.timeout');
+        const late = records.find((record) => record.event === 'provider.response' && record.status === 'late');
+        const lateAfterTimeout =
+          timeout !== undefined &&
+          late !== undefined &&
+          timeout.durationMs === LOCAL_TIMEOUT_AFTER_RELEASE_MS &&
+          late.durationMs > timeout.durationMs &&
+          Date.parse(late.ts) > Date.parse(timeout.ts);
+        if (!lateAfterTimeout) {
+          violations.push(traceId);
+        }
+      }
+
+      expect(violations).toEqual([]);
+    }, 120_000);
+  });
 });
 
 // -----------------------------------------------------------------------------------------------------------------
