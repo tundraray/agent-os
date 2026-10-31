@@ -1,75 +1,131 @@
-import { Module, type OnModuleInit } from '@nestjs/common';
 import {
-  RUNTIME_CONFIG,
+  type BeforeApplicationShutdown,
+  Inject,
+  Module,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+  type OnModuleInit,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  assertNoPendingMigrations,
+  createDatabase,
+  type DatabaseConnection,
+} from '@agent-os/db';
+import {
+  type Clock,
+  createRuntime,
+  parseRuntimeConfig,
+  type Runtime,
   type RuntimeConfig,
-} from '../database/runtime-config.js';
+  systemClock,
+} from '@agent-os/runtime';
 import { ThreadDeletionHooks } from '../threads/thread-deletion-hooks.js';
 import { ThreadsModule } from '../threads/threads.module.js';
-import { CLOCK, systemClock } from './clock.js';
-import { CrashPoints } from './crash-points.js';
-import { Dispatcher } from './dispatcher.js';
-import { EventConsumerRegistry } from './event-consumer.registry.js';
-import { EventLog } from './event-log.js';
-import { EvidenceReader } from './evidence.reader.js';
-import { EvidenceStore } from './evidence.store.js';
-import { HandlerRegistry } from './handler.registry.js';
-import { InvestigationService } from './investigation.service.js';
-import { OutboxRelay } from './outbox.relay.js';
-import { RecoverySweeper } from './recovery.sweeper.js';
-import { RunningTaskRegistry } from './running-task.registry.js';
-import { RuntimeLifecycle } from './runtime.lifecycle.js';
-import { SchedulerConsumer } from './scheduler.consumer.js';
-import { TaskScheduler } from './task-scheduler.js';
-import { TaskRepository } from './task.repository.js';
+import { ThreadsService } from '../threads/threads.service.js';
+import { NestRuntimeLogger } from './nest-runtime-logger.js';
+import {
+  HANDLER_REGISTRY,
+  RESEARCH_RUNTIME,
+  RUNTIME_CLOCK,
+} from './research.tokens.js';
+import { runtimeSettingsVariables } from './runtime-settings.js';
+
+/** Runtime Settings parsed from the environment; internal to this module. */
+const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
+/** The application's single pool and its Drizzle client (KD-7); internal to this module. */
+const DATABASE = Symbol('DATABASE');
 
 /**
- * The research runtime (ADR-0001): investigations, admission and execution of tasks, evidence
- * and the outbox. Depends on `threads` only (the ownership check of `withOwnedThread`), never
- * the other way round. `DatabaseModule` is global: `DRIZZLE`, `PG_POOL` and `RUNTIME_CONFIG`
- * come from it. Workers start and stop with the application (`RuntimeLifecycle`, KD-7). A thread's
- * investigations are deleted with it through the thread deletion hook registered at start (KD-5).
+ * Composition root of the research runtime (ADR-0001, ADR-0004): it reads the environment,
+ * opens the pool with `createDatabase`, builds the runtime with `createRuntime` and binds it to
+ * the Nest phases (KD-7). `ThreadsService` is the `ThreadOwnership` port, and the thread deletion
+ * hook is registered here (KD-5), so `threads` depends on nothing of the runtime.
+ *
+ * Phases: `onModuleInit` — the migration check (never applies, ADR-0003) and the deletion hook;
+ * `onApplicationBootstrap` — `start` (workers only when `RUNTIME_WORKERS=on`);
+ * `beforeApplicationShutdown` — `stop`; `onApplicationShutdown` — the pool closes last.
  */
 @Module({
   imports: [ThreadsModule],
   providers: [
-    { provide: CLOCK, useValue: systemClock },
     {
-      provide: CrashPoints,
-      useFactory: (config: RuntimeConfig) => CrashPoints.fromConfig(config),
-      inject: [RUNTIME_CONFIG],
+      provide: RUNTIME_SETTINGS,
+      useFactory: (config: ConfigService): RuntimeConfig =>
+        parseRuntimeConfig(
+          runtimeSettingsVariables((name) => config.get<string>(name)),
+        ),
+      inject: [ConfigService],
     },
-    HandlerRegistry,
-    EventConsumerRegistry,
-    EventLog,
-    TaskRepository,
-    EvidenceStore,
-    EvidenceReader,
-    TaskScheduler,
-    InvestigationService,
-    RunningTaskRegistry,
-    Dispatcher,
-    SchedulerConsumer,
-    OutboxRelay,
-    RecoverySweeper,
-    RuntimeLifecycle,
+    {
+      provide: DATABASE,
+      useFactory: (
+        config: ConfigService,
+        settings: RuntimeConfig,
+      ): DatabaseConnection =>
+        createDatabase({
+          connectionString: config.getOrThrow<string>('DATABASE_URL'),
+          poolMax: settings.dbPoolMax,
+        }),
+      inject: [ConfigService, RUNTIME_SETTINGS],
+    },
+    { provide: RUNTIME_CLOCK, useValue: systemClock },
+    {
+      provide: RESEARCH_RUNTIME,
+      useFactory: (
+        database: DatabaseConnection,
+        settings: RuntimeConfig,
+        threads: ThreadsService,
+        clock: Clock,
+      ): Runtime =>
+        createRuntime({
+          database,
+          config: settings,
+          threads,
+          logger: new NestRuntimeLogger('ResearchRuntime'),
+          clock,
+        }),
+      inject: [DATABASE, RUNTIME_SETTINGS, ThreadsService, RUNTIME_CLOCK],
+    },
+    {
+      provide: HANDLER_REGISTRY,
+      useFactory: (runtime: Runtime) => runtime.handlers,
+      inject: [RESEARCH_RUNTIME],
+    },
   ],
-  exports: [
-    HandlerRegistry,
-    TaskScheduler,
-    InvestigationService,
-    EvidenceReader,
-  ],
+  exports: [RESEARCH_RUNTIME, HANDLER_REGISTRY, RUNTIME_CLOCK],
 })
-export class ResearchModule implements OnModuleInit {
+export class ResearchModule
+  implements
+    OnModuleInit,
+    OnApplicationBootstrap,
+    BeforeApplicationShutdown,
+    OnApplicationShutdown
+{
   constructor(
+    @Inject(DATABASE) private readonly database: DatabaseConnection,
+    @Inject(RESEARCH_RUNTIME) private readonly runtime: Runtime,
     private readonly deletionHooks: ThreadDeletionHooks,
-    private readonly investigations: InvestigationService,
   ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    await assertNoPendingMigrations(this.database.pool);
+    const { investigations } = this.runtime;
     this.deletionHooks.register({
-      stop: (ref, window) => this.investigations.stopThread(ref, window),
-      purge: (ref) => this.investigations.purgeThread(ref),
+      stop: (ref, window) => investigations.stopThread(ref, window),
+      purge: (ref) => investigations.purgeThread(ref),
     });
+  }
+
+  onApplicationBootstrap(): void {
+    this.runtime.start();
+  }
+
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.runtime.stop();
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.database.close();
   }
 }

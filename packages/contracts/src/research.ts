@@ -340,8 +340,8 @@ export type ToolCallGrant = z.infer<typeof ToolCallGrantSchema>;
 const ShortTextListSchema = z.array(z.string().max(500));
 
 /**
- * Result of `TaskHandler.run`. `failed` carries `failure`; `wait` carries `waitFor`
- * (edges already registered through `registerWait`).
+ * Schema of `TaskHandler.run`'s result; the type `HandlerResult` belongs to the handler port in
+ * `@agent-os/runtime`. `failed` carries `failure`; `wait` carries `waitFor`.
  */
 export const HandlerResultSchema = z
   .object({
@@ -371,7 +371,6 @@ export const HandlerResultSchema = z
       });
     }
   });
-export type HandlerResult = z.infer<typeof HandlerResultSchema>;
 
 /** Outcome of a succeeded task as stored and read (`Task.outcome`). */
 export const TaskOutcomeSchema = z.object({

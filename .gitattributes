@@ -1,0 +1,2 @@
+# Migration hashes are taken over raw bytes: no line-ending conversion.
+packages/db/migrations/** -text

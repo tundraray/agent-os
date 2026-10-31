@@ -33,18 +33,18 @@ jobs:
       - name: Migrations match the schema model
         run: |
           pnpm db:generate
-          changes="$(git status --porcelain -- apps/api/migrations)"
+          changes="$(git status --porcelain -- packages/db/migrations)"
           if [ -n "$changes" ]; then
             echo "::error::drizzle-kit generate produced migration changes; run pnpm db:generate and commit them"
             echo "$changes"
             exit 1
           fi
       - name: drizzle-kit check (snapshot collisions)
-        run: pnpm --filter api exec drizzle-kit check
+        run: pnpm --filter @agent-os/db exec drizzle-kit check
       - name: Migration journal timestamps strictly increase
         run: |
           node -e '
-            const { entries } = JSON.parse(require("fs").readFileSync("apps/api/migrations/meta/_journal.json", "utf8"));
+            const { entries } = JSON.parse(require("fs").readFileSync("packages/db/migrations/meta/_journal.json", "utf8"));
             for (let i = 1; i < entries.length; i++) {
               if (entries[i].when <= entries[i - 1].when) {
                 console.error(`::error::journal "when" of ${entries[i].tag} (${entries[i].when}) is not after ${entries[i - 1].tag} (${entries[i - 1].when}); regenerate the migration after rebase`);
@@ -55,9 +55,12 @@ jobs:
           '
       - run: pnpm knip
 
-  # Research runtime against a real Postgres 16 (design-runtime.md, Verification Strategy): the
-  # in-process INT file and the child-process kill matrix. The chat-shell e2e suite and the
-  # on-demand measurements (test:verify) are not part of CI.
+  # Research runtime against a real Postgres 16 (design-runtime.md, Part constraints): the
+  # packages are built along the turbo graph, then each package's Postgres suite runs in turn —
+  # db (migrations), runtime (in-process INT file and the child-process kill matrix) — and then
+  # the apps/api wiring and boot tests. One suite at a time: the relay and the reaper of one
+  # suite would touch another's rows. The chat-shell e2e suite and the on-demand measurements
+  # (test:verify) are not part of CI.
   e2e-runtime:
     runs-on: ubuntu-latest
     services:
@@ -86,7 +89,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Contracts first (turbo ^build), then apps/api, whose dist holds the migration CLI.
+      # Contracts, then db, then runtime, then apps/api, whose dist holds the migration CLI.
       - run: pnpm turbo build --filter=api...
       - run: pnpm --filter api db:migrate
+      - run: pnpm --filter @agent-os/db test:e2e
+      - run: pnpm --filter @agent-os/runtime test:e2e
       - run: pnpm --filter api test:e2e:runtime

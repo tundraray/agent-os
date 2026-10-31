@@ -1,24 +1,25 @@
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModule } from '@nestjs/testing';
 import { Agent } from '@mastra/core/agent';
 import { Mastra } from '@mastra/core/mastra';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
-import { AppModule } from '../../src/app.module.js';
-import {
-  loadRuntimeConfig,
-  RUNTIME_CONFIG,
-  type RuntimeConfig,
-} from '../../src/database/runtime-config.js';
-import { MASTRA } from '../../src/mastra/mastra.constants.js';
-import { EvidenceReader } from '../../src/research/evidence.reader.js';
-import {
+import type {
+  EvidenceReader,
   HandlerRegistry,
-  type TaskHandler,
-} from '../../src/research/handler.registry.js';
-import { InvestigationService } from '../../src/research/investigation.service.js';
-import { TaskScheduler } from '../../src/research/task-scheduler.js';
+  InvestigationService,
+  Runtime,
+  RuntimeConfig,
+  TaskHandler,
+  TaskScheduler,
+} from '@agent-os/runtime';
+import { AppModule } from '../../src/app.module.js';
+import { MASTRA } from '../../src/mastra/mastra.constants.js';
+import {
+  HANDLER_REGISTRY,
+  RESEARCH_RUNTIME,
+} from '../../src/research/research.tokens.js';
 import {
   createThreadTitleAgent,
   THREAD_TITLE_AGENT,
@@ -47,36 +48,90 @@ export interface RuntimeApp {
   close(): Promise<void>;
 }
 
+/** Variable of Runtime Settings behind each `RuntimeConfig` field (design-runtime.md). */
+const SETTING_VARIABLES: Record<keyof RuntimeConfig, string> = {
+  workers: 'RUNTIME_WORKERS',
+  concurrency: 'RUNTIME_CONCURRENCY',
+  pollMs: 'RUNTIME_POLL_MS',
+  notify: 'RUNTIME_NOTIFY',
+  leaseMs: 'RUNTIME_LEASE_MS',
+  heartbeatMs: 'RUNTIME_HEARTBEAT_MS',
+  reaperMs: 'RUNTIME_REAPER_MS',
+  maxRecoveries: 'RUNTIME_MAX_RECOVERIES',
+  deliveryMaxAttempts: 'RUNTIME_DELIVERY_MAX_ATTEMPTS',
+  shutdownGraceMs: 'RUNTIME_SHUTDOWN_GRACE_MS',
+  dbPoolMax: 'DB_POOL_MAX',
+  crashAt: 'RUNTIME_CRASH_AT',
+  nodeEnv: 'NODE_ENV',
+};
+
+/** The settings as the variables `ResearchModule` reads; `undefined` leaves a variable unset. */
+function settingVariables(
+  settings: Partial<RuntimeConfig>,
+): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(settings).map(([field, value]) => [
+      SETTING_VARIABLES[field as keyof RuntimeConfig],
+      typeof value === 'boolean' ? (value ? 'on' : 'off') : value?.toString(),
+    ]),
+  );
+}
+
+/**
+ * Sets `variables` in `process.env` and returns the function restoring the previous values.
+ */
+function overrideEnv(
+  variables: Record<string, string | undefined>,
+): () => void {
+  const previous = Object.fromEntries(
+    Object.keys(variables).map((name) => [name, process.env[name]]),
+  );
+  const assign = (values: Record<string, string | undefined>) => {
+    for (const [name, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  assign(variables);
+  return () => assign(previous);
+}
+
 /**
  * The real `AppModule` against the docker-compose Postgres with the runtime's workers on,
- * whatever the environment says (the e2e harness defaults to `RUNTIME_WORKERS=off`): the parsed
- * `RuntimeConfig` is replaced, not the variable. `MASTRA` carries only the `assistant` agent's
- * Memory (threads for `InvestigationService.create`) on a mock model — no network.
+ * whatever the environment says (the e2e harness defaults to `RUNTIME_WORKERS=off`): the test
+ * settings are the variables `ResearchModule` reads, set in `process.env` while the module
+ * compiles — the only time they are read — and restored right after. Test handlers are
+ * registered through `HANDLER_REGISTRY` before `app.init()` starts the workers. `MASTRA` carries
+ * only the `assistant` agent's Memory (threads for `InvestigationService.create`) on a mock
+ * model — no network.
  */
 export async function createRuntimeApp(
   options: RuntimeAppOptions,
 ): Promise<RuntimeApp> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(RUNTIME_CONFIG)
-    .useFactory({
-      factory: (config: ConfigService): RuntimeConfig => ({
-        ...loadRuntimeConfig(config),
-        workers: true,
-        concurrency: 2,
-        pollMs: 50,
-        dbPoolMax: 4,
-        ...options.runtime,
-      }),
-      inject: [ConfigService],
-    })
-    .overrideProvider(MASTRA)
-    .useFactory({ factory: createRuntimeMastra, inject: [ConfigService] })
-    .overrideProvider(THREAD_TITLE_AGENT)
-    .useValue(createThreadTitleAgent(titleModel().model))
-    .compile();
+  const restoreEnv = overrideEnv(
+    settingVariables({
+      workers: true,
+      concurrency: 2,
+      pollMs: 50,
+      dbPoolMax: 4,
+      ...options.runtime,
+    }),
+  );
+  let moduleRef: TestingModule;
+  try {
+    moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MASTRA)
+      .useFactory({ factory: createRuntimeMastra, inject: [ConfigService] })
+      .overrideProvider(THREAD_TITLE_AGENT)
+      .useValue(createThreadTitleAgent(titleModel().model))
+      .compile();
+  } finally {
+    restoreEnv();
+  }
 
-  const registry = moduleRef.get(HandlerRegistry);
+  const registry = moduleRef.get<HandlerRegistry>(HANDLER_REGISTRY);
   for (const handler of options.handlers) registry.register(handler);
+  const runtime = moduleRef.get<Runtime>(RESEARCH_RUNTIME);
 
   const app = moduleRef.createNestApplication();
   await app.init();
@@ -90,9 +145,9 @@ export async function createRuntimeApp(
   const owners = new Set<string>();
   return {
     app,
-    investigations: moduleRef.get(InvestigationService),
-    scheduler: moduleRef.get(TaskScheduler),
-    evidence: moduleRef.get(EvidenceReader),
+    investigations: runtime.investigations,
+    scheduler: runtime.scheduler,
+    evidence: runtime.evidence,
     createThread: async (resourceId) => {
       owners.add(resourceId);
       const { ids } = await seed(memory, {

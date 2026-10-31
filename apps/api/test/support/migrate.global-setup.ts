@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
-import { applyMigrations } from '../../src/database/migrate.js';
+import { applyMigrations } from '@agent-os/db';
 
 const ENV_FILE = fileURLToPath(new URL('../../.env', import.meta.url));
 

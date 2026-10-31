@@ -10,10 +10,16 @@
     "apps/api": {
       "entry": [
         "src/main.ts",
-        "src/database/migrate-cli.ts",
-        "test/support/runtimeChildMain.ts"
+        "src/research/migrate-cli.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
+    },
+    "packages/runtime": {
+      "entry": [
+        "src/index.ts",
+        "test/support/runtimeChildMain.ts",
+        "test/verify/**/*.verify.ts"
+      ]
     }
   }
 }
