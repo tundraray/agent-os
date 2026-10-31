@@ -19,6 +19,8 @@
 // Budget: integration 4 of 5 (limit 3; the 4th names a defect no other test catches - see INT-4). Pure rules are proven at unit level, see the
 // "Proven at unit level" block at the end of this file; do not re-check their variants here.
 
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HandlerResultSchema, type EvidenceInput } from '@agent-os/contracts';
 import { DATASET_VERSIONS, generateGroundTruth, type DatasetVersion } from '@agent-os/mcp-fixture';
 import type { Clock } from '@agent-os/runtime';
@@ -27,7 +29,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AttemptStoppedError } from '../src/attempt-stopped.error.js';
 import { FetchHandler } from '../src/fetch.handler.js';
 import { FetchCheckpointSchema, type FetchCheckpoint } from '../src/fetch-input.js';
-import { FIXTURE_SOURCE_ID } from '../src/fixture/fixture-source.adapter.js';
+import { FIXTURE_SOURCE_ID, FixtureSourceAdapter } from '../src/fixture/fixture-source.adapter.js';
 import {
   AggregateLogsResultSchema,
   GetTraceResultSchema,
@@ -486,6 +488,60 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
       expect(afterCrash).toHaveLength(2);
       expect(new Set(afterCrash.map((line) => line.pid)).size).toBe(1);
       expect(afterCrash[0].pid).not.toBe(lines[crashAt].pid);
+    }, 30_000);
+
+    it('a process start that outlives the call timeout is K-6 timeout, retried, and the retry starts a new process (K-6, AC-MS-5)', async () => {
+      const harness = fixture({});
+      const ctx = new InMemoryTaskContext(LIMITS_3_5);
+      const args = searchArgs(0);
+      // The first call's timeout fits no process start (spawn and initialize), as on an overloaded machine; the retry's does.
+      const settings = {
+        ...harness.settings,
+        get callTimeoutMs() {
+          return ctx.toolCalls <= 1 ? 1 : harness.settings.callTimeoutMs;
+        },
+      };
+      const executor = new ToolExecutor({
+        registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: ALLOWLIST }),
+        settings,
+        clock: clockWithJitter(0.5),
+        logger: harness.logger,
+      });
+
+      const outcome = await executor.execute(ctx, searchRequest(args));
+
+      expect(outcome.kind).toBe('completed');
+      expect(ctx.reservations.map((record) => record.retry)).toEqual([false, true]);
+      expect(retryCodes(harness, ctx)).toEqual(['timeout']);
+      // The timed-out start never reached tools/call; the retry went to a process started afresh.
+      expect(linesOf(harness, args)).toHaveLength(1);
+    }, 30_000);
+
+    it('a source process whose entry script does not exist is K-9, not retried, and logged at error (K-9)', async () => {
+      const harness = fixture({});
+      const missing = new FixtureSourceAdapter({
+        serverPath: join(tmpdir(), 'agent-os-no-such-mcp-server.js'),
+        settings: harness.settings,
+        logger: harness.logger,
+      });
+      const executor = new ToolExecutor({
+        registry: createSourceRegistry({ adapters: [missing], allowlist: ALLOWLIST }),
+        settings: harness.settings,
+        clock: clockWithJitter(0.5),
+        logger: harness.logger,
+      });
+      const ctx = new InMemoryTaskContext(LIMITS_3_5);
+
+      try {
+        const outcome = await executor.execute(ctx, searchRequest(searchArgs(0)));
+
+        expect(failureOf(outcome)).toEqual(CONFIG_MISMATCH);
+        expect(ctx.reservations.map((record) => record.retry)).toEqual([false]);
+        const errors = harness.logger.records.filter((record) => record.level === 'error');
+        expect(errors.map((record) => record.fields.code)).toEqual(['config_or_protocol_mismatch']);
+      } finally {
+        await missing.close();
+      }
     }, 30_000);
   });
 

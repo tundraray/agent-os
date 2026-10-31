@@ -52,6 +52,14 @@ function assertFixtureEnv(env: Readonly<Record<string, string>>): void {
 }
 
 /**
+ * A handshake that outlived its timeout: a slow start, not a wrong configuration. It stays a `RequestTimeout`
+ * (K-6, or K-2 when the deadline capped the timeout) instead of becoming a startup failure (K-9).
+ */
+function isStartTimeout(error: unknown): error is SdkError {
+  return error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout;
+}
+
+/**
  * Waits for the shared process start but stops waiting when this call's signal aborts, reporting it as the SDK
  * reports an aborted request (RequestTimeout); the caller reads the signal first (K-1). The start itself goes on
  * for the other calls that share it.
@@ -132,7 +140,7 @@ export class McpSourceClient {
     const opening: Promise<Connection> = this.start(timeoutMs, () => this.forget(opening)).catch(
       (error: unknown) => {
         this.forget(opening);
-        throw new McpStartupError(error);
+        throw isStartTimeout(error) ? error : new McpStartupError(error);
       },
     );
     return opening;
