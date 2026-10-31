@@ -13,6 +13,7 @@ import {
   type RuntimeLogFields,
   type RuntimeLogger,
   systemClock,
+  type TaskHandler,
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import {
@@ -111,14 +112,19 @@ export interface SourcesHarnessOptions {
   readonly runtime?: Partial<RuntimeConfig>;
   /** Also print every log line (the child process, whose output its harness keeps on failure). */
   readonly echoLogs?: boolean;
+  /** Test handlers registered next to `source.fetch`, before the workers start. */
+  readonly handlers?: readonly TaskHandler[];
 }
 
 export interface SourcesHarness {
   readonly runtime: Runtime;
   readonly sources: Sources;
   readonly database: DatabaseConnection;
-  /** A new thread of `resourceId` known to the ownership double; returns its id. */
-  createThread(resourceId: string): string;
+  /**
+   * A thread of `resourceId` known to the ownership double; returns its id. A new id by default, or `threadId` —
+   * a thread an earlier assembly created — so a later assembly reads the same investigation.
+   */
+  createThread(resourceId: string, threadId?: string): string;
   /** Stops the runtime, then closes the sources (their processes), then the pool — each even when one before fails. */
   close(): Promise<void>;
 }
@@ -182,14 +188,14 @@ export function createSourcesHarness(options: SourcesHarnessOptions): SourcesHar
     clock: systemClock,
     logger: loggers.sources,
   });
+  for (const handler of options.handlers ?? []) runtime.handlers.register(handler);
   runtime.start();
 
   return {
     runtime,
     sources,
     database,
-    createThread(resourceId) {
-      const threadId = `thread-${randomUUID()}`;
+    createThread(resourceId, threadId = `thread-${randomUUID()}`) {
       owners.set(threadId, resourceId);
       return threadId;
     },

@@ -14,20 +14,23 @@
 // - Backoff jitter and clock injected; no LLM, no network.
 // - The Design Doc lists UC-7 (stub adapter) under e2e-runtime; it needs no database and is proven at unit level instead (see the int skeleton file).
 //
-// Cases whose task has not landed are `it.todo` (E2E-1: T4.2). Do not convert a todo into a passing stub.
+// E2E-1 registers a probe handler next to `source.fetch`: the other side of the dependency and of the refused wait.
 //
 // Budget: E2E 2 of 2. Raw-formula ROI is low for both because the formula divides by an E2E cost of 38; they are kept because the Design Doc and PRD make them the
 // acceptance gates (metrics 1, 3) and nothing at a lower level can prove Postgres-backed fencing, recovery and storage.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Task } from '@agent-os/contracts';
-import { fixtureServerPath } from '@agent-os/mcp-fixture';
-import { McpSourceClient, parseSourcesSettings } from '@agent-os/sources';
+import type { ProposeResult, Task, TaskSpec } from '@agent-os/contracts';
+import { argsHash, fixtureServerPath } from '@agent-os/mcp-fixture';
+import type { HandlerResult, RegisterWaitResult, TaskContext, TaskHandler, UpstreamTask } from '@agent-os/runtime';
+import { FIXTURE_SOURCE_ID, McpSourceClient, parseSourcesSettings } from '@agent-os/sources';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { CRASH_EXIT_CODE, runFetchRecovery } from './support/fetchChild.js';
 import {
+  type CallLogLine,
   createSourcesHarness,
   type FetchArgs,
   type FetchRequest,
@@ -37,6 +40,7 @@ import {
   proposeFetch,
   type ProposedFetch,
   SEARCH_LOGS,
+  SOURCE_FETCH,
   type SourcesHarness,
   TEST_SOURCES_ENV,
 } from './support/runtimeHarness.js';
@@ -76,9 +80,463 @@ describe('research-runtime / mcp-source - E2E (real Postgres, real fixture)', ()
   // - Outcome 7: same request on fixture v1 then v2 -> a new task, a new source call, evidence snapshot differs
   // - Metric 3: per run, the fixture call log has exactly 1 line for the 10 simultaneous identical requests; the check is repeated for all 20 runs
   // - All 20 runs pass independently (fresh resourceId and fresh fault / log files per run)
-  it.todo(
-    'E2E-1: the seven-outcome acceptance scenario holds in 20 consecutive runs, with provenance on every evidence and exactly one source call for 10 identical requests',
-  );
+  describe('E2E-1: the seven-outcome acceptance scenario holds in 20 consecutive runs, with provenance on every evidence and exactly one source call for 10 identical requests', () => {
+    const RUNS = Array.from({ length: 20 }, (_, index) => index + 1);
+    /** Snapshot of the fixture's `v1` dataset (`fx-<version>-<8 hex of the generator parameters>`). */
+    const V1_SNAPSHOT = 'fx-v1-2157485c';
+    const V2_SNAPSHOT = 'fx-v2-5311fe55';
+    const PROBE = 'e2e.probe';
+    const REQUESTER = 'e2e-1';
+    const IDENTICAL_REQUESTS = 10;
+    const MAX_RETRIES = 3;
+    /** Keeps the shared call open while the 10 admissions land, so all of them meet a live task. */
+    const IDENTICAL_HOLD_MS = 2_000;
+    /** Keeps the call of page 3 open while the first assembly closes; the stop aborts it long before. */
+    const RESTART_HOLD_MS = 20_000;
+    const TASK_END_MS = 60_000;
+    const POLL_MS = 50;
+
+    /** UC-1: the hour after the release, one service, on several pages. */
+    const RELEASE_HOUR = { from: '2026-09-15T00:00:00.000Z', to: '2026-09-15T01:00:00.000Z', service: 'provider-adapter', pageSize: 500 };
+    /** Counted from the generator: the same 665 records on `v1` and `v2`, two pages of 500. */
+    const RELEASE_HOUR_MATCHES = 665;
+    const RELEASE_HOUR_PAGES = 2;
+    /** Each outcome has a window or filter of its own, so its calls and its fault rule are its own. */
+    const IDENTICAL = { from: '2026-09-14T01:00:00.000Z', to: '2026-09-14T01:10:00.000Z', pageSize: 500 };
+    const DEPENDENT = { from: '2026-09-14T02:00:00.000Z', to: '2026-09-14T02:10:00.000Z', pageSize: 500 };
+    const EMPTY = { ...RELEASE_HOUR, event: 'e2e.no-such-event' };
+    const TOOL_ERROR = { from: '2026-09-14T03:00:00.000Z', to: '2026-09-14T03:10:00.000Z', pageSize: 500 };
+    const CRASH = { from: '2026-09-14T04:00:00.000Z', to: '2026-09-14T04:10:00.000Z', pageSize: 500 };
+    /** A window of exactly 2 500 `v1` records: five pages of 500. */
+    const RESTART = { from: '2026-09-14T07:00:00.000Z', to: '2026-09-14T08:00:01.000Z', pageSize: 500 };
+    const RESTART_PAGE_KEYS = ['page-0001', 'page-0002', 'page-0003', 'page-0004', 'page-0005'];
+
+    const FAULT_RULES: readonly FixtureFaultRule[] = [
+      { tool: SEARCH_LOGS, argsHash: argsHash(IDENTICAL), occurrences: [1], mode: 'delay_ms', ms: IDENTICAL_HOLD_MS },
+      { tool: SEARCH_LOGS, argsHash: argsHash(TOOL_ERROR), occurrences: 'all', mode: 'tool_error' },
+      { tool: SEARCH_LOGS, argsHash: argsHash(CRASH), occurrences: 'all', mode: 'crash_process' },
+      { tool: SEARCH_LOGS, argsHash: argsHash(RESTART), occurrences: [3], mode: 'delay_ms', ms: RESTART_HOLD_MS },
+    ];
+
+    /** What a probe task does when it runs, by the `script` of its input; set by the run that proposes it. */
+    const probeScripts = new Map<string, (ctx: TaskContext) => Promise<HandlerResult>>();
+    const ProbeInputSchema = z.object({ script: z.string().min(1) });
+    /** A test handler beside `source.fetch`: the other side of a dependency or of a wait. */
+    const probeHandler: TaskHandler = {
+      workflowType: PROBE,
+      workflowVersion: 1,
+      inputSchema: ProbeInputSchema,
+      run(ctx) {
+        const { script } = ProbeInputSchema.parse(ctx.input);
+        const run = probeScripts.get(script);
+        if (run === undefined) throw new Error(`No probe script ${script}`);
+        return run(ctx);
+      },
+    };
+    const probeCompleted: HandlerResult = {
+      kind: 'completed',
+      answerOrDelta: null,
+      evidenceRefs: [],
+      coverage: null,
+      missingEvidence: [],
+      warnings: [],
+      proposedTasks: [],
+    };
+
+    /** One run: its own resource, investigation, fault rules and call log. */
+    interface ScenarioRun {
+      readonly resourceId: string;
+      readonly threadId: string;
+      readonly investigationId: string;
+      readonly files: FixtureFiles;
+    }
+
+    interface EvidenceRow {
+      readonly evidenceId: string;
+      readonly evidenceKey: string;
+      readonly sha256: string;
+      readonly writtenByAttempt: number;
+    }
+
+    const ended = (task: Task): boolean => ['succeeded', 'failed', 'cancelled'].includes(task.status);
+    const pageKey = (index: number): string => `page-${String(index + 1).padStart(4, '0')}`;
+
+    function assemble(files: FixtureFiles, dataset: 'v1' | 'v2'): SourcesHarness {
+      return createSourcesHarness({
+        sources: parseSourcesSettings({ ...TEST_SOURCES_ENV, ...files.env, FIXTURE_DATASET: dataset }),
+        handlers: [probeHandler],
+      });
+    }
+
+    /**
+     * Runs `body` on a new assembly over the run's fixture files and closes it. A later assembly adopts the run's
+     * thread. When `body` fails, the run's investigation is cancelled first, so its unfinished tasks do not reach the
+     * assembly of a later run, which claims every ready task of a registered type.
+     */
+    async function inAssembly<T>(
+      files: FixtureFiles,
+      dataset: 'v1' | 'v2',
+      scenario: { readonly run?: ScenarioRun },
+      body: (harness: SourcesHarness) => Promise<T>,
+    ): Promise<T> {
+      const harness = assemble(files, dataset);
+      try {
+        if (scenario.run !== undefined) harness.createThread(scenario.run.resourceId, scenario.run.threadId);
+        return await body(harness);
+      } catch (error) {
+        const { run } = scenario;
+        if (run !== undefined) {
+          await harness.runtime.investigations.cancel(run.investigationId, run.resourceId).catch((cancelError: unknown) => {
+            throw new AggregateError([error, cancelError], `Run failed, and cancelling investigation ${run.investigationId} failed too`);
+          });
+        }
+        throw error;
+      } finally {
+        await harness.close();
+      }
+    }
+
+    async function openRun(harness: SourcesHarness, files: FixtureFiles): Promise<ScenarioRun> {
+      const resourceId = `e2e-${randomUUID()}`;
+      const threadId = harness.createThread(resourceId);
+      const { investigationId } = await harness.runtime.investigations.create({
+        resourceId,
+        threadId,
+        query: 'mcp-source E2E-1',
+        budget: { maxTasks: 20, maxToolCalls: 200 },
+      });
+      return { resourceId, threadId, investigationId, files };
+    }
+
+    /** Polls `condition` until it yields a value; a guard on state, not an ordering sleep. */
+    async function until<T>(what: string, condition: () => Promise<T | undefined>): Promise<T> {
+      const startedAt = Date.now();
+      for (;;) {
+        const value = await condition();
+        if (value !== undefined) return value;
+        if (Date.now() - startedAt > TASK_END_MS) throw new Error(`No ${what} within ${TASK_END_MS} ms`);
+        await delay(POLL_MS);
+      }
+    }
+
+    function fetchSpec(
+      run: ScenarioRun,
+      args: FetchArgs,
+      pin: { completeness: 'all' | 'sample'; snapshot: string; dependsOn?: readonly string[] },
+    ): TaskSpec {
+      return {
+        investigationId: run.investigationId,
+        workflowType: SOURCE_FETCH,
+        workflowVersion: 1,
+        input: { sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS, args: { ...args } },
+        inputRefs: [{ kind: 'source', ref: FIXTURE_SOURCE_ID, snapshot: pin.snapshot }],
+        expectedOutput: { description: 'fixture logs of the window', completeness: pin.completeness },
+        dependsOn: [...(pin.dependsOn ?? [])],
+        budget: { maxToolCalls: 10, maxRetries: MAX_RETRIES, deadlineMs: 120_000, maxTokens: 0 },
+      };
+    }
+
+    function probeSpec(run: ScenarioRun, script: string, dependsOn: readonly string[]): TaskSpec {
+      return {
+        investigationId: run.investigationId,
+        workflowType: PROBE,
+        workflowVersion: 1,
+        input: { script },
+        inputRefs: [],
+        expectedOutput: { description: 'probe', completeness: 'sample' },
+        dependsOn: [...dependsOn],
+        budget: { maxToolCalls: 1, maxRetries: 0, deadlineMs: 120_000, maxTokens: 0 },
+      };
+    }
+
+    function createdTask(result: ProposeResult): string {
+      if (result.outcome !== 'created') throw new Error(`Expected a new task, got ${JSON.stringify(result)}`);
+      return result.taskId;
+    }
+
+    async function proposeNew(harness: SourcesHarness, spec: TaskSpec): Promise<string> {
+      return createdTask(await harness.runtime.scheduler.propose(spec, REQUESTER));
+    }
+
+    /** The task through the runtime's public view of the investigation. */
+    async function taskView(harness: SourcesHarness, run: ScenarioRun, taskId: string): Promise<Task> {
+      const investigations = await harness.runtime.investigations.listForThread(run.resourceId, run.threadId);
+      const task = investigations
+        .find((investigation) => investigation.investigationId === run.investigationId)
+        ?.tasks?.find((known) => known.taskId === taskId);
+      if (task === undefined) throw new Error(`Task ${taskId} is not in investigation ${run.investigationId}`);
+      return task;
+    }
+
+    function taskEnd(harness: SourcesHarness, run: ScenarioRun, taskId: string): Promise<Task> {
+      return until(`end of task ${taskId}`, async () => {
+        const task = await taskView(harness, run, taskId);
+        return ended(task) ? task : undefined;
+      });
+    }
+
+    /** Lines of the independent counter for one query: every page of it shares the hash. */
+    function callsOf(run: ScenarioRun, args: FetchArgs): CallLogLine[] {
+      const hash = argsHash(args);
+      return run.files.readCallLog().filter((line) => line.tool === SEARCH_LOGS && line.argsHash === hash);
+    }
+
+    /** Every evidence row of the task, by key; a page stored twice shows up as two rows. */
+    async function evidenceRows(harness: SourcesHarness, taskId: string): Promise<EvidenceRow[]> {
+      const { rows } = await harness.database.pool.query<EvidenceRow>(
+        `SELECT e.evidence_id AS "evidenceId", e.evidence_key AS "evidenceKey", c.sha256,
+                e.written_by_attempt AS "writtenByAttempt"
+           FROM app.research_evidence e
+           JOIN app.research_evidence_contents c ON c.evidence_id = e.evidence_id
+          WHERE e.task_id = $1 ORDER BY e.evidence_key, e.written_by_attempt`,
+        [taskId],
+      );
+      return rows;
+    }
+
+    /**
+     * AC-12.1: `outputRefs` are exactly the task's evidence, one row per page, and every page carries the FR-12
+     * provenance - source, tool, the arguments with the cursor that fetched it, the pinned snapshot - with its
+     * coverage, media type and a hash of its bytes.
+     */
+    async function expectProvenance(
+      harness: SourcesHarness,
+      run: ScenarioRun,
+      task: Task,
+      expected: { args: FetchArgs; snapshot: string; pages: number },
+    ): Promise<void> {
+      const rows = await evidenceRows(harness, task.taskId);
+      expect(rows.map((row) => row.evidenceKey)).toEqual(Array.from({ length: expected.pages }, (_, index) => pageKey(index)));
+      expect(task.outputRefs).toEqual(rows.map((row) => row.evidenceId));
+      let cursor: string | null = null;
+      for (const evidenceId of task.outputRefs) {
+        const { record, bytes } = await harness.runtime.evidence.get(evidenceId, run.resourceId);
+        expect(record.provenance).toEqual({
+          sourceId: 'fixture',
+          toolName: 'search_logs',
+          normalizedArgs: { ...expected.args, cursor },
+          snapshot: expected.snapshot,
+        });
+        expect(record).toMatchObject({ taskId: task.taskId, mediaType: 'application/json', knowledgeStatus: 'observed' });
+        expect(createHash('sha256').update(bytes).digest('hex')).toBe(record.sha256);
+        expect(record.coverage.truncated).toBe(record.coverage.continuation !== null);
+        cursor = record.coverage.continuation;
+      }
+      expect(cursor).toBeNull();
+    }
+
+    /** Outcome 1 (AC-12.1, UC-1): the hour after the release on `v1`, every page with provenance. */
+    async function evidenceWithProvenance(harness: SourcesHarness, run: ScenarioRun): Promise<Task> {
+      const snapshot = await harness.sources.registry.currentSnapshot(FIXTURE_SOURCE_ID, AbortSignal.timeout(TASK_END_MS));
+      expect(snapshot).toBe(V1_SNAPSHOT);
+      const taskId = await proposeNew(harness, fetchSpec(run, RELEASE_HOUR, { completeness: 'all', snapshot }));
+
+      const task = await taskEnd(harness, run, taskId);
+
+      expect(task.status).toBe('succeeded');
+      expect(task.coverage).toEqual({
+        completeness: 'complete',
+        totalMatched: RELEASE_HOUR_MATCHES,
+        totalRelation: 'eq',
+        returned: RELEASE_HOUR_MATCHES,
+        truncated: false,
+        continuation: null,
+      });
+      await expectProvenance(harness, run, task, { args: RELEASE_HOUR, snapshot: V1_SNAPSHOT, pages: RELEASE_HOUR_PAGES });
+      expect(callsOf(run, RELEASE_HOUR)).toHaveLength(RELEASE_HOUR_PAGES);
+      return task;
+    }
+
+    /** Outcome 3 (AC-06.1) and metric 3 (AC-06.2): 10 simultaneous identical requests, one task, one source call. */
+    async function identicalRequestsCollapse(harness: SourcesHarness, run: ScenarioRun): Promise<void> {
+      const spec = fetchSpec(run, IDENTICAL, { completeness: 'sample', snapshot: V1_SNAPSHOT });
+      const requesters = Array.from({ length: IDENTICAL_REQUESTS }, (_, index) => `${REQUESTER}-requester-${index + 1}`);
+
+      const results = await Promise.all(requesters.map((requester) => harness.runtime.scheduler.propose(spec, requester)));
+
+      expect(results.map((result) => result.outcome).sort()).toEqual(['created', ...Array<string>(IDENTICAL_REQUESTS - 1).fill('subscribed')]);
+      const taskIds = new Set(results.map((result) => (result.outcome === 'rejected' ? result.reason : result.taskId)));
+      expect(taskIds.size).toBe(1);
+      const [taskId] = taskIds;
+      const task = await taskEnd(harness, run, taskId);
+      expect(task.status).toBe('succeeded');
+      expect([...task.subscribers].sort()).toEqual([...requesters].sort());
+      expect(task.outputRefs).toHaveLength(1);
+      // Metric 3: the independent counter has exactly one line for the 10 requests.
+      expect(callsOf(run, IDENTICAL)).toHaveLength(1);
+    }
+
+    /**
+     * Outcomes 2 (AC-04.1) and 4 (AC-07.1): a fetch task F depends on a probe W, and a probe R depends on F. While W
+     * runs, neither F nor R starts and the source is not called; W then registers a wait on F, which closes the cycle
+     * W -> F -> W and is refused; all three go on and succeed, and R starts with F succeeded and F's evidence.
+     */
+    async function dependencyAndRefusedCycle(harness: SourcesHarness, run: ScenarioRun): Promise<void> {
+      const waiterScript = `${run.resourceId}:waiter`;
+      const readerScript = `${run.resourceId}:reader`;
+      let fetchId = '';
+      let waiterRunning = false;
+      let releaseWaiter = (): void => undefined;
+      const waiterReleased = new Promise<void>((resolve) => {
+        releaseWaiter = resolve;
+      });
+      let registered: RegisterWaitResult | undefined;
+      let upstreamAtStart: UpstreamTask[] | undefined;
+      probeScripts.set(waiterScript, async (ctx) => {
+        waiterRunning = true;
+        await waiterReleased;
+        registered = await ctx.registerWait([fetchId]);
+        return probeCompleted;
+      });
+      probeScripts.set(readerScript, async (ctx) => {
+        upstreamAtStart = ctx.upstream.map((upstream) => ({ ...upstream, outputRefs: [...upstream.outputRefs] }));
+        return probeCompleted;
+      });
+      try {
+        const waiterId = await proposeNew(harness, probeSpec(run, waiterScript, []));
+        fetchId = await proposeNew(
+          harness,
+          fetchSpec(run, DEPENDENT, { completeness: 'sample', snapshot: V1_SNAPSHOT, dependsOn: [waiterId] }),
+        );
+        const readerId = await proposeNew(harness, probeSpec(run, readerScript, [fetchId]));
+        await until('start of the waiter', async () => (waiterRunning ? true : undefined));
+
+        // AC-04.1: while the dependency runs, the dependents have not started and the source was not called.
+        expect((await taskView(harness, run, fetchId)).status).toBe('queued');
+        expect((await taskView(harness, run, readerId)).status).toBe('queued');
+        expect(callsOf(run, DEPENDENT)).toEqual([]);
+
+        releaseWaiter();
+        const [waiter, fetched, reader] = await Promise.all(
+          [waiterId, fetchId, readerId].map((taskId) => taskEnd(harness, run, taskId)),
+        );
+
+        // AC-07.1: the wait that closes the cycle is refused, naming the cycle from the task that asked.
+        expect(registered).toEqual({ outcome: 'rejected', reason: 'wait_cycle', details: { cycle: [waiterId, fetchId] } });
+        expect([waiter.status, fetched.status, reader.status]).toEqual(['succeeded', 'succeeded', 'succeeded']);
+        // AC-04.1: the dependent starts after its dependency succeeded and gets its evidence.
+        expect(fetched.outputRefs).toHaveLength(1);
+        expect(upstreamAtStart).toEqual([
+          { taskId: fetchId, kind: 'depends_on', status: 'succeeded', outputRefs: fetched.outputRefs },
+        ]);
+        expect(callsOf(run, DEPENDENT)).toHaveLength(1);
+      } finally {
+        // On a failure above, the waiter must not hold its slot through the cancel and the stop.
+        releaseWaiter();
+        probeScripts.delete(waiterScript);
+        probeScripts.delete(readerScript);
+      }
+    }
+
+    /** Outcome 6 (FR-13): an empty result, a tool error and a transport failure end in three different classes. */
+    async function threeOutcomeClasses(harness: SourcesHarness, run: ScenarioRun): Promise<void> {
+      const fetchToEnd = async (args: FetchArgs): Promise<Task> =>
+        taskEnd(harness, run, await proposeNew(harness, fetchSpec(run, args, { completeness: 'all', snapshot: V1_SNAPSHOT })));
+
+      const empty = await fetchToEnd(EMPTY);
+      const toolError = await fetchToEnd(TOOL_ERROR);
+      // Last: every attempt kills the fixture process, which the next call starts again.
+      const crashed = await fetchToEnd(CRASH);
+
+      expect(empty).toMatchObject({
+        status: 'succeeded',
+        failureReason: null,
+        coverage: { completeness: 'complete', totalMatched: 0, totalRelation: 'eq', returned: 0, truncated: false, continuation: null },
+      });
+      await expectProvenance(harness, run, empty, { args: EMPTY, snapshot: V1_SNAPSHOT, pages: 1 });
+      expect(callsOf(run, EMPTY)).toHaveLength(1);
+
+      expect(toolError).toMatchObject({ status: 'failed', outputRefs: [], failureReason: { class: 'tool_error', code: 'tool_error' } });
+      expect(callsOf(run, TOOL_ERROR)).toHaveLength(1);
+
+      expect(crashed).toMatchObject({
+        status: 'failed',
+        outputRefs: [],
+        failureReason: { class: 'transport_protocol', code: 'connection_lost' },
+      });
+      expect(callsOf(run, CRASH)).toHaveLength(1 + MAX_RETRIES);
+    }
+
+    /**
+     * Outcome 5, first half (AC-08.1, AC-08.2): a five-page task stores pages 1-2 and holds the call of page 3; the
+     * pages it stored are read before the assembly closes in the middle of the investigation.
+     */
+    async function stopMidTask(harness: SourcesHarness, run: ScenarioRun): Promise<{ taskId: string; stored: EvidenceRow[] }> {
+      const taskId = await proposeNew(harness, fetchSpec(run, RESTART, { completeness: 'all', snapshot: V1_SNAPSHOT }));
+      const stored = await until('pages 1-2 stored and the call of page 3 held', async () => {
+        const rows = await evidenceRows(harness, taskId);
+        return rows.length === 2 && callsOf(run, RESTART).length === 3 ? rows : undefined;
+      });
+      return { taskId, stored };
+    }
+
+    /** Outcome 5, second half: a new assembly finishes the task with no page lost or stored twice. */
+    async function resumeAfterRestart(
+      harness: SourcesHarness,
+      run: ScenarioRun,
+      stopped: { taskId: string; stored: EvidenceRow[] },
+    ): Promise<void> {
+      const task = await taskEnd(harness, run, stopped.taskId);
+
+      expect(task).toMatchObject({
+        status: 'succeeded',
+        attempt: 2,
+        coverage: { completeness: 'complete', totalMatched: 2_500, totalRelation: 'eq', returned: 2_500 },
+      });
+      const rows = await evidenceRows(harness, stopped.taskId);
+      expect(rows.map((row) => row.evidenceKey)).toEqual(RESTART_PAGE_KEYS);
+      expect(rows.slice(0, 2)).toEqual(stopped.stored);
+      expect(rows.map((row) => row.writtenByAttempt)).toEqual([1, 1, 2, 2, 2]);
+      expect(task.outputRefs).toEqual(rows.map((row) => row.evidenceId));
+      // Pages 1-3 by the first fixture process (page 3 aborted), pages 3-5 by the second.
+      const calls = callsOf(run, RESTART);
+      expect(calls).toHaveLength(6);
+      expect(new Set(calls.map((line) => line.pid)).size).toBe(2);
+    }
+
+    /** Outcome 7 (AC-06.4): the request of outcome 1 on the `v2` snapshot is a new task with a new call. */
+    async function newSnapshotIsNotReused(harness: SourcesHarness, run: ScenarioRun, onV1: Task): Promise<void> {
+      const snapshot = await harness.sources.registry.currentSnapshot(FIXTURE_SOURCE_ID, AbortSignal.timeout(TASK_END_MS));
+      expect(snapshot).toBe(V2_SNAPSHOT);
+      const callsOnV1 = callsOf(run, RELEASE_HOUR);
+
+      const result = await harness.runtime.scheduler.propose(fetchSpec(run, RELEASE_HOUR, { completeness: 'all', snapshot }), REQUESTER);
+
+      const taskId = createdTask(result);
+      expect(taskId).not.toBe(onV1.taskId);
+      const task = await taskEnd(harness, run, taskId);
+      expect(task.status).toBe('succeeded');
+      await expectProvenance(harness, run, task, { args: RELEASE_HOUR, snapshot: V2_SNAPSHOT, pages: RELEASE_HOUR_PAGES });
+      expect(task.outputRefs.filter((evidenceId) => onV1.outputRefs.includes(evidenceId))).toEqual([]);
+      const calls = callsOf(run, RELEASE_HOUR);
+      expect(calls).toHaveLength(callsOnV1.length + RELEASE_HOUR_PAGES);
+      expect(calls.slice(callsOnV1.length).every((line) => line.pid !== callsOnV1[0].pid)).toBe(true);
+    }
+
+    it.each(RUNS)(
+      'run %i of 20: provenance, dependency, one call for 10 identical requests, refused cycle, restart, three classes, new snapshot',
+      async () => {
+        const files = fixtureFiles(FAULT_RULES);
+        const scenario: { run?: ScenarioRun } = {};
+        try {
+          const { run, onV1, stopped } = await inAssembly(files, 'v1', scenario, async (harness) => {
+            const opened = await openRun(harness, files);
+            scenario.run = opened;
+            const evidence = await evidenceWithProvenance(harness, opened);
+            await identicalRequestsCollapse(harness, opened);
+            await dependencyAndRefusedCycle(harness, opened);
+            await threeOutcomeClasses(harness, opened);
+            return { run: opened, onV1: evidence, stopped: await stopMidTask(harness, opened) };
+          });
+          await inAssembly(files, 'v1', scenario, (harness) => resumeAfterRestart(harness, run, stopped));
+          await inAssembly(files, 'v2', scenario, (harness) => newSnapshotIsNotReused(harness, run, onV1));
+        } finally {
+          files.remove();
+        }
+      },
+      300_000,
+    );
+  });
 
   // ---------------------------------------------------------------------------------------------------------------
   // E2E-2  Durability against Postgres: recovery, cancellation during a call, oversize result
