@@ -1,6 +1,8 @@
 import {
   AbortReasonKindSchema,
   type Coverage,
+  type EvidenceInput,
+  type ExpectedOutput,
   type FailureClass,
   type FailureReason,
   type ToolCallDenyReason,
@@ -8,6 +10,8 @@ import {
 import type { Clock, TaskContext } from '@agent-os/runtime';
 import { backoffDelayMs, sleepUnlessAborted, type BackoffSettings } from './backoff.js';
 import { canonicalJson } from './canonical-json.js';
+import { coverageOf } from './completeness.js';
+import type { FetchCheckpoint } from './fetch-input.js';
 import type { NormalizedPage, SourceAdapter, SourceToolDescriptor, TransportFailure } from './source-adapter.js';
 import type { SourceRegistry } from './source-registry.js';
 import type { SourcesSettings } from './sources.settings.js';
@@ -28,13 +32,22 @@ export interface SourcesLogger {
   error(message: string, fields: Readonly<Record<string, unknown>>): void;
 }
 
-/** One tool call of a task, checked against the allowlist of `workflowType` and the tool's `argsSchema`. */
+/**
+ * The tool calls of a task (design-mcp-source.md, FetchInput и ToolRequest), checked against the allowlist of
+ * `workflowType` and the tool's `argsSchema`.
+ */
 export interface ToolRequest {
   readonly workflowType: string;
   readonly sourceId: string;
   readonly toolName: string;
   /** Arguments without the cursor. */
   readonly args: Readonly<Record<string, unknown>>;
+  /** The snapshot the task is pinned to; a page of another snapshot is not stored. */
+  readonly pin: string;
+  /** `all`: pages until the cursor ends; `sample`: one page. */
+  readonly completeness: ExpectedOutput['completeness'];
+  /** Where a previous attempt stopped, or null. */
+  readonly resume: FetchCheckpoint | null;
 }
 
 /** Why the attempt stopped without an outcome of its own; the runtime decides what is written. */
@@ -59,7 +72,7 @@ export type ToolOutcome =
 
 export interface ToolExecutorDeps {
   readonly registry: SourceRegistry;
-  readonly settings: Pick<SourcesSettings, 'callTimeoutMs'> & BackoffSettings;
+  readonly settings: Pick<SourcesSettings, 'callTimeoutMs' | 'maxPages'> & BackoffSettings;
   readonly clock: Clock;
   readonly logger: SourcesLogger;
 }
@@ -68,7 +81,13 @@ type FailureDraft = Pick<FailureReason, 'class' | 'code' | 'message' | 'cause'>;
 
 /** The end of a call sequence: a page to store, or the task's outcome without one. */
 type PageResult = { readonly kind: 'page'; readonly page: NormalizedPage } | { readonly kind: 'ended'; readonly ended: Ended };
-type Ended = { readonly kind: 'failed'; readonly draft: FailureDraft } | { readonly kind: 'stopped'; readonly reason: StopReason };
+type Ended =
+  | { readonly kind: 'failed'; readonly draft: FailureDraft }
+  | { readonly kind: 'stopped'; readonly reason: StopReason }
+  /** The first reservation of a page was refused for the call limit. */
+  | { readonly kind: 'exhausted' };
+
+const FENCED = { kind: 'stopped', reason: 'fenced' } as const satisfies Ended;
 
 interface ResolvedCall {
   readonly ctx: TaskContext;
@@ -92,25 +111,69 @@ function failure(failureClass: FailureClass, code: string, message: string, caus
 
 const DEADLINE_EXCEEDED = failure('deadline', 'deadline_exceeded', 'The task ran past its deadline during a source call');
 const CANCEL_REQUESTED = failure('cancelled', 'cancel_requested', 'The investigation was cancelled');
+const TOOL_CALLS_EXHAUSTED = failure('budget_exhausted', 'tool_calls_exhausted', 'The task has no tool calls left');
+
+/** A task that has not stored a page yet. */
+const FIRST_PAGE: FetchCheckpoint = {
+  nextPage: 1,
+  cursor: null,
+  unpinnedAt: null,
+  evidenceIds: [],
+  returned: 0,
+  totalMatched: null,
+  totalRelation: null,
+};
 
 function pageKey(pageNumber: number): string {
   return `page-${String(pageNumber).padStart(PAGE_KEY_DIGITS, '0')}`;
 }
 
-/**
- * Coverage of one page (design-mcp-source.md, Evidence страницы и Пагинация и охват): `truncated` and
- * `continuation` follow `nextCursor`; the page is complete only with no cursor and a confirmed count.
- */
-function pageCoverage(page: NormalizedPage): Coverage {
-  const confirmed = page.exhausted || (page.totalRelation === 'eq' && page.returned === page.totalMatched);
+/** The position after `page`, stored as `evidenceId`. */
+function advance(position: FetchCheckpoint, page: NormalizedPage, evidenceId: string): FetchCheckpoint {
   return {
-    completeness: page.nextCursor === null && confirmed ? 'complete' : 'partial',
+    nextPage: position.nextPage + 1,
+    cursor: page.nextCursor,
+    unpinnedAt: position.unpinnedAt,
+    evidenceIds: [...position.evidenceIds, evidenceId],
+    returned: position.returned + page.returned,
     totalMatched: page.totalMatched,
     totalRelation: page.totalRelation,
-    returned: page.returned,
-    truncated: page.nextCursor !== null,
-    continuation: page.nextCursor,
   };
+}
+
+/** The runtime refuses a write of a lost attempt with an error whose `reason` is `fenced`. */
+function isFenced(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { reason?: unknown }).reason === 'fenced';
+}
+
+const FENCED_WRITE = Symbol('fenced write');
+
+/** The write's value, or `FENCED_WRITE` when the runtime refused it; any other error propagates. */
+async function unlessFenced<T>(write: () => Promise<T>): Promise<T | typeof FENCED_WRITE> {
+  try {
+    return await write();
+  } catch (error) {
+    if (isFenced(error)) return FENCED_WRITE;
+    throw error;
+  }
+}
+
+/** The cursor ended on `page` (or `sample` took one page): coverage of every stored page by the completeness rule. */
+function completed(position: FetchCheckpoint, page: NormalizedPage): ToolOutcome {
+  const { coverage, warnings } = coverageOf({ ...page, returned: position.returned });
+  return { kind: 'completed', evidenceRefs: position.evidenceIds, coverage, warnings };
+}
+
+/** The loop stopped with a cursor left (call or page limit after the first page): `partial`, continuing at the cursor. */
+function partial(position: FetchCheckpoint): ToolOutcome {
+  const { coverage, warnings } = coverageOf({
+    returned: position.returned,
+    totalMatched: position.totalMatched,
+    totalRelation: position.totalRelation,
+    nextCursor: position.cursor,
+    exhausted: false,
+  });
+  return { kind: 'completed', evidenceRefs: position.evidenceIds, coverage, warnings };
 }
 
 function transportFailure(outcome: TransportFailure, message: string): FailureDraft {
@@ -118,12 +181,18 @@ function transportFailure(outcome: TransportFailure, message: string): FailureDr
 }
 
 /**
- * Executes a source tool call for a task (design-mcp-source.md, ToolExecutor.execute): allowlist and `argsSchema`
- * before any reservation; one reservation per source call, a retry only for a retryable K-n row after
+ * Executes the source tool calls of a task (design-mcp-source.md, ToolExecutor.execute and Flow 1): allowlist and
+ * `argsSchema` before any reservation; one reservation per source call, a retry only for a retryable K-n row after
  * `reserveToolCall(retry: true)`, with full-jitter backoff on the `Clock` port; the call timeout is capped by the
  * rest of the deadline. The signal is checked before each reservation and call and before a failure is classified,
- * so a deadline or cancel is never reported as a source failure. The page is stored as evidence `page-0001`.
- * Source failures are values; a defect (and K-14) is an exception. No transaction is held across a call.
+ * so a deadline or cancel is never reported as a source failure.
+ *
+ * Pages are fetched from `resume` (or the first page) until the cursor ends, a reservation is refused or
+ * `SOURCE_MAX_PAGES` is reached (checked before the reservation); `sample` fetches one page. Each page of the pinned
+ * snapshot is stored as evidence `page-NNNN`, followed by a checkpoint when the loop goes on; a page of another
+ * snapshot ends the task `snapshot_changed` unstored, and the pages before it stay out of `evidenceRefs`. A fenced
+ * write or a lost attempt is `stopped` with no further call. Source failures are values; a defect (and K-14) is an
+ * exception. No transaction is held across a call.
  */
 export class ToolExecutor {
   constructor(private readonly deps: ToolExecutorDeps) {}
@@ -156,32 +225,67 @@ export class ToolExecutor {
       adapter: resolved.adapter,
       args: parsed.data as Readonly<Record<string, unknown>>,
     };
-    const result = await this.fetchPage(call, null, counters);
-    if (result.kind === 'ended') {
-      return this.endedOutcome(call, result.ended, counters);
-    }
-    return this.storePage(call, result.page, { pageNumber: 1, cursor: null });
+    return this.fetchPages(call, counters);
   }
 
-  private async storePage(
-    call: ResolvedCall,
-    page: NormalizedPage,
-    position: { pageNumber: number; cursor: string | null },
-  ): Promise<ToolOutcome> {
-    const { pageNumber, cursor } = position;
-    const coverage = pageCoverage(page);
-    const ref = await call.ctx.putEvidence({
+  private async fetchPages(call: ResolvedCall, counters: CallCounters): Promise<ToolOutcome> {
+    let position = call.request.resume ?? FIRST_PAGE;
+    for (;;) {
+      if (position.nextPage > this.deps.settings.maxPages) {
+        this.deps.logger.debug('source fetch reached the page limit', { ...this.fields(call, null), pages: position.evidenceIds.length });
+        return partial(position);
+      }
+      const result = await this.fetchPage(call, position.cursor, counters);
+      if (result.kind === 'ended') {
+        if (result.ended.kind === 'exhausted' && position.nextPage > 1) return partial(position);
+        return this.endedOutcome(call, result.ended, counters);
+      }
+      const { page } = result;
+      if (page.snapshot !== call.request.pin) {
+        return this.snapshotChanged(call, counters, page.snapshot);
+      }
+      const ref = await unlessFenced(() => call.ctx.putEvidence(this.pageEvidence(call, page, position)));
+      if (ref === FENCED_WRITE) return this.endedOutcome(call, FENCED, counters);
+      const next = advance(position, page, ref.evidenceId);
+      if (page.nextCursor === null || call.request.completeness === 'sample') {
+        return completed(next, page);
+      }
+      const saved = await unlessFenced(() => call.ctx.saveCheckpoint(next));
+      if (saved === FENCED_WRITE) return this.endedOutcome(call, FENCED, counters);
+      position = next;
+    }
+  }
+
+  /**
+   * Evidence of one page (design-mcp-source.md, Evidence страницы): its key and content depend only on the
+   * snapshot, the arguments and the page number, so a page fetched again stores nothing new.
+   */
+  private pageEvidence(call: ResolvedCall, page: NormalizedPage, position: FetchCheckpoint): EvidenceInput {
+    const pageNumber = position.nextPage;
+    return {
       evidenceKey: pageKey(pageNumber),
       provenance: {
         sourceId: call.request.sourceId,
         toolName: call.request.toolName,
-        normalizedArgs: JSON.parse(canonicalJson({ ...call.args, cursor })),
+        normalizedArgs: JSON.parse(canonicalJson({ ...call.args, cursor: position.cursor })),
         snapshot: page.snapshot,
       },
-      coverage,
+      coverage: coverageOf(page).coverage,
       content: { mediaType: EVIDENCE_MEDIA_TYPE, bytes: utf8.encode(canonicalJson({ pageNumber, ...page })) },
-    });
-    return { kind: 'completed', evidenceRefs: [ref.evidenceId], coverage, warnings: [] };
+    };
+  }
+
+  private snapshotChanged(call: ResolvedCall, counters: CallCounters, snapshot: string): ToolOutcome {
+    this.deps.logger.warn('source snapshot changed', { ...this.fields(call, null), pinned: call.request.pin, snapshot });
+    return this.failed(
+      call.ctx,
+      counters,
+      failure(
+        'snapshot_changed',
+        'snapshot_changed',
+        `A page came from snapshot ${snapshot}, the task is pinned to ${call.request.pin}`,
+      ),
+    );
   }
 
   /**
@@ -269,11 +373,15 @@ export class ToolExecutor {
   }
 
   private endedOutcome(call: ResolvedCall, outcome: Ended, counters: CallCounters): ToolOutcome {
-    if (outcome.kind === 'stopped') {
-      this.deps.logger.warn('source call stopped', { ...this.fields(call, null), reason: outcome.reason });
-      return outcome;
+    switch (outcome.kind) {
+      case 'stopped':
+        this.deps.logger.warn('source call stopped', { ...this.fields(call, null), reason: outcome.reason });
+        return outcome;
+      case 'exhausted':
+        return this.failed(call.ctx, counters, TOOL_CALLS_EXHAUSTED);
+      case 'failed':
+        return this.failed(call.ctx, counters, outcome.draft);
     }
-    return this.failed(call.ctx, counters, outcome.draft);
   }
 
   private failed(ctx: TaskContext, counters: CallCounters, draft: FailureDraft): ToolOutcome {
@@ -323,8 +431,9 @@ function ended(outcome: Ended): PageResult {
 }
 
 /**
- * A refused reservation (design-mcp-source.md, Error Handling): before the first call the call limit is
- * `budget_exhausted`; on a retry either limit ends the task with the class of the last failure.
+ * A refused reservation (design-mcp-source.md, Error Handling): the call limit on a page's first call is
+ * `exhausted` (`budget_exhausted` on the first page, `partial` after it); on a retry either limit ends the task
+ * with the class of the last failure.
  */
 function denialOutcome(reason: ToolCallDenyReason, lastFailure: TransportFailure | null): Ended {
   switch (reason) {
@@ -341,7 +450,7 @@ function denialOutcome(reason: ToolCallDenyReason, lastFailure: TransportFailure
         };
       }
       if (reason === 'tool_calls_exhausted') {
-        return { kind: 'failed', draft: failure('budget_exhausted', 'tool_calls_exhausted', 'The task has no tool calls left') };
+        return { kind: 'exhausted' };
       }
       throw new Error('retries_exhausted refused a first call, which never asks for a retry');
   }

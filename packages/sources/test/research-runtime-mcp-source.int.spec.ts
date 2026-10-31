@@ -18,11 +18,15 @@
 // Budget: integration 4 of 5 (limit 3; the 4th names a defect no other test catches - see INT-4). Pure rules are proven at unit level, see the
 // "Proven at unit level" block at the end of this file; do not re-check their variants here.
 
+import { HandlerResultSchema, type EvidenceInput } from '@agent-os/contracts';
 import type { Clock } from '@agent-os/runtime';
 import { afterEach, describe, expect, it } from 'vitest';
+import { AttemptStoppedError } from '../src/attempt-stopped.error.js';
+import { FetchHandler } from '../src/fetch.handler.js';
+import { FetchCheckpointSchema, type FetchCheckpoint } from '../src/fetch-input.js';
 import { FIXTURE_SOURCE_ID } from '../src/fixture/fixture-source.adapter.js';
 import { createSourceRegistry } from '../src/source-registry.js';
-import { ToolExecutor, type ToolOutcome } from '../src/tool-executor.js';
+import { ToolExecutor, type ToolOutcome, type ToolRequest } from '../src/tool-executor.js';
 import { startFixture, fixtureArgsHash, type CallLogLine, type FixtureFaultRule, type FixtureHarness } from './support/fixtureHarness.js';
 import { InMemoryTaskContext } from './support/inMemoryTaskContext.js';
 
@@ -77,8 +81,20 @@ function searchArgs(seed: number): Record<string, unknown> {
   return { from: from.toISOString(), to: to.toISOString(), pageSize: PAGE_SIZE };
 }
 
-function searchRequest(args: Record<string, unknown>) {
-  return { workflowType: WORKFLOW_TYPE, sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS, args };
+/** Snapshot of the fixture's `v1` dataset (`fx-<version>-<8 hex of the generator parameters>`). */
+const V1_SNAPSHOT = 'fx-v1-2157485c';
+
+/** One page of a query pinned to `v1`, as INT-1 and INT-3 run it. */
+function searchRequest(args: Record<string, unknown>): ToolRequest {
+  return {
+    workflowType: WORKFLOW_TYPE,
+    sourceId: FIXTURE_SOURCE_ID,
+    toolName: SEARCH_LOGS,
+    args,
+    pin: V1_SNAPSHOT,
+    completeness: 'sample',
+    resume: null,
+  };
 }
 
 function linesOf(harness: FixtureHarness, args: Record<string, unknown>): CallLogLine[] {
@@ -480,9 +496,329 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   // - Each row asserts: task outcome, coverage {status, truncated, continuation, returned, totalMatched}, evidence keys, outputRefs, call-log count
   // - Evidence provenance.snapshot equals the pinned snapshot on every stored page; `outputRefs` lists stored pages in order, and is empty for snapshot_changed
   // - The completeness rule (eq / gte / null / exhausted / source_ended_early) is NOT re-tested here - one unit table owns it (see unit list at the end)
-  it.todo(
-    'INT-2: the page loop ends on the right condition with the right coverage, continuation and call count, and makes no call after a fence or a snapshot change',
-  );
+  describe('INT-2: the page loop ends on the right condition with the right coverage, continuation and call count, and makes no call after a fence or a snapshot change', () => {
+    const PAGE_500 = 500;
+
+    /**
+     * A window of exactly 2 500 `v1` records (counted from the generator): `hour` hours after 2026-09-14T00:00Z,
+     * `seconds` long. Each case takes its own window.
+     */
+    function window2500(hour: number, seconds: number): Record<string, unknown> {
+      const from = new Date(Date.UTC(2026, 8, 14, hour));
+      const to = new Date(from.getTime() + seconds * 1_000);
+      return { from: from.toISOString(), to: to.toISOString(), pageSize: PAGE_500 };
+    }
+
+    /** Offset of the next record a fixture cursor points at (base64url JSON; design-mcp-source.md, Пагинация и охват). */
+    function cursorOffset(cursor: unknown): number | null {
+      if (typeof cursor !== 'string') return null;
+      return (JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { offset: number }).offset;
+    }
+
+    function contentOf(input: EvidenceInput): { pageNumber: number; nextCursor: string | null } {
+      return JSON.parse(new TextDecoder().decode(input.content.bytes)) as { pageNumber: number; nextCursor: string | null };
+    }
+
+    interface FetchContextOptions {
+      readonly maxToolCalls: number;
+      readonly completeness: 'all' | 'sample';
+      readonly denyFrom?: { readonly reservation: number; readonly reason: 'not_current_attempt' };
+      readonly fencedWrites?: boolean;
+      readonly checkpoint?: FetchCheckpoint;
+      /** False: the task has no input reference of the source. */
+      readonly pinned?: false;
+    }
+
+    /** A `source.fetch` task pinned to `v1` through its input reference, as `deep-research` proposes it. */
+    function fetchContext(args: Record<string, unknown>, options: FetchContextOptions): InMemoryTaskContext {
+      return new InMemoryTaskContext({
+        ...options,
+        maxRetries: 3,
+        // The JSON the runtime stores as `TaskSpec.input`.
+        input: JSON.parse(JSON.stringify({ sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS, args })),
+        inputRefs: options.pinned === false ? [] : [{ kind: 'source', ref: FIXTURE_SOURCE_ID, snapshot: V1_SNAPSHOT }],
+      });
+    }
+
+    /** The handler's result, or the error it threw. */
+    async function settle(promise: Promise<unknown>): Promise<{ result?: unknown; error?: unknown }> {
+      return promise.then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+    }
+
+    type ExpectedOutcome =
+      | {
+          readonly kind: 'completed';
+          readonly coverage: {
+            readonly completeness: 'complete' | 'partial';
+            readonly totalMatched: number | null;
+            readonly totalRelation: 'eq' | 'gte' | null;
+            readonly returned: number;
+            readonly truncated: boolean;
+          };
+          /** Offset of the record the `continuation` cursor points at; null for no continuation. */
+          readonly continuationOffset: number | null;
+        }
+      | { readonly kind: 'failed'; readonly failure: { readonly class: string; readonly code: string } }
+      | { readonly kind: 'stopped'; readonly reason: string };
+
+    interface PageLoopRow {
+      readonly name: string;
+      readonly args: Record<string, unknown>;
+      readonly context: FetchContextOptions;
+      readonly env?: Readonly<Record<string, string>>;
+      readonly rules?: readonly FixtureFaultRule[];
+      readonly expected: {
+        readonly outcome: ExpectedOutcome;
+        /** Stored evidence: `page-0001` … `page-<pages>`. */
+        readonly pages: number;
+        /** Source calls: fixture log lines of the query, granted reservations and `toolCallsUsed`. */
+        readonly calls: number;
+        /** Reservations asked for, granted or refused. */
+        readonly reservations: number;
+        /** `nextPage` of each saved checkpoint, in order. */
+        readonly checkpoints: readonly number[];
+      };
+    }
+
+    const all = (maxToolCalls: number): FetchContextOptions => ({ maxToolCalls, completeness: 'all' });
+    const EXACT_2500 = { totalMatched: 2_500, totalRelation: 'eq' } as const;
+
+    const rows: PageLoopRow[] = [
+      {
+        name: '"sample": one page, truncated, continuation = cursor of page 2 (UC-2, AC-12.2)',
+        args: window2500(4, 3_595),
+        context: { maxToolCalls: 10, completeness: 'sample' },
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'partial', ...EXACT_2500, returned: 500, truncated: true },
+            continuationOffset: 500,
+          },
+          pages: 1,
+          calls: 1,
+          reservations: 1,
+          checkpoints: [],
+        },
+      },
+      {
+        name: '"all", call limit 10: five pages, complete, no truncation (UC-2, AC-17.1)',
+        args: window2500(7, 3_601),
+        context: all(10),
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'complete', ...EXACT_2500, returned: 2_500, truncated: false },
+            continuationOffset: null,
+          },
+          pages: 5,
+          calls: 5,
+          reservations: 5,
+          checkpoints: [2, 3, 4, 5],
+        },
+      },
+      {
+        name: '"all", call limit 3: succeeded partial after three pages, continuation = cursor of page 4 (UC-2, AC-17.2)',
+        args: window2500(8, 3_596),
+        context: all(3),
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'partial', ...EXACT_2500, returned: 1_500, truncated: true },
+            continuationOffset: 1_500,
+          },
+          pages: 3,
+          calls: 3,
+          reservations: 4,
+          checkpoints: [2, 3, 4],
+        },
+      },
+      {
+        name: '"all", SOURCE_MAX_PAGES 2: partial after two pages, no third reservation or call (UC-2, AC-MS-9)',
+        args: window2500(9, 3_601),
+        context: all(10),
+        env: { SOURCE_MAX_PAGES: '2' },
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'partial', ...EXACT_2500, returned: 1_000, truncated: true },
+            continuationOffset: 1_000,
+          },
+          pages: 2,
+          calls: 2,
+          reservations: 2,
+          checkpoints: [2, 3],
+        },
+      },
+      {
+        name: 'filter with no matches: succeeded, one evidence with 0 matches and the filter in normalizedArgs, complete (UC-3, AC-13.1)',
+        args: { ...window2500(16, 3_595), event: 'no.such.event' },
+        context: all(10),
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'complete', totalMatched: 0, totalRelation: 'eq', returned: 0, truncated: false },
+            continuationOffset: null,
+          },
+          pages: 1,
+          calls: 1,
+          reservations: 1,
+          checkpoints: [],
+        },
+      },
+      {
+        name: 'unknown_total: succeeded partial, totalMatched null and not 0 (UC-3, AC-12.3)',
+        args: window2500(18, 3_595),
+        context: all(10),
+        rules: [{ tool: SEARCH_LOGS, argsHash: '*', occurrences: 'all', mode: 'unknown_total' }],
+        expected: {
+          outcome: {
+            kind: 'completed',
+            coverage: { completeness: 'partial', totalMatched: null, totalRelation: null, returned: 2_500, truncated: false },
+            continuationOffset: null,
+          },
+          pages: 5,
+          calls: 5,
+          reservations: 5,
+          checkpoints: [2, 3, 4, 5],
+        },
+      },
+      {
+        name: 'snapshot_flip after occurrence 2: failed snapshot_changed, page 3 not stored, outputRefs empty (UC-E10, AC-MS-4)',
+        args: window2500(19, 3_601),
+        context: all(10),
+        rules: [{ tool: SEARCH_LOGS, argsHash: '*', occurrences: [2], mode: 'snapshot_flip' }],
+        expected: {
+          outcome: { kind: 'failed', failure: { class: 'snapshot_changed', code: 'snapshot_changed' } },
+          pages: 2,
+          calls: 3,
+          reservations: 3,
+          checkpoints: [2, 3],
+        },
+      },
+      {
+        name: 'fenced from putEvidence of page 1: stopped (AttemptStoppedError), no further call (UC-E12, AC-MS-6)',
+        args: window2500(21, 3_601),
+        context: { ...all(10), fencedWrites: true },
+        expected: { outcome: { kind: 'stopped', reason: 'fenced' }, pages: 0, calls: 1, reservations: 1, checkpoints: [] },
+      },
+      {
+        name: 'not_current_attempt from the reservation of page 2: stopped, one source call (UC-E12, AC-MS-6)',
+        args: window2500(30, 3_595),
+        context: { ...all(10), denyFrom: { reservation: 2, reason: 'not_current_attempt' } },
+        expected: {
+          outcome: { kind: 'stopped', reason: 'not_current_attempt' },
+          pages: 1,
+          calls: 1,
+          reservations: 2,
+          checkpoints: [2],
+        },
+      },
+      {
+        name: 'no input reference of the source: failed snapshot_pin_missing before any reservation (Failure Mode: missing config)',
+        args: window2500(35, 3_601),
+        context: { ...all(10), pinned: false },
+        expected: {
+          outcome: { kind: 'failed', failure: { class: 'validation_rejected', code: 'snapshot_pin_missing' } },
+          pages: 0,
+          calls: 0,
+          reservations: 0,
+          checkpoints: [],
+        },
+      },
+    ];
+
+    it.each(rows)(
+      '$name',
+      async ({ args, context, env, rules, expected }) => {
+        const harness = fixture({ rules, env });
+        const ctx = fetchContext(args, context);
+
+        const { result, error } = await settle(new FetchHandler(executorFor(harness)).run(ctx));
+
+        const { outcome } = expected;
+        const stored = ctx.evidence.map((record) => record.ref.evidenceId);
+        if (outcome.kind === 'stopped') {
+          expect(error).toBeInstanceOf(AttemptStoppedError);
+          expect((error as AttemptStoppedError).reason).toBe(outcome.reason);
+        } else {
+          expect(error).toBeUndefined();
+          const handlerResult = HandlerResultSchema.parse(result);
+          expect(handlerResult.kind).toBe(outcome.kind);
+          if (outcome.kind === 'completed') {
+            expect({ ...handlerResult.coverage, continuation: undefined }).toEqual({ ...outcome.coverage, continuation: undefined });
+            expect(cursorOffset(handlerResult.coverage?.continuation)).toBe(outcome.continuationOffset);
+            // outputRefs: every stored page, in page order.
+            expect(handlerResult.evidenceRefs).toEqual(stored);
+            for (const record of ctx.evidence) {
+              expect(record.input.coverage.totalMatched).toBe(outcome.coverage.totalMatched);
+            }
+          } else {
+            expect(handlerResult.failure).toMatchObject(outcome.failure);
+            // Pages stored before the change stay unreferenced (rollback-only visibility).
+            expect(handlerResult.evidenceRefs).toEqual([]);
+          }
+        }
+
+        expect(ctx.evidence.map((record) => record.input.evidenceKey)).toEqual(
+          Array.from({ length: expected.pages }, (_, index) => `page-000${index + 1}`),
+        );
+        // Every stored page is of the pinned snapshot; its normalizedArgs carry the query and the cursor it was read with.
+        let cursor: string | null = null;
+        for (const record of ctx.evidence) {
+          expect(record.input.provenance.snapshot).toBe(V1_SNAPSHOT);
+          expect(record.input.provenance.normalizedArgs).toEqual({ ...args, cursor });
+          cursor = contentOf(record.input).nextCursor;
+        }
+        // The last stored page's nextCursor is the continuation of a partial result.
+        if (outcome.kind === 'completed' && outcome.continuationOffset !== null) {
+          expect(cursorOffset(cursor)).toBe(outcome.continuationOffset);
+        }
+
+        const checkpoints = ctx.checkpoints.map((checkpoint) => FetchCheckpointSchema.parse(checkpoint));
+        expect(checkpoints.map((checkpoint) => checkpoint.nextPage)).toEqual(expected.checkpoints);
+        for (const checkpoint of checkpoints) {
+          expect(checkpoint.evidenceIds).toEqual(stored.slice(0, checkpoint.nextPage - 1));
+          expect(cursorOffset(checkpoint.cursor)).toBe((checkpoint.nextPage - 1) * PAGE_500);
+        }
+
+        expect(ctx.reservations).toHaveLength(expected.reservations);
+        expect(ctx.toolCalls).toBe(expected.calls);
+        await delay(BOUNDED_WAIT_MS);
+        expect(linesOf(harness, args)).toHaveLength(expected.calls);
+      },
+      30_000,
+    );
+
+    it('a new attempt continues from the checkpoint: stored pages are not fetched again and outputRefs keep page order (Flow 1, Failure Mode: no-op)', async () => {
+      const harness = fixture({});
+      const args = window2500(31, 3_601);
+      const first = fetchContext(args, all(3));
+      await new FetchHandler(executorFor(harness)).run(first);
+      const checkpoint = FetchCheckpointSchema.parse(first.checkpoints.at(-1));
+      expect(checkpoint.nextPage).toBe(4);
+
+      const second = fetchContext(args, { ...all(10), checkpoint });
+      const result = HandlerResultSchema.parse(await new FetchHandler(executorFor(harness)).run(second));
+
+      expect(second.evidence.map((record) => record.input.evidenceKey)).toEqual(['page-0004', 'page-0005']);
+      expect(second.evidence[0].input.provenance.normalizedArgs).toEqual({ ...args, cursor: checkpoint.cursor });
+      expect(result.evidenceRefs).toEqual(
+        [...first.evidence, ...second.evidence].map((record) => record.ref.evidenceId),
+      );
+      expect(result.coverage).toEqual({
+        completeness: 'complete',
+        ...EXACT_2500,
+        returned: 2_500,
+        truncated: false,
+        continuation: null,
+      });
+      expect(second.toolCalls).toBe(2);
+      expect(linesOf(harness, args)).toHaveLength(5);
+    }, 30_000);
+  });
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3  Deadline and cancellation take precedence over error classification
