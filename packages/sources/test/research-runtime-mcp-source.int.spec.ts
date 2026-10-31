@@ -1,13 +1,13 @@
 // research-runtime / mcp-source Integration Test Skeletons - Design Doc: docs/features/research-runtime/design-mcp-source.md
 // Upstream contract consumed: docs/features/research-runtime/design-runtime.md (TaskContext, HandlerResult, Coverage, FailureReason, reservation rule)
 // PRD: docs/features/research-runtime/prd.md
-// Generated: 2026-10-31 | Part: mcp-source | Test type: integration, NO Postgres (runs in CI `check` via vitest.config.ts, include '**/*.spec.ts')
+// Generated: 2026-10-31 | Part: mcp-source | Test type: integration, NO Postgres (runs in CI `check` via packages/sources/vitest.config.ts, include 'test/**/*.int.spec.ts')
 //
 // Environment (Design Doc "Test Boundaries"):
 // - Real fixture process (packages/mcp-fixture, spawned over stdio by McpSourceClient). Never mocked: codes and drops are only provable on a real transport.
 // - TaskContext is an in-memory fake that implements the runtime reservation rule (retry / call limits, deadline, injectable
 //   `fenced` / `not_current_attempt` / `cancel_requested`). Postgres-only behaviour (guarded UPDATE, fencing, recovery) lives in
-//   apps/api/test/research-runtime-mcp-source.e2e-spec.ts.
+//   packages/sources/test/research-runtime-mcp-source.e2e-spec.ts.
 // - Backoff jitter and clock are injected; SOURCE_CALL_TIMEOUT_MS is set to a few hundred ms so hang / malformed_json rows stay fast.
 // - Isolation (Design Doc Risks): every test builds its own fixture rules keyed by argsHash, with its own window/filter and its own
 //   FIXTURE_CALL_LOG file in a temp dir. No shared journal, no test order dependency.

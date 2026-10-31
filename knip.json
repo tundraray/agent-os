@@ -20,6 +20,12 @@
         "test/support/runtimeChildMain.ts",
         "test/verify/**/*.verify.ts"
       ]
+    },
+    "packages/mcp-fixture": {
+      "entry": ["src/server.ts", "src/generate-ground-truth.ts"]
+    },
+    "packages/sources": {
+      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts"]
     }
   }
 }

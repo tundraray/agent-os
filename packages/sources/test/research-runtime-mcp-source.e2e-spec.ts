@@ -4,8 +4,8 @@
 // Generated: 2026-10-31 | Part: mcp-source | Test type: End-to-End (real Postgres + real fixture process), CI job `e2e-runtime`
 // Implementation timing: after all mcp-source and runtime implementation tasks complete (final phase only).
 //
-// File name follows the project convention (`*.e2e-spec.ts` under apps/api/test, picked up by vitest.config.e2e.ts and run with
-// `pnpm --filter api test:e2e`).
+// File name follows the project convention (`*.e2e-spec.ts` under packages/sources/test, picked up by packages/sources/vitest.config.e2e.ts and run with
+// `pnpm --filter @agent-os/sources test:e2e`).
 //
 // Environment (Design Doc "Test Boundaries"):
 // - Postgres from infra/docker-compose.yml (DATABASE_URL from apps/api/.env). No table cleanup; isolation by a unique `resourceId = 'e2e-' + randomUUID()` per test.
