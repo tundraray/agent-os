@@ -38,6 +38,9 @@ importers:
       '@agent-os/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@agent-os/sources':
+        specifier: workspace:*
+        version: link:../../packages/sources
       '@mastra/ai-sdk':
         specifier: ^1.11.2
         version: 1.11.2(@mastra/core@1.80.0(ai@7.0.148(zod@4.6.7))(express@5.3.0)(rxjs@7.8.2)(zod@4.6.7))(zod@4.6.7)
@@ -87,6 +90,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@agent-os/mcp-fixture':
+        specifier: workspace:*
+        version: link:../../packages/mcp-fixture
       '@nestjs/cli':
         specifier: ^12.0.0
         version: 12.0.11(@types/node@24.19.2)(prettier@3.9.10)

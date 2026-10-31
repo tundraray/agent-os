@@ -29,6 +29,7 @@
     "@agent-os/contracts": "workspace:*",
     "@agent-os/db": "workspace:*",
     "@agent-os/runtime": "workspace:*",
+    "@agent-os/sources": "workspace:*",
     "@mastra/ai-sdk": "^1.11.2",
     "@mastra/core": "^1.80.0",
     "@mastra/memory": "^1.39.1",
@@ -47,6 +48,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@agent-os/mcp-fixture": "workspace:*",
     "@nestjs/cli": "^12.0.0",
     "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
