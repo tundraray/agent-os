@@ -57,6 +57,14 @@ export interface Runtime {
 export function createRuntime(options: RuntimeOptions): Runtime {
   const { database, config, threads, logger, clock } = options;
   const { db, pool } = database;
+  // A pooled client has no `error` listener while it is checked out, so a session the server ends
+  // (the `idle_in_transaction_session_timeout` of `withAttemptGuard`) would crash the process. The
+  // query in flight still fails, and the pool replaces the client. Covers clients connected from now on.
+  pool.on('connect', (client) => {
+    client.on('error', (error) => {
+      logger.warn(`database client error=${error.message}`);
+    });
+  });
 
   const crashPoints = CrashPoints.fromConfig(config);
   const handlers = new HandlerRegistry();

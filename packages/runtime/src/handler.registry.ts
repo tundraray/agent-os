@@ -12,6 +12,7 @@ import type {
   ToolCallGrant,
 } from '@agent-os/contracts';
 import type { z } from 'zod';
+import type { RuntimeTx } from './guarded-transition.js';
 
 /** A dependency or awaited task of the attempt, with its outputs. */
 export interface UpstreamTask {
@@ -25,6 +26,14 @@ export interface UpstreamTask {
 /** Result of `TaskContext.registerWait`: the edges are recorded, or refused without a write. */
 export type RegisterWaitResult =
   { outcome: 'ok' } | Extract<ProposeResult, { outcome: 'rejected' }>;
+
+/**
+ * Result of `TaskContext.withAttemptGuard`: `work` ran and its transaction committed, or the attempt
+ * is not the task's current one (or the task row is gone) and nothing was written.
+ */
+export type AttemptGuardResult<T> =
+  | { outcome: 'committed'; value: T }
+  | { outcome: 'fenced' };
 
 /**
  * Fenced API of one attempt (design-runtime.md, TaskHandler и TaskContext). `attempt` is the
@@ -50,6 +59,17 @@ export interface TaskContext {
   /** JSON up to 64 KiB. */
   saveCheckpoint(checkpoint: unknown): Promise<void>;
   registerWait(taskIds: readonly string[]): Promise<RegisterWaitResult>;
+  /**
+   * Runs `work` — the client's writes to its own tables, nothing else (no model or external call) —
+   * in one transaction that first checks, under the task row lock, that the task is `running` with
+   * this attempt (KD-9). The transaction is bounded by `RUNTIME_LEASE_MS`. An exception of `work`,
+   * a timeout or a failed commit rolls back and is thrown; another `TaskContext` function called
+   * inside `work` is refused with an exception at once. `cancel_requested_at` does not change the
+   * verdict.
+   */
+  withAttemptGuard<T>(
+    work: (tx: RuntimeTx) => Promise<T>,
+  ): Promise<AttemptGuardResult<T>>;
 }
 
 /**

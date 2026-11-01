@@ -517,6 +517,7 @@ export class Dispatcher {
         scheduler: this.scheduler,
         crashPoints: this.crashPoints,
         logger: this.logger,
+        leaseMs: this.config.leaseMs,
       },
       claimed,
     );

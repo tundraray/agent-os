@@ -154,6 +154,10 @@ export class InMemoryTaskContext implements TaskContext {
     return Promise.reject(new Error('registerWait is not used by source.fetch'));
   }
 
+  withAttemptGuard(): Promise<never> {
+    return Promise.reject(new Error('withAttemptGuard is not used by source.fetch'));
+  }
+
   private fenced(operation: string): FencedWriteError {
     return new FencedWriteError(`${operation} of task ${this.taskId} attempt ${this.attempt} is fenced`);
   }

@@ -83,7 +83,44 @@ export async function query<Row extends pg.QueryResultRow>(
   return rows;
 }
 
-/** Closes the test's connections; call from `afterAll`. */
+/**
+ * The test client table of `TaskContext.withAttemptGuard` (design-runtime.md UC-E9): it stands for
+ * any client package's table, and its rows go with their task (FK with cascade, as KD-9 requires).
+ */
+const CLIENT_TABLE = 'public.runtime_test_client_rows';
+
+/** A row the client wrote through `withAttemptGuard`. */
+export interface ClientRow {
+  attempt: number;
+  label: string;
+}
+
+/** (Re)creates the test client table; call from `beforeAll`. */
+export async function createClientTable(): Promise<void> {
+  await db().query(`DROP TABLE IF EXISTS ${CLIENT_TABLE}`);
+  await db().query(
+    `CREATE TABLE ${CLIENT_TABLE} (
+       id serial PRIMARY KEY,
+       task_id uuid NOT NULL REFERENCES app.research_tasks (task_id) ON DELETE CASCADE,
+       attempt integer NOT NULL,
+       label text NOT NULL)`,
+  );
+}
+
+/** Drops the test client table; call from `afterAll`. */
+export async function dropClientTable(): Promise<void> {
+  await db().query(`DROP TABLE IF EXISTS ${CLIENT_TABLE}`);
+}
+
+/** Client rows of the task in insertion order. */
+export async function clientRowsOf(taskId: string): Promise<ClientRow[]> {
+  const { rows } = await db().query<ClientRow>(
+    `SELECT attempt, label FROM ${CLIENT_TABLE} WHERE task_id = $1 ORDER BY id`,
+    [taskId],
+  );
+  return rows;
+}
+
 /**
  * Waits until no investigation holding a task of these workflow types has a `running` task or a
  * pending delivery, both in one snapshot. Call before closing a runtime: closing while an event is

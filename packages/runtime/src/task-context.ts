@@ -16,7 +16,15 @@ import {
   type ToolCallDenyReason,
   type ToolCallGrant,
 } from '@agent-os/contracts';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import {
+  and,
+  asc,
+  eq,
+  isNull,
+  sql,
+  TransactionRollbackError,
+} from 'drizzle-orm';
 import { z } from 'zod';
 import {
   type Database,
@@ -29,6 +37,7 @@ import type { EventLog } from './event-log.js';
 import type { EvidenceStore } from './evidence.store.js';
 import type { RuntimeTx, TaskRow } from './guarded-transition.js';
 import type {
+  AttemptGuardResult,
   RegisterWaitResult,
   TaskContext,
   UpstreamTask,
@@ -69,6 +78,8 @@ export interface TaskContextDeps {
   scheduler: TaskScheduler;
   crashPoints: CrashPoints;
   logger: RuntimeLogger;
+  /** `RUNTIME_LEASE_MS`: the bound of a `withAttemptGuard` transaction. */
+  leaseMs: number;
 }
 
 /** What the claim knows about the attempt. */
@@ -150,6 +161,8 @@ export class AttemptContext implements TaskContext {
   readonly checkpoint: unknown;
   readonly signal: AbortSignal;
   readonly deadlineAt: Date;
+  /** Set inside the `work` of an open {@link withAttemptGuard}, in that async context only. */
+  private readonly guardedWork = new AsyncLocalStorage<true>();
 
   constructor(
     private readonly deps: TaskContextDeps,
@@ -183,7 +196,11 @@ export class AttemptContext implements TaskContext {
    * retry, `retries_used + attempt_retries < max_retries`. `callIndex` counts the task's calls
    * across attempts from 0.
    */
-  reserveToolCall(toolName: string, retry: boolean): Promise<ToolCallGrant> {
+  async reserveToolCall(
+    toolName: string,
+    retry: boolean,
+  ): Promise<ToolCallGrant> {
+    this.refuseInsideGuard('reserveToolCall');
     const t = researchTasks;
     return this.deps.db.transaction(async (tx) => {
       const row = await this.deps.tasks.transition(
@@ -232,6 +249,7 @@ export class AttemptContext implements TaskContext {
    * the stored ref and writes no event). The event carries the content by `payloadRef` only.
    */
   async putEvidence(evidence: EvidenceInput): Promise<EvidenceRef> {
+    this.refuseInsideGuard('putEvidence');
     const parsed = EvidenceInputSchema.safeParse(evidence);
     if (!parsed.success) {
       const [issue] = parsed.error.issues;
@@ -259,6 +277,7 @@ export class AttemptContext implements TaskContext {
   }
 
   async saveCheckpoint(checkpoint: unknown): Promise<void> {
+    this.refuseInsideGuard('saveCheckpoint');
     const parsed = CheckpointSchema.safeParse(checkpoint);
     if (!parsed.success) {
       throw new ValidationRejectedError(
@@ -282,6 +301,7 @@ export class AttemptContext implements TaskContext {
    * A refusal (`unknown_dependency`, `self_dependency`, `wait_cycle` with the cycle) writes nothing.
    */
   async registerWait(taskIds: readonly string[]): Promise<RegisterWaitResult> {
+    this.refuseInsideGuard('registerWait');
     const result = await this.deps.db.transaction(async (tx) => {
       await this.deps.tasks.lockInvestigation(tx, this.investigationId);
       const [own] = await this.deps.tasks.lockTasks(tx, [this.taskId]);
@@ -296,6 +316,43 @@ export class AttemptContext implements TaskContext {
     });
     if (result.outcome === 'fenced') throw this.fenced('registerWait');
     return result;
+  }
+
+  /**
+   * A one-task transaction (invariant 13): both timeouts bounded by `RUNTIME_LEASE_MS` for this
+   * transaction only (`set_config(…, true)`, the value as a parameter — ADR-0003), then the task row
+   * FOR UPDATE — held to the commit, so neither claim, reaper nor outcome changes the task meanwhile —
+   * and the check `running` with this attempt. `cancel_requested_at` is not part of the check.
+   */
+  async withAttemptGuard<T>(
+    work: (tx: RuntimeTx) => Promise<T>,
+  ): Promise<AttemptGuardResult<T>> {
+    this.refuseInsideGuard('withAttemptGuard');
+    const timeout = String(this.deps.leaseMs);
+    let fenced = false;
+    try {
+      const value = await this.deps.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select set_config('statement_timeout', ${timeout}, true), set_config('idle_in_transaction_session_timeout', ${timeout}, true)`,
+        );
+        const [own] = await this.deps.tasks.lockTasks(tx, [this.taskId]);
+        if (own?.status !== running || own.attempt !== this.attempt) {
+          fenced = true;
+          tx.rollback();
+        }
+        return this.guardedWork.run(true, () => work(tx));
+      });
+      return { outcome: 'committed', value };
+    } catch (error) {
+      if (fenced && error instanceof TransactionRollbackError) {
+        this.warnFenced('withAttemptGuard');
+        return { outcome: 'fenced' };
+      }
+      this.deps.logger.warn(
+        `withAttemptGuard rolled back investigationId=${this.investigationId} taskId=${this.taskId} attempt=${this.attempt} error=${error instanceof Error ? error.name : typeof error}`,
+      );
+      throw error;
+    }
   }
 
   private async appendEvidenceStored(
@@ -352,6 +409,15 @@ export class AttemptContext implements TaskContext {
         return { status: 'fenced' };
       }
       throw error;
+    }
+  }
+
+  /** Another function of the attempt inside `work` would wait on the task row `work` holds. */
+  private refuseInsideGuard(operation: string): void {
+    if (this.guardedWork.getStore()) {
+      throw new Error(
+        `${operation} of task ${this.taskId} attempt ${this.attempt} called inside withAttemptGuard work`,
+      );
     }
   }
 

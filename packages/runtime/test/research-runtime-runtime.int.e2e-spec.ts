@@ -39,14 +39,17 @@ import {
   type ToolCallGrant,
 } from '@agent-os/contracts';
 import { researchInvestigations } from '@agent-os/db';
-import type {
-  EventConsumer,
-  HandlerResult,
-  RegisterWaitResult,
-  TaskContext,
-  UpstreamTask,
+import {
+  type Clock,
+  type EventConsumer,
+  type HandlerResult,
+  type RegisterWaitResult,
+  type RuntimeTx,
+  systemClock,
+  type TaskContext,
+  type UpstreamTask,
 } from '@agent-os/runtime';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CrashPoints } from '../src/crash-points.js';
 import { EventConsumerRegistry } from '../src/event-consumer.registry.js';
@@ -56,7 +59,10 @@ import { SchedulerConsumer } from '../src/scheduler.consumer.js';
 import { TaskRepository } from '../src/task.repository.js';
 import { newUser } from './support/new-user.js';
 import {
+  clientRowsOf,
   closeRuntimeDb,
+  createClientTable,
+  dropClientTable,
   eventsOf,
   knowledgeStatusesOf,
   query,
@@ -1145,6 +1151,7 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         },
       });
       threadId = await runtime.createThread(resourceId);
+      await createClientTable();
     });
 
     afterAll(async () => {
@@ -1153,6 +1160,7 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         await runtimeWorkSettled([workflowType], LATCH_MS);
       } finally {
         await runtime?.close();
+        await dropClientTable();
         await closeRuntimeDb();
       }
     }, 2 * LATCH_MS);
@@ -1825,9 +1833,319 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
     // - R9 reaper waits for the commit (UC-E9 variant 1): the lease of attempt 2 expires while its `work` is still open (latch inside `work`) -> the sweeper does not requeue the task before `work` commits; after the commit the task is requeued and attempt 2's row is kept
     // - R10 `work` that must not commit (UC-E9 variant 2): `work` outlasting `RUNTIME_LEASE_MS` -> transaction rolled back, exception thrown, no client row; `work` that throws -> rollback and the same exception propagates (not wrapped into `fenced`);
     //   `work` that calls another TaskContext function (`saveCheckpoint`) -> rejected with an exception at once (it would wait on the same task row), no client row, no checkpoint written
-    it.todo('INT-3 R8 withAttemptGuard: a superseded or settled attempt gets fenced and its client row is rolled back; the live attempt gets committed with the result of work and its row is kept; cancel does not change the verdict');
-    it.todo('INT-3 R9 withAttemptGuard: a lease that expires while work is open is not requeued by the reaper until work commits, and the live attempt\'s row is kept');
-    it.todo('INT-3 R10 withAttemptGuard: work longer than RUNTIME_LEASE_MS, work that throws and work that calls another TaskContext function roll back, throw, and leave no client row');
+    // - R10 also (orchestrator decision 2026-11-01): a session ended by `idle_in_transaction_session_timeout` while `work` waits outside the database does not crash the process (the pool client's
+    //   `error` reaches the RuntimeLogger as a warning), and the next query of the same pool passes after each of the two timeouts
+
+    /** The client's write of `work`: one row of the test client table for the attempt. */
+    const insertClientRow = (
+      tx: RuntimeTx,
+      ctx: TaskContext,
+      label: string,
+    ): Promise<unknown> =>
+      tx.execute(
+        sql`INSERT INTO public.runtime_test_client_rows (task_id, attempt, label) VALUES (${ctx.taskId}, ${ctx.attempt}, ${label})`,
+      );
+
+    const fencedGuardLogged = (taskId: string, attempt: number): boolean =>
+      runtime.logs.warn.some(
+        ([message]) =>
+          message.startsWith('fenced withAttemptGuard') &&
+          message.includes(`taskId=${taskId} attempt=${attempt}`),
+      );
+
+    /** A clock `shift` moves forward: the reaper of its runtime sees a lease run out on demand. */
+    function shiftableClock(): Clock & { shift(ms: number): void } {
+      let offset = 0;
+      return {
+        now: () => new Date(systemClock.now().getTime() + offset),
+        random: () => systemClock.random(),
+        setTimer: (ms, callback) => systemClock.setTimer(ms, callback),
+        shift: (ms) => {
+          offset += ms;
+        },
+      };
+    }
+
+    /** An owner of its own on the thread double of `app`, for a runtime built by one test. */
+    async function ownerOn(app: RuntimeHarness) {
+      const owner = newUser();
+      return { app, resourceId: owner, threadId: await app.createThread(owner) };
+    }
+
+    it('INT-3 R8 withAttemptGuard: a superseded or settled attempt gets fenced and its client row is rolled back; the live attempt gets committed with the result of work and its row is kept; cancel does not change the verdict', async () => {
+      const investigationId = await newInvestigation('R8');
+      const firstStarted = gate();
+      const holdFirst = gate();
+      const secondStarted = gate();
+      const finishSecond = gate();
+      const contexts: TaskContext[] = [];
+      scripts.set('r8', async (ctx) => {
+        contexts.push(ctx);
+        if (ctx.attempt > 1) {
+          secondStarted.release();
+          await finishSecond.promise;
+          return completed();
+        }
+        firstStarted.release();
+        await holdFirst.promise;
+        return completed();
+      });
+
+      const taskId = await create(spec(investigationId, 'r8'));
+      await within(firstStarted.promise, LATCH_MS, 'attempt 1');
+      await expireLease(taskId, 1);
+      await within(secondStarted.promise, LATCH_MS, 'attempt 2 after recovery');
+      const [first, second] = contexts;
+
+      // The superseded attempt: fenced, nothing written, the task row untouched.
+      const beforeFenced = await taskRow(taskId);
+      expect(
+        await first.withAttemptGuard((tx) =>
+          insertClientRow(tx, first, 'attempt 1'),
+        ),
+      ).toEqual({ outcome: 'fenced' });
+      expect(fencedGuardLogged(taskId, 1)).toBe(true);
+      expect(await taskRow(taskId)).toEqual(beforeFenced);
+
+      // A cancel requested on the running task does not change the verdict of the live attempt.
+      await query(
+        'UPDATE app.research_tasks SET cancel_requested_at = now() WHERE task_id = $1',
+        [taskId],
+      );
+      const beforeCommitted = await taskRow(taskId);
+      expect(
+        await second.withAttemptGuard(async (tx) => {
+          await insertClientRow(tx, second, 'attempt 2');
+          return 'written by attempt 2';
+        }),
+      ).toEqual({ outcome: 'committed', value: 'written by attempt 2' });
+      expect(await taskRow(taskId)).toEqual(beforeCommitted);
+
+      // Settled with the same attempt: no longer `running`, so fenced.
+      finishSecond.release();
+      await settledAs(taskId, 'cancelled');
+      expect(
+        await second.withAttemptGuard((tx) =>
+          insertClientRow(tx, second, 'attempt 2 after the end'),
+        ),
+      ).toEqual({ outcome: 'fenced' });
+      expect(await clientRowsOf(taskId)).toEqual([
+        { attempt: 2, label: 'attempt 2' },
+      ]);
+
+      // The task row is gone with its investigation.
+      await query(
+        'DELETE FROM app.research_investigations WHERE investigation_id = $1',
+        [investigationId],
+      );
+      expect(
+        await second.withAttemptGuard((tx) =>
+          insertClientRow(tx, second, 'attempt 2 without a task'),
+        ),
+      ).toEqual({ outcome: 'fenced' });
+      expect(await clientRowsOf(taskId)).toEqual([]);
+      holdFirst.release();
+    }, 30_000);
+
+    it("INT-3 R9 withAttemptGuard: a lease that expires while work is open is not requeued by the reaper until work commits, and the live attempt's row is kept", async () => {
+      const reaperType = uniqueWorkflowType('int3-guard-reaper');
+      const clock = shiftableClock();
+      const contexts: TaskContext[] = [];
+      const started = gate();
+      const holdFirst = gate();
+      const app = await createRuntimeHarness({
+        handlers: [
+          testHandler(reaperType, async (ctx) => {
+            contexts.push(ctx);
+            if (ctx.attempt > 1) return completed();
+            started.release();
+            await holdFirst.promise;
+            return completed();
+          }),
+        ],
+        clock,
+        // No heartbeat moves the lease within the test; the reaper runs every 50 ms.
+        runtime: { leaseMs: 3_000, heartbeatMs: 60_000, reaperMs: 50 },
+      });
+      try {
+        const investigationId = await newInvestigation('R9', await ownerOn(app));
+        const taskId = await create(
+          spec(investigationId, 'r9', { workflowType: reaperType }),
+          app,
+        );
+        await within(started.promise, LATCH_MS, 'attempt 1');
+        const [ctx] = contexts;
+
+        const workOpen = gate();
+        const commitWork = gate();
+        const guarded = ctx.withAttemptGuard(async (tx) => {
+          await insertClientRow(tx, ctx, 'attempt 1');
+          workOpen.release();
+          await commitWork.promise;
+          return 'committed after the lease ran out';
+        });
+        await within(workOpen.promise, LATCH_MS, 'work open');
+        clock.shift(4_000);
+        // The reaper found the expired lease, and its guarded write waits for the task row.
+        await vi.waitFor(
+          async () => {
+            const [waiting] = await query<{ count: number }>(
+              `SELECT count(*)::int AS count FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock'
+                  AND query ILIKE 'update "app"."research_tasks"%'`,
+              [],
+            );
+            expect(waiting.count).toBe(1);
+          },
+          { timeout: LATCH_MS, interval: 25 },
+        );
+        expect(await taskState(taskId)).toMatchObject({
+          status: 'running',
+          attempt: 1,
+          recoveryCount: 0,
+        });
+
+        commitWork.release();
+        expect(await guarded).toEqual({
+          outcome: 'committed',
+          value: 'committed after the lease ran out',
+        });
+        await settledAs(taskId, 'succeeded');
+        expect(await taskState(taskId)).toMatchObject({
+          attempt: 2,
+          recoveryCount: 1,
+        });
+        expect(await clientRowsOf(taskId)).toEqual([
+          { attempt: 1, label: 'attempt 1' },
+        ]);
+      } finally {
+        holdFirst.release();
+        try {
+          await runtimeWorkSettled([reaperType], LATCH_MS);
+        } finally {
+          await app.close();
+        }
+      }
+    }, 30_000);
+
+    it('INT-3 R10 withAttemptGuard: work longer than RUNTIME_LEASE_MS, work that throws and work that calls another TaskContext function roll back, throw, and leave no client row', async () => {
+      const LEASE_MS = 1_500;
+      const guardType = uniqueWorkflowType('int3-guard-rollback');
+      const contexts: TaskContext[] = [];
+      const started = gate();
+      const finish = gate();
+      const app = await createRuntimeHarness({
+        handlers: [
+          testHandler(guardType, async (ctx) => {
+            contexts.push(ctx);
+            started.release();
+            await finish.promise;
+            return completed();
+          }),
+        ],
+        // No heartbeat within the test; the lease is moved an hour ahead below, so LEASE_MS bounds
+        // only the guard's transactions here. One pooled connection, polling instead of LISTEN:
+        // every query after a guard runs on the connection the guard used.
+        runtime: {
+          leaseMs: LEASE_MS,
+          heartbeatMs: 60_000,
+          dbPoolMax: 1,
+          notify: false,
+        },
+      });
+      const sessionEndLogged = (): boolean =>
+        app.logs.warn.some(([message]) =>
+          message.startsWith('database client error'),
+        );
+      const poolAnswers = async (): Promise<unknown> =>
+        (await app.db.execute(sql`SELECT 1 AS one`)).rows;
+      const poolTimeouts = async (): Promise<unknown> =>
+        (
+          await app.db.execute(
+            sql`SELECT current_setting('statement_timeout') AS statement, current_setting('idle_in_transaction_session_timeout') AS idle`,
+          )
+        ).rows;
+      try {
+        const investigationId = await newInvestigation('R10', await ownerOn(app));
+        const taskId = await create(
+          spec(investigationId, 'r10', { workflowType: guardType }),
+          app,
+        );
+        await within(started.promise, LATCH_MS, 'attempt 1');
+        const [ctx] = contexts;
+        // Every runtime's reaper sweeps every task: attempt 1 stays current through the test.
+        const held = await query(
+          `UPDATE app.research_tasks SET lease_expires_at = now() + interval '1 hour'
+            WHERE task_id = $1 AND status = 'running' AND attempt = 1 RETURNING task_id`,
+          [taskId],
+        );
+        expect(held).toHaveLength(1);
+
+        // A statement outlasting the lease: statement_timeout cancels it.
+        await expect(
+          ctx.withAttemptGuard(async (tx) => {
+            await insertClientRow(tx, ctx, 'slow statement');
+            await tx.execute(sql`SELECT pg_sleep(5)`);
+          }),
+        ).rejects.toMatchObject({ cause: { code: '57014' } });
+        expect(await poolAnswers()).toEqual([{ one: 1 }]);
+
+        // A wait outside the database outlasting the lease: the session is ended, the process lives.
+        await expect(
+          ctx.withAttemptGuard(async (tx) => {
+            await insertClientRow(tx, ctx, 'idle transaction');
+            await vi.waitFor(() => expect(sessionEndLogged()).toBe(true), {
+              timeout: LATCH_MS,
+              interval: 25,
+            });
+            await tx.execute(sql`SELECT 1`);
+          }),
+        ).rejects.toThrow();
+        expect(await poolAnswers()).toEqual([{ one: 1 }]);
+
+        // `work` that throws: the same exception, not a `fenced` value.
+        const workFailure = new Error('client work failed');
+        await expect(
+          ctx.withAttemptGuard(async (tx) => {
+            await insertClientRow(tx, ctx, 'throwing work');
+            throw workFailure;
+          }),
+        ).rejects.toBe(workFailure);
+
+        // Another TaskContext function inside `work` is refused at once, not after the lease.
+        await expect(
+          within(
+            ctx.withAttemptGuard(async (tx) => {
+              await insertClientRow(tx, ctx, 'nested call');
+              await ctx.saveCheckpoint({ nested: true });
+            }),
+            LEASE_MS / 2,
+            'nested saveCheckpoint refusal',
+          ),
+        ).rejects.toThrow('inside withAttemptGuard');
+
+        // The timeouts belong to the guard's transaction: a committed guard leaves none on the connection.
+        expect(await ctx.withAttemptGuard(async () => 'nothing written')).toEqual(
+          { outcome: 'committed', value: 'nothing written' },
+        );
+        expect(await poolTimeouts()).toEqual([{ statement: '0', idle: '0' }]);
+
+        expect(await clientRowsOf(taskId)).toEqual([]);
+        expect(await taskState(taskId)).toMatchObject({ status: 'running' });
+        const [task] = await query<{ checkpoint: unknown }>(
+          'SELECT checkpoint FROM app.research_tasks WHERE task_id = $1',
+          [taskId],
+        );
+        expect(task.checkpoint).toBeNull();
+      } finally {
+        finish.release();
+        try {
+          await runtimeWorkSettled([guardType], LATCH_MS);
+        } finally {
+          await app.close();
+        }
+      }
+    }, 30_000);
   });
 
   // ---------------------------------------------------------------------------------------------------------------

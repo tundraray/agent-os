@@ -9,7 +9,9 @@ export {
   EventConsumerRegistry,
 } from './event-consumer.registry.js';
 export { EvidenceReader, type StoredEvidence } from './evidence.reader.js';
+export type { RuntimeTx } from './guarded-transition.js';
 export {
+  type AttemptGuardResult,
   HandlerRegistry,
   type HandlerResult,
   type RegisterWaitResult,
