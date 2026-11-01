@@ -18,11 +18,15 @@
     "test:e2e": "pnpm build && vitest run --config ./vitest.config.e2e.ts"
   },
   "dependencies": {
+    "@agent-os/contracts": "workspace:*",
+    "@agent-os/db": "workspace:*",
+    "@agent-os/runtime": "workspace:*",
     "@agent-os/sources": "workspace:*",
+    "@mastra/core": "^1.80.0",
+    "drizzle-orm": "0.45.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@agent-os/db": "workspace:*",
     "@types/node": "^24.0.0",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
