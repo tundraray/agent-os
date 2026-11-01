@@ -1,6 +1,7 @@
 // deep-research / engine Integration Test Skeletons - Design Doc: docs/features/deep-research/design-engine.md
-// PRD: docs/features/deep-research/prd.md (FR-01..FR-12). ADRs: ADR-0001 (runtime owner), ADR-0003 (Drizzle data layer), ADR-0004 (engine package). UXRD: none (part without UI).
-// Generated: 2026-11-01 | Part: engine | Test type: Integration (in-process runtime + engine + real Postgres, scripted model), CI job `e2e-engine`
+// PRD: docs/features/deep-research/prd.md v1.12 (FR-01..FR-12, FR-25, FR-26). ADRs: ADR-0001 (runtime owner), ADR-0003 (Drizzle data layer), ADR-0004 (engine package). UXRD: none (part without UI).
+// Generated: 2026-11-01 | Updated: 2026-11-01 for the no-source mode (Design Doc v1.9: KD-8, KD-9, DC-16..DC-19, Flow 5, UC-11, UC-12, UC-E11, UC-E12) | Part: engine
+// Test type: Integration (in-process runtime + engine + real Postgres, scripted model), CI job `e2e-engine`
 // Implementation timing: created alongside the implementation slice that each test names (the controller loop, the token ledger, the claim lifecycle, the attempt guard).
 //
 // File name and placement. This follows the sibling runtime package (`research-runtime-runtime.int.e2e-spec.ts`), not the DB-free `*.int.spec.ts` of `packages/sources`:
@@ -16,18 +17,25 @@
 //   The double records every packet it receives (for window and isolation checks) and scripts the structured output and the reported `usage`. `TokenCounter` is a deterministic double
 //   with an injectable offset, so a divergence between counted and actual input can be forced (DC-13).
 // - Source boundary: a `SourceRegistry` with one in-memory counting adapter allowed to `source.fetch` (the real fixture process is used only in the E2E file). The adapter's call counter
-//   is the independent counter for "no source call".
+//   is the independent counter for "no source call". `createEngine` receives `connectedSources` = [that adapter's sourceId] by default (mode `sources`, DC-14 in force); the no-source rows (INT-1 C7, INT-2 L6)
+//   pass `[]` (mode `model_knowledge`, KD-8) and C7 rebuilds the engine over the same database with the adapter connected. In those rows the model double records the role of every call, so "no controller, worker or verifier call" is read from it
+//   and from `research_llm_calls`, and the counting adapter must stay at zero calls.
 // - Isolation (project convention, no truncate): a unique `resourceId = 'e2e-' + randomUUID()` and a unique `launchKey` per test. The engine's handler types are fixed, so isolation by
 //   `workflowType` is not available: this file runs with `fileParallelism: false`, owns the only runtime with engine handlers in the job, and each test waits for its own terminal status of `controllerTaskId`.
 // - Clock, lease and backoff jitter are injected; `notAfter` and the lease are moved with the injected clock and by moving `lease_expires_at` back (as runtime INT-3 does). No sleeps for ordering.
-// - Support to add with the package scaffold (not created here): test/support/engineHarness.ts (createDatabase + createRuntime + createEngine, scripted model, counting source, clock),
+// - Support to add with the package scaffold (not created here): test/support/engineHarness.ts (createDatabase + createRuntime + createEngine with a `connectedSources` option, a `rebuildEngine` over the same database,
+//   scripted model, counting source, clock, a `seedShell` helper that calls the real `InvestigationService.create` for INT-1 C8),
 //   test/support/engineDb.ts (read-only snapshots of `research_*` rows and a row-version snapshot for "no row changed" checks).
 //
 // Budget: Integration 4 (limit 3; up to 5 under the integration-e2e-testing rule only when each extra test names the defect no other test catches).
 //   INT-1..INT-3 are the core budget. INT-4 is the one extra; its unique defect is stated at its header. Table-driven rows keep the ACs of one rule or one flow in one test.
+//   The no-source mode (PRD 1.12) adds rows to these tests, not tests: INT-1 C7 and C8, INT-2 L6, assertions in INT-3 V1 and V2. The count stays 4 of 5 and the extra slot is still INT-4 only.
 //
 // Proven elsewhere (not in this file; see "Proven at unit level" at the end and the plan's traceability table "AC -> proving test"):
-// - process-level: AC-05.1, AC-05.2, AC-05.3 (UC-2, UC-3), NFR-03 / DC-9 on a killed process (UC-E9 first two scenarios) - deep-research-engine.e2e-spec.ts
+// - process-level: AC-05.1, AC-05.2, AC-05.3 (UC-2, UC-3), NFR-03 / DC-9 on a killed process (UC-E9 first two scenarios), DC-19 second scenario of UC-E12 (the engine row written, the controller task not yet proposed) - deep-research-engine.e2e-spec.ts
+// - AC-26.1 (the service starts without the fixture package, `connectedSources` is empty in the composition root): the api composition, not this package - extends apps/api/test/sources-wiring.e2e-spec.ts (named for the plan; that file is not part of
+//   this skeleton set); the part-level half (chat accepts messages and launches research without a source check) is apps/api/test/deep-research-chat-entry.int.e2e-spec.ts INT-1 A6
+// - AC-26.2, AC-26.3 (exactly one start warning without sources, none with one): unit, loader table (see "Proven at unit level"); the real log of a booted process is read by hand in the L1 scenario of the chat-entry part (L1-7)
 // - runtime port TaskContext.withAttemptGuard (design-runtime.md UC-E9 and variants): packages/runtime/test/research-runtime-runtime.int.e2e-spec.ts, INT-3 R8..R10
 // - the runtime primitives the engine builds on (admission/dedup, wait/wake, fencing of putEvidence/saveCheckpoint, cancel, deadline): runtime and mcp-source suites, not repeated here
 
@@ -35,7 +43,7 @@ import { describe, it } from 'vitest';
 
 describe('deep-research / engine - integration (in-process runtime + engine + real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-1  Controller loop: only accepted decisions create tasks, and every stop ends in an answer built by code
+  // INT-1  Controller loop: only accepted decisions create tasks, every stop ends in an answer built by code, a deployment without sources runs plan and synthesis only, and a retried start keeps one investigation
   // ---------------------------------------------------------------------------------------------------------------
   // Covers (original statements):
   // AC-01.1: "Given на двух расследованиях контроллер выдаёт разные цепочки решений (сразу ответ; сбор → проверка → перестройка плана → сбор → ответ), Then в каждом исполняются ровно выбранные возможности в выбранном порядке и ни одной без решения контроллера."
@@ -53,15 +61,25 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   // DC-5 (FR-04): "Сигнал незарегистрированного вида или с payload не по схеме своего вида не записывается, и вызывающий получает отказ."
   // DC-8 (FR-06): "Когда обязательная часть входа контроллера не помещается в его окно, модель не вызывается, и расследование останавливается с причиной context_overflow и ответом кодом."
   // DC-15 (FR-12): "Создание движка отклоняет повтор пары processId и version, а разные версии одного процесса загружаются рядом. Старт без версии берёт наибольшую загруженную, и расследование до конца исполняется на версии, с которой стартовало." (here: the recorded-version half; the loader and resolution half is a unit spec, see "Proven at unit level")
-  // Use cases: UC-1, UC-4, UC-5, UC-9, UC-10 (recorded-version half), UC-E1, UC-E4 (deadline scenario), UC-E6 (controller scenario). Flow 1 (first half), Flow 2.
+  // AC-25.1: "Given в развёртывании не подключён ни один источник данных, When расследование завершено, Then каждое утверждение ответа помечено как взятое из знаний модели без источника, и ни одно не ссылается на evidence."
+  // AC-25.2 (engine half): "Given ответ расследования в режиме без источников, Then он ... имеет исход `answered`, и ни одно утверждение не выдано как установленное." (the warning that opens the answer is chat-entry, MC-32)
+  // AC-25.4: "Given режим без источников, When расследование завершено, Then учёт вызовов (FR-11) показывает вызовы только постановки и плана и синтеза, а вызовов воркера, проверяющего и источников нет."
+  // DC-16 (FR-25): "Режим расследования определяет список подключённых источников в момент старта, и до конца расследования он не меняется, в том числе после рестарта с другим набором источников."
+  // DC-17 (FR-25): "В режиме без источников утверждение черновика синтеза со ссылкой на evidence удаляется с причиной `evidence_not_found`, а синтез без единого утверждения даёт исход `inconclusive`." (here: the wiring half; the rule table is a unit test)
+  // DC-19 (NFR-03): "Повтор `startInvestigation` с тем же `launchKey` после сбоя на любом шаге старта оставляет у запуска одно расследование со строкой движка и задачей контроллера; оболочку прежнего сбоя он берёт, а не создаёт второе расследование." (here: shell taken and two parallel starts; the kill between the engine row and the controller task is E2E-2 K3)
+  // Use cases: UC-1, UC-4, UC-5, UC-9, UC-10 (recorded-version half), UC-11, UC-E1, UC-E4 (deadline scenario), UC-E6 (controller scenario), UC-E12 (first and third scenarios). Flow 1 (first half), Flow 2, Flow 5. KD-8, KD-9, Invariants 8 and 10.
   //
   // Primary failure mode (turns red when): a rejected decision still proposes a task or calls the source; a step is executed twice or without a decision row; a decision's task is
   // not the capability it chose; a stop condition ends the controller task as `failed` without an answer; a replan with the same query calls the source again;
-  // an investigation that survives an engine rebuild runs its next steps on the prompts of a newer loaded version instead of its recorded one (the frozen copy in `research_engine_runs` is not what the handlers read).
+  // an investigation that survives an engine rebuild runs its next steps on the prompts of a newer loaded version instead of its recorded one (the frozen copy in `research_engine_runs` is not what the handlers read);
+  // an investigation started without sources calls the controller model, a worker or the source anyway, or its claims reach `established` or keep an evidence reference, or it switches to `sources` when the engine is rebuilt with a source connected
+  // (the mode is read from the live `connectedSources` instead of the recorded `sourceMode`); a repeated start with the same `launchKey` after a failed start leaves two investigations in the thread, or leaves an untaken shell next to the new one,
+  // or two parallel starts both keep their investigation.
   // Behavior: scripted controller output -> DecisionGate verdict -> research_decisions row (accepted or refused with reason) -> tasks proposed through TaskScheduler (or none) -> runtime wakes the controller
-  //   -> after the last step, or at any stop condition, one answer row built from the verified claims with the stop reason
+  //   -> after the last step, or at any stop condition, one answer row built from the verified claims with the stop reason;
+  //   without sources: the controller task, after the `plan` role, accepts `proposeAnswer` by code, proposes `research.synthesize` and waits -> synthesis claims go to `assumed` -> one answer row
   // @category: core-functionality
-  // @dependency: ControllerHandler, ContextBuilder, ModelGateway, DecisionGate, CapabilityRegistry, TaskScheduler (runtime), source.fetch, research_decisions, research_signals, research_engine_runs, Postgres
+  // @dependency: ControllerHandler, ContextBuilder, ModelGateway, DecisionGate, CapabilityRegistry, TaskScheduler (runtime), InvestigationService (runtime), source.fetch, research_decisions, research_signals, research_engine_runs, Postgres
   // @complexity: high
   //
   // Verification items (table of scenarios; each row names the AC it proves and shares the harness):
@@ -83,6 +101,21 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   engine built with versions 1 and 2 of one `processId` (different prompt text); investigation A started without a version, investigation B with version 1, both parked mid-run -> `readInvestigation` shows version 2 for A and 1 for B;
   //   the runtime is stopped and the engine rebuilt over the same database with versions 1, 2 and 3 -> both investigations reach an answer, the packets the double received for each carry the prompt text of its recorded version (A: 2, B: 1),
   //   and a new investigation started without a version records version 3. Which version a start picks and the duplicate-pair rejection are not repeated here: they are the loader spec
+  // - C7 no-source mode (UC-11, AC-25.1, AC-25.2 engine half, AC-25.4, DC-16, DC-17 wiring; unique defect: a controller or worker call, a source call or an evidence reference in a deployment without sources, and a mode read from the live
+  //   `connectedSources` instead of the recorded row, which only a persisted `sourceMode` and a second `createEngine` over the same database can show): engine built with `connectedSources: []`; the double is scripted with a plan revision
+  //   and a synthesis draft of three claims, one of them citing an evidence id -> investigation A: `readInvestigation` shows `sourceMode` `model_knowledge`, outcome `answered`, two claims in `assumed` with empty `evidenceIds` and `verified` false,
+  //   the third in `removed` with `evidence_not_found`, `established` empty; the synthesis packet carries the field `sourceMode` = `model_knowledge`; `research_llm_calls` has rows of the roles `plan` and `synthesis` only and the model double
+  //   received no call of any other role; the investigation has no task of type `source.fetch`, `research.analyze` or `research.verify`; `research_decisions` holds exactly one accepted decision, `proposeAnswer`, and no refusal; the counting adapter
+  //   has zero calls; the controller task is `succeeded` with the `answerId`; the ledger sum equals `research_engine_runs.spent`. Investigation B, started in the same engine and parked before its synthesis, then the engine is rebuilt over the same
+  //   database with the adapter connected: B reaches its answer with `sourceMode` `model_knowledge` and still zero source calls, and a new investigation C started in the rebuilt engine records `sourceMode` `sources`
+  //   (the claim-by-claim rule table of the gateway, the code-built answers and the configuration without `plan` or `synthesize` are unit tests, see "Proven at unit level")
+  // - C8 start retry takes the shell, and a parallel start keeps one investigation (UC-E12 first and third scenarios, DC-19, KD-9; unique defect: `startInvestigation` creating a second investigation when a retry follows a failure between
+  //   `InvestigationService.create` and the engine row, and two starts with one `launchKey` both keeping theirs, which only the real unique indexes and the real runtime show). The state a kill between the two writes leaves is exactly what `create`
+  //   commits in its own transaction, so it is seeded with the real `InvestigationService.create` (same thread, owner, `query`, `maxTasks`, `maxToolCalls`) and no engine row; a second shell with another `query` is seeded beside it:
+  //   (a) `startInvestigation` with launchKey L -> `created`, the returned `investigationId` is the matching shell, `InvestigationService.listForThread` shows the thread with two investigations only (that shell and the unmatched one, which is untouched and not
+  //   cancelled), one engine row for L, one controller task, and the investigation reaches an answer; a repeated start with L -> `existing`, `propose` answers `subscribed`, no new row or task
+  //   (b) two parallel `startInvestigation` calls with one launchKey and no shell -> both return the same `investigationId`, one engine row and one controller task exist, the investigation the loser created is `cancelled` with no task and no spend
+  //   (the kill between the engine row and the controller task cannot be produced without faking a runtime component: it is E2E-2 K3; the shell-matching predicate is a unit test)
   // - Rows never re-check the variants of DecisionGate / config validation / admissible computation: one refused kind per wiring row proves the link, the rule table is a unit test
   describe('INT-1', () => {
     it.todo('INT-1 C1: two scripted decision chains execute exactly the chosen capabilities in the chosen order, each task traces to a decision, and every model call is made by its role\'s model');
@@ -91,6 +124,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
     it.todo('INT-1 C4: recorded signals appear in the next decision input and are referenced by the decision row; unknown kind, off-schema payload and another owner are refused and write nothing');
     it.todo('INT-1 C5: controller_invalid, step_limit, deadline and context_overflow each end the investigation with a code-built answer carrying the reason; invalid decisions create no task and no source call');
     it.todo('INT-1 C6: investigations started on versions 2 (no version given) and 1 finish on the prompts of their recorded versions after the engine is rebuilt with versions 1, 2 and 3, and a new start without a version records version 3');
+    it.todo('INT-1 C7: without connected sources the investigation runs plan then one synthesis with no controller, worker, verifier or source call, delivers its claims as assumed and unverified with evidence references removed, and keeps that mode after the engine is rebuilt with a source connected');
+    it.todo('INT-1 C8: a start repeated after a failed start takes the shell the failure left instead of creating a second investigation, and two parallel starts with one launchKey keep one investigation');
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -105,10 +140,12 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   // AC-11.1: "Given завершённое расследование, Then сумма учтённых вызовов совпадает с расходом, списанным с бюджета (FR-07), и разбита по ролям и моделям."
   // DC-12 (FR-10): "Когда модель недоступна и повторы исчерпаны, задача воркера, проверки или синтеза проваливается с кодом model_unavailable, а контроллер останавливает расследование принудительно с этой причиной."
   // DC-13 (FR-11): "Строка журнала хранит и счёт входа до вызова, и фактический вход, так что расхождение счёта провайдера видно по каждому вызову."
-  // Use cases: UC-8, UC-E2, UC-E5, UC-E10. Flow 1 (failure handling: budget, provider errors, cancel), Flow 2 (first failure bullet). Invariants 1, 2, 4.
+  // AC-25.5: "Given режим без источников, When бюджет исчерпан или время расследования истекло раньше, чем синтез завершён, Then расследование завершается с исходом `inconclusive` и причиной остановки."
+  // Use cases: UC-8, UC-E2, UC-E5, UC-E10, UC-E11. Flow 1 (failure handling: budget, provider errors, cancel), Flow 2 (first failure bullet), Flow 5 (failure handling). Invariants 1, 2, 4.
   //
   // Primary failure mode (turns red when): a model call starts without a recorded reservation or beyond the remaining investigation budget or the task's `maxTokens`; the charged total differs from the sum of ledger rows;
-  // a failed or cancelled call leaves a reservation `reserved`; a provider outage or an exhausted budget fails the controller instead of ending the investigation with an answer; a call starts after cancel.
+  // a failed or cancelled call leaves a reservation `reserved`; a provider outage or an exhausted budget fails the controller instead of ending the investigation with an answer; a call starts after cancel;
+  // in a deployment without sources a refused reservation, an expired `notAfter` or a cancel during synthesis fails the controller task, or leaves it without an answer (budget, deadline), or gives a cancelled investigation an answer.
   // Behavior: a role asks for a call -> reservation (counted input + margin + maxOutputTokens) is written within the remaining budgets, or refused before the network -> the call -> the reservation is replaced by actual usage and price
   //   (settled), or closed failed/abandoned -> totals per role and model are read back through readInvestigation
   // @category: core-functionality
@@ -126,12 +163,18 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   every failed call's reservation is `failed` (settled to what the provider reported in usage); the controller then ends the investigation with an answer by code, stop reason `model_unavailable`
   // - L5 cancel (UC-E2, AC-01.4): a worker call is in flight (held by a latch), a second analysis task is queued -> `InvestigationService.cancel` -> after the cancel commit there is no new reservation row and no new call of the counting source adapter,
   //   the in-flight call is aborted by the signal, its reservation is closed `abandoned` and counted in full, and the sum still equals the charged total
+  // - L6 no-source stop before the synthesis ends (UC-E11, AC-25.5; unique defect: the code-built stop answer exists only for the sources path, so the plan-then-synthesis path fails the controller or answers nothing): engine with `connectedSources: []`, three investigations:
+  //   (a) the budget covers the `plan` call but is below the synthesis reservation -> the reservation is refused, the double got no synthesis call, the answer has no claims, outcome `inconclusive`, stop reason `budget_exhausted`, the controller task is `succeeded` with that `answerId`
+  //   (b) the injected clock moves past `notAfter` after the plan and before the synthesis task is claimed -> the synthesis task fails with class `deadline` without a model call, the controller answers by code: no claims, `inconclusive`, stop reason `deadline`, task `succeeded`
+  //   (c) cancel while the synthesis call is held by a latch -> status `cancelled`, `answer` null, no new reservation, the in-flight reservation closed `abandoned` (the abort mechanism itself is L5)
+  //   (`model_unavailable` in this mode takes the same code-built answer: a row of the unit table of stop answers, see "Proven at unit level")
   describe('INT-2', () => {
     it.todo('INT-2 L1: a task whose maxTokens is below its call fails with task_tokens_exhausted without calling the model, and its sibling task continues');
     it.todo('INT-2 L2: an exhausted investigation budget starts no further call, stops with budget_exhausted and answers with the claims verified before, spending no more than the budget');
     it.todo('INT-2 L3: after all roles move to one model by configuration, the ledger sum equals the charged total, usage is split by role and model, and each row keeps counted and actual input');
     it.todo('INT-2 L4: a provider outage gives the worker 3 calls then model_unavailable, closes each failed reservation as failed, and ends the investigation with an answer by code');
     it.todo('INT-2 L5: after cancel no reservation and no source call start, the in-flight reservation is closed abandoned and the ledger sum still equals the charged total');
+    it.todo('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer');
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -140,13 +183,15 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   // Covers (original statements):
   // AC-08.1: "Given утверждение называет число или идентификатор, которого нет в цитируемом evidence, Then код помечает его refuted или insufficient, и в ответ оно не попадает как установленное." (here: the failed-collection half, DC-10)
   // AC-08.3: "Given лимит циклов проверки исчерпан без подтверждения, Then утверждение insufficient и никогда не становится supported автоматически."
-  // AC-09.1: "Given черновик ответа содержит утверждение без ссылки, со ссылкой на несуществующее evidence или на evidence другого расследования, Then это утверждение удалено из ответа до выдачи, а удаление записано в ходе расследования." (here: the real EvidenceReader half)
-  // AC-09.2: "Given выданный ответ, Then каждое его утверждение ведёт к evidence со всеми полями provenance."
+  // AC-09.1: "Given в развёртывании подключён хотя бы один источник данных, и черновик ответа содержит утверждение без ссылки, со ссылкой на несуществующее evidence или на evidence другого расследования, Then это утверждение удалено из ответа до выдачи, а удаление записано в ходе расследования." (here: the real EvidenceReader half, in mode `sources`; the mode without sources is INT-1 C7)
+  // AC-09.2: "Given в развёртывании подключён хотя бы один источник данных, и ответ выдан, Then каждое его утверждение ведёт к evidence со всеми полями provenance."
+  // AC-25.3: "Given подключён хотя бы один источник, в том числе недоступный во время расследования, Then в ответе нет ни пометки знаний модели, ни предупреждения режима без источников, а утверждения без допустимой ссылки удаляются (AC-09.1)." (here: the mode of an investigation whose connected source fails; UC-12 second half)
   // AC-09.3: "Given при написании ответа появилось новое существенное утверждение, When циклы проверки (FR-08) ещё остались, Then оно проверяется до выдачи; When циклов не осталось, Then оно выдаётся как предположенное и помечено как непроверенное. Как установленное оно не выдаётся ни в одном случае."
   // DC-10 (FR-08): "refuted ставится только тогда, когда полученная исходная запись противоречит атому; отсутствие атома или провал задачи сбора дают insufficient."
-  // Use cases: UC-6 (wiring half), UC-7 (wiring half), UC-E7. Flow 3, Flow 4. Invariants 7, 8, 9.
+  // Use cases: UC-6 (wiring half), UC-7 (wiring half), UC-12 (second half), UC-E7. Flow 3, Flow 4. Invariants 7, 8, 9.
   //
   // Primary failure mode (turns red when): a claim reaches `established` without all atoms found in this investigation's source records (a worker summary is enough, or a failed collection counts as found);
+  // a connected source that fails during the investigation flips the investigation to the no-source mode (its claims lose their references or are marked as model knowledge);
   // evidence of another investigation or an unknown id survives the reference gateway; a status change overwrites the earlier revision instead of appending; the verify loop never ends or ends without a round counted.
   // Behavior: worker claims (unverified) -> verifier picks records -> research.verify proposes source.fetch tasks and waits through the runtime -> code compares atoms to the fetched records -> new revision rows;
   //   synthesis draft -> reference gateway over EvidenceReader -> answer rows (established / assumed / removed); a new claim with rounds left returns needs_verification and the controller verifies and proposes the answer again
@@ -156,13 +201,14 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //
   // Verification items (table):
   // - V1 verification round through the runtime (UC-6 wiring, AC-08.1 failed-collection half, DC-10): two claims -> the first has all atoms in the records returned by a fetch task -> new revision `supported` with basis and scope;
-  //   the second depends on a fetch task that the adapter fails -> new revision `insufficient` listing the missing atoms, not `refuted`; the earlier `unverified` revisions are byte-identical after the round (row-version snapshot), the verify task `succeeded`
-  // - V2 gateway over the real reader (UC-7 wiring, AC-09.1, AC-09.2): a draft with a claim citing evidence of another investigation of the same user, a claim citing an id that does not exist and a claim citing this investigation's evidence of a `supported` claim ->
+  //   the second depends on a fetch task that the adapter fails -> new revision `insufficient` listing the missing atoms, not `refuted`; the earlier `unverified` revisions are byte-identical after the round (row-version snapshot), the verify task `succeeded`;
+  //   the same run also pins AC-25.3 (UC-12 second half): the engine is built with the failing adapter connected, so `readInvestigation` shows `sourceMode` `sources` although a collection failed, and the answer carries no model-knowledge mark
+  // - V2 gateway over the real reader (UC-7 wiring, AC-09.1, AC-09.2, mode `sources`): a draft with a claim citing evidence of another investigation of the same user, a claim citing an id that does not exist and a claim citing this investigation's evidence of a `supported` claim ->
   //   the first two are in `answer.removed` with their reasons, the third in `established` and `EvidenceReader.get` returns every provenance field for each of its evidence ids; `readInvestigation` by another `resourceId` -> `investigation_not_found`
   // - V3 new claim during synthesis (UC-7 and UC-E7 wiring, AC-09.3, AC-08.3): with verify rounds left -> synthesis returns `needs_verification`, the controller decides `requestVerification` then `proposeAnswer` again and the claim ends in `established` or `insufficient` by the records;
   //   with rounds exhausted (`maxVerifyRounds` reached, `requestVerification` no longer admissible) -> the claim is in `assumed` with `verified` false, never in `established`, and its latest revision is `insufficient` or `unverified`, never `supported`
   describe('INT-3', () => {
-    it.todo('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched');
+    it.todo('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched, and a failing connected source keeps the investigation in the sources mode');
     it.todo('INT-3 V2: the reference gateway removes claims citing another investigation\'s or unknown evidence, and each established claim resolves to evidence with all provenance fields; another owner cannot read the investigation');
     it.todo('INT-3 V3: a new claim made during synthesis is verified before delivery while rounds remain, and is delivered as assumed and unverified, never established, when they are exhausted');
   });
@@ -203,8 +249,11 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 // - DecisionGate + admissible computation (table): decision outside the closed set, capability not enabled (DC-1), invalid structure, `maxFanOut` + 1 sub-questions (DC-6), `replan` at `maxPlanRevisions` leaving only requestVerification /
 //   proposeAnswer / concludeInconclusive (AC-02.2, UC-E3), `noveltyWindow` steps without new evidence or revisions leaving only proposeAnswer / concludeInconclusive (AC-03.1, UC-E4 first scenario), a decision creating tasks refused when
 //   `notAfter` is within 1 000 ms. AC-02.2, AC-03.1, DC-6.
-// - ProcessConfig schema and loader (table, UC-E8, UC-10): capability outside the registry, unknown key `script`, unknown field in a prompt template, tool outside the `source.fetch` allowlist (path of the error in the message), duplicate pair `processId` + `version`
+// - ProcessConfig schema and loader (table, UC-E8, UC-10, UC-12): capability outside the registry, unknown key `script`, unknown field in a prompt template, tool outside the `source.fetch` allowlist (path of the error in the message), duplicate pair `processId` + `version`
 //   (the error path names the repeated pair), role model absent from the model catalog; the deep-research configuration shipped as a data file passes the same loader. AC-12.2, AC-12.3, DC-14.
+//   Rows added for the mode (UC-12 first half, no database, a recording logger double): `createEngine` with empty `connectedSources` accepts a configuration whose source is outside the allowlist, writes exactly one `warn` that the sources are not connected and
+//   the investigations will run on model knowledge, and `Engine.sourceMode` is `model_knowledge`; the same configuration with a non-empty `connectedSources` is rejected by DC-14 with the error path, writes no such warning, and `Engine.sourceMode` is `sources`;
+//   a connected source that is unreachable at run time does not change either value. AC-26.2, AC-26.3, AC-25.3 (mode half), DC-18, KD-8.
 // - Process version resolution (rows of the same loader table, UC-10): versions 1 and 2 of one `processId` load side by side while a repeated version 1 is rejected; a start without a version resolves to the highest loaded (2, then 3 once 3 is loaded);
 //   a start with an explicit version resolves exactly that one; a version or a `processId` that is not loaded answers `process_unknown`. DC-15 (resolution half; the recorded-version half is INT-1 C6).
 // - ContextBuilder (table + fast-check property): input tokens of the packed prompt <= `windowTokens` for arbitrary evidence sizes (AC-06.1); mandatory evidence is never truncated and yields `needs_narrowing` with the material size (AC-06.2, DC-7);
@@ -213,7 +262,12 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 // - Claim verifier (table, UC-6): an atom (traceId, service, event, interval, number) absent from the records -> `insufficient`; a number equal to the aggregate -> `supported`; an interval contradicted by a fetched record -> `refuted`;
 //   a claim backed only by a worker summary is never `supported` before source records arrive. AC-08.1, AC-08.2, DC-10 (comparison half).
 // - Reference gateway (table, UC-7): claim without a reference, with an unknown reference, with another investigation's reference -> removed with a reason; a new claim -> `needs_verification` or `assumed`/unverified depending on rounds left; `established` holds only
-//   `supported`; outcome `answered` without any `supported` claim is lowered to `inconclusive` (DC-11). AC-09.1 (rule), AC-09.3 (rule), DC-11.
+//   `supported`; outcome `answered` without any `supported` claim is lowered to `inconclusive` (DC-11, mode `sources` only). AC-09.1 (rule), AC-09.3 (rule), DC-11.
+//   Rows added for the mode `model_knowledge` (UC-11 rule half): every claim without a reference -> `assumed`, `verified` false, empty `evidenceIds`; a claim with any reference -> `removed` with `evidence_not_found`; at least one remaining claim -> outcome `answered`
+//   (DC-11 not applied); a draft with no claim, or all removed -> `inconclusive`; `established` empty in every row. AC-25.1 (rule), AC-25.2 (rule), DC-17.
+// - Code-built answers and plan seed of the no-source path (table over the pure builders, UC-11, UC-E11): a stop at `budget_exhausted`, `deadline` or `model_unavailable` before the synthesis ends -> answer with no claims, outcome `inconclusive`, that stop reason;
+//   a configuration without the `plan` capability -> the first plan revision is the `goal` and there is no `plan` call; a configuration without `synthesize` -> answer by code, `inconclusive`, no stop reason. AC-25.5 (rule), KD-8.
+// - Shell matching predicate (table, UC-E12): an investigation is taken by a retried start only when it has the same thread and owner, the same `query`, the same `maxTasks` and `maxToolCalls`, and no engine row; each differing field leaves it untouched. DC-19 (rule), KD-9.
 // - Dedup key builder for gather descriptions (fast-check property): the same tool, arguments and snapshot always give the same key regardless of `rationale` text or argument key order (DC-4 key half).
 // - Signal registry (table): kind lookup, payload schema per kind, a kind registered later is accepted without changing the DecisionInput shape (AC-04.2).
 // - Cost calculation (table): catalog prices including the Haiku tier above 100 000 input tokens, cache read and write tokens (AC-11.1 price half).

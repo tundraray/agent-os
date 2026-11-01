@@ -1,6 +1,6 @@
 // deep-research / chat-entry Integration Test Skeletons (api side) - Design Doc: docs/features/deep-research/design-chat-entry.md
-// PRD: docs/features/deep-research/prd.md (FR-19..FR-22, NFR-01, NFR-03). ADRs: ADR-0001 (runtime owner), ADR-0002 (app schema migrations), ADR-0003 (Drizzle data layer), ADR-0004 (api owns chat logic). UXRD: docs/features/deep-research/uxrd.md (only through DC-7 / MC-13 / MC-15 / MC-16 / MC-29 on the wire).
-// Generated: 2026-11-01 | Part: chat-entry | Test type: Integration (in-process Nest app + real runtime + real Postgres, scripted chat model, engine port double), CI job `e2e` of apps/api
+// PRD: docs/features/deep-research/prd.md v1.12 (FR-19..FR-22, FR-26 (api share), FR-27, NFR-01, NFR-03). ADRs: ADR-0001 (runtime owner), ADR-0002 (app schema migrations), ADR-0003 (Drizzle data layer), ADR-0004 (api owns chat logic). UXRD: docs/features/deep-research/uxrd.md (only through DC-7 / MC-13 / MC-15 / MC-16 / MC-29 on the wire, and MC-31 / MC-32 / MC-33 as the text the server stores).
+// Generated: 2026-11-01 | Updated: 2026-11-01 for the no-source mode (Design Doc v1.6: KD-8, DC-8, DC-9, UC-4, UC-12, UC-13, UC-E8) | Part: chat-entry | Test type: Integration (in-process Nest app + real runtime + real Postgres, scripted chat model, engine port double), CI job `e2e` of apps/api
 // Implementation timing: created alongside the slice each test names (the `deepResearch` tool and ResearchLaunchService, the delivery loop, the tail/delete hooks).
 //
 // File name and placement. This follows the sibling api files (`research-runtime-wiring.e2e-spec.ts`, `threads.e2e-spec.ts`): `apps/api/test/*.e2e-spec.ts`, picked up by `vitest.config.e2e.ts`
@@ -16,6 +16,8 @@
 //   it records the options of every call (the forced tool choice, the thinking setting) and the message list it received; (2) the engine port (`Engine.startInvestigation`, `Engine.readInvestigation`): a test double over the
 //   real runtime that creates a real investigation whose controller task is a test handler held by a latch (wiring-handlers.ts `testHandler`), and answers `readInvestigation` with a scripted `InvestigationView`
 //   (answer, claims, evidence records with provenance). The engine itself is proven in packages/engine; here its contract (design-engine.md, Contract Definitions) is the boundary.
+//   The double also carries the source mode (design-engine.md v1.9): `Engine.sourceMode` is settable between steps of a test (the stand-in for restarting the process with another set of sources), the scripted `InvestigationView`
+//   has its own `sourceMode` (set when the double starts the investigation, not changed afterwards, as the engine guarantees), and `EvidenceReader.get` is a counting spy so that "the loop reads no evidence" is observable.
 // - Isolation (project convention, no truncate): a unique `resourceId = newUser()` per test as `x-user-id`, unique thread ids; afterAll removes the threads of every resourceId through ThreadsService.
 // - Time: the delivery loop is driven by single passes (`runOnce`) instead of waiting for `RUNTIME_POLL_MS`; the clock behind `RESEARCH_APPEND_GIVE_UP_MS`, `RESEARCH_LAUNCH_RECOVERY_MS` and the retry pause is injected.
 //   No sleeps for ordering.
@@ -25,12 +27,17 @@
 // Budget (whole part): Integration 5 (limit 3; up to 5 under the integration-e2e-testing rule only when each extra test names the defect no other test catches).
 //   INT-1..INT-3 (this file) are the core budget. INT-4 and INT-5 are the two web tests and the two extras; their unique defects are stated in their headers. Table-driven rows keep the ACs of one rule or one flow in one test.
 //   E2E 2 (limit 2): E2E-1 in deep-research-chat-entry.e2e-spec.ts, E2E-2 the L1 browser scenario at the end of deep-research-chat-entry.e2e-spec.ts.
+//   The no-source mode (PRD 1.12) adds rows to these tests, not tests: INT-1 A6, INT-2 D5, an assertion block in INT-2 D1. The count stays 5 of 5 for the part and the extras are still INT-4 and INT-5 only.
 //
 // Proven elsewhere (not in this file; see the "AC -> proving test" table in the generation report and "Proven at unit level" at the end of this file):
 // - the runtime primitives (cancel idempotence, purge of investigations, event delivery, EventConsumer contract) - packages/runtime and research-runtime-wiring.e2e-spec.ts
 // - "after cancel no new model call and no source call" (AC-01.4, the second half of AC-21.1) - engine INT-2 L5 (packages/engine/test/deep-research-engine.int.e2e-spec.ts)
 // - the deletion order of ThreadsService.delete and owner isolation of the runtime - research-runtime-wiring.e2e-spec.ts INT-5; here only what the part adds to it (the `purge` hook of launch rows, T4)
 // - restart of the process between steps (NFR-03, UC-5, UC-E6) - deep-research-chat-entry.e2e-spec.ts
+// - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (INT-1 C7, INT-2 L6, loader table); here only what the part does with the mode the engine reports
+// - AC-26.1, service side (the process starts with no fixture package and `connectedSources` is empty): the api composition - extends apps/api/test/sources-wiring.e2e-spec.ts (named for the plan; not part of this skeleton set). The chat side of AC-26.1
+//   (chat accepts messages, the research is proposed and launched, and the part adds no source check) is A6 below
+// - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (deep-research-chat-entry.e2e-spec.ts)
 
 import { describe, it } from 'vitest';
 
@@ -51,11 +58,18 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // DC-1 (FR-19): "Когда пользователь нажимает «Запустить», «Не нужно» или «Остановить» на карточке, чья судьба уже решена, ход решения ничего не меняет, а карточка переходит в текущее состояние запуска без строки ошибки."
   // DC-2 (FR-19): "Когда пользователь отправляет следующее сообщение, открытые предложения беседы закрываются, и карточка показывает «Не запущен» с причиной MC-13 для продолжившейся беседы; нажатие кнопки карточки следующим сообщением не считается."
   // DC-7 (FR-19, server half): "ChatController помечает реплику хода решения метаданными researchDecisionReply с launchKey" - what the web hides is INT-4; here the marks are what is stored and returned by GET messages.
-  // Use cases: UC-1, UC-2, UC-3 (server half), UC-E1 (the `decisionError` rows), UC-E2, UC-E5. Flow 1, Flow 2, Flow 4 (the branches that do not race with the answer). KD-1, KD-2, Invariants 1, 2.
+  // AC-26.1 (chat share): "Given в развёртывании не подключён ни один источник данных, When сервис запускается, Then он запускается без ошибки, чат принимает сообщения, а глубокое исследование можно запустить в режиме без источников."
+  // AC-27.1 (server half): "Given в развёртывании не подключён ни один источник данных, When агент предлагает глубокое исследование, Then вместе с целью и оценкой бюджета предложение предупреждает, что источники данных не подключены и ответ будет опираться на знания модели." (the sentence MC-31 is drawn by the web; here the proposal's `sourceMode`)
+  // AC-27.2 (server half): "Given в развёртывании не подключён ни один источник данных, When пользователь явно выбрал глубокое исследование и отправил сообщение, Then беседа показывает то же предупреждение там же, где показывает, что расследование идёт (AC-19.1), с момента запуска." (here: the first view the tool returns already has `sourceMode`)
+  // AC-27.4 (server half): "Given подключён хотя бы один источник, Then беседа не показывает предупреждения режима без источников ни в предложении, ни в идущем расследовании, ни в ответе." (here: `sourceMode` `sources` in every view; the answer is INT-2 D1)
+  // DC-8 (FR-27): "Пока у запуска нет расследования, карточка показывает MC-31 по режиму развёртывания в момент чтения; после старта — по режиму своего расследования, и рестарт с другим набором источников её не меняет."
+  // Use cases: UC-1, UC-2, UC-3 (server half), UC-12 (launch half), UC-13, UC-E1 (the `decisionError` rows), UC-E2, UC-E5. Flow 1, Flow 2, Flow 4 (the branches that do not race with the answer). KD-1, KD-2, KD-8, Invariants 1, 2.
   //
   // Primary failure mode (turns red when): a turn without the mode or a decision starts an investigation (the agent launches itself); a mode turn runs without the forced `deepResearch` call or with reasoning on (the provider rejects it);
   // a confirm starts a second investigation, or starts one with the goal or budget the model passed in the decision turn instead of the recorded proposal; a decision on a settled launch changes it or answers an error; a decision turn
-  // closes other proposals, or a plain follow-up does not; a decision with another user's `launchKey` changes that user's launch; the reply of a decision turn is stored without `researchDecisionReply`.
+  // closes other proposals, or a plain follow-up does not; a decision with another user's `launchKey` changes that user's launch; the reply of a decision turn is stored without `researchDecisionReply`;
+  // a deployment without sources refuses or does not offer the research (the part adds its own source check), or its proposal and first launch view lack the mode; a running launch follows the live engine mode after a restart with other sources
+  // instead of keeping its investigation's mode, or a proposal keeps the old mode (the row stores what was read when it was proposed); a deployment with a source shows the no-source mode.
   // Behavior: POST /api/chat with message metadata (`deepResearch: true`, or `researchDecision` with action and `launchKey`) or without -> ChatController gives the turn its single forced tool and no reasoning, or none -> the scripted model calls
   //   `deepResearch` -> the tool reads the mode or decision from the turn context, not from model arguments -> ResearchLaunchService writes the `research_chat_launches` row under the thread lock and starts the investigation outside it ->
   //   the tool returns a ResearchLaunchView -> GET /api/threads/:threadId/research and GET /messages show the result
@@ -79,12 +93,20 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   //   leaves the other proposal `proposed`
   // - A5 another user (UC-E5, AC-20.5): user V reads GET /research of U's thread -> 404 THREAD_NOT_FOUND (ApiError schema); V sends a decision turn in V's own thread with U's `launchKey` -> `decisionError: not_found`, U's row version
   //   unchanged (row-version snapshot), no investigation for V
+  // - A6 source mode of the launches (UC-12 launch half, UC-13, AC-26.1 chat share, AC-27.1, AC-27.2, AC-27.4, DC-8, KD-8; unique defect: the mode read from the wrong moment - the live engine mode for a running launch, or the mode stored at proposal time for a
+  //   proposal - and a source check added by the part, which neither the web nor the engine suites can show): the double starts with `Engine.sourceMode` `model_knowledge` and the app is composed with no source adapter:
+  //     a turn without the mode where the chat model double calls `deepResearch` -> the app takes the message, the double saw the same single tool and the same instruction text as in a `sources` run, the proposal is stored and GET /research shows it with `sourceMode` `model_knowledge`
+  //     a turn with the mode -> one investigation started, the tool result (the first view) already has `sourceMode` `model_knowledge`, and the `research_chat_launches` row stores the investigation's mode copied at reconciliation
+  //     rows with no investigation (declined, superseded, failed start, `launching`) show the current `Engine.sourceMode`
+  //     then the double's `Engine.sourceMode` is set to `sources` (the restart with the fixture): the open proposal shows `sources`, the running launch keeps `model_knowledge`, a confirm of the proposal starts an investigation viewed as `sources`
+  //   and in a run with `sources` from the start every view (proposal, running, completed) has `sourceMode` `sources`
   describe('INT-1', () => {
     it.todo('INT-1 A1: a turn with the research mode forces the deepResearch call without reasoning and starts one investigation; the next turn without the mode answers as usual and starts none');
     it.todo('INT-1 A2: a turn without the mode only records a proposal with its goal and budget, and no later turn without a confirm starts an investigation');
     it.todo('INT-1 A3: confirm starts exactly one investigation with the recorded goal and budget, decline starts none, repeated and stale decisions change nothing and answer no error, stop cancels once, refused start or stop returns decisionError, and every decision reply is marked');
     it.todo('INT-1 A4: a plain follow-up message closes open proposals as superseded, a decision turn does not close the other proposals, and a confirm on a superseded card starts nothing');
     it.todo('INT-1 A5: another user cannot read the launches of the thread (404) and a foreign launchKey in a decision turn changes nothing (not_found)');
+    it.todo('INT-1 A6: without sources the chat still proposes and launches research with no source check by the part, each launch view carries the mode (current engine mode until the investigation exists, the investigation\'s own mode after), a restart with a source changes proposals but not a running launch, and with a source no view carries the no-source mode');
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -96,16 +118,21 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // AC-20.3: "Given в момент завершения расследования в беседе стримится другой ответ, Then ответ расследования показан отдельным сообщением и не склеен со стримящимся ни вживую, ни после перезагрузки."
   // AC-20.4: "Given расследование завершилось ошибкой, Then беседа показывает, что оно не удалось, и больше не показывает, что оно идёт."
   // AC-20.6: "Given в беседе идут два расследования, When запущенное вторым завершилось первым, Then его ответ дописан раньше ответа первого, и каждый ответ ссылается на своё сообщение-запуск."
-  // AC-20.7: "Given ответ дописан, Then у каждого его утверждения в беседе видно, на какое evidence оно опирается (AC-09.2)." (server half: footnote numbers and source records in `researchAnswer`; the rendering is a component spec)
+  // AC-20.7: "Given в развёртывании подключён хотя бы один источник данных, и ответ дописан, Then у каждого его утверждения в беседе видно, на какое evidence оно опирается (AC-09.2)." (server half: footnote numbers and source records in `researchAnswer`; the rendering is a component spec)
+  // AC-27.3 (server half): "Given в беседу дописан ответ расследования в режиме без источников, Then беседа показывает предупреждение ответа и пометку знаний модели у каждого утверждения (AC-25.1, AC-25.2), в том числе после перезагрузки." (here: `sourceMode` in `researchAnswer`, MC-32 and MC-33 in the stored text, survival in GET /messages; the drawing is a component spec)
+  // AC-27.4 (answer half): "Given подключён хотя бы один источник, Then беседа не показывает предупреждения режима без источников ни в предложении, ни в идущем расследовании, ни в ответе." (UC-4 with the fixture connected: asserted in D1)
+  // DC-9 (FR-27): "Текстовая часть ответа в режиме без источников начинается с MC-32 и несёт MC-33 после каждого утверждения, поэтому «Копировать» и модель в следующих ходах получают ту же оговорку."
   // AC-21.1 (third part): "...а ответ не дописывается." (the stop wins over a finished controller)
   // DC-3 (FR-20): "Стримящийся ответ из NFR-01 - любой прогон чата беседы, зарегистрированный в ThreadRunRegistry этого процесса, в том числе ход решения; ответ ресерча дописывается после его конца."
   // DC-4 (FR-20): "Когда ответ не удаётся записать дольше RESEARCH_APPEND_GIVE_UP_MS с первой неудачи, запуск переходит в failed, и карточка показывает «Не удался»; так же кончается повторная запись ответа, убранного перегенерацией."
   // NFR-01 (server share only): "ответ завершённого расследования появляется в открытой беседе не позже чем через 5 с после завершения" - the measured end-to-end figure is E2E-2; here the answer is stored by the first pass after the event.
-  // Use cases: UC-4 (server half), UC-6, UC-7, UC-E3, UC-E4, UC-E7 (server half). Flow 3, Flow 4 (race branch). KD-3, KD-4, KD-5, Invariants 3, 4, 5.
+  // Use cases: UC-4 (server half, with a fixture connected), UC-6, UC-7, UC-12 (answer half), UC-E3, UC-E4, UC-E7 (server half), UC-E8. Flow 3, Flow 4 (race branch). KD-3, KD-4, KD-5, KD-8, Invariants 3, 4, 5, 6.
   //
   // Primary failure mode (turns red when): the answer is written in the middle of a chat turn or between the user message and its reply (DC-3); a later-finishing investigation's answer lands before an earlier one that is still retrying, or the
   // other way round for AC-20.6; a redelivered `TaskSucceeded` or a second pass writes a second message; a stopped or failed launch still gets an answer; a client copy of `research-answer-*` in the next chat request overwrites the stored answer;
-  // the loop retries forever and the card stays "running", or gives up early; a child task or an investigation started outside a thread turns a row to `answer_pending`.
+  // the loop retries forever and the card stays "running", or gives up early; a child task or an investigation started outside a thread turns a row to `answer_pending`;
+  // an answer of an investigation without sources is stored with footnotes, sources or `established` claims, or without `sourceMode` (the web then draws it as a checked answer), or its text carries no MC-32 / MC-33
+  // (the copy and the next chat turn lose the caveat), or the loop reads evidence for it; an answer of an investigation with a source carries the no-source warning or marks.
   // Behavior: TaskSucceeded of the row's `controllerTaskId` -> consumer moves the row to `answer_pending` in the delivery transaction (no external call) -> the loop pass picks the rows in completion order, skips threads with a registered run, and under the
   //   thread lock re-reads the row, reads the answer and provenance through the engine port, saves `research-answer-<investigationId>` with Markdown text and `researchAnswer` metadata, marks `answered` -> GET /research and GET /messages show it
   // @category: core-functionality
@@ -113,9 +140,9 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // @complexity: high
   //
   // Verification items (table; every row reads the stored messages of the thread with their metadata and `createdAt`, and the launch rows):
-  // - D1 delivery and shape (UC-4, AC-20.1, AC-20.2 uniqueness, AC-20.4, AC-20.7): TaskSucceeded of the controller task -> after one pass exactly one message `research-answer-<investigationId>` after the last message; its text is the
+  // - D1 delivery and shape (UC-4 with a fixture connected, AC-20.1, AC-20.2 uniqueness, AC-20.4, AC-20.7, AC-27.4): TaskSucceeded of the controller task -> after one pass exactly one message `research-answer-<investigationId>` after the last message; its text is the
   //   whole answer in Markdown (header, groups, claims with `[n]`, source list); its `researchAnswer` metadata has goal, outcome, stop reason, the launch reference, claims with footnote numbers by first appearance and the source entries
-  //   (sourceId, toolName, snapshot, truncated); no `removed` section; GET /research shows `completed` with `answerMessageId`; the same event delivered again and a second pass change nothing (still one message, same position);
+  //   (sourceId, toolName, snapshot, truncated), and `sourceMode` `sources`; the text holds neither MC-32 nor MC-33 and the launch view has no no-source mode (AC-27.4); no `removed` section; GET /research shows `completed` with `answerMessageId`; the same event delivered again and a second pass change nothing (still one message, same position);
   //   a TaskSucceeded of a child task and of an investigation not started from a thread do not touch any row; TaskFailed -> row `failed` and TaskCancelled -> `stopped`, no message in both
   // - D2 order and running turns (UC-6, UC-E3, AC-20.3, AC-20.6, DC-3, UC-E7 server half): two launches in one thread, the second finishes first -> its answer is stored before the first one's, each with its own launch reference;
   //   a chat run registered in ThreadRunRegistry (a latch holds the model) -> passes write nothing for that thread; after the run ends, the next pass writes the answer after the run's reply, never between the user message and its reply;
@@ -125,11 +152,18 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // - D4 give-up window and queue (UC-E4, AC-20.6, DC-4): the memory write fails on every try -> the row stays `answer_pending`, the pauses between tries start at `RUNTIME_POLL_MS` and double up to 16 times that, a later finished
   //   investigation of the same thread writes nothing while the earlier one retries; at `RESEARCH_APPEND_GIVE_UP_MS` after the first failure the row is `failed` (GET /research: `failed`, no `answerMessageId`), the earlier-finished one is
   //   not retried again, and the next row is then written
+  // - D5 answer without sources (UC-12 answer half, UC-E8, AC-27.3 server half, DC-9, KD-8; unique defect: the loop treating a no-source answer as a sourced one - reading evidence that does not exist, numbering footnotes, dropping the mode from the metadata - or
+  //   storing the caveat only in the metadata so that the copy and the model lose it; the builder's rule table is a unit test): the double's `InvestigationView` has `sourceMode` `model_knowledge`, two claims in `assumed` with no evidence, `established` empty, outcome `answered`;
+  //   one pass after TaskSucceeded -> one message `research-answer-<investigationId>`; `researchAnswer.sourceMode` is `model_knowledge`, `established` is empty, claims have no footnote numbers, the source list is empty; the text starts with MC-32 and has MC-33 after each of the two
+  //   claims and no `[n]`; the counting spy on `EvidenceReader.get` has zero calls; GET /messages after a reload returns the same message once; the next plain chat turn of the thread: the message list the chat model double received contains that text with MC-32 and both MC-33
+  //   (the model is not told the claims are checked); GET /research shows `completed` with `answerMessageId`.
+  //   UC-E8 row: the view is a stop before the synthesis ended (outcome `inconclusive`, stop reason `budget_exhausted`, no claims) -> the stored text starts with MC-32 and states the stop reason MC-25, the metadata has no claims, and the launch is `completed`
   describe('INT-2', () => {
-    it.todo('INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing');
+    it.todo('INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata (mode sources, no no-source warning or mark) at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing');
     it.todo('INT-2 D2: answers are appended in completion order, only after the running chat turn of the thread has ended, never between a user message and its reply, and a client copy of an answer does not overwrite the stored one');
     it.todo('INT-2 D3: a stop decision on a launch whose controller already finished leaves the launch stopped and appends no answer, while an already delivered answer is untouched');
     it.todo('INT-2 D4: a write that keeps failing is retried with growing pauses and holds the later answers of its thread until RESEARCH_APPEND_GIVE_UP_MS, then the launch is failed and the queue moves on');
+    it.todo('INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat, and a stop before the synthesis ends gives a warning with the reason and no claims');
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -177,13 +211,17 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
 // ---------------------------------------------------------------------------------------------------------------
 // - Launch state machine of ResearchLaunchService (table over State Transitions): for every state x action (confirm, decline, stop, supersede, discard, TaskSucceeded, TaskFailed, TaskCancelled, write window expired) the next state or "no change",
 //   and the ResearchLaunchView mapping (`launching` and `answer_pending` shown as `running`, `answered` and `answer_reappend` as `completed`, `declined` and `superseded` as `not_launched` with the reason, `answerPending` only for `answer_reappend`).
+//   The `sourceMode` of the view (rows of the same table): a row with an investigation shows the mode copied from its `InvestigationView` at reconciliation whatever `Engine.sourceMode` is now; a row without one (`proposed`, `not_launched`, `failed` at start,
+//   `launching`) shows the current `Engine.sourceMode`; reconciliation copies the mode once and never overwrites it. DC-8 (rule), KD-8.
 //   AC-19.7 (rule), DC-1 (rule), DC-2 (rule), Invariants 1 and 2. The integration rows prove only that the real tool and the real lock reach this machine once.
 // - `discardRepliesAfter` (extends threads.service.spec.ts): last user message is the last one without `researchDecision`, the tail may hold hidden pairs and answers, `repeated` is true only when the request's last message equals the stored one,
 //   `beforeDelete` sees the tail before the delete and its exception cancels it. AC-22.2 (rule), KD-7.
 // - `ThreadRunRegistry.hasRuns` (extends thread-run-registry.spec.ts).
 // - Answer message builder (table + fast-check property): footnote numbers follow the first appearance of a source and are stable for the same input; the Markdown text and the `researchAnswer` metadata agree on the numbers; the section `removed`
 //   never appears; outcome and stop reason pass through. AC-20.7 (server share).
+//   Rows added for the mode `model_knowledge` (UC-12, UC-E8): the text starts with MC-32 and carries MC-33 after every claim (and after none when there are no claims), no `[n]` and no source section; `established` is empty and no claim has a footnote number;
+//   the Markdown text and the metadata agree on the claims; in the mode `sources` neither MC-32 nor MC-33 appears. AC-27.3 (server share), DC-9 (rule).
 // - Message-metadata schemas of `@agent-os/contracts` (`deepResearch`, `researchDecision`, `researchDecisionReply`, `researchAnswer`, `ResearchLaunchView`, `ThreadResearchResponse`): the part's own rules only (an unknown action is refused, `answerMessageId`
-//   only with `completed`), not that zod parses.
+//   only with `completed`, a `researchAnswer` with `sourceMode` `model_knowledge` has an empty `established`, no footnote numbers and no source entries), not that zod parses.
 // - Deterministic id and retry pause: `research-answer-<investigationId>`; pause doubling from `RUNTIME_POLL_MS` capped at 16x (fast-check property).
 // - Settings parsing of `RESEARCH_APPEND_GIVE_UP_MS` and `RESEARCH_LAUNCH_RECOVERY_MS` (extends runtime-settings.spec.ts): defaults 300000 and 60000, invalid values refused.
