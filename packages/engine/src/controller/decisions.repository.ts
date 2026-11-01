@@ -28,6 +28,33 @@ export interface NewDecision {
   readonly notAfter: Date;
 }
 
+/**
+ * KD-8: the one decision of an investigation without sources — `proposeAnswer`, accepted by code at the first step
+ * after the plan; no model wrote it, so it has no refusal and no retry.
+ */
+export function proposeAnswerByCode(input: {
+  readonly decisionId: string;
+  readonly investigationId: string;
+  readonly planRevision: number;
+  readonly notAfter: Date;
+}): NewDecision {
+  return {
+    ...input,
+    step: 1,
+    callIndex: 0,
+    status: 'accepted',
+    rejectionReason: null,
+    decidedBy: 'code',
+    kind: 'proposeAnswer',
+    decision: {
+      kind: 'proposeAnswer',
+      rationale: 'no data source is connected: the answer is synthesized from model knowledge',
+      evidenceIds: [],
+      await: true,
+    },
+  };
+}
+
 /** The latest revision of a claim with the time it was written. */
 export interface LatestClaimRow {
   readonly claimId: string;

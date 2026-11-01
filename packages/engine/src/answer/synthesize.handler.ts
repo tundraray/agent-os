@@ -48,11 +48,6 @@ const SynthesisOutputSchema = z.object({
   ),
 });
 
-/** A path of the engine that arrives in a later task of the plan reached execution. */
-class SynthesisNotExecutableError extends Error {
-  override readonly name = 'SynthesisNotExecutableError';
-}
-
 const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(SYNTHESIZE_WORKFLOW, cause);
 
 type Drafted = { readonly next: 'draft'; readonly draft: SynthesisDraft } | { readonly next: 'result'; readonly result: HandlerResult };
@@ -63,7 +58,8 @@ type Drafted = { readonly next: 'draft'; readonly draft: SynthesisDraft } | { re
  * is saved to the checkpoint. Code then checks every cited evidence through `EvidenceReader.get` for the owner and
  * against the investigation's tasks, and the reference gateway decides the answer (KD-6): new claims are written as
  * `unverified` revisions and either sent to verification first (`needs_verification`, AC-09.3) or delivered as assumed;
- * the answer is written once with the claims the gateway removed and why (AC-09.1).
+ * the answer is written once with the claims the gateway removed and why (AC-09.1). In the mode `model_knowledge`
+ * (Flow 5) nothing is looked up or verified: the claims are written and delivered as assumed (DC-17).
  */
 export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
   const { database: db } = deps;
@@ -144,9 +140,7 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
       return failed(ctx, 'deadline', 'the synthesis task was claimed after notAfter');
     }
     const frame = await readTaskFrame(db, ctx, notAfter);
-    if (frame.sourceMode === 'model_knowledge') {
-      throw new SynthesisNotExecutableError('the model_knowledge path of the synthesis is not executable by this engine');
-    }
+    const { sourceMode } = frame;
     const known = await controllerRepository.latestClaims(db, ctx.investigationId);
 
     const saved = checkpointedAnswer(ctx, SYNTHESIZE_CALL);
@@ -157,12 +151,15 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
 
     const draftClaims: readonly DraftClaim[] = draft.claims;
     const screened = screenDraft({
+      sourceMode,
       claims: draftClaims,
       known: new Map(known.map((claim) => [claim.claimId, claim])),
-      references: await checkReferences(frame, draftClaims.flatMap((claim) => claim.evidenceIds)),
+      // DC-17: without sources there is no evidence to look up; the gateway removes every reference.
+      references:
+        sourceMode === 'sources' ? await checkReferences(frame, draftClaims.flatMap((claim) => claim.evidenceIds)) : new Map(),
     });
     const { limits, capabilities } = frame.config;
-    const verifyRoundsLeft = capabilities.includes('verify')
+    const verifyRoundsLeft = sourceMode === 'sources' && capabilities.includes('verify')
       ? Math.max(0, limits.maxVerifyRounds - (await answers.verifyRoundsUsed(db, ctx.investigationId)))
       : 0;
     const answerId = randomUUID();
@@ -174,7 +171,7 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
         coverage: null,
         claims: screened.fresh,
       });
-      const result = composeAnswer({ answerId, draft, screened, freshClaimIds, verifyRoundsLeft, removedClaimId: randomUUID });
+      const result = composeAnswer({ sourceMode, answerId, draft, screened, freshClaimIds, verifyRoundsLeft, removedClaimId: randomUUID });
       if (result.outcome === 'needs_verification') return result;
       return { outcome: 'answer' as const, answer: InvestigationAnswerSchema.parse(await answers.writeAnswer(tx, ctx.investigationId, result.answer)) };
     });

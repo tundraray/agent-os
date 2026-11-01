@@ -43,6 +43,7 @@ import { randomUUID } from 'node:crypto';
 import { deepResearchProcessV1, type InvestigationView, type StartInvestigationResult, type TokenCountRequest } from '@agent-os/engine';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { COUNTING_SOURCE_ID } from './support/countingSource.js';
 import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
 import { createEngineHarness, type EngineHarness, type HandlerPoint, TEST_NOTE_KIND } from './support/engineHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
@@ -641,7 +642,117 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       expect(await view(c.investigationId, resourceId)).toMatchObject({ version: 3 });
       expect(await finished(c.investigationId, resourceId)).toMatchObject({ status: 'completed', version: 3 });
     });
-    it.todo('INT-1 C7: without connected sources the investigation runs plan then one synthesis with no controller, worker, verifier or source call, delivers its claims as assumed and unverified with evidence references removed, and keeps that mode after the engine is rebuilt with a source connected');
+    it('INT-1 C7: without connected sources the investigation runs plan then one synthesis with no controller, worker, verifier or source call, delivers its claims as assumed and unverified with evidence references removed, and keeps that mode after the engine is rebuilt with a source connected', async () => {
+      const draftClaim = (text: string, evidenceIds: string[] = []) => ({
+        claimId: null,
+        text,
+        atoms: [{ kind: 'service', value: 'payments' }],
+        evidenceIds,
+      });
+      await harness.rebuildEngine({ connectedSources: [] });
+      try {
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        // A: plan, then one synthesis whose third claim cites an evidence id.
+        harness.model.script('synthesis', {
+          output: {
+            outcome: 'answered',
+            summary: 'C7 answer from model knowledge',
+            claims: [draftClaim('C7 first claim'), draftClaim('C7 second claim'), draftClaim('C7 cited claim', [randomUUID()])],
+          },
+        });
+        const a = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: 'C7 A: why do payments time out?',
+            processId: 'deep-research',
+            launchKey: newLaunchKey(),
+          }),
+        );
+        const doneA = await finished(a.investigationId, resourceId);
+
+        expect(doneA).toMatchObject({
+          status: 'completed',
+          sourceMode: 'model_knowledge',
+          answer: {
+            outcome: 'answered',
+            stopReason: null,
+            established: [],
+            assumed: [
+              { text: 'C7 first claim', evidenceIds: [], verified: false },
+              { text: 'C7 second claim', evidenceIds: [], verified: false },
+            ],
+            removed: [{ text: 'C7 cited claim', reason: 'evidence_not_found' }],
+          },
+        });
+        expect(doneA.answer?.assumed).toHaveLength(2);
+        expect(doneA.answer?.removed).toHaveLength(1);
+        // Invariant 10, AC-25.4: plan and synthesis only, at the double and in the ledger; no source call.
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'synthesis']);
+        expect(harness.model.callsOf('synthesis')[0]!.system).toContain('Source mode: model_knowledge.');
+        expect(harness.countingSource.calls).toEqual([]);
+        const rowsA = await engineRowsOf(a.investigationId);
+        expect(rowsA.llmCalls.map((row) => [row.role, row.status])).toEqual([
+          ['plan', 'settled'],
+          ['synthesis', 'settled'],
+        ]);
+        expect(rowsA.llmCalls.reduce((sum, row) => sum + (row.chargedTokens ?? 0), 0)).toBe(rowsA.run!.tokensSpent);
+        // KD-8: one decision, proposeAnswer accepted by code, no refusal.
+        expect(rowsA.decisions.map((row) => [row.step, row.status, row.decidedBy, row.kind])).toEqual([[1, 'accepted', 'code', 'proposeAnswer']]);
+        const [controllerA, synthesisA, ...othersA] = await tasksOf(a.investigationId);
+        expect(othersA).toEqual([]);
+        expect(synthesisA).toMatchObject({ workflowType: 'research.synthesize', status: 'succeeded' });
+        expect(controllerA).toMatchObject({
+          workflowType: 'research.controller',
+          status: 'succeeded',
+          outcome: { answerOrDelta: { answerId: doneA.answer?.answerId, outcome: 'answered' } },
+        });
+
+        // B: parked in its plan call, then the engine is rebuilt with the source connected (DC-16).
+        harness.model.calls.length = 0;
+        const queryB = 'C7 B: why do refunds fail?';
+        harness.model.script('plan', { hangUntilAborted: true });
+        const b = created(
+          await harness.engine.startInvestigation({ resourceId, threadId, query: queryB, processId: 'deep-research', launchKey: newLaunchKey() }),
+        );
+        await vi.waitFor(() => expect(harness.model.callsOf('plan').some((call) => call.system.includes(queryB))).toBe(true), {
+          timeout: 20_000,
+        });
+        expect(await view(b.investigationId, resourceId)).toMatchObject({ status: 'running', sourceMode: 'model_knowledge' });
+
+        harness.model.calls.length = 0;
+        harness.model.script('synthesis', { output: { outcome: 'answered', summary: 'C7 B answer', claims: [draftClaim('C7 B claim')] } });
+        // No fence: B survives the restart and resumes on the new workers.
+        await harness.rebuildEngine({ connectedSources: [COUNTING_SOURCE_ID] }, { fence: false });
+        expect(harness.engine.sourceMode).toBe('sources');
+        const doneB = await finished(b.investigationId, resourceId);
+
+        expect(doneB).toMatchObject({
+          status: 'completed',
+          sourceMode: 'model_knowledge',
+          answer: { outcome: 'answered', established: [], assumed: [{ text: 'C7 B claim', evidenceIds: [], verified: false }] },
+        });
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'synthesis']);
+        expect(harness.countingSource.calls).toEqual([]);
+        expect(new Set((await engineRowsOf(b.investigationId)).llmCalls.map((row) => row.role))).toEqual(new Set(['plan', 'synthesis']));
+
+        // C: a new start in the rebuilt engine records the mode of that engine.
+        harness.model.script('controller', conclude);
+        const c = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: 'C7 C after the rebuild',
+            processId: 'deep-research',
+            launchKey: newLaunchKey(),
+          }),
+        );
+        expect(await finished(c.investigationId, resourceId)).toMatchObject({ status: 'completed', sourceMode: 'sources' });
+      } finally {
+        await harness.rebuildEngine({ connectedSources: [COUNTING_SOURCE_ID] });
+      }
+    }, 60_000);
     it('INT-1 C8: a start repeated after a failed start takes the shell the failure left instead of creating a second investigation, and two parallel starts with one launchKey keep one investigation', async () => {
       // (a) a retry after a start that failed between `InvestigationService.create` and the engine row
       const resourceId = newUser();
@@ -1064,7 +1175,97 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         workerGo.open();
       }
     }, 30_000);
-    it.todo('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer');
+    // L6 (c) follows DC-9 and UC-E2 of design-engine.md v1.12 (as L5 does): after the cancel no attempt is left to close the in-flight
+    //   synthesis reservation under its guard, so it stays `reserved` rather than `abandoned`.
+    it('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer', async () => {
+      const noClaims = { established: [], assumed: [], unknown: [], removed: [] };
+      /** The no-source stop answer: no claims, `inconclusive`, the reason; the controller succeeded with it, not failed. */
+      async function expectStopAnswer(investigationId: string, done: InvestigationView, stopReason: string) {
+        expect(done).toMatchObject({
+          status: 'completed',
+          sourceMode: 'model_knowledge',
+          answer: { outcome: 'inconclusive', stopReason, ...noClaims },
+        });
+        const [controller, synthesis, ...others] = await tasksOf(investigationId);
+        expect(others).toEqual([]);
+        expect(controller).toMatchObject({
+          workflowType: 'research.controller',
+          status: 'succeeded',
+          outcome: { answerOrDelta: { answerId: done.answer?.answerId, outcome: 'inconclusive' } },
+        });
+        return synthesis!;
+      }
+
+      await harness.rebuildEngine({ connectedSources: [] });
+      const synthesisClaimed = latch();
+      const synthesisGo = latch();
+      try {
+        // (a) the budget covers the plan call (about 9 300 reserved, 120 charged) but not the synthesis reservation (about 11 000).
+        const a = await startDeepResearch('L6 a: why did the batch job stop?', 10_000);
+        const synthesisA = await expectStopAnswer(a.investigationId, await finished(a.investigationId, a.resourceId), 'budget_exhausted');
+        expect(synthesisA).toMatchObject({
+          workflowType: 'research.synthesize',
+          status: 'failed',
+          failureReason: { class: 'budget_exhausted', code: 'investigation_tokens_exhausted' },
+        });
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan']);
+        expect((await expectLedgerBalanced(a.investigationId)).map((row) => row.role)).toEqual(['plan']);
+
+        // (b) the engine clock passes notAfter after the plan, while the synthesis task waits to start.
+        harness.model.calls.length = 0;
+        harness.handlerHold.at = async (point) => {
+          if (point.at !== 'run' || point.workflowType !== 'research.synthesize') return;
+          synthesisClaimed.open();
+          await synthesisGo.wait;
+        };
+        const b = await startDeepResearch('L6 b: why did the cron drift?');
+        await synthesisClaimed.wait;
+        harness.engineClock.offsetMs = 3_600_000;
+        synthesisGo.open();
+        const synthesisB = await expectStopAnswer(b.investigationId, await finished(b.investigationId, b.resourceId), 'deadline');
+        expect(synthesisB).toMatchObject({
+          workflowType: 'research.synthesize',
+          status: 'failed',
+          failureReason: { class: 'deadline', code: 'deadline' },
+        });
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan']);
+        expect((await expectLedgerBalanced(b.investigationId)).map((row) => row.role)).toEqual(['plan']);
+        harness.handlerHold.at = undefined;
+        harness.engineClock.offsetMs = 0;
+
+        // (c) a cancel while the synthesis call is in flight.
+        harness.model.calls.length = 0;
+        harness.model.script('synthesis', { hangUntilAborted: true });
+        const c = await startDeepResearch('L6 c: why did the export stall?');
+        const inFlight = await vi.waitFor(
+          async () => {
+            const row = (await engineRowsOf(c.investigationId)).llmCalls.find((call) => call.role === 'synthesis');
+            if (row === undefined || harness.model.callsOf('synthesis').length === 0) throw new Error('the synthesis call is not in flight yet');
+            return row;
+          },
+          { timeout: 10_000, interval: 20 },
+        );
+        const rowsAtCancel = (await engineRowsOf(c.investigationId)).llmCalls;
+        await harness.runtime.investigations.cancel(c.investigationId, c.resourceId);
+        expect(await finished(c.investigationId, c.resourceId)).toMatchObject({ status: 'cancelled', answer: null });
+        const synthesisC = (await tasksOf(c.investigationId)).find((task) => task.workflowType === 'research.synthesize')!;
+        await vi.waitFor(() => expect(harness.endedRuns).toContainEqual({ taskId: synthesisC.taskId, attempt: synthesisC.attempt }), {
+          timeout: 10_000,
+          interval: 20,
+        });
+        const { run, llmCalls } = await engineRowsOf(c.investigationId);
+        expect(run!.answer).toBeNull();
+        expect(llmCalls).toEqual(rowsAtCancel);
+        expect(llmCalls.find((row) => row.callId === inFlight.callId)).toMatchObject({ status: 'reserved', chargedTokens: null });
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'synthesis']);
+      } finally {
+        harness.handlerHold.at = undefined;
+        harness.engineClock.offsetMs = 0;
+        synthesisClaimed.open();
+        synthesisGo.open();
+        await harness.rebuildEngine({ connectedSources: [COUNTING_SOURCE_ID] });
+      }
+    }, 60_000);
     // L7 parallel reservations (Failure Mode «shared-state dependency», invariant 1, AC-07.1; unique defect: the reservations of parallel tasks read the
     //   investigation's remainder without serialization and together exceed the budget, which only concurrent workers over the real ledger can show)
     // Covers (original statements):

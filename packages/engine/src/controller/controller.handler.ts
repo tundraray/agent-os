@@ -10,6 +10,7 @@ import { checkpointedAnswer } from '../attempt/checkpoint.js';
 import { abandon as abandonAttempt } from '../attempt/task-attempt.js';
 import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
 import { recordProposedTasks, unavailableRequestsOf } from '../capabilities/proposed-tasks.repository.js';
+import { SYNTHESIZE_WORKFLOW } from '../capabilities/synthesize.js';
 import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { SourceMode } from '../config/source-check.js';
@@ -22,10 +23,10 @@ import { signalsRepository as signals } from '../signals/signals.repository.js';
 import { admissibleDecisions, type GateState, type GateVerdict, judgeControllerOutput } from './decision-gate.js';
 import { controllerMaterial, openTasks, otherTasks, stepsWithoutNovelty } from './decision-input.js';
 import { ControllerOutputSchema, DecisionSchema } from './decision.schema.js';
-import { controllerRepository as repository, type DecisionRow } from './decisions.repository.js';
-import { type InvestigationFrame, promptValues, writePlanRevision } from './plan-role.js';
+import { controllerRepository as repository, type DecisionRow, proposeAnswerByCode } from './decisions.repository.js';
+import { type InvestigationFrame, type PlanRevisionResult, promptValues, writePlanRevision } from './plan-role.js';
 import { callOrReplay } from './role-call.js';
-import { stopBeforeStep } from './stop-rules.js';
+import { noSourceEnd, seedPlan, stopBeforeStep } from './stop-rules.js';
 
 const CONTROLLER_WORKFLOW = 'research.controller';
 
@@ -280,6 +281,58 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     return stop(ctx, investigation, 'controller_invalid');
   }
 
+  /** The first plan revision: the `plan` role writes it, or code seeds it with the goal without a call (KD-8). */
+  async function writeFirstPlanRevision(ctx: TaskContext, investigation: Investigation): Promise<PlanRevisionResult> {
+    const seed = seedPlan(investigation.config);
+    if (seed === null) {
+      return writePlanRevision(deps, ctx, { frame: investigation, previous: undefined, reason: null });
+    }
+    const written = await ctx.withAttemptGuard((tx) =>
+      repository.insertPlanRevision(tx, { investigationId: investigation.investigationId, revision: 1, plan: seed, reason: null }),
+    );
+    return written.outcome === 'fenced' ? { outcome: 'abandon', cause: 'fenced' } : { outcome: 'revised', revision: 1 };
+  }
+
+  /**
+   * Flow 5 (KD-8, invariant 10): without sources the controller model is never called and no `DecisionInput` is built.
+   * After the plan, code accepts the one decision `proposeAnswer`, proposes `research.synthesize` and waits for it like
+   * for any decision; the synthesis writes the answer. A synthesis that ends without one — or a configuration without
+   * `synthesize` — ends the investigation with an answer by code (AC-25.5).
+   */
+  async function answerWithoutSources(ctx: TaskContext, investigation: Investigation): Promise<HandlerResult> {
+    const { config, investigationId } = investigation;
+    const accepted = async () =>
+      (await repository.decisionsOf(db, investigationId)).filter((row) => row.status === 'accepted').at(-1);
+    let decision = await accepted();
+    if (decision === undefined) {
+      const end = noSourceEnd({ capabilities: config.capabilities, synthesis: undefined });
+      if (end !== null) return finish(ctx, investigationId, end);
+      const plan = await repository.latestPlanRevision(db, investigationId);
+      if (plan === undefined) throw new Error(`investigation ${investigationId} lost its plan`);
+      const byCode = proposeAnswerByCode({
+        decisionId: randomUUID(),
+        investigationId,
+        planRevision: plan.revision,
+        notAfter: investigation.notAfter,
+      });
+      const written = await ctx.withAttemptGuard((tx) => repository.insertDecision(tx, byCode));
+      if (written.outcome === 'fenced') return abandon('fenced');
+      // A replayed attempt keeps the decision written first.
+      decision = await accepted();
+      if (decision === undefined) throw new Error(`investigation ${investigationId} lost its decision`);
+    }
+    const applied = await applyTasks(ctx, investigation, decision);
+    if (applied.next === 'result') return applied.result;
+
+    // The synthesis has ended: with the answer it wrote, or without one, and then code answers.
+    const read = await repository.readRun(db, investigationId);
+    if (read !== undefined && read.run.answer !== null) return completed(InvestigationAnswerSchema.parse(read.run.answer));
+    const synthesis = otherTasks(await tasksOf(investigation), ctx.taskId).find((task) => task.workflowType === SYNTHESIZE_WORKFLOW);
+    const end = noSourceEnd({ capabilities: config.capabilities, synthesis });
+    if (end === null) throw new Error(`the synthesis of investigation ${investigationId} has not ended`);
+    return finish(ctx, investigationId, end);
+  }
+
   async function run(ctx: TaskContext): Promise<HandlerResult> {
     const read = await repository.readRun(db, ctx.investigationId);
     if (read === undefined) {
@@ -290,10 +343,8 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       return completed(InvestigationAnswerSchema.parse(row.answer));
     }
     if ((await abandonEarlierAttempts(ctx)) === 'fenced') return abandon('fenced');
+    // DC-16: the mode recorded at the start, never the engine's current `connectedSources`.
     const sourceMode = row.sourceMode as SourceMode;
-    if (sourceMode === 'model_knowledge') {
-      throw new DecisionNotExecutableError('the model_knowledge path of the controller is not executable by this engine');
-    }
     const config = ProcessConfigSchema.parse(row.processConfig);
     const investigation: Investigation = {
       investigationId: ctx.investigationId,
@@ -307,10 +358,11 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     };
 
     if ((await repository.latestPlanRevision(db, ctx.investigationId)) === undefined) {
-      const first = await writePlanRevision(deps, ctx, { frame: investigation, previous: undefined, reason: null });
+      const first = await writeFirstPlanRevision(ctx, investigation);
       if (first.outcome === 'abandon') return abandon(first.cause);
       if (first.outcome === 'stop') return finish(ctx, ctx.investigationId, { stopReason: first.reason });
     }
+    if (sourceMode === 'model_knowledge') return answerWithoutSources(ctx, investigation);
 
     for (;;) {
       const decisions = await repository.decisionsOf(db, ctx.investigationId);
