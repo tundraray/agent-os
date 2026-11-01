@@ -25,6 +25,8 @@ agent-os/
     contracts/        общие типы: инструменты, события, DTO
     db/               модель схемы `app` (Drizzle), миграции, мигратор, createDatabase
     runtime/          durable runtime исследований без NestJS: createRuntime, порты, порт обработчика
+    sources/          источники данных по MCP: createSources, исполнитель source.fetch, ToolExecutor, адаптер fixture
+    mcp-fixture/      тестовый MCP-сервер логов (stdio): детерминированные срезы v1/v2, эталон, режимы отказа
   infra/
     docker-compose.yml
     nginx.conf
@@ -277,6 +279,30 @@ POSTGRES_PORT=5433 pnpm db:up
 | `RUNTIME_SHUTDOWN_GRACE_MS` | 5000 |
 | `DB_POOL_MAX` | 10 |
 | `RUNTIME_CRASH_AT` | не задана (только для тестов) |
+
+## Источники MCP и fixture
+
+Пакет `@agent-os/sources` подключает внешние источники по MCP: `apps/api` собирает его через `createSources` в `SourcesModule` и регистрирует исполнитель `source.fetch@1` в runtime. Единственный источник сейчас — `fixture`: пакет `@agent-os/mcp-fixture`, MCP-сервер логов по stdio с детерминированными данными. Процесс fixture запускается лениво, при первом вызове, и закрывается при остановке `apps/api`. Разрешённые пары «исполнитель → источник/инструмент» — в `apps/api/src/sources/sources.config.ts`; дизайн — `docs/features/research-runtime/design-mcp-source.md`.
+
+| Команда | Что делает |
+|---|---|
+| `pnpm --filter @agent-os/mcp-fixture generate` | собирает fixture и пишет эталон `packages/mcp-fixture/ground-truth/<версия>.json` (все версии или названные: `generate v1`); повторная генерация даёт те же байты |
+| `pnpm --filter @agent-os/sources test` | unit и интеграционные тесты против процесса fixture, без Postgres (входят в `pnpm check`) |
+| `pnpm --filter @agent-os/sources test:e2e` | E2E против Postgres и fixture: сквозной сценарий `source.fetch` и восстановление после гибели процесса (собирает пакет и дочерний процесс) |
+| `pnpm --filter @agent-os/sources test:verify` | замеры по требованию: накладные расходы `ToolExecutor` (UC-N1) и ответ fixture на страницу (UC-N2); в обычный набор не входят |
+
+`test:e2e` и `test:verify` пакета sources тоже работают с Postgres — запускайте их по одному с остальными наборами из раздела выше.
+
+Переменные `apps/api` (`apps/api/.env.example`). Неверное значение останавливает старт.
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `SOURCE_CALL_TIMEOUT_MS` | 30000 | таймаут вызова инструмента и чтения среза, мс; дедлайн задачи может его урезать |
+| `SOURCE_RETRY_BASE_MS` / `SOURCE_RETRY_CAP_MS` | 200 / 5000 | backoff full jitter между повторами: случайная задержка в [0, min(cap, base × 2^n)] |
+| `SOURCE_MAX_PAGES` | 1000 | предел страниц на одну задачу fetch |
+| `FIXTURE_DATASET` | `v1` | версия данных fixture при старте процесса: `v1` или `v2` |
+| `FIXTURE_FAULTS` | не задана | JSON-массив правил отказа (только для тестов); без `FIXTURE_CALL_LOG` — ошибка старта; при `NODE_ENV=production` не читается |
+| `FIXTURE_CALL_LOG` | не задана | путь к журналу вызовов `tools/call` процесса fixture (только для тестов) |
 
 ## Проверки качества
 

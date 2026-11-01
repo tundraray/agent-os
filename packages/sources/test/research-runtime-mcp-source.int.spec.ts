@@ -14,8 +14,6 @@
 //   FIXTURE_CALL_LOG file in a temp dir. No shared journal, no test order dependency.
 // - The independent counter is the fixture call log (JSONL, only `tools/call`). Assert `log lines === toolCallsUsed` wherever calls happen.
 //
-// Cases whose task has not landed are `it.todo`. Implement each following its Arrange/Act/Assert notes when its task lands. Do not convert a todo into a passing stub.
-//
 // Budget: integration 4 of 5 (limit 3; the 4th names a defect no other test catches - see INT-4). Pure rules are proven at unit level, see the
 // "Proven at unit level" block at the end of this file; do not re-check their variants here.
 
