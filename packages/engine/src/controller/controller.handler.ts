@@ -12,6 +12,7 @@ import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
+import { abandonEarlierAttempts, abandonReservations } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { RoleMessage } from '../model/token-counter.js';
 import { signalsRepository as signals } from '../signals/signals.repository.js';
@@ -76,7 +77,11 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   async function finish(ctx: TaskContext, investigationId: string, end: CodeAnswerEnd): Promise<HandlerResult> {
     const claims = await repository.latestClaims(db, investigationId);
     const answer = buildCodeAnswer(randomUUID(), claims, end);
-    const written = await ctx.withAttemptGuard((tx) => repository.writeAnswer(tx, investigationId, answer));
+    // DC-9: a reservation still open when the answer is written will never be closed by its call.
+    const written = await ctx.withAttemptGuard(async (tx) => {
+      await abandonReservations(tx, investigationId, { all: true });
+      return repository.writeAnswer(tx, investigationId, answer);
+    });
     if (written.outcome === 'fenced') return abandon('fenced');
     return completed(InvestigationAnswerSchema.parse(written.value));
   }
@@ -208,6 +213,8 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     const roleConfig = config.roles.controller;
     const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(investigation));
 
+    const openTaskIds = new Set(openTasks(tasks).map((task) => task.taskId));
+    const finishedTaskIds = tasks.filter((task) => !openTaskIds.has(task.taskId)).map((task) => task.taskId);
     const recorded = decisions.filter((row) => row.step === step).length;
     for (let callIndex = recorded; callIndex <= config.limits.maxDecisionRetries; callIndex += 1) {
       const call = `decision:${step}:${callIndex}`;
@@ -255,6 +262,8 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
           planRevision: plan.revision,
           notAfter: investigation.notAfter,
         });
+        // DC-9: a task the controller sees in a final status closes no reservation of its own any more.
+        await abandonReservations(tx, investigationId, { taskIds: finishedTaskIds });
         // AC-04.1: the accepted decision is the one that read the signals of its input.
         if (verdict.verdict === 'accepted') {
           await signals.markRead(tx, decisionId, unread.map((signal) => signal.signalId));
@@ -275,6 +284,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     if (row.answer !== null) {
       return completed(InvestigationAnswerSchema.parse(row.answer));
     }
+    if ((await abandonEarlierAttempts(ctx)) === 'fenced') return abandon('fenced');
     const sourceMode = row.sourceMode as SourceMode;
     if (sourceMode === 'model_knowledge') {
       throw new DecisionNotExecutableError('the model_knowledge path of the controller is not executable by this engine');

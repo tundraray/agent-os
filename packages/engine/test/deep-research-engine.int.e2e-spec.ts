@@ -926,7 +926,144 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       ]);
       // Two provider retries for the worker and two for the controller wait 1 s and 3 s each on the engine clock.
     }, 30_000);
-    it.todo('INT-2 L5: after cancel no reservation and no source call start, the in-flight reservation is closed abandoned and the ledger sum still equals the charged total');
+    // L5 follows UC-E2 of design-engine.md v1.11 (it supersedes the skeleton comment above): the runtime writes `cancelled` at once, so no attempt is
+    //   left to close the in-flight reservation under its guard; it stays `reserved`, counted in `tokensReserved`, and the cost is spent + reserved.
+    //   The DC-9 close points apply only to investigations that are not cancelled.
+    it('INT-2 L5: after cancel no reservation and no source call start, the in-flight reservation stays reserved and the investigation counts it with the charged total', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'disk full' }]);
+      const queued = 'L5 queued: what failed in service-1?';
+      harness.model.script('controller', analysisOf(['L5 in flight: what failed in service-0?', queued]));
+      harness.model.script('worker', { hangUntilAborted: true });
+      // The queued worker is held in the count `ModelGateway` makes before its reservation (its second count: the first is the
+      // packet's), so the check after the count is what must stop it once the cancel is in force.
+      const held = latch();
+      const release = latch();
+      const passed = latch();
+      let queuedCounts = 0;
+      harness.tokenCounter.intercept = async (request) => {
+        if (!isWorkerRequest(request) || !request.messages.some((message) => message.content.includes(queued))) return undefined;
+        queuedCounts += 1;
+        if (queuedCounts === 2) {
+          held.open();
+          await release.wait;
+          passed.open();
+        }
+        return undefined;
+      };
+      try {
+        const { resourceId, investigationId } = await startDeepResearch('L5: why did the disks fill up?');
+        const inFlight = await vi.waitFor(
+          async () => {
+            const row = (await engineRowsOf(investigationId)).llmCalls.find((call) => call.role === 'worker');
+            if (row === undefined || harness.model.callsOf('worker').length === 0) throw new Error('the worker call is not in flight yet');
+            return row;
+          },
+          { timeout: 10_000, interval: 20 },
+        );
+        await held.wait;
+        const queuedTask = (await tasksOf(investigationId)).find(
+          (task) => task.workflowType === 'research.analyze' && JSON.stringify(task.input).includes(queued),
+        )!;
+        const sourceCallsAtCancel = harness.countingSource.calls.length;
+        const rowsAtCancel = (await engineRowsOf(investigationId)).llmCalls;
+
+        await harness.runtime.investigations.cancel(investigationId, resourceId);
+        release.open();
+        await passed.wait;
+        // The runtime settles the cancelled attempts at once; the queued worker's handler ends on its own.
+        await vi.waitFor(() => expect(harness.endedRuns).toContainEqual({ taskId: queuedTask.taskId, attempt: queuedTask.attempt }), {
+          timeout: 10_000,
+          interval: 20,
+        });
+
+        expect(await finished(investigationId, resourceId)).toMatchObject({ status: 'cancelled', answer: null });
+        // The collections ended before the cancel; every task of the engine ends cancelled (the runtime settles the running ones after the commit).
+        await vi.waitFor(
+          async () =>
+            expect((await tasksOf(investigationId)).map((task) => [task.workflowType, task.status])).toEqual([
+              ['research.controller', 'cancelled'],
+              ['source.fetch', 'succeeded'],
+              ['research.analyze', 'cancelled'],
+              ['source.fetch', 'succeeded'],
+              ['research.analyze', 'cancelled'],
+            ]),
+          { timeout: 10_000, interval: 50 },
+        );
+        // The queued worker passed its count after the cancel and stopped before reserving: no reservation was even tried
+        // (a tried one is refused by the runtime's guard, which logs `fenced` for its task), and the ledger is what it was at the cancel.
+        expect(harness.logs.runtime.warn.filter(([message]) => message.includes(`taskId=${queuedTask.taskId}`))).toEqual([]);
+        const { run, llmCalls } = await engineRowsOf(investigationId);
+        expect(llmCalls).toEqual(rowsAtCancel);
+        expect(llmCalls.find((row) => row.callId === inFlight.callId)).toMatchObject({ status: 'reserved', chargedTokens: null });
+        // UC-E2 (design v1.11): the charged rows sum to `tokensSpent`, the reserved rows to `tokensReserved`; the cost is spent + reserved.
+        expect(llmCalls.reduce((sum, row) => sum + (row.chargedTokens ?? 0), 0)).toBe(run!.tokensSpent);
+        expect(llmCalls.filter((row) => row.status === 'reserved').reduce((sum, row) => sum + row.reservedTokens, 0)).toBe(run!.tokensReserved);
+        expect(run!.tokensReserved).toBe(inFlight.reservedTokens);
+        expect(run!.tokensSpent + run!.tokensReserved).toBeLessThanOrEqual(run!.tokenBudget);
+        expect(harness.model.callsOf('worker')).toHaveLength(1);
+        expect(harness.countingSource.calls).toHaveLength(sourceCallsAtCancel);
+      } finally {
+        release.open();
+      }
+    }, 30_000);
+    // L5 late close (DC-9 close point 3, design v1.11; unique defect: the answer written by code abandons the reservation of a worker call still
+    //   running after a decision with `await: false`, and that call's own close then throws `reservation ... is not open`, failing the task; only the real
+    //   ledger and a call coming back after the answer show it). The late close changes nothing in the ledger and logs one warning without prompt text.
+    it('INT-2 L5 late close: a worker call that comes back after the answer abandoned its reservation keeps the abandoned charge, logs one warning and succeeds', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'pool exhausted' }]);
+      const subquestion = 'L5 late: what failed in service-0?';
+      const controllerGo = latch();
+      const workerGo = latch();
+      try {
+        harness.model.script(
+          'controller',
+          { output: { ...analysisOf([subquestion]).output, await: false } },
+          { ...conclude, holdUntil: controllerGo.wait },
+        );
+        harness.model.script('worker', { output: { claims: [] }, holdUntil: workerGo.wait });
+
+        const { resourceId, investigationId } = await startDeepResearch('L5 late: why was the pool exhausted?');
+        const workerRow = await vi.waitFor(
+          async () => {
+            const row = (await engineRowsOf(investigationId)).llmCalls.find((call) => call.role === 'worker');
+            if (row === undefined || harness.model.callsOf('worker').length === 0 || harness.model.callsOf('controller').length < 2) {
+              throw new Error('the worker call and the second controller call are not both in flight yet');
+            }
+            return row;
+          },
+          { timeout: 10_000, interval: 20 },
+        );
+        controllerGo.open();
+        expect(await finished(investigationId, resourceId)).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive' } });
+        workerGo.open();
+
+        const analyze = await vi.waitFor(
+          async () => {
+            const task = (await tasksOf(investigationId)).find((candidate) => candidate.workflowType === 'research.analyze');
+            if (task === undefined || task.status === 'running' || task.status === 'queued') throw new Error('the analysis task is still running');
+            return task;
+          },
+          { timeout: 10_000, interval: 50 },
+        );
+        expect(analyze).toMatchObject({ status: 'succeeded' });
+        const llmCalls = await expectLedgerBalanced(investigationId);
+        expect(llmCalls.find((row) => row.callId === workerRow.callId)).toMatchObject({
+          status: 'abandoned',
+          chargedTokens: workerRow.reservedTokens,
+        });
+        const warnings = harness.logs.engine.warn.filter(([, fields]) => (fields as { taskId?: string } | undefined)?.taskId === analyze.taskId);
+        expect(warnings).toEqual([
+          [
+            'model call closed after its reservation was abandoned',
+            expect.objectContaining({ role: 'worker', outcome: 'settled_after_abandoned' }),
+          ],
+        ]);
+        expect(JSON.stringify(warnings)).not.toContain(subquestion);
+      } finally {
+        controllerGo.open();
+        workerGo.open();
+      }
+    }, 30_000);
     it.todo('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer');
     // L7 parallel reservations (Failure Mode «shared-state dependency», invariant 1, AC-07.1; unique defect: the reservations of parallel tasks read the
     //   investigation's remainder without serialization and together exceed the budget, which only concurrent workers over the real ledger can show)

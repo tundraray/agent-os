@@ -30,8 +30,11 @@ export interface ScriptedUsage {
 
 /** One answer of the script. */
 export type ScriptedStep =
-  /** A structured output (any JSON value: a test may script one the schema refuses). */
-  | { readonly output: unknown; readonly usage?: ScriptedUsage }
+  /**
+   * A structured output (any JSON value: a test may script one the schema refuses). With `holdUntil` the call is
+   * recorded at once and answers when that promise settles.
+   */
+  | { readonly output: unknown; readonly usage?: ScriptedUsage; readonly holdUntil?: Promise<void> }
   /** A provider error, thrown as `AI_APICallError`; without `statusCode` a network error. */
   | { readonly providerError: { readonly statusCode?: number } }
   /** A refusal: `finishReason` `content-filter`, no output. */
@@ -148,6 +151,7 @@ export function createScriptedModel(): ScriptedModel {
     if ('refusal' in step) {
       return { content: [], finishReason: { unified: 'content-filter', raw: 'refusal' }, usage: usageOf(DEFAULT_USAGE), warnings: [] };
     }
+    await step.holdUntil;
     return {
       content: [{ type: 'text', text: JSON.stringify(step.output) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },

@@ -88,11 +88,14 @@ interface Scenario {
   counts?: TokenCountResult[];
   refuse?: 'task_tokens_exhausted';
   notAfter?: Date;
+  /** The investigation is cancelled before the call is asked for. */
+  cancelledBefore?: boolean;
 }
 
 interface Observed {
   result: ModelCallResult<Output>;
   generateCalls: number;
+  countCalls: number;
   reservations: ReservationRequest[];
   closings: Pick<ReservationClosing, 'callId' | 'status' | 'chargedTokens'>[];
   delays: number[];
@@ -133,6 +136,8 @@ async function run(scenario: Scenario): Promise<Observed> {
   const counts = [...(scenario.counts ?? [])];
   const notAfterTimers: (() => void)[] = [];
   let generateCalls = 0;
+  let countCalls = 0;
+  if (scenario.cancelledBefore === true) controller.abort();
 
   const ledger: CallLedger = {
     reserve(_ctx, request): Promise<ReservationOutcome> {
@@ -163,8 +168,10 @@ async function run(scenario: Scenario): Promise<Observed> {
     },
   };
   const tokenCounter: TokenCounter = {
-    countInputTokens: () =>
-      Promise.resolve(counts.shift() ?? { outcome: 'counted', inputTokens: COUNTED }),
+    countInputTokens: () => {
+      countCalls += 1;
+      return Promise.resolve(counts.shift() ?? { outcome: 'counted', inputTokens: COUNTED });
+    },
   };
   // Retry delays fire at once and are recorded; the `notAfter` timer, an hour away, fires only
   // when a step reaches it.
@@ -206,7 +213,7 @@ async function run(scenario: Scenario): Promise<Observed> {
       return Promise.resolve();
     },
   });
-  return { result, generateCalls, reservations, closings, delays, events };
+  return { result, generateCalls, countCalls, reservations, closings, delays, events };
 }
 
 const failedClosings = (n: number) =>
@@ -315,6 +322,11 @@ describe('ModelGateway retry policy', () => {
       'an answer that resolves after the cancel — dropped, no checkpoint, nothing closed',
       { steps: [cancelledThen(answer)] },
       { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 1, closings: [], events: ['reserve'] },
+    ],
+    [
+      'the signal already aborted by a cancel — no count, no reservation, no call (invariant 4)',
+      { steps: [answer], cancelledBefore: true },
+      { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 0, countCalls: 0, reservations: [] },
     ],
     [
       'notAfter already passed — no count, no reservation, no call',

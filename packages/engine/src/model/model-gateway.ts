@@ -147,6 +147,28 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     });
   };
 
+  /**
+   * Closes the call's reservation. A reservation a DC-9 close point already charged in full as `abandoned` (the answer
+   * was written while this call ran) stays as it is: the call goes on, and one warning without the prompt says so.
+   */
+  const closeReservation = async (
+    request: Pick<ModelCallRequest<unknown>, 'ctx' | 'role' | 'roleConfig'>,
+    attempt: number,
+    closing: ReservationClosing,
+  ): Promise<'closed' | 'fenced'> => {
+    const closed = await ledger.close(request.ctx, closing);
+    if (closed !== 'already_abandoned') return closed;
+    deps.logger.warn('model call closed after its reservation was abandoned', {
+      role: request.role,
+      model: request.roleConfig.model,
+      investigationId: request.ctx.investigationId,
+      taskId: request.ctx.taskId,
+      attempt,
+      outcome: `${closing.status}_after_abandoned`,
+    });
+    return 'closed';
+  };
+
   /** One counted, reserved and closed call; `next` says whether the loop retries. */
   const callOnce = async <T>(
     request: ModelCallRequest<T>,
@@ -185,7 +207,7 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
       case 'stopped':
         return { next: 'done', result: { outcome: 'no_answer', reason: resolved.reason } };
       case 'provider_error': {
-        const closed = await ledger.close(ctx, {
+        const closed = await closeReservation(request, attempt, {
           callId: reservation.callId,
           status: 'failed',
           usage: null,
@@ -206,8 +228,9 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
         break;
     }
 
-    const closed = await ledger.close(
-      ctx,
+    const closed = await closeReservation(
+      request,
+      attempt,
       settledClosing(request.roleConfig.model, reservation.callId, {
         reported: resolved.usage,
         reservedTokens,

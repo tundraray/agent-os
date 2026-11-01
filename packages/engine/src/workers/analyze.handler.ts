@@ -13,6 +13,7 @@ import type { EvidenceItem } from '../context/role-packets.js';
 import { controllerRepository } from '../controller/decisions.repository.js';
 import { type InvestigationFrame, promptValues } from '../controller/plan-role.js';
 import { ENGINE_FAILURE_CLASSES, type EngineFailureCode } from '../engine-errors.js';
+import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 
 export interface AnalyzeDeps {
@@ -157,6 +158,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
 
   async function run(ctx: TaskContext): Promise<HandlerResult> {
     const input = AnalyzeInputSchema.parse(ctx.input);
+    if ((await abandonEarlierAttempts(ctx)) === 'fenced') return abandon('fenced');
     const notAfter = new Date(input.notAfter);
     // DC-3: a task claimed at or after `notAfter` calls no model.
     if (deps.clock.now() >= notAfter) {

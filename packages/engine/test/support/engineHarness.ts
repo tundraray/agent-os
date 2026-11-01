@@ -19,6 +19,7 @@ import {
   type RuntimeConfig,
   type RuntimeLogger,
   systemClock,
+  type TaskHandler,
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import { createSources, parseSourcesSettings, type Sources, type SourcesLogger } from '@agent-os/sources';
@@ -107,6 +108,11 @@ export interface EngineHarness {
   readonly model: ScriptedModel;
   readonly clock: Clock;
   readonly logs: { readonly runtime: LogLines; readonly engine: LogLines; readonly sources: LogLines };
+  /**
+   * Attempts of the engine's handlers whose `run` has returned or thrown, in order. The runtime settles a cancelled
+   * attempt without waiting for its handler; this tells a test when the handler itself is done. A test may empty it.
+   */
+  readonly endedRuns: { readonly taskId: string; readonly attempt: number }[];
   /** A new thread of `resourceId` known to the ownership double; returns its id. */
   createThread(resourceId: string): Promise<string>;
   /**
@@ -212,6 +218,18 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const engineClock = shiftedClock(clock);
   const logs = { runtime: recordingLogs(), engine: recordingLogs(), sources: recordingLogs() };
   const owners = new Map<string, string>();
+  const endedRuns: { taskId: string; attempt: number }[] = [];
+  /** The engine's handlers as registered, with every end of `run` recorded in `endedRuns`. */
+  const observed = (handler: TaskHandler): TaskHandler => ({
+    ...handler,
+    run: async (ctx) => {
+      try {
+        return await handler.run(ctx);
+      } finally {
+        endedRuns.push({ taskId: ctx.taskId, attempt: ctx.attempt });
+      }
+    },
+  });
   const database = createDatabase({ connectionString: databaseUrl(), poolMax: config.dbPoolMax });
   const countingSource = createCountingSource();
   const tokenCounter = offsetTokenCounter();
@@ -265,7 +283,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
         scheduler: runtime.scheduler,
         investigations: runtime.investigations,
         evidence: runtime.evidence,
-        handlers: runtime.handlers,
+        handlers: { register: (handler) => runtime.handlers.register(observed(handler)) },
       },
       sourceRegistry: sources.registry,
       connectedSources: build.connectedSources ?? [],
@@ -322,6 +340,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     model,
     clock,
     logs,
+    endedRuns,
     createThread: async (resourceId) => {
       const threadId = `thread-${randomUUID()}`;
       owners.set(threadId, resourceId);
