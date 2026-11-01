@@ -1,0 +1,72 @@
+{
+  "processId": "deep-research",
+  "version": 1,
+  "goal": "Answer the user's question about the system's behaviour from its logs: find what happened, where and why, and back every statement with evidence from the logs.",
+  "capabilities": ["plan", "gather", "analyze", "verify", "synthesize"],
+  "sources": [
+    { "sourceId": "fixture", "toolName": "search_logs" },
+    { "sourceId": "fixture", "toolName": "aggregate_logs" },
+    { "sourceId": "fixture", "toolName": "get_trace" }
+  ],
+  "roles": {
+    "plan": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "effort": "medium",
+      "maxOutputTokens": 8000,
+      "windowTokens": 16000,
+      "marginTokens": 800,
+      "prompt": "You plan a log investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nWrite the readiness criteria and the branches of the investigation as the output schema asks. In the mode model_knowledge no data source is connected: plan an answer from general knowledge only. Write in the language of the question."
+    },
+    "controller": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "effort": "low",
+      "maxOutputTokens": 8000,
+      "windowTokens": 32000,
+      "marginTokens": 1600,
+      "prompt": "You direct a log investigation step by step. Goal: {{goal}}\nQuestion: {{query}}\nChoose exactly one decision from the admissible list in the input. Request evidence before claiming anything, split data larger than one window into sub-questions, verify claims before proposing the answer, and conclude when new steps stop bringing new evidence. Explain the choice briefly in rationale."
+    },
+    "worker": {
+      "model": "anthropic/claude-haiku-5-5",
+      "effort": "low",
+      "maxOutputTokens": 8000,
+      "windowTokens": 64000,
+      "marginTokens": 3200,
+      "prompt": "You analyse log records for one sub-question of an investigation. Question of the investigation: {{query}}\nUse only the records in the input. Every claim names the evidence ids it rests on and the atoms it asserts: traceId, service, event, interval or number. If the records are not enough to answer, say so instead of guessing."
+    },
+    "verifier": {
+      "model": "anthropic/claude-haiku-5-5",
+      "effort": "low",
+      "maxOutputTokens": 4000,
+      "windowTokens": 32000,
+      "marginTokens": 1600,
+      "prompt": "You choose which source records would confirm or refute each claim of an investigation. Question: {{query}}\nFor every claim in the input, request the records whose content checks its atoms. Do not judge the claims yourself: the code compares them with the records."
+    },
+    "synthesis": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "effort": "medium",
+      "maxOutputTokens": 8000,
+      "windowTokens": 48000,
+      "marginTokens": 2400,
+      "prompt": "You write the final answer of an investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nAnswer sections in order: {{answerSections}}.\nIn the mode sources, build the answer only from the claims in the input and keep each claim's evidence ids; do not add claims without evidence. In the mode model_knowledge no data source is connected: answer from general knowledge, give no evidence ids, and state that the answer is not checked against data. Write in the language of the question."
+    }
+  },
+  "limits": {
+    "maxSteps": 24,
+    "maxPlanRevisions": 3,
+    "noveltyWindow": 3,
+    "maxDecisionRetries": 2,
+    "maxFanOut": 4,
+    "maxVerifyRounds": 3,
+    "deadlineMarginMs": 120000,
+    "investigationTokens": { "default": 3000000, "max": 10000000 },
+    "maxTasks": 300,
+    "maxToolCalls": 3000,
+    "taskBudgets": {
+      "research.controller": { "deadlineMs": 3600000 },
+      "source.fetch": { "maxToolCalls": 20, "maxRetries": 3 }
+    }
+  },
+  "answer": {
+    "sections": ["summary", "established", "assumed", "unknown", "removed"]
+  }
+}
