@@ -12,3 +12,6 @@ export const HANDLER_REGISTRY = Symbol('HANDLER_REGISTRY');
 
 /** The system `Clock` the runtime was built with. */
 export const RUNTIME_CLOCK = Symbol('RUNTIME_CLOCK');
+
+/** The application's single pool and its Drizzle client (`DatabaseConnection`, KD-7 of design-runtime.md). */
+export const RESEARCH_DATABASE = Symbol('RESEARCH_DATABASE');

@@ -26,6 +26,7 @@ import { ThreadsService } from '../threads/threads.service.js';
 import { NestRuntimeLogger } from './nest-runtime-logger.js';
 import {
   HANDLER_REGISTRY,
+  RESEARCH_DATABASE,
   RESEARCH_RUNTIME,
   RUNTIME_CLOCK,
 } from './research.tokens.js';
@@ -33,8 +34,6 @@ import { runtimeSettingsVariables } from './runtime-settings.js';
 
 /** Runtime Settings parsed from the environment; internal to this module. */
 const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
-/** The application's single pool and its Drizzle client (KD-7); internal to this module. */
-const DATABASE = Symbol('DATABASE');
 
 /**
  * Composition root of the research runtime (ADR-0001, ADR-0004): it reads the environment,
@@ -58,7 +57,7 @@ const DATABASE = Symbol('DATABASE');
       inject: [ConfigService],
     },
     {
-      provide: DATABASE,
+      provide: RESEARCH_DATABASE,
       useFactory: (
         config: ConfigService,
         settings: RuntimeConfig,
@@ -85,7 +84,7 @@ const DATABASE = Symbol('DATABASE');
           logger: new NestRuntimeLogger('ResearchRuntime'),
           clock,
         }),
-      inject: [DATABASE, RUNTIME_SETTINGS, ThreadsService, RUNTIME_CLOCK],
+      inject: [RESEARCH_DATABASE, RUNTIME_SETTINGS, ThreadsService, RUNTIME_CLOCK],
     },
     {
       provide: HANDLER_REGISTRY,
@@ -93,7 +92,12 @@ const DATABASE = Symbol('DATABASE');
       inject: [RESEARCH_RUNTIME],
     },
   ],
-  exports: [RESEARCH_RUNTIME, HANDLER_REGISTRY, RUNTIME_CLOCK],
+  exports: [
+    RESEARCH_RUNTIME,
+    HANDLER_REGISTRY,
+    RUNTIME_CLOCK,
+    RESEARCH_DATABASE,
+  ],
 })
 export class ResearchModule
   implements
@@ -103,7 +107,7 @@ export class ResearchModule
     OnApplicationShutdown
 {
   constructor(
-    @Inject(DATABASE) private readonly database: DatabaseConnection,
+    @Inject(RESEARCH_DATABASE) private readonly database: DatabaseConnection,
     @Inject(RESEARCH_RUNTIME) private readonly runtime: Runtime,
     private readonly deletionHooks: ThreadDeletionHooks,
   ) {}

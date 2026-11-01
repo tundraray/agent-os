@@ -170,7 +170,7 @@ async function fixtureAdapters(
       useFactory: () => new BoundSourceRegistry(),
     },
   ],
-  exports: [SOURCE_REGISTRY],
+  exports: [SOURCE_REGISTRY, SOURCE_ADAPTERS],
 })
 export class SourcesModule implements OnModuleInit, OnApplicationShutdown {
   private sources: Sources | null = null;

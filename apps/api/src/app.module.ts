@@ -7,6 +7,7 @@ import { ChatModule } from './chat/chat.module.js';
 import { ThreadsModule } from './threads/threads.module.js';
 import { ResearchModule } from './research/research.module.js';
 import { SourcesModule } from './sources/sources.module.js';
+import { EngineModule } from './engine/engine.module.js';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SourcesModule } from './sources/sources.module.js';
     ThreadsModule,
     ResearchModule,
     SourcesModule,
+    EngineModule,
   ],
 })
 export class AppModule {}

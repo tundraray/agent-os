@@ -3,10 +3,14 @@ import { FIXTURE_SOURCE_ID, type SourceAllowlist } from '@agent-os/sources';
 /**
  * Tools each workflow type may call (design-mcp-source.md, SourceDescriptor и allowlist). `createSources` checks
  * every pair against the adapter's descriptor at startup: a tool that is not read-only stops the start (FR-11).
- * Workflow types of `deep-research` add their rows with that feature.
+ * `aggregate_logs` and `get_trace` are the gather tools of `deep-research` (design-engine.md, C2, DC-14).
  */
 export const SOURCES_ALLOWLIST: SourceAllowlist = {
-  'source.fetch': [{ sourceId: FIXTURE_SOURCE_ID, toolName: 'search_logs' }],
+  'source.fetch': [
+    { sourceId: FIXTURE_SOURCE_ID, toolName: 'search_logs' },
+    { sourceId: FIXTURE_SOURCE_ID, toolName: 'aggregate_logs' },
+    { sourceId: FIXTURE_SOURCE_ID, toolName: 'get_trace' },
+  ],
 };
 
 /** Variables of Sources Settings (design-mcp-source.md, Settings) that `SourcesModule` hands to `parseSourcesSettings`. */

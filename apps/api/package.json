@@ -20,7 +20,7 @@
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
-    "test:e2e:runtime": "nest build && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring",
+    "test:e2e:runtime": "nest build && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring test/engine-wiring",
     "dev": "nest start --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "node --env-file-if-exists=.env dist/research/migrate-cli.js"
@@ -28,8 +28,10 @@
   "dependencies": {
     "@agent-os/contracts": "workspace:*",
     "@agent-os/db": "workspace:*",
+    "@agent-os/engine": "workspace:*",
     "@agent-os/runtime": "workspace:*",
     "@agent-os/sources": "workspace:*",
+    "@ai-sdk/anthropic": "4.0.82",
     "@mastra/ai-sdk": "^1.11.2",
     "@mastra/core": "^1.80.0",
     "@mastra/memory": "^1.39.1",

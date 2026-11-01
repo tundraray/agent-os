@@ -32,6 +32,14 @@ export interface RuntimeAppOptions {
   handlers: readonly TaskHandler[];
   /** Runtime Settings over the test defaults (workers on, 2 slots, 50 ms poll, pool of 4). */
   runtime?: Partial<RuntimeConfig>;
+  /** Providers replaced by a value, e.g. the engine's model and token counter doubles. */
+  overrides?: readonly ProviderOverride[];
+}
+
+/** A provider of `AppModule` and the value that replaces it. */
+export interface ProviderOverride {
+  token: symbol;
+  value: unknown;
 }
 
 export interface RuntimeApp {
@@ -119,12 +127,15 @@ export async function createRuntimeApp(
   );
   let moduleRef: TestingModule;
   try {
-    moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    let builder = Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(MASTRA)
       .useFactory({ factory: createRuntimeMastra, inject: [ConfigService] })
       .overrideProvider(THREAD_TITLE_AGENT)
-      .useValue(createThreadTitleAgent(titleModel().model))
-      .compile();
+      .useValue(createThreadTitleAgent(titleModel().model));
+    for (const { token, value } of options.overrides ?? []) {
+      builder = builder.overrideProvider(token).useValue(value);
+    }
+    moduleRef = await builder.compile();
   } finally {
     restoreEnv();
   }

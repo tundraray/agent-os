@@ -8,6 +8,7 @@
 // `source.fetch`), closes the adapters in beforeApplicationShutdown (before the workers stop), or lets a refused allowlist start the workers.
 // Run: `pnpm --filter api test:e2e:runtime`, never in parallel with other suites against one database.
 
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,7 @@ import {
   type SourceAdapter,
   type SourceRegistry,
 } from '@agent-os/sources';
+import type { Engine, ResolveModel, TokenCounter } from '@agent-os/engine';
 import { HandlerRegistry } from '@agent-os/runtime';
 import { type INestApplication, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -24,9 +26,15 @@ import { Agent } from '@mastra/core/agent';
 import { Mastra } from '@mastra/core/mastra';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
+import { MockLanguageModelV4 } from 'ai/test';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AppModule } from '../src/app.module.js';
+import {
+  ENGINE_RESOLVE_MODEL,
+  ENGINE_TOKEN_COUNTER,
+  RESEARCH_ENGINE,
+} from '../src/engine/engine.tokens.js';
 import { MASTRA } from '../src/mastra/mastra.constants.js';
 import {
   SOURCE_ADAPTERS,
@@ -38,12 +46,20 @@ import {
 } from '../src/threads/thread-title.agent.js';
 import { assistantModel, titleModel } from './support/mockModels.js';
 import { createRuntimeApp } from './support/runtimeApp.js';
-import { closeRuntimeDb } from './support/wiring-handlers.js';
+import { newUser } from './support/seed.js';
+import { closeRuntimeDb, query } from './support/wiring-handlers.js';
 
 describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-process Nest + real Postgres)', () => {
   const PROCESS_EXIT_MS = 10_000;
   const WORKERS_STARTED = 'Runtime workers started';
   const WORKERS_STOPPED = 'Runtime workers stopped';
+  /** EngineModule (deep-research / engine) registers its handlers right after source.fetch, before the workers start. */
+  const ENGINE_REGISTRATIONS = [
+    'register research.controller@1',
+    'register research.analyze@1',
+    'register research.verify@1',
+    'register research.synthesize@1',
+  ];
 
   const tempDirs: string[] = [];
 
@@ -135,7 +151,11 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
 
     let pid: number;
     try {
-      expect(timeline()).toEqual(['register source.fetch@1', WORKERS_STARTED]);
+      expect(timeline()).toEqual([
+        'register source.fetch@1',
+        ...ENGINE_REGISTRATIONS,
+        WORKERS_STARTED,
+      ]);
 
       // The fixture process starts on the first call through the registry SourcesModule provides.
       const registry = runtime.app.get<SourceRegistry>(SOURCE_REGISTRY);
@@ -172,6 +192,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
 
     expect(timeline()).toEqual([
       'register source.fetch@1',
+      ...ENGINE_REGISTRATIONS,
       WORKERS_STARTED,
       WORKERS_STOPPED,
       'fixture close',
@@ -225,6 +246,89 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
       expect(timeline()).not.toContain('register source.fetch@1');
     } finally {
       await app.close();
+    }
+  }, 60_000);
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // UC-12 (service half)  Start without the fixture: the engine runs on model knowledge   [EXTRA: beyond the part's budget, T6.1]
+  // ---------------------------------------------------------------------------------------------------------------
+  // Design Doc: docs/features/deep-research/design-engine.md (KD-8, DC-14, DC-18, Contract Definitions: createEngine, Engine.sourceMode).
+  // Unique defect no other test catches: EngineModule builds `connectedSources` from the allowlist or the registry instead of the
+  // adapters SourcesModule built, so DC-14 refuses the configuration and apps/api does not start without @agent-os/mcp-fixture.
+  // Covers: AC-26.1 (service side): without a connected source the service starts and a new investigation starts in
+  // `model_knowledge`. The number of warnings (AC-26.2, AC-26.3) is proven by packages/engine/src/create-engine.spec.ts; the chat
+  // half of AC-26.1 by INT-1 A6 of chat-entry; the live log line by scenario L1-7 of chat-entry.
+  // Use case: UC-12. Primary failure mode (turns red when): `connectedSources` comes from SOURCES_ALLOWLIST or SOURCE_REGISTRY.
+  // @category: integration
+  // @dependency: AppModule (real), SOURCE_ADAPTERS overridden with [] (as the allowlist refusal case above), model and token
+  // counter doubles, Postgres
+  //
+  // Verification items:
+  // - app.init() resolves; source.fetch is not registered
+  // - RESEARCH_ENGINE resolves to an Engine with sourceMode `model_knowledge`
+  // - a started investigation reaches its research.controller task in research_tasks
+  it('starts without the fixture and runs the engine on model knowledge (UC-12)', async () => {
+    const register = vi.spyOn(HandlerRegistry.prototype, 'register');
+    const silentModel: ResolveModel = (modelId) =>
+      new MockLanguageModelV4({
+        provider: 'test',
+        modelId,
+        doGenerate: ({ abortSignal }) =>
+          new Promise((_, reject) => {
+            if (!abortSignal) {
+              reject(new Error('role model call without abortSignal'));
+              return;
+            }
+            abortSignal.addEventListener(
+              'abort',
+              () => reject(abortSignal.reason as Error),
+              { once: true },
+            );
+          }),
+      });
+    const fixedCounter: TokenCounter = {
+      countInputTokens: () =>
+        Promise.resolve({ outcome: 'counted', inputTokens: 100 }),
+    };
+
+    const runtime = await createRuntimeApp({
+      handlers: [],
+      runtime: { shutdownGraceMs: 1_000 },
+      overrides: [
+        { token: SOURCE_ADAPTERS, value: [] },
+        { token: ENGINE_RESOLVE_MODEL, value: silentModel },
+        { token: ENGINE_TOKEN_COUNTER, value: fixedCounter },
+      ],
+    });
+
+    try {
+      const registered = register.mock.calls.map(
+        ([handler]) => `${handler.workflowType}@${handler.workflowVersion}`,
+      );
+      expect(registered).not.toContain('source.fetch@1');
+
+      const engine = runtime.app.get<Engine>(RESEARCH_ENGINE);
+      expect(engine.sourceMode).toBe('model_knowledge');
+
+      const resourceId = newUser();
+      const threadId = await runtime.createThread(resourceId);
+      const started = await engine.startInvestigation({
+        resourceId,
+        threadId,
+        query: 'Why did checkout fail at 10:00?',
+        processId: 'deep-research',
+        launchKey: randomUUID(),
+      });
+      expect(started.outcome).toBe('created');
+      if (started.outcome !== 'created') return;
+      const tasks = await query<{ workflowType: string }>(
+        `SELECT workflow_type AS "workflowType" FROM app.research_tasks
+          WHERE investigation_id = $1 AND task_id = $2`,
+        [started.investigationId, started.controllerTaskId],
+      );
+      expect(tasks).toEqual([{ workflowType: 'research.controller' }]);
+    } finally {
+      await runtime.close();
     }
   }, 60_000);
 });
