@@ -27,11 +27,11 @@ Runtime исследований связан с NestJS и чатом внутр
 | `@agent-os/runtime` | задачи, события, outbox, восстановление, evidence; порт обработчика (`TaskHandler`, `TaskContext`, `HandlerResult`) | contracts, db |
 | `@agent-os/sources` | `ToolExecutor`, `SourceAdapter`, клиент MCP, обработчик `source.fetch` | contracts, runtime |
 | `@agent-os/engine` | реестр возможностей, контроллер, `ContextBuilder`, конфигурация процесса; агенты ролей на Mastra | всё выше, `@mastra/core` |
-| `@agent-os/eval` | эталонный набор, прогоны H, B1, B2 и отчёты; вторая точка сборки — CLI, который читает окружение | engine и всё выше |
+| `@agent-os/eval` | не планируется | — |
 | `@agent-os/mcp-fixture` | тестовый MCP-сервер ([design-mcp-source.md](../features/research-runtime/design-mcp-source.md), KD-6) | — (только в devDependencies) |
 | `apps/api` | HTTP, аутентификация, чат и беседы, модули Nest над пакетами, чтение окружения | рабочие пакеты |
 
-Слои снизу вверх: contracts, db, runtime, sources, engine, eval. Пакет зависит только от слоёв ниже себя, `apps/api` стоит над всеми, а `apps/web` зависит только от contracts.
+Слои снизу вверх: contracts, db, runtime, sources, engine. Пакет зависит только от слоёв ниже себя, `apps/api` стоит над всеми, а `apps/web` зависит только от contracts. Пакета `@agent-os/eval` не будет: части `eval` в Delivery Parts [deep-research/prd.md](../features/deep-research/prd.md) нет. Оценка в Decision, Context, Rationale и Options — мотив решения на момент принятия.
 
 ## Context
 
@@ -77,7 +77,7 @@ Runtime исследований живёт в `apps/api/src/research`, слой
 
 - Запрет Mastra в db, runtime и sources проверяют и объявленные зависимости (knip в CI), и lint
 - Тесты runtime с Postgres и матрица убийств поднимают только runtime и db
-- Оценка собирает движок теми же функциями сборки, что `apps/api`
+- Тесты пакета движка собирают движок теми же функциями сборки, что `apps/api`
 
 ### Negative Consequences
 
@@ -98,9 +98,9 @@ Runtime исследований живёт в `apps/api/src/research`, слой
 - Пакеты потребляются как собранный `dist` через `exports`, как `@agent-os/contracts`. Собирает их `tsc` в порядке графа Turborepo, а при локальной разработке пакеты собираются в режиме watch
 - Зависимость идёт только вниз по слоям и объявлена в `package.json`; цикл отвергает turbo, необъявленный импорт отмечает knip
 - Пакеты не импортируют `@nestjs/*`: функция сборки принимает настройки и порты (логгер, часы, владелец беседы) и отдаёт сервисы со стартом и остановкой; `apps/api` привязывает их к хукам Nest
-- Окружение читают только точки сборки: `apps/api` и вход CLI пакета eval. Остальной код в `packages/`, включая функции сборки eval, получает настройки параметрами
+- Окружение читает только точка сборки `apps/api`. Код в `packages/`, включая функции сборки, получает настройки параметрами
 - Чужой домен приходит в пакет портом: runtime не знает о беседах, проверку владельца и хук удаления беседы связывает `apps/api`
-- `@mastra/*` объявляют только engine, eval и `apps/api`; правила ADR-0001 действуют в пакетах так же, как в приложении
+- `@mastra/*` объявляют только engine и `apps/api`; правила ADR-0001 действуют в пакетах так же, как в приложении
 - Запрет импорта `@mastra/*` остаётся в lint пакетов db, runtime и sources: проверку одних зависимостей обходит добавление зависимости
 - Таблицы фичи объявляются в модели схемы `app` в `@agent-os/db`, миграции генерируются там же
 - Тест живёт в пакете, чьё поведение доказывает; в `apps/api` остаются HTTP-тесты чата и бесед и тест связывания пакетов
