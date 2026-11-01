@@ -203,6 +203,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     const material = controllerMaterial({
       plan,
       admissible: admissibleDecisions(state),
+      tools: capabilities.fetchToolCatalog(config),
       signals: unread,
       stepsWithoutNovelty: state.stepsWithoutNovelty,
       tasks,

@@ -25,10 +25,13 @@ export interface TokenCountRequest {
 /**
  * The count, or a refusal: a network failure (`statusCode` null) or a non-2xx answer. A refusal
  * is handled by `ModelGateway` like a provider error of the model call (retries, then DC-12).
+ * `errorClass` is the class of the refusal for the log — the provider's `error.type` of a non-2xx
+ * answer (`invalid_request_error`, `overloaded_error`, …), `network_error` or `invalid_response` —
+ * never the provider's message, which may quote the request.
  */
 export type TokenCountResult =
   | { readonly outcome: 'counted'; readonly inputTokens: number }
-  | { readonly outcome: 'failed'; readonly statusCode: number | null };
+  | { readonly outcome: 'failed'; readonly statusCode: number | null; readonly errorClass: string };
 
 /** Port that counts the input tokens of a role packet before its reservation (KD-4). */
 export interface TokenCounter {

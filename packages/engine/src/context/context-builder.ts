@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ProcessConfig } from '../config/process-config.schema.js';
 import type { RoleMessage, TokenCounter } from '../model/token-counter.js';
+import type { EngineLogger } from '../ports.js';
 import {
   type ClaimLine,
   type ControllerMaterial,
@@ -68,6 +69,8 @@ export interface ContextBuilder {
 
 export interface ContextBuilderDeps {
   readonly tokenCounter: TokenCounter;
+  /** A refused count is logged with its status and error class, never with the packet. */
+  readonly logger: EngineLogger;
 }
 
 type Counted = { readonly outcome: 'counted'; readonly packet: PackedPacket } | CountFailed;
@@ -89,6 +92,11 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       frame.signal,
     );
     if (counted.outcome === 'failed') {
+      deps.logger.warn('token count failed', {
+        model: frame.roleConfig.model,
+        statusCode: counted.statusCode,
+        errorClass: counted.errorClass,
+      });
       return { outcome: 'count_failed', statusCode: counted.statusCode };
     }
     return {

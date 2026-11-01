@@ -11,6 +11,7 @@ import {
   createContextBuilder,
   type PacketFrame,
 } from './context-builder.js';
+import type { EngineLogger } from '../ports.js';
 import type { ClaimLine, EvidenceItem } from './role-packets.js';
 
 // ContextBuilder (design-engine.md, C3; AC-06.1–AC-06.3, DC-7, DC-8, AC-05.2): the packet of a role is
@@ -31,6 +32,8 @@ const charCounter = (): TokenCounter => ({
     return Promise.resolve({ outcome: 'counted', inputTokens });
   },
 });
+
+const silentLogger: EngineLogger = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
 type RoleWindow = Pick<ProcessConfig['roles']['worker'], 'windowTokens' | 'marginTokens'>;
 
@@ -61,7 +64,7 @@ describe('ContextBuilder', () => {
         async (windowTokens, marginPercent, sizes) => {
           const marginTokens = Math.floor((windowTokens * marginPercent) / 100);
           const items = sizes.map((size, index) => evidence(`ev-${index}`, size));
-          const builder = createContextBuilder({ tokenCounter: charCounter() });
+          const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 
           const result = await builder.buildWorkerPacket(frame({ windowTokens, marginTokens }), {
             subquestion: 'Which service failed first?',
@@ -95,7 +98,7 @@ describe('ContextBuilder', () => {
     ['window of this investigation smaller than the shipped worker window', { windowTokens: 150, marginTokens: 0 }, 'needs_narrowing'],
     ['window of this investigation larger', { windowTokens: 1_000, marginTokens: 50 }, 'packed'],
   ] as const)('AC-06.3, DC-7: worker packet when %s', async (_, window, outcome) => {
-    const builder = createContextBuilder({ tokenCounter: charCounter() });
+    const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 
     const result = await builder.buildWorkerPacket(frame(window), material);
 
@@ -111,7 +114,7 @@ describe('ContextBuilder', () => {
   });
 
   it('AC-05.2: a worker packet holds only its subquestion and its evidence', async () => {
-    const builder = createContextBuilder({ tokenCounter: charCounter() });
+    const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 
     const result = await builder.buildWorkerPacket(
       frame({ windowTokens: 1_000, marginTokens: 0 }),
@@ -151,7 +154,7 @@ describe('ContextBuilder', () => {
   ] as const)(
     'C3: controller packet packs earlier claims newest first when %s',
     async (_, windowTokens, packedClaims) => {
-      const builder = createContextBuilder({ tokenCounter: charCounter() });
+      const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 
       const result = await builder.buildControllerPacket(
         frame({ windowTokens, marginTokens: 0 }),
@@ -170,7 +173,7 @@ describe('ContextBuilder', () => {
   );
 
   it('DC-8: controller packet whose mandatory part exceeds the window is refused without truncation', async () => {
-    const builder = createContextBuilder({ tokenCounter: charCounter() });
+    const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 
     const result = await builder.buildControllerPacket(
       frame({ windowTokens: 260, marginTokens: 13 }),
@@ -180,17 +183,24 @@ describe('ContextBuilder', () => {
     expect(result).toEqual({ outcome: 'context_overflow', mandatoryTokens: 254, limitTokens: 247 });
   });
 
-  it('a failed count is returned, not taken as a fitting packet', async () => {
+  // T7.3: a refused count stopped the investigation with no trace of why. Defect caught: the refusal is taken as a
+  // fitting packet, or it is not logged with its status and class, or the log carries the packet.
+  it('a failed count is returned, not taken as a fitting packet, and logged with its status and class only', async () => {
     const failing: TokenCounter = {
-      countInputTokens: () => Promise.resolve({ outcome: 'failed', statusCode: 529 }),
+      countInputTokens: () => Promise.resolve({ outcome: 'failed', statusCode: 400, errorClass: 'invalid_request_error' }),
     };
-    const builder = createContextBuilder({ tokenCounter: failing });
+    const warnings: unknown[][] = [];
+    const logger = { ...silentLogger, warn: (...line: unknown[]) => void warnings.push(line) };
+    const builder = createContextBuilder({ tokenCounter: failing, logger });
 
     const result = await builder.buildWorkerPacket(
       frame({ windowTokens: 1_000, marginTokens: 0 }),
       material,
     );
 
-    expect(result).toEqual({ outcome: 'count_failed', statusCode: 529 });
+    expect(result).toEqual({ outcome: 'count_failed', statusCode: 400 });
+    expect(warnings).toEqual([
+      ['token count failed', { model: 'anthropic/claude-haiku-5-5', statusCode: 400, errorClass: 'invalid_request_error' }],
+    ]);
   });
 });

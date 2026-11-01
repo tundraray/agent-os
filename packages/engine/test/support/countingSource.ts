@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { CallOutcome, SourceAdapter, SourceAllowlist, SourceCall, SourceSchema } from '@agent-os/sources';
 
 /**
@@ -11,6 +12,8 @@ const TOOL_NAMES = ['search_logs', 'aggregate_logs', 'get_trace'] as const;
 const SNAPSHOT = 'counting-v1';
 
 /** Accepts any value: the tool's arguments are the test's business, the adapter only counts and answers. */
+/** Any arguments: a zod schema, since the engine describes each tool's arguments to the model as JSON schema. */
+const anyArgs = z.record(z.string(), z.unknown());
 const anyValue: SourceSchema = { safeParse: (value) => ({ success: true, data: value }) };
 
 /** A recorded call, without the signal. */
@@ -66,7 +69,7 @@ export function createCountingSource(): CountingSource {
         name,
         paginated: false,
         readOnly: true,
-        argsSchema: anyValue,
+        argsSchema: anyArgs,
         resultSchema: anyValue,
       })),
     },

@@ -3,6 +3,7 @@ import type { ResolvedSourceTool, SourceRegistry, SourceSchema } from '@agent-os
 import { loadProcessConfig } from '../config/load-process-config.js';
 import shippedDeepResearch from '../processes/deep-research.v1.json' with { type: 'json' };
 import { type GateState, judgeControllerOutput, type RejectionReason } from '../controller/decision-gate.js';
+import { z } from 'zod';
 import { createCapabilityRegistry } from './capability-registry.js';
 
 // Security Considerations, Decision (`requestEvidence`): the source requests of a decision are checked against the tools
@@ -16,13 +17,8 @@ if (!loaded.ok) throw new Error('the shipped configuration does not load');
 const config = loaded.config;
 
 /** `search_logs` takes `{ query: string }` only; the other tools take anything. */
-const searchLogsArgs: SourceSchema = {
-  safeParse: (value) =>
-    typeof value === 'object' && value !== null && Object.keys(value).join() === 'query' && typeof (value as { query?: unknown }).query === 'string'
-      ? { success: true, data: value }
-      : { success: false, error: new Error('off schema') },
-};
-const anyArgs: SourceSchema = { safeParse: (value) => ({ success: true, data: value }) };
+const searchLogsArgs: SourceSchema = z.strictObject({ query: z.string() });
+const anyArgs: SourceSchema = z.record(z.string(), z.unknown());
 
 /** The allowlist holds `fixture` `search_logs` and `get_trace`, not `aggregate_logs`. */
 const sources: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'> = {
@@ -55,8 +51,28 @@ const evidence = (sourceId: string, toolName: string, args: Record<string, unkno
   rationale: 'r',
   sourceId,
   toolName,
-  args,
+  args: JSON.stringify(args),
   completeness: 'all',
+});
+
+// DecisionInput `tools` and the verifier's assignment (T7.3: with no tools in its input the real controller guessed the
+// source id and argument names). Defect caught: a pair outside the configuration or the allowlist is offered to the
+// model, an admitted pair is missing, or its argument schema is not the descriptor's.
+describe('the tool catalog a role reads', () => {
+  it('lists every pair the configuration and the allowlist admit, by sourceId and toolName, with its argument schema', () => {
+    expect(registry.fetchToolCatalog(config)).toEqual([
+      {
+        sourceId: 'fixture',
+        toolName: 'get_trace',
+        argsSchema: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: {} },
+      },
+      {
+        sourceId: 'fixture',
+        toolName: 'search_logs',
+        argsSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false },
+      },
+    ]);
+  });
 });
 
 describe('DecisionGate with the gather capability: source requests are checked against the descriptor', () => {
@@ -71,8 +87,8 @@ describe('DecisionGate with the gather capability: source requests are checked a
         kind: 'requestAnalysis',
         rationale: 'r',
         subquestions: [
-          { text: 'a', sourceId: 'fixture', toolName: 'search_logs', args: { query: 'error' }, completeness: 'all' },
-          { text: 'b', sourceId: 'fixture', toolName: 'search_logs', args: { q: 'error' }, completeness: 'sample' },
+          { text: 'a', sourceId: 'fixture', toolName: 'search_logs', args: '{"query":"error"}', completeness: 'all' },
+          { text: 'b', sourceId: 'fixture', toolName: 'search_logs', args: '{"q":"error"}', completeness: 'sample' },
         ],
       },
       'invalid_args',

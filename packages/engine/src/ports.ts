@@ -32,7 +32,10 @@ export interface EngineLogFields {
   outcome?: string;
   /** Source a warning is about, e.g. one whose snapshot could not be read. */
   sourceId?: string;
-  /** Class (constructor name) of the error a warning reports; never its message. */
+  /**
+   * Class of the error a warning reports — the constructor name, or the provider's `error.type` of a refused token
+   * count; never its message.
+   */
   errorClass?: string;
 }
 

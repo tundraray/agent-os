@@ -38,7 +38,7 @@ const EvidenceIdSchema = z.uuid();
  * What the `synthesis` role returns: the draft answer. A claim names the input claim it states by `claimId`, or is new
  * (`claimId` null) with its atoms, so it can be verified like a worker claim (AC-09.3).
  */
-const SynthesisOutputSchema = z.object({
+export const SynthesisOutputSchema = z.object({
   outcome: z.enum(['answered', 'partial', 'inconclusive']),
   summary: z.string(),
   claims: z.array(

@@ -12,6 +12,14 @@ const PROVIDER_PREFIX = /^[^/]+\//;
 const CountTokensResponseSchema = z.object({
   input_tokens: z.number().int().nonnegative(),
 });
+/** The provider's error body; only `error.type`, a short identifier, is kept for the log. */
+const ProviderErrorSchema = z.object({
+  error: z.object({ type: z.string().regex(/^[a-z_]{1,64}$/) }),
+});
+const NETWORK_ERROR = 'network_error';
+const INVALID_RESPONSE = 'invalid_response';
+/** A non-2xx answer whose body names no error type. */
+const HTTP_ERROR = 'http_error';
 
 export interface AnthropicTokenCounterOptions {
   readonly apiKey: string;
@@ -50,21 +58,30 @@ export class AnthropicTokenCounter implements TokenCounter {
         signal,
       });
     } catch {
-      return { outcome: 'failed', statusCode: null };
+      return { outcome: 'failed', statusCode: null, errorClass: NETWORK_ERROR };
     }
     if (!response.ok) {
-      await response.body?.cancel();
-      return { outcome: 'failed', statusCode: response.status };
+      return { outcome: 'failed', statusCode: response.status, errorClass: await errorTypeOf(response) };
     }
     try {
       const parsed = CountTokensResponseSchema.safeParse(await response.json());
       return parsed.success
         ? { outcome: 'counted', inputTokens: parsed.data.input_tokens }
-        : { outcome: 'failed', statusCode: response.status };
+        : { outcome: 'failed', statusCode: response.status, errorClass: INVALID_RESPONSE };
     } catch {
       // The body broke off or is not JSON.
-      return { outcome: 'failed', statusCode: null };
+      return { outcome: 'failed', statusCode: null, errorClass: INVALID_RESPONSE };
     }
+  }
+}
+
+/** `error.type` of a provider error body; the message is never read, since it may quote the request. */
+async function errorTypeOf(response: Response): Promise<string> {
+  try {
+    const parsed = ProviderErrorSchema.safeParse(await response.json());
+    return parsed.success ? parsed.data.error.type : HTTP_ERROR;
+  } catch {
+    return HTTP_ERROR;
   }
 }
 

@@ -113,6 +113,31 @@ function textOf(options: GenerateOptions, role: 'system' | 'user'): string {
     .join('\n');
 }
 
+/** An `args` object written as the JSON text the model returns; text (a test's own, maybe broken) stays as it is. */
+function argsAsText<T>(item: T): T {
+  if (typeof item !== 'object' || item === null || !('args' in item)) return item;
+  const { args } = item as { args: unknown };
+  return typeof args === 'object' && args !== null ? { ...item, args: JSON.stringify(args) } : item;
+}
+
+/**
+ * The output as the provider sends it: the controller's and the verifier's tool `args` are JSON text in their output
+ * schemas (`ModelArgsSchema`), so a script may write them as objects and the double writes the text.
+ */
+function asSent(role: ScriptedRole, output: unknown): unknown {
+  if (typeof output !== 'object' || output === null) return output;
+  if (role === 'controller') {
+    const withArgs = argsAsText(output);
+    const { subquestions } = withArgs as { subquestions?: unknown };
+    return Array.isArray(subquestions) ? { ...withArgs, subquestions: subquestions.map(argsAsText) } : withArgs;
+  }
+  if (role === 'verifier') {
+    const { requests } = output as { requests?: unknown };
+    return Array.isArray(requests) ? { ...output, requests: requests.map(argsAsText) } : output;
+  }
+  return output;
+}
+
 /** A held call that no abort ends fails the test instead of hanging the suite. */
 const HANG_LIMIT_MS = 30_000;
 
@@ -178,7 +203,7 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
     }
     await step.holdUntil;
     return {
-      content: [{ type: 'text', text: JSON.stringify(typeof step.output === 'function' ? step.output() : step.output) }],
+      content: [{ type: 'text', text: JSON.stringify(asSent(role, typeof step.output === 'function' ? step.output() : step.output)) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },
       usage: usageOf(typeof step.usage === 'function' ? step.usage(call) : (step.usage ?? DEFAULT_USAGE)),
       warnings: [],

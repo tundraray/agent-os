@@ -1,6 +1,7 @@
 import type { Task } from '@agent-os/contracts';
 import { unavailableRequestsOf } from '../capabilities/proposed-tasks.repository.js';
 import { SOURCE_FETCH_WORKFLOW } from '../capabilities/gather-key.js';
+import type { FetchToolLine } from '../capabilities/capability-registry.js';
 import type { DecisionKind } from '../config/capabilities.js';
 import type { ClaimLine, ControllerMaterial, TaskCount } from '../context/role-packets.js';
 import { type InputSignal, toInputSignal } from '../signals/signal-registry.js';
@@ -46,6 +47,8 @@ export interface DecisionInputParts {
   readonly plan: PlanRevisionRow;
   readonly budget: Readonly<Record<string, number>>;
   readonly admissible: readonly DecisionKind[];
+  /** The source tools the decisions may fetch from, with their argument schemas. */
+  readonly tools: readonly FetchToolLine[];
   /** Signals no decision has read yet. */
   readonly signals: readonly InputSignal[];
   readonly stepsWithoutNovelty: number;
@@ -112,6 +115,7 @@ export function controllerMaterial(parts: DecisionInputParts): ControllerMateria
       planRevision: { revision: parts.plan.revision, ...(parts.plan.plan as object) },
       budget: parts.budget,
       admissible: parts.admissible,
+      tools: parts.tools,
       signals: parts.signals.map(toInputSignal),
       observations: {
         tasks: [...parts.tasks.filter(isNewTask).map(taskObservation), ...unavailableObservations(parts.previous)],

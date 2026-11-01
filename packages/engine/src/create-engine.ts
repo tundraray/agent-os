@@ -132,7 +132,7 @@ export function createEngine(options: CreateEngineOptions): Engine {
 
   const { clock, tokenCounter, logger } = options;
   const gateway = createModelGateway({ models, tokenCounter, catalog, clock, logger });
-  const contextBuilder = createContextBuilder({ tokenCounter });
+  const contextBuilder = createContextBuilder({ tokenCounter, logger });
   options.runtime.handlers.register(
     createControllerHandler({
       database: options.database,

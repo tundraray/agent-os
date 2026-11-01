@@ -22,6 +22,7 @@ import type { ContextBuilder } from '../context/context-builder.js';
 import type { EvidenceItem } from '../context/role-packets.js';
 import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
+import { ModelArgsObjectSchema, parseModelArgs } from '../model/model-args.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { EngineLogger } from '../ports.js';
 import { type Atom, type SourceRecord, verifyClaim } from './claim-verifier.js';
@@ -50,13 +51,13 @@ const FINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'can
  * What the `verifier` role returns: the source records to fetch and the claims each request checks. It judges no
  * claim — code does (KD-6). No top-level `claims`: that is the worker's output.
  */
-const VerifierOutputSchema = z.object({
+export const VerifierOutputSchema = z.object({
   requests: z.array(
     z.object({
       claimIds: z.array(z.string()),
       sourceId: z.string(),
       toolName: z.string(),
-      args: z.record(z.string(), z.unknown()),
+      args: ModelArgsObjectSchema,
     }),
   ),
 });
@@ -115,8 +116,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   ): Promise<Step<readonly VerifierRequest[]>> {
     const roleConfig = frame.config.roles.verifier;
     const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
-    const fetchTool = capabilities.fetchTools(frame.config);
-    const tools = frame.config.sources.filter((source) => fetchTool(source) !== null);
+    const tools = capabilities.fetchToolCatalog(frame.config);
     const cited = [...new Set(revisions.flatMap((revision) => revision.evidenceIds))];
     const evidence: EvidenceItem[] = await Promise.all(
       cited.map(async (evidenceId) => ({ evidenceId, text: await readEvidence(frame, evidenceId) })),
@@ -163,7 +163,9 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
 
   /**
    * Proposes a `source.fetch` task per request the investigation may fetch (the gate's check of the tool and its
-   * arguments); a request for another claim set, tool or arguments is dropped, and its claims stay without records.
+   * arguments, parsed from the JSON text the model writes — an output whose text is not a JSON object never gets here,
+   * the gateway refuses it as invalid); a request for another claim set or tool, or with arguments the tool's schema
+   * refuses, is dropped, and its claims stay without records.
    */
   async function collect(
     ctx: TaskContext,
@@ -184,8 +186,9 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
     for (const request of requests) {
       const claimIds = request.claimIds.filter((claimId) => known.has(claimId));
       const tool = fetchTool(request);
-      if (claimIds.length === 0 || tool === null || !tool.argsSchema.safeParse(request.args).success) continue;
-      const { sourceId, toolName, args } = request;
+      const args = parseModelArgs(request.args);
+      if (claimIds.length === 0 || tool === null || args === null || !tool.argsSchema.safeParse(args).success) continue;
+      const { sourceId, toolName } = request;
       const gathered = await proposeGather(gatherDeps, decision, {
         kind: 'requestEvidence',
         rationale: 'verification round',

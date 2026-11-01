@@ -137,11 +137,13 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     attempt: number,
     outcome: string,
     statusCode: number | null,
+    errorClass?: string,
   ): void => {
     deps.logger.warn('model call failed', {
       role: request.role,
       model: request.roleConfig.model,
       statusCode,
+      errorClass,
       attempt,
       outcome,
     });
@@ -185,7 +187,7 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
       return { next: 'done', result: { outcome: 'no_answer', reason: stopAfterCount } };
     }
     if (counted.outcome === 'failed') {
-      logFailure(request, attempt, 'token_count_failed', counted.statusCode);
+      logFailure(request, attempt, 'token_count_failed', counted.statusCode, counted.errorClass);
       return { next: 'provider_retry' };
     }
 

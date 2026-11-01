@@ -1,6 +1,7 @@
 import { type Capability, DECISION_KINDS, type DecisionKind, decisionsOpenedBy } from '../config/capabilities.js';
 import type { SourceSchema } from '@agent-os/sources';
 import type { ProcessConfig } from '../config/process-config.schema.js';
+import { parseModelArgs } from '../model/model-args.js';
 import { type Decision, DecisionSchema, isDecisionKind, TASK_CREATING_KINDS } from './decision.schema.js';
 
 /** The runtime refuses a task deadline below this; a decision creating tasks needs more time left (DC-3). */
@@ -71,13 +72,51 @@ export function admissibleDecisions(state: GateState): DecisionKind[] {
   return DECISION_KINDS.filter((kind) => opened.has(kind) && limitOf(kind, state) === null);
 }
 
+/** One `args` field of a model output: absent stays absent, JSON text becomes its object; null when it is neither. */
+function decodeArgs(args: unknown): { readonly args: Record<string, unknown> | undefined } | null {
+  if (args === undefined) return { args: undefined };
+  if (typeof args !== 'string') return null;
+  const parsed = parseModelArgs(args);
+  return parsed === null ? null : { args: parsed };
+}
+
+function withArgs<T extends object>(item: T, args: Record<string, unknown> | undefined): T {
+  return args === undefined ? item : { ...item, args };
+}
+
+/**
+ * The controller output with its `args` — top-level and of every sub-question — parsed from the JSON text the model
+ * writes (`ControllerOutputSchema`); null when one of them is not a JSON object.
+ */
+function decodeOutputArgs(output: object): object | null {
+  const top = decodeArgs('args' in output ? output.args : undefined);
+  if (top === null) return null;
+  const subquestions = 'subquestions' in output ? output.subquestions : undefined;
+  if (!Array.isArray(subquestions)) return withArgs(output, top.args);
+  const decoded: unknown[] = [];
+  for (const item of subquestions as unknown[]) {
+    if (typeof item !== 'object' || item === null) {
+      decoded.push(item);
+      continue;
+    }
+    const own = decodeArgs('args' in item ? item.args : undefined);
+    if (own === null) return null;
+    decoded.push(withArgs(item, own.args));
+  }
+  return { ...withArgs(output, top.args), subquestions: decoded };
+}
+
 /**
  * Invariant 6: a controller output becomes a decision only when its kind is in the closed set, the configuration enables
- * its capability (DC-1), its structure passes the schema, it stays within `maxFanOut` (DC-6) and the limits of this step
- * admit it. The checks run in that order, and the first failure is the reason.
+ * its capability (DC-1), its `args` are JSON objects (`invalid_args` otherwise), its structure passes the schema, it
+ * stays within `maxFanOut` (DC-6) and the limits of this step admit it. The checks run in that order, and the first
+ * failure is the reason.
  */
 export function judgeDecision(output: unknown, state: GateState): GateVerdict {
-  const rawKind = typeof output === 'object' && output !== null && 'kind' in output ? output.kind : undefined;
+  if (typeof output !== 'object' || output === null) {
+    return { verdict: 'rejected', reason: 'kind_unknown', kind: null };
+  }
+  const rawKind = 'kind' in output ? output.kind : undefined;
   if (typeof rawKind !== 'string' || !isDecisionKind(rawKind)) {
     return { verdict: 'rejected', reason: 'kind_unknown', kind: null };
   }
@@ -86,7 +125,11 @@ export function judgeDecision(output: unknown, state: GateState): GateVerdict {
   if (!decisionsOpenedBy(state.capabilities).has(kind)) {
     return rejected('capability_disabled');
   }
-  const parsed = DecisionSchema.safeParse(output);
+  const decoded = decodeOutputArgs(output);
+  if (decoded === null) {
+    return rejected('invalid_args');
+  }
+  const parsed = DecisionSchema.safeParse(decoded);
   if (!parsed.success) {
     return rejected('invalid_structure');
   }

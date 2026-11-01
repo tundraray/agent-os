@@ -257,9 +257,9 @@ describe('ModelGateway retry policy', () => {
       {
         steps: [],
         counts: [
-          { outcome: 'failed', statusCode: 503 },
-          { outcome: 'failed', statusCode: null },
-          { outcome: 'failed', statusCode: 500 },
+          { outcome: 'failed', statusCode: 503, errorClass: 'api_error' },
+          { outcome: 'failed', statusCode: null, errorClass: 'network_error' },
+          { outcome: 'failed', statusCode: 500, errorClass: 'api_error' },
         ],
       },
       { result: modelUnavailable, generateCalls: 0, reservations: [], delays: [1_000, 3_000] },

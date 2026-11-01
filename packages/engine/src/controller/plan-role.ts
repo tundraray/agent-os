@@ -10,7 +10,7 @@ import { controllerRepository as repository, type PlanRevisionRow } from './deci
 import { callOrReplay } from './role-call.js';
 
 /** What the `plan` role returns (design-engine.md, DecisionInput `planRevision`: readiness criteria and branches). */
-const PlanOutputSchema = z.object({
+export const PlanOutputSchema = z.object({
   readinessCriteria: z.array(z.string()),
   branches: z.array(z.object({ question: z.string(), approach: z.string() })),
 });

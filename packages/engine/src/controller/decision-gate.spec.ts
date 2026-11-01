@@ -20,7 +20,8 @@ const open: GateState = {
   openTasks: 1,
 };
 
-const fetch = { sourceId: 'fixture', toolName: 'search_logs', args: { q: 'x' }, completeness: 'all' };
+// The model writes `args` as JSON text (ControllerOutputSchema); the gate parses it.
+const fetch = { sourceId: 'fixture', toolName: 'search_logs', args: '{"q":"x"}', completeness: 'all' };
 const subquestion = (text: string) => ({ text, ...fetch });
 
 const outputs = {
@@ -63,6 +64,21 @@ describe('DecisionGate: only an admissible, well-formed decision of an enabled c
       ['requestEvidence', 'wait', 'concludeInconclusive'],
     ],
     ['requestEvidence without its arguments', { kind: 'requestEvidence', rationale: 'r' }, {}, 'invalid_structure', [
+      'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
+    ]],
+    // T7.3: the model writes `args` as JSON text. Defect caught: text that is not a JSON object crashes the step or
+    // becomes a decision; an object where the model must write text is let through.
+    ['requestEvidence whose args text is not JSON', { ...outputs.requestEvidence, args: '{q: x' }, {}, 'invalid_args', [
+      'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
+    ]],
+    [
+      'a requestAnalysis sub-question whose args text is a JSON array',
+      { ...outputs.requestAnalysis, subquestions: [subquestion('a'), { ...subquestion('b'), args: '["q"]' }] },
+      {},
+      'invalid_args',
+      ['requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive'],
+    ],
+    ['requestEvidence with args as an object, not text', { ...outputs.requestEvidence, args: { q: 'x' } }, {}, 'invalid_args', [
       'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
     ]],
     ['a rationale of 2 001 characters', { kind: 'concludeInconclusive', rationale: 'x'.repeat(2_001) }, {}, 'invalid_structure', [
@@ -145,6 +161,16 @@ describe('DecisionGate: only an admissible, well-formed decision of an enabled c
       expect(verdict).toMatchObject({ verdict: 'rejected', reason: expected });
     }
     expect(admissibleDecisions(state)).toEqual(admissible);
+  });
+
+  // T7.3: the recorded decision keeps `args` as the object the source fetch takes. Defect caught: the JSON text reaches
+  // the decision row or the fetch request.
+  it('an accepted decision carries its args parsed into objects', () => {
+    expect(judgeDecision(outputs.requestEvidence, open)).toMatchObject({ verdict: 'accepted', decision: { args: { q: 'x' } } });
+    expect(judgeDecision(outputs.requestAnalysis, open)).toMatchObject({
+      verdict: 'accepted',
+      decision: { subquestions: [{ text: 'a', args: { q: 'x' } }, { text: 'b', args: { q: 'x' } }] },
+    });
   });
 
   // Defect caught: a proposeAnswer the model sent with `await: false` lets the controller step on while its synthesis runs.

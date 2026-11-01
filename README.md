@@ -26,6 +26,7 @@ agent-os/
     db/               модель схемы `app` (Drizzle), миграции, мигратор, createDatabase
     runtime/          durable runtime исследований без NestJS: createRuntime, порты, порт обработчика
     sources/          источники данных по MCP: createSources, исполнитель source.fetch, ToolExecutor, адаптер fixture
+    engine/           исследовательский движок без NestJS: createEngine, контроллер, воркеры, проверка утверждений, синтез ответа
     mcp-fixture/      тестовый MCP-сервер логов (stdio): детерминированные срезы v1/v2, эталон, режимы отказа
   infra/
     docker-compose.yml
@@ -303,6 +304,26 @@ POSTGRES_PORT=5433 pnpm db:up
 | `FIXTURE_DATASET` | `v1` | версия данных fixture при старте процесса: `v1` или `v2` |
 | `FIXTURE_FAULTS` | не задана | JSON-массив правил отказа (только для тестов); без `FIXTURE_CALL_LOG` — ошибка старта; при `NODE_ENV=production` не читается |
 | `FIXTURE_CALL_LOG` | не задана | путь к журналу вызовов `tools/call` процесса fixture (только для тестов) |
+
+## Исследовательский движок
+
+Пакет `@agent-os/engine` ведёт глубокое исследование поверх runtime и источников: контроллер выбирает шаги, воркеры анализируют срезы данных, код проверяет утверждения по записям источника, синтез пишет ответ. Пакет не зависит от NestJS и не читает переменные окружения: `apps/api` собирает его в `EngineModule` (`apps/api/src/engine/`) — передаёт runtime, реестр источников, подключённые источники, порт `resolveModel` (модели ролей на `@ai-sdk/anthropic`) и счётчик токенов `AnthropicTokenCounter`. Процесс исследования задаёт конфигурация `deep-research` v1 (`packages/engine/src/processes/`): модели и окна ролей, лимиты, разделы ответа. Дизайн — `docs/features/deep-research/design-engine.md`.
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | не задана | ключ провайдера; без него `apps/api` стартует, но вызовы моделей движка получат отказ провайдера |
+| `RESEARCH_ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | база провайдера **без версии API**; одна база на вызов модели (`<база>/v1/messages`) и на подсчёт входа (`<база>/v1/messages/count_tokens`), поэтому вызов и его подсчёт идут на один адрес. Значение не http(s) URL останавливает старт с именем переменной |
+
+`ANTHROPIC_BASE_URL` движок не читает и не задаёт. Её читает Mastra для агента чата, и там она — база **с** версией (`…/v1`); общая переменная увела бы вызовы движка и его подсчёт входа на разные адреса, а переменная процесса меняла бы адрес и для чата.
+
+**Режим без источников.** Если ни один источник не подключён (например, установка без devDependency `@agent-os/mcp-fixture`), движок работает в режиме `model_knowledge`: при старте `apps/api` пишет одно предупреждение `no data source is connected: investigations will run on model knowledge, without evidence (sourceMode model_knowledge)`, расследование вызывает только роли `plan` и `synthesis`, а все утверждения ответа попадают в раздел `assumed` без evidence и без проверки. Режим фиксируется при создании движка и записывается в каждое расследование (`sourceMode`).
+
+| Команда | Что делает |
+|---|---|
+| `pnpm --filter @agent-os/engine test` | unit-таблицы и свойства движка, без Postgres и без сети (входят в `pnpm check`) |
+| `pnpm --filter @agent-os/engine test:e2e` | интеграционные (INT-1…INT-4) и сквозные (E2E-1, E2E-2) тесты против Postgres, runtime и процесса fixture; собирает пакет и дочерний процесс движка. Модель — двойник, к провайдеру тесты не обращаются |
+
+`test:e2e` движка работает с Postgres — запускайте его по одному с остальными наборами (`db`, `runtime`, `sources`, `api`), не параллельно против одной базы.
 
 ## Проверки качества
 

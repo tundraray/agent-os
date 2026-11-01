@@ -97,9 +97,21 @@ describe('AnthropicTokenCounter', () => {
     });
   });
 
-  it.each<[string, Reply, { outcome: 'failed'; statusCode: number | null }]>([
-    ['a provider 5xx', json(529, { type: 'error', error: { type: 'overloaded_error' } }), { outcome: 'failed', statusCode: 529 }],
-    ['a broken connection', (res) => res.socket?.destroy(), { outcome: 'failed', statusCode: null }],
+  // The refusal carries the provider's error class for the log, never its message (T7.3: a 400 on the output schema
+  // was invisible). Defect caught: the class is lost, or the message, which may quote the request, is passed on.
+  it.each<[string, Reply, { outcome: 'failed'; statusCode: number | null; errorClass: string }]>([
+    [
+      'a provider 5xx',
+      json(529, { type: 'error', error: { type: 'overloaded_error' } }),
+      { outcome: 'failed', statusCode: 529, errorClass: 'overloaded_error' },
+    ],
+    [
+      'a provider 400 with a message',
+      json(400, { type: 'error', error: { type: 'invalid_request_error', message: 'output_config.format.schema: secret' } }),
+      { outcome: 'failed', statusCode: 400, errorClass: 'invalid_request_error' },
+    ],
+    ['a provider error without a JSON body', (res) => res.writeHead(502).end('bad gateway'), { outcome: 'failed', statusCode: 502, errorClass: 'http_error' }],
+    ['a broken connection', (res) => res.socket?.destroy(), { outcome: 'failed', statusCode: null, errorClass: 'network_error' }],
   ])('returns a refusal, not an exception, on %s', async (_case, failure, expected) => {
     reply = failure;
     const counter = new AnthropicTokenCounter({ apiKey: 'test-key', baseUrl: origin });
