@@ -8,6 +8,7 @@
 // AC-10.1: "Given пустая база из infra/docker-compose.yml, When применяются миграции, Then схема создана; повторное применение ничего не меняет."
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
 // AC-RT-8: "Домены CHECK статусов, классов и типов в схеме app совпадают со значениями enum в packages/contracts."
+// design-engine.md, Data Model: the engine tables and their CHECK domains (literals; the engine contract is not in packages/contracts).
 //
 // Primary failure mode: the migrator applies twice or partially, touches `public`, or a CHECK domain drifts from the contract enums.
 // Isolation: the row runs in its own scratch database, created with CREATE DATABASE and dropped afterwards.
@@ -29,14 +30,20 @@ import { ScratchDatabases, withDatabase } from './support/scratch-db.js';
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;
 
-/** Tables of the Data Model (design-runtime.md) plus the migration journal. */
+/** Tables of the Data Models (design-runtime.md, design-engine.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
+  'research_claims',
+  'research_decisions',
+  'research_engine_runs',
   'research_event_deliveries',
   'research_events',
   'research_evidence',
   'research_evidence_contents',
   'research_investigations',
+  'research_llm_calls',
+  'research_plan_revisions',
+  'research_signals',
   'research_task_dependencies',
   'research_task_subscribers',
   'research_tasks',
@@ -205,6 +212,39 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
           TaskEdgeKindSchema.options,
         ),
         research_tasks_status_check: sorted(TaskStatusSchema.options),
+        // Engine domains (design-engine.md, Data Model): the engine contract is not in
+        // packages/contracts, so the expected values are literals.
+        research_claims_status_check: [
+          'insufficient',
+          'refuted',
+          'supported',
+          'unverified',
+        ],
+        research_decisions_decided_by_check: ['code', 'model'],
+        research_decisions_kind_check: [
+          'concludeInconclusive',
+          'proposeAnswer',
+          'replan',
+          'requestAnalysis',
+          'requestEvidence',
+          'requestVerification',
+          'wait',
+        ],
+        research_decisions_status_check: ['accepted', 'rejected'],
+        research_engine_runs_source_mode_check: ['model_knowledge', 'sources'],
+        research_llm_calls_role_check: [
+          'controller',
+          'plan',
+          'synthesis',
+          'verifier',
+          'worker',
+        ],
+        research_llm_calls_status_check: [
+          'abandoned',
+          'failed',
+          'reserved',
+          'settled',
+        ],
       });
     });
   });

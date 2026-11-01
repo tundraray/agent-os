@@ -18,6 +18,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgSchema,
   primaryKey,
   text,
@@ -32,7 +33,10 @@ import {
  * declared here; feature tables carry their prefix (`research_`). drizzle-kit generates the
  * migrations in `packages/db/migrations/` from this module.
  *
- * CHECK domains are built from the contract enums (AC-RT-8), never duplicated here.
+ * CHECK domains of runtime tables are built from the contract enums (AC-RT-8), never duplicated
+ * here. The engine tables (design-engine.md, Data Model) keep their domains below: the engine
+ * contract lives in `@agent-os/engine`, which depends on this package, and `packages/contracts`
+ * does not change for it.
  * The cascade starts at `research_investigations`: every FK is `ON DELETE CASCADE`.
  */
 export const app = pgSchema('app');
@@ -353,5 +357,311 @@ export const researchEvidenceContents = app.table(
       'research_evidence_contents_byte_size_check',
       sql`${t.byteSize} = octet_length(${t.bytes}) and ${t.byteSize} <= ${sql.raw(String(EVIDENCE_CONTENT_MAX_BYTES))}`,
     ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Engine tables (design-engine.md, Data Model). Each one references its investigation and, where
+// a task writes the row, that task; evidence and proposed tasks are referenced by id only.
+// ---------------------------------------------------------------------------------------------
+
+/** `sourceMode` of an investigation, fixed at start (KD-8, DC-16). */
+const SOURCE_MODES = ['sources', 'model_knowledge'] as const;
+/** Decision kinds of the controller (design-engine.md, Terms). */
+const DECISION_KINDS = [
+  'requestEvidence',
+  'requestAnalysis',
+  'requestVerification',
+  'replan',
+  'wait',
+  'proposeAnswer',
+  'concludeInconclusive',
+] as const;
+/** Verdict on a controller output: one accepted decision makes a step, a rejected one carries a reason. */
+const DecisionStatus = { accepted: 'accepted', rejected: 'rejected' } as const;
+/** Who took the decision: the controller model, or code without a model call (KD-8). */
+const DECISION_AUTHORS = ['model', 'code'] as const;
+/** Status of a claim revision (design-engine.md, State Transitions). */
+const CLAIM_STATUSES = [
+  'unverified',
+  'supported',
+  'refuted',
+  'insufficient',
+] as const;
+/** Roles of `ProcessConfig.roles`. */
+const MODEL_ROLES = [
+  'plan',
+  'controller',
+  'worker',
+  'verifier',
+  'synthesis',
+] as const;
+/** Ledger row status: `reserved` → `settled`, `failed` or `abandoned` (KD-4, DC-9). */
+const LLM_CALL_STATUSES = [
+  'reserved',
+  'settled',
+  'failed',
+  'abandoned',
+] as const;
+const RESERVED: (typeof LLM_CALL_STATUSES)[number] = 'reserved';
+/** Size limit of a signal payload (design-engine.md, DecisionInput: JSON up to 4 KiB). */
+const SIGNAL_PAYLOAD_MAX_BYTES = 4096;
+
+const investigationRef = () =>
+  uuid('investigation_id')
+    .notNull()
+    .references(() => researchInvestigations.investigationId, {
+      onDelete: 'cascade',
+    });
+
+export const researchEngineRuns = app.table(
+  'research_engine_runs',
+  {
+    /** One engine row per investigation (KD-9). */
+    investigationId: uuid('investigation_id')
+      .primaryKey()
+      .references(() => researchInvestigations.investigationId, {
+        onDelete: 'cascade',
+      }),
+    resourceId: text('resource_id').notNull(),
+    launchKey: text('launch_key').notNull(),
+    processId: text('process_id').notNull(),
+    processVersion: integer('process_version').notNull(),
+    /** Frozen copy of the `ProcessConfig` the investigation runs on to the end (DC-15). */
+    processConfig: jsonb('process_config').notNull(),
+    sourceMode: text('source_mode').notNull(),
+    /** Set once the controller task is proposed; a start that failed before it leaves null. */
+    controllerTaskId: uuid('controller_task_id'),
+    tokenBudget: integer('token_budget').notNull(),
+    /** Tokens held by open reservations of the ledger. */
+    tokensReserved: integer('tokens_reserved').notNull().default(0),
+    /** Tokens charged by closed ledger rows: the sum of their `charged_tokens`. */
+    tokensSpent: integer('tokens_spent').notNull().default(0),
+    answerId: uuid('answer_id'),
+    answer: jsonb('answer'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('research_engine_runs_launch_key').on(t.resourceId, t.launchKey),
+    check(
+      'research_engine_runs_source_mode_check',
+      isOneOf(t.sourceMode, SOURCE_MODES),
+    ),
+    check(
+      'research_engine_runs_tokens_check',
+      sql`${t.tokenBudget} > 0 and ${t.tokensReserved} >= 0 and ${t.tokensSpent} >= 0 and ${t.tokensSpent} <= ${t.tokenBudget}`,
+    ),
+    check(
+      'research_engine_runs_process_version_check',
+      sql`${t.processVersion} > 0`,
+    ),
+    check(
+      'research_engine_runs_keys_check',
+      sql`${t.resourceId} <> '' and ${t.launchKey} <> ''`,
+    ),
+    check(
+      'research_engine_runs_answer_check',
+      sql`(${t.answerId} is null) = (${t.answer} is null)`,
+    ),
+  ],
+);
+
+export const researchPlanRevisions = app.table(
+  'research_plan_revisions',
+  {
+    investigationId: investigationRef(),
+    /** Starts at 1 and grows by 1; the `maxPlanRevisions` + 1 cap comes from the frozen config. */
+    revision: integer('revision').notNull(),
+    plan: jsonb('plan').notNull(),
+    /** Reason of the `replan` decision; null for the first revision. */
+    reason: text('reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.investigationId, t.revision] }),
+    check('research_plan_revisions_revision_check', sql`${t.revision} >= 1`),
+  ],
+);
+
+export const researchDecisions = app.table(
+  'research_decisions',
+  {
+    decisionId: uuid('decision_id').primaryKey(),
+    investigationId: investigationRef(),
+    step: integer('step').notNull(),
+    /** Number of the controller output within the step: retries after rejected outputs (DC-2). */
+    callIndex: integer('call_index').notNull(),
+    status: text('status').notNull(),
+    rejectionReason: text('rejection_reason'),
+    decidedBy: text('decided_by').notNull(),
+    /** Null only for a rejected output without a recognised kind; the raw output stays in `decision`. */
+    kind: text('kind'),
+    /** The output as received; null when nothing parseable came back. */
+    decision: jsonb('decision'),
+    planRevision: integer('plan_revision'),
+    proposedTaskIds: uuid('proposed_task_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    notAfter: timestamp('not_after', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'research_decisions_plan_revision_fk',
+      columns: [t.investigationId, t.planRevision],
+      foreignColumns: [
+        researchPlanRevisions.investigationId,
+        researchPlanRevisions.revision,
+      ],
+    }).onDelete('cascade'),
+    unique('research_decisions_step_call_key').on(
+      t.investigationId,
+      t.step,
+      t.callIndex,
+    ),
+    /** One accepted decision per step: a step repeated after a restart finds it (NFR-03). */
+    uniqueIndex('research_decisions_accepted_step_idx')
+      .on(t.investigationId, t.step)
+      .where(sql`${t.status} = ${literal(DecisionStatus.accepted)}`),
+    check(
+      'research_decisions_status_check',
+      isOneOf(t.status, Object.values(DecisionStatus)),
+    ),
+    check(
+      'research_decisions_decided_by_check',
+      isOneOf(t.decidedBy, DECISION_AUTHORS),
+    ),
+    check('research_decisions_kind_check', isOneOf(t.kind, DECISION_KINDS)),
+    check(
+      'research_decisions_accepted_kind_check',
+      sql`${t.status} <> ${literal(DecisionStatus.accepted)} or ${t.kind} is not null`,
+    ),
+    check(
+      'research_decisions_rejection_reason_check',
+      sql`(${t.status} = ${literal(DecisionStatus.rejected)}) = (${t.rejectionReason} is not null)`,
+    ),
+    check(
+      'research_decisions_step_check',
+      sql`${t.step} >= 1 and ${t.callIndex} >= 0`,
+    ),
+  ],
+);
+
+export const researchSignals = app.table(
+  'research_signals',
+  {
+    signalId: uuid('signal_id').primaryKey(),
+    investigationId: investigationRef(),
+    /** Kinds are registered in `createEngine`, not fixed by the schema (AC-04.2). */
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** The decision whose input read the signal; null while unread. */
+    readByDecisionId: uuid('read_by_decision_id').references(
+      () => researchDecisions.decisionId,
+      { onDelete: 'cascade' },
+    ),
+  },
+  (t) => [
+    check(
+      'research_signals_payload_size_check',
+      sql`octet_length(${t.payload}::text) <= ${sql.raw(String(SIGNAL_PAYLOAD_MAX_BYTES))}`,
+    ),
+    index('research_signals_unread_idx')
+      .on(t.investigationId, t.recordedAt)
+      .where(sql`${t.readByDecisionId} is null`),
+  ],
+);
+
+export const researchClaims = app.table(
+  'research_claims',
+  {
+    claimRevisionId: uuid('claim_revision_id').primaryKey(),
+    /** Insertion order: the latest revision of a claim has the highest `seq`. */
+    seq: bigint('seq', { mode: 'number' })
+      .notNull()
+      .generatedAlwaysAsIdentity(),
+    investigationId: investigationRef(),
+    /** The claim across its revisions. */
+    claimId: uuid('claim_id').notNull(),
+    /** Task that wrote the revision, and the claim's number in that task's output. */
+    taskId: uuid('task_id').notNull(),
+    claimIndex: integer('claim_index').notNull(),
+    text: text('text').notNull(),
+    atoms: jsonb('atoms').notNull(),
+    evidenceIds: uuid('evidence_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    coverage: jsonb('coverage'),
+    status: text('status').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'research_claims_task_fk',
+      columns: [t.investigationId, t.taskId],
+      foreignColumns: [researchTasks.investigationId, researchTasks.taskId],
+    }).onDelete('cascade'),
+    /** A retried attempt that reuses the checkpointed model output adds no copy (invariant 3). */
+    unique('research_claims_task_claim_key').on(t.taskId, t.claimIndex),
+    check('research_claims_status_check', isOneOf(t.status, CLAIM_STATUSES)),
+    check('research_claims_claim_index_check', sql`${t.claimIndex} >= 0`),
+    index('research_claims_claim_seq_idx').on(t.claimId, t.seq),
+    index('research_claims_investigation_idx').on(t.investigationId),
+  ],
+);
+
+export const researchLlmCalls = app.table(
+  'research_llm_calls',
+  {
+    callId: uuid('call_id').primaryKey(),
+    investigationId: investigationRef(),
+    taskId: uuid('task_id').notNull(),
+    /** Attempt of the task that reserved; a reservation left by an earlier attempt is abandoned (DC-9). */
+    attempt: integer('attempt').notNull(),
+    role: text('role').notNull(),
+    model: text('model').notNull(),
+    status: text('status').notNull().default(RESERVED),
+    reservedTokens: integer('reserved_tokens').notNull(),
+    /** Provider's count of the package before the call (DC-13). */
+    countedInputTokens: integer('counted_input_tokens').notNull(),
+    /** Usage the provider reported; null while reserved or when it reported none. */
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    cacheReadTokens: integer('cache_read_tokens'),
+    cacheWriteTokens: integer('cache_write_tokens'),
+    /** Tokens charged to the budget on close. */
+    chargedTokens: integer('charged_tokens'),
+    costUsd: numeric('cost_usd', { precision: 14, scale: 8 }),
+    createdAt: createdAt(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({
+      name: 'research_llm_calls_task_fk',
+      columns: [t.investigationId, t.taskId],
+      foreignColumns: [researchTasks.investigationId, researchTasks.taskId],
+    }).onDelete('cascade'),
+    check(
+      'research_llm_calls_status_check',
+      isOneOf(t.status, LLM_CALL_STATUSES),
+    ),
+    check('research_llm_calls_role_check', isOneOf(t.role, MODEL_ROLES)),
+    check(
+      'research_llm_calls_closed_check',
+      sql`(${t.status} = ${literal(RESERVED)}) = (${t.closedAt} is null) and (${t.closedAt} is null) = (${t.chargedTokens} is null)`,
+    ),
+    check(
+      'research_llm_calls_tokens_check',
+      sql`${t.reservedTokens} > 0 and ${t.countedInputTokens} >= 0 and ${t.attempt} >= 1 and (${t.chargedTokens} is null or ${t.chargedTokens} >= 0)`,
+    ),
+    index('research_llm_calls_investigation_idx').on(t.investigationId),
+    index('research_llm_calls_reserved_task_idx')
+      .on(t.taskId)
+      .where(sql`${t.status} = ${literal(RESERVED)}`),
   ],
 );
