@@ -36,5 +36,8 @@
 ## Index
 
 - [Основы](./foundations.md) — типографика, цвет, отступы и плотность, форма и глубина, движение, иконки.
+- [Карточка ресерча](./components/research-card.md) — одно расследование в ленте: предложение, запуск, ход, итог.
+- [Ответ ресерча](./components/research-answer.md) — итог расследования в ленте: шапка с исходом, сноски, список источников.
+- [Метка запуска ресерча](./components/research-launch-label.md) — отметка над сообщением, которое запустило ресерч.
 
-Спецификаций компонентов в `components/` пока нет: базовые компоненты описывают shadcn/ui и assistant-ui, а элементы оболочки чата — её [UXRD](../features/chat-shell/uxrd.md), раздел Design System.
+Базовые компоненты описывают shadcn/ui и assistant-ui, а элементы оболочки чата — её [UXRD](../features/chat-shell/uxrd.md), раздел Design System.
