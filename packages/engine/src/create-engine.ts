@@ -1,5 +1,5 @@
 import type { Database } from '@agent-os/db';
-import type { Clock, HandlerRegistry } from '@agent-os/runtime';
+import type { Clock, EvidenceReader, HandlerRegistry } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { loadProcessConfig } from './config/load-process-config.js';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
@@ -14,12 +14,19 @@ import type { TokenCounter } from './model/token-counter.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
 import { createSignalRegistry, type SignalKind } from './signals/signal-registry.js';
+import { createAnalyzeHandler } from './workers/analyze.handler.js';
 
 /** What the assembly point passes to {@link createEngine} (ADR-0004: settings and ports, no environment). */
 export interface CreateEngineOptions {
   readonly database: Database;
-  /** Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`. */
-  readonly runtime: EngineRuntimePorts & { readonly handlers: Pick<HandlerRegistry, 'register'> };
+  /**
+   * Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`, `evidence` serves the
+   * workers the content of their gather task's evidence.
+   */
+  readonly runtime: EngineRuntimePorts & {
+    readonly handlers: Pick<HandlerRegistry, 'register'>;
+    readonly evidence: Pick<EvidenceReader, 'get'>;
+  };
   /** Checks the configured sources (DC-14) and serves the gather capability: tools, argument schemas and snapshots. */
   readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
   /** `sourceId` of the sources connected in the deployment; empty runs every investigation on model knowledge (KD-8). */
@@ -97,8 +104,8 @@ function resolveRoleModels(configs: readonly ProcessConfig[], resolveModel: Reso
  * Builds the engine (design-engine.md, Contract Definitions). Throws with the configuration path when a configuration
  * fails the schema, a role model has no catalog entry or does not resolve, a `processId` + `version` pair repeats, or —
  * only with a connected source — a configured source is not allowed for `source.fetch` (DC-14). Without a connected
- * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` handler (KD-2). Reads neither
- * the environment nor the database.
+ * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2) and `research.analyze`
+ * handlers. Reads neither the environment nor the database.
  */
 export function createEngine(options: CreateEngineOptions): Engine {
   const catalog = options.modelCatalog ?? DEFAULT_MODEL_CATALOG;
@@ -122,14 +129,26 @@ export function createEngine(options: CreateEngineOptions): Engine {
   }
 
   const { clock, tokenCounter, logger } = options;
+  const gateway = createModelGateway({ models, tokenCounter, catalog, clock, logger });
+  const contextBuilder = createContextBuilder({ tokenCounter });
   options.runtime.handlers.register(
     createControllerHandler({
       database: options.database,
       investigations: options.runtime.investigations,
       scheduler: options.runtime.scheduler,
       sourceRegistry: options.sourceRegistry,
-      gateway: createModelGateway({ models, tokenCounter, catalog, clock, logger }),
-      contextBuilder: createContextBuilder({ tokenCounter }),
+      gateway,
+      contextBuilder,
+      clock,
+    }),
+  );
+  options.runtime.handlers.register(
+    createAnalyzeHandler({
+      database: options.database,
+      investigations: options.runtime.investigations,
+      evidence: options.runtime.evidence,
+      gateway,
+      contextBuilder,
       clock,
     }),
   );

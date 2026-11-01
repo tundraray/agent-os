@@ -92,6 +92,7 @@ function options(overrides: {
         listForThread: notCalled('listForThread'),
         cancel: notCalled('cancel'),
       },
+      evidence: { get: notCalled('evidence.get') },
       handlers: { register: () => undefined },
     },
     sourceRegistry: overrides.registry,

@@ -2,6 +2,7 @@ import type { SourceRegistry } from '@agent-os/sources';
 import type { ProcessConfig } from '../config/process-config.schema.js';
 import type { FetchToolLookup } from '../controller/decision-gate.js';
 import type { Decision } from '../controller/decision.schema.js';
+import { proposeAnalysis } from './analyze.js';
 import { type DecisionFrame, type GatherDeps, type ProposedTasks, proposeGather } from './gather.js';
 import { SOURCE_FETCH_WORKFLOW } from './gather-key.js';
 
@@ -36,6 +37,8 @@ export function createCapabilityRegistry(deps: CapabilityRegistryDeps): Capabili
       switch (decision.kind) {
         case 'requestEvidence':
           return proposeGather(deps, frame, decision);
+        case 'requestAnalysis':
+          return proposeAnalysis(deps, frame, decision);
         default:
           return undefined;
       }

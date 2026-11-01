@@ -103,6 +103,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       case 'wait':
         return waitFor(ctx, investigation, openTasks(otherTasks(await tasksOf(investigation), ctx.taskId)));
       case 'requestEvidence':
+      case 'requestAnalysis':
         return applyTasks(ctx, investigation, latest);
       default:
         throw new DecisionNotExecutableError(`decision ${latest.kind ?? 'unknown'} is not executable by this engine`);

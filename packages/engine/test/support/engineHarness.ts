@@ -76,6 +76,20 @@ export interface OffsetTokenCounter extends TokenCounter {
   offset: number;
   /** Every request counted, in order. */
   readonly requests: TokenCountRequest[];
+  /**
+   * Consulted before each count: it may hold the count (a latch or a barrier) and may answer a count of its own; with
+   * `undefined` the request is counted as usual. A test that sets it sets it back to `undefined` before it ends.
+   */
+  intercept: ((request: TokenCountRequest) => Promise<number | undefined> | number | undefined) | undefined;
+}
+
+/**
+ * The clock the engine is built with: the harness clock moved by `offsetMs` (0 by default). Moving it puts the engine past
+ * a `notAfter` while the runtime's leases and deadlines keep the harness clock. A test that moves it sets it back to 0
+ * before it ends.
+ */
+export interface ShiftedClock extends Clock {
+  offsetMs: number;
 }
 
 export interface EngineHarness {
@@ -87,6 +101,8 @@ export interface EngineHarness {
   readonly engine: Engine;
   readonly countingSource: CountingSource;
   readonly tokenCounter: OffsetTokenCounter;
+  /** The engine's clock; it survives {@link rebuildEngine}. */
+  readonly engineClock: ShiftedClock;
   /** The model double behind `resolveModel`; it survives {@link rebuildEngine}. */
   readonly model: ScriptedModel;
   readonly clock: Clock;
@@ -157,14 +173,29 @@ function offsetTokenCounter(): OffsetTokenCounter {
   const counter: OffsetTokenCounter = {
     offset: 0,
     requests: [],
-    countInputTokens(request): Promise<TokenCountResult> {
+    intercept: undefined,
+    async countInputTokens(request): Promise<TokenCountResult> {
       counter.requests.push(request);
+      const intercepted = await counter.intercept?.(request);
+      if (intercepted !== undefined) {
+        return { outcome: 'counted', inputTokens: intercepted };
+      }
       const characters =
         request.system.length + request.messages.reduce((sum, message) => sum + message.content.length, 0);
-      return Promise.resolve({ outcome: 'counted', inputTokens: characters + counter.offset });
+      return { outcome: 'counted', inputTokens: characters + counter.offset };
     },
   };
   return counter;
+}
+
+function shiftedClock(base: Clock): ShiftedClock {
+  const clock: ShiftedClock = {
+    offsetMs: 0,
+    now: () => new Date(base.now().getTime() + clock.offsetMs),
+    random: () => base.random(),
+    setTimer: (ms, callback) => base.setTimer(ms, callback),
+  };
+  return clock;
 }
 
 /** Builds the database, runtime, sources and engine, and starts the runtime's workers unless they are off. */
@@ -178,6 +209,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...options.runtime,
   };
   const clock = options.clock ?? systemClock;
+  const engineClock = shiftedClock(clock);
   const logs = { runtime: recordingLogs(), engine: recordingLogs(), sources: recordingLogs() };
   const owners = new Map<string, string>();
   const database = createDatabase({ connectionString: databaseUrl(), poolMax: config.dbPoolMax });
@@ -229,14 +261,19 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     });
     const engine = createEngine({
       database: database.db,
-      runtime: { scheduler: runtime.scheduler, investigations: runtime.investigations, handlers: runtime.handlers },
+      runtime: {
+        scheduler: runtime.scheduler,
+        investigations: runtime.investigations,
+        evidence: runtime.evidence,
+        handlers: runtime.handlers,
+      },
       sourceRegistry: sources.registry,
       connectedSources: build.connectedSources ?? [],
       processes: build.processes ?? [],
       signalKinds: build.signalKinds ?? [],
       resolveModel: model.resolveModel,
       tokenCounter,
-      clock,
+      clock: engineClock,
       logger: recordingLogger(logs.engine),
     });
     if (fence) {
@@ -281,6 +318,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     },
     countingSource,
     tokenCounter,
+    engineClock,
     model,
     clock,
     logs,

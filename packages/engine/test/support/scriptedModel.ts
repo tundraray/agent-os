@@ -13,12 +13,13 @@ type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
 /** Roles the double tells apart by the output schema of the call. */
-export type ScriptedRole = 'plan' | 'controller';
+export type ScriptedRole = 'plan' | 'controller' | 'worker';
 
 /** A property only the output schema of that role has. */
 const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
   plan: 'readinessCriteria',
   controller: 'kind',
+  worker: 'claims',
 };
 
 /** Token usage the double reports for a call. */
@@ -119,7 +120,7 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
 
 export function createScriptedModel(): ScriptedModel {
   const calls: RecordedModelCall[] = [];
-  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [] };
+  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [] };
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
     const role = roleOf(options);
@@ -173,7 +174,8 @@ export function createScriptedModel(): ScriptedModel {
       calls.length = 0;
       scripts.plan.length = 0;
       scripts.controller.length = 0;
+      scripts.worker.length = 0;
     },
-    pending: () => ({ plan: scripts.plan.length, controller: scripts.controller.length }),
+    pending: () => ({ plan: scripts.plan.length, controller: scripts.controller.length, worker: scripts.worker.length }),
   };
 }

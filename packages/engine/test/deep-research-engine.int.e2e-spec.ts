@@ -40,7 +40,7 @@
 // - the runtime primitives the engine builds on (admission/dedup, wait/wake, fencing of putEvidence/saveCheckpoint, cancel, deadline): runtime and mcp-source suites, not repeated here
 
 import { randomUUID } from 'node:crypto';
-import type { InvestigationView, StartInvestigationResult } from '@agent-os/engine';
+import type { InvestigationView, StartInvestigationResult, TokenCountRequest } from '@agent-os/engine';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
@@ -53,6 +53,37 @@ import {
   versionedConfig,
   versionMarker,
 } from './support/test-configs.js';
+
+/** A worker packet: the output schema of the `worker` role is the one with `claims`. */
+function isWorkerRequest(request: TokenCountRequest): boolean {
+  const properties = (request.outputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+  return 'claims' in properties;
+}
+
+/** A gate a test opens once; waiting on an open gate goes on at once. */
+function latch() {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open: () => open() };
+}
+
+/** Lets callers on in groups of `size`: each waits until `size` callers have arrived. */
+function barrier(size: number) {
+  let waiting: (() => void)[] = [];
+  return {
+    arrive(): Promise<void> {
+      return new Promise((resolve) => {
+        waiting.push(resolve);
+        if (waiting.length === size) {
+          for (const release of waiting) release();
+          waiting = [];
+        }
+      });
+    },
+  };
+}
 
 describe('deep-research / engine - integration (in-process runtime + engine + real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -146,7 +177,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
     afterEach(async () => {
       try {
         // A step left in the script means the test scripted a call that never happened.
-        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0 });
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
       } finally {
         // A test that failed midway leaves no active investigation for the next one to run into.
         await harness.cancelStarted();
@@ -469,8 +500,83 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       expect(llmCalls.map((row) => row.role)).toEqual(['plan']);
       await expectControllerSucceededWith(investigationId, done.answer);
     });
-    // C5 deadline (UC-E4 third scenario, DC-3): analysis task claimed after its decision's `notAfter` -> the task fails with class `deadline` and the double got no call for it; the controller wakes and answers by code with `deadline`, it does not fail
-    it.todo('INT-1 C5 deadline: an analysis task claimed after notAfter fails with deadline without a model call, and the controller answers by code with deadline');
+    // C5 deadline (UC-E4 third scenario, DC-3): analysis task reaches its decision's `notAfter` while running -> the task fails with class `deadline` and the double got no call for it; the controller wakes and answers by code with `deadline`, it does not fail
+    it('INT-1 C5 deadline: an analysis task that reaches notAfter fails with deadline without a model call, and the controller answers by code with deadline', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      harness.countingSource.answerWith(() => [{ service: 'payments', level: 'error', message: 'upstream timeout' }]);
+      const subquestion = 'C5 deadline: which payment calls timed out?';
+      harness.model.script('controller', {
+        output: {
+          kind: 'requestAnalysis',
+          rationale: 'one sub-question over the payment errors',
+          subquestions: [{ text: subquestion, sourceId: 'fixture', toolName: 'search_logs', args: { service: 'payments' }, completeness: 'all' }],
+        },
+      });
+      // The worker is held in the count of its packet; the engine clock moves past notAfter before it goes on.
+      const workerHeld = latch();
+      let workerCounting = false;
+      harness.tokenCounter.intercept = async (request) => {
+        if (isWorkerRequest(request)) {
+          workerCounting = true;
+          await workerHeld.wait;
+        }
+        return undefined;
+      };
+      try {
+        const { investigationId } = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: 'C5 deadline: why did the payments slow down?',
+            processId: 'deep-research',
+            launchKey: newLaunchKey(),
+          }),
+        );
+        await vi.waitFor(() => expect(workerCounting).toBe(true), { timeout: 20_000 });
+        // Past the controller's deadline, so past notAfter = deadline - deadlineMarginMs of the decision and its tasks.
+        harness.engineClock.offsetMs = 3_600_000;
+        workerHeld.open();
+        const done = await finished(investigationId, resourceId);
+
+        expect(done).toMatchObject({
+          status: 'completed',
+          answer: { outcome: 'inconclusive', stopReason: 'deadline', established: [] },
+        });
+        const [controller, fetch, analyze, ...others] = await tasksOf(investigationId);
+        expect(others).toEqual([]);
+        expect(controller).toMatchObject({
+          workflowType: 'research.controller',
+          status: 'succeeded',
+          outcome: { answerOrDelta: { answerId: done.answer?.answerId, outcome: 'inconclusive' } },
+        });
+        expect(fetch).toMatchObject({ workflowType: 'source.fetch', status: 'succeeded' });
+        expect(analyze).toMatchObject({
+          workflowType: 'research.analyze',
+          status: 'failed',
+          failureReason: { class: 'deadline', code: 'deadline' },
+          // Runtime settings: three reservations of the worker call (64 000 + 3 200 + 8 000), 1 tool call, 0 retries.
+          maxTokens: 225_600,
+          maxToolCalls: 1,
+          maxRetries: 0,
+        });
+        // The analysis task's time is what was left until the decision's notAfter when it was proposed.
+        const notAfter = controller!.deadlineAt!.getTime() - 120_000;
+        expect(analyze!.deadlineMs).toBeGreaterThanOrEqual(Math.floor(notAfter - analyze!.createdAt.getTime()) - 1);
+        expect(analyze!.deadlineMs).toBeLessThanOrEqual(notAfter - controller!.startedAt!.getTime());
+        // No worker call and no worker reservation: the model was not called after notAfter.
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'controller']);
+        const { decisions, llmCalls } = await engineRowsOf(investigationId);
+        expect(llmCalls.map((row) => row.role)).toEqual(['plan', 'controller']);
+        expect(decisions.map((row) => [row.step, row.status, row.kind, row.proposedTaskIds])).toEqual([
+          [1, 'accepted', 'requestAnalysis', [fetch!.taskId, analyze!.taskId]],
+        ]);
+      } finally {
+        harness.engineClock.offsetMs = 0;
+        harness.tokenCounter.intercept = undefined;
+        workerHeld.open();
+      }
+    });
     it('INT-1 C6: investigations started on versions 2 (no version given) and 1 finish on the prompts of their recorded versions after the engine is rebuilt with versions 1, 2 and 3, and a new start without a version records version 3', async () => {
       await harness.rebuildEngine({ processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2)] });
       const resourceId = newUser();
@@ -650,12 +756,225 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   (c) cancel while the synthesis call is held by a latch -> status `cancelled`, `answer` null, no new reservation, the in-flight reservation closed `abandoned` (the abort mechanism itself is L5)
   //   (`model_unavailable` in this mode takes the same code-built answer: a row of the unit table of stop answers, see "Proven at unit level")
   describe('INT-2', () => {
-    it.todo('INT-2 L1: a task whose maxTokens is below its call fails with task_tokens_exhausted without calling the model, and its sibling task continues');
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      // Four slots: the analysis tasks of one decision run side by side (L7).
+      harness = await createEngineHarness({ runtime: { concurrency: 4, dbPoolMax: 10 } });
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+      await closeEngineDb();
+    });
+
+    beforeEach(() => {
+      harness.model.reset();
+      harness.countingSource.calls.length = 0;
+    });
+
+    afterEach(async () => {
+      try {
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+      } finally {
+        harness.tokenCounter.intercept = undefined;
+        await harness.cancelStarted();
+      }
+    });
+
+    const conclude = { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } };
+
+    async function startDeepResearch(query: string, tokenBudget?: number) {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      const result = await harness.engine.startInvestigation({
+        resourceId,
+        threadId,
+        query,
+        processId: 'deep-research',
+        launchKey: newLaunchKey(),
+        ...(tokenBudget === undefined ? {} : { tokenBudget }),
+      });
+      if (result.outcome === 'rejected') throw new Error(`start refused: ${result.code}`);
+      return { resourceId, investigationId: result.investigationId };
+    }
+
+    function finished(investigationId: string, resourceId: string): Promise<InvestigationView> {
+      return vi.waitFor(
+        async () => {
+          const read = await harness.engine.readInvestigation({ investigationId, resourceId });
+          if (read.outcome !== 'found') throw new Error(`investigation ${investigationId} not found`);
+          if (read.view.status === 'running') throw new Error(`investigation ${investigationId} is still running`);
+          return read.view;
+        },
+        { timeout: 30_000, interval: 50 },
+      );
+    }
+
+    /** Every row of the ledger is closed, their charge is what the engine row spent, and the spend is within the budget. */
+    async function expectLedgerBalanced(investigationId: string) {
+      const { run, llmCalls } = await engineRowsOf(investigationId);
+      expect(llmCalls.filter((row) => row.status === 'reserved')).toEqual([]);
+      expect(run!.tokensReserved).toBe(0);
+      expect(llmCalls.reduce((sum, row) => sum + (row.chargedTokens ?? 0), 0)).toBe(run!.tokensSpent);
+      expect(run!.tokensSpent).toBeLessThanOrEqual(run!.tokenBudget);
+      return llmCalls;
+    }
+
+    const analysisOf = (texts: readonly string[]) => ({
+      output: {
+        kind: 'requestAnalysis',
+        rationale: 'split the errors by service',
+        subquestions: texts.map((text, index) => ({
+          text,
+          sourceId: 'fixture',
+          toolName: 'search_logs',
+          args: { service: `service-${index}` },
+          completeness: 'all',
+        })),
+      },
+    });
+
+    it('INT-2 L1: a task whose maxTokens is below its call fails with task_tokens_exhausted without calling the model, and its sibling task continues', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'connection reset' }]);
+      const overBudget = 'L1 over-budget: what failed in service-0?';
+      const sibling = 'L1 sibling: what failed in service-1?';
+      harness.model.script('controller', analysisOf([overBudget, sibling]), conclude);
+      harness.model.script('worker', {
+        output: { claims: [{ text: 'service-1 reset its connections', atoms: [{ kind: 'service', value: 'service-1' }], evidenceIds: [] }] },
+      });
+      // The call of the first worker is counted above three reservations of the worker role (its task's maxTokens):
+      // its packet fits the window, the reservation of the call does not fit the task.
+      let overBudgetCounts = 0;
+      harness.tokenCounter.intercept = (request) => {
+        if (!isWorkerRequest(request) || !request.messages.some((message) => message.content.includes(overBudget))) return undefined;
+        overBudgetCounts += 1;
+        return overBudgetCounts === 1 ? undefined : 300_000;
+      };
+
+      const { resourceId, investigationId } = await startDeepResearch('L1: why did the services reset their connections?');
+      const done = await finished(investigationId, resourceId);
+
+      expect(done).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive', stopReason: null } });
+      const [controller, , overTask, , siblingTask, ...others] = await tasksOf(investigationId);
+      expect(others).toEqual([]);
+      expect(controller).toMatchObject({ workflowType: 'research.controller', status: 'succeeded' });
+      expect(overTask).toMatchObject({
+        workflowType: 'research.analyze',
+        status: 'failed',
+        failureReason: { class: 'budget_exhausted', code: 'task_tokens_exhausted' },
+      });
+      expect(siblingTask).toMatchObject({ workflowType: 'research.analyze', status: 'succeeded' });
+      // The refused task called no model: the only worker call is the sibling's, with its own sub-question only.
+      const workerCalls = harness.model.callsOf('worker');
+      expect(workerCalls).toHaveLength(1);
+      expect(workerCalls[0]!.user).toContain(sibling);
+      expect(workerCalls[0]!.user).not.toContain(overBudget);
+      const llmCalls = await expectLedgerBalanced(investigationId);
+      expect(llmCalls.filter((row) => row.taskId === overTask!.taskId)).toEqual([]);
+      expect(llmCalls.filter((row) => row.taskId === siblingTask!.taskId).map((row) => [row.role, row.status])).toEqual([
+        ['worker', 'settled'],
+      ]);
+      // The sibling's claim is an unverified revision with the coverage of its gather task.
+      const { claims } = await engineRowsOf(investigationId);
+      expect(claims.map((row) => [row.taskId, row.claimIndex, row.text, row.status, row.atoms])).toEqual([
+        [siblingTask!.taskId, 0, 'service-1 reset its connections', 'unverified', [{ kind: 'service', value: 'service-1' }]],
+      ]);
+      expect(claims[0]!.coverage).toMatchObject({ completeness: 'complete', returned: 1 });
+      // The next decision observes both outcomes: the refusal by its code and the sibling's claim.
+      const nextInput = harness.model.callsOf('controller')[1]!.user;
+      expect(nextInput).toContain(`"taskId":"${overTask!.taskId}","type":"research.analyze","status":"failed"`);
+      expect(nextInput).toContain('"failureCode":"task_tokens_exhausted"');
+      expect(nextInput).toContain(`"claimId":"${claims[0]!.claimId}","status":"unverified","text":"service-1 reset its connections"`);
+    });
     it.todo('INT-2 L2: an exhausted investigation budget starts no further call, stops with budget_exhausted and answers with the claims verified before, spending no more than the budget');
     it.todo('INT-2 L3: after all roles move to one model by configuration, the ledger sum equals the charged total, usage is split by role and model, and each row keeps counted and actual input');
-    it.todo('INT-2 L4: a provider outage gives the worker 3 calls then model_unavailable, closes each failed reservation as failed, and ends the investigation with an answer by code');
+    it('INT-2 L4: a provider outage gives the worker 3 calls then model_unavailable, closes each failed reservation as failed, and ends the investigation with an answer by code', async () => {
+      const outage = { providerError: { statusCode: 503 } };
+      harness.model.script('controller', analysisOf(['L4: what failed in service-0?']), outage, outage, outage);
+      harness.model.script('worker', outage, outage, outage);
+
+      const { resourceId, investigationId } = await startDeepResearch('L4: why is the provider down?');
+      const done = await finished(investigationId, resourceId);
+
+      expect(done).toMatchObject({
+        status: 'completed',
+        answer: { outcome: 'inconclusive', stopReason: 'model_unavailable', established: [] },
+      });
+      const [controller, , analyze, ...others] = await tasksOf(investigationId);
+      expect(others).toEqual([]);
+      expect(controller).toMatchObject({
+        workflowType: 'research.controller',
+        status: 'succeeded',
+        outcome: { answerOrDelta: { answerId: done.answer?.answerId, outcome: 'inconclusive' } },
+      });
+      expect(analyze).toMatchObject({
+        workflowType: 'research.analyze',
+        status: 'failed',
+        failureReason: { class: 'transport_protocol', code: 'model_unavailable' },
+      });
+      // One call and two retries, one request each: the role agent does not retry on its own (KD-7).
+      expect(harness.model.callsOf('worker')).toHaveLength(3);
+      expect(harness.model.calls.map((call) => call.role)).toEqual([
+        'plan', 'controller', 'worker', 'worker', 'worker', 'controller', 'controller', 'controller',
+      ]);
+      const llmCalls = await expectLedgerBalanced(investigationId);
+      expect(llmCalls.filter((row) => row.taskId === analyze!.taskId).map((row) => [row.role, row.status, row.chargedTokens])).toEqual([
+        ['worker', 'failed', 0],
+        ['worker', 'failed', 0],
+        ['worker', 'failed', 0],
+      ]);
+      // Two provider retries for the worker and two for the controller wait 1 s and 3 s each on the engine clock.
+    }, 30_000);
     it.todo('INT-2 L5: after cancel no reservation and no source call start, the in-flight reservation is closed abandoned and the ledger sum still equals the charged total');
     it.todo('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer');
+    // L7 parallel reservations (Failure Mode «shared-state dependency», invariant 1, AC-07.1; unique defect: the reservations of parallel tasks read the
+    //   investigation's remainder without serialization and together exceed the budget, which only concurrent workers over the real ledger can show)
+    // Covers (original statements):
+    // Invariant 1: "Вызов модели не начинается без записанного резерва, а резерв не выходит за остаток бюджета расследования и maxTokens задачи."
+    // AC-07.1: "Given бюджет расследования меньше требуемого, Then суммарный расход токенов не превышает бюджета, и ни один вызов не начат после того, как остатка перестало хватать."
+    // Primary failure mode (turns red when): the reservation checks the remainder without locking the `research_engine_runs` row, so three workers reserving at once
+    //   all pass the check and the investigation reserves and spends beyond its budget.
+    // Verification items: three analysis tasks of one decision reach their reservation together (a barrier in the token counter double), the remainder of the
+    //   investigation budget covers exactly two reservations -> exactly two worker reservations are written and settled, the third task fails
+    //   `investigation_tokens_exhausted` (class `budget_exhausted`) and its call is not started (two worker calls at the model double), `spent` <= budget and
+    //   the ledger sum equals `spent`.
+    it('INT-2 L7: three workers reserving at once with a remainder for two get exactly two reservations, the third call does not start, and the spend stays within the budget', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'queue full' }]);
+      harness.model.script(
+        'controller',
+        analysisOf(['L7: what failed in service-0?', 'L7: what failed in service-1?', 'L7: what failed in service-2?']),
+        conclude,
+      );
+      harness.model.script('worker', { output: { claims: [] } }, { output: { claims: [] } });
+      // Every packet counts 1 000 tokens: plan 9 800, controller 10 600 and worker 12 200 per reservation. After the plan and the first
+      // controller call (120 charged each) 29 760 are left: two worker reservations (24 400) fit, a third (36 600) does not.
+      // The worker counts pass a barrier of three, so the three reservations follow their counts at once.
+      const workers = barrier(3);
+      harness.tokenCounter.intercept = async (request) => {
+        if (isWorkerRequest(request)) await workers.arrive();
+        return 1_000;
+      };
+
+      const { resourceId, investigationId } = await startDeepResearch('L7: why did the queues fill up?', 30_000);
+      const done = await finished(investigationId, resourceId);
+
+      expect(done).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive', stopReason: null } });
+      const analyses = (await tasksOf(investigationId)).filter((task) => task.workflowType === 'research.analyze');
+      expect(analyses).toHaveLength(3);
+      const refused = analyses.filter((task) => task.status === 'failed');
+      expect(refused).toHaveLength(1);
+      expect(refused[0]).toMatchObject({ failureReason: { class: 'budget_exhausted', code: 'investigation_tokens_exhausted' } });
+      expect(analyses.filter((task) => task.status === 'succeeded')).toHaveLength(2);
+      expect(harness.model.callsOf('worker')).toHaveLength(2);
+      const llmCalls = await expectLedgerBalanced(investigationId);
+      const workerRows = llmCalls.filter((row) => row.role === 'worker');
+      expect(workerRows.map((row) => [row.status, row.reservedTokens])).toEqual([
+        ['settled', 12_200],
+        ['settled', 12_200],
+      ]);
+      expect(workerRows.filter((row) => row.taskId === refused[0]!.taskId)).toEqual([]);
+    });
   });
 
   // ---------------------------------------------------------------------------------------------------------------
