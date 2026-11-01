@@ -13,6 +13,7 @@ import { createModelGateway } from './model/model-gateway.js';
 import type { TokenCounter } from './model/token-counter.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
+import { createSignalRegistry, type SignalKind } from './signals/signal-registry.js';
 
 /** What the assembly point passes to {@link createEngine} (ADR-0004: settings and ports, no environment). */
 export interface CreateEngineOptions {
@@ -32,6 +33,11 @@ export interface CreateEngineOptions {
   readonly clock: Clock;
   /** The package's catalog by default. */
   readonly modelCatalog?: ModelCatalog;
+  /**
+   * Kinds of external signals `Engine.recordSignal` accepts, each with its payload schema; none by default. A new kind
+   * is a new entry here, the decision input keeps its form (AC-04.2).
+   */
+  readonly signalKinds?: readonly SignalKind[];
   readonly logger: EngineLogger;
 }
 
@@ -110,6 +116,7 @@ export function createEngine(options: CreateEngineOptions): Engine {
     throw new ProcessConfigRejectedError(sources.rejection);
   }
   const models = resolveRoleModels(configs, options.resolveModel);
+  const signalKinds = createSignalRegistry(options.signalKinds ?? []);
   if (sources.warnNoSources) {
     options.logger.warn(NO_SOURCES_WARNING);
   }
@@ -133,5 +140,6 @@ export function createEngine(options: CreateEngineOptions): Engine {
     processes: processSet.set,
     sourceMode: sources.sourceMode,
     models,
+    signalKinds,
   });
 }

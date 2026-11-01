@@ -14,6 +14,7 @@ import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { RoleMessage } from '../model/token-counter.js';
+import { signalsRepository as signals } from '../signals/signals.repository.js';
 import { admissibleDecisions, type GateState, type GateVerdict, judgeControllerOutput } from './decision-gate.js';
 import { controllerMaterial, openTasks, otherTasks, stepsWithoutNovelty } from './decision-input.js';
 import { ControllerOutputSchema, DecisionSchema } from './decision.schema.js';
@@ -167,11 +168,12 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     const stopReason = stopBeforeStep({ step, maxSteps: config.limits.maxSteps, now, notAfter: investigation.notAfter });
     if (stopReason !== null) return stop(ctx, investigation, stopReason);
 
-    const [plan, claims, tasks, readRun] = await Promise.all([
+    const [plan, claims, tasks, readRun, unread] = await Promise.all([
       repository.latestPlanRevision(db, investigationId),
       repository.latestClaims(db, investigationId),
       tasksOf(investigation).then((all) => otherTasks(all, ctx.taskId)),
       repository.readRun(db, investigationId),
+      signals.unread(db, investigationId),
     ]);
     if (plan === undefined || readRun === undefined) {
       throw new Error(`investigation ${investigationId} lost its plan or engine row`);
@@ -189,6 +191,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     const material = controllerMaterial({
       plan,
       admissible: admissibleDecisions(state),
+      signals: unread,
       stepsWithoutNovelty: state.stepsWithoutNovelty,
       tasks,
       claims,
@@ -236,9 +239,10 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
         answered.outcome === 'answered'
           ? judgeControllerOutput(answered.output, state, capabilities.fetchTools(config))
           : { verdict: 'rejected', reason: 'invalid_model_output', kind: null };
-      const written = await ctx.withAttemptGuard((tx) =>
-        repository.insertDecision(tx, {
-          decisionId: randomUUID(),
+      const decisionId = randomUUID();
+      const written = await ctx.withAttemptGuard(async (tx) => {
+        await repository.insertDecision(tx, {
+          decisionId,
           investigationId,
           step,
           callIndex,
@@ -249,8 +253,12 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
           decision: verdict.verdict === 'accepted' ? verdict.decision : answered.outcome === 'answered' ? answered.output : null,
           planRevision: plan.revision,
           notAfter: investigation.notAfter,
-        }),
-      );
+        });
+        // AC-04.1: the accepted decision is the one that read the signals of its input.
+        if (verdict.verdict === 'accepted') {
+          await signals.markRead(tx, decisionId, unread.map((signal) => signal.signalId));
+        }
+      });
       if (written.outcome === 'fenced') return abandon('fenced');
       if (verdict.verdict === 'accepted') return { next: 'continue' };
     }

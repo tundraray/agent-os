@@ -1,6 +1,7 @@
 import type { Task } from '@agent-os/contracts';
 import type { DecisionKind } from '../config/capabilities.js';
 import type { ClaimLine, ControllerMaterial, TaskCount } from '../context/role-packets.js';
+import { type InputSignal, toInputSignal } from '../signals/signal-registry.js';
 import type { DecisionRow, LatestClaimRow, PlanRevisionRow } from './decisions.repository.js';
 
 const FINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'cancelled']);
@@ -43,6 +44,8 @@ export interface DecisionInputParts {
   readonly plan: PlanRevisionRow;
   readonly budget: Readonly<Record<string, number>>;
   readonly admissible: readonly DecisionKind[];
+  /** Signals no decision has read yet. */
+  readonly signals: readonly InputSignal[];
   readonly stepsWithoutNovelty: number;
   /** Tasks other than the controller. */
   readonly tasks: readonly Task[];
@@ -93,7 +96,7 @@ export function controllerMaterial(parts: DecisionInputParts): ControllerMateria
       planRevision: { revision: parts.plan.revision, ...(parts.plan.plan as object) },
       budget: parts.budget,
       admissible: parts.admissible,
-      signals: [],
+      signals: parts.signals.map(toInputSignal),
       observations: {
         tasks: parts.tasks.filter(isNewTask).map(taskObservation),
         claims: newClaims.map((claim) => ({

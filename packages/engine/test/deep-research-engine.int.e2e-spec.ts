@@ -42,8 +42,9 @@
 import { randomUUID } from 'node:crypto';
 import type { InvestigationView, StartInvestigationResult } from '@agent-os/engine';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
-import { createEngineHarness, type EngineHarness } from './support/engineHarness.js';
+import { createEngineHarness, type EngineHarness, TEST_NOTE_KIND } from './support/engineHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
 import {
   SECOND_CONFIG_MARKER,
@@ -301,7 +302,73 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         'plan', 'controller', 'controller', 'plan', 'controller', 'controller',
       ]);
     });
-    it.todo('INT-1 C4: recorded signals appear in the next decision input and are referenced by the decision row; unknown kind, off-schema payload and another owner are refused and write nothing');
+    it('INT-1 C4: recorded signals appear in the next decision input and are referenced by the decision row; unknown kind, off-schema payload and another owner are refused and write nothing', async () => {
+      // A kind registered only in this test: an entry in the options, the controller code is the same (AC-04.2).
+      const alertKind = { kind: 'test.alert', payloadSchema: z.object({ severity: z.enum(['low', 'high']) }) };
+      await harness.rebuildEngine({ signalKinds: [TEST_NOTE_KIND, alertKind] });
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      // The controller is parked in its first call; the signals arrive before the decision taken after the restart.
+      harness.model.script('controller', { hangUntilAborted: true });
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C4: did the rollback stop the errors?',
+          processId: 'deep-research',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(1), { timeout: 20_000 });
+      expect(harness.model.callsOf('controller')[0]!.user).toContain('"signals":[]');
+
+      const record = (kind: string, payload: unknown, owner = resourceId) =>
+        harness.engine.recordSignal({ investigationId, resourceId: owner, kind, payload });
+      const note = await record('test.note', { note: 'the deploy was rolled back at 12:05' });
+      const alert = await record('test.alert', { severity: 'high' });
+      if (note.outcome !== 'recorded' || alert.outcome !== 'recorded') throw new Error('a valid signal was refused');
+      // DC-5: refusals are told apart and write no row.
+      expect([
+        await record('test.unknown', { note: 'x' }),
+        await record('test.alert', { severity: 'urgent' }),
+        await record('test.note', { note: 'not mine' }, newUser()),
+      ]).toEqual([
+        { outcome: 'rejected', code: 'signal_kind_unknown' },
+        { outcome: 'rejected', code: 'signal_payload_invalid' },
+        { outcome: 'rejected', code: 'investigation_not_found' },
+      ]);
+      expect((await engineRowsOf(investigationId)).signals.map((row) => [row.signalId, row.readByDecisionId])).toEqual([
+        [note.signalId, null],
+        [alert.signalId, null],
+      ]);
+
+      harness.model.script('controller', conclude);
+      // No fence: the parked controller resumes on the new workers and takes its step with the signals.
+      // Back to the default kinds: test.alert stays registered only for the first half of this test.
+      await harness.rebuildEngine({ signalKinds: [TEST_NOTE_KIND] }, { fence: false });
+      const done = await finished(investigationId, resourceId);
+
+      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: null });
+      const controllerCalls = harness.model.callsOf('controller');
+      expect(controllerCalls).toHaveLength(2);
+      const input = controllerCalls[1]!.user;
+      expect(input).toContain(
+        `{"signalId":"${note.signalId}","kind":"test.note","recordedAt":`,
+      );
+      expect(input).toContain('"payload":{"note":"the deploy was rolled back at 12:05"}');
+      expect(input).toContain(`{"signalId":"${alert.signalId}","kind":"test.alert","recordedAt":`);
+      expect(input).toContain('"payload":{"severity":"high"}');
+      const { decisions, signals } = await engineRowsOf(investigationId);
+      expect(decisions.map((row) => [row.step, row.callIndex, row.status, row.kind])).toEqual([
+        [1, 0, 'accepted', 'concludeInconclusive'],
+      ]);
+      // AC-04.1: the decision row is the one that read both signals; the refused attempts left no row.
+      expect(signals.map((row) => [row.signalId, row.kind, row.readByDecisionId])).toEqual([
+        [note.signalId, 'test.note', decisions[0]!.decisionId],
+        [alert.signalId, 'test.alert', decisions[0]!.decisionId],
+      ]);
+    });
     // C5 controller_invalid (UC-E1, AC-01.2, AC-01.3, DC-2): decision outside the set, then an invalid structure, then outside the set with `maxDecisionRetries` 2 -> exactly 3 controller calls for the step, 3 refusals recorded with their reasons, zero tasks, zero source calls
     it('INT-1 C5 controller_invalid: invalid decisions of a step create no task and no source call, each refusal is recorded with its reason, and the investigation ends with a code-built answer', async () => {
       const resourceId = newUser();

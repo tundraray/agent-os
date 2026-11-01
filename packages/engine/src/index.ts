@@ -2,7 +2,7 @@
 export type { ModelCatalog, ModelCatalogEntry } from './config/model-catalog.js';
 export type { SourceMode } from './config/source-check.js';
 export { createEngine, type CreateEngineOptions } from './create-engine.js';
-export type { Engine } from './engine.js';
+export type { Engine, RecordSignalInput, RecordSignalResult } from './engine.js';
 export {
   loadProcessConfig,
   type LoadProcessConfigResult,
@@ -21,6 +21,7 @@ export type {
 } from './model/token-counter.js';
 export type { EngineLogFields, EngineLogger, ResolveModel, RoleModel } from './ports.js';
 export { deepResearchProcessV1 } from './processes/shipped-processes.js';
+export type { SignalKind, SignalPayloadSchema } from './signals/signal-registry.js';
 export type {
   EngineRuntimePorts,
   StartInvestigationInput,

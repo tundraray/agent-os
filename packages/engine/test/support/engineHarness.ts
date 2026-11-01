@@ -6,6 +6,7 @@ import {
   deepResearchProcessV1,
   type Engine,
   type EngineLogger,
+  type SignalKind,
   type TokenCounter,
   type TokenCountRequest,
   type TokenCountResult,
@@ -22,6 +23,7 @@ import {
 } from '@agent-os/runtime';
 import { createSources, parseSourcesSettings, type Sources, type SourcesLogger } from '@agent-os/sources';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
 import { createScriptedModel, type ScriptedModel } from './scriptedModel.js';
@@ -36,12 +38,17 @@ import { createScriptedModel, type ScriptedModel } from './scriptedModel.js';
 /** Budget of the shipped deep-research configuration: what a start asks `InvestigationService.create` for. */
 const DEFAULT_BUDGET = { maxTasks: 300, maxToolCalls: 3_000 };
 
+/** The signal kind every harness engine registers (UC-5): a note with its text. */
+export const TEST_NOTE_KIND: SignalKind = { kind: 'test.note', payloadSchema: z.object({ note: z.string() }) };
+
 /** What may change when the engine is (re)built over the same database. */
 export interface EngineBuildOptions {
   /** Process configurations as data; the shipped deep-research configuration by default. */
   processes?: readonly unknown[];
   /** The counting source's id by default (mode `sources`); `[]` for the no-source mode. */
   connectedSources?: readonly string[];
+  /** Signal kinds of `createEngine`; `[TEST_NOTE_KIND]` by default. */
+  signalKinds?: readonly SignalKind[];
 }
 
 export interface EngineHarnessOptions extends EngineBuildOptions {
@@ -181,6 +188,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   let build: EngineBuildOptions = {
     processes: options.processes ?? [deepResearchProcessV1],
     connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
+    signalKinds: options.signalKinds ?? [TEST_NOTE_KIND],
   };
 
   /**
@@ -225,6 +233,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       sourceRegistry: sources.registry,
       connectedSources: build.connectedSources ?? [],
       processes: build.processes ?? [],
+      signalKinds: build.signalKinds ?? [],
       resolveModel: model.resolveModel,
       tokenCounter,
       clock,
@@ -245,6 +254,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       return engine.sourceMode;
     },
     readInvestigation: (input) => engine.readInvestigation(input),
+    recordSignal: (input) => engine.recordSignal(input),
     startInvestigation: async (input) => {
       const result = await engine.startInvestigation(input);
       if (result.outcome !== 'rejected') {
