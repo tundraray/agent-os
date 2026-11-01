@@ -33,3 +33,21 @@ function readEnvFile(): Record<string, string | undefined> {
   }
   return parseEnv(text);
 }
+
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Refuses a database that does not look like the local test database: a fence cancels every active investigation with
+ * an engine row, so it runs only against a local host with the test port 5433 (dev) or the test database `agent_os` (CI)
+ * or a name containing `test`.
+ */
+export function assertTestDatabase(url: string): void {
+  const { hostname, port, pathname } = new URL(url);
+  const name = pathname.slice(1);
+  const local = LOCAL_HOSTS.includes(hostname);
+  if (local && (port === '5433' || name === 'agent_os' || name.includes('test'))) return;
+  throw new Error(
+    `Refusing to cancel leftover investigations in ${hostname}:${port || '5432'}/${name}: ` +
+      'the engine suites fence only a local test database (port 5433, or database agent_os or *test*)',
+  );
+}

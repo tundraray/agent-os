@@ -27,7 +27,7 @@ import { createSources, parseSourcesSettings, type Sources, type SourcesLogger }
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
-import { databaseUrl } from './database-url.js';
+import { assertTestDatabase, databaseUrl } from './database-url.js';
 import { createScriptedModel, type ScriptedModel } from './scriptedModel.js';
 
 /**
@@ -92,6 +92,11 @@ export interface OffsetTokenCounter extends TokenCounter {
  */
 export interface ShiftedClock extends Clock {
   offsetMs: number;
+  /**
+   * Every value `now()` returned, in ms, in order: a test derives what the engine computed from the exact instant it
+   * read, never by comparing the engine clock with a database timestamp (two clock sources).
+   */
+  readonly reads: number[];
 }
 
 /**
@@ -233,7 +238,12 @@ function offsetTokenCounter(): OffsetTokenCounter {
 function shiftedClock(base: Clock): ShiftedClock {
   const clock: ShiftedClock = {
     offsetMs: 0,
-    now: () => new Date(base.now().getTime() + clock.offsetMs),
+    reads: [],
+    now: () => {
+      const now = base.now().getTime() + clock.offsetMs;
+      clock.reads.push(now);
+      return new Date(now);
+    },
     random: () => base.random(),
     setTimer: (ms, callback) => base.setTimer(ms, callback),
   };
@@ -314,6 +324,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
    * rows are never edited by the harness.
    */
   async function cancelLeftovers(runtime: Runtime): Promise<void> {
+    assertTestDatabase(databaseUrl());
     const leftovers = await database.db
       .select({ investigationId: researchInvestigations.investigationId, resourceId: researchInvestigations.resourceId })
       .from(researchInvestigations)

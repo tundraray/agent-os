@@ -24,7 +24,9 @@
 // cannot be built in-process without faking a runtime component, so K3 stays as the one row of E2E-2.
 // The no-source mode (PRD 1.12) adds no E2E test to this part: its investigation is proven in-process (INT-1 C7, INT-2 L6), and the real process boot without the fixture package is read in the chat-entry L1 scenario (L1-7).
 
-import { describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { CRASH_EXIT_CODE, endStateOf, type RunRows, runScenario, type ScenarioRun } from './support/engineChild.js';
+import { closeEngineDb } from './support/engineDb.js';
 
 describe('deep-research / engine - E2E (real fixture, real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -86,8 +88,155 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
   //   proposes the controller task once, and the investigation reaches the answer; the thread has exactly one investigation of the user and one `research_engine_runs` row for the key; no shell is left next to it
   // - All rows: final statuses of all tasks as in the reference run; claim revisions are not duplicated; the fixture call log has no more `tools/call` lines than the reference run for the same keys
   describe('E2E-2', () => {
-    it.todo('E2E-2 K1: a kill after the controller recorded its decision and before propose leaves one decision, one set of tasks and a finished investigation after the restart');
-    it.todo('E2E-2 K2: a kill during a worker model call closes the open reservation as abandoned, keeps the ledger sum equal to the charged total, and the investigation still ends in an answer');
-    it.todo('E2E-2 K3: a kill after the engine row was written and before the controller task was proposed leaves one investigation after the restart, whose repeated start proposes the task once and reaches the answer');
+    // The scenario of every row, in the compiled child (support/engineChildMain.ts): plan; step 1 `requestAnalysis` of one sub-question over
+    // one fixture page (a `source.fetch` and a `research.analyze` task); the worker states one claim; step 2 `proposeAnswer`; the synthesis
+    // answers. The model double is a program of the call, not a queue, so a restarted child answers whatever call comes next.
+    let reference: ScenarioRun;
+
+    /** The uninterrupted run, as literals: what every killed run must end in. */
+    const REFERENCE_END = {
+      tasks: [
+        ['research.controller', 'succeeded', null],
+        ['source.fetch', 'succeeded', null],
+        ['research.analyze', 'succeeded', null],
+        ['research.synthesize', 'succeeded', null],
+      ],
+      decisions: [
+        [1, 0, 'accepted', 'requestAnalysis', ['source.fetch', 'research.analyze']],
+        [2, 0, 'accepted', 'proposeAnswer', ['research.synthesize']],
+      ],
+      planRevisions: 1,
+      claims: [['research.analyze', 0, 'unverified', 'The provider adapter logged errors.']],
+      answer: { outcome: 'inconclusive', stopReason: null },
+      calls: [
+        ['plan', 'settled'],
+        ['controller', 'settled'],
+        ['worker', 'settled'],
+        ['controller', 'settled'],
+        ['synthesis', 'settled'],
+      ],
+    };
+
+    beforeAll(async () => {
+      reference = await runScenario();
+      expect(reference.firstExitCode).toBe(0);
+      expect(endStateOf(reference.end)).toEqual(REFERENCE_END);
+      // One fixture call (the one page of the sub-question), and a ledger the runs compare with: closed and spent.
+      expect(reference.callLog).toHaveLength(1);
+      expect(reference.callLog[0]).toMatch(/^search_logs /);
+      expectLedgerClosed(reference.end);
+      expect(reference.end.rows.run?.tokensSpent).toBeGreaterThan(0);
+    }, 120_000);
+
+    afterAll(async () => {
+      await closeEngineDb();
+    });
+
+    /** AC-11.1 after the restart: no open reservation is left, and the ledger rows sum to the charged total. */
+    function expectLedgerClosed({ rows }: RunRows) {
+      expect(rows.llmCalls.filter((call) => call.status === 'reserved')).toEqual([]);
+      expect(rows.run?.tokensReserved).toBe(0);
+      expect(rows.llmCalls.reduce((sum, call) => sum + (call.chargedTokens ?? 0), 0)).toBe(rows.run?.tokensSpent);
+    }
+
+    /** The end equals the reference run's, with one investigation and one engine row for the launch and no extra source call. */
+    function expectReferenceEnd(run: ScenarioRun) {
+      expect(endStateOf(run.end)).toEqual(endStateOf(reference.end));
+      expect([run.end.investigations, run.end.engineRuns]).toEqual([1, 1]);
+      expect(run.callLog).toEqual(reference.callLog);
+      expectLedgerClosed(run.end);
+    }
+
+    /** The reservation of the killed worker call (attempt 1) and the worker call of a later attempt, when there is one. */
+    function workerCalls({ rows }: RunRows) {
+      const worker = rows.llmCalls.filter((call) => call.role === 'worker');
+      return { killed: worker.find((call) => call.attempt === 1), retried: worker.find((call) => call.attempt > 1) };
+    }
+
+    it('E2E-2 K1: a kill after the controller recorded its decision and before propose leaves one decision, one set of tasks and a finished investigation after the restart', async () => {
+      // The second step-task proposal of the first child is the analysis: the decision is recorded and its gather task proposed.
+      const run = await runScenario({ crashAt: 'before-propose:2' });
+
+      expect(run.firstExitCode).toBe(CRASH_EXIT_CODE);
+      expect(endStateOf(run.atKill!)).toMatchObject({
+        tasks: [
+          ['research.controller', 'running', null],
+          ['source.fetch', 'queued', null],
+        ],
+        decisions: [[1, 0, 'accepted', 'requestAnalysis', []]],
+      });
+      // The restarted controller applies the recorded decision instead of taking the step again: the gather proposal is answered
+      // `subscribed` and the analysis is created once; the repeated start subscribes to the live controller task.
+      expect([...run.last.proposals].sort(([a], [b]) => a.localeCompare(b))).toEqual([
+        ['research.analyze', 'created'],
+        ['research.controller', 'subscribed'],
+        ['research.synthesize', 'created'],
+        ['source.fetch', 'subscribed'],
+      ]);
+      expect(run.last.started).toBe('existing');
+      expectReferenceEnd(run);
+    }, 120_000);
+
+    it('E2E-2 K2: a kill during a worker model call closes the open reservation as abandoned, keeps the ledger sum equal to the charged total, and the investigation still ends in an answer', async () => {
+      // (a) The runtime recovers the worker task: its next attempt closes the reservation of the killed call before its own call (DC-9,
+      // first close point), and the investigation ends as the reference run.
+      const recovered = await runScenario({ crashAt: 'worker-call:1' });
+
+      expect(recovered.firstExitCode).toBe(CRASH_EXIT_CODE);
+      expect(endStateOf(recovered.atKill!).tasks).toEqual([
+        ['research.controller', 'waiting', null],
+        ['source.fetch', 'succeeded', null],
+        ['research.analyze', 'running', null],
+      ]);
+      expect(workerCalls(recovered.atKill!).killed).toMatchObject({ status: 'reserved', chargedTokens: null });
+      expectReferenceEnd(recovered);
+      const { killed, retried } = workerCalls(recovered.end);
+      expect(killed).toMatchObject({ status: 'abandoned', chargedTokens: killed?.reservedTokens });
+      expect(retried).toMatchObject({ status: 'settled' });
+      expect(killed!.closedAt!.getTime()).toBeLessThanOrEqual(retried!.createdAt.getTime());
+
+      // (b) No recovery is left (`RUNTIME_MAX_RECOVERIES=0` in the restarted child): the worker task fails `recovery_exhausted` without
+      // another attempt, and the controller, seeing it in a final status, closes its reservation with its next decision (DC-9, second close
+      // point) — in the transaction of that decision, before the answer would (third close point).
+      const exhausted = await runScenario({ crashAt: 'worker-call:1', restartSettings: { RUNTIME_MAX_RECOVERIES: '0' } });
+
+      expect(exhausted.firstExitCode).toBe(CRASH_EXIT_CODE);
+      expect(endStateOf(exhausted.end)).toMatchObject({
+        tasks: [
+          ['research.controller', 'succeeded', null],
+          ['source.fetch', 'succeeded', null],
+          ['research.analyze', 'failed', 'recovery_exhausted'],
+          ['research.synthesize', 'succeeded', null],
+        ],
+        decisions: [
+          [1, 0, 'accepted', 'requestAnalysis', ['source.fetch', 'research.analyze']],
+          [2, 0, 'accepted', 'proposeAnswer', ['research.synthesize']],
+        ],
+        claims: [],
+        answer: { outcome: 'inconclusive', stopReason: null },
+      });
+      const { killed: abandoned, retried: none } = workerCalls(exhausted.end);
+      expect(abandoned).toMatchObject({ status: 'abandoned', chargedTokens: abandoned?.reservedTokens });
+      expect(none).toBeUndefined();
+      const stepTwo = exhausted.end.rows.decisions.find((decision) => decision.step === 2);
+      expect(abandoned!.closedAt).toEqual(stepTwo!.createdAt);
+      expectLedgerClosed(exhausted.end);
+    }, 240_000);
+
+    it('E2E-2 K3: a kill after the engine row was written and before the controller task was proposed leaves one investigation after the restart, whose repeated start proposes the task once and reaches the answer', async () => {
+      const run = await runScenario({ crashAt: 'engine.start.after-row' });
+
+      expect(run.firstExitCode).toBe(CRASH_EXIT_CODE);
+      // What the kill left: the investigation and its engine row, no controller task.
+      expect(run.atKill).toMatchObject({ investigations: 1, engineRuns: 1, tasks: [], rows: { run: { controllerTaskId: null } } });
+      // The repeated start finds the launch, answers `existing` and proposes the controller task once, which creates it.
+      expect(run.last.started).toBe('existing');
+      expect(run.last.proposals.filter(([workflowType]) => workflowType === 'research.controller')).toEqual([
+        ['research.controller', 'created'],
+      ]);
+      expect(run.end.investigationId).toBe(run.atKill!.investigationId);
+      expect(run.end.rows.run?.controllerTaskId).toBe(run.end.tasks[0]?.taskId);
+      expectReferenceEnd(run);
+    }, 120_000);
   });
 });

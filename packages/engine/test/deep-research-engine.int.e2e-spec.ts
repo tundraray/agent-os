@@ -415,8 +415,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         maxRetries: 3,
       });
       const notAfter = controller!.deadlineAt!.getTime() - 120_000;
-      expect(fetch!.deadlineMs).toBeGreaterThanOrEqual(Math.floor(notAfter - fetch!.createdAt.getTime()) - 1);
-      expect(fetch!.deadlineMs).toBeLessThanOrEqual(notAfter - controller!.startedAt!.getTime());
+      // Taken at one read of the engine clock (gather.ts floors the difference), not against a database timestamp.
+      expect(harness.engineClock.reads.map((read) => Math.floor(notAfter - read))).toContain(fetch!.deadlineMs);
       // The second proposal of the same request was answered `subscribed`: both decisions name the one task.
       expect(decisions.map((row) => [row.step, row.status, row.kind, row.planRevision, row.proposedTaskIds])).toEqual([
         [1, 'accepted', 'requestEvidence', 1, [fetch!.taskId]],
@@ -666,8 +666,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         });
         // The analysis task's time is what was left until the decision's notAfter when it was proposed.
         const notAfter = controller!.deadlineAt!.getTime() - 120_000;
-        expect(analyze!.deadlineMs).toBeGreaterThanOrEqual(Math.floor(notAfter - analyze!.createdAt.getTime()) - 1);
-        expect(analyze!.deadlineMs).toBeLessThanOrEqual(notAfter - controller!.startedAt!.getTime());
+        // Taken at one read of the engine clock (gather.ts floors the difference), not against a database timestamp.
+        expect(harness.engineClock.reads.map((read) => Math.floor(notAfter - read))).toContain(analyze!.deadlineMs);
         // No worker call and no worker reservation: the model was not called after notAfter.
         expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'controller']);
         const { decisions, llmCalls } = await engineRowsOf(investigationId);

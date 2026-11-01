@@ -28,7 +28,7 @@
       "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/fetchChildMain.ts"]
     },
     "packages/engine": {
-      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts"]
+      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/engineChildMain.ts"]
     }
   }
 }

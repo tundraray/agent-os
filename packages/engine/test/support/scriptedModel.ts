@@ -136,7 +136,16 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
-export function createScriptedModel(): ScriptedModel {
+export interface ScriptedModelOptions {
+  /**
+   * Answers a call whose role has no scripted step left, from the call itself: a program instead of a queue, for a
+   * process that restarts in the middle of an investigation and cannot know which steps the dead one consumed.
+   * `undefined` falls through to the default plan or to the loud failure.
+   */
+  readonly fallback?: (call: RecordedModelCall) => ScriptedStep | undefined;
+}
+
+export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): ScriptedModel {
   const calls: RecordedModelCall[] = [];
   const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [], verifier: [], synthesis: [] };
 
@@ -147,7 +156,7 @@ export function createScriptedModel(): ScriptedModel {
     if (role === 'unknown') {
       throw new Error(`scripted model ${modelId}: a call of an unscripted role`);
     }
-    const step = scripts[role].shift() ?? (role === 'plan' ? { output: DEFAULT_PLAN } : undefined);
+    const step = scripts[role].shift() ?? modelOptions.fallback?.(call) ?? (role === 'plan' ? { output: DEFAULT_PLAN } : undefined);
     if (step === undefined) {
       throw new Error(`scripted model ${modelId}: no ${role} step left`);
     }
