@@ -750,7 +750,9 @@ sequenceDiagram
 | `v1` | 120 000 | 2026-09-14T00:00Z — 2026-09-16T00:00Z | 2026-09-15T00:00:00Z |
 | `v2` | `v1` + 2 000 | + час после окна | тот же |
 
-Срез — `fx-<версия>-<8 hex sha256 параметров генератора>`. Запись `i` — функция (seed версии, `i`) seeded PRNG; время монотонно по индексу, интервал — диапазон индексов. Трасса `checkout-web` → `payment-api` → `provider-adapter` → провайдер; задержка провайдера из одного распределения до и после релиза. Локальный timeout `provider-adapter` — 3 000 мс до релиза и 1 500 мс после; задержка больше timeout даёт `provider.timeout`, затем `provider.response` со статусом `late` (AC-15.2).
+Третий набор — `incidents`: каталог синтетических инцидентов поверх трафика по правилам `v1`, по окну на инцидент. Его записи и эталон определяет [design-eval.md](../deep-research/design-eval.md#key-decisions), KD-1; срез — хеш каталога вместе с константой ревизии генератора. Данные `v1` и `v2` набор не меняет.
+
+Срез `v1` и `v2` — `fx-<версия>-<8 hex sha256 параметров генератора>`. В этих наборах запись `i` — функция (seed версии, `i`) seeded PRNG; время монотонно по индексу, интервал — диапазон индексов. Трасса `checkout-web` → `payment-api` → `provider-adapter` → провайдер; задержка провайдера из одного распределения до и после релиза. Локальный timeout `provider-adapter` — 3 000 мс до релиза и 1 500 мс после; задержка больше timeout даёт `provider.timeout`, затем `provider.response` со статусом `late` (AC-15.2).
 
 #### Эталон сценария
 
@@ -830,7 +832,7 @@ sequenceDiagram
 | `SOURCE_CALL_TIMEOUT_MS` | 30 000 | таймаут вызова и чтения среза до ограничения дедлайном |
 | `SOURCE_RETRY_BASE_MS` / `SOURCE_RETRY_CAP_MS` | 200 / 5 000 | full jitter: случайная задержка от 0 до min(потолок, база × 2^n) |
 | `SOURCE_MAX_PAGES` | 1 000 | страниц на задачу; держит `FetchCheckpoint` в лимите checkpoint runtime |
-| `FIXTURE_DATASET` | `v1` | версия данных при запуске процесса |
+| `FIXTURE_DATASET` | `v1` | набор данных при запуске процесса: `v1`, `v2` или `incidents` ([design-eval.md](../deep-research/design-eval.md#contract-definitions)); значение `incidents` есть и в перечне fixture, и в схеме настроек `sources` |
 | `FIXTURE_FAULTS` / `FIXTURE_CALL_LOG` | не заданы | путь правил отказа и журнала вызовов; правила без журнала — ошибка старта |
 
 Буфер чтения stdio (`maxBufferSize`) — 32 MiB, предел одной строки ответа; с правилом `text` ([Fixture MCP](#fixture-mcp)) ответ со страницей в лимите содержимого evidence runtime занимает не больше половины буфера. Ответ длиннее буфера закрывает транспорт (K-5).
@@ -1034,3 +1036,4 @@ sequenceDiagram
 | 1.6 | 2026-10-31 | `warn` при старте без установленной fixture; без fixture `SourcesModule` предоставляет пустой `SourceRegistry`, `currentSnapshot` отвечает исключением «нет адаптера» |
 | 1.7 | 2026-10-31 | Приведено к текущему шаблону: порядок и состав разделов, Snapshot с обзором, Key Decisions с отвергнутыми вариантами, Terms, критерии по требованиям; решения, контракты, критерии и use cases не менялись |
 | 1.8 | 2026-11-01 | По итогам T3.2: источник без среза, ветка `unpinned:` и `FetchCheckpoint.unpinnedAt` отложены до первого адаптера без среза, так как порт `SourceAdapter` требует срез (YAGNI); после последней страницы checkpoint не пишется (AC-MS-8 сохраняется); отсутствие закреплённого среза — `validation_rejected` (`snapshot_pin_missing`) |
+| 1.9 | 2026-11-01 | Согласовано с design-eval.md (KD-1): `FIXTURE_DATASET` и перечень наборов в `sources` получают значение `incidents`, `v1` остаётся по умолчанию; срез `incidents` — хеш каталога с константой ревизии генератора; статус Approved сохранён |
