@@ -47,6 +47,10 @@ import { COUNTING_SOURCE_ID } from './support/countingSource.js';
 import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
 import { createEngineHarness, type EngineHarness, type HandlerPoint, TEST_NOTE_KIND } from './support/engineHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
+import type { RecordedModelCall, ScriptedUsage } from './support/scriptedModel.js';
+
+/** What a scripted step reports: fixed, or following the packet the double received. */
+type StepUsage = ScriptedUsage | ((call: RecordedModelCall) => ScriptedUsage);
 import {
   SECOND_CONFIG_MARKER,
   TEST_PROCESSES,
@@ -221,7 +225,106 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       });
     }
 
-    it.todo('INT-1 C1: two scripted decision chains execute exactly the chosen capabilities in the chosen order, each task traces to a decision, and every model call is made by its role\'s model');
+    // C1 also deletes the conversation at the end (unique defect: an engine table whose FK to the investigation does not cascade
+    //   blocks `InvestigationService.purgeThread`, which only real rows of all six tables show): after the purge no engine row is left.
+    it('INT-1 C1: two scripted decision chains execute exactly the chosen capabilities in the chosen order, each task traces to a decision, and every model call is made by its role\'s model', async () => {
+      const SONNET = 'anthropic/claude-sonnet-5-5';
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'refund declined' }]);
+      const answerFromDraft = { output: { outcome: 'answered', summary: 'C1 answer', claims: [] } };
+      const gather = (service: string, rationale: string) => ({
+        output: { kind: 'requestEvidence', rationale, sourceId: 'fixture', toolName: 'search_logs', args: { service }, completeness: 'all' },
+      });
+      const propose = { output: { kind: 'proposeAnswer', rationale: 'enough to answer' } };
+      const run = async (query: string) => {
+        const { investigationId } = created(
+          await harness.engine.startInvestigation({ resourceId, threadId, query, processId: 'deep-research', launchKey: newLaunchKey() }),
+        );
+        const done = await finished(investigationId, resourceId);
+        expect(done).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive', stopReason: null } });
+        return { investigationId, done, tasks: await tasksOf(investigationId), rows: await engineRowsOf(investigationId) };
+      };
+
+      // A: the answer at once.
+      harness.model.script('controller', propose);
+      harness.model.script('synthesis', answerFromDraft);
+      const a = await run('C1 A: why were the refunds declined?');
+      const callsA = harness.model.calls.map((call) => [call.role, call.modelId]);
+      harness.model.calls.length = 0;
+      // B: gather -> verify -> replan -> gather -> answer.
+      harness.model.script(
+        'controller',
+        gather('payments', 'collect the payment errors'),
+        { output: { kind: 'requestVerification', rationale: 'check the claim', claimIds: [randomUUID()] } },
+        { output: { kind: 'replan', rationale: 'the errors point elsewhere', reason: 'the refunds service declines them' } },
+        gather('refunds', 'collect the refund errors'),
+        propose,
+      );
+      harness.model.script('synthesis', answerFromDraft);
+      const b = await run('C1 B: why were the refunds declined?');
+      const callsB = harness.model.calls.map((call) => [call.role, call.modelId]);
+
+      // Exactly the chosen capabilities in the chosen order, each task named by its decision and none without one.
+      for (const { tasks, rows } of [a, b]) {
+        const [controller, ...decided] = tasks;
+        expect(controller).toMatchObject({ workflowType: 'research.controller', status: 'succeeded' });
+        expect(rows.decisions.flatMap((row) => row.proposedTaskIds)).toEqual(decided.map((task) => task.taskId));
+      }
+      expect(a.tasks.map((task) => [task.workflowType, task.status])).toEqual([
+        ['research.controller', 'succeeded'],
+        ['research.synthesize', 'succeeded'],
+      ]);
+      expect(a.rows.decisions.map((row) => [row.step, row.status, row.kind, row.proposedTaskIds])).toEqual([
+        [1, 'accepted', 'proposeAnswer', [a.tasks[1]!.taskId]],
+      ]);
+      const [, fetchPayments, verify, fetchRefunds, synthesize] = b.tasks;
+      expect(b.tasks.map((task) => [task.workflowType, task.status])).toEqual([
+        ['research.controller', 'succeeded'],
+        ['source.fetch', 'succeeded'],
+        ['research.verify', 'succeeded'],
+        ['source.fetch', 'succeeded'],
+        ['research.synthesize', 'succeeded'],
+      ]);
+      expect(b.rows.decisions.map((row) => [row.step, row.status, row.kind, row.planRevision, row.proposedTaskIds])).toEqual([
+        [1, 'accepted', 'requestEvidence', 1, [fetchPayments!.taskId]],
+        [2, 'accepted', 'requestVerification', 1, [verify!.taskId]],
+        [3, 'accepted', 'replan', 1, []],
+        [4, 'accepted', 'requestEvidence', 2, [fetchRefunds!.taskId]],
+        [5, 'accepted', 'proposeAnswer', 2, [synthesize!.taskId]],
+      ]);
+      expect(harness.countingSource.calls.map((call) => call.args)).toEqual([{ service: 'payments' }, { service: 'refunds' }]);
+      // AC-10.1: the model double was called with the model of each call's role, and the ledger and the view record it.
+      expect(callsA).toEqual([['plan', SONNET], ['controller', SONNET], ['synthesis', SONNET]]);
+      expect(callsB).toEqual([
+        ['plan', SONNET], ['controller', SONNET], ['controller', SONNET], ['controller', SONNET],
+        ['plan', SONNET], ['controller', SONNET], ['controller', SONNET], ['synthesis', SONNET],
+      ]);
+      expect(a.rows.llmCalls.map((row) => [row.role, row.model, row.status])).toEqual(callsA.map((call) => [...call, 'settled']));
+      expect(b.rows.llmCalls.map((row) => [row.role, row.model, row.status])).toEqual(callsB.map((call) => [...call, 'settled']));
+      expect(b.done.usage.byRoleAndModel.map((row) => [row.role, row.model, row.calls])).toEqual([
+        ['plan', SONNET, 2],
+        ['controller', SONNET, 5],
+        ['synthesis', SONNET, 1],
+      ]);
+
+      // The conversation is deleted: the runtime's purge cascades through the engine tables (a signal row included; neither
+      // chain writes a claim).
+      const signal = await harness.engine.recordSignal({ investigationId: b.investigationId, resourceId, kind: 'test.note', payload: { note: 'C1' } });
+      expect(signal.outcome).toBe('recorded');
+      await harness.purgeThread(resourceId, threadId);
+      for (const { investigationId } of [a, b]) {
+        expect(await engineRowsOf(investigationId)).toEqual({
+          run: undefined,
+          planRevisions: [],
+          decisions: [],
+          signals: [],
+          claims: [],
+          llmCalls: [],
+        });
+        expect(await tasksOf(investigationId)).toEqual([]);
+      }
+    }, 30_000);
     it('INT-1 C2: a second configuration without verify and analyze refuses requestVerification, builds packets from its own prompts and windows, and ends in an answer without code changes', async () => {
       const resourceId = newUser();
       const threadId = await harness.createThread(resourceId);
@@ -868,10 +971,19 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   (`model_unavailable` in this mode takes the same code-built answer: a row of the unit table of stop answers, see "Proven at unit level")
   describe('INT-2', () => {
     let harness: EngineHarness;
+    const HAIKU = 'anthropic/claude-haiku-5-5';
+    /** L3 (AC-10.2): the shipped process with every role on one model, by configuration only. */
+    const ONE_MODEL_PROCESS = 'one-model';
 
     beforeAll(async () => {
+      const shipped = deepResearchProcessV1 as { readonly roles: Readonly<Record<string, Readonly<Record<string, unknown>>>> };
+      const oneModel = {
+        ...shipped,
+        processId: ONE_MODEL_PROCESS,
+        roles: Object.fromEntries(Object.entries(shipped.roles).map(([role, config]) => [role, { ...config, model: HAIKU }])),
+      };
       // Four slots: the analysis tasks of one decision run side by side (L7).
-      harness = await createEngineHarness({ runtime: { concurrency: 4, dbPoolMax: 10 } });
+      harness = await createEngineHarness({ processes: [deepResearchProcessV1, oneModel], runtime: { concurrency: 4, dbPoolMax: 10 } });
     });
 
     afterAll(async () => {
@@ -998,8 +1110,163 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       expect(nextInput).toContain('"failureCode":"task_tokens_exhausted"');
       expect(nextInput).toContain(`"claimId":"${claims[0]!.claimId}","status":"unverified","text":"service-1 reset its connections"`);
     });
-    it.todo('INT-2 L2: an exhausted investigation budget starts no further call, stops with budget_exhausted and answers with the claims verified before, spending no more than the budget');
-    it.todo('INT-2 L3: after all roles move to one model by configuration, the ledger sum equals the charged total, usage is split by role and model, and each row keeps counted and actual input');
+    /**
+     * Scripts one analysis of the trace and one verification round of its claim: the controller asks for the round once the
+     * worker's claim is written (the test reads its id meanwhile). Returns the claim ids, once known.
+     */
+    function scriptAnalysisAndRound(usage: Partial<Record<'controller' | 'worker' | 'verifier', StepUsage>> = {}) {
+      const usageOf = (role: 'controller' | 'worker' | 'verifier') => (usage[role] === undefined ? {} : { usage: usage[role] });
+      const trace = 'e'.repeat(32);
+      harness.countingSource.answerWith(() => [{ ts: '2026-10-01T12:05:00.000Z', service: 'payments', level: 'error', traceId: trace }]);
+      const claimsWritten = latch();
+      const state = { claimIds: [] as string[], claimsWritten };
+      harness.model.script(
+        'controller',
+        {
+          output: {
+            kind: 'requestAnalysis',
+            rationale: 'find the failing trace',
+            subquestions: [{ text: 'which trace failed?', sourceId: 'fixture', toolName: 'search_logs', args: { service: 'payments' }, completeness: 'all' }],
+          },
+          ...usageOf('controller'),
+        },
+        {
+          output: () => ({ kind: 'requestVerification', rationale: 'check the claim', claimIds: state.claimIds }),
+          holdUntil: claimsWritten.wait,
+          ...usageOf('controller'),
+        },
+      );
+      harness.model.script('worker', {
+        output: { claims: [{ text: 'the payment trace failed', atoms: [{ kind: 'traceId', value: trace }], evidenceIds: [] }] },
+        ...usageOf('worker'),
+      });
+      harness.model.script('verifier', {
+        output: () => ({ requests: [{ claimIds: state.claimIds, sourceId: 'fixture', toolName: 'get_trace', args: { traceId: trace } }] }),
+        ...usageOf('verifier'),
+      });
+      return state;
+    }
+
+    /** Reads the worker's claim ids into `state` and lets the controller ask for their round. */
+    async function releaseRound(investigationId: string, state: ReturnType<typeof scriptAnalysisAndRound>) {
+      state.claimIds = await vi.waitFor(
+        async () => {
+          const { claims } = await engineRowsOf(investigationId);
+          if (claims.length === 0) throw new Error('the worker claim is not written yet');
+          return claims.map((row) => row.claimId);
+        },
+        { timeout: 20_000, interval: 50 },
+      );
+      state.claimsWritten.open();
+    }
+
+    it('INT-2 L2: an exhausted investigation budget starts no further call, stops with budget_exhausted and answers with the claims verified before, spending no more than the budget', async () => {
+      // Every packet counts 1 000 tokens, so each reservation is 1 000 + margin + maxOutputTokens of its role:
+      // plan 9 800, controller 10 600, worker 12 200, verifier 6 600. The calls charge 120 (plan, controller),
+      // 6 000 (worker) and 4 000 (verifier): 10 360 spent before the third controller call, whose 10 600 no longer fit 20 000.
+      harness.tokenCounter.intercept = () => 1_000;
+      const round = scriptAnalysisAndRound({ worker: { inputTokens: 1_000, outputTokens: 5_000 }, verifier: { inputTokens: 1_000, outputTokens: 3_000 } });
+      try {
+        const { resourceId, investigationId } = await startDeepResearch('L2: which payment trace failed?', 20_000);
+        await releaseRound(investigationId, round);
+        const done = await finished(investigationId, resourceId);
+
+        const tasks = await tasksOf(investigationId);
+        const basis = tasks.find((task) => task.workflowType === 'source.fetch' && (task.input as { toolName?: string }).toolName === 'get_trace')!.outputRefs;
+        // AC-07.3: the forced stop answers with the claim verified before, with its evidence; FR-09 makes it partial.
+        expect(done).toMatchObject({
+          status: 'completed',
+          answer: {
+            outcome: 'partial',
+            stopReason: 'budget_exhausted',
+            established: [{ claimId: round.claimIds[0], text: 'the payment trace failed', evidenceIds: basis, verified: true }],
+          },
+        });
+        expect(basis).toHaveLength(1);
+        expect(tasks.find((task) => task.workflowType === 'research.controller')).toMatchObject({
+          status: 'succeeded',
+          outcome: { answerOrDelta: { answerId: done.answer?.answerId, outcome: 'partial' } },
+        });
+        // AC-07.1: the refused call was neither reserved nor made, and the spend stays within the budget.
+        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'controller', 'worker', 'controller', 'verifier']);
+        const llmCalls = await expectLedgerBalanced(investigationId);
+        expect(llmCalls.map((row) => [row.role, row.reservedTokens, row.chargedTokens])).toEqual([
+          ['plan', 9_800, 120],
+          ['controller', 10_600, 120],
+          ['worker', 12_200, 6_000],
+          ['controller', 10_600, 120],
+          ['verifier', 6_600, 4_000],
+        ]);
+        expect(done.usage).toMatchObject({ totalTokens: 10_360, tokenBudget: 20_000 });
+      } finally {
+        round.claimsWritten.open();
+      }
+    }, 30_000);
+    // L3 per the skeleton row; the cache read and write are scripted so their columns are summed too (AC-11.1).
+    it('INT-2 L3: after all roles move to one model by configuration, the ledger sum equals the charged total, usage is split by role and model, and each row keeps counted and actual input', async () => {
+      // DC-13: the counter counts one token per character plus 7; the double reports the characters of the packet it got.
+      harness.tokenCounter.offset = 7;
+      const actual = (call: RecordedModelCall): ScriptedUsage => ({
+        inputTokens: call.system.length + call.user.length,
+        outputTokens: 40,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 10,
+      });
+      harness.model.script('plan', { output: { readinessCriteria: ['the trace is named'], branches: [] }, usage: actual });
+      const round = scriptAnalysisAndRound({ controller: actual, worker: actual, verifier: actual });
+      harness.model.script('controller', { output: { kind: 'proposeAnswer', rationale: 'the claim is verified' }, usage: actual });
+      harness.model.script('synthesis', { output: { outcome: 'answered', summary: 'L3 answer', claims: [] }, usage: actual });
+      try {
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        const started = await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'L3: which payment trace failed?',
+          processId: ONE_MODEL_PROCESS,
+          launchKey: newLaunchKey(),
+        });
+        if (started.outcome === 'rejected') throw new Error(`start refused: ${started.code}`);
+        const { investigationId } = started;
+        await releaseRound(investigationId, round);
+        const done = await finished(investigationId, resourceId);
+
+        expect(done.status).toBe('completed');
+        const llmCalls = await expectLedgerBalanced(investigationId);
+        // AC-10.2: the configuration alone moved every role to one model.
+        expect(harness.model.calls.map((call) => [call.role, call.modelId])).toEqual(
+          ['plan', 'controller', 'worker', 'controller', 'verifier', 'controller', 'synthesis'].map((role) => [role, HAIKU]),
+        );
+        // DC-13: each row keeps both inputs, 7 apart, so the counter's divergence is visible per call.
+        expect(llmCalls.map((row) => [row.role, row.model, row.status, row.countedInputTokens - row.inputTokens!])).toEqual(
+          ['plan', 'controller', 'worker', 'controller', 'verifier', 'controller', 'synthesis'].map((role) => [role, HAIKU, 'settled', 7]),
+        );
+        // AC-11.1: usage by role and model; its total is what the ledger charged.
+        const byRole = (role: string) => llmCalls.filter((row) => row.role === role);
+        expect(done.usage.byRoleAndModel).toEqual(
+          (['plan', 'controller', 'worker', 'verifier', 'synthesis'] as const).map((role) => {
+            const rows = byRole(role);
+            return {
+              role,
+              model: HAIKU,
+              calls: rows.length,
+              inputTokens: rows.reduce((sum, row) => sum + row.inputTokens!, 0),
+              outputTokens: 40 * rows.length,
+              cacheReadTokens: 30 * rows.length,
+              cacheWriteTokens: 10 * rows.length,
+              costUsd: expect.closeTo(rows.reduce((sum, row) => sum + Number(row.costUsd), 0), 8),
+            };
+          }),
+        );
+        expect(done.usage.byRoleAndModel.map((row) => row.calls)).toEqual([1, 3, 1, 1, 1]);
+        const { run } = await engineRowsOf(investigationId);
+        expect(done.usage).toMatchObject({ totalTokens: run!.tokensSpent, tokenBudget: 3_000_000 });
+        expect(done.usage.totalCostUsd).toBeGreaterThan(0);
+      } finally {
+        harness.tokenCounter.offset = 0;
+        round.claimsWritten.open();
+      }
+    }, 30_000);
     it('INT-2 L4: a provider outage gives the worker 3 calls then model_unavailable, closes each failed reservation as failed, and ends the investigation with an answer by code', async () => {
       const outage = { providerError: { statusCode: 503 } };
       harness.model.script('controller', analysisOf(['L4: what failed in service-0?']), outage, outage, outage);

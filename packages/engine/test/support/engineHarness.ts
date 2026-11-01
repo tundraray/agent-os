@@ -168,6 +168,11 @@ export interface EngineHarness {
    * still active — call in `afterEach`, so a test that failed midway leaves no controller task to the next one.
    */
   cancelStarted(): Promise<void>;
+  /**
+   * Deletes the thread's investigations through the real `InvestigationService.purgeThread` (a deleted conversation) and
+   * drops them from the starts {@link cancelStarted} cancels.
+   */
+  purgeThread(resourceId: string, threadId: string): Promise<void>;
   /** Stops the runtime and closes the sources, then the pool — the pool even when the stop fails. */
   close(): Promise<void>;
 }
@@ -432,6 +437,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
         await current.runtime.investigations.cancel(investigationId, resourceId);
       }
       started.clear();
+    },
+    purgeThread: async (resourceId, threadId) => {
+      const purged = await current.runtime.investigations.listForThread(resourceId, threadId);
+      await current.runtime.investigations.purgeThread({ resourceId, threadId });
+      for (const { investigationId } of purged) started.delete(investigationId);
     },
     close: async () => {
       try {

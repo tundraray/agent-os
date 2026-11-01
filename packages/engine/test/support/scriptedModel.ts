@@ -27,10 +27,12 @@ const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
   verifier: 'requests',
 };
 
-/** Token usage the double reports for a call. */
+/** Token usage the double reports for a call; `inputTokens` is the whole input, the cached parts included. */
 export interface ScriptedUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
 }
 
 /** One answer of the script. */
@@ -38,9 +40,14 @@ export type ScriptedStep =
   /**
    * A structured output (any JSON value: a test may script one the schema refuses). With `holdUntil` the call is
    * recorded at once and answers when that promise settles. A function is called when the call answers, for an output
-   * that names ids the test learns only while the investigation runs.
+   * that names ids the test learns only while the investigation runs. `usage` may be a function of the call, for a
+   * usage that follows the packet (the actual input next to the counted one, DC-13).
    */
-  | { readonly output: unknown; readonly usage?: ScriptedUsage; readonly holdUntil?: Promise<void> }
+  | {
+      readonly output: unknown;
+      readonly usage?: ScriptedUsage | ((call: RecordedModelCall) => ScriptedUsage);
+      readonly holdUntil?: Promise<void>;
+    }
   /** A provider error, thrown as `AI_APICallError`; without `statusCode` a network error. */
   | { readonly providerError: { readonly statusCode?: number } }
   /** A refusal: `finishReason` `content-filter`, no output. */
@@ -80,8 +87,10 @@ const DEFAULT_USAGE: ScriptedUsage = { inputTokens: 100, outputTokens: 20 };
 const DEFAULT_PLAN = { readinessCriteria: ['the question is answered'], branches: [] };
 
 function usageOf(usage: ScriptedUsage): GenerateResult['usage'] {
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
   return {
-    inputTokens: { total: usage.inputTokens, noCache: usage.inputTokens, cacheRead: 0, cacheWrite: 0 },
+    inputTokens: { total: usage.inputTokens, noCache: usage.inputTokens - cacheRead - cacheWrite, cacheRead, cacheWrite },
     outputTokens: { total: usage.outputTokens, text: usage.outputTokens, reasoning: 0 },
   };
 }
@@ -133,7 +142,8 @@ export function createScriptedModel(): ScriptedModel {
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
     const role = roleOf(options);
-    calls.push({ role, modelId, system: textOf(options, 'system'), user: textOf(options, 'user') });
+    const call: RecordedModelCall = { role, modelId, system: textOf(options, 'system'), user: textOf(options, 'user') };
+    calls.push(call);
     if (role === 'unknown') {
       throw new Error(`scripted model ${modelId}: a call of an unscripted role`);
     }
@@ -161,7 +171,7 @@ export function createScriptedModel(): ScriptedModel {
     return {
       content: [{ type: 'text', text: JSON.stringify(typeof step.output === 'function' ? step.output() : step.output) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },
-      usage: usageOf(step.usage ?? DEFAULT_USAGE),
+      usage: usageOf(typeof step.usage === 'function' ? step.usage(call) : (step.usage ?? DEFAULT_USAGE)),
       warnings: [],
     };
   }

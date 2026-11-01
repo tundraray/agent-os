@@ -1,7 +1,9 @@
 import { type InvestigationAnswer, InvestigationAnswerSchema } from '../answer/code-answer.js';
 import { type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
+import type { ModelRole } from '../model/ledger.js';
 import type { EngineRunStatus } from '../runs/engine-runs.repository.js';
+import type { RoleModelUsageRow } from './usage.repository.js';
 
 export type InvestigationViewStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -31,6 +33,32 @@ export interface InvestigationView {
    * the sections of its configuration in their order.
    */
   readonly answer: InvestigationAnswerView | null;
+  readonly usage: InvestigationUsage;
+}
+
+/** Calls of one role on one model, as the ledger recorded them. */
+interface RoleModelUsage {
+  readonly role: ModelRole;
+  readonly model: string;
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly costUsd: number;
+}
+
+/** The ledger of the investigation by role and model, its total and its budget (AC-11.1). */
+interface InvestigationUsage {
+  /** In the order of the roles (`plan`, `controller`, `worker`, `verifier`, `synthesis`), then by model. */
+  readonly byRoleAndModel: readonly RoleModelUsage[];
+  /**
+   * Charged plus the open reservations: a cancelled investigation keeps the reservation of its interrupted call open in
+   * the ledger, and it counts as spent (DC-9).
+   */
+  readonly totalTokens: number;
+  readonly totalCostUsd: number;
+  readonly tokenBudget: number;
 }
 
 export type ReadInvestigationResult =
@@ -55,7 +83,10 @@ function viewStatus(investigationStatus: string, controllerTaskStatus: string | 
   return investigationStatus === 'active' ? 'running' : 'cancelled';
 }
 
-export function toInvestigationView({ run, investigationStatus, controllerTaskStatus }: EngineRunStatus): InvestigationView {
+export function toInvestigationView(
+  { run, investigationStatus, controllerTaskStatus }: EngineRunStatus,
+  usageRows: readonly RoleModelUsageRow[],
+): InvestigationView {
   return {
     investigationId: run.investigationId,
     status: viewStatus(investigationStatus, controllerTaskStatus),
@@ -64,7 +95,31 @@ export function toInvestigationView({ run, investigationStatus, controllerTaskSt
     version: run.processVersion,
     sourceMode: recordedSourceMode(run.sourceMode),
     answer: run.answer === null ? null : answerView(InvestigationAnswerSchema.parse(run.answer), run.processConfig),
+    usage: usageView(run, usageRows),
   };
+}
+
+const ROLE_ORDER: readonly ModelRole[] = ['plan', 'controller', 'worker', 'verifier', 'synthesis'];
+
+function usageView(run: EngineRunStatus['run'], rows: readonly RoleModelUsageRow[]): InvestigationUsage {
+  const byRoleAndModel = rows
+    .map((row): RoleModelUsage => ({ ...row, role: recordedRole(row.role), costUsd: Number(row.costUsd) }))
+    .sort((left, right) => ROLE_ORDER.indexOf(left.role) - ROLE_ORDER.indexOf(right.role) || left.model.localeCompare(right.model));
+  return {
+    byRoleAndModel,
+    totalTokens: run.tokensSpent + run.tokensReserved,
+    totalCostUsd: byRoleAndModel.reduce((sum, row) => sum + row.costUsd, 0),
+    tokenBudget: run.tokenBudget,
+  };
+}
+
+/** The column's CHECK allows only the five roles; anything else is a defect. */
+function recordedRole(value: string): ModelRole {
+  const role = ROLE_ORDER.find((candidate) => candidate === value);
+  if (role === undefined) {
+    throw new Error(`research_llm_calls.role holds an unknown role ${value}`);
+  }
+  return role;
 }
 
 /** The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15). */

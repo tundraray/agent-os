@@ -58,10 +58,11 @@ function assignment(previous: PlanRevisionRow | undefined, reason: string | null
 }
 
 /**
- * Writes the next plan revision. Without the `plan` capability the first revision is the configuration's `goal` and the
- * role is not called (KD-8). With it, the `plan` role writes the revision; its answer goes to the checkpoint before the
- * guarded write, so a replayed attempt writes the same revision without a second call (invariant 3). A role input that
- * does not fit its window and an output that stays invalid after the gateway's retry end the investigation by code.
+ * Writes the next plan revision by the `plan` role; its answer goes to the checkpoint before the guarded write, so a
+ * replayed attempt writes the same revision without a second call (invariant 3). A role input that does not fit its
+ * window and an output that stays invalid after the gateway's retry end the investigation by code. Only a configuration
+ * with the `plan` capability gets here: without it code seeds the first revision (`seedPlan`, KD-8) and the gate refuses
+ * `replan`.
  */
 export async function writePlanRevision(
   deps: PlanRoleDeps,
@@ -70,33 +71,31 @@ export async function writePlanRevision(
 ): Promise<PlanRevisionResult> {
   const { frame, previous, reason } = input;
   const revision = (previous?.revision ?? 0) + 1;
-  let content: PlanContent;
-  if (frame.config.capabilities.includes('plan')) {
-    const roleConfig = frame.config.roles.plan;
-    const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
-    const call = `plan:${revision}`;
-    const packet = await deps.contextBuilder.buildSlotPacket(
-      { roleConfig, instructions, outputSchema: PlanOutputSchema, signal: ctx.signal },
-      { assignment: assignment(previous, reason), evidence: [] },
-    );
-    if (packet.outcome === 'needs_narrowing') return { outcome: 'stop', reason: 'context_overflow' };
-    if (packet.outcome === 'count_failed') return { outcome: 'stop', reason: 'model_unavailable' };
-    const answered = await callOrReplay(deps.gateway, {
-      ctx,
-      role: 'plan',
-      roleConfig,
-      call,
-      instructions,
-      messages: packet.messages,
-      outputSchema: PlanOutputSchema,
-      notAfter: frame.notAfter,
-    });
-    if (answered.outcome === 'invalid') return { outcome: 'stop', reason: 'controller_invalid' };
-    if (answered.outcome !== 'answered') return answered;
-    content = { goal: frame.config.goal, ...answered.output };
-  } else {
-    content = { goal: frame.config.goal, readinessCriteria: [], branches: [] };
+  if (!frame.config.capabilities.includes('plan')) {
+    throw new Error(`investigation ${frame.investigationId} has no plan capability to write revision ${revision}`);
   }
+  const roleConfig = frame.config.roles.plan;
+  const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
+  const call = `plan:${revision}`;
+  const packet = await deps.contextBuilder.buildSlotPacket(
+    { roleConfig, instructions, outputSchema: PlanOutputSchema, signal: ctx.signal },
+    { assignment: assignment(previous, reason), evidence: [] },
+  );
+  if (packet.outcome === 'needs_narrowing') return { outcome: 'stop', reason: 'context_overflow' };
+  if (packet.outcome === 'count_failed') return { outcome: 'stop', reason: 'model_unavailable' };
+  const answered = await callOrReplay(deps.gateway, {
+    ctx,
+    role: 'plan',
+    roleConfig,
+    call,
+    instructions,
+    messages: packet.messages,
+    outputSchema: PlanOutputSchema,
+    notAfter: frame.notAfter,
+  });
+  if (answered.outcome === 'invalid') return { outcome: 'stop', reason: 'controller_invalid' };
+  if (answered.outcome !== 'answered') return answered;
+  const content: PlanContent = { goal: frame.config.goal, ...answered.output };
   const written = await ctx.withAttemptGuard((tx) =>
     repository.insertPlanRevision(tx, { investigationId: frame.investigationId, revision, plan: content, reason }),
   );

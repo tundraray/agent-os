@@ -13,6 +13,7 @@ import {
   type StartInvestigationResult,
 } from './runs/start-investigation.js';
 import { type ReadInvestigationResult, toInvestigationView } from './view/investigation-view.js';
+import { usageRepository as usage } from './view/usage.repository.js';
 
 export interface RecordSignalInput {
   readonly investigationId: string;
@@ -81,7 +82,11 @@ export function buildEngine(deps: EngineDeps): Engine {
         return NOT_FOUND;
       }
       const status = await runs.readStatus(database, investigationId, resourceId);
-      return status === undefined ? NOT_FOUND : { outcome: 'found', view: toInvestigationView(status) };
+      if (status === undefined) {
+        return NOT_FOUND;
+      }
+      const usageRows = await usage.byRoleAndModel(database, investigationId);
+      return { outcome: 'found', view: toInvestigationView(status, usageRows) };
     },
   };
 }
