@@ -24,9 +24,17 @@
 // cannot be built in-process without faking a runtime component, so K3 stays as the one row of E2E-2.
 // The no-source mode (PRD 1.12) adds no E2E test to this part: its investigation is proven in-process (INT-1 C7, INT-2 L6), and the real process boot without the fixture package is read in the chat-entry L1 scenario (L1-7).
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { researchEvents, researchTaskDependencies } from '@agent-os/db';
+import { generateGroundTruth } from '@agent-os/mcp-fixture';
+import { parseSourcesSettings } from '@agent-os/sources';
+import { asc, inArray } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CRASH_EXIT_CODE, endStateOf, type RunRows, runScenario, type ScenarioRun } from './support/engineChild.js';
-import { closeEngineDb } from './support/engineDb.js';
+import { closeEngineDb, engineRowsOf, tasksOf } from './support/engineDb.js';
+import { createEngineHarness, type EngineHarness } from './support/engineHarness.js';
+import { FIXTURE_ALLOWLIST, type FixtureFiles, fixtureAdapter, fixtureFiles } from './support/fixtureHarness.js';
+import { newLaunchKey, newUser } from './support/new-user.js';
+import type { RecordedModelCall, ScriptedStep, ScriptedUsage } from './support/scriptedModel.js';
 
 describe('deep-research / engine - E2E (real fixture, real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -56,7 +64,311 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
   // - Provenance and truth (AC-09.2): every `established` claim has `evidenceIds` that `EvidenceReader.get` resolves with the investigation's `resourceId`, with every provenance field present, and its atoms match the fixture ground truth for the slice; nothing outside `supported` is in `established`
   // - Outcome: controller task `succeeded` with an `answerId`; `usage` splits cost by role and the sum equals the charged total; `readInvestigation` shows `sourceMode` `sources` (the real fixture is connected: AC-09.2 is in force, no claim is marked as model knowledge)
   describe('E2E-1', () => {
-    it.todo('E2E-1: a question over the 120 000-record slice ends in a sourced answer with no call above its window, parallel isolated workers, partial coverage under the call limit, and provenance on every established claim');
+    // The scenario: step 1 `requestAnalysis` of three sub-questions over the real fixture — A every provider timeout of the day after
+    // the release (899 records in pages of 5: 180 pages against the 20 calls of a `source.fetch` task), B the first page of the whole
+    // slice (500 records, more than the worker window: its worker must not call the model), C one affected trace; step 2
+    // `requestVerification` of the claims of A and C; step 3 `proposeAnswer`; the synthesis cites the verified claims with their basis.
+    // The double builds the claims from the slice's ground truth, read through `generateGroundTruth`.
+    const truth = generateGroundTruth('v1');
+    const DAY_AFTER_RELEASE = { from: '2026-09-15T00:00:00.000Z', to: '2026-09-16T00:00:00.000Z' };
+    const TIMEOUTS = { ...DAY_AFTER_RELEASE, service: 'provider-adapter', event: 'provider.timeout' };
+    const ALL_TIMEOUTS = {
+      text: 'E2E-1 A: how often did the provider adapter time out after the release?',
+      sourceId: 'fixture',
+      toolName: 'search_logs',
+      args: { ...TIMEOUTS, pageSize: 5 },
+      completeness: 'all',
+    };
+    const WHOLE_SLICE = {
+      text: 'E2E-1 B: what does the whole slice hold?',
+      sourceId: 'fixture',
+      toolName: 'search_logs',
+      args: { from: '2026-09-14T00:00:00.000Z', to: '2026-09-16T00:00:00.000Z', pageSize: 500 },
+      completeness: 'sample',
+    };
+    const ONE_TRACE = {
+      text: 'E2E-1 C: what happened to the first affected trace?',
+      sourceId: 'fixture',
+      toolName: 'get_trace',
+      args: { traceId: truth.affectedTraceIds[0] },
+      completeness: 'sample',
+    };
+    const SUBQUESTIONS = [ALL_TIMEOUTS, WHOLE_SLICE, ONE_TRACE];
+    const AGGREGATE_TIMEOUTS = { ...TIMEOUTS, groupBy: 'event', bucket: '1h' };
+    /** Runtime settings of deep-research: the window of each role; its margin is 5 %. */
+    const WINDOWS: Readonly<Record<string, number>> = { plan: 16_000, controller: 32_000, worker: 64_000, verifier: 32_000, synthesis: 48_000 };
+
+    const claimOfA = {
+      text: `After the release the provider adapter timed out ${truth.providerTimeouts.afterRelease} times`,
+      atoms: [
+        { kind: 'event', value: 'provider.timeout' },
+        { kind: 'number', value: String(truth.providerTimeouts.afterRelease) },
+      ],
+      evidenceIds: [],
+    };
+    const claimOfC = {
+      text: `Trace ${truth.affectedTraceIds[0]} got its provider reply late`,
+      atoms: [
+        { kind: 'traceId', value: truth.affectedTraceIds[0]! },
+        { kind: 'service', value: truth.cause.service },
+        { kind: 'event', value: 'provider.response' },
+      ],
+      evidenceIds: [],
+    };
+
+    /** The double reports the packet it got as the actual input: one token per character, as the harness counter counts. */
+    const actual = (call: RecordedModelCall): ScriptedUsage => ({ inputTokens: call.system.length + call.user.length, outputTokens: 50 });
+
+    /**
+     * The worker's program: three workers run at once, so each answer follows the sub-question of the packet, not an order.
+     * Any other worker call (B's, were its packet let through) answers without claims, so the window check is what sees it.
+     */
+    function worker(call: RecordedModelCall): ScriptedStep | undefined {
+      if (call.role !== 'worker') return undefined;
+      if (call.user.includes(ALL_TIMEOUTS.text)) return { output: { claims: [claimOfA] }, usage: actual };
+      if (call.user.includes(ONE_TRACE.text)) return { output: { claims: [claimOfC] }, usage: actual };
+      return { output: { claims: [] }, usage: actual };
+    }
+
+    let files: FixtureFiles;
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      files = fixtureFiles();
+      const settings = parseSourcesSettings(files.env);
+      harness = await createEngineHarness({
+        // Three analyses, a gather and the controller may run at once.
+        runtime: { concurrency: 5, dbPoolMax: 8 },
+        source: { settings, allowlist: FIXTURE_ALLOWLIST, adapter: (logger) => fixtureAdapter(settings, logger) },
+        model: { fallback: worker },
+      });
+    });
+
+    afterAll(async () => {
+      try {
+        await harness?.close();
+      } finally {
+        files?.remove();
+        await closeEngineDb();
+      }
+    });
+
+    function latch() {
+      let open!: () => void;
+      const wait = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { wait, open: () => open() };
+    }
+
+    function until<T>(what: string, read: () => Promise<T | undefined>): Promise<T> {
+      return vi.waitFor(
+        async () => {
+          const value = await read();
+          if (value === undefined) throw new Error(`waiting for ${what}`);
+          return value;
+        },
+        { timeout: 60_000, interval: 50 },
+      );
+    }
+
+    it('E2E-1: a question over the 120 000-record slice ends in a sourced answer with no call above its window, parallel isolated workers, partial coverage under the call limit, and provenance on every established claim', async () => {
+      // The reference values of the slice, against literals of the fixture's answer key.
+      expect([truth.snapshot, truth.affectedTraceIds[0], truth.providerTimeouts.afterRelease]).toEqual(['fx-v1-2157485c', '2fc6e7867ffac751ec4b9011b0fe8942', 899]);
+      // AC-05.2: each analysis waits at its start until all three have started; a serialised analysis never lets the others on.
+      const allStarted = latch();
+      let analysesStarted = 0;
+      harness.handlerHold.at = async (point) => {
+        if (point.at !== 'run' || point.workflowType !== 'research.analyze') return;
+        analysesStarted += 1;
+        if (analysesStarted === SUBQUESTIONS.length) allStarted.open();
+        await allStarted.wait;
+      };
+      const analysed = latch();
+      const verified = latch();
+      const claimIds = { A: '', C: '' };
+      const basis: { A: string[]; C: string[] } = { A: [], C: [] };
+      harness.model.script('plan', { output: { readinessCriteria: ['the cause of the timeouts is named'], branches: [] }, usage: actual });
+      harness.model.script(
+        'controller',
+        { output: { kind: 'requestAnalysis', rationale: 'split the question', subquestions: SUBQUESTIONS }, usage: actual },
+        {
+          output: () => ({ kind: 'requestVerification', rationale: 'check the claims', claimIds: [claimIds.A, claimIds.C] }),
+          usage: actual,
+          holdUntil: analysed.wait,
+        },
+        { output: { kind: 'proposeAnswer', rationale: 'both claims are verified' }, usage: actual, holdUntil: verified.wait },
+      );
+      harness.model.script('verifier', {
+        output: () => ({
+          requests: [
+            { claimIds: [claimIds.A], sourceId: 'fixture', toolName: 'aggregate_logs', args: AGGREGATE_TIMEOUTS },
+            { claimIds: [claimIds.C], sourceId: 'fixture', toolName: 'get_trace', args: ONE_TRACE.args },
+          ],
+        }),
+        usage: actual,
+      });
+      harness.model.script('synthesis', {
+        output: () => ({
+          outcome: 'answered',
+          summary: truth.cause.summary,
+          claims: [
+            { claimId: claimIds.A, text: claimOfA.text, atoms: claimOfA.atoms, evidenceIds: basis.A },
+            { claimId: claimIds.C, text: claimOfC.text, atoms: claimOfC.atoms, evidenceIds: basis.C },
+          ],
+        }),
+        usage: actual,
+      });
+      try {
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        const started = await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'Why did provider timeouts rise after the release?',
+          processId: 'deep-research',
+          launchKey: newLaunchKey(),
+        });
+        if (started.outcome === 'rejected') throw new Error(`start refused: ${started.code}`);
+        const { investigationId } = started;
+        const subquestionOf = (task: { input: unknown }) => (task.input as { subquestion?: string }).subquestion;
+        const analyses = await until('the analyses', async () => {
+          const found = (await tasksOf(investigationId)).filter((task) => task.workflowType === 'research.analyze');
+          return found.length === SUBQUESTIONS.length && found.every((task) => task.status === 'succeeded') ? found : undefined;
+        });
+        const analysisOf = (subquestion: { text: string }) => analyses.find((task) => subquestionOf(task) === subquestion.text)!;
+        const workerClaims = (await engineRowsOf(investigationId)).claims;
+        claimIds.A = workerClaims.find((row) => row.taskId === analysisOf(ALL_TIMEOUTS).taskId)!.claimId;
+        claimIds.C = workerClaims.find((row) => row.taskId === analysisOf(ONE_TRACE).taskId)!.claimId;
+        analysed.open();
+        const verify = await until('the verification round', async () =>
+          (await tasksOf(investigationId)).find((task) => task.workflowType === 'research.verify' && task.status === 'succeeded'),
+        );
+        const revisions = (await engineRowsOf(investigationId)).claims.filter((row) => row.taskId === verify.taskId);
+        basis.A = revisions.find((row) => row.claimId === claimIds.A)!.evidenceIds;
+        basis.C = revisions.find((row) => row.claimId === claimIds.C)!.evidenceIds;
+        verified.open();
+        const done = await until('the answer', async () => {
+          const read = await harness.engine.readInvestigation({ investigationId, resourceId });
+          return read.outcome === 'found' && read.view.status !== 'running' ? read.view : undefined;
+        });
+
+        const tasks = await tasksOf(investigationId);
+        const { run, claims, llmCalls } = await engineRowsOf(investigationId);
+        const [thread] = (await harness.runtime.investigations.listForThread(resourceId, threadId)).filter(
+          (investigation) => investigation.investigationId === investigationId,
+        );
+        const coverageOf = (taskId: string) => thread?.tasks?.find((task) => task.taskId === taskId)?.coverage;
+        const gatherOf = (subquestion: { text: string }) => (analysisOf(subquestion).input as { gatherTaskId: string }).gatherTaskId;
+        const fetches = tasks.filter((task) => task.workflowType === 'source.fetch');
+
+        // AC-05.1: no call above its role's window (the reference contract: worker 64 000), the counted input within the margin of the actual.
+        expect(
+          llmCalls.filter((row) => row.inputTokens! > WINDOWS[row.role]! || Math.abs(row.countedInputTokens - row.inputTokens!) > WINDOWS[row.role]! * 0.05),
+        ).toEqual([]);
+        expect(llmCalls.map((row) => row.role)).toEqual(['plan', 'controller', 'worker', 'worker', 'controller', 'verifier', 'controller', 'synthesis']);
+        // The real read B is larger than the largest window: its worker called no model and asked to narrow (DC-7).
+        expect(coverageOf(gatherOf(WHOLE_SLICE))).toMatchObject({ completeness: 'partial', totalMatched: 120_000, returned: 500, truncated: true });
+        const narrowing = (analysisOf(WHOLE_SLICE).outcome as { answerOrDelta: { needsNarrowing: { materialTokens: number; limitTokens: number } } })
+          .answerOrDelta.needsNarrowing;
+        expect(narrowing.limitTokens).toBe(60_800);
+        expect(narrowing.materialTokens).toBeGreaterThan(64_000);
+
+        // AC-05.2: no edge between the analyses, each depends on its own gather only; all three started before any of them succeeded.
+        const analysisIds = analyses.map((task) => task.taskId);
+        const edges = await harness.db
+          .select()
+          .from(researchTaskDependencies)
+          .where(inArray(researchTaskDependencies.taskId, analysisIds));
+        expect(edges).toHaveLength(SUBQUESTIONS.length);
+        expect(Object.fromEntries(edges.map((edge) => [edge.taskId, [edge.dependsOnTaskId, edge.kind]]))).toEqual(
+          Object.fromEntries(SUBQUESTIONS.map((subquestion) => [analysisOf(subquestion).taskId, [gatherOf(subquestion), 'depends_on']])),
+        );
+        const events = await harness.db
+          .select({ type: researchEvents.type })
+          .from(researchEvents)
+          .where(inArray(researchEvents.taskId, analysisIds))
+          .orderBy(asc(researchEvents.seq));
+        const lifecycle = events.map((event) => event.type).filter((type) => type === 'TaskStarted' || type === 'TaskSucceeded');
+        expect(lifecycle.slice(0, 3)).toEqual(['TaskStarted', 'TaskStarted', 'TaskStarted']);
+        // Each worker packet holds only its sub-question and the evidence of its own gather: no other sub-question, no controller input.
+        const packetOf = (subquestion: { text: string }) => harness.model.callsOf('worker').filter((call) => call.user.includes(subquestion.text));
+        expect(packetOf(WHOLE_SLICE)).toEqual([]);
+        for (const subquestion of [ALL_TIMEOUTS, ONE_TRACE]) {
+          const [packet, ...more] = packetOf(subquestion);
+          expect(more).toEqual([]);
+          const evidenceIds = [...packet!.user.matchAll(/<evidence id="([^"]+)">/g)].map((match) => match[1]);
+          expect(evidenceIds).toEqual(tasks.find((task) => task.taskId === gatherOf(subquestion))!.outputRefs);
+          expect(SUBQUESTIONS.filter((other) => packet!.user.includes(other.text))).toEqual([subquestion]);
+          expect(packet!.user).not.toContain('<decision_input>');
+        }
+
+        // AC-05.3: the "all matches" gather spent its 20 calls with pages left, and its worker carried `partial`, never `complete`.
+        const timeoutsGather = tasks.find((task) => task.taskId === gatherOf(ALL_TIMEOUTS))!;
+        expect(timeoutsGather).toMatchObject({ status: 'succeeded', maxToolCalls: 20, toolCallsUsed: 20 });
+        const partial = { completeness: 'partial', totalMatched: 899, totalRelation: 'eq', returned: 100, truncated: true };
+        expect(coverageOf(timeoutsGather.taskId)).toMatchObject(partial);
+        expect(coverageOf(analysisOf(ALL_TIMEOUTS).taskId)).toMatchObject(partial);
+        expect(claims.find((row) => row.taskId === analysisOf(ALL_TIMEOUTS).taskId)!.coverage).toMatchObject(partial);
+        // The independent counter: one fixture `tools/call` line per call the tasks counted — 20 for A, one each for B, C and the
+        // two collections of the verification round.
+        const counted = fetches.reduce((sum, task) => sum + task.toolCallsUsed, 0);
+        expect(counted).toBe(24);
+        expect(files.readCallLog()).toHaveLength(counted);
+
+        // AC-09.2: the established claims are the verified ones; each resolves to fixture evidence of this investigation with all provenance fields.
+        expect(done).toMatchObject({ status: 'completed', sourceMode: 'sources', answer: { outcome: 'answered', stopReason: null, summary: truth.cause.summary, assumed: [] } });
+        expect(done.answer!.established).toEqual([
+          { claimId: claimIds.A, text: claimOfA.text, evidenceIds: basis.A, verified: true },
+          { claimId: claimIds.C, text: claimOfC.text, evidenceIds: basis.C, verified: true },
+        ]);
+        expect(revisions).toHaveLength(2);
+        expect(Object.fromEntries(revisions.map((row) => [row.claimId, [row.status, row.atoms]]))).toEqual({
+          [claimIds.A]: ['supported', claimOfA.atoms.map((atom) => ({ ...atom, verdict: 'found' }))],
+          [claimIds.C]: ['supported', claimOfC.atoms.map((atom) => ({ ...atom, verdict: 'found' }))],
+        });
+        const own = new Set(tasks.map((task) => task.taskId));
+        const provenance = async (evidenceIds: readonly string[]) =>
+          Promise.all(
+            evidenceIds.map(async (evidenceId) => {
+              const { record } = await harness.runtime.evidence.get(evidenceId, resourceId);
+              expect(own.has(record.taskId)).toBe(true);
+              return record.provenance;
+            }),
+          );
+        expect(basis.A.length).toBeGreaterThan(0);
+        expect(await provenance(basis.A)).toEqual(
+          basis.A.map(() => ({ sourceId: 'fixture', toolName: 'aggregate_logs', normalizedArgs: { ...AGGREGATE_TIMEOUTS, cursor: null }, snapshot: 'fx-v1-2157485c' })),
+        );
+        expect(basis.C.length).toBeGreaterThan(0);
+        expect(await provenance(basis.C)).toEqual(
+          basis.C.map(() => ({ sourceId: 'fixture', toolName: 'get_trace', normalizedArgs: { ...ONE_TRACE.args, cursor: null }, snapshot: 'fx-v1-2157485c' })),
+        );
+
+        // Outcome: the controller succeeded with the answer; usage by role sums to the charged total, no reservation is open.
+        expect(tasks.find((task) => task.workflowType === 'research.controller')).toMatchObject({
+          status: 'succeeded',
+          outcome: { answerOrDelta: { answerId: done.answer!.answerId, outcome: 'answered' } },
+        });
+        expect(done.usage.byRoleAndModel.map((row) => [row.role, row.calls])).toEqual([
+          ['plan', 1],
+          ['controller', 3],
+          ['worker', 2],
+          ['verifier', 1],
+          ['synthesis', 1],
+        ]);
+        expect(llmCalls.filter((row) => row.status !== 'settled')).toEqual([]);
+        expect(llmCalls.reduce((sum, row) => sum + row.chargedTokens!, 0)).toBe(run!.tokensSpent);
+        expect(done.usage).toMatchObject({ totalTokens: run!.tokensSpent });
+        expect(run!.tokensReserved).toBe(0);
+      } finally {
+        harness.handlerHold.at = undefined;
+        allStarted.open();
+        analysed.open();
+        verified.open();
+        await harness.cancelStarted();
+      }
+    }, 120_000);
   });
 
   // ---------------------------------------------------------------------------------------------------------------

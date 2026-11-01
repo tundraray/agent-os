@@ -23,12 +23,20 @@ import {
   type TaskHandler,
   type ThreadOwnership,
 } from '@agent-os/runtime';
-import { createSources, parseSourcesSettings, type Sources, type SourcesLogger } from '@agent-os/sources';
+import {
+  createSources,
+  parseSourcesSettings,
+  type SourceAdapter,
+  type SourceAllowlist,
+  type Sources,
+  type SourcesLogger,
+  type SourcesSettings,
+} from '@agent-os/sources';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { assertTestDatabase, databaseUrl } from './database-url.js';
-import { createScriptedModel, type ScriptedModel } from './scriptedModel.js';
+import { createScriptedModel, type ScriptedModel, type ScriptedModelOptions } from './scriptedModel.js';
 
 /**
  * Test assembly of the engine (design-engine.md, Test Strategy): the real `createRuntime`, `createSources` and
@@ -53,11 +61,23 @@ export interface EngineBuildOptions {
   signalKinds?: readonly SignalKind[];
 }
 
+/** A source the assemblies connect instead of the counting source (E2E-1: the real fixture process). */
+export interface HarnessSource {
+  readonly settings: SourcesSettings;
+  readonly allowlist: SourceAllowlist;
+  /** A new adapter per assembly: stopping an assembly closes its adapter with its sources. */
+  adapter(logger: SourcesLogger): SourceAdapter;
+}
+
 export interface EngineHarnessOptions extends EngineBuildOptions {
   /** Runtime Settings over the test defaults (workers on, 2 slots, 50 ms poll, pool of 4); `workers: false` builds without workers. */
   runtime?: Partial<RuntimeConfig>;
   /** The clock of the runtime and the sources; the system clock by default. */
   clock?: Clock;
+  /** The source of every assembly; the counting source by default (with it, `countingSource` gets no call). */
+  source?: HarnessSource;
+  /** Options of the model double, such as the program that answers a call no scripted step is left for. */
+  model?: ScriptedModelOptions;
 }
 
 /** One recorded log call. */
@@ -309,8 +329,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const database = createDatabase({ connectionString: databaseUrl(), poolMax: config.dbPoolMax });
   const countingSource = createCountingSource();
   const tokenCounter = offsetTokenCounter();
-  const model = createScriptedModel();
-  const sourcesSettings = parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' });
+  const model = createScriptedModel(options.model);
+  const sourcesSettings = options.source?.settings ?? parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' });
   let build: EngineBuildOptions = {
     processes: options.processes ?? [deepResearchProcessV1],
     connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
@@ -349,8 +369,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     });
     const sources = createSources({
       handlers: runtime.handlers,
-      adapters: [countingSource.adapter],
-      allowlist: countingSource.allowlist,
+      adapters: [options.source?.adapter(sourcesLogger(logs.sources)) ?? countingSource.adapter],
+      allowlist: options.source?.allowlist ?? countingSource.allowlist,
       settings: sourcesSettings,
       clock,
       logger: sourcesLogger(logs.sources),
