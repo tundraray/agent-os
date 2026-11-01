@@ -70,6 +70,12 @@ Runtime уже реализован в `apps/api`, и перенос в паке
 
 Отвергнут `nest build` с `AppModule`, потому что Nest остаётся вне пакета. Запуск исходников через `tsx` или через снятие типов Node отвергнут: это новый загрузчик ради одного входа, а снятие типов не отображает спецификаторы `.js` на `.ts`.
 
+#### KD-9: Клиентский пакет охраняет записи в свои таблицы через `TaskContext.withAttemptGuard`, не читая таблиц runtime
+
+Обработчик может вести собственные таблицы, и писать в них должна только текущая попытка: иначе попытка-зомби после перехвата lease оставит там свои строки. `withAttemptGuard` проверяет попытку под той же блокировкой строки задачи, что и записи runtime, и выполняет запись клиента в той же транзакции. Таблицы расследований, задач, событий, доставок и evidence остаются за runtime (ADR-0001). Операция обратно совместима: прежние функции `TaskContext` и обработчики она не меняет. Её реализует план части `engine` фичи `deep-research` ([design-engine.md](../deep-research/design-engine.md)).
+
+Отвергнуто чтение `research_tasks` клиентом: оно открыло бы ему таблицы runtime и повторило бы охрану вне runtime. Хранение записей клиента как evidence через `putEvidence` отвергнуто, потому что evidence нельзя искать и обновлять как строки. Отдельная проверка попытки перед записью отвергнута: между проверкой и commit reaper успевает вернуть задачу.
+
 ## Terms
 
 - **Durable runtime** — исполнитель задач, чьё состояние хранится в Postgres и переживает гибель процесса.
@@ -148,7 +154,7 @@ Runtime уже реализован в `apps/api`, и перенос в паке
 ### FR-08: Доставка событий с восстановлением после рестарта
 
 - Применяются как написаны: после убийства процесса каждое ожидавшее событие доставлено, а задачи дошли до тех же конечных состояний (AC-08.1); ни один эффект не применён дважды (AC-08.2); повторная доставка не меняет записей (AC-08.3); задача из `running` исполняется снова в пределах времени восстановления (AC-08.4).
-- Если попытка, чей lease перехвачен (меньший `attempt` или задача уже не `running`), пишет итог, evidence, checkpoint или резерв вызова, система отклоняет запись и не меняет ни одной строки (AC-RT-1).
+- Если попытка, чей lease перехвачен (меньший `attempt` или задача уже не `running`), пишет итог, evidence, checkpoint, резерв вызова или запись клиента через `withAttemptGuard`, система отклоняет запись и не меняет ни одной строки (AC-RT-1).
 - Если каждая попытка задачи прерывается истечением lease, обработчик вызывается не больше `RUNTIME_MAX_RECOVERIES + 1` раз, и следующее истечение lease записывает `failed` с классом `recovery_exhausted` (AC-RT-2).
 - Пока два процесса с runtime работают над одной базой с одним обработчиком, каждая готовая задача исполняется одной попыткой за раз, и каждую доставку доводит до `done` один процесс; в production это экземпляры `apps/api` (AC-RT-4).
 - Когда процесс завершается штатно, исполняющиеся задачи возвращаются в `queued` без роста `recovery_count`, а пул закрывается после остановки воркеров (AC-RT-5).
@@ -351,7 +357,7 @@ flowchart TB
 
 - `Dispatcher` опрашивает базу и просыпается по `NOTIFY`, захватывает задачи в свободные слоты, держит `AbortSignal` и heartbeat попытки и пишет охраняемый итог.
 - `TaskHandler` — порт обработчика; его реализации дают `mcp-source` и следующие фичи.
-- `TaskContext` даёт обработчику fenced API: резерв вызова, `putEvidence`, checkpoint и ожидание.
+- `TaskContext` даёт обработчику fenced API: резерв вызова, `putEvidence`, checkpoint, ожидание и охрану записей клиента (`withAttemptGuard`).
 - `TaskScheduler` проверяет `TaskSpec`, дедуплицирует, регистрирует рёбра с проверкой цикла, резервирует бюджет и подписывает запросившего.
 - `TaskRepository`, `EvidenceStore` и `EventLog` выполняют запросы Drizzle к задачам, evidence и событиям в переданной транзакции.
 - `OutboxRelay` доставляет события с повтором, backoff и парковкой, а `LISTEN` использует как подсказку.
@@ -804,6 +810,7 @@ sequenceDiagram
 | `TaskContext.putEvidence` | `EvidenceInput` | `EvidenceRef` | попытка не текущая или строки задачи нет (расследование удалено, ошибка FK) → `fenced`; содержимое больше лимита → `validation_rejected` |
 | `TaskContext.saveCheckpoint` | JSON до 64 KiB | `void` | попытка не текущая → `fenced` |
 | `TaskContext.registerWait` | `taskIds` | `ok` или `rejected: wait_cycle` с циклом | задачи нет в расследовании → `unknown_dependency` |
+| `TaskContext.withAttemptGuard` | функция `work`, получающая транзакцию | `committed` с результатом `work` или `fenced` | попытка не текущая или строки задачи нет → значение `fenced`, ничего не записано; исключение `work` или сбой commit → откат, исключение пробрасывается; `work` дольше `RUNTIME_LEASE_MS` или вызов другой функции `TaskContext` внутри `work` → откат, исключение |
 | `EvidenceReader.get` | `evidenceId`, `resourceId` | `EvidenceRecord` и байты | не найдено для владельца → `evidence_not_found` |
 | `EventConsumerRegistry.register` | `EventConsumer` | `void` | дубль имени → ошибка старта |
 | `ThreadDeletionHooks.register` | хук `ThreadDeletionHook` | `void` | — |
@@ -897,7 +904,7 @@ sequenceDiagram
 | `checkpoint` | JSON или null | последний сохранённый checkpoint |
 | `signal` | AbortSignal | причина в `signal.reason`: `{kind}` из `cancelled`, `deadline`, `shutdown`, `lease_lost` |
 | `deadlineAt` | datetime | абсолютный дедлайн |
-| `reserveToolCall`, `putEvidence`, `saveCheckpoint`, `registerWait` | функции | fenced API, см. таблицу операций |
+| `reserveToolCall`, `putEvidence`, `saveCheckpoint`, `registerWait`, `withAttemptGuard` | функции | fenced API, см. таблицу операций |
 
 `ToolCallGrant`: `granted` (bool), `callIndex` (int, при выдаче), `reason` (`tool_calls_exhausted`, `retries_exhausted`, `not_current_attempt`, `cancel_requested`) при отказе.
 
@@ -906,6 +913,16 @@ sequenceDiagram
 - Собственная охраняемая запись попытки, которая её завершает (итог, переход в `waiting`, штатный возврат в `queued`), переносит `attempt_tool_calls` в `tool_calls_used` и `attempt_retries` в `retries_used`.
 - Claim обнуляет `attempt_tool_calls` и `attempt_retries`. Лимит вызовов и лимит повторов действуют на задачу по всем попыткам: возобновление `waiting → queued` не даёт новых вызовов и повторов.
 - Попытка, потерянная по lease, ничего не переносит: reaper возвращает задачу в `queued`, и следующий claim обнуляет её счётчики: вызовы и повторы такой попытки не списываются, и следующая попытка расходует лимиты заново (AC-RT-2).
+
+`withAttemptGuard(work)` охраняет записи пакета-клиента в его собственные таблицы (KD-9). Это транзакция одной задачи, как `saveCheckpoint` (инвариант 13): расследование она не блокирует. Первым шагом runtime проверяет под блокировкой строки задачи, что задача `running` и попытка текущая. До commit ни claim, ни reaper, ни итог не меняют задачу, а reaper ждёт commit. Проверка прошла — runtime вызывает `work` с транзакцией Drizzle над `Database` из `@agent-os/db`, затем делает commit и возвращает `committed` с результатом `work`. Проверка не прошла — откат, предупреждение `fenced` в `RuntimeLogger` и значение `fenced`.
+
+- Внутри `work` клиент пишет только свои таблицы через переданную транзакцию. Он не обращается к модели или внешней системе (инвариант 14) и не блокирует расследование (инвариант 9).
+- Вызов другой функции `TaskContext` внутри `work` runtime отклоняет исключением сразу: её транзакция ждала бы ту же строку задачи.
+- Транзакция ограничена `RUNTIME_LEASE_MS`. Если `work` не завершился в срок, база прерывает транзакцию, runtime откатывает её и бросает исключение, поэтому reaper и `purge` ждут не дольше lease.
+- Таблицы клиента ссылаются по FK только на своё расследование или свою задачу, и `purge` удаляет их строки каскадом.
+- `cancel_requested_at` охрану не меняет, как и у `putEvidence`.
+- Отказ `withAttemptGuard` — значение, как отказ `propose` и резерва. `putEvidence`, `saveCheckpoint` и `registerWait` сообщают `fenced` исключением `AttemptFencedError` с полем `reason: 'fenced'`, которое распознаёт `mcp-source`. Оба сигнала значат одно: попытка не текущая, и ничего не записано.
+- Первый потребитель — движок `deep-research`: так он пишет `research_decisions`, `research_claims` и `research_llm_calls` ([design-engine.md](../deep-research/design-engine.md)).
 
 #### HandlerResult
 
@@ -942,7 +959,9 @@ sequenceDiagram
 | `attempt`, `toolCalls`, `retries` | int | ≥ 0 | счётчики попытки |
 | `dependencyTaskId`, `rootCauseTaskId` | uuid | при `dependency_failed` | прямая и корневая причина каскада |
 
-Только runtime выставляет `dependency_failed` и `recovery_exhausted`. Runtime пишет `deadline` по таймеру дедлайна и при рестарте после дедлайна, `cancelled` — для итога при выставленном `cancel_requested_at`. `budget_exhausted` и `validation_rejected` приходят только от обработчика через `HandlerResult.failure`; обработчик может вернуть и `cancelled` (отражая `signal.reason`) или `deadline`. Остальные классы и коды выставляет `mcp-source`.
+Только runtime выставляет `dependency_failed` и `recovery_exhausted`. Runtime пишет `deadline` по таймеру дедлайна и при рестарте после дедлайна, `cancelled` — для итога при выставленном `cancel_requested_at`. `budget_exhausted` и `validation_rejected` приходят только от обработчика через `HandlerResult.failure`; обработчик может вернуть и `cancelled` (отражая `signal.reason`) или `deadline`.
+
+Сбои источника выставляет `mcp-source`: классы `transport_protocol`, `tool_error`, `snapshot_changed` и `allowlist_rejected` с их кодами. Класс `transport_protocol` возвращает и обработчик, который сам вызывает внешний сервис, например API модели. При сбое сервиса такой обработчик ставит свой код: движок `deep-research` пишет `model_unavailable` ([design-engine.md](../deep-research/design-engine.md)).
 
 Обработчик не возвращает `internal`: его пишет runtime при исключении обработчика или невалидном результате. Остановленную попытку обработчик может завершить исключением: при `fenced` и `not_current_attempt` запись отклоняет охрана, при `signal.reason` `shutdown` Dispatcher возвращает задачу в queued (или пишет cancelled, если выставлен cancel_requested_at), при `lease_lost` итог не пишет.
 
@@ -1025,7 +1044,8 @@ sequenceDiagram
 | Lease истёк | requeue; при исчерпании восстановлений — `recovery_exhausted` (AC-RT-2) | `TaskQueued (recovered)` или `TaskFailed` |
 | Heartbeat вернул 0 строк или не удаётся вплоть до `lease_expires_at` | abort с причиной `lease_lost`, слот освобождён | ничего; задачу вернёт reaper |
 | База недоступна в цикле воркера (dispatcher, relay, reaper, heartbeat) | ошибка в лог, backoff с удвоением от `RUNTIME_POLL_MS` до 16 × `RUNTIME_POLL_MS`; состояние не меняется | ничего |
-| Запись брошенной попытки | отклонена охраной, предупреждение `fenced` | ничего |
+| Запись брошенной попытки | отклонена охраной, предупреждение `fenced` | исключение `AttemptFencedError`; у `withAttemptGuard` — значение `fenced` |
+| `work` в `withAttemptGuard` не завершился за `RUNTIME_LEASE_MS` или вызвал другую функцию `TaskContext` | откат, предупреждение | исключение |
 | Сбой потребителя события | откат к savepoint, `attempts`, `next_attempt_at`, `last_error` — той же транзакцией; после лимита `needs_attention` | строка доставки с `last_error` |
 | Неизвестная `schemaVersion` | сразу `needs_attention`, без вызова потребителя | строка доставки |
 | Пустой `resourceId` | исключение (дефект сервера), как `assertUserId` | 500 |
@@ -1137,8 +1157,8 @@ stateDiagram-v2
 10. Второй держатель блокировки расследования при доставке (`OutboxRelay`, `purge`) ждёт на ней, поэтому цикла с задачами потребителя нет.
 11. Сначала расследование, затем задачи блокируют приём, ожидание (рёбра и переход в `waiting`), итог с `proposedTasks`, отмена и `stop`; `purge` затем удаляет каскадом задачи, события и доставки.
 12. `OutboxRelay` читает `investigation_id` события pending-доставки без блокировки, блокирует расследование `FOR NO KEY UPDATE`, затем доставку `FOR UPDATE SKIP LOCKED` со статусом `pending`, затем исполняет потребителя (каскад, пробуждение, подписчики) в savepoint и отмечает `done` (Flow 3); сбой потребителя описан в [Error Handling](#error-handling).
-13. Транзакция одной задачи сначала касается строки своей задачи (охраняемый UPDATE, `FOR UPDATE` или вставка evidence с FK на задачу) и только затем вставляет события. Так работают claim, heartbeat, резерв, evidence, checkpoint, итог без `proposedTasks` и ожидания, reaper и штатный возврат в `queued`.
-14. Ни одна транзакция не держится через вызов обработчика или внешней системы.
+13. Транзакция одной задачи сначала касается строки своей задачи (охраняемый UPDATE, `FOR UPDATE` или вставка evidence с FK на задачу) и только затем вставляет события. Так работают claim, heartbeat, резерв, evidence, checkpoint, итог без `proposedTasks` и ожидания, reaper, штатный возврат в `queued` и охрана записей клиента (`withAttemptGuard`).
+14. Ни одна транзакция не держится через `run` обработчика, вызов модели или внешней системы; `work` в `withAttemptGuard` только пишет в базу.
 
 ## Test Strategy
 
@@ -1249,6 +1269,12 @@ stateDiagram-v2
   - When: приложение закрывается
   - Then: задача `queued`, пул закрыт после остановки воркеров
   - Вариант: при `RUNTIME_WORKERS=off` готовая задача остаётся `queued`
+- **UC-E9: охрана записей клиента** — covers AC-RT-1 (`withAttemptGuard`, KD-9)
+  - Given: тестовая таблица клиента; lease попытки 1 перехвачен, задача `running` с попыткой 2
+  - When: попытки 1 и 2 вызывают `withAttemptGuard`, и каждая пишет строку в эту таблицу
+  - Then: попытка 1 получает `fenced`, её строки нет; попытка 2 получает `committed`, её строка есть
+  - Вариант: lease попытки 2 истекает, пока `work` не завершён → reaper возвращает задачу только после commit, строка попытки 2 сохранена
+  - Вариант: `work` не завершается за `RUNTIME_LEASE_MS` → откат, исключение, строки нет
 
 ### Non-Functional Use Cases
 
@@ -1396,3 +1422,5 @@ Node 24.11, `pg` 8.23.1, Postgres 16.15 из `infra/docker-compose.yml`, одн�
 | 1.14 | 2026-10-31 | Перенос реализованного в `apps/api` кода в пакеты: группа переноса в карте влияния, побайтный перенос миграций, Interface Change Matrix, прежняя реализация точек интеграции — по текущему коду; UC-E8 о связывании в `apps/api`; AC-RT-4 о двух процессах с runtime; задача CI `e2e-runtime` запускает и тесты пакета sources с Postgres |
 | 1.15 | 2026-10-31 | В карте влияния прямое и косвенное влияние сведены к тому, что меняет перенос, уже реализованное вынесено в отдельную группу; UC-E8 без повтора регистрации хука удаления из UC-17 |
 | 1.16 | 2026-10-31 | Приведено к текущему шаблону: порядок и состав разделов, Snapshot с обзором, Key Decisions с отвергнутыми вариантами, Terms, критерии по требованиям; решения, контракты, критерии и use cases не менялись |
+| 1.17 | 2026-11-01 | FailureReason: обработчик, вызывающий внешний сервис, возвращает `transport_protocol` со своим кодом (`model_unavailable` у движка `deep-research`); классы и коды сбоев источника — у `mcp-source`; поведение и схемы не менялись |
+| 1.18 | 2026-11-01 | `TaskContext.withAttemptGuard` (KD-9): запись клиента в свои таблицы в транзакции под блокировкой строки задачи с проверкой попытки, отказ — значение `fenced`; транзакция ограничена `RUNTIME_LEASE_MS`, вложенный вызов `TaskContext` отклоняется, FK таблиц клиента только на своё расследование или задачу; AC-RT-1, инварианты 13 и 14 и Error Handling охватывают её; первый потребитель — движок `deep-research`; добавление к контракту с обратной совместимостью, реализуется в плане части `engine`; UC-E9; прочее поведение не менялось |
