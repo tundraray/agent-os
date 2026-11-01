@@ -177,7 +177,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
     afterEach(async () => {
       try {
         // A step left in the script means the test scripted a call that never happened.
-        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0 });
       } finally {
         // A test that failed midway leaves no active investigation for the next one to run into.
         await harness.cancelStarted();
@@ -775,7 +775,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 
     afterEach(async () => {
       try {
-        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0 });
       } finally {
         harness.tokenCounter.intercept = undefined;
         await harness.cancelStarted();
@@ -1144,8 +1144,170 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   the first two are in `answer.removed` with their reasons, the third in `established` and `EvidenceReader.get` returns every provenance field for each of its evidence ids; `readInvestigation` by another `resourceId` -> `investigation_not_found`
   // - V3 new claim during synthesis (UC-7 and UC-E7 wiring, AC-09.3, AC-08.3): with verify rounds left -> synthesis returns `needs_verification`, the controller decides `requestVerification` then `proposeAnswer` again and the claim ends in `established` or `insufficient` by the records;
   //   with rounds exhausted (`maxVerifyRounds` reached, `requestVerification` no longer admissible) -> the claim is in `assumed` with `verified` false, never in `established`, and its latest revision is `insufficient` or `unverified`, never `supported`
+  // V1 follows design-engine.md v1.12: the failing connected source answers its snapshot and loses every call of one tool, so its fetch task
+  //   exists and fails (DC-10); a source whose snapshot cannot be read creates no task (KD-10, DC-20) and is proven by the unit row in
+  //   capability-registry.spec.ts. A verified revision keeps its basis in `evidenceIds`, its scope in `coverage` and a verdict per atom in `atoms`.
   describe('INT-3', () => {
-    it.todo('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched, and a failing connected source keeps the investigation in the sources mode');
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      harness = await createEngineHarness();
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+      await closeEngineDb();
+    });
+
+    beforeEach(() => {
+      harness.model.reset();
+      harness.countingSource.calls.length = 0;
+    });
+
+    afterEach(async () => {
+      try {
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0 });
+      } finally {
+        harness.countingSource.failCalls(null);
+        await harness.cancelStarted();
+      }
+    });
+
+    it('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched, and a failing connected source keeps the investigation in the sources mode', async () => {
+      const trace = 'c'.repeat(32);
+      const record = { ts: '2026-10-01T12:05:00.000Z', service: 'payments', level: 'error', event: 'refund', traceId: trace, status: 'error' };
+      harness.countingSource.answerWith(() => [record]);
+      // The connected source stops answering aggregate_logs; its snapshot still reads, so the fetch task exists and fails.
+      harness.countingSource.failCalls((call) => call.toolName === 'aggregate_logs');
+      let claimIds: string[] = [];
+      const claimsWritten = latch();
+      harness.model.script(
+        'controller',
+        {
+          output: {
+            kind: 'requestAnalysis',
+            rationale: 'find the failing refunds',
+            subquestions: [{ text: 'V1: which refunds failed?', sourceId: 'fixture', toolName: 'search_logs', args: { service: 'payments' }, completeness: 'all' }],
+          },
+        },
+        { output: () => ({ kind: 'requestVerification', rationale: 'check both claims', claimIds }), holdUntil: claimsWritten.wait },
+        { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } },
+      );
+      harness.model.script('worker', {
+        output: {
+          claims: [
+            { text: 'the refund trace failed in payments', atoms: [{ kind: 'traceId', value: trace }, { kind: 'service', value: 'payments' }], evidenceIds: [] },
+            { text: 'payments logged 42 errors', atoms: [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }], evidenceIds: [] },
+          ],
+        },
+      });
+      harness.model.script('verifier', {
+        output: () => ({
+          requests: [
+            { claimIds: [claimIds[0]], sourceId: 'fixture', toolName: 'get_trace', args: { traceId: trace } },
+            { claimIds: [claimIds[1]], sourceId: 'fixture', toolName: 'aggregate_logs', args: { service: 'payments', groupBy: 'service' } },
+          ],
+        }),
+      });
+      try {
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        const started = await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'V1: why did the refunds fail?',
+          processId: 'deep-research',
+          launchKey: newLaunchKey(),
+        });
+        if (started.outcome === 'rejected') throw new Error(`start refused: ${started.code}`);
+        const { investigationId } = started;
+        const earlier = await vi.waitFor(
+          async () => {
+            const { claims } = await engineRowsOf(investigationId);
+            if (claims.length < 2) throw new Error('the worker claims are not written yet');
+            // One transaction writes both: their order is the worker's output order.
+            return claims.sort((left, right) => left.claimIndex - right.claimIndex);
+          },
+          { timeout: 20_000, interval: 50 },
+        );
+        claimIds = earlier.map((row) => row.claimId);
+        const versionsBefore = await rowVersionsOf(investigationId);
+        claimsWritten.open();
+        const done = await vi.waitFor(
+          async () => {
+            const read = await harness.engine.readInvestigation({ investigationId, resourceId });
+            if (read.outcome !== 'found' || read.view.status === 'running') throw new Error('the investigation is still running');
+            return read.view;
+          },
+          { timeout: 20_000, interval: 50 },
+        );
+
+        const tasks = await tasksOf(investigationId);
+        const toolOf = (task: (typeof tasks)[number]) => (task.input as { toolName?: string }).toolName;
+        const verify = tasks.find((task) => task.workflowType === 'research.verify')!;
+        const traceFetch = tasks.find((task) => task.workflowType === 'source.fetch' && toolOf(task) === 'get_trace')!;
+        const aggregateFetch = tasks.find((task) => task.workflowType === 'source.fetch' && toolOf(task) === 'aggregate_logs')!;
+        // Runtime settings: three reservations of the verifier call (32 000 + 1 600 + 4 000), 1 tool call, 0 retries.
+        expect(verify).toMatchObject({ status: 'succeeded', maxTokens: 112_800, maxToolCalls: 1, maxRetries: 0 });
+        expect(traceFetch).toMatchObject({ status: 'succeeded' });
+        expect(aggregateFetch).toMatchObject({ status: 'failed', failureReason: { class: 'transport_protocol' } });
+        // AC-25.3: the failing connected source does not switch the mode; the answer carries the supported claim with its evidence, no model-knowledge mark.
+        expect(done).toMatchObject({ status: 'completed', sourceMode: 'sources', answer: { outcome: 'inconclusive', stopReason: null, assumed: [] } });
+
+        const { claims: rows, decisions, llmCalls } = await engineRowsOf(investigationId);
+        // Revisions in the order they were appended: the worker's, then the round's, each by its number in its task.
+        const claims = rows.sort((left, right) => Number(left.taskId === verify.taskId) - Number(right.taskId === verify.taskId) || left.claimIndex - right.claimIndex);
+        expect(claims.map((row) => [row.claimId, row.taskId, row.status, row.atoms, row.evidenceIds])).toEqual([
+          [claimIds[0], earlier[0]!.taskId, 'unverified', [{ kind: 'traceId', value: trace }, { kind: 'service', value: 'payments' }], []],
+          [claimIds[1], earlier[1]!.taskId, 'unverified', [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }], []],
+          [
+            claimIds[0],
+            verify.taskId,
+            'supported',
+            [{ kind: 'traceId', value: trace, verdict: 'found' }, { kind: 'service', value: 'payments', verdict: 'found' }],
+            traceFetch.outputRefs,
+          ],
+          // DC-10: the failed collection gave no record, so its atoms are missing — insufficient, never refuted.
+          [
+            claimIds[1],
+            verify.taskId,
+            'insufficient',
+            [{ kind: 'service', value: 'payments', verdict: 'missing' }, { kind: 'number', value: '42', verdict: 'missing' }],
+            [],
+          ],
+        ]);
+        expect(done.answer!.established).toEqual([
+          { claimId: claimIds[0], text: 'the refund trace failed in payments', evidenceIds: traceFetch.outputRefs, verified: true },
+        ]);
+        expect(claims[2]!.coverage).toMatchObject({ completeness: 'complete', returned: 1 });
+        expect(claims[3]!.coverage).toBeNull();
+        expect(verify.outcome).toMatchObject({
+          answerOrDelta: {
+            verdicts: [
+              { claimId: claimIds[0], status: 'supported', missingAtoms: [] },
+              { claimId: claimIds[1], status: 'insufficient', missingAtoms: [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }] },
+            ],
+          },
+        });
+        // Invariant 9: the earlier revisions are the same rows, never rewritten.
+        const versionsAfter = await rowVersionsOf(investigationId);
+        for (const row of earlier) {
+          const key = `research_claims:${row.claimRevisionId}`;
+          expect(versionsAfter.get(key)).toBe(versionsBefore.get(key));
+        }
+        // The round is counted on its accepted decision and its one task.
+        expect(decisions.filter((row) => row.status === 'accepted').map((row) => [row.kind, row.proposedTaskIds.length])).toEqual([
+          ['requestAnalysis', 2],
+          ['requestVerification', 1],
+          ['concludeInconclusive', 0],
+        ]);
+        expect(decisions[1]!.proposedTaskIds).toEqual([verify.taskId]);
+        expect(llmCalls.filter((row) => row.taskId === verify.taskId).map((row) => [row.role, row.status])).toEqual([['verifier', 'settled']]);
+        expect(harness.model.callsOf('verifier')[0]!.user).toContain(claimIds[1]);
+      } finally {
+        claimsWritten.open();
+      }
+    }, 30_000);
     it.todo('INT-3 V2: the reference gateway removes claims citing another investigation\'s or unknown evidence, and each established claim resolves to evidence with all provenance fields; another owner cannot read the investigation');
     it.todo('INT-3 V3: a new claim made during synthesis is verified before delivery while rounds remain, and is delivered as assumed and unverified, never established, when they are exhausted');
   });
@@ -1206,7 +1368,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 
     afterEach(async () => {
       try {
-        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0 });
       } finally {
         harness.handlerHold.at = undefined;
         await harness.cancelStarted();
@@ -1388,7 +1550,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           expect(await finished(investigationId, resourceId)).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive' } });
           // The worker model was called once, by attempt 1: the next attempts took its answer from the checkpoint.
           expect(harness.model.callsOf('worker')).toHaveLength(1);
-          expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+          expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0 });
           const { run, claims: unordered, llmCalls } = await engineRowsOf(investigationId);
           // The revisions of one write share `createdAt`: by their number.
           const claims = [...unordered].sort((left, right) => left.claimIndex - right.claimIndex);

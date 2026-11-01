@@ -1,4 +1,6 @@
 import type { Task } from '@agent-os/contracts';
+import { unavailableRequestsOf } from '../capabilities/proposed-tasks.repository.js';
+import { SOURCE_FETCH_WORKFLOW } from '../capabilities/gather-key.js';
 import type { DecisionKind } from '../config/capabilities.js';
 import type { ClaimLine, ControllerMaterial, TaskCount } from '../context/role-packets.js';
 import { type InputSignal, toInputSignal } from '../signals/signal-registry.js';
@@ -66,6 +68,20 @@ function taskObservation(task: Task) {
   };
 }
 
+/** KD-10: a request of the previous decision that created no task, observed like a failed gather task. */
+function unavailableObservations(previous: DecisionRow | undefined) {
+  return unavailableRequestsOf(previous?.decision).map((request) => ({
+    taskId: null,
+    type: SOURCE_FETCH_WORKFLOW,
+    status: 'failed',
+    coverage: null,
+    failureCode: request.failureCode,
+    outcome: null,
+    warnings: [],
+    request: { sourceId: request.sourceId, toolName: request.toolName, args: request.args },
+  }));
+}
+
 function countTasks(tasks: readonly Task[]): TaskCount[] {
   const counts = new Map<string, TaskCount>();
   for (const task of tasks) {
@@ -79,8 +95,8 @@ function countTasks(tasks: readonly Task[]): TaskCount[] {
 
 /**
  * The controller input split as in C3: the plan revision, budget, admissible decisions, signals and what appeared or
- * changed since the previous step are mandatory — open tasks, tasks the previous step proposed, claim revisions written
- * after it; the other tasks are counted and the other claims become compressible lines.
+ * changed since the previous step are mandatory — open tasks, tasks the previous step proposed, requests of it that
+ * created no task (KD-10), claim revisions written after it; the other tasks are counted and the other claims become compressible lines.
  */
 export function controllerMaterial(parts: DecisionInputParts): ControllerMaterial {
   const proposedByPrevious = new Set(parts.previous?.proposedTaskIds ?? []);
@@ -98,7 +114,7 @@ export function controllerMaterial(parts: DecisionInputParts): ControllerMateria
       admissible: parts.admissible,
       signals: parts.signals.map(toInputSignal),
       observations: {
-        tasks: parts.tasks.filter(isNewTask).map(taskObservation),
+        tasks: [...parts.tasks.filter(isNewTask).map(taskObservation), ...unavailableObservations(parts.previous)],
         claims: newClaims.map((claim) => ({
           claimId: claim.claimId,
           status: claim.status,

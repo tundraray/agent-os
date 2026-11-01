@@ -30,6 +30,10 @@ export interface EngineLogFields {
   attempt?: number;
   /** Class of the call outcome, e.g. `provider_error`. */
   outcome?: string;
+  /** Source a warning is about, e.g. one whose snapshot could not be read. */
+  sourceId?: string;
+  /** Class (constructor name) of the error a warning reports; never its message. */
+  errorClass?: string;
 }
 
 /** Logger of the engine, passed by the assembly point. */

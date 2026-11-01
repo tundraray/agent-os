@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Coverage } from '@agent-os/contracts';
-import { researchClaims } from '@agent-os/db';
+import { type Database, researchClaims } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { WorkerClaim } from './claim.schema.js';
 
 /** The claims one task writes from its model answer. */
@@ -13,6 +13,22 @@ export interface TaskClaims {
   readonly coverage: Coverage | null;
   readonly claims: readonly WorkerClaim[];
 }
+
+/** A revision a verification round appends to a claim (design-engine.md, Data Model: research_claims). */
+export interface VerifiedRevision {
+  readonly claimId: string;
+  readonly text: string;
+  /** Each atom with its verdict `found`, `missing` or `contradicted`. */
+  readonly atoms: readonly unknown[];
+  /** The basis: evidence of the records the status rests on. */
+  readonly evidenceIds: readonly string[];
+  /** The scope: coverage of the collection the basis came from. */
+  readonly coverage: Coverage | null;
+  readonly status: 'supported' | 'refuted' | 'insufficient';
+}
+
+/** The latest revision of a claim, as the verifier reads it. */
+export type ClaimRevisionRow = typeof researchClaims.$inferSelect;
 
 /**
  * Claim revisions (ADR-0003: drizzle-orm). Every write takes the transaction of `TaskContext.withAttemptGuard`
@@ -50,5 +66,42 @@ export const claimsRepository = {
       .where(eq(researchClaims.taskId, input.taskId))
       .orderBy(asc(researchClaims.claimIndex));
     return written.map((row) => row.claimId);
+  },
+
+  /** The latest revision of each of `claimIds` that belongs to the investigation; ids of other investigations are absent. */
+  latestRevisions(db: Database, investigationId: string, claimIds: readonly string[]): Promise<ClaimRevisionRow[]> {
+    return db
+      .selectDistinctOn([researchClaims.claimId])
+      .from(researchClaims)
+      .where(and(eq(researchClaims.investigationId, investigationId), inArray(researchClaims.claimId, [...claimIds])))
+      .orderBy(asc(researchClaims.claimId), desc(researchClaims.seq));
+  },
+
+  /**
+   * Appends the revisions of one verification task, numbered by their place in its round (invariant 9: the earlier
+   * revisions stay as they were). Unique by task and number, so a replayed attempt adds nothing.
+   */
+  async appendRevisions(
+    tx: RuntimeTx,
+    input: { readonly investigationId: string; readonly taskId: string; readonly revisions: readonly VerifiedRevision[] },
+  ): Promise<void> {
+    if (input.revisions.length === 0) return;
+    await tx
+      .insert(researchClaims)
+      .values(
+        input.revisions.map((revision, claimIndex) => ({
+          claimRevisionId: randomUUID(),
+          investigationId: input.investigationId,
+          claimId: revision.claimId,
+          taskId: input.taskId,
+          claimIndex,
+          text: revision.text,
+          atoms: revision.atoms,
+          evidenceIds: [...revision.evidenceIds],
+          coverage: revision.coverage,
+          status: revision.status,
+        })),
+      )
+      .onConflictDoNothing({ target: [researchClaims.taskId, researchClaims.claimIndex] });
   },
 };

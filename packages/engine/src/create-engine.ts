@@ -14,6 +14,7 @@ import type { TokenCounter } from './model/token-counter.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
 import { createSignalRegistry, type SignalKind } from './signals/signal-registry.js';
+import { createVerifyHandler } from './verify/verify.handler.js';
 import { createAnalyzeHandler } from './workers/analyze.handler.js';
 
 /** What the assembly point passes to {@link createEngine} (ADR-0004: settings and ports, no environment). */
@@ -104,8 +105,8 @@ function resolveRoleModels(configs: readonly ProcessConfig[], resolveModel: Reso
  * Builds the engine (design-engine.md, Contract Definitions). Throws with the configuration path when a configuration
  * fails the schema, a role model has no catalog entry or does not resolve, a `processId` + `version` pair repeats, or —
  * only with a connected source — a configured source is not allowed for `source.fetch` (DC-14). Without a connected
- * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2) and `research.analyze`
- * handlers. Reads neither the environment nor the database.
+ * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2), `research.analyze`
+ * and `research.verify` handlers. Reads neither the environment nor the database.
  */
 export function createEngine(options: CreateEngineOptions): Engine {
   const catalog = options.modelCatalog ?? DEFAULT_MODEL_CATALOG;
@@ -140,6 +141,7 @@ export function createEngine(options: CreateEngineOptions): Engine {
       gateway,
       contextBuilder,
       clock,
+      logger,
     }),
   );
   options.runtime.handlers.register(
@@ -150,6 +152,19 @@ export function createEngine(options: CreateEngineOptions): Engine {
       gateway,
       contextBuilder,
       clock,
+    }),
+  );
+  options.runtime.handlers.register(
+    createVerifyHandler({
+      database: options.database,
+      investigations: options.runtime.investigations,
+      evidence: options.runtime.evidence,
+      scheduler: options.runtime.scheduler,
+      sourceRegistry: options.sourceRegistry,
+      gateway,
+      contextBuilder,
+      clock,
+      logger,
     }),
   );
 

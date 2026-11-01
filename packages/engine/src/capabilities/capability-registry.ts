@@ -5,6 +5,7 @@ import type { Decision } from '../controller/decision.schema.js';
 import { proposeAnalysis } from './analyze.js';
 import { type DecisionFrame, type GatherDeps, type ProposedTasks, proposeGather } from './gather.js';
 import { SOURCE_FETCH_WORKFLOW } from './gather-key.js';
+import { proposeVerification } from './verify.js';
 
 export interface CapabilityRegistryDeps extends GatherDeps {
   readonly sources: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
@@ -39,6 +40,8 @@ export function createCapabilityRegistry(deps: CapabilityRegistryDeps): Capabili
           return proposeGather(deps, frame, decision);
         case 'requestAnalysis':
           return proposeAnalysis(deps, frame, decision);
+        case 'requestVerification':
+          return proposeVerification(deps, frame, decision);
         default:
           return undefined;
       }

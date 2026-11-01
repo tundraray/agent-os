@@ -1,4 +1,4 @@
-import { systemClock } from '@agent-os/runtime';
+import { systemClock, type TaskContext } from '@agent-os/runtime';
 import type { ResolvedSourceTool, SourceRegistry, SourceSchema } from '@agent-os/sources';
 import { loadProcessConfig } from '../config/load-process-config.js';
 import shippedDeepResearch from '../processes/deep-research.v1.json' with { type: 'json' };
@@ -37,6 +37,7 @@ const registry = createCapabilityRegistry({
   sources,
   scheduler: { propose: () => Promise.reject(new Error('not called by the gate')) },
   clock: systemClock,
+  logger: { log: () => undefined, warn: () => undefined, error: () => undefined },
 });
 
 const open: GateState = {
@@ -84,5 +85,54 @@ describe('DecisionGate with the gather capability: source requests are checked a
     } else {
       expect(verdict).toMatchObject({ verdict: 'rejected', reason: expected });
     }
+  });
+});
+
+// KD-10, DC-20 (design-engine.md v1.12): a request whose source snapshot cannot be read is a failed collection without a
+// task. Defect caught: the `currentSnapshot` exception escapes and fails the controller task as `internal`, or a task is
+// proposed without a pinned snapshot, or the warning carries the request.
+describe('the gather capability over a source whose snapshot cannot be read', () => {
+  it('proposes no task, returns the request as source_unavailable and logs one warning without the request', async () => {
+    const warnings: unknown[][] = [];
+    const proposals: unknown[] = [];
+    const unreadable = createCapabilityRegistry({
+      sources: { ...sources, currentSnapshot: () => Promise.reject(new TypeError('fetch failed')) },
+      scheduler: {
+        propose: (spec) => {
+          proposals.push(spec);
+          return Promise.reject(new Error('no task may be proposed'));
+        },
+      },
+      clock: systemClock,
+      logger: { log: () => undefined, warn: (...line) => warnings.push(line), error: () => undefined },
+    });
+    const frame = {
+      ctx: { taskId: '00000000-0000-4000-8000-000000000001', signal: new AbortController().signal } as TaskContext,
+      investigationId: '00000000-0000-4000-8000-000000000002',
+      config,
+      notAfter: new Date(Date.now() + 60_000),
+    };
+    const args = { query: 'secret-request-text' };
+
+    const proposed = await unreadable.proposeTasks(frame, {
+      kind: 'requestEvidence',
+      rationale: 'r',
+      evidenceIds: [],
+      await: true,
+      sourceId: 'fixture',
+      toolName: 'search_logs',
+      args,
+      completeness: 'all',
+    });
+
+    expect(proposed).toEqual({
+      outcome: 'proposed',
+      taskIds: [],
+      unavailable: [{ sourceId: 'fixture', toolName: 'search_logs', args, failureCode: 'source_unavailable' }],
+    });
+    expect(proposals).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]![1]).toMatchObject({ sourceId: 'fixture', errorClass: 'TypeError', outcome: 'source_unavailable' });
+    expect(JSON.stringify(warnings)).not.toContain('secret-request-text');
   });
 });

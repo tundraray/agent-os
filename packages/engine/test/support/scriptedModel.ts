@@ -13,13 +13,14 @@ type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
 /** Roles the double tells apart by the output schema of the call. */
-export type ScriptedRole = 'plan' | 'controller' | 'worker';
+export type ScriptedRole = 'plan' | 'controller' | 'worker' | 'verifier';
 
 /** A property only the output schema of that role has. */
 const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
   plan: 'readinessCriteria',
   controller: 'kind',
   worker: 'claims',
+  verifier: 'requests',
 };
 
 /** Token usage the double reports for a call. */
@@ -32,7 +33,8 @@ export interface ScriptedUsage {
 export type ScriptedStep =
   /**
    * A structured output (any JSON value: a test may script one the schema refuses). With `holdUntil` the call is
-   * recorded at once and answers when that promise settles.
+   * recorded at once and answers when that promise settles. A function is called when the call answers, for an output
+   * that names ids the test learns only while the investigation runs.
    */
   | { readonly output: unknown; readonly usage?: ScriptedUsage; readonly holdUntil?: Promise<void> }
   /** A provider error, thrown as `AI_APICallError`; without `statusCode` a network error. */
@@ -123,7 +125,7 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
 
 export function createScriptedModel(): ScriptedModel {
   const calls: RecordedModelCall[] = [];
-  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [] };
+  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [], verifier: [] };
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
     const role = roleOf(options);
@@ -153,7 +155,7 @@ export function createScriptedModel(): ScriptedModel {
     }
     await step.holdUntil;
     return {
-      content: [{ type: 'text', text: JSON.stringify(step.output) }],
+      content: [{ type: 'text', text: JSON.stringify(typeof step.output === 'function' ? step.output() : step.output) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },
       usage: usageOf(step.usage ?? DEFAULT_USAGE),
       warnings: [],
@@ -179,7 +181,13 @@ export function createScriptedModel(): ScriptedModel {
       scripts.plan.length = 0;
       scripts.controller.length = 0;
       scripts.worker.length = 0;
+      scripts.verifier.length = 0;
     },
-    pending: () => ({ plan: scripts.plan.length, controller: scripts.controller.length, worker: scripts.worker.length }),
+    pending: () => ({
+      plan: scripts.plan.length,
+      controller: scripts.controller.length,
+      worker: scripts.worker.length,
+      verifier: scripts.verifier.length,
+    }),
   };
 }

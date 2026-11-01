@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { buildCodeAnswer, type CodeAnswerEnd, InvestigationAnswerSchema, type StopReason } from '../answer/code-answer.js';
 import { checkpointedAnswer } from '../attempt/checkpoint.js';
 import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
-import { recordProposedTasks } from '../capabilities/proposed-tasks.repository.js';
+import { recordProposedTasks, unavailableRequestsOf } from '../capabilities/proposed-tasks.repository.js';
 import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { SourceMode } from '../config/source-check.js';
@@ -15,6 +15,7 @@ import type { ContextBuilder } from '../context/context-builder.js';
 import { abandonEarlierAttempts, abandonReservations } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { RoleMessage } from '../model/token-counter.js';
+import type { EngineLogger } from '../ports.js';
 import { signalsRepository as signals } from '../signals/signals.repository.js';
 import { admissibleDecisions, type GateState, type GateVerdict, judgeControllerOutput } from './decision-gate.js';
 import { controllerMaterial, openTasks, otherTasks, stepsWithoutNovelty } from './decision-input.js';
@@ -35,6 +36,8 @@ export interface ControllerDeps {
   readonly gateway: ModelGateway;
   readonly contextBuilder: ContextBuilder;
   readonly clock: Clock;
+  /** Warnings of the controller's capabilities, e.g. a source snapshot that could not be read (KD-10). */
+  readonly logger: EngineLogger;
 }
 
 /** The attempt ends without an outcome: a cancel or a lost attempt; the runtime decides it by the abort or the fence. */
@@ -72,7 +75,12 @@ const emptyResult = () => ({ evidenceRefs: [], coverage: null, missingEvidence: 
  */
 export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   const { database: db } = deps;
-  const capabilities = createCapabilityRegistry({ scheduler: deps.scheduler, sources: deps.sourceRegistry, clock: deps.clock });
+  const capabilities = createCapabilityRegistry({
+    scheduler: deps.scheduler,
+    sources: deps.sourceRegistry,
+    clock: deps.clock,
+    logger: deps.logger,
+  });
 
   async function finish(ctx: TaskContext, investigationId: string, end: CodeAnswerEnd): Promise<HandlerResult> {
     const claims = await repository.latestClaims(db, investigationId);
@@ -109,6 +117,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
         return waitFor(ctx, investigation, openTasks(otherTasks(await tasksOf(investigation), ctx.taskId)));
       case 'requestEvidence':
       case 'requestAnalysis':
+      case 'requestVerification':
         return applyTasks(ctx, investigation, latest);
       default:
         throw new DecisionNotExecutableError(`decision ${latest.kind ?? 'unknown'} is not executable by this engine`);
@@ -129,17 +138,19 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   /**
    * A decision that creates tasks: its capability proposes them once and the decision row records them; an attempt that
    * finds them recorded (a wake or a replay) does not propose again. With `await` (true by default) the attempt waits
-   * for those of them still open before the next step.
+   * for those of them still open before the next step. A request whose source gave no snapshot creates no task and is
+   * recorded on the decision as unavailable; nothing waits for it (KD-10).
    */
   async function applyTasks(ctx: TaskContext, investigation: Investigation, latest: DecisionRow): Promise<StepEnd> {
     const decision = DecisionSchema.parse(latest.decision);
     let taskIds: readonly string[] = latest.proposedTaskIds;
-    if (taskIds.length === 0) {
+    if (taskIds.length === 0 && unavailableRequestsOf(latest.decision).length === 0) {
       const frame = {
         ctx,
         investigationId: investigation.investigationId,
         config: investigation.config,
         notAfter: latest.notAfter ?? investigation.notAfter,
+        decisionId: latest.decisionId,
       };
       const proposing = capabilities.proposeTasks(frame, decision);
       if (proposing === undefined) {
@@ -148,7 +159,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       const proposed = await proposing;
       if (proposed.outcome === 'abandon') return abandon(proposed.cause);
       if (proposed.outcome === 'stop') return stop(ctx, investigation, proposed.reason);
-      const recorded = await ctx.withAttemptGuard((tx) => recordProposedTasks(tx, latest.decisionId, proposed.taskIds));
+      const recorded = await ctx.withAttemptGuard((tx) => recordProposedTasks(tx, latest.decisionId, proposed));
       if (recorded.outcome === 'fenced') return abandon('fenced');
       taskIds = proposed.taskIds;
     }

@@ -36,6 +36,11 @@ export interface CountingSource {
    * fails, until set back.
    */
   setUnavailable(unavailable: boolean): void;
+  /**
+   * A connected source whose every call matched by `which` is a lost connection while its snapshot still reads
+   * (AC-25.3, DC-10: the fetch task exists and fails); `null` sets it back.
+   */
+  failCalls(which: ((call: RecordedSourceCall) => boolean) | null): void;
 }
 
 /** What the fixture adapter answers when its process is gone (row K-5 of the mcp-source classification). */
@@ -52,6 +57,7 @@ export function createCountingSource(): CountingSource {
   const calls: RecordedSourceCall[] = [];
   let recordsOf: RecordsOf = () => [];
   let unavailable = false;
+  let failing: ((call: RecordedSourceCall) => boolean) | null = null;
 
   const adapter: SourceAdapter = {
     descriptor: {
@@ -67,7 +73,7 @@ export function createCountingSource(): CountingSource {
     call(call: SourceCall): Promise<CallOutcome> {
       const recorded = { toolName: call.toolName, args: call.args, cursor: call.cursor };
       calls.push(recorded);
-      if (unavailable) {
+      if (unavailable || failing?.(recorded) === true) {
         return Promise.resolve(connectionLost);
       }
       const items = recordsOf(recorded);
@@ -100,6 +106,9 @@ export function createCountingSource(): CountingSource {
     },
     setUnavailable: (value) => {
       unavailable = value;
+    },
+    failCalls: (which) => {
+      failing = which;
     },
   };
 }
