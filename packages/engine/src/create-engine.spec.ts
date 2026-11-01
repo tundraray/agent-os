@@ -1,4 +1,5 @@
 import type { Database } from '@agent-os/db';
+import { systemClock } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
 import { createEngine, type CreateEngineOptions } from './create-engine.js';
@@ -90,11 +91,14 @@ function options(overrides: {
         listForThread: notCalled('listForThread'),
         cancel: notCalled('cancel'),
       },
+      handlers: { register: () => undefined },
     },
     sourceRegistry: overrides.registry,
     connectedSources: overrides.connectedSources,
     processes: [deepResearchProcessV1, secondVersion],
     resolveModel: overrides.resolveModel ?? modelDouble,
+    tokenCounter: { countInputTokens: notCalled('countInputTokens') },
+    clock: systemClock,
     modelCatalog: catalog,
     logger: overrides.logger,
   };

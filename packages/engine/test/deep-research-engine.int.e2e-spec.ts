@@ -39,7 +39,19 @@
 // - runtime port TaskContext.withAttemptGuard (design-runtime.md UC-E9 and variants): packages/runtime/test/research-runtime-runtime.int.e2e-spec.ts, INT-3 R8..R10
 // - the runtime primitives the engine builds on (admission/dedup, wait/wake, fencing of putEvidence/saveCheckpoint, cancel, deadline): runtime and mcp-source suites, not repeated here
 
-import { describe, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import type { InvestigationView, StartInvestigationResult } from '@agent-os/engine';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
+import { createEngineHarness, type EngineHarness } from './support/engineHarness.js';
+import { newLaunchKey, newUser } from './support/new-user.js';
+import {
+  SECOND_CONFIG_MARKER,
+  TEST_PROCESSES,
+  VERSIONED_PROCESS_ID,
+  versionedConfig,
+  versionMarker,
+} from './support/test-configs.js';
 
 describe('deep-research / engine - integration (in-process runtime + engine + real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -92,11 +104,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   the counting source adapter saw exactly one call, the evidence of the first revision is readable by the second
   // - C4 signals reach the decision (UC-5, AC-04.1, DC-5): two recorded signals (kind `test.note` and a kind registered only in this test) are in the next DecisionInput the double received and the decision row lists their `signalId`;
   //   `recordSignal` with an unknown kind -> `signal_kind_unknown`, with a payload off its kind's schema -> `signal_payload_invalid`, with another user's `resourceId` -> `investigation_not_found`; `research_signals` has exactly the two rows
-  // - C5 forced stops end in a code-built answer (one row per reason; each asserts: reason in the answer, outcome `partial` if a supported claim exists else `inconclusive`, controller task `succeeded` with that `answerId`, the double got no call after the stop):
-  //     controller_invalid (UC-E1, AC-01.2, AC-01.3, DC-2): decision outside the set, then an invalid structure, then outside the set with `maxDecisionRetries` 2 -> exactly 3 controller calls for the step, 3 refusals recorded with their reasons, zero tasks, zero source calls
-  //     step_limit (AC-03.2): `maxSteps` 2 of the test configuration -> third step is not taken, stop reason `step_limit`
-  //     deadline (UC-E4 third scenario, DC-3): analysis task claimed after its decision's `notAfter` -> the task fails with class `deadline` and the double got no call for it; the controller wakes and answers by code with `deadline`, it does not fail
-  //     context_overflow (UC-E6 second scenario, DC-8): mandatory part of the controller input larger than its `windowTokens` -> the double is not called, stop reason `context_overflow`
+  // - C5 forced stops end in a code-built answer (one row per reason; each asserts: reason in the answer, outcome `partial` if a supported claim exists else `inconclusive`, controller task `succeeded` with that `answerId`, the double got no call after the stop): One case per reason; each reason's row is the comment above its case.
   // - C6 recorded version survives an engine rebuild (UC-10, DC-15; unique defect: reading the live configuration list instead of the frozen copy, which only a persisted row and a second `createEngine` over the same database can show):
   //   engine built with versions 1 and 2 of one `processId` (different prompt text); investigation A started without a version, investigation B with version 1, both parked mid-run -> `readInvestigation` shows version 2 for A and 1 for B;
   //   the runtime is stopped and the engine rebuilt over the same database with versions 1, 2 and 3 -> both investigations reach an answer, the packets the double received for each carry the prompt text of its recorded version (A: 2, B: 1),
@@ -118,14 +126,355 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   (the kill between the engine row and the controller task cannot be produced without faking a runtime component: it is E2E-2 K3; the shell-matching predicate is a unit test)
   // - Rows never re-check the variants of DecisionGate / config validation / admissible computation: one refused kind per wiring row proves the link, the rule table is a unit test
   describe('INT-1', () => {
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      harness = await createEngineHarness({ processes: TEST_PROCESSES });
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+      await closeEngineDb();
+    });
+
+    beforeEach(() => {
+      harness.model.reset();
+      harness.countingSource.calls.length = 0;
+    });
+
+    afterEach(async () => {
+      try {
+        // A step left in the script means the test scripted a call that never happened.
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0 });
+      } finally {
+        // A test that failed midway leaves no active investigation for the next one to run into.
+        await harness.cancelStarted();
+      }
+    });
+
+    const conclude = { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } };
+
+    function created(result: StartInvestigationResult) {
+      if (result.outcome === 'rejected') throw new Error(`start refused: ${result.code}`);
+      return result;
+    }
+
+    async function view(investigationId: string, resourceId: string): Promise<InvestigationView> {
+      const read = await harness.engine.readInvestigation({ investigationId, resourceId });
+      if (read.outcome !== 'found') throw new Error(`investigation ${investigationId} not found`);
+      return read.view;
+    }
+
+    /** Waits for the terminal status of the investigation's controller task (rule 9: each test waits for its own). */
+    function finished(investigationId: string, resourceId: string): Promise<InvestigationView> {
+      return vi.waitFor(
+        async () => {
+          const current = await view(investigationId, resourceId);
+          if (current.status === 'running') throw new Error(`investigation ${investigationId} is still running`);
+          return current;
+        },
+        { timeout: 20_000, interval: 50 },
+      );
+    }
+
+    /** Contract «Завершение расследования»: the controller task succeeded with the answer's `answerId` and `outcome`. */
+    async function expectControllerSucceededWith(investigationId: string, answer: InvestigationView['answer']) {
+      const [controller, ...others] = await tasksOf(investigationId);
+      expect(others).toEqual([]);
+      expect(controller).toMatchObject({
+        workflowType: 'research.controller',
+        status: 'succeeded',
+        outcome: { answerOrDelta: { answerId: answer?.answerId, outcome: answer?.outcome } },
+      });
+    }
+
     it.todo('INT-1 C1: two scripted decision chains execute exactly the chosen capabilities in the chosen order, each task traces to a decision, and every model call is made by its role\'s model');
-    it.todo('INT-1 C2: a second configuration without verify and analyze refuses requestVerification, builds packets from its own prompts and windows, and ends in an answer without code changes');
+    it('INT-1 C2: a second configuration without verify and analyze refuses requestVerification, builds packets from its own prompts and windows, and ends in an answer without code changes', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      harness.model.script(
+        'controller',
+        { output: { kind: 'requestVerification', rationale: 'check the claim', claimIds: [randomUUID()] } },
+        conclude,
+      );
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C2: what failed in the checkout incident?',
+          processId: 'incident-summary',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const done = await finished(investigationId, resourceId);
+
+      expect(done).toMatchObject({
+        status: 'completed',
+        processId: 'incident-summary',
+        version: 1,
+        answer: { outcome: 'inconclusive', stopReason: null, established: [] },
+      });
+      const { decisions } = await engineRowsOf(investigationId);
+      expect(decisions.map((row) => [row.step, row.callIndex, row.status, row.kind, row.rejectionReason])).toEqual([
+        [1, 0, 'rejected', 'requestVerification', 'capability_disabled'],
+        [1, 1, 'accepted', 'concludeInconclusive', null],
+      ]);
+      await expectControllerSucceededWith(investigationId, done.answer);
+      // The packets carry this configuration's prompts and fit its windows (one counted token per character).
+      const calls = harness.model.calls;
+      expect(calls.map((call) => call.role)).toEqual(['plan', 'controller', 'controller']);
+      for (const call of calls) {
+        expect(call.system).toContain(SECOND_CONFIG_MARKER);
+      }
+      const plan = calls[0]!;
+      expect(plan.system.length + plan.user.length).toBeLessThanOrEqual(5_000);
+      for (const call of calls.slice(1)) {
+        expect(call.system.length + call.user.length).toBeLessThanOrEqual(6_000);
+        // The controller chooses only from this configuration's decisions: no verify, no analyze, nothing to wait for.
+        expect(call.user).toContain('"admissible":["requestEvidence","replan","proposeAnswer","concludeInconclusive"]');
+      }
+    });
     it.todo('INT-1 C3: replan with the same request and snapshot but another rationale creates a second plan revision and no second source call (propose answers subscribed)');
     it.todo('INT-1 C4: recorded signals appear in the next decision input and are referenced by the decision row; unknown kind, off-schema payload and another owner are refused and write nothing');
-    it.todo('INT-1 C5: controller_invalid, step_limit, deadline and context_overflow each end the investigation with a code-built answer carrying the reason; invalid decisions create no task and no source call');
-    it.todo('INT-1 C6: investigations started on versions 2 (no version given) and 1 finish on the prompts of their recorded versions after the engine is rebuilt with versions 1, 2 and 3, and a new start without a version records version 3');
+    // C5 controller_invalid (UC-E1, AC-01.2, AC-01.3, DC-2): decision outside the set, then an invalid structure, then outside the set with `maxDecisionRetries` 2 -> exactly 3 controller calls for the step, 3 refusals recorded with their reasons, zero tasks, zero source calls
+    it('INT-1 C5 controller_invalid: invalid decisions of a step create no task and no source call, each refusal is recorded with its reason, and the investigation ends with a code-built answer', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      const query = 'C5 controller_invalid: why did the payment service restart?';
+      harness.model.script(
+        'controller',
+        { output: { kind: 'deleteEverything', rationale: 'outside the closed set' } },
+        { output: { kind: 'concludeInconclusive', rationale: 'x'.repeat(2_001) } },
+        { output: { kind: 'summariseLogs', rationale: 'outside the closed set again' } },
+      );
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query,
+          processId: 'deep-research',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const done = await finished(investigationId, resourceId);
+
+      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: 'controller_invalid', established: [] });
+      const { decisions, llmCalls } = await engineRowsOf(investigationId);
+      expect(decisions.map((row) => [row.step, row.callIndex, row.status, row.kind, row.rejectionReason])).toEqual([
+        [1, 0, 'rejected', null, 'kind_unknown'],
+        [1, 1, 'rejected', 'concludeInconclusive', 'invalid_structure'],
+        [1, 2, 'rejected', null, 'kind_unknown'],
+      ]);
+      // Exactly maxDecisionRetries + 1 controller calls, none after the stop, no task and no source call.
+      expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'controller', 'controller', 'controller']);
+      expect(llmCalls.map((row) => row.role)).toEqual(['plan', 'controller', 'controller', 'controller']);
+      await expectControllerSucceededWith(investigationId, done.answer);
+      expect(harness.countingSource.calls).toEqual([]);
+      // Rule 12: the engine log holds no prompt and no model answer.
+      const engineLog = JSON.stringify([harness.logs.engine.log, harness.logs.engine.warn, harness.logs.engine.error]);
+      expect(engineLog).not.toContain(query);
+      expect(engineLog).not.toContain('outside the closed set');
+    });
+    // C5 step_limit (AC-03.2): `maxSteps` 2 of the test configuration -> third step is not taken, stop reason `step_limit`
+    it('INT-1 C5 step_limit: the step after maxSteps is not taken and the investigation ends with a code-built answer with step_limit', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      harness.model.script(
+        'controller',
+        { output: { kind: 'replan', rationale: 'first replan', reason: 'the first branch is wrong' } },
+        { output: { kind: 'replan', rationale: 'second replan', reason: 'the second branch is wrong' } },
+      );
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C5 step_limit: when did the queue back up?',
+          processId: 'two-steps',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const done = await finished(investigationId, resourceId);
+
+      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: 'step_limit', established: [] });
+      const { decisions, planRevisions } = await engineRowsOf(investigationId);
+      expect(decisions.map((row) => [row.step, row.status, row.kind])).toEqual([
+        [1, 'accepted', 'replan'],
+        [2, 'accepted', 'replan'],
+      ]);
+      expect(planRevisions.map((row) => [row.revision, row.reason])).toEqual([
+        [1, null],
+        [2, 'the first branch is wrong'],
+        [3, 'the second branch is wrong'],
+      ]);
+      // The third step is not taken: two controller calls, no call after the stop.
+      expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'controller', 'plan', 'controller', 'plan']);
+      await expectControllerSucceededWith(investigationId, done.answer);
+    });
+    // C5 context_overflow (UC-E6 second scenario, DC-8): mandatory part of the controller input larger than its `windowTokens` -> the double is not called, stop reason `context_overflow`
+    it('INT-1 C5 context_overflow: a mandatory controller input larger than its window calls no controller model and ends with a code-built answer with context_overflow', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C5 context_overflow: which service timed out first?',
+          processId: 'narrow-controller',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const done = await finished(investigationId, resourceId);
+
+      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: 'context_overflow', established: [] });
+      // The mandatory part is not cut to fit: the controller model is never called.
+      expect(harness.model.calls.map((call) => call.role)).toEqual(['plan']);
+      const { decisions, llmCalls } = await engineRowsOf(investigationId);
+      expect(decisions).toEqual([]);
+      expect(llmCalls.map((row) => row.role)).toEqual(['plan']);
+      await expectControllerSucceededWith(investigationId, done.answer);
+    });
+    // C5 deadline (UC-E4 third scenario, DC-3): analysis task claimed after its decision's `notAfter` -> the task fails with class `deadline` and the double got no call for it; the controller wakes and answers by code with `deadline`, it does not fail
+    it.todo('INT-1 C5 deadline: an analysis task claimed after notAfter fails with deadline without a model call, and the controller answers by code with deadline');
+    it('INT-1 C6: investigations started on versions 2 (no version given) and 1 finish on the prompts of their recorded versions after the engine is rebuilt with versions 1, 2 and 3, and a new start without a version records version 3', async () => {
+      await harness.rebuildEngine({ processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2)] });
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      const queryA = 'C6 investigation A without a version';
+      const queryB = 'C6 investigation B on version 1';
+      // Both controllers are parked in their first controller call until the runtime stops.
+      harness.model.script('controller', { hangUntilAborted: true }, { hangUntilAborted: true });
+
+      const a = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: queryA,
+          processId: VERSIONED_PROCESS_ID,
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const b = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: queryB,
+          processId: VERSIONED_PROCESS_ID,
+          version: 1,
+          launchKey: newLaunchKey(),
+        }),
+      );
+      await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(2), { timeout: 20_000 });
+      expect(await view(a.investigationId, resourceId)).toMatchObject({ status: 'running', version: 2 });
+      expect(await view(b.investigationId, resourceId)).toMatchObject({ status: 'running', version: 1 });
+
+      harness.model.calls.length = 0;
+      harness.model.script('controller', conclude, conclude, conclude);
+      // No fence: the parked controllers must survive the restart and resume on the new workers.
+      await harness.rebuildEngine(
+        { processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2), versionedConfig(3)] },
+        { fence: false },
+      );
+      const doneA = await finished(a.investigationId, resourceId);
+      const doneB = await finished(b.investigationId, resourceId);
+
+      expect(doneA).toMatchObject({ status: 'completed', version: 2, answer: { outcome: 'inconclusive' } });
+      expect(doneB).toMatchObject({ status: 'completed', version: 1, answer: { outcome: 'inconclusive' } });
+      // After the rebuild each investigation runs on the prompts of its recorded version, not on the newest loaded.
+      const markerOf = (query: string) =>
+        harness.model.calls
+          .filter((call) => call.system.includes(query))
+          .map((call) => [call.role, [1, 2, 3].filter((version) => call.system.includes(versionMarker(version)))]);
+      expect(markerOf(queryA)).toEqual([['controller', [2]]]);
+      expect(markerOf(queryB)).toEqual([['controller', [1]]]);
+
+      const c = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C6 investigation C after the rebuild',
+          processId: VERSIONED_PROCESS_ID,
+          launchKey: newLaunchKey(),
+        }),
+      );
+      expect(await view(c.investigationId, resourceId)).toMatchObject({ version: 3 });
+      expect(await finished(c.investigationId, resourceId)).toMatchObject({ status: 'completed', version: 3 });
+    });
     it.todo('INT-1 C7: without connected sources the investigation runs plan then one synthesis with no controller, worker, verifier or source call, delivers its claims as assumed and unverified with evidence references removed, and keeps that mode after the engine is rebuilt with a source connected');
-    it.todo('INT-1 C8: a start repeated after a failed start takes the shell the failure left instead of creating a second investigation, and two parallel starts with one launchKey keep one investigation');
+    it('INT-1 C8: a start repeated after a failed start takes the shell the failure left instead of creating a second investigation, and two parallel starts with one launchKey keep one investigation', async () => {
+      // (a) a retry after a start that failed between `InvestigationService.create` and the engine row
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      const query = 'C8: why did the login service fail?';
+      const shell = await harness.seedShell({ resourceId, threadId, query });
+      const unmatched = await harness.seedShell({ resourceId, threadId, query: 'C8: another question' });
+      const unmatchedBefore = await rowVersionsOf(unmatched.investigationId);
+      const launchKey = newLaunchKey();
+      harness.model.script('controller', conclude);
+      const input = { resourceId, threadId, query, processId: 'deep-research', launchKey };
+
+      const first = created(await harness.engine.startInvestigation(input));
+
+      expect(first).toMatchObject({ outcome: 'created', investigationId: shell.investigationId });
+      expect(await view(first.investigationId, resourceId)).toMatchObject({ sourceMode: 'sources' });
+      const thread = await harness.runtime.investigations.listForThread(resourceId, threadId);
+      expect(thread.map((investigation) => [investigation.investigationId, investigation.status])).toEqual([
+        [shell.investigationId, 'active'],
+        [unmatched.investigationId, 'active'],
+      ]);
+      expect(await rowVersionsOf(unmatched.investigationId)).toEqual(unmatchedBefore);
+      expect((await engineRunsOf(resourceId)).map((run) => [run.investigationId, run.launchKey, run.sourceMode])).toEqual([
+        [shell.investigationId, launchKey, 'sources'],
+      ]);
+      expect(await finished(first.investigationId, resourceId)).toMatchObject({
+        status: 'completed',
+        answer: { outcome: 'inconclusive', stopReason: null },
+      });
+      expect((await tasksOf(first.investigationId)).map((task) => task.taskId)).toEqual([first.controllerTaskId]);
+
+      const repeated = created(await harness.engine.startInvestigation(input));
+
+      expect(repeated).toEqual({
+        outcome: 'existing',
+        investigationId: first.investigationId,
+        controllerTaskId: first.controllerTaskId,
+      });
+      expect(await view(repeated.investigationId, resourceId)).toMatchObject({ sourceMode: 'sources' });
+      expect(await engineRunsOf(resourceId)).toHaveLength(1);
+      expect((await tasksOf(first.investigationId)).map((task) => task.taskId)).toEqual([first.controllerTaskId]);
+
+      // (b) two parallel starts with one launchKey and no shell
+      const otherThread = await harness.createThread(resourceId);
+      const parallelKey = newLaunchKey();
+      harness.model.script('controller', conclude);
+      const parallelInput = { resourceId, threadId: otherThread, query, processId: 'deep-research', launchKey: parallelKey };
+
+      const [left, right] = (
+        await Promise.all([harness.engine.startInvestigation(parallelInput), harness.engine.startInvestigation(parallelInput)])
+      ).map(created);
+
+      expect(right!.investigationId).toBe(left!.investigationId);
+      expect(right!.controllerTaskId).toBe(left!.controllerTaskId);
+      const winner = left!.investigationId;
+      expect(await view(winner, resourceId)).toMatchObject({ sourceMode: 'sources' });
+      expect((await engineRunsOf(resourceId)).filter((run) => run.launchKey === parallelKey)).toHaveLength(1);
+      expect(await finished(winner, resourceId)).toMatchObject({ status: 'completed' });
+      expect((await tasksOf(winner)).map((task) => task.taskId)).toEqual([left!.controllerTaskId]);
+      const parallelThread = await harness.runtime.investigations.listForThread(resourceId, otherThread);
+      expect(parallelThread.filter((investigation) => investigation.status === 'active').map((i) => i.investigationId)).toEqual([
+        winner,
+      ]);
+      // The loser may not exist: when the second start already sees the first one's engine row, it returns `existing`
+      // without creating an investigation. The race is not forced (no fake runtime component), so the loop may be empty.
+      for (const loser of parallelThread.filter((investigation) => investigation.investigationId !== winner)) {
+        expect(loser.status).toBe('cancelled');
+        expect(await tasksOf(loser.investigationId)).toEqual([]);
+        expect((await engineRowsOf(loser.investigationId)).llmCalls).toEqual([]);
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------------------------------------------

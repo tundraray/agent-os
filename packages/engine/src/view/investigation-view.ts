@@ -1,3 +1,4 @@
+import { type InvestigationAnswer, InvestigationAnswerSchema } from '../answer/code-answer.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { EngineRunStatus } from '../runs/engine-runs.repository.js';
 
@@ -15,6 +16,11 @@ export interface InvestigationView {
   readonly processId: string;
   readonly version: number;
   readonly sourceMode: SourceMode;
+  /**
+   * Null until the investigation is answered; then its `outcome`, `stopReason` (null, or why the engine stopped it), the
+   * sections and the removed claims.
+   */
+  readonly answer: InvestigationAnswer | null;
 }
 
 export type ReadInvestigationResult =
@@ -47,6 +53,7 @@ export function toInvestigationView({ run, investigationStatus, controllerTaskSt
     processId: run.processId,
     version: run.processVersion,
     sourceMode: recordedSourceMode(run.sourceMode),
+    answer: run.answer === null ? null : InvestigationAnswerSchema.parse(run.answer),
   };
 }
 

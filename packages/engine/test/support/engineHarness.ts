@@ -1,13 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Investigation } from '@agent-os/contracts';
-import { createDatabase, type Database } from '@agent-os/db';
+import { createDatabase, type Database, researchEngineRuns, researchInvestigations } from '@agent-os/db';
 import {
   createEngine,
   deepResearchProcessV1,
   type Engine,
   type EngineLogger,
-  type ResolveModel,
-  type RoleModel,
   type TokenCounter,
   type TokenCountRequest,
   type TokenCountResult,
@@ -23,14 +21,16 @@ import {
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import { createSources, parseSourcesSettings, type Sources, type SourcesLogger } from '@agent-os/sources';
+import { eq } from 'drizzle-orm';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
+import { createScriptedModel, type ScriptedModel } from './scriptedModel.js';
 
 /**
  * Test assembly of the engine (design-engine.md, Test Strategy): the real `createRuntime`, `createSources` and
  * `createEngine` over the test database, without `apps/api`. Doubles stand only at the boundaries: the model port
- * `resolveModel`, the `TokenCounter`, the in-memory counting source, the thread-ownership port, the clock and the
- * loggers. The engine package is imported by name, as the runtime and sources harnesses import theirs.
+ * `resolveModel` (the scripted model double), the `TokenCounter`, the in-memory counting source, the thread-ownership
+ * port, the clock and the loggers. The engine package is imported by name, as the runtime and sources harnesses import theirs.
  */
 
 /** Budget of the shipped deep-research configuration: what a start asks `InvestigationService.create` for. */
@@ -76,11 +76,12 @@ export interface EngineHarness {
   readonly db: Database;
   /** Replaced by {@link rebuildEngine}. */
   readonly runtime: Runtime;
-  /** Replaced by {@link rebuildEngine}. */
+  /** Replaced by {@link rebuildEngine}; its starts are recorded for {@link cancelStarted}. */
   readonly engine: Engine;
   readonly countingSource: CountingSource;
   readonly tokenCounter: OffsetTokenCounter;
-  readonly resolveModel: ResolveModel;
+  /** The model double behind `resolveModel`; it survives {@link rebuildEngine}. */
+  readonly model: ScriptedModel;
   readonly clock: Clock;
   readonly logs: { readonly runtime: LogLines; readonly engine: LogLines; readonly sources: LogLines };
   /** A new thread of `resourceId` known to the ownership double; returns its id. */
@@ -97,9 +98,16 @@ export interface EngineHarness {
   }): Promise<Investigation>;
   /**
    * Stops the runtime and builds a new runtime, sources and engine over the same database and threads — a restart of
-   * the process with other configurations or `connectedSources` (UC-10, UC-11). Returns the new engine.
+   * the process with other configurations or `connectedSources` (UC-10, UC-11). Returns the new engine. By default the
+   * new assembly fences the leftovers like the first one; `fence: false` keeps the tasks a test parked before the
+   * rebuild, which the restarted workers then resume (C6).
    */
-  rebuildEngine(options?: EngineBuildOptions): Promise<Engine>;
+  rebuildEngine(options?: EngineBuildOptions, rebuild?: { fence?: boolean }): Promise<Engine>;
+  /**
+   * Cancels, through the real `InvestigationService.cancel`, every investigation started through {@link engine} that is
+   * still active — call in `afterEach`, so a test that failed midway leaves no controller task to the next one.
+   */
+  cancelStarted(): Promise<void>;
   /** Stops the runtime and closes the sources, then the pool — the pool even when the stop fails. */
   close(): Promise<void>;
 }
@@ -152,22 +160,6 @@ function offsetTokenCounter(): OffsetTokenCounter {
   return counter;
 }
 
-/**
- * The model port until the scripted model double arrives (task-09): an instance per model id that the engine only
- * hands to role agents. Creation resolves every role model; nothing calls the instance yet, so a call fails loudly.
- */
-const unscriptedModel: ResolveModel = (modelId): RoleModel => {
-  const unscripted = () => Promise.reject(new Error(`model ${modelId} has no script in this harness`));
-  return {
-    specificationVersion: 'v2',
-    provider: 'engine-harness',
-    modelId,
-    supportedUrls: {},
-    doGenerate: unscripted,
-    doStream: unscripted,
-  };
-};
-
 /** Builds the database, runtime, sources and engine, and starts the runtime's workers unless they are off. */
 export async function createEngineHarness(options: EngineHarnessOptions = {}): Promise<EngineHarness> {
   const config: RuntimeConfig = {
@@ -184,14 +176,34 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const database = createDatabase({ connectionString: databaseUrl(), poolMax: config.dbPoolMax });
   const countingSource = createCountingSource();
   const tokenCounter = offsetTokenCounter();
+  const model = createScriptedModel();
   const sourcesSettings = parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' });
   let build: EngineBuildOptions = {
     processes: options.processes ?? [deepResearchProcessV1],
     connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
   };
 
-  /** createEngine runs before the workers start, as in the composition root (handlers registered before a claim). */
-  function assemble(): { runtime: Runtime; sources: Sources; engine: Engine } {
+  /**
+   * The fence of an assembly: before the workers start, every active investigation with an engine row — what an earlier
+   * run of the file left, for instance after a failed test — is cancelled through the real service, so the new workers
+   * never claim a foreign controller task that would consume the script. Rows are never edited by the harness.
+   */
+  async function cancelLeftovers(runtime: Runtime): Promise<void> {
+    const leftovers = await database.db
+      .select({ investigationId: researchInvestigations.investigationId, resourceId: researchInvestigations.resourceId })
+      .from(researchInvestigations)
+      .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchInvestigations.investigationId))
+      .where(eq(researchInvestigations.status, 'active'));
+    for (const { investigationId, resourceId } of leftovers) {
+      await runtime.investigations.cancel(investigationId, resourceId);
+    }
+  }
+
+  /**
+   * createEngine runs before the workers start, as in the composition root (handlers registered before a claim);
+   * `fence` cancels the leftovers in between.
+   */
+  async function assemble(fence: boolean): Promise<{ runtime: Runtime; sources: Sources; engine: Engine }> {
     const runtime = createRuntime({
       database,
       config,
@@ -209,18 +221,38 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     });
     const engine = createEngine({
       database: database.db,
-      runtime: { scheduler: runtime.scheduler, investigations: runtime.investigations },
+      runtime: { scheduler: runtime.scheduler, investigations: runtime.investigations, handlers: runtime.handlers },
       sourceRegistry: sources.registry,
       connectedSources: build.connectedSources ?? [],
       processes: build.processes ?? [],
-      resolveModel: unscriptedModel,
+      resolveModel: model.resolveModel,
+      tokenCounter,
+      clock,
       logger: recordingLogger(logs.engine),
     });
+    if (fence) {
+      await cancelLeftovers(runtime);
+    }
     runtime.start();
     return { runtime, sources, engine };
   }
 
-  let current = assemble();
+  let current = await assemble(true);
+  /** Investigations started through the harness engine, with their owner. */
+  const started = new Map<string, string>();
+  const recordStarts = (engine: Engine): Engine => ({
+    get sourceMode() {
+      return engine.sourceMode;
+    },
+    readInvestigation: (input) => engine.readInvestigation(input),
+    startInvestigation: async (input) => {
+      const result = await engine.startInvestigation(input);
+      if (result.outcome !== 'rejected') {
+        started.set(result.investigationId, input.resourceId);
+      }
+      return result;
+    },
+  });
   const stop = async (): Promise<void> => {
     try {
       await current.runtime.stop();
@@ -235,11 +267,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       return current.runtime;
     },
     get engine() {
-      return current.engine;
+      return recordStarts(current.engine);
     },
     countingSource,
     tokenCounter,
-    resolveModel: unscriptedModel,
+    model,
     clock,
     logs,
     createThread: async (resourceId) => {
@@ -249,11 +281,17 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     },
     seedShell: ({ resourceId, threadId, query, budget = DEFAULT_BUDGET }) =>
       current.runtime.investigations.create({ resourceId, threadId, query, budget }),
-    rebuildEngine: async (next = {}) => {
+    rebuildEngine: async (next = {}, { fence = true } = {}) => {
       await stop();
       build = { ...build, ...next };
-      current = assemble();
-      return current.engine;
+      current = await assemble(fence);
+      return recordStarts(current.engine);
+    },
+    cancelStarted: async () => {
+      for (const [investigationId, resourceId] of started) {
+        await current.runtime.investigations.cancel(investigationId, resourceId);
+      }
+      started.clear();
     },
     close: async () => {
       try {

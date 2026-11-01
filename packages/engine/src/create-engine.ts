@@ -1,24 +1,34 @@
 import type { Database } from '@agent-os/db';
+import type { Clock, HandlerRegistry } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { loadProcessConfig } from './config/load-process-config.js';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
 import { checkRoleModels, type ProcessConfig, type ProcessConfigRejection } from './config/process-config.schema.js';
 import { createProcessSet } from './config/process-set.js';
 import { checkProcessSources } from './config/source-check.js';
+import { createContextBuilder } from './context/context-builder.js';
+import { createControllerHandler } from './controller/controller.handler.js';
 import { buildEngine, type Engine } from './engine.js';
+import { createModelGateway } from './model/model-gateway.js';
+import type { TokenCounter } from './model/token-counter.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
 
 /** What the assembly point passes to {@link createEngine} (ADR-0004: settings and ports, no environment). */
 export interface CreateEngineOptions {
   readonly database: Database;
-  readonly runtime: EngineRuntimePorts;
+  /** Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`. */
+  readonly runtime: EngineRuntimePorts & { readonly handlers: Pick<HandlerRegistry, 'register'> };
   readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool'>;
   /** `sourceId` of the sources connected in the deployment; empty runs every investigation on model knowledge (KD-8). */
   readonly connectedSources: readonly string[];
   /** Process configurations as data; each goes through the schema of `loadProcessConfig` (AC-12.3). */
   readonly processes: readonly unknown[];
   readonly resolveModel: ResolveModel;
+  /** Counts the input of every role packet before its reservation (KD-4). */
+  readonly tokenCounter: TokenCounter;
+  /** Time and timers of the engine: `notAfter`, retry delays (the runtime's clock in tests). */
+  readonly clock: Clock;
   /** The package's catalog by default. */
   readonly modelCatalog?: ModelCatalog;
   readonly logger: EngineLogger;
@@ -80,10 +90,12 @@ function resolveRoleModels(configs: readonly ProcessConfig[], resolveModel: Reso
  * Builds the engine (design-engine.md, Contract Definitions). Throws with the configuration path when a configuration
  * fails the schema, a role model has no catalog entry or does not resolve, a `processId` + `version` pair repeats, or —
  * only with a connected source — a configured source is not allowed for `source.fetch` (DC-14). Without a connected
- * source it writes exactly one `warn` instead (DC-18). Reads neither the environment nor the database.
+ * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` handler (KD-2). Reads neither
+ * the environment nor the database.
  */
 export function createEngine(options: CreateEngineOptions): Engine {
-  const configs = loadConfigs(options.processes, options.modelCatalog ?? DEFAULT_MODEL_CATALOG);
+  const catalog = options.modelCatalog ?? DEFAULT_MODEL_CATALOG;
+  const configs = loadConfigs(options.processes, catalog);
   const processSet = createProcessSet(configs);
   if (!processSet.ok) {
     throw new ProcessConfigRejectedError(processSet.rejection);
@@ -100,6 +112,17 @@ export function createEngine(options: CreateEngineOptions): Engine {
   if (sources.warnNoSources) {
     options.logger.warn(NO_SOURCES_WARNING);
   }
+
+  const { clock, tokenCounter, logger } = options;
+  options.runtime.handlers.register(
+    createControllerHandler({
+      database: options.database,
+      investigations: options.runtime.investigations,
+      gateway: createModelGateway({ models, tokenCounter, catalog, clock, logger }),
+      contextBuilder: createContextBuilder({ tokenCounter }),
+      clock,
+    }),
+  );
 
   return buildEngine({
     database: options.database,
