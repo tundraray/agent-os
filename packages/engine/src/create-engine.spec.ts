@@ -45,9 +45,10 @@ const modelDouble = (modelId: string): RoleModel => ({
 /** A registry whose allowlist holds every pair while `available`, and none once the source stops answering. */
 function registryDouble(allows: boolean) {
   const state = { available: true };
-  const registry: Pick<SourceRegistry, 'resolveTool'> = {
+  const registry: CreateEngineOptions['sourceRegistry'] = {
     resolveTool: () =>
       allows && state.available ? ({ adapter: {}, tool: {} } as ReturnType<SourceRegistry['resolveTool']>) : null,
+    currentSnapshot: notCalled('currentSnapshot'),
   };
   return { registry, state };
 }
@@ -78,7 +79,7 @@ const catalog: ModelCatalog = {
 
 function options(overrides: {
   connectedSources: readonly string[];
-  registry: Pick<SourceRegistry, 'resolveTool'>;
+  registry: CreateEngineOptions['sourceRegistry'];
   logger: EngineLogger;
   resolveModel?: ResolveModel;
 }): CreateEngineOptions {

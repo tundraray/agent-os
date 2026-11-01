@@ -235,7 +235,72 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         expect(call.user).toContain('"admissible":["requestEvidence","replan","proposeAnswer","concludeInconclusive"]');
       }
     });
-    it.todo('INT-1 C3: replan with the same request and snapshot but another rationale creates a second plan revision and no second source call (propose answers subscribed)');
+    it('INT-1 C3: replan with the same request and snapshot but another rationale creates a second plan revision and no second source call (propose answers subscribed)', async () => {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      harness.countingSource.answerWith(() => [{ service: 'payments', level: 'error', message: 'connection reset by peer' }]);
+      const gather = { kind: 'requestEvidence', sourceId: 'fixture', toolName: 'search_logs', completeness: 'all' };
+      harness.model.script(
+        'controller',
+        { output: { ...gather, rationale: 'collect the payment errors first', args: { service: 'payments', level: 'error' } } },
+        { output: { kind: 'replan', rationale: 'the errors contradict the deploy branch', reason: 'the restart is not a deploy' } },
+        // The same request in the new revision: another rationale, the arguments in another key order.
+        { output: { ...gather, rationale: 'the new plan needs the same errors', args: { level: 'error', service: 'payments' } } },
+        conclude,
+      );
+
+      const { investigationId } = created(
+        await harness.engine.startInvestigation({
+          resourceId,
+          threadId,
+          query: 'C3: why did the payment service restart?',
+          processId: 'deep-research',
+          launchKey: newLaunchKey(),
+        }),
+      );
+      const done = await finished(investigationId, resourceId);
+
+      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: null, established: [] });
+      const { decisions, planRevisions } = await engineRowsOf(investigationId);
+      expect(planRevisions.map((row) => [row.revision, row.reason])).toEqual([
+        [1, null],
+        [2, 'the restart is not a deploy'],
+      ]);
+      const [controller, fetch, ...others] = await tasksOf(investigationId);
+      expect(others).toEqual([]);
+      expect(controller).toMatchObject({ workflowType: 'research.controller', status: 'succeeded' });
+      // One gather task, pinned to the source's snapshot, with the source.fetch budget and the time left until notAfter.
+      expect(fetch).toMatchObject({
+        workflowType: 'source.fetch',
+        status: 'succeeded',
+        input: { sourceId: 'fixture', toolName: 'search_logs', args: { level: 'error', service: 'payments' } },
+        inputRefs: [{ kind: 'source', ref: 'fixture', snapshot: 'counting-v1' }],
+        maxToolCalls: 20,
+        maxRetries: 3,
+      });
+      const notAfter = controller!.deadlineAt!.getTime() - 120_000;
+      expect(fetch!.deadlineMs).toBeGreaterThanOrEqual(Math.floor(notAfter - fetch!.createdAt.getTime()) - 1);
+      expect(fetch!.deadlineMs).toBeLessThanOrEqual(notAfter - controller!.startedAt!.getTime());
+      // The second proposal of the same request was answered `subscribed`: both decisions name the one task.
+      expect(decisions.map((row) => [row.step, row.status, row.kind, row.planRevision, row.proposedTaskIds])).toEqual([
+        [1, 'accepted', 'requestEvidence', 1, [fetch!.taskId]],
+        [2, 'accepted', 'replan', 1, []],
+        [3, 'accepted', 'requestEvidence', 2, [fetch!.taskId]],
+        [4, 'accepted', 'concludeInconclusive', 2, []],
+      ]);
+      expect(harness.countingSource.calls).toEqual([
+        { toolName: 'search_logs', args: { level: 'error', service: 'payments' }, cursor: null },
+      ]);
+      // The evidence collected under revision 1 is what revision 2 decides on: its next decision input carries that task.
+      expect(fetch!.outputRefs).toHaveLength(1);
+      const controllerCalls = harness.model.callsOf('controller');
+      expect(controllerCalls).toHaveLength(4);
+      expect(controllerCalls[3]!.user).toContain('"revision":2');
+      expect(controllerCalls[3]!.user).toContain(fetch!.taskId);
+      expect(harness.model.calls.map((call) => call.role)).toEqual([
+        'plan', 'controller', 'controller', 'plan', 'controller', 'controller',
+      ]);
+    });
     it.todo('INT-1 C4: recorded signals appear in the next decision input and are referenced by the decision row; unknown kind, off-schema payload and another owner are refused and write nothing');
     // C5 controller_invalid (UC-E1, AC-01.2, AC-01.3, DC-2): decision outside the set, then an invalid structure, then outside the set with `maxDecisionRetries` 2 -> exactly 3 controller calls for the step, 3 refusals recorded with their reasons, zero tasks, zero source calls
     it('INT-1 C5 controller_invalid: invalid decisions of a step create no task and no source call, each refusal is recorded with its reason, and the investigation ends with a code-built answer', async () => {

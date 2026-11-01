@@ -1,4 +1,5 @@
 import { type Capability, DECISION_KINDS, type DecisionKind, decisionsOpenedBy } from '../config/capabilities.js';
+import type { SourceSchema } from '@agent-os/sources';
 import type { ProcessConfig } from '../config/process-config.schema.js';
 import { type Decision, DecisionSchema, isDecisionKind, TASK_CREATING_KINDS } from './decision.schema.js';
 
@@ -16,7 +17,9 @@ export type RejectionReason =
   | 'no_novelty'
   | 'verify_rounds_exhausted'
   | 'deadline_too_close'
-  | 'nothing_to_wait_for';
+  | 'nothing_to_wait_for'
+  | 'source_not_allowed'
+  | 'invalid_args';
 
 /** What the limits look like at this step; the handler reads it from the engine rows and the runtime. */
 export interface GateState {
@@ -93,4 +96,44 @@ export function judgeDecision(output: unknown, state: GateState): GateVerdict {
   }
   const limit = limitOf(kind, state);
   return limit === null ? { verdict: 'accepted', decision } : rejected(limit);
+}
+
+/** A source tool a decision may fetch from, with the argument schema of its descriptor; null when it may not. */
+export type FetchToolLookup = (request: { readonly sourceId: string; readonly toolName: string }) => {
+  readonly argsSchema: SourceSchema;
+} | null;
+
+/** The source requests of a decision: its own for `requestEvidence`, one per sub-question for `requestAnalysis`. */
+function fetchRequestsOf(decision: Decision) {
+  switch (decision.kind) {
+    case 'requestEvidence':
+      return [decision];
+    case 'requestAnalysis':
+      return decision.subquestions;
+    default:
+      return [];
+  }
+}
+
+/**
+ * The gate of a controller output (invariant 6): {@link judgeDecision}, then every source request of the decision
+ * against the tools it may fetch from — a pair outside the configuration's `sources` or the `source.fetch` allowlist
+ * is refused as `source_not_allowed`, arguments the tool's descriptor schema refuses as `invalid_args` (Security
+ * Considerations: tool arguments are checked by the descriptor's schema from `SourceRegistry.resolveTool`).
+ */
+export function judgeControllerOutput(output: unknown, state: GateState, fetchTool: FetchToolLookup): GateVerdict {
+  const verdict = judgeDecision(output, state);
+  if (verdict.verdict === 'rejected') {
+    return verdict;
+  }
+  for (const request of fetchRequestsOf(verdict.decision)) {
+    const tool = fetchTool(request);
+    if (tool === null) {
+      return { verdict: 'rejected', reason: 'source_not_allowed', kind: verdict.decision.kind };
+    }
+    if (!tool.argsSchema.safeParse(request.args).success) {
+      return { verdict: 'rejected', reason: 'invalid_args', kind: verdict.decision.kind };
+    }
+  }
+  return verdict;
 }

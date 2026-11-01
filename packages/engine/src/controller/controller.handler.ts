@@ -1,19 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
-import type { Clock, HandlerResult, InvestigationService, TaskContext, TaskHandler } from '@agent-os/runtime';
+import type { Clock, HandlerResult, InvestigationService, TaskContext, TaskHandler, TaskScheduler } from '@agent-os/runtime';
+import type { SourceRegistry } from '@agent-os/sources';
 import { z } from 'zod';
 import { buildCodeAnswer, type CodeAnswerEnd, InvestigationAnswerSchema, type StopReason } from '../answer/code-answer.js';
 import { checkpointedAnswer } from '../attempt/checkpoint.js';
+import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
+import { recordProposedTasks } from '../capabilities/proposed-tasks.repository.js';
 import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { RoleMessage } from '../model/token-counter.js';
-import { admissibleDecisions, type GateState, type GateVerdict, judgeDecision } from './decision-gate.js';
+import { admissibleDecisions, type GateState, type GateVerdict, judgeControllerOutput } from './decision-gate.js';
 import { controllerMaterial, openTasks, otherTasks, stepsWithoutNovelty } from './decision-input.js';
-import { ControllerOutputSchema } from './decision.schema.js';
+import { ControllerOutputSchema, DecisionSchema } from './decision.schema.js';
 import { controllerRepository as repository, type DecisionRow } from './decisions.repository.js';
 import { type InvestigationFrame, promptValues, writePlanRevision } from './plan-role.js';
 import { callOrReplay } from './role-call.js';
@@ -24,6 +27,9 @@ const CONTROLLER_WORKFLOW = 'research.controller';
 export interface ControllerDeps {
   readonly database: Database;
   readonly investigations: Pick<InvestigationService, 'listForThread'>;
+  /** Proposes the tasks of accepted decisions (ADR-0001: the engine writes runtime state only through its services). */
+  readonly scheduler: Pick<TaskScheduler, 'propose'>;
+  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
   readonly gateway: ModelGateway;
   readonly contextBuilder: ContextBuilder;
   readonly clock: Clock;
@@ -64,6 +70,7 @@ const emptyResult = () => ({ evidenceRefs: [], coverage: null, missingEvidence: 
  */
 export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   const { database: db } = deps;
+  const capabilities = createCapabilityRegistry({ scheduler: deps.scheduler, sources: deps.sourceRegistry, clock: deps.clock });
 
   async function finish(ctx: TaskContext, investigationId: string, end: CodeAnswerEnd): Promise<HandlerResult> {
     const claims = await repository.latestClaims(db, investigationId);
@@ -92,18 +99,55 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
         if (revised.outcome === 'stop') return stop(ctx, investigation, revised.reason);
         return { next: 'continue' };
       }
-      case 'wait': {
-        const open = openTasks(otherTasks(await tasksOf(investigation), ctx.taskId)).map((task) => task.taskId);
-        if (open.length === 0) return { next: 'continue' };
-        const registered = await ctx.registerWait(open);
-        if (registered.outcome !== 'ok') {
-          throw new Error(`wait of investigation ${investigation.investigationId} refused: ${registered.reason}`);
-        }
-        return { next: 'result', result: { kind: 'wait', answerOrDelta: null, waitFor: open, ...emptyResult() } };
-      }
+      case 'wait':
+        return waitFor(ctx, investigation, openTasks(otherTasks(await tasksOf(investigation), ctx.taskId)));
+      case 'requestEvidence':
+        return applyTasks(ctx, investigation, latest);
       default:
         throw new DecisionNotExecutableError(`decision ${latest.kind ?? 'unknown'} is not executable by this engine`);
     }
+  }
+
+  /** Ends the attempt waiting for `open` (registered through the runtime), or goes on when nothing is open. */
+  async function waitFor(ctx: TaskContext, investigation: Investigation, open: readonly Task[]): Promise<StepEnd> {
+    if (open.length === 0) return { next: 'continue' };
+    const taskIds = open.map((task) => task.taskId);
+    const registered = await ctx.registerWait(taskIds);
+    if (registered.outcome !== 'ok') {
+      throw new Error(`wait of investigation ${investigation.investigationId} refused: ${registered.reason}`);
+    }
+    return { next: 'result', result: { kind: 'wait', answerOrDelta: null, waitFor: taskIds, ...emptyResult() } };
+  }
+
+  /**
+   * A decision that creates tasks: its capability proposes them once and the decision row records them; an attempt that
+   * finds them recorded (a wake or a replay) does not propose again. With `await` (true by default) the attempt waits
+   * for those of them still open before the next step.
+   */
+  async function applyTasks(ctx: TaskContext, investigation: Investigation, latest: DecisionRow): Promise<StepEnd> {
+    const decision = DecisionSchema.parse(latest.decision);
+    let taskIds: readonly string[] = latest.proposedTaskIds;
+    if (taskIds.length === 0) {
+      const frame = {
+        ctx,
+        investigationId: investigation.investigationId,
+        config: investigation.config,
+        notAfter: latest.notAfter ?? investigation.notAfter,
+      };
+      const proposing = capabilities.proposeTasks(frame, decision);
+      if (proposing === undefined) {
+        throw new DecisionNotExecutableError(`decision ${decision.kind} is not executable by this engine`);
+      }
+      const proposed = await proposing;
+      if (proposed.outcome === 'abandon') return abandon(proposed.cause);
+      if (proposed.outcome === 'stop') return stop(ctx, investigation, proposed.reason);
+      const recorded = await ctx.withAttemptGuard((tx) => recordProposedTasks(tx, latest.decisionId, proposed.taskIds));
+      if (recorded.outcome === 'fenced') return abandon('fenced');
+      taskIds = proposed.taskIds;
+    }
+    if (!('await' in decision) || !decision.await) return { next: 'continue' };
+    const proposedSet = new Set(taskIds);
+    return waitFor(ctx, investigation, openTasks(await tasksOf(investigation)).filter((task) => proposedSet.has(task.taskId)));
   }
 
   async function stop(ctx: TaskContext, investigation: Investigation, reason: StopReason): Promise<StepEnd> {
@@ -190,7 +234,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       if (answered.outcome === 'stop') return stop(ctx, investigation, answered.reason);
       const verdict: GateVerdict =
         answered.outcome === 'answered'
-          ? judgeDecision(answered.output, state)
+          ? judgeControllerOutput(answered.output, state, capabilities.fetchTools(config))
           : { verdict: 'rejected', reason: 'invalid_model_output', kind: null };
       const written = await ctx.withAttemptGuard((tx) =>
         repository.insertDecision(tx, {
@@ -247,9 +291,13 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
     for (;;) {
       const decisions = await repository.decisionsOf(db, ctx.investigationId);
       const latest = decisions.filter((decision) => decision.status === 'accepted').at(-1);
-      const applied = latest === undefined ? { next: 'continue' as const } : await applyLatest(ctx, investigation, latest);
-      if (applied.next === 'result') return applied.result;
-      const stepped = await takeStep(ctx, investigation, decisions);
+      if (latest !== undefined) {
+        const applied = await applyLatest(ctx, investigation, latest);
+        if (applied.next === 'result') return applied.result;
+      }
+      // Applying the latest decision may have recorded its tasks: the step reads the rows as they are now.
+      const current = latest === undefined ? decisions : await repository.decisionsOf(db, ctx.investigationId);
+      const stepped = await takeStep(ctx, investigation, current);
       if (stepped.next === 'result') return stepped.result;
     }
   }

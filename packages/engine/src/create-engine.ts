@@ -19,7 +19,8 @@ export interface CreateEngineOptions {
   readonly database: Database;
   /** Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`. */
   readonly runtime: EngineRuntimePorts & { readonly handlers: Pick<HandlerRegistry, 'register'> };
-  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool'>;
+  /** Checks the configured sources (DC-14) and serves the gather capability: tools, argument schemas and snapshots. */
+  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
   /** `sourceId` of the sources connected in the deployment; empty runs every investigation on model knowledge (KD-8). */
   readonly connectedSources: readonly string[];
   /** Process configurations as data; each goes through the schema of `loadProcessConfig` (AC-12.3). */
@@ -118,6 +119,8 @@ export function createEngine(options: CreateEngineOptions): Engine {
     createControllerHandler({
       database: options.database,
       investigations: options.runtime.investigations,
+      scheduler: options.runtime.scheduler,
+      sourceRegistry: options.sourceRegistry,
       gateway: createModelGateway({ models, tokenCounter, catalog, clock, logger }),
       contextBuilder: createContextBuilder({ tokenCounter }),
       clock,
