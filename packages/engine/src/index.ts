@@ -1,4 +1,8 @@
 // The package entry `.`; the engine components are exported here as they land.
+export type { ModelCatalog, ModelCatalogEntry } from './config/model-catalog.js';
+export type { SourceMode } from './config/source-check.js';
+export { createEngine, type CreateEngineOptions } from './create-engine.js';
+export type { Engine } from './engine.js';
 export {
   loadProcessConfig,
   type LoadProcessConfigResult,
@@ -15,5 +19,15 @@ export type {
   TokenCountRequest,
   TokenCountResult,
 } from './model/token-counter.js';
-export type { ResolveModel, RoleModel } from './ports.js';
+export type { EngineLogFields, EngineLogger, ResolveModel, RoleModel } from './ports.js';
 export { deepResearchProcessV1 } from './processes/shipped-processes.js';
+export type {
+  EngineRuntimePorts,
+  StartInvestigationInput,
+  StartInvestigationResult,
+} from './runs/start-investigation.js';
+export type {
+  InvestigationView,
+  InvestigationViewStatus,
+  ReadInvestigationResult,
+} from './view/investigation-view.js';
