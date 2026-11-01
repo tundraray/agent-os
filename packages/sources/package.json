@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "build:child": "tsc -p tsconfig.child.json",
-    "test:e2e": "pnpm build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts"
+    "test:e2e": "pnpm build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts",
+    "test:verify": "pnpm build && vitest run --config ./vitest.config.verify.ts"
   },
   "dependencies": {
     "@agent-os/contracts": "workspace:*",
