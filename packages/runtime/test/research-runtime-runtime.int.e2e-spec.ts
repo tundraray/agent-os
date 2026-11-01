@@ -1801,6 +1801,33 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         if (!closed) await closing.close();
       }
     }, 30_000);
+
+    // -------------------------------------------------------------------------------------------------------------
+    // INT-3 R8..R10  TaskContext.withAttemptGuard (KD-9; design-runtime.md UC-E9 and its two variants)  [skeletons added 2026-11-01 for the deep-research engine part]
+    // -------------------------------------------------------------------------------------------------------------
+    // Same family and same primary failure mode as R1: one more write path (a client-table write through `withAttemptGuard`) lacks the `status = running AND attempt = own` check. It extends INT-3 as three rows
+    // instead of a sixth integration test, so the part's integration budget is unchanged. The first consumer is the deep-research engine (design-engine.md KD-3); its own use of the guard is INT-4 of
+    // packages/engine/test/deep-research-engine.int.e2e-spec.ts, which does not repeat these rows.
+    // Covers (original statements):
+    // AC-RT-1 (extended by design-runtime.md v1.18): "If попытка, чей lease перехвачен (меньший attempt или задача уже не running), пишет итог, evidence, checkpoint, резерв вызова или запись клиента через withAttemptGuard, система отклоняет запись и не меняет ни одной строки."
+    // Invariants 13 and 14 (Design Doc): the guarded write is a one-task transaction that does not block the investigation and holds no model or external call; `work` only writes the database.
+    // Use case: UC-E9 (main scenario and both variants). Contract: operations table, row `TaskContext.withAttemptGuard`; "withAttemptGuard(work)" paragraph of the Data Contract.
+    // Support to add: a test client table created in `beforeAll` through the harness database (columns: id, task_id uuid references the runtime's task table with ON DELETE CASCADE, attempt, label), dropped in `afterAll`;
+    //   it stands for any client package's table and is the "тестовая таблица клиента" of the use case.
+    // @category: core-functionality
+    // @dependency: TaskContext.withAttemptGuard, Dispatcher, RecoverySweeper, RUNTIME_LEASE_MS, test client table, injected clock, Postgres
+    // @complexity: medium
+    //
+    // Verification items:
+    // - R8 guard decides by attempt (UC-E9 main): lease of attempt 1 taken by attempt 2 (task `running`, attempt 2) -> attempt 1's `withAttemptGuard(work)` returns `fenced`, its `work` writes a row and the row is not in the client table (rolled back),
+    //   a `fenced` warning reaches the recording RuntimeLogger; attempt 2's call returns `committed` with the result of `work` and its row is present; also `fenced` when the task is no longer `running` (settled or cancelled) and when the task row is gone;
+    //   a cancel requested on a `running` task does not change the verdict (`committed`, as `putEvidence`). The task's own row (`state_version`) is unchanged by either call.
+    // - R9 reaper waits for the commit (UC-E9 variant 1): the lease of attempt 2 expires while its `work` is still open (latch inside `work`) -> the sweeper does not requeue the task before `work` commits; after the commit the task is requeued and attempt 2's row is kept
+    // - R10 `work` that must not commit (UC-E9 variant 2): `work` outlasting `RUNTIME_LEASE_MS` -> transaction rolled back, exception thrown, no client row; `work` that throws -> rollback and the same exception propagates (not wrapped into `fenced`);
+    //   `work` that calls another TaskContext function (`saveCheckpoint`) -> rejected with an exception at once (it would wait on the same task row), no client row, no checkpoint written
+    it.todo('INT-3 R8 withAttemptGuard: a superseded or settled attempt gets fenced and its client row is rolled back; the live attempt gets committed with the result of work and its row is kept; cancel does not change the verdict');
+    it.todo('INT-3 R9 withAttemptGuard: a lease that expires while work is open is not requeued by the reaper until work commits, and the live attempt\'s row is kept');
+    it.todo('INT-3 R10 withAttemptGuard: work longer than RUNTIME_LEASE_MS, work that throws and work that calls another TaskContext function roll back, throw, and leave no client row');
   });
 
   // ---------------------------------------------------------------------------------------------------------------
