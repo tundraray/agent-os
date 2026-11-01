@@ -1,0 +1,66 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "typescript/no-floating-promises": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@nestjs/*", "@nestjs/**"],
+            "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
+          },
+          {
+            "group": ["@ai-sdk/*", "@ai-sdk/**"],
+            "message": "ADR-0004: the engine reaches the model only through Mastra and the resolveModel port; provider SDKs stay in apps/api."
+          },
+          {
+            "group": ["@anthropic-ai/*", "@anthropic-ai/**"],
+            "message": "ADR-0004: the engine reaches the model only through Mastra and the resolveModel port; provider SDKs stay in apps/api."
+          },
+          {
+            "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+            "message": "ADR-0004: a package is imported only through its single entry `.`."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@nestjs/*", "@nestjs/**"],
+                "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
+              },
+              {
+                "group": ["@ai-sdk/*", "@ai-sdk/**"],
+                "message": "ADR-0004: the engine reaches the model only through Mastra and the resolveModel port; provider SDKs stay in apps/api."
+              },
+              {
+                "group": ["@anthropic-ai/*", "@anthropic-ai/**"],
+                "message": "ADR-0004: the engine reaches the model only through Mastra and the resolveModel port; provider SDKs stay in apps/api."
+              },
+              {
+                "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+                "message": "ADR-0004: a package is imported only through its single entry `.`."
+              },
+              {
+                "group": ["ai", "ai/*", "ai/**"],
+                "message": "ADR-0004: the AI SDK stays out of src; the model double from ai/test lives only in test/."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "env": {
+    "node": true
+  }
+}

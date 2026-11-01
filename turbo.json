@@ -10,6 +10,8 @@
     "@agent-os/runtime#lint": { "dependsOn": ["^build", "build"] },
     "@agent-os/sources#typecheck": { "dependsOn": ["^build", "build"] },
     "@agent-os/sources#lint": { "dependsOn": ["^build", "build"] },
+    "@agent-os/engine#typecheck": { "dependsOn": ["^build", "build"] },
+    "@agent-os/engine#lint": { "dependsOn": ["^build", "build"] },
     "test": { "dependsOn": ["^build"] }
   }
 }

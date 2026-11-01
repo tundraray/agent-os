@@ -97,3 +97,35 @@ jobs:
       - run: pnpm --filter @agent-os/runtime test:e2e
       - run: pnpm --filter @agent-os/sources test:e2e
       - run: pnpm --filter api test:e2e:runtime
+
+  # Research engine against a real Postgres 16 (design-engine.md, Test Strategy): its own job with
+  # its own database, so the engine suite never shares rows with the runtime suites above. The
+  # suite applies migrations itself (global setup) and uses a scripted model: no provider key.
+  e2e-engine:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent_os"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://agent:agent@localhost:5432/agent_os
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo build --filter=@agent-os/engine...
+      - run: pnpm --filter @agent-os/engine test:e2e
