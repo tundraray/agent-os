@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Investigation } from '@agent-os/contracts';
-import { createDatabase, type Database, researchEngineRuns, researchInvestigations } from '@agent-os/db';
+import { createDatabase, type Database, researchEngineRuns, researchInvestigations, researchTasks } from '@agent-os/db';
 import {
   createEngine,
   deepResearchProcessV1,
@@ -19,11 +19,12 @@ import {
   type RuntimeConfig,
   type RuntimeLogger,
   systemClock,
+  type TaskContext,
   type TaskHandler,
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import { createSources, parseSourcesSettings, type Sources, type SourcesLogger } from '@agent-os/sources';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
@@ -93,6 +94,29 @@ export interface ShiftedClock extends Clock {
   offsetMs: number;
 }
 
+/**
+ * A point an attempt of an engine handler reaches: `run` before the handler starts, `checkpoint` after a
+ * `saveCheckpoint` returned, `guarded` after a `withAttemptGuard` returned, `end` after the handler returned its result
+ * and before the runtime gets it.
+ */
+export interface HandlerPoint {
+  readonly at: 'run' | 'checkpoint' | 'guarded' | 'end';
+  readonly workflowType: string;
+  readonly taskId: string;
+  readonly attempt: number;
+  /** At `checkpoint`: the value saved. */
+  readonly checkpoint?: unknown;
+}
+
+/** Holds the engine's handlers at their points (a zombie attempt kept alive, INT-4). */
+export interface HandlerHold {
+  /**
+   * Awaited at every {@link HandlerPoint}: the attempt goes on when it settles. A test that sets it sets it back to
+   * `undefined` before it ends.
+   */
+  at: ((point: HandlerPoint) => Promise<void> | void) | undefined;
+}
+
 export interface EngineHarness {
   /** The Drizzle client of the harness pool. */
   readonly db: Database;
@@ -113,6 +137,13 @@ export interface EngineHarness {
    * attempt without waiting for its handler; this tells a test when the handler itself is done. A test may empty it.
    */
   readonly endedRuns: { readonly taskId: string; readonly attempt: number }[];
+  readonly handlerHold: HandlerHold;
+  /**
+   * The lease of the task's running `attempt` runs out now on the harness clock, as if its worker had stopped beating:
+   * the recovery sweeper requeues the task and the next attempt takes it (runtime INT-3). Throws when that attempt
+   * is not the task's running one.
+   */
+  expireLease(taskId: string, attempt: number): Promise<void>;
   /** A new thread of `resourceId` known to the ownership double; returns its id. */
   createThread(resourceId: string): Promise<string>;
   /**
@@ -204,6 +235,28 @@ function shiftedClock(base: Clock): ShiftedClock {
   return clock;
 }
 
+/** `ctx` with `hold` awaited after each guarded write and after each saved checkpoint. */
+function heldContext(ctx: TaskContext, hold: (at: 'checkpoint' | 'guarded', checkpoint?: unknown) => Promise<void>): TaskContext {
+  const guarded: Pick<TaskContext, 'withAttemptGuard' | 'saveCheckpoint'> = {
+    withAttemptGuard: async (work) => {
+      const result = await ctx.withAttemptGuard(work);
+      await hold('guarded');
+      return result;
+    },
+    saveCheckpoint: async (checkpoint) => {
+      await ctx.saveCheckpoint(checkpoint);
+      await hold('checkpoint', checkpoint);
+    },
+  };
+  return new Proxy(ctx, {
+    get(target, property) {
+      if (property === 'withAttemptGuard' || property === 'saveCheckpoint') return guarded[property];
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 /** Builds the database, runtime, sources and engine, and starts the runtime's workers unless they are off. */
 export async function createEngineHarness(options: EngineHarnessOptions = {}): Promise<EngineHarness> {
   const config: RuntimeConfig = {
@@ -219,12 +272,20 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const logs = { runtime: recordingLogs(), engine: recordingLogs(), sources: recordingLogs() };
   const owners = new Map<string, string>();
   const endedRuns: { taskId: string; attempt: number }[] = [];
-  /** The engine's handlers as registered, with every end of `run` recorded in `endedRuns`. */
+  const handlerHold: HandlerHold = { at: undefined };
+  /** The engine's handlers as registered, held at their points by `handlerHold`, with every end of `run` recorded in `endedRuns`. */
   const observed = (handler: TaskHandler): TaskHandler => ({
     ...handler,
     run: async (ctx) => {
+      const hold = async (at: HandlerPoint['at'], checkpoint?: unknown): Promise<void> => {
+        const point = { at, workflowType: handler.workflowType, taskId: ctx.taskId, attempt: ctx.attempt };
+        await handlerHold.at?.(at === 'checkpoint' ? { ...point, checkpoint } : point);
+      };
       try {
-        return await handler.run(ctx);
+        await hold('run');
+        const result = await handler.run(heldContext(ctx, hold));
+        await hold('end');
+        return result;
       } finally {
         endedRuns.push({ taskId: ctx.taskId, attempt: ctx.attempt });
       }
@@ -244,7 +305,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   /**
    * The fence of an assembly: before the workers start, every active investigation with an engine row — what an earlier
    * run of the file left, for instance after a failed test — is cancelled through the real service, so the new workers
-   * never claim a foreign controller task that would consume the script. Rows are never edited by the harness.
+   * never claim a foreign controller task that would consume the script. Apart from {@link EngineHarness.expireLease},
+   * rows are never edited by the harness.
    */
   async function cancelLeftovers(runtime: Runtime): Promise<void> {
     const leftovers = await database.db
@@ -341,6 +403,17 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     clock,
     logs,
     endedRuns,
+    handlerHold,
+    expireLease: async (taskId, attempt) => {
+      const expired = await database.db
+        .update(researchTasks)
+        .set({ leaseExpiresAt: new Date(clock.now().getTime() - 1_000) })
+        .where(and(eq(researchTasks.taskId, taskId), eq(researchTasks.status, 'running'), eq(researchTasks.attempt, attempt)))
+        .returning({ taskId: researchTasks.taskId });
+      if (expired.length !== 1) {
+        throw new Error(`task ${taskId} is not running attempt ${attempt}`);
+      }
+    },
     createThread: async (resourceId) => {
       const threadId = `thread-${randomUUID()}`;
       owners.set(threadId, resourceId);

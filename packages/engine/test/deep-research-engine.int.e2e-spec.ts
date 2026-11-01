@@ -44,7 +44,7 @@ import type { InvestigationView, StartInvestigationResult, TokenCountRequest } f
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { closeEngineDb, engineRowsOf, engineRunsOf, rowVersionsOf, tasksOf } from './support/engineDb.js';
-import { createEngineHarness, type EngineHarness, TEST_NOTE_KIND } from './support/engineHarness.js';
+import { createEngineHarness, type EngineHarness, type HandlerPoint, TEST_NOTE_KIND } from './support/engineHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
 import {
   SECOND_CONFIG_MARKER,
@@ -1174,9 +1174,278 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   attempt 2 makes zero model calls (the double's call count stays 1), writes the claim revisions once; running attempt 2's write a second time leaves the row count unchanged
   // - Z2 controller decision: the same takeover for `research.controller` after the decision was produced and checkpointed -> the late decision write of attempt 1 is `fenced`; attempt 2 ends with exactly one accepted decision for the step
   //   and tasks proposed once (second `propose` answers `subscribed`)
+  // The zombie is held right before the write under test (the harness's `handlerHold`: after its checkpoint, or after the guarded write before
+  //   it returned, so the hold does not depend on how the write under test is made), its lease is moved back on the harness clock, and the next
+  //   attempt is held as it starts: the snapshot is taken with both attempts held, so only the zombie can change a row before it is compared.
+  //   The zombie's `run` ending and the runtime fencing its outcome say it is done.
+  // - Z1 runs two rows, one per write of the worker after its checkpoint: `close` (the zombie holds an open reservation, which the next attempt
+  //   closes `abandoned`, charged in full: DC-9 close point 1) and `claims` (the zombie settled its reservation before it lost the task);
+  //   the `claims` row also loses attempt 2 after its write, so attempt 3 replays the same answer and repeats the write.
+  // - Z2 holds the controller before its decision write; the decision's tasks are proposed only by attempt 2, which applies the replayed decision.
   describe('INT-4', () => {
-    it.todo('INT-4 Z1: a worker attempt that lost its lease writes no claim or reservation closure, the next attempt replays the checkpointed answer without a model call, and a repeated write adds no revision');
-    it.todo('INT-4 Z2: a controller attempt that lost its lease writes no decision, and the next attempt ends with exactly one accepted decision for the step and no duplicated task');
+    const ANALYZE = 'research.analyze';
+    const CONTROLLER = 'research.controller';
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      // A lease is lost only when a test moves it back: no heartbeat beats within a test, the sweeper runs every 50 ms.
+      harness = await createEngineHarness({
+        runtime: { concurrency: 4, dbPoolMax: 10, leaseMs: 60_000, heartbeatMs: 60_000, reaperMs: 50 },
+      });
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+      await closeEngineDb();
+    });
+
+    beforeEach(() => {
+      harness.model.reset();
+      harness.countingSource.calls.length = 0;
+    });
+
+    afterEach(async () => {
+      try {
+        expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+      } finally {
+        harness.handlerHold.at = undefined;
+        await harness.cancelStarted();
+      }
+    });
+
+    const conclude = { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } };
+    const analysisOf = (subquestion: string) => ({
+      output: {
+        kind: 'requestAnalysis',
+        rationale: 'look at the failing service',
+        subquestions: [{ text: subquestion, sourceId: 'fixture', toolName: 'search_logs', args: { service: 'service-0' }, completeness: 'all' }],
+      },
+    });
+
+    async function startDeepResearch(query: string) {
+      const resourceId = newUser();
+      const threadId = await harness.createThread(resourceId);
+      const result = await harness.engine.startInvestigation({
+        resourceId,
+        threadId,
+        query,
+        processId: 'deep-research',
+        launchKey: newLaunchKey(),
+      });
+      if (result.outcome === 'rejected') throw new Error(`start refused: ${result.code}`);
+      return { resourceId, investigationId: result.investigationId };
+    }
+
+    function finished(investigationId: string, resourceId: string): Promise<InvestigationView> {
+      return vi.waitFor(
+        async () => {
+          const read = await harness.engine.readInvestigation({ investigationId, resourceId });
+          if (read.outcome !== 'found') throw new Error(`investigation ${investigationId} not found`);
+          if (read.view.status === 'running') throw new Error(`investigation ${investigationId} is still running`);
+          return read.view;
+        },
+        { timeout: 30_000, interval: 50 },
+      );
+    }
+
+    /**
+     * Holds the first handler point `match` accepts until `release`; `reached()` settles with that point once it is held,
+     * and fails when no attempt reaches it within 10 s.
+     */
+    function holdAt(what: string, match: (point: HandlerPoint) => boolean) {
+      const release = latch();
+      let reach!: (point: HandlerPoint) => void;
+      const heldPoint = new Promise<HandlerPoint>((resolve) => {
+        reach = resolve;
+      });
+      let held = false;
+      return {
+        reached: async (): Promise<HandlerPoint> => {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${what} was not reached within 10 s`)), 10_000);
+          });
+          try {
+            return await Promise.race([heldPoint, timeout]);
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+        release: release.open,
+        async visit(point: HandlerPoint): Promise<void> {
+          if (held || !match(point)) return;
+          held = true;
+          reach(point);
+          await release.wait;
+        },
+      };
+    }
+    type Hold = ReturnType<typeof holdAt>;
+
+    const holding = (...holds: Hold[]): void => {
+      harness.handlerHold.at = async (point) => {
+        for (const hold of holds) await hold.visit(point);
+      };
+    };
+
+    const startOf = (workflowType: string, attempt: number) => (point: HandlerPoint) =>
+      point.at === 'run' && point.workflowType === workflowType && point.attempt === attempt;
+
+    /**
+     * The point of an attempt once it saved the model answer of `call` to its checkpoint and then returned from `guarded`
+     * guarded writes; with 0, the checkpoint itself.
+     */
+    function afterCheckpoint(workflowType: string, attempt: number, call: string, guarded: number) {
+      let returned: number | undefined;
+      return (point: HandlerPoint): boolean => {
+        if (point.workflowType !== workflowType || point.attempt !== attempt) return false;
+        if (point.at === 'checkpoint' && (point.checkpoint as { call?: unknown }).call === call) {
+          returned = 0;
+          return guarded === 0;
+        }
+        if (point.at !== 'guarded' || returned === undefined) return false;
+        returned += 1;
+        return returned === guarded;
+      };
+    }
+
+    /** The runtime found the attempt superseded when it came to write its outcome, and wrote nothing. */
+    function outcomeFenced(taskId: string, attempt: number): Promise<void> {
+      return vi.waitFor(
+        () => {
+          const logged = harness.logs.runtime.warn.some(
+            ([message]) => message.startsWith('fenced outcome') && message.includes(`taskId=${taskId} attempt=${attempt}`),
+          );
+          if (!logged) throw new Error(`the outcome of ${taskId} attempt ${attempt} is not settled yet`);
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+    }
+
+    /**
+     * The takeover of a held `zombie` by the next attempt, held as it starts in `successor`: the zombie, let on, ends
+     * without changing any row of the investigation. Returns the zombie's task.
+     */
+    async function zombieWritesNothing(investigationId: string, zombie: Hold, successor: Hold): Promise<string> {
+      const { taskId, attempt } = await zombie.reached();
+      await harness.expireLease(taskId, attempt);
+      await successor.reached();
+      const before = await rowVersionsOf(investigationId);
+
+      zombie.release();
+      await vi.waitFor(() => expect(harness.endedRuns).toContainEqual({ taskId, attempt }), { timeout: 10_000, interval: 20 });
+      await outcomeFenced(taskId, attempt);
+
+      expect(await rowVersionsOf(investigationId)).toEqual(before);
+      return taskId;
+    }
+
+    it('INT-4 Z1: a worker attempt that lost its lease writes no claim or reservation closure, the next attempt replays the checkpointed answer without a model call, and a repeated write adds no revision', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'lock wait timeout' }]);
+      const workerAnswer = {
+        output: {
+          claims: [
+            { text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'service', value: 'service-0' }], evidenceIds: [] },
+            { text: 'the lock wait exceeded its timeout', atoms: [{ kind: 'event', value: 'lock wait timeout' }], evidenceIds: [] },
+          ],
+        },
+      };
+      // The writes of the worker after its checkpoint: the guarded close of its reservation, then the claims.
+      for (const [row, guardedBefore] of [['close', 0], ['claims', 1]] as const) {
+        harness.model.reset();
+        harness.model.script('controller', analysisOf(`Z1 ${row}: what failed in service-0?`), conclude);
+        harness.model.script('worker', workerAnswer);
+        const zombie = holdAt(`attempt 1 before its ${row} write`, afterCheckpoint(ANALYZE, 1, 'analyze', guardedBefore));
+        const second = holdAt('the start of attempt 2', startOf(ANALYZE, 2));
+        // In the `claims` row attempt 2 is held after its write, and attempt 3 takes the task over and writes again.
+        const secondWritten = holdAt(
+          'the end of attempt 2',
+          (point) => row === 'claims' && point.at === 'end' && point.workflowType === ANALYZE && point.attempt === 2,
+        );
+        holding(zombie, second, secondWritten);
+        try {
+          const { resourceId, investigationId } = await startDeepResearch(`Z1 ${row}: why do the lock waits time out?`);
+          const taskId = await zombieWritesNothing(investigationId, zombie, second);
+          second.release();
+
+          let firstWrite: unknown[] = [];
+          if (row === 'claims') {
+            await secondWritten.reached();
+            firstWrite = (await engineRowsOf(investigationId)).claims;
+            await harness.expireLease(taskId, 2);
+            await vi.waitFor(
+              async () =>
+                expect((await tasksOf(investigationId)).find((task) => task.taskId === taskId)).toMatchObject({
+                  status: 'succeeded',
+                  attempt: 3,
+                }),
+              { timeout: 10_000, interval: 50 },
+            );
+            secondWritten.release();
+            await outcomeFenced(taskId, 2);
+          }
+
+          expect(await finished(investigationId, resourceId)).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive' } });
+          // The worker model was called once, by attempt 1: the next attempts took its answer from the checkpoint.
+          expect(harness.model.callsOf('worker')).toHaveLength(1);
+          expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0 });
+          const { run, claims: unordered, llmCalls } = await engineRowsOf(investigationId);
+          // The revisions of one write share `createdAt`: by their number.
+          const claims = [...unordered].sort((left, right) => left.claimIndex - right.claimIndex);
+          const task = (await tasksOf(investigationId)).find((candidate) => candidate.taskId === taskId)!;
+          expect(task).toMatchObject({ status: 'succeeded', attempt: row === 'claims' ? 3 : 2 });
+          // The claims are written once and the task's outcome names them; in `claims` the repeated write of attempt 3 added nothing.
+          expect(claims.map((claim) => [claim.taskId, claim.claimIndex, claim.status])).toEqual([
+            [taskId, 0, 'unverified'],
+            [taskId, 1, 'unverified'],
+          ]);
+          expect(task.outcome).toMatchObject({ answerOrDelta: { claimIds: claims.map((claim) => claim.claimId) } });
+          if (row === 'claims') expect(unordered).toEqual(firstWrite);
+          // `close`: attempt 1's fenced close left its reservation open, and attempt 2 closed it `abandoned`, charged in full (DC-9);
+          // `claims`: attempt 1 settled it before it lost the task.
+          const workerRows = llmCalls.filter((call) => call.taskId === taskId);
+          expect(workerRows.map((call) => [call.attempt, call.status])).toEqual([[1, row === 'close' ? 'abandoned' : 'settled']]);
+          if (row === 'close') expect(workerRows[0]!.chargedTokens).toBe(workerRows[0]!.reservedTokens);
+          expect(llmCalls.filter((call) => call.status === 'reserved')).toEqual([]);
+          expect(llmCalls.reduce((sum, call) => sum + (call.chargedTokens ?? 0), 0)).toBe(run!.tokensSpent);
+        } finally {
+          zombie.release();
+          second.release();
+          secondWritten.release();
+        }
+      }
+    }, 60_000);
+
+    it('INT-4 Z2: a controller attempt that lost its lease writes no decision, and the next attempt ends with exactly one accepted decision for the step and no duplicated task', async () => {
+      harness.countingSource.answerWith((call) => [{ service: call.args.service, level: 'error', message: 'replica lag' }]);
+      harness.model.script('controller', analysisOf('Z2: what failed in service-0?'), conclude);
+      harness.model.script('worker', { output: { claims: [] } });
+      // After the checkpoint of its first decision the controller closes its reservation (a guarded write), then writes the decision.
+      const zombie = holdAt('attempt 1 before its decision write', afterCheckpoint(CONTROLLER, 1, 'decision:1:0', 1));
+      const second = holdAt('the start of attempt 2', startOf(CONTROLLER, 2));
+      holding(zombie, second);
+      try {
+        const { resourceId, investigationId } = await startDeepResearch('Z2: why do the replicas lag?');
+        await zombieWritesNothing(investigationId, zombie, second);
+        second.release();
+
+        expect(await finished(investigationId, resourceId)).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive' } });
+        // Two controller calls, one per step: attempt 2 took the decision of step 1 from the checkpoint.
+        expect(harness.model.callsOf('controller')).toHaveLength(2);
+        const { decisions } = await engineRowsOf(investigationId);
+        expect(decisions.map((decision) => [decision.step, decision.callIndex, decision.status, decision.kind])).toEqual([
+          [1, 0, 'accepted', 'requestAnalysis'],
+          [2, 0, 'accepted', 'concludeInconclusive'],
+        ]);
+        // The decision's tasks are proposed once: one collection and one analysis, both recorded on the decision.
+        const tasks = await tasksOf(investigationId);
+        expect(tasks.map((task) => task.workflowType)).toEqual([CONTROLLER, 'source.fetch', ANALYZE]);
+        expect(decisions[0]!.proposedTaskIds).toEqual(tasks.slice(1).map((task) => task.taskId));
+      } finally {
+        zombie.release();
+        second.release();
+      }
+    }, 30_000);
   });
 });
 
