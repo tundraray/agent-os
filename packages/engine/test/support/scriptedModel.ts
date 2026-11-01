@@ -13,10 +13,14 @@ type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
 /** Roles the double tells apart by the output schema of the call. */
-export type ScriptedRole = 'plan' | 'controller' | 'worker' | 'verifier';
+export type ScriptedRole = 'plan' | 'controller' | 'worker' | 'verifier' | 'synthesis';
 
-/** A property only the output schema of that role has. */
+/**
+ * A property only the output schema of that role has, looked up in this order: the synthesis output also has
+ * `claims`, so its `summary` is checked before the worker's marker.
+ */
 const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
+  synthesis: 'summary',
   plan: 'readinessCriteria',
   controller: 'kind',
   worker: 'claims',
@@ -125,7 +129,7 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
 
 export function createScriptedModel(): ScriptedModel {
   const calls: RecordedModelCall[] = [];
-  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [], verifier: [] };
+  const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [], verifier: [], synthesis: [] };
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
     const role = roleOf(options);
@@ -182,12 +186,14 @@ export function createScriptedModel(): ScriptedModel {
       scripts.controller.length = 0;
       scripts.worker.length = 0;
       scripts.verifier.length = 0;
+      scripts.synthesis.length = 0;
     },
     pending: () => ({
       plan: scripts.plan.length,
       controller: scripts.controller.length,
       worker: scripts.worker.length,
       verifier: scripts.verifier.length,
+      synthesis: scripts.synthesis.length,
     }),
   };
 }

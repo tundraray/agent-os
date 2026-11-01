@@ -147,7 +147,12 @@ describe('DecisionGate: only an admissible, well-formed decision of an enabled c
     expect(admissibleDecisions(state)).toEqual(admissible);
   });
 
-  it('defaults await to true for a decision creating tasks', () => {
-    expect(judgeDecision(outputs.proposeAnswer, open)).toMatchObject({ decision: { await: true, evidenceIds: [EVIDENCE_ID] } });
+  // Defect caught: a proposeAnswer the model sent with `await: false` lets the controller step on while its synthesis runs.
+  it.each<[string, unknown, boolean]>([
+    ['defaults await to true for a decision creating tasks', outputs.proposeAnswer, true],
+    ['keeps await false for another decision creating tasks', { ...outputs.requestEvidence, await: false }, false],
+    ['always waits for the synthesis of an accepted proposeAnswer', { ...outputs.proposeAnswer, await: false }, true],
+  ])('%s', (_, output, awaits) => {
+    expect(judgeDecision(output, open)).toMatchObject({ verdict: 'accepted', decision: { await: awaits } });
   });
 });

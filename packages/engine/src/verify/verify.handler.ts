@@ -12,18 +12,15 @@ import type {
 import type { SourceRegistry } from '@agent-os/sources';
 import { z } from 'zod';
 import { answerSaver, checkpointedAnswer } from '../attempt/checkpoint.js';
+import { abandon as abandonAttempt, failed, readTaskFrame, succeeded, type TaskFrame } from '../attempt/task-attempt.js';
 import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
 import { type DecisionFrame, proposeGather } from '../capabilities/gather.js';
 import { VERIFY_WORKFLOW, VerifyInputSchema } from '../capabilities/verify.js';
 import { type ClaimRevisionRow, claimsRepository as claims, type VerifiedRevision } from '../claims/claims.repository.js';
-import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
-import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { EvidenceItem } from '../context/role-packets.js';
-import { controllerRepository } from '../controller/decisions.repository.js';
-import { type InvestigationFrame, promptValues } from '../controller/plan-role.js';
-import { ENGINE_FAILURE_CLASSES, type EngineFailureCode } from '../engine-errors.js';
+import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import type { EngineLogger } from '../ports.js';
@@ -83,39 +80,9 @@ const StoredAtomsSchema = z.array(z.object({ kind: z.string(), value: z.string()
 /** A page of `source.fetch` evidence: its records are `items` (design-mcp-source.md, evidence of a page). */
 const PageSchema = z.object({ items: z.array(z.unknown()) });
 
-/** The attempt ends without an outcome: a cancel or a lost attempt; the runtime decides it by the abort or the fence. */
-class AttemptAbandonedError extends Error {
-  override readonly name = 'AttemptAbandonedError';
-}
-
-const abandon = (cause: 'cancelled' | 'fenced'): never => {
-  throw new AttemptAbandonedError(`verification attempt ended without an outcome: ${cause}`);
-};
-
-/** The investigation as one verification attempt sees it. */
-interface VerificationFrame extends InvestigationFrame {
-  readonly resourceId: string;
-  readonly threadId: string;
-}
+const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(VERIFY_WORKFLOW, cause);
 
 type Step<T> = { readonly next: 'go'; readonly value: T } | { readonly next: 'result'; readonly result: HandlerResult };
-
-function succeeded(answerOrDelta: HandlerResult['answerOrDelta'], warnings: string[] = []): HandlerResult {
-  return { kind: 'completed', answerOrDelta, evidenceRefs: [], coverage: null, missingEvidence: [], warnings, proposedTasks: [] };
-}
-
-function failed(ctx: TaskContext, code: EngineFailureCode, message: string): HandlerResult {
-  return {
-    kind: 'failed',
-    answerOrDelta: null,
-    evidenceRefs: [],
-    coverage: null,
-    missingEvidence: [],
-    warnings: [],
-    proposedTasks: [],
-    failure: { class: ENGINE_FAILURE_CLASSES[code], code, message, cause: null, attempt: ctx.attempt, toolCalls: 0, retries: 0 },
-  };
-}
 
 /**
  * `research.verify` v1 (design-engine.md, Flow 4). The `verifier` role chooses which source records would check the
@@ -132,34 +99,18 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   const gatherDeps = { scheduler: deps.scheduler, sources: deps.sourceRegistry, clock: deps.clock, logger: deps.logger };
   const capabilities = createCapabilityRegistry(gatherDeps);
 
-  async function frameOf(ctx: TaskContext, notAfter: Date): Promise<VerificationFrame> {
-    const read = await controllerRepository.readRun(db, ctx.investigationId);
-    if (read === undefined) {
-      throw new Error(`investigation ${ctx.investigationId} has no engine row`);
-    }
-    return {
-      investigationId: ctx.investigationId,
-      resourceId: read.run.resourceId,
-      threadId: read.threadId,
-      query: read.query,
-      config: ProcessConfigSchema.parse(read.run.processConfig),
-      sourceMode: read.run.sourceMode as SourceMode,
-      notAfter,
-    };
-  }
-
-  async function tasksOf(frame: VerificationFrame): Promise<readonly Task[]> {
+  async function tasksOf(frame: TaskFrame): Promise<readonly Task[]> {
     const thread = await deps.investigations.listForThread(frame.resourceId, frame.threadId);
     return thread.find((candidate) => candidate.investigationId === frame.investigationId)?.tasks ?? [];
   }
 
-  const readEvidence = (frame: VerificationFrame, evidenceId: string) =>
+  const readEvidence = (frame: TaskFrame, evidenceId: string) =>
     deps.evidence.get(evidenceId, frame.resourceId).then((stored) => decoder.decode(stored.bytes));
 
   /** The verifier's call over the claims, their atoms and the evidence they cite (Flow 4). */
   async function callVerifier(
     ctx: TaskContext,
-    frame: VerificationFrame,
+    frame: TaskFrame,
     revisions: readonly ClaimRevisionRow[],
   ): Promise<Step<readonly VerifierRequest[]>> {
     const roleConfig = frame.config.roles.verifier;
@@ -199,7 +150,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
       case 'answered':
         return { next: 'go', value: answered.output.requests };
       case INVALID_MODEL_OUTPUT:
-        return { next: 'result', result: succeeded({ verdicts: [] }, [INVALID_MODEL_OUTPUT]) };
+        return { next: 'result', result: succeeded({ verdicts: [] }, { warnings: [INVALID_MODEL_OUTPUT] }) };
       case 'no_answer':
         if (answered.reason === 'cancelled') return abandon('cancelled');
         return { next: 'result', result: failed(ctx, 'deadline', 'the verifier call reached notAfter') };
@@ -216,7 +167,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
    */
   async function collect(
     ctx: TaskContext,
-    frame: VerificationFrame,
+    frame: TaskFrame,
     revisions: readonly ClaimRevisionRow[],
     requests: readonly VerifierRequest[],
   ): Promise<Step<Collection[]>> {
@@ -263,7 +214,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
     return { next: 'go', value: collections };
   }
 
-  async function recordsOf(frame: VerificationFrame, task: Task | undefined): Promise<SourceRecord[]> {
+  async function recordsOf(frame: TaskFrame, task: Task | undefined): Promise<SourceRecord[]> {
     if (task?.status !== 'succeeded') return [];
     const pages = await Promise.all(
       task.outputRefs.map(async (evidenceId) => ({ evidenceId, page: PageSchema.parse(JSON.parse(await readEvidence(frame, evidenceId))) })),
@@ -272,7 +223,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   }
 
   /** Code compares every claim's atoms with the records fetched for it (KD-6, DC-10). */
-  async function judge(frame: VerificationFrame, revisions: readonly ClaimRevisionRow[], collections: readonly Collection[], tasks: readonly Task[]) {
+  async function judge(frame: TaskFrame, revisions: readonly ClaimRevisionRow[], collections: readonly Collection[], tasks: readonly Task[]) {
     const byId = new Map(tasks.map((task) => [task.taskId, task]));
     const fetched = new Map<Collection, { records: SourceRecord[]; coverage: Coverage | null }>();
     for (const collection of collections) {
@@ -298,7 +249,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   }
 
   /** The verifier's requests and the round's collections, from the checkpoint or by calling and proposing now. */
-  async function round(ctx: TaskContext, frame: VerificationFrame, revisions: readonly ClaimRevisionRow[]): Promise<Step<Collection[]>> {
+  async function round(ctx: TaskContext, frame: TaskFrame, revisions: readonly ClaimRevisionRow[]): Promise<Step<Collection[]>> {
     const proposed = ProposedRoundSchema.safeParse(ctx.checkpoint);
     if (proposed.success) return { next: 'go', value: proposed.data.collections };
     const saved = checkpointedAnswer(ctx, VERIFY_CALL);
@@ -319,7 +270,7 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
     if (deps.clock.now() >= notAfter) {
       return failed(ctx, 'deadline', 'the verification task ran at or after notAfter');
     }
-    const frame = await frameOf(ctx, notAfter);
+    const frame = await readTaskFrame(db, ctx, notAfter);
     // In the order the decision named them: a revision's number in this task is its claim's place in the round.
     const order = (claimId: string) => input.claimIds.indexOf(claimId);
     const revisions = (await claims.latestRevisions(db, ctx.investigationId, input.claimIds)).sort(

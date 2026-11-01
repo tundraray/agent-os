@@ -90,7 +90,9 @@ export function judgeDecision(output: unknown, state: GateState): GateVerdict {
   if (!parsed.success) {
     return rejected('invalid_structure');
   }
-  const decision = parsed.data;
+  // An accepted answer always waits for its synthesis, whatever the model sent: the controller ends with the answer
+  // the synthesis writes, so it must not take steps while that task runs.
+  const decision: Decision = parsed.data.kind === 'proposeAnswer' ? { ...parsed.data, await: true } : parsed.data;
   if (decision.kind === 'requestAnalysis' && decision.subquestions.length > state.limits.maxFanOut) {
     return rejected('fan_out_exceeded');
   }

@@ -4,8 +4,10 @@ import type { Database } from '@agent-os/db';
 import type { Clock, HandlerResult, InvestigationService, TaskContext, TaskHandler, TaskScheduler } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { z } from 'zod';
+import { answerRepository as answers } from '../answer/answer.repository.js';
 import { buildCodeAnswer, type CodeAnswerEnd, InvestigationAnswerSchema, type StopReason } from '../answer/code-answer.js';
 import { checkpointedAnswer } from '../attempt/checkpoint.js';
+import { abandon as abandonAttempt } from '../attempt/task-attempt.js';
 import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
 import { recordProposedTasks, unavailableRequestsOf } from '../capabilities/proposed-tasks.repository.js';
 import { ProcessConfigSchema } from '../config/process-config.schema.js';
@@ -40,19 +42,12 @@ export interface ControllerDeps {
   readonly logger: EngineLogger;
 }
 
-/** The attempt ends without an outcome: a cancel or a lost attempt; the runtime decides it by the abort or the fence. */
-class AttemptAbandonedError extends Error {
-  override readonly name = 'AttemptAbandonedError';
-}
-
 /** A decision whose capability arrives in a later release of the engine reached execution. */
 class DecisionNotExecutableError extends Error {
   override readonly name = 'DecisionNotExecutableError';
 }
 
-const abandon = (cause: 'cancelled' | 'fenced'): never => {
-  throw new AttemptAbandonedError(`controller attempt ended without an outcome: ${cause}`);
-};
+const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(CONTROLLER_WORKFLOW, cause);
 
 /** One investigation as one attempt of its controller task sees it. */
 interface Investigation extends InvestigationFrame {
@@ -85,11 +80,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   async function finish(ctx: TaskContext, investigationId: string, end: CodeAnswerEnd): Promise<HandlerResult> {
     const claims = await repository.latestClaims(db, investigationId);
     const answer = buildCodeAnswer(randomUUID(), claims, end);
-    // DC-9: a reservation still open when the answer is written will never be closed by its call.
-    const written = await ctx.withAttemptGuard(async (tx) => {
-      await abandonReservations(tx, investigationId, { all: true });
-      return repository.writeAnswer(tx, investigationId, answer);
-    });
+    const written = await ctx.withAttemptGuard((tx) => answers.writeAnswer(tx, investigationId, answer));
     if (written.outcome === 'fenced') return abandon('fenced');
     return completed(InvestigationAnswerSchema.parse(written.value));
   }
@@ -118,6 +109,9 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       case 'requestEvidence':
       case 'requestAnalysis':
       case 'requestVerification':
+      // Flow 3: the synthesis writes the answer and wakes the controller, which then finds it; an outcome without an
+      // answer — `needs_verification` or a failure — reaches the next step through its observations.
+      case 'proposeAnswer':
         return applyTasks(ctx, investigation, latest);
       default:
         throw new DecisionNotExecutableError(`decision ${latest.kind ?? 'unknown'} is not executable by this engine`);

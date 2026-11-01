@@ -2,17 +2,14 @@ import type { Coverage, Task } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { Clock, EvidenceReader, HandlerResult, InvestigationService, TaskContext, TaskHandler } from '@agent-os/runtime';
 import { answerSaver, checkpointedAnswer } from '../attempt/checkpoint.js';
+import { abandon as abandonAttempt, failed, readTaskFrame, succeeded, type TaskFrame } from '../attempt/task-attempt.js';
 import { ANALYZE_WORKFLOW, AnalyzeInputSchema } from '../capabilities/analyze.js';
 import { WorkerOutputSchema, type WorkerClaim } from '../claims/claim.schema.js';
 import { claimsRepository as claims } from '../claims/claims.repository.js';
-import { ProcessConfigSchema } from '../config/process-config.schema.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
-import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { EvidenceItem } from '../context/role-packets.js';
-import { controllerRepository } from '../controller/decisions.repository.js';
-import { type InvestigationFrame, promptValues } from '../controller/plan-role.js';
-import { ENGINE_FAILURE_CLASSES, type EngineFailureCode } from '../engine-errors.js';
+import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 
@@ -31,40 +28,10 @@ export interface AnalyzeDeps {
 const ANALYZE_CALL = 'analyze';
 const INVALID_MODEL_OUTPUT = 'invalid_model_output';
 
-/** The attempt ends without an outcome: a cancel or a lost attempt; the runtime decides it by the abort or the fence. */
-class AttemptAbandonedError extends Error {
-  override readonly name = 'AttemptAbandonedError';
-}
-
-const abandon = (cause: 'cancelled' | 'fenced'): never => {
-  throw new AttemptAbandonedError(`analysis attempt ended without an outcome: ${cause}`);
-};
+const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(ANALYZE_WORKFLOW, cause);
 
 /** What a model call of the worker gave: claims to write, or the result the task ends with. */
 type WorkerAnswer = { readonly next: 'claims'; readonly claims: readonly WorkerClaim[] } | { readonly next: 'result'; readonly result: HandlerResult };
-
-/** The investigation as one analysis attempt sees it: its frozen configuration, mode and query, and the owner. */
-interface AnalysisFrame extends InvestigationFrame {
-  readonly resourceId: string;
-  readonly threadId: string;
-}
-
-function succeeded(answerOrDelta: HandlerResult['answerOrDelta'], coverage: Coverage | null, warnings: string[] = []): HandlerResult {
-  return { kind: 'completed', answerOrDelta, evidenceRefs: [], coverage, missingEvidence: [], warnings, proposedTasks: [] };
-}
-
-function failed(ctx: TaskContext, code: EngineFailureCode, message: string): HandlerResult {
-  return {
-    kind: 'failed',
-    answerOrDelta: null,
-    evidenceRefs: [],
-    coverage: null,
-    missingEvidence: [],
-    warnings: [],
-    proposedTasks: [],
-    failure: { class: ENGINE_FAILURE_CLASSES[code], code, message, cause: null, attempt: ctx.attempt, toolCalls: 0, retries: 0 },
-  };
-}
 
 /**
  * `research.analyze` v1 (design-engine.md, Flow 1): one worker call over its own sub-question and the evidence of its
@@ -79,30 +46,14 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
   const { database: db } = deps;
   const decoder = new TextDecoder();
 
-  async function frameOf(ctx: TaskContext, notAfter: Date): Promise<AnalysisFrame> {
-    const read = await controllerRepository.readRun(db, ctx.investigationId);
-    if (read === undefined) {
-      throw new Error(`investigation ${ctx.investigationId} has no engine row`);
-    }
-    return {
-      investigationId: ctx.investigationId,
-      resourceId: read.run.resourceId,
-      threadId: read.threadId,
-      query: read.query,
-      config: ProcessConfigSchema.parse(read.run.processConfig),
-      sourceMode: read.run.sourceMode as SourceMode,
-      notAfter,
-    };
-  }
-
   /** Coverage of the gather task, as the runtime recorded it; code carries it to the claims unchanged. */
-  async function gatherCoverage(frame: AnalysisFrame, gatherTaskId: string): Promise<Coverage | null> {
+  async function gatherCoverage(frame: TaskFrame, gatherTaskId: string): Promise<Coverage | null> {
     const thread = await deps.investigations.listForThread(frame.resourceId, frame.threadId);
     const tasks: readonly Task[] = thread.find((candidate) => candidate.investigationId === frame.investigationId)?.tasks ?? [];
     return tasks.find((task) => task.taskId === gatherTaskId)?.coverage ?? null;
   }
 
-  async function readEvidence(frame: AnalysisFrame, evidenceIds: readonly string[]): Promise<EvidenceItem[]> {
+  async function readEvidence(frame: TaskFrame, evidenceIds: readonly string[]): Promise<EvidenceItem[]> {
     return Promise.all(
       evidenceIds.map(async (evidenceId) => {
         const stored = await deps.evidence.get(evidenceId, frame.resourceId);
@@ -114,7 +65,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
   /** The worker's call, or its outcome when no claims follow from it. */
   async function callWorker(
     ctx: TaskContext,
-    frame: AnalysisFrame,
+    frame: TaskFrame,
     request: { readonly subquestion: string; readonly evidenceIds: readonly string[]; readonly coverage: Coverage | null },
   ): Promise<WorkerAnswer> {
     const roleConfig = frame.config.roles.worker;
@@ -126,7 +77,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
     if (packet.outcome === 'needs_narrowing') {
       // DC-7: nothing is cut and the model is not called; the controller reads the sign in its next observations.
       const narrowing = { materialTokens: packet.materialTokens, limitTokens: packet.limitTokens };
-      return { next: 'result', result: succeeded({ needsNarrowing: narrowing, claimIds: [] }, request.coverage) };
+      return { next: 'result', result: succeeded({ needsNarrowing: narrowing, claimIds: [] }, { coverage: request.coverage }) };
     }
     if (packet.outcome === 'count_failed') {
       return { next: 'result', result: failed(ctx, 'model_unavailable', 'the worker packet could not be counted') };
@@ -145,7 +96,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
       case 'answered':
         return { next: 'claims', claims: answered.output.claims };
       case INVALID_MODEL_OUTPUT:
-        return { next: 'result', result: succeeded({ claimIds: [] }, request.coverage, [INVALID_MODEL_OUTPUT]) };
+        return { next: 'result', result: succeeded({ claimIds: [] }, { coverage: request.coverage, warnings: [INVALID_MODEL_OUTPUT] }) };
       case 'no_answer':
         if (answered.reason === 'cancelled') return abandon('cancelled');
         return { next: 'result', result: failed(ctx, 'deadline', 'the worker call reached notAfter') };
@@ -164,7 +115,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
     if (deps.clock.now() >= notAfter) {
       return failed(ctx, 'deadline', 'the analysis task was claimed after notAfter');
     }
-    const frame = await frameOf(ctx, notAfter);
+    const frame = await readTaskFrame(db, ctx, notAfter);
     const evidenceIds = ctx.upstream.find((task) => task.taskId === input.gatherTaskId)?.outputRefs ?? [];
     const coverage = await gatherCoverage(frame, input.gatherTaskId);
 
@@ -182,7 +133,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
       claims.writeTaskClaims(tx, { investigationId: ctx.investigationId, taskId: ctx.taskId, coverage, claims: cited }),
     );
     if (written.outcome === 'fenced') return abandon('fenced');
-    return succeeded({ claimIds: written.value }, coverage);
+    return succeeded({ claimIds: written.value }, { coverage });
   }
 
   return {

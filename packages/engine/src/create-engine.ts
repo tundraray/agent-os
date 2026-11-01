@@ -1,6 +1,7 @@
 import type { Database } from '@agent-os/db';
 import type { Clock, EvidenceReader, HandlerRegistry } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
+import { createSynthesizeHandler } from './answer/synthesize.handler.js';
 import { loadProcessConfig } from './config/load-process-config.js';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
 import { checkRoleModels, type ProcessConfig, type ProcessConfigRejection } from './config/process-config.schema.js';
@@ -22,7 +23,7 @@ export interface CreateEngineOptions {
   readonly database: Database;
   /**
    * Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`, `evidence` serves the
-   * workers the content of their gather task's evidence.
+   * workers the content of their gather task's evidence and the synthesis the provenance of the cited evidence.
    */
   readonly runtime: EngineRuntimePorts & {
     readonly handlers: Pick<HandlerRegistry, 'register'>;
@@ -105,8 +106,8 @@ function resolveRoleModels(configs: readonly ProcessConfig[], resolveModel: Reso
  * Builds the engine (design-engine.md, Contract Definitions). Throws with the configuration path when a configuration
  * fails the schema, a role model has no catalog entry or does not resolve, a `processId` + `version` pair repeats, or —
  * only with a connected source — a configured source is not allowed for `source.fetch` (DC-14). Without a connected
- * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2), `research.analyze`
- * and `research.verify` handlers. Reads neither the environment nor the database.
+ * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2), `research.analyze`,
+ * `research.verify` and `research.synthesize` handlers. Reads neither the environment nor the database.
  */
 export function createEngine(options: CreateEngineOptions): Engine {
   const catalog = options.modelCatalog ?? DEFAULT_MODEL_CATALOG;
@@ -165,6 +166,16 @@ export function createEngine(options: CreateEngineOptions): Engine {
       contextBuilder,
       clock,
       logger,
+    }),
+  );
+  options.runtime.handlers.register(
+    createSynthesizeHandler({
+      database: options.database,
+      investigations: options.runtime.investigations,
+      evidence: options.runtime.evidence,
+      gateway,
+      contextBuilder,
+      clock,
     }),
   );
 
