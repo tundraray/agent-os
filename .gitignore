@@ -11,5 +11,6 @@ dist/
 .claude/agent-memory/
 .playwright-mcp
 docs/features/*/*/*.md
+!docs/features/*/*/l1-browser-scenarios.md
 docs/features/*/*/*/*.md
 agent-memory

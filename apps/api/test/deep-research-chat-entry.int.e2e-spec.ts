@@ -26,7 +26,7 @@
 //
 // Budget (whole part): Integration 5 (limit 3; up to 5 under the integration-e2e-testing rule only when each extra test names the defect no other test catches).
 //   INT-1..INT-3 (this file) are the core budget. INT-4 and INT-5 are the two web tests and the two extras; their unique defects are stated in their headers. Table-driven rows keep the ACs of one rule or one flow in one test.
-//   E2E 2 (limit 2): E2E-1 in deep-research-chat-entry.e2e-spec.ts, E2E-2 the L1 browser scenario at the end of deep-research-chat-entry.e2e-spec.ts.
+//   E2E 2 (limit 2): E2E-1 in deep-research-chat-entry.e2e-spec.ts, E2E-2 the L1 browser scenario in docs/features/deep-research/chat-entry/l1-browser-scenarios.md.
 //   The no-source mode (PRD 1.12) adds rows to these tests, not tests: INT-1 A6, INT-2 D5, an assertion block in INT-2 D1. The count stays 5 of 5 for the part and the extras are still INT-4 and INT-5 only.
 //
 // Proven elsewhere (not in this file; see the "AC -> proving test" table in the generation report and "Proven at unit level" at the end of this file):
@@ -37,7 +37,7 @@
 // - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (INT-1 C7, INT-2 L6, loader table); here only what the part does with the mode the engine reports
 // - AC-26.1, service side (the process starts with no fixture package and `connectedSources` is empty): the api composition - extends apps/api/test/sources-wiring.e2e-spec.ts (named for the plan; not part of this skeleton set). The chat side of AC-26.1
 //   (chat accepts messages, the research is proposed and launched, and the part adds no source check) is A6 below
-// - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (deep-research-chat-entry.e2e-spec.ts)
+// - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (docs/features/deep-research/chat-entry/l1-browser-scenarios.md)
 
 import { describe, it } from 'vitest';
 

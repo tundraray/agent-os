@@ -4,7 +4,7 @@
 // Implementation timing: created alongside the web slice that adds ResearchModeToggle, ResearchCard and the metadata handling in ChatRuntimeProvider / ThreadMessage.
 //
 // File name and placement follow the sibling files `shell.<topic>.int.test.tsx` in this folder (include 'src/**/*.test.{ts,tsx}' of vitest.config.ts). The web part has no browser E2E runner:
-// the real-browser journey is the L1 scenario E2E-2, written at the end of apps/api/test/deep-research-chat-entry.e2e-spec.ts (the plan moves it to docs/features/deep-research/chat-entry/l1-browser-scenarios.md, as chat-shell does).
+// the real-browser journey is the L1 scenario E2E-2 in docs/features/deep-research/chat-entry/l1-browser-scenarios.md, as chat-shell does.
 //
 // Why integration and not the component test: whether the decision turn is invisible and is not sent a second time depends on three things that only the real runtime combines - what `useChatRuntime` stores and re-sends,
 //   the `sendAutomaticallyWhen` rule, and which messages `ThreadMessage` draws. A component test on useLocalRuntime has none of them. The AI SDK resets the chat error on every send (design KD-2): only the real runtime shows it.
