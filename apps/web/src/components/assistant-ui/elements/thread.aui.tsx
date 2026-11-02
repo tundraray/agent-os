@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { regenerateAfterError } from "@/lib/config";
 import { focusAfterNewChat } from "@/lib/focus";
+import { isHiddenMessageAt, isLastVisibleMessageAt } from "@/lib/threads/research-messages";
 import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
@@ -308,7 +309,9 @@ const ThreadMessage: FC = () => {
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
+  const isHidden = useAuiState((s) => isHiddenMessageAt(s.thread.messages, s.message.index));
 
+  if (isHidden) return null;
   if (isSpoken) return <SpokenMessage />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessageComponent />;
@@ -782,13 +785,14 @@ const isGeneratingReply = (s: AssistantState) =>
   s.message.status?.type === "running";
 
 /**
- * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last message
+ * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last visible
+ * message (KD-2: hidden decision pairs do not count)
  * shows it at rest; earlier ones reveal it on hover or focus within the message, and a coarse
  * pointer always shows it. Hidden by opacity only — never display:none or visibility:hidden.
  */
 const useActionBarVisibility = () => {
-  const isLast = useAuiState((s) => s.message.isLast);
-  return isLast
+  const isLastVisible = useAuiState((s) => isLastVisibleMessageAt(s.thread.messages, s.message.index));
+  return isLastVisible
     ? undefined
     : "opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none";
 };
