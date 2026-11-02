@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { createSignalRegistry, type SignalCheck, type SignalKind, toInputSignal } from './signal-registry.js';
+import { createSignalRegistry, type SignalCheck, type SignalKind } from './signal-registry.js';
 
 // AC-04.2, DC-5: the kinds of external signals come from the `createEngine` options, each with its payload schema and
 // the 4 KiB limit of the stored JSON. Defects caught: a payload larger than the limit accepted (it would then fail the
 // table's check instead of being refused); a payload checked against another kind's schema; a kind outside the options
-// accepted; a kind added later taking another form in the decision input.
+// accepted. A kind added later reaching the decision input in the same form is INT-1 C4.
 
 const note: SignalKind = { kind: 'test.note', payloadSchema: z.object({ note: z.string() }) };
 const alert: SignalKind = { kind: 'test.alert', payloadSchema: z.object({ severity: z.enum(['low', 'high']) }) };
@@ -28,18 +28,6 @@ describe('signal registry (AC-04.2, DC-5)', () => {
     ['the same kind once registered later', after, 'test.alert', { severity: 'high' }, { outcome: 'accepted', payload: { severity: 'high' } }],
   ])('%s', (_, registry, kind, payload, expected) => {
     expect(registry.check(kind, payload)).toEqual(expected);
-  });
-
-  it('a kind registered later takes the same decision-input form as the first one', () => {
-    const recordedAt = new Date('2026-11-01T10:00:00Z');
-    const rows = [
-      { signalId: 's-1', kind: 'test.note', recordedAt, payload: { note: 'x' }, readByDecisionId: null },
-      { signalId: 's-2', kind: 'test.alert', recordedAt, payload: { severity: 'high' }, readByDecisionId: null },
-    ];
-    expect(rows.map(toInputSignal)).toEqual([
-      { signalId: 's-1', kind: 'test.note', recordedAt, payload: { note: 'x' } },
-      { signalId: 's-2', kind: 'test.alert', recordedAt, payload: { severity: 'high' } },
-    ]);
   });
 
   it('refuses a kind registered twice', () => {

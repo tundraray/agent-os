@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { RuntimeLogFields, RuntimeLogger } from '@agent-os/runtime';
+import { withFields } from '../common/log-fields.js';
 
 /**
  * `RuntimeLogger` over the Nest `Logger` (design-runtime.md, Logging and Monitoring): the level
@@ -24,12 +25,4 @@ export class NestRuntimeLogger implements RuntimeLogger {
   error(message: string, fields?: RuntimeLogFields): void {
     this.logger.error(withFields(message, fields));
   }
-}
-
-function withFields(message: string, fields?: RuntimeLogFields): string {
-  if (!fields) return message;
-  const pairs = Object.entries(fields)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return pairs.length === 0 ? message : `${message} ${pairs.join(' ')}`;
 }

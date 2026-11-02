@@ -17,9 +17,9 @@ import type { ClaimLine, EvidenceItem } from './role-packets.js';
 // ContextBuilder (design-engine.md, C3; AC-06.1–AC-06.3, DC-7, DC-8, AC-05.2): the packet of a role is
 // counted through the TokenCounter port and fits `windowTokens − marginTokens` of the role in the
 // investigation's configuration; a mandatory record is never cut.
-// Defects caught: a mandatory evidence or controller record cut to fit; the window taken from package
-// defaults instead of the investigation's configuration; earlier claims packed oldest first; a worker
-// packet carrying more than its subquestion and its evidence.
+// Defects caught: a mandatory evidence or controller record cut to fit; earlier claims packed oldest
+// first; a worker packet carrying more than its subquestion and its evidence. The window taken from the
+// investigation's configuration rather than package defaults is INT-1 C2.
 // Boundary double: the token counter, one token per character of the instructions and messages.
 
 const OutputSchema = z.object({ claims: z.array(z.string()) });
@@ -95,8 +95,6 @@ describe('ContextBuilder', () => {
   it.each([
     ['fits exactly at window − margin', { windowTokens: 253, marginTokens: 10 }, 'packed'],
     ['one token over window − margin', { windowTokens: 252, marginTokens: 10 }, 'needs_narrowing'],
-    ['window of this investigation smaller than the shipped worker window', { windowTokens: 150, marginTokens: 0 }, 'needs_narrowing'],
-    ['window of this investigation larger', { windowTokens: 1_000, marginTokens: 50 }, 'packed'],
   ] as const)('AC-06.3, DC-7: worker packet when %s', async (_, window, outcome) => {
     const builder = createContextBuilder({ tokenCounter: charCounter(), logger: silentLogger });
 

@@ -20,7 +20,7 @@
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
-    "test:e2e:runtime": "nest build && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring test/engine-wiring",
+    "test:e2e:runtime": "nest build && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring",
     "dev": "nest start --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "node --env-file-if-exists=.env dist/research/migrate-cli.js"

@@ -134,7 +134,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   // Verification items (table of scenarios; each row names the AC it proves and shares the harness):
   // - C1 two decision chains (UC-1, AC-01.1, AC-10.1): investigation A scripted [proposeAnswer], investigation B scripted [requestEvidence, requestVerification, replan, requestEvidence, proposeAnswer] ->
   //   task types per investigation are exactly gather/verify/gather(+their sources)/synthesize in the chosen order, each task row refers to its decision row, no task without a decision;
-  //   every `research_llm_calls` row carries the model of its role (controller on the large model, worker/verifier on the small one)
+  //   every `research_llm_calls` row carries the model of its role (controller on the large model; neither chain calls a worker or a verifier, so their small model is asserted in INT-3 V1)
   // - C2 second configuration (UC-9, AC-12.1, DC-1): a test ProcessConfig with another goal, no `verify` and no `analyze`, other prompt text and another `windowTokens`; the scripted controller offers `requestVerification` ->
   //   refused with a reason, zero tasks of that kind; the packets the double received carry this configuration's prompt text and fit its `windowTokens`; the investigation ends in an answer without code changes
   // - C3 replan does not re-collect (UC-4, AC-02.1, DC-4): gather F, then `replan`, then the same request with the same snapshot and another `rationale` text -> two plan revisions, the second `propose` answers `subscribed`,
@@ -225,8 +225,6 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       });
     }
 
-    // C1 also deletes the conversation at the end (unique defect: an engine table whose FK to the investigation does not cascade
-    //   blocks `InvestigationService.purgeThread`, which only real rows of all six tables show): after the purge no engine row is left.
     it('INT-1 C1: two scripted decision chains execute exactly the chosen capabilities in the chosen order, each task traces to a decision, and every model call is made by its role\'s model', async () => {
       const SONNET = 'anthropic/claude-sonnet-5-5';
       const resourceId = newUser();
@@ -307,23 +305,6 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         ['controller', SONNET, 5],
         ['synthesis', SONNET, 1],
       ]);
-
-      // The conversation is deleted: the runtime's purge cascades through the engine tables (a signal row included; neither
-      // chain writes a claim).
-      const signal = await harness.engine.recordSignal({ investigationId: b.investigationId, resourceId, kind: 'test.note', payload: { note: 'C1' } });
-      expect(signal.outcome).toBe('recorded');
-      await harness.purgeThread(resourceId, threadId);
-      for (const { investigationId } of [a, b]) {
-        expect(await engineRowsOf(investigationId)).toEqual({
-          run: undefined,
-          planRevisions: [],
-          decisions: [],
-          signals: [],
-          claims: [],
-          llmCalls: [],
-        });
-        expect(await tasksOf(investigationId)).toEqual([]);
-      }
     }, 30_000);
     it('INT-1 C2: a second configuration without verify and analyze refuses requestVerification, builds packets from its own prompts and windows, and ends in an answer without code changes', async () => {
       const resourceId = newUser();
@@ -441,68 +422,72 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       // A kind registered only in this test: an entry in the options, the controller code is the same (AC-04.2).
       const alertKind = { kind: 'test.alert', payloadSchema: z.object({ severity: z.enum(['low', 'high']) }) };
       await harness.rebuildEngine({ signalKinds: [TEST_NOTE_KIND, alertKind] });
-      const resourceId = newUser();
-      const threadId = await harness.createThread(resourceId);
-      // The controller is parked in its first call; the signals arrive before the decision taken after the restart.
-      harness.model.script('controller', { hangUntilAborted: true });
+      try {
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        // The controller is parked in its first call; the signals arrive before the decision taken after the restart.
+        harness.model.script('controller', { hangUntilAborted: true });
 
-      const { investigationId } = created(
-        await harness.engine.startInvestigation({
-          resourceId,
-          threadId,
-          query: 'C4: did the rollback stop the errors?',
-          processId: 'deep-research',
-          launchKey: newLaunchKey(),
-        }),
-      );
-      await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(1), { timeout: 20_000 });
-      expect(harness.model.callsOf('controller')[0]!.user).toContain('"signals":[]');
+        const { investigationId } = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: 'C4: did the rollback stop the errors?',
+            processId: 'deep-research',
+            launchKey: newLaunchKey(),
+          }),
+        );
+        await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(1), { timeout: 20_000 });
+        expect(harness.model.callsOf('controller')[0]!.user).toContain('"signals":[]');
 
-      const record = (kind: string, payload: unknown, owner = resourceId) =>
-        harness.engine.recordSignal({ investigationId, resourceId: owner, kind, payload });
-      const note = await record('test.note', { note: 'the deploy was rolled back at 12:05' });
-      const alert = await record('test.alert', { severity: 'high' });
-      if (note.outcome !== 'recorded' || alert.outcome !== 'recorded') throw new Error('a valid signal was refused');
-      // DC-5: refusals are told apart and write no row.
-      expect([
-        await record('test.unknown', { note: 'x' }),
-        await record('test.alert', { severity: 'urgent' }),
-        await record('test.note', { note: 'not mine' }, newUser()),
-      ]).toEqual([
-        { outcome: 'rejected', code: 'signal_kind_unknown' },
-        { outcome: 'rejected', code: 'signal_payload_invalid' },
-        { outcome: 'rejected', code: 'investigation_not_found' },
-      ]);
-      expect((await engineRowsOf(investigationId)).signals.map((row) => [row.signalId, row.readByDecisionId])).toEqual([
-        [note.signalId, null],
-        [alert.signalId, null],
-      ]);
+        const record = (kind: string, payload: unknown, owner = resourceId) =>
+          harness.engine.recordSignal({ investigationId, resourceId: owner, kind, payload });
+        const note = await record('test.note', { note: 'the deploy was rolled back at 12:05' });
+        const alert = await record('test.alert', { severity: 'high' });
+        if (note.outcome !== 'recorded' || alert.outcome !== 'recorded') throw new Error('a valid signal was refused');
+        // DC-5: refusals are told apart and write no row.
+        expect([
+          await record('test.unknown', { note: 'x' }),
+          await record('test.alert', { severity: 'urgent' }),
+          await record('test.note', { note: 'not mine' }, newUser()),
+        ]).toEqual([
+          { outcome: 'rejected', code: 'signal_kind_unknown' },
+          { outcome: 'rejected', code: 'signal_payload_invalid' },
+          { outcome: 'rejected', code: 'investigation_not_found' },
+        ]);
+        expect((await engineRowsOf(investigationId)).signals.map((row) => [row.signalId, row.readByDecisionId])).toEqual([
+          [note.signalId, null],
+          [alert.signalId, null],
+        ]);
 
-      harness.model.script('controller', conclude);
-      // No fence: the parked controller resumes on the new workers and takes its step with the signals.
-      // Back to the default kinds: test.alert stays registered only for the first half of this test.
-      await harness.rebuildEngine({ signalKinds: [TEST_NOTE_KIND] }, { fence: false });
-      const done = await finished(investigationId, resourceId);
+        harness.model.script('controller', conclude);
+        // No fence: the parked controller resumes on the new workers and takes its step with the signals.
+        await harness.rebuildEngine({}, { fence: false });
+        const done = await finished(investigationId, resourceId);
 
-      expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: null });
-      const controllerCalls = harness.model.callsOf('controller');
-      expect(controllerCalls).toHaveLength(2);
-      const input = controllerCalls[1]!.user;
-      expect(input).toContain(
-        `{"signalId":"${note.signalId}","kind":"test.note","recordedAt":`,
-      );
-      expect(input).toContain('"payload":{"note":"the deploy was rolled back at 12:05"}');
-      expect(input).toContain(`{"signalId":"${alert.signalId}","kind":"test.alert","recordedAt":`);
-      expect(input).toContain('"payload":{"severity":"high"}');
-      const { decisions, signals } = await engineRowsOf(investigationId);
-      expect(decisions.map((row) => [row.step, row.callIndex, row.status, row.kind])).toEqual([
-        [1, 0, 'accepted', 'concludeInconclusive'],
-      ]);
-      // AC-04.1: the decision row is the one that read both signals; the refused attempts left no row.
-      expect(signals.map((row) => [row.signalId, row.kind, row.readByDecisionId])).toEqual([
-        [note.signalId, 'test.note', decisions[0]!.decisionId],
-        [alert.signalId, 'test.alert', decisions[0]!.decisionId],
-      ]);
+        expect(done.answer).toMatchObject({ outcome: 'inconclusive', stopReason: null });
+        const controllerCalls = harness.model.callsOf('controller');
+        expect(controllerCalls).toHaveLength(2);
+        const input = controllerCalls[1]!.user;
+        expect(input).toContain(
+          `{"signalId":"${note.signalId}","kind":"test.note","recordedAt":`,
+        );
+        expect(input).toContain('"payload":{"note":"the deploy was rolled back at 12:05"}');
+        expect(input).toContain(`{"signalId":"${alert.signalId}","kind":"test.alert","recordedAt":`);
+        expect(input).toContain('"payload":{"severity":"high"}');
+        const { decisions, signals } = await engineRowsOf(investigationId);
+        expect(decisions.map((row) => [row.step, row.callIndex, row.status, row.kind])).toEqual([
+          [1, 0, 'accepted', 'concludeInconclusive'],
+        ]);
+        // AC-04.1: the decision row is the one that read both signals; the refused attempts left no row.
+        expect(signals.map((row) => [row.signalId, row.kind, row.readByDecisionId])).toEqual([
+          [note.signalId, 'test.note', decisions[0]!.decisionId],
+          [alert.signalId, 'test.alert', decisions[0]!.decisionId],
+        ]);
+      } finally {
+        // Back to the default kinds: test.alert stays registered for this test only.
+        await harness.rebuildEngine({ signalKinds: [TEST_NOTE_KIND] });
+      }
     });
     // C5 controller_invalid (UC-E1, AC-01.2, AC-01.3, DC-2): decision outside the set, then an invalid structure, then outside the set with `maxDecisionRetries` 2 -> exactly 3 controller calls for the step, 3 refusals recorded with their reasons, zero tasks, zero source calls
     it('INT-1 C5 controller_invalid: invalid decisions of a step create no task and no source call, each refusal is recorded with its reason, and the investigation ends with a code-built answer', async () => {
@@ -682,68 +667,73 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       }
     });
     it('INT-1 C6: investigations started on versions 2 (no version given) and 1 finish on the prompts of their recorded versions after the engine is rebuilt with versions 1, 2 and 3, and a new start without a version records version 3', async () => {
-      await harness.rebuildEngine({ processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2)] });
-      const resourceId = newUser();
-      const threadId = await harness.createThread(resourceId);
-      const queryA = 'C6 investigation A without a version';
-      const queryB = 'C6 investigation B on version 1';
-      // Both controllers are parked in their first controller call until the runtime stops.
-      harness.model.script('controller', { hangUntilAborted: true }, { hangUntilAborted: true });
+      try {
+        await harness.rebuildEngine({ processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2)] });
+        const resourceId = newUser();
+        const threadId = await harness.createThread(resourceId);
+        const queryA = 'C6 investigation A without a version';
+        const queryB = 'C6 investigation B on version 1';
+        // Both controllers are parked in their first controller call until the runtime stops.
+        harness.model.script('controller', { hangUntilAborted: true }, { hangUntilAborted: true });
 
-      const a = created(
-        await harness.engine.startInvestigation({
-          resourceId,
-          threadId,
-          query: queryA,
-          processId: VERSIONED_PROCESS_ID,
-          launchKey: newLaunchKey(),
-        }),
-      );
-      const b = created(
-        await harness.engine.startInvestigation({
-          resourceId,
-          threadId,
-          query: queryB,
-          processId: VERSIONED_PROCESS_ID,
-          version: 1,
-          launchKey: newLaunchKey(),
-        }),
-      );
-      await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(2), { timeout: 20_000 });
-      expect(await view(a.investigationId, resourceId)).toMatchObject({ status: 'running', version: 2 });
-      expect(await view(b.investigationId, resourceId)).toMatchObject({ status: 'running', version: 1 });
+        const a = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: queryA,
+            processId: VERSIONED_PROCESS_ID,
+            launchKey: newLaunchKey(),
+          }),
+        );
+        const b = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: queryB,
+            processId: VERSIONED_PROCESS_ID,
+            version: 1,
+            launchKey: newLaunchKey(),
+          }),
+        );
+        await vi.waitFor(() => expect(harness.model.callsOf('controller')).toHaveLength(2), { timeout: 20_000 });
+        expect(await view(a.investigationId, resourceId)).toMatchObject({ status: 'running', version: 2 });
+        expect(await view(b.investigationId, resourceId)).toMatchObject({ status: 'running', version: 1 });
 
-      harness.model.calls.length = 0;
-      harness.model.script('controller', conclude, conclude, conclude);
-      // No fence: the parked controllers must survive the restart and resume on the new workers.
-      await harness.rebuildEngine(
-        { processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2), versionedConfig(3)] },
-        { fence: false },
-      );
-      const doneA = await finished(a.investigationId, resourceId);
-      const doneB = await finished(b.investigationId, resourceId);
+        harness.model.calls.length = 0;
+        harness.model.script('controller', conclude, conclude, conclude);
+        // No fence: the parked controllers must survive the restart and resume on the new workers.
+        await harness.rebuildEngine(
+          { processes: [...TEST_PROCESSES, versionedConfig(1), versionedConfig(2), versionedConfig(3)] },
+          { fence: false },
+        );
+        const doneA = await finished(a.investigationId, resourceId);
+        const doneB = await finished(b.investigationId, resourceId);
 
-      expect(doneA).toMatchObject({ status: 'completed', version: 2, answer: { outcome: 'inconclusive' } });
-      expect(doneB).toMatchObject({ status: 'completed', version: 1, answer: { outcome: 'inconclusive' } });
-      // After the rebuild each investigation runs on the prompts of its recorded version, not on the newest loaded.
-      const markerOf = (query: string) =>
-        harness.model.calls
-          .filter((call) => call.system.includes(query))
-          .map((call) => [call.role, [1, 2, 3].filter((version) => call.system.includes(versionMarker(version)))]);
-      expect(markerOf(queryA)).toEqual([['controller', [2]]]);
-      expect(markerOf(queryB)).toEqual([['controller', [1]]]);
+        expect(doneA).toMatchObject({ status: 'completed', version: 2, answer: { outcome: 'inconclusive' } });
+        expect(doneB).toMatchObject({ status: 'completed', version: 1, answer: { outcome: 'inconclusive' } });
+        // After the rebuild each investigation runs on the prompts of its recorded version, not on the newest loaded.
+        const markerOf = (query: string) =>
+          harness.model.calls
+            .filter((call) => call.system.includes(query))
+            .map((call) => [call.role, [1, 2, 3].filter((version) => call.system.includes(versionMarker(version)))]);
+        expect(markerOf(queryA)).toEqual([['controller', [2]]]);
+        expect(markerOf(queryB)).toEqual([['controller', [1]]]);
 
-      const c = created(
-        await harness.engine.startInvestigation({
-          resourceId,
-          threadId,
-          query: 'C6 investigation C after the rebuild',
-          processId: VERSIONED_PROCESS_ID,
-          launchKey: newLaunchKey(),
-        }),
-      );
-      expect(await view(c.investigationId, resourceId)).toMatchObject({ version: 3 });
-      expect(await finished(c.investigationId, resourceId)).toMatchObject({ status: 'completed', version: 3 });
+        const c = created(
+          await harness.engine.startInvestigation({
+            resourceId,
+            threadId,
+            query: 'C6 investigation C after the rebuild',
+            processId: VERSIONED_PROCESS_ID,
+            launchKey: newLaunchKey(),
+          }),
+        );
+        expect(await view(c.investigationId, resourceId)).toMatchObject({ version: 3 });
+        expect(await finished(c.investigationId, resourceId)).toMatchObject({ status: 'completed', version: 3 });
+      } finally {
+        // Back to the processes of this file: the versioned process stays loaded for this test only.
+        await harness.rebuildEngine({ processes: TEST_PROCESSES });
+      }
     });
     it('INT-1 C7: without connected sources the investigation runs plan then one synthesis with no controller, worker, verifier or source call, delivers its claims as assumed and unverified with evidence references removed, and keeps that mode after the engine is rebuilt with a source connected', async () => {
       const draftClaim = (text: string, evidenceIds: string[] = []) => ({
@@ -946,7 +936,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //
   // Primary failure mode (turns red when): a model call starts without a recorded reservation or beyond the remaining investigation budget or the task's `maxTokens`; the charged total differs from the sum of ledger rows;
   // a failed or cancelled call leaves a reservation `reserved`; a provider outage or an exhausted budget fails the controller instead of ending the investigation with an answer; a call starts after cancel;
-  // in a deployment without sources a refused reservation, an expired `notAfter` or a cancel during synthesis fails the controller task, or leaves it without an answer (budget, deadline), or gives a cancelled investigation an answer.
+  // in a deployment without sources a refused reservation or an expired `notAfter` fails the controller task, or leaves it without an answer (budget, deadline).
   // Behavior: a role asks for a call -> reservation (counted input + margin + maxOutputTokens) is written within the remaining budgets, or refused before the network -> the call -> the reservation is replaced by actual usage and price
   //   (settled), or closed failed/abandoned -> totals per role and model are read back through readInvestigation
   // @category: core-functionality
@@ -964,10 +954,10 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //   every failed call's reservation is `failed` (settled to what the provider reported in usage); the controller then ends the investigation with an answer by code, stop reason `model_unavailable`
   // - L5 cancel (UC-E2, AC-01.4): a worker call is in flight (held by a latch), a second analysis task is queued -> `InvestigationService.cancel` -> after the cancel commit there is no new reservation row and no new call of the counting source adapter,
   //   the in-flight call is aborted by the signal, its reservation is closed `abandoned` and counted in full, and the sum still equals the charged total
-  // - L6 no-source stop before the synthesis ends (UC-E11, AC-25.5; unique defect: the code-built stop answer exists only for the sources path, so the plan-then-synthesis path fails the controller or answers nothing): engine with `connectedSources: []`, three investigations:
+  // - L6 no-source stop before the synthesis ends (UC-E11, AC-25.5; unique defect: the code-built stop answer exists only for the sources path, so the plan-then-synthesis path fails the controller or answers nothing): engine with `connectedSources: []`, two investigations:
   //   (a) the budget covers the `plan` call but is below the synthesis reservation -> the reservation is refused, the double got no synthesis call, the answer has no claims, outcome `inconclusive`, stop reason `budget_exhausted`, the controller task is `succeeded` with that `answerId`
   //   (b) the injected clock moves past `notAfter` after the plan and before the synthesis task is claimed -> the synthesis task fails with class `deadline` without a model call, the controller answers by code: no claims, `inconclusive`, stop reason `deadline`, task `succeeded`
-  //   (c) cancel while the synthesis call is held by a latch -> status `cancelled`, `answer` null, no new reservation, the in-flight reservation closed `abandoned` (the abort mechanism itself is L5)
+  //   (a cancel during the synthesis is not a row: the cancel path is the same as in the sources mode, L5)
   //   (`model_unavailable` in this mode takes the same code-built answer: a row of the unit table of stop answers, see "Proven at unit level")
   describe('INT-2', () => {
     let harness: EngineHarness;
@@ -1302,7 +1292,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         ['worker', 'failed', 0],
         ['worker', 'failed', 0],
       ]);
-      // Two provider retries for the worker and two for the controller wait 1 s and 3 s each on the engine clock.
+      // The 30 s timeout: the two provider retries of the worker and of the controller each wait 1 s and 3 s through the
+      // engine clock, whose timers are the real ones of the harness clock (8 s in all).
     }, 30_000);
     // L5 follows UC-E2 of design-engine.md v1.11 (it supersedes the skeleton comment above): the runtime writes `cancelled` at once, so no attempt is
     //   left to close the in-flight reservation under its guard; it stays `reserved`, counted in `tokensReserved`, and the cost is spent + reserved.
@@ -1442,9 +1433,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         workerGo.open();
       }
     }, 30_000);
-    // L6 (c) follows DC-9 and UC-E2 of design-engine.md v1.12 (as L5 does): after the cancel no attempt is left to close the in-flight
-    //   synthesis reservation under its guard, so it stays `reserved` rather than `abandoned`.
-    it('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason, and a cancel during synthesis leaves no answer', async () => {
+    it('INT-2 L6: without sources an exhausted budget or an expired notAfter before the synthesis ends answers by code with no claims, inconclusive and the stop reason', async () => {
       const noClaims = { established: [], assumed: [], unknown: [], removed: [] };
       /** The no-source stop answer: no claims, `inconclusive`, the reason; the controller succeeded with it, not failed. */
       async function expectStopAnswer(investigationId: string, done: InvestigationView, stopReason: string) {
@@ -1497,34 +1486,6 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         });
         expect(harness.model.calls.map((call) => call.role)).toEqual(['plan']);
         expect((await expectLedgerBalanced(b.investigationId)).map((row) => row.role)).toEqual(['plan']);
-        harness.handlerHold.at = undefined;
-        harness.engineClock.offsetMs = 0;
-
-        // (c) a cancel while the synthesis call is in flight.
-        harness.model.calls.length = 0;
-        harness.model.script('synthesis', { hangUntilAborted: true });
-        const c = await startDeepResearch('L6 c: why did the export stall?');
-        const inFlight = await vi.waitFor(
-          async () => {
-            const row = (await engineRowsOf(c.investigationId)).llmCalls.find((call) => call.role === 'synthesis');
-            if (row === undefined || harness.model.callsOf('synthesis').length === 0) throw new Error('the synthesis call is not in flight yet');
-            return row;
-          },
-          { timeout: 10_000, interval: 20 },
-        );
-        const rowsAtCancel = (await engineRowsOf(c.investigationId)).llmCalls;
-        await harness.runtime.investigations.cancel(c.investigationId, c.resourceId);
-        expect(await finished(c.investigationId, c.resourceId)).toMatchObject({ status: 'cancelled', answer: null });
-        const synthesisC = (await tasksOf(c.investigationId)).find((task) => task.workflowType === 'research.synthesize')!;
-        await vi.waitFor(() => expect(harness.endedRuns).toContainEqual({ taskId: synthesisC.taskId, attempt: synthesisC.attempt }), {
-          timeout: 10_000,
-          interval: 20,
-        });
-        const { run, llmCalls } = await engineRowsOf(c.investigationId);
-        expect(run!.answer).toBeNull();
-        expect(llmCalls).toEqual(rowsAtCancel);
-        expect(llmCalls.find((row) => row.callId === inFlight.callId)).toMatchObject({ status: 'reserved', chargedTokens: null });
-        expect(harness.model.calls.map((call) => call.role)).toEqual(['plan', 'synthesis']);
       } finally {
         harness.handlerHold.at = undefined;
         harness.engineClock.offsetMs = 0;
@@ -1613,8 +1574,11 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   // - V3 new claim during synthesis (UC-7 and UC-E7 wiring, AC-09.3, AC-08.3): with verify rounds left -> synthesis returns `needs_verification`, the controller decides `requestVerification` then `proposeAnswer` again and the claim ends in `established` or `insufficient` by the records;
   //   with rounds exhausted (`maxVerifyRounds` reached, `requestVerification` no longer admissible) -> the claim is in `assumed` with `verified` false, never in `established`, and its latest revision is `insufficient` or `unverified`, never `supported`
   // V1 follows design-engine.md v1.12: the failing connected source answers its snapshot and loses every call of one tool, so its fetch task
-  //   exists and fails (DC-10); a source whose snapshot cannot be read creates no task (KD-10, DC-20) and is proven by the unit row in
-  //   capability-registry.spec.ts. A verified revision keeps its basis in `evidenceIds`, its scope in `coverage` and a verdict per atom in `atoms`.
+  //   exists and fails (DC-10); a source whose snapshot cannot be read creates no task (KD-10, DC-20): the rule is the unit row in
+  //   capability-registry.spec.ts, and V1 adds the controller half (no wait, the request observed with `source_unavailable` in the next input).
+  //   A verified revision keeps its basis in `evidenceIds`, its scope in `coverage` and a verdict per atom in `atoms`.
+  //   V1 also asserts the model of each role under the shipped configuration (AC-10.1: worker and verifier on Haiku) and ends by deleting the
+  //   conversation, so the purge cascades through claim revisions as well (moved from INT-1 C1, whose chains write no claim).
   describe('INT-3', () => {
     let harness: EngineHarness;
     /** V3 (AC-09.3, AC-08.3): the shipped process without verification rounds, so a new claim cannot be verified. */
@@ -1641,11 +1605,12 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         expect(harness.model.pending()).toEqual({ plan: 0, controller: 0, worker: 0, verifier: 0, synthesis: 0 });
       } finally {
         harness.countingSource.failCalls(null);
+        harness.countingSource.setUnavailable(false);
         await harness.cancelStarted();
       }
     });
 
-    it('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched, and a failing connected source keeps the investigation in the sources mode', async () => {
+    it('INT-3 V1: a verification round appends supported and insufficient revisions from fetched source records (a failed collection gives insufficient, not refuted) and leaves the earlier revisions untouched, a failing or unreadable connected source keeps the investigation in the sources mode, and deleting the conversation removes every engine row', async () => {
       const trace = 'c'.repeat(32);
       const record = { ts: '2026-10-01T12:05:00.000Z', service: 'payments', level: 'error', event: 'refund', traceId: trace, status: 'error' };
       harness.countingSource.answerWith(() => [record]);
@@ -1663,6 +1628,13 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           },
         },
         { output: () => ({ kind: 'requestVerification', rationale: 'check both claims', claimIds }), holdUntil: claimsWritten.wait },
+        {
+          // DC-20 (controller half): the source's snapshot stops reading before this decision proposes its gather.
+          output: () => {
+            harness.countingSource.setUnavailable(true);
+            return { kind: 'requestEvidence', rationale: 'collect the refund errors', sourceId: 'fixture', toolName: 'search_logs', args: { service: 'refunds' }, completeness: 'all' };
+          },
+        },
         { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } },
       );
       harness.model.script('worker', {
@@ -1767,15 +1739,50 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           const key = `research_claims:${row.claimRevisionId}`;
           expect(versionsAfter.get(key)).toBe(versionsBefore.get(key));
         }
-        // The round is counted on its accepted decision and its one task.
+        // The round is counted on its accepted decision and its one task; the gather over the unreadable snapshot created none.
         expect(decisions.filter((row) => row.status === 'accepted').map((row) => [row.kind, row.proposedTaskIds.length])).toEqual([
           ['requestAnalysis', 2],
           ['requestVerification', 1],
+          ['requestEvidence', 0],
           ['concludeInconclusive', 0],
         ]);
         expect(decisions[1]!.proposedTaskIds).toEqual([verify.taskId]);
         expect(llmCalls.filter((row) => row.taskId === verify.taskId).map((row) => [row.role, row.status])).toEqual([['verifier', 'settled']]);
         expect(harness.model.callsOf('verifier')[0]!.user).toContain(claimIds[1]);
+        // DC-20: the controller did not wait for the request that created no task, and its next input observes it as a
+        // failed gather with `source_unavailable`; the mode stayed `sources` (asserted on the view above).
+        const afterUnavailable = harness.model.callsOf('controller')[3]!.user;
+        expect(afterUnavailable).toContain('"taskId":null,"type":"source.fetch","status":"failed"');
+        expect(afterUnavailable).toContain('"failureCode":"source_unavailable"');
+        expect(afterUnavailable).toContain('"request":{"sourceId":"fixture","toolName":"search_logs","args":{"service":"refunds"}}');
+        // AC-10.1 under the shipped configuration: plan and controller on Sonnet, worker and verifier on Haiku.
+        const SONNET = 'anthropic/claude-sonnet-5-5';
+        const HAIKU = 'anthropic/claude-haiku-5-5';
+        expect(harness.model.calls.map((call) => [call.role, call.modelId])).toEqual([
+          ['plan', SONNET],
+          ['controller', SONNET],
+          ['worker', HAIKU],
+          ['controller', SONNET],
+          ['verifier', HAIKU],
+          ['controller', SONNET],
+          ['controller', SONNET],
+        ]);
+
+        // The conversation is deleted (unique defect: an engine table whose FK to the investigation does not cascade blocks
+        // `InvestigationService.purgeThread`, which only real rows of all six tables show, claim revisions and a signal
+        // included): after the purge no engine row and no task is left.
+        const signal = await harness.engine.recordSignal({ investigationId, resourceId, kind: 'test.note', payload: { note: 'V1' } });
+        expect(signal.outcome).toBe('recorded');
+        await harness.purgeThread(resourceId, threadId);
+        expect(await engineRowsOf(investigationId)).toEqual({
+          run: undefined,
+          planRevisions: [],
+          decisions: [],
+          signals: [],
+          claims: [],
+          llmCalls: [],
+        });
+        expect(await tasksOf(investigationId)).toEqual([]);
       } finally {
         claimsWritten.open();
       }
@@ -2341,6 +2348,6 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 //   a configuration without the `plan` capability -> the first plan revision is the `goal` and there is no `plan` call; a configuration without `synthesize` -> answer by code, `inconclusive`, no stop reason. AC-25.5 (rule), KD-8.
 // - Shell matching predicate (table, UC-E12): an investigation is taken by a retried start only when it has the same thread and owner, the same `query`, the same `maxTasks` and `maxToolCalls`, and no engine row; each differing field leaves it untouched. DC-19 (rule), KD-9.
 // - Dedup key builder for gather descriptions (fast-check property): the same tool, arguments and snapshot always give the same key regardless of `rationale` text or argument key order (DC-4 key half).
-// - Signal registry (table): kind lookup, payload schema per kind, a kind registered later is accepted without changing the DecisionInput shape (AC-04.2).
+// - Signal registry (table): kind lookup, payload schema per kind, a kind registered later is accepted (AC-04.2); its DecisionInput form is INT-1 C4.
 // - Cost calculation (table): catalog prices including the Haiku tier above 100 000 input tokens, cache read and write tokens (AC-11.1 price half).
 // - Retry policy of ModelGateway (table): 429 / 5xx / network retried twice with a reservation per attempt; `refusal` stop reason and invalid structured output retried once then `invalid_model_output` (Error handling).

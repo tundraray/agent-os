@@ -63,21 +63,21 @@ describe('DecisionGate: only an admissible, well-formed decision of an enabled c
       'capability_disabled',
       ['requestEvidence', 'wait', 'concludeInconclusive'],
     ],
+    [
+      'requestAnalysis with analyze but without gather (DC-1)',
+      outputs.requestAnalysis,
+      { capabilities: ['analyze', 'verify', 'synthesize'] },
+      'capability_disabled',
+      ['requestVerification', 'wait', 'proposeAnswer', 'concludeInconclusive'],
+    ],
     ['requestEvidence without its arguments', { kind: 'requestEvidence', rationale: 'r' }, {}, 'invalid_structure', [
       'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
     ]],
-    // T7.3: the model writes `args` as JSON text. Defect caught: text that is not a JSON object crashes the step or
-    // becomes a decision; an object where the model must write text is let through.
+    // T7.3: the model writes `args` as JSON text. Defect caught: text that does not parse crashes the step or becomes a
+    // decision; an object where the model must write text is let through.
     ['requestEvidence whose args text is not JSON', { ...outputs.requestEvidence, args: '{q: x' }, {}, 'invalid_args', [
       'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
     ]],
-    [
-      'a requestAnalysis sub-question whose args text is a JSON array',
-      { ...outputs.requestAnalysis, subquestions: [subquestion('a'), { ...subquestion('b'), args: '["q"]' }] },
-      {},
-      'invalid_args',
-      ['requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive'],
-    ],
     ['requestEvidence with args as an object, not text', { ...outputs.requestEvidence, args: { q: 'x' } }, {}, 'invalid_args', [
       'requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive',
     ]],

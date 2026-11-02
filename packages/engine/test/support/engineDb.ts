@@ -1,5 +1,6 @@
 import {
   createDatabase,
+  type Database,
   type DatabaseConnection,
   researchClaims,
   researchDecisions,
@@ -10,12 +11,14 @@ import {
   researchSignals,
   researchTasks,
 } from '@agent-os/db';
+import type { InvestigationService } from '@agent-os/runtime';
 import { asc, eq, sql } from 'drizzle-orm';
-import { databaseUrl } from './database-url.js';
+import { assertTestDatabase, databaseUrl } from './database-url.js';
 
 /**
  * Read-only snapshots of the engine's `research_*` rows for the integration file, over the test's own connections,
- * apart from the runtime's pool. Nothing here writes.
+ * apart from the runtime's pool. Nothing here writes, apart from {@link cancelLeftovers}, which writes only through the
+ * real `InvestigationService.cancel`.
  */
 
 let connection: DatabaseConnection | undefined;
@@ -106,4 +109,21 @@ export async function rowVersionsOf(investigationId: string): Promise<Map<string
     union all select 'research_llm_calls:' || call_id, xmin::text from ${researchLlmCalls} where investigation_id = ${id}
   `);
   return new Map(rows.map((row) => [row.key, row.version]));
+}
+
+/**
+ * The fence of an assembly or a run: every active investigation with an engine row — what an earlier run left, for
+ * instance after a failed test — is cancelled through the real `InvestigationService.cancel`, so new workers never claim
+ * a foreign controller task that would consume a script or a crash pass. Refuses a database that is not the local test one.
+ */
+export async function cancelLeftovers(database: Database, investigations: Pick<InvestigationService, 'cancel'>): Promise<void> {
+  assertTestDatabase(databaseUrl());
+  const leftovers = await database
+    .select({ investigationId: researchInvestigations.investigationId, resourceId: researchInvestigations.resourceId })
+    .from(researchInvestigations)
+    .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchInvestigations.investigationId))
+    .where(eq(researchInvestigations.status, 'active'));
+  for (const { investigationId, resourceId } of leftovers) {
+    await investigations.cancel(investigationId, resourceId);
+  }
 }

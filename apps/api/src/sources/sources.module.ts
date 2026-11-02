@@ -19,6 +19,7 @@ import {
   type SourcesSettings,
   type SourceToolRequest,
 } from '@agent-os/sources';
+import { withFields } from '../common/log-fields.js';
 import { ResearchModule } from '../research/research.module.js';
 import {
   HANDLER_REGISTRY,
@@ -60,16 +61,6 @@ class NestSourcesLogger implements SourcesLogger {
   error(message: string, fields: Readonly<Record<string, unknown>>): void {
     this.logger.error(withFields(message, fields));
   }
-}
-
-function withFields(
-  message: string,
-  fields: Readonly<Record<string, unknown>>,
-): string {
-  const pairs = Object.entries(fields)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return pairs.length === 0 ? message : `${message} ${pairs.join(' ')}`;
 }
 
 /**

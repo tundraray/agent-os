@@ -4,10 +4,9 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { createDatabase, type DatabaseConnection, researchEngineRuns, researchInvestigations } from '@agent-os/db';
+import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import { createRuntime, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
-import { eq } from 'drizzle-orm';
-import { assertTestDatabase, databaseUrl } from './database-url.js';
+import { databaseUrl } from './database-url.js';
 import type {
   CrashExitCode,
   EngineChildMessage,
@@ -15,7 +14,7 @@ import type {
   EngineChildScenarioEnv,
   StopMessage,
 } from './engineChildMain.js';
-import { engineRowsOf, engineRunsOf, tasksOf } from './engineDb.js';
+import { cancelLeftovers, engineRowsOf, engineRunsOf, tasksOf } from './engineDb.js';
 import { fixtureFiles } from './fixtureHarness.js';
 import { newLaunchKey, newUser } from './new-user.js';
 
@@ -187,12 +186,10 @@ class EngineChild {
 type Pool = DatabaseConnection['pool'];
 
 /**
- * The fence of a run, as the in-process harness fences its assembly: every active investigation with an engine row — what
- * an earlier run left, for instance after a failed test — is cancelled through the real `InvestigationService.cancel`
- * of a runtime without workers, so a child never claims a foreign controller task that would spend its crash pass.
+ * The fence of a run ({@link cancelLeftovers}) over a runtime without workers, so a child never claims a foreign
+ * controller task that would spend its crash pass.
  */
-async function cancelLeftovers(connection: DatabaseConnection): Promise<void> {
-  assertTestDatabase(databaseUrl());
+async function fenceLeftovers(connection: DatabaseConnection): Promise<void> {
   const runtime = createRuntime({
     database: connection,
     config: parseRuntimeConfig({ RUNTIME_WORKERS: 'off' }),
@@ -202,14 +199,7 @@ async function cancelLeftovers(connection: DatabaseConnection): Promise<void> {
     logger: { log: () => undefined, warn: () => undefined, error: () => undefined },
     clock: systemClock,
   });
-  const leftovers = await connection.db
-    .select({ investigationId: researchInvestigations.investigationId, resourceId: researchInvestigations.resourceId })
-    .from(researchInvestigations)
-    .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchInvestigations.investigationId))
-    .where(eq(researchInvestigations.status, 'active'));
-  for (const { investigationId, resourceId } of leftovers) {
-    await runtime.investigations.cancel(investigationId, resourceId);
-  }
+  await cancelLeftovers(connection.db, runtime.investigations);
 }
 
 /**
@@ -368,7 +358,7 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
     return child;
   };
   try {
-    await cancelLeftovers(reader);
+    await fenceLeftovers(reader);
     await assertNoForeignEngineWork(reader.pool);
     let child = start(options.crashAt);
     let firstExitCode: number | null = null;

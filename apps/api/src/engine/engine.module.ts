@@ -13,6 +13,7 @@ import {
 } from '@agent-os/engine';
 import type { Clock, Runtime } from '@agent-os/runtime';
 import type { SourceAdapter, SourceRegistry } from '@agent-os/sources';
+import { withFields } from '../common/log-fields.js';
 import { ResearchModule } from '../research/research.module.js';
 import {
   RESEARCH_DATABASE,
@@ -57,14 +58,6 @@ class NestEngineLogger implements EngineLogger {
   error(message: string, fields?: EngineLogFields): void {
     this.logger.error(withFields(message, fields));
   }
-}
-
-function withFields(message: string, fields?: EngineLogFields): string {
-  if (!fields) return message;
-  const pairs = Object.entries(fields)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return pairs.length === 0 ? message : `${message} ${pairs.join(' ')}`;
 }
 
 /**

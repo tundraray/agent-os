@@ -3,9 +3,12 @@
 // The allowlist rule (a tool without readOnly is refused) is proven by packages/sources/src/sources.registry.spec.ts; this file proves only
 // what a package test cannot see: the order of the Nest phases around createSources and the adapters' close().
 // Budget: beyond the integration budget of the part, required by the design (Test Strategy: UC-9); the plan records the exception (T3.4).
-// Covers: AC-11.3 (the start is aborted before the workers), Use case UC-9.
+// Covers: AC-11.3 (the start is aborted before the workers), Use case UC-9; for deep-research / engine (design-engine.md, C2):
+// EngineModule registers its handlers after source.fetch and before the workers start, and Engine.sourceMode is `sources` with the fixture.
 // Primary failure mode (turns red when): SourcesModule calls createSources in onApplicationBootstrap (after the workers may claim
-// `source.fetch`), closes the adapters in beforeApplicationShutdown (before the workers stop), or lets a refused allowlist start the workers.
+// `source.fetch`), closes the adapters in beforeApplicationShutdown (before the workers stop), or lets a refused allowlist start the workers;
+// EngineModule calls createEngine after the workers start, or before SourcesModule binds the source registry (DC-14 then refuses the
+// configuration against the empty registry and app.init() throws).
 // Run: `pnpm --filter api test:e2e:runtime`, never in parallel with other suites against one database.
 
 import { randomUUID } from 'node:crypto';
@@ -156,6 +159,9 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
         ...ENGINE_REGISTRATIONS,
         WORKERS_STARTED,
       ]);
+      // EngineModule creates the engine after SourcesModule binds the registry: with the fixture connected it runs in
+      // the sources mode (DC-14 checked against the bound registry, not the empty one).
+      expect(runtime.app.get<Engine>(RESEARCH_ENGINE).sourceMode).toBe('sources');
 
       // The fixture process starts on the first call through the registry SourcesModule provides.
       const registry = runtime.app.get<SourceRegistry>(SOURCE_REGISTRY);

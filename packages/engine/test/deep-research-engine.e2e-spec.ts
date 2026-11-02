@@ -273,6 +273,11 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
           .answerOrDelta.needsNarrowing;
         expect(narrowing.limitTokens).toBe(60_800);
         expect(narrowing.materialTokens).toBeGreaterThan(64_000);
+        // DC-7 (second half): the next controller input observes the narrowing request of that analysis.
+        const afterAnalyses = harness.model.callsOf('controller')[1]!.user;
+        expect(afterAnalyses).toContain(`"taskId":"${analysisOf(WHOLE_SLICE).taskId}","type":"research.analyze","status":"succeeded"`);
+        expect(afterAnalyses).toContain('"needsNarrowing":{');
+        expect(afterAnalyses).toContain(`"materialTokens":${narrowing.materialTokens}`);
 
         // AC-05.2: no edge between the analyses, each depends on its own gather only; all three started before any of them succeeded.
         const analysisIds = analyses.map((task) => task.taskId);
@@ -395,7 +400,8 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
   //
   // Verification items (table of crash points; the end state of each is compared with an uninterrupted reference run of the same scripted investigation):
   // - K1 after the decision, before `propose` (first scenario): exactly one accepted `research_decisions` row for the step, the proposed tasks exist once (dedup key unique), the restarted controller's `propose` answers `subscribed`, final answer present
-  // - K2 during a worker's model call (second scenario): the reservation of the killed call is `abandoned` and counted in full once the next attempt or the answer write closes it; `sum(research_llm_calls) === research_engine_runs.spent`; no `reserved` row remains after the end
+  // - K2 during a worker's model call (second scenario), restarted with no recovery left: the reservation of the killed call is `abandoned` and counted in full by the next controller decision (DC-9, second close point);
+  //   `sum(research_llm_calls) === research_engine_runs.spent`; no `reserved` row remains after the end (the first close point, the task's next attempt, is the runtime's recovery path and is not repeated here)
   // - K3 at the start, after the engine row and before the controller task (UC-E12 second scenario, DC-19, KD-9): the child is killed at `engine.start.after-row`; after the restart the same `startInvestigation` (same `launchKey`) answers `existing`,
   //   proposes the controller task once, and the investigation reaches the answer; the thread has exactly one investigation of the user and one `research_engine_runs` row for the key; no shell is left next to it
   // - All rows: final statuses of all tasks as in the reference run; claim revisions are not duplicated; the fixture call log has no more `tools/call` lines than the reference run for the same keys
@@ -489,25 +495,8 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
       expectReferenceEnd(run);
     }, 120_000);
 
-    it('E2E-2 K2: a kill during a worker model call closes the open reservation as abandoned, keeps the ledger sum equal to the charged total, and the investigation still ends in an answer', async () => {
-      // (a) The runtime recovers the worker task: its next attempt closes the reservation of the killed call before its own call (DC-9,
-      // first close point), and the investigation ends as the reference run.
-      const recovered = await runScenario({ crashAt: 'worker-call:1' });
-
-      expect(recovered.firstExitCode).toBe(CRASH_EXIT_CODE);
-      expect(endStateOf(recovered.atKill!).tasks).toEqual([
-        ['research.controller', 'waiting', null],
-        ['source.fetch', 'succeeded', null],
-        ['research.analyze', 'running', null],
-      ]);
-      expect(workerCalls(recovered.atKill!).killed).toMatchObject({ status: 'reserved', chargedTokens: null });
-      expectReferenceEnd(recovered);
-      const { killed, retried } = workerCalls(recovered.end);
-      expect(killed).toMatchObject({ status: 'abandoned', chargedTokens: killed?.reservedTokens });
-      expect(retried).toMatchObject({ status: 'settled' });
-      expect(killed!.closedAt!.getTime()).toBeLessThanOrEqual(retried!.createdAt.getTime());
-
-      // (b) No recovery is left (`RUNTIME_MAX_RECOVERIES=0` in the restarted child): the worker task fails `recovery_exhausted` without
+    it('E2E-2 K2: a kill during a worker model call with no recovery left closes the open reservation as abandoned in the next decision, keeps the ledger sum equal to the charged total, and the investigation still ends in an answer', async () => {
+      // No recovery is left (`RUNTIME_MAX_RECOVERIES=0` in the restarted child): the worker task fails `recovery_exhausted` without
       // another attempt, and the controller, seeing it in a final status, closes its reservation with its next decision (DC-9, second close
       // point) — in the transaction of that decision, before the answer would (third close point).
       const exhausted = await runScenario({ crashAt: 'worker-call:1', restartSettings: { RUNTIME_MAX_RECOVERIES: '0' } });
@@ -533,7 +522,7 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
       const stepTwo = exhausted.end.rows.decisions.find((decision) => decision.step === 2);
       expect(abandoned!.closedAt).toEqual(stepTwo!.createdAt);
       expectLedgerClosed(exhausted.end);
-    }, 240_000);
+    }, 120_000);
 
     it('E2E-2 K3: a kill after the engine row was written and before the controller task was proposed leaves one investigation after the restart, whose repeated start proposes the task once and reaches the answer', async () => {
       const run = await runScenario({ crashAt: 'engine.start.after-row' });

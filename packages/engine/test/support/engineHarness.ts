@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Investigation } from '@agent-os/contracts';
-import { createDatabase, type Database, researchEngineRuns, researchInvestigations, researchTasks } from '@agent-os/db';
+import { createDatabase, type Database, researchTasks } from '@agent-os/db';
 import {
   createEngine,
   deepResearchProcessV1,
@@ -35,7 +35,8 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
-import { assertTestDatabase, databaseUrl } from './database-url.js';
+import { databaseUrl } from './database-url.js';
+import { cancelLeftovers } from './engineDb.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedModelOptions } from './scriptedModel.js';
 
 /**
@@ -338,26 +339,9 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   };
 
   /**
-   * The fence of an assembly: before the workers start, every active investigation with an engine row — what an earlier
-   * run of the file left, for instance after a failed test — is cancelled through the real service, so the new workers
-   * never claim a foreign controller task that would consume the script. Apart from {@link EngineHarness.expireLease},
-   * rows are never edited by the harness.
-   */
-  async function cancelLeftovers(runtime: Runtime): Promise<void> {
-    assertTestDatabase(databaseUrl());
-    const leftovers = await database.db
-      .select({ investigationId: researchInvestigations.investigationId, resourceId: researchInvestigations.resourceId })
-      .from(researchInvestigations)
-      .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchInvestigations.investigationId))
-      .where(eq(researchInvestigations.status, 'active'));
-    for (const { investigationId, resourceId } of leftovers) {
-      await runtime.investigations.cancel(investigationId, resourceId);
-    }
-  }
-
-  /**
    * createEngine runs before the workers start, as in the composition root (handlers registered before a claim);
-   * `fence` cancels the leftovers in between.
+   * `fence` cancels the leftovers in between ({@link cancelLeftovers}). Apart from {@link EngineHarness.expireLease},
+   * rows are never edited by the harness.
    */
   async function assemble(fence: boolean): Promise<{ runtime: Runtime; sources: Sources; engine: Engine }> {
     const runtime = createRuntime({
@@ -393,7 +377,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       logger: recordingLogger(logs.engine),
     });
     if (fence) {
-      await cancelLeftovers(runtime);
+      await cancelLeftovers(database.db, runtime.investigations);
     }
     runtime.start();
     return { runtime, sources, engine };

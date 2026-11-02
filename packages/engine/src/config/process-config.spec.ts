@@ -1,6 +1,5 @@
 import type { ResolvedSourceTool, SourceRegistry, SourceToolRequest } from '@agent-os/sources';
 import shippedDeepResearch from '../processes/deep-research.v1.json' with { type: 'json' };
-import { decisionsOpenedBy, type Capability } from './capabilities.js';
 import { loadProcessConfig, type ProcessConfig } from './load-process-config.js';
 import { DEFAULT_MODEL_CATALOG } from './model-catalog.js';
 import { checkRoleModels } from './process-config.schema.js';
@@ -149,43 +148,41 @@ describe('engine-creation checks', () => {
     });
   });
 
+  const ALLOWLISTED = { sourceId: 'fixture', toolName: 'search_logs' };
+  const OUTSIDE = { sourceId: 'fixture', toolName: 'delete_logs' };
+
   it.each([
     {
       name: 'a tool outside the source.fetch allowlist with a connected source is rejected (DC-14)',
+      sources: [ALLOWLISTED, OUTSIDE],
       connectedSources: ['fixture'],
       expected: { ok: false, rejection: { code: 'process_config_rejected', path: [0, 'sources', 1] } },
-      resolveCalls: 2,
+      resolved: ['search_logs', 'delete_logs'],
     },
     {
       name: 'the same configuration without connected sources is accepted in model_knowledge mode with a warning (DC-18)',
+      sources: [ALLOWLISTED, OUTSIDE],
       connectedSources: [],
       expected: { ok: true, sourceMode: 'model_knowledge', warnNoSources: true },
-      resolveCalls: 0,
+      resolved: [],
     },
-  ])('$name', ({ connectedSources, expected, resolveCalls }) => {
+    {
+      name: 'allowlisted sources with a connected source are accepted in sources mode without a warning',
+      sources: [ALLOWLISTED],
+      connectedSources: ['fixture'],
+      expected: { ok: true, sourceMode: 'sources', warnNoSources: false },
+      resolved: ['search_logs'],
+    },
+  ])('$name', ({ sources, connectedSources, expected, resolved }) => {
     const registry = registryDouble();
-    const config = loaded(
-      rawConfig({
-        sources: [
-          { sourceId: 'fixture', toolName: 'search_logs' },
-          { sourceId: 'fixture', toolName: 'delete_logs' },
-        ],
-      }),
-    );
+    const config = loaded(rawConfig({ sources }));
 
     const result = checkProcessSources({ configs: [config], registry, connectedSources });
 
     expect(result).toMatchObject(expected);
-    expect(registry.requests).toHaveLength(resolveCalls);
-  });
-
-  it('accepts allowlisted sources with a connected source in sources mode without a warning', () => {
-    const registry = registryDouble();
-
-    const result = checkProcessSources({ configs: [loaded(rawConfig())], registry, connectedSources: ['fixture'] });
-
-    expect(result).toEqual({ ok: true, sourceMode: 'sources', warnNoSources: false });
-    expect(registry.requests).toEqual([{ workflowType: 'source.fetch', sourceId: 'fixture', toolName: 'search_logs' }]);
+    expect(registry.requests).toEqual(
+      resolved.map((toolName) => ({ workflowType: 'source.fetch', sourceId: 'fixture', toolName })),
+    );
   });
 });
 
@@ -218,18 +215,4 @@ describe('process versions (DC-15, resolution half)', () => {
       expect(resolution.ok ? { ok: true, version: resolution.config.version } : resolution).toEqual(expected);
     },
   );
-});
-
-describe('capability registry', () => {
-  it.each<[Capability[], string[]]>([
-    [[], ['wait', 'concludeInconclusive']],
-    [['gather'], ['requestEvidence', 'wait', 'concludeInconclusive']],
-    [
-      ['gather', 'analyze', 'plan'],
-      ['requestEvidence', 'requestAnalysis', 'replan', 'wait', 'concludeInconclusive'],
-    ],
-    [['analyze', 'verify', 'synthesize'], ['requestVerification', 'wait', 'proposeAnswer', 'concludeInconclusive']],
-  ])('capabilities %j open exactly %j', (capabilities, decisions) => {
-    expect([...decisionsOpenedBy(capabilities)]).toEqual(decisions);
-  });
 });
