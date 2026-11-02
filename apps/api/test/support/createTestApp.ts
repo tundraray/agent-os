@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { Agent, type ToolsInput } from '@mastra/core/agent';
 import { Mastra } from '@mastra/core/mastra';
+import type { RequestContext } from '@mastra/core/request-context';
 import { createTool } from '@mastra/core/tools';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
@@ -58,7 +59,10 @@ const failing = createTool({
 
 /** The test `assistant` agent: its mock model, and the instruction and tools that replace the defaults. */
 export interface TestAgentOptions {
-  model: MockLanguageModelV4;
+  /** A mock model, or a function of the turn's `requestContext` picking one (an agent whose model follows the turn). */
+  model:
+    | MockLanguageModelV4
+    | ((turn: { requestContext: RequestContext }) => MockLanguageModelV4);
   /** Default `'You are a test assistant.'`. */
   instructions?: string;
   /** Default: `getWeather` and `failing`. */

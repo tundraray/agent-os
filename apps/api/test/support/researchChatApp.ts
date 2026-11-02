@@ -15,7 +15,13 @@ import { vi } from 'vitest';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { RESEARCH_ENGINE } from '../../src/engine/engine.tokens.js';
+import {
+  ASSISTANT_INSTRUCTIONS,
+  turnModelId,
+} from '../../src/mastra/agents/assistant.agent.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
+import { createDeepResearchTool } from '../../src/research-chat/deep-research.tool.js';
+import { ResearchLaunchService } from '../../src/research-chat/research-launch.service.js';
 import {
   HANDLER_REGISTRY,
   RESEARCH_RUNTIME,
@@ -32,6 +38,8 @@ import { ThreadsService } from '../../src/threads/threads.service.js';
 import { createTestMastra } from './createTestApp.js';
 import { createEngineDouble, type EngineDouble } from './engineDouble.js';
 import {
+  DEEP_RESEARCH_TOOL,
+  SCRIPTED_CHAT_MODEL_ID,
   type ScriptedChatModel,
   scriptedChatModel,
   titleModel,
@@ -43,7 +51,7 @@ import { type Latch, latch } from './wiring-handlers.js';
 /**
  * The in-process app of the chat-entry integration file (design-chat-entry.md, Test Strategy): the real `AppModule`
  * — `ChatController`, `ThreadsService` with its lock, `ThreadRunRegistry`, Mastra Memory over Postgres, the real
- * runtime with its workers on, and the part's module once `AppModule` imports it (task-09) — with the doubled
+ * runtime with its workers on, and the part's `ResearchChatModule` — with the doubled
  * boundaries only: the scripted chat model and the engine port (`RESEARCH_ENGINE`). Around the real pieces it puts
  * observers and scripted faults: calls of `investigations.cancel`, failed writes of answer messages and of the tail
  * delete, reads of `EvidenceReader.get`, and the clock of the runtime and the delivery loop.
@@ -86,8 +94,8 @@ export interface ResearchChatAppOptions {
    */
   env?: Record<string, string | undefined>;
   /**
-   * Instruction and tools of the test `assistant` agent (the part's `deepResearch` tool, task-09), or a function of
-   * `resolve` building them.
+   * Instruction and tools of the test `assistant` agent, or a function of `resolve` building them. Default: the
+   * production chat agent's instruction and its `deepResearch` tool over the app's `ResearchLaunchService`.
    */
   agent?:
     TestAgentDefinition | ((resolve: ResolveProvider) => TestAgentDefinition);
@@ -281,6 +289,18 @@ function countEvidenceReads(runtime: Runtime) {
   };
 }
 
+/** The production chat agent's instruction and `deepResearch` tool; the tool resolves its service when it runs. */
+function productionAgent(resolve: ResolveProvider): TestAgentDefinition {
+  return {
+    instructions: ASSISTANT_INSTRUCTIONS,
+    tools: {
+      [DEEP_RESEARCH_TOOL]: createDeepResearchTool(() =>
+        resolve<ResearchLaunchService>(ResearchLaunchService),
+      ),
+    },
+  };
+}
+
 async function compile(
   options: ResearchChatAppOptions,
   assembly: {
@@ -292,16 +312,24 @@ async function compile(
 ): Promise<TestingModule> {
   const { chatModel, clock, engine, resolve } = assembly;
   // A function of `resolve` lets a tool reach providers when it executes, not while MASTRA is built: this avoids the
-  // DI cycle of the deepResearch tool (its service needs THREAD_MEMORY, which needs MASTRA; task-09).
+  // DI cycle of the deepResearch tool (its service needs THREAD_MEMORY, which needs MASTRA).
   const agent =
     typeof options.agent === 'function'
       ? options.agent(resolve)
-      : options.agent;
+      : (options.agent ?? productionAgent(resolve));
   let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
     .useFactory({
       factory: (config: ConfigService) =>
-        createTestMastra(config, { model: chatModel.model, ...agent }),
+        createTestMastra(config, {
+          ...agent,
+          // The turn's model follows its requestContext through the production choice (design-chat-entry.md, KD-9);
+          // each model id the choice returns is a scripted model reporting that id in its call records.
+          model: ({ requestContext }) =>
+            chatModel.modelFor(
+              turnModelId(SCRIPTED_CHAT_MODEL_ID, requestContext),
+            ),
+        }),
       inject: [ConfigService],
     })
     .overrideProvider(THREAD_TITLE_AGENT)

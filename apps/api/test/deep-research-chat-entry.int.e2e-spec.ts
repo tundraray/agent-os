@@ -39,9 +39,129 @@
 //   (chat accepts messages, the research is proposed and launched, and the part adds no source check) is A6 below
 // - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (docs/features/deep-research/chat-entry/l1-browser-scenarios.md)
 
-import { describe, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import {
+  RESEARCH_METADATA_KEYS,
+  ThreadMessagesResponseSchema,
+  ThreadResearchResponseSchema,
+} from '@agent-os/contracts';
+import request from 'supertest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import { ThreadRunRegistry } from '../src/threads/thread-run-registry.js';
+import {
+  deepResearchCallStep,
+  DEEP_RESEARCH_TOOL,
+  type RecordedChatCall,
+  textStep,
+} from './support/mockModels.js';
+import {
+  createResearchChatApp,
+  type ResearchChatApp,
+} from './support/researchChatApp.js';
+import { investigationsOf, launchesOf } from './support/researchChatDb.js';
+import { closeRuntimeDb } from './support/wiring-handlers.js';
+
+/** The model of the research mode and decision turns (design-chat-entry.md, KD-9, Runtime settings). */
+const RESEARCH_TURN_MODEL = 'anthropic/claude-haiku-5-5';
+/** The scripted chat model's id: the model of ordinary turns. */
+const CHAT_MODEL = 'mock/chat';
+/** `investigationTokens.default` of the shipped deep-research configuration. */
+const DEFAULT_TOKEN_BUDGET = 3_000_000;
+/** Above `high`: a research turn must still run with `high` (Haiku 5.5 turns thinking off only up to it, KD-9). */
+const REASONING_EFFORT = 'max';
+/** Long enough for a chat turn with the real Memory and lock; not a latency check. */
+const TURN_TIMEOUT_MS = 30_000;
+const BOOT_TIMEOUT_MS = 60_000;
+
+let t: ResearchChatApp;
+
+/** A user message as the web sends it; `metadata` carries the research mode or a decision. */
+function userMessage(text: string, metadata?: Record<string, unknown>) {
+  return {
+    id: `client-${randomUUID()}`,
+    role: 'user',
+    parts: [{ type: 'text', text }],
+    ...(metadata && { metadata }),
+  };
+}
+
+/**
+ * Sends one chat turn and waits until its run has ended (the run is released after Mastra's end-of-run save), so the
+ * stored messages and launch rows are final.
+ */
+async function chat(
+  user: string,
+  threadId: string,
+  message: ReturnType<typeof userMessage>,
+): Promise<void> {
+  await request(t.app.getHttpServer())
+    .post('/api/chat/assistant')
+    .set('x-user-id', user)
+    .send({ id: threadId, messages: [message] })
+    .expect(200);
+  const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
+  await vi.waitFor(
+    () => {
+      if (runs.hasRuns(threadId))
+        throw new Error(`chat run of ${threadId} still registered`);
+    },
+    { timeout: TURN_TIMEOUT_MS, interval: 25 },
+  );
+}
+
+async function research(user: string, threadId: string) {
+  const res = await request(t.app.getHttpServer())
+    .get(`/api/threads/${threadId}/research`)
+    .set('x-user-id', user)
+    .expect(200);
+  return ThreadResearchResponseSchema.parse(res.body).launches;
+}
+
+async function messages(user: string, threadId: string) {
+  const res = await request(t.app.getHttpServer())
+    .get(`/api/threads/${threadId}/messages`)
+    .set('x-user-id', user)
+    .expect(200);
+  return ThreadMessagesResponseSchema.parse(res.body).messages;
+}
+
+/** The turn options a model call received, without the prompt. */
+function turnOptions(call: RecordedChatCall | undefined) {
+  if (call === undefined) throw new Error('the chat model was not called');
+  return {
+    modelId: call.modelId,
+    toolChoice: call.toolChoice,
+    tools: call.tools,
+    thinking: call.thinking,
+    effort: call.providerOptions?.anthropic?.effort,
+  };
+}
 
 describe('deep-research / chat-entry - integration (in-process Nest + real runtime + real Postgres, scripted chat model)', () => {
+  beforeAll(async () => {
+    t = await createResearchChatApp({ env: { REASONING_EFFORT } });
+  }, BOOT_TIMEOUT_MS);
+
+  afterAll(async () => {
+    try {
+      await t?.close();
+    } finally {
+      await closeRuntimeDb();
+    }
+  }, BOOT_TIMEOUT_MS);
+
+  beforeEach(() => t.reset());
+  afterEach(() => t.reset());
+
   // ---------------------------------------------------------------------------------------------------------------
   // INT-1  Chat turns decide launches: only the mode or a confirmed card starts an investigation, and a decision is applied once
   // ---------------------------------------------------------------------------------------------------------------
@@ -101,8 +221,176 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   //     then the double's `Engine.sourceMode` is set to `sources` (the restart with the fixture): the open proposal shows `sources`, the running launch keeps `model_knowledge`, a confirm of the proposal starts an investigation viewed as `sources`
   //   and in a run with `sources` from the start every view (proposal, running, completed) has `sourceMode` `sources`
   describe('INT-1', () => {
-    it.todo('INT-1 A1: a turn with the research mode forces the deepResearch call without reasoning and starts one investigation; the next turn without the mode answers as usual and starts none');
-    it.todo('INT-1 A2: a turn without the mode only records a proposal with its goal and budget, and no later turn without a confirm starts an investigation');
+    it(
+      'INT-1 A1: a turn with the research mode forces the deepResearch call without reasoning and starts one investigation; the next turn without the mode answers as usual and starts none',
+      async () => {
+        // Arrange: a mode turn whose model call is the deepResearch call.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const call = deepResearchCallStep({
+          goal: 'Почему падает импорт заказов',
+          tokenBudget: 400_000,
+        });
+        t.chatModel.script(call.step);
+        const modeMessage = userMessage(
+          'Разберись, почему падает импорт заказов',
+          {
+            [RESEARCH_METADATA_KEYS.deepResearch]: true,
+          },
+        );
+
+        // Act
+        await chat(user, threadId, modeMessage);
+
+        // Assert (AC-19.1, KD-1, KD-9): one call on Haiku 5.5 with deepResearch as the only, forced tool, thinking off and
+        // the effort capped at high — one step.
+        expect(t.chatModel.calls.map(turnOptions)).toEqual([
+          {
+            modelId: RESEARCH_TURN_MODEL,
+            toolChoice: { type: 'tool', toolName: DEEP_RESEARCH_TOOL },
+            tools: [DEEP_RESEARCH_TOOL],
+            thinking: { type: 'disabled' },
+            effort: 'high',
+          },
+        ]);
+        // The launch row is running with its controller task, and the user has one investigation, in this thread.
+        const [investigation, ...moreInvestigations] =
+          await investigationsOf(user);
+        expect(moreInvestigations).toEqual([]);
+        expect(investigation).toMatchObject({
+          threadId,
+          query: 'Почему падает импорт заказов',
+        });
+        expect(t.engine.started).toHaveLength(1);
+        expect(await launchesOf(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: call.toolCallId,
+            mode: 'explicit',
+            state: 'running',
+            goal: 'Почему падает импорт заказов',
+            tokenBudget: 400_000,
+            userMessageId: modeMessage.id,
+            investigationId: investigation?.investigationId,
+            controllerTaskId: t.engine.started[0]?.controllerTaskId,
+            sourceMode: 'sources',
+          }),
+        ]);
+        // The user message keeps the mode after a reload (the DR-02 label).
+        const stored = await messages(user, threadId);
+        expect(
+          stored.find((message) => message.id === modeMessage.id)?.metadata,
+        ).toMatchObject({
+          [RESEARCH_METADATA_KEYS.deepResearch]: true,
+        });
+
+        // Act: the next turn without the mode (AC-19.6).
+        t.chatModel.script(textStep('Импорт падает на проверке схемы.'));
+        await chat(
+          user,
+          threadId,
+          userMessage('А пока скажи, что ты думаешь?'),
+        );
+
+        // Assert: the chat model, the tool not forced but offered among the ordinary ones, thinking not turned off; a
+        // text reply; still one investigation.
+        expect(t.chatModel.calls).toHaveLength(2);
+        expect(turnOptions(t.chatModel.calls[1])).toEqual({
+          modelId: CHAT_MODEL,
+          toolChoice: { type: 'auto' },
+          tools: [DEEP_RESEARCH_TOOL],
+          thinking: undefined,
+          effort: undefined,
+        });
+        const reply = (await messages(user, threadId)).at(-1);
+        expect(reply?.role).toBe('assistant');
+        expect(reply?.parts).toEqual([
+          expect.objectContaining({
+            type: 'text',
+            text: 'Импорт падает на проверке схемы.',
+          }),
+        ]);
+        expect(await investigationsOf(user)).toHaveLength(1);
+        expect(t.engine.started).toHaveLength(1);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 2,
+    );
+
+    it(
+      'INT-1 A2: a turn without the mode only records a proposal with its goal and budget, and no later turn without a confirm starts an investigation',
+      async () => {
+        // Arrange: an ordinary turn where the model proposes research, then answers after the tool result.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const first = deepResearchCallStep({
+          goal: 'Сравнить ошибки импорта за неделю',
+          tokenBudget: 500_000,
+        });
+        t.chatModel.script(
+          first.step,
+          textStep('Предлагаю запустить глубокое исследование.'),
+        );
+
+        // Act
+        await chat(
+          user,
+          threadId,
+          userMessage('Почему импорт заказов падает всю неделю?'),
+        );
+
+        // Assert (AC-19.2, AC-19.5): the turn ran on the chat model with the tool not forced; the launch is a proposal
+        // with the model's goal and budget, and nothing started.
+        expect(turnOptions(t.chatModel.calls[0])).toMatchObject({
+          modelId: CHAT_MODEL,
+          toolChoice: { type: 'auto' },
+        });
+        expect(await research(user, threadId)).toEqual([
+          {
+            launchKey: first.toolCallId,
+            mode: 'proposal',
+            state: 'proposed',
+            notLaunchedReason: null,
+            goal: 'Сравнить ошибки импорта за неделю',
+            tokenBudget: 500_000,
+            createdAt: expect.any(String),
+            answerMessageId: null,
+            answerPending: false,
+            sourceMode: 'sources',
+          },
+        ]);
+        expect(await investigationsOf(user)).toEqual([]);
+        expect(t.engine.startCalls).toEqual([]);
+
+        // Act: a later turn without a confirm proposes again, without a budget.
+        const second = deepResearchCallStep({
+          goal: 'Найти первый сбой импорта',
+        });
+        t.chatModel.script(
+          second.step,
+          textStep('Могу запустить и это исследование.'),
+        );
+        await chat(user, threadId, userMessage('А когда это началось?'));
+
+        // Assert: a second row with its own launchKey and the configuration's default budget; still no investigation.
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: first.toolCallId,
+            state: 'proposed',
+          }),
+          expect.objectContaining({
+            launchKey: second.toolCallId,
+            mode: 'proposal',
+            state: 'proposed',
+            goal: 'Найти первый сбой импорта',
+            tokenBudget: DEFAULT_TOKEN_BUDGET,
+          }),
+        ]);
+        expect(await investigationsOf(user)).toEqual([]);
+        expect(t.engine.startCalls).toEqual([]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 2,
+    );
     it.todo('INT-1 A3: confirm starts exactly one investigation with the recorded goal and budget, decline starts none, repeated and stale decisions change nothing and answer no error, stop cancels once, refused start or stop returns decisionError, and every decision reply is marked');
     it.todo('INT-1 A4: a plain follow-up message closes open proposals as superseded, a decision turn does not close the other proposals, and a confirm on a superseded card starts nothing');
     it.todo('INT-1 A5: another user cannot read the launches of the thread (404) and a foreign launchKey in a decision turn changes nothing (not_found)');

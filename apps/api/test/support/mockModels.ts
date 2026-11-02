@@ -237,6 +237,8 @@ export function assistantModel(...steps: AssistantStep[]): MockLanguageModelV4 {
 
 /** What one chat model call received, as the turn options reached the model. */
 export interface RecordedChatCall {
+  /** Id of the model that served the call (`ScriptedChatModel.modelFor`): which model the agent picked for the turn. */
+  modelId: string;
   /** The tool choice of the call; `{ type: 'tool', toolName }` when a tool is forced. */
   toolChoice: CallOptions['toolChoice'];
   /** Names of the tools offered to the model, in the order of the call. */
@@ -260,7 +262,13 @@ export interface RecordedChatCall {
  * the records between tests.
  */
 export interface ScriptedChatModel {
+  /** The chat model, `modelFor(SCRIPTED_CHAT_MODEL_ID)`. */
   readonly model: MockLanguageModelV4;
+  /**
+   * The model with id `modelId`, one instance per id, serving the same queue and records: an agent whose model
+   * follows the turn (design-chat-entry.md, KD-9) maps the model id it picks to one of these.
+   */
+  modelFor(modelId: string): MockLanguageModelV4;
   /** Every call in arrival order. */
   readonly calls: readonly RecordedChatCall[];
   /** Appends steps to the queue. */
@@ -270,9 +278,13 @@ export interface ScriptedChatModel {
   reset(): void;
 }
 
-function recordCall(options: CallOptions): RecordedChatCall {
+/** Id of the scripted chat model: what `ScriptedChatModel.model` reports as the model of a call. */
+export const SCRIPTED_CHAT_MODEL_ID = 'mock/chat';
+
+function recordCall(modelId: string, options: CallOptions): RecordedChatCall {
   const anthropic = options.providerOptions?.anthropic;
   return {
+    modelId,
     toolChoice: options.toolChoice,
     tools: (options.tools ?? []).map((tool) => tool.name),
     reasoning: options.reasoning,
@@ -290,16 +302,25 @@ function recordCall(options: CallOptions): RecordedChatCall {
 export function scriptedChatModel(): ScriptedChatModel {
   const queue: AssistantStep[] = [];
   const calls: RecordedChatCall[] = [];
-  const model = new MockLanguageModelV4({
-    provider: 'mock',
-    modelId: 'mock-chat',
-    doStream: (options) => {
-      calls.push(recordCall(options));
-      return nextFromQueue(queue, options, 'scripted chat model');
-    },
-  });
+  const models = new Map<string, MockLanguageModelV4>();
+  const modelFor = (modelId: string): MockLanguageModelV4 => {
+    let model = models.get(modelId);
+    if (model === undefined) {
+      model = new MockLanguageModelV4({
+        provider: 'mock',
+        modelId,
+        doStream: (options) => {
+          calls.push(recordCall(modelId, options));
+          return nextFromQueue(queue, options, 'scripted chat model');
+        },
+      });
+      models.set(modelId, model);
+    }
+    return model;
+  };
   return {
-    model,
+    model: modelFor(SCRIPTED_CHAT_MODEL_ID),
+    modelFor,
     calls,
     script: (...steps) => {
       queue.push(...steps);

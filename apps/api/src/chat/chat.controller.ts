@@ -11,6 +11,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import type { Mastra } from '@mastra/core/mastra';
 import type { MessageListInput } from '@mastra/core/agent/message-list';
@@ -18,6 +19,12 @@ import { toAISdkStream } from '@mastra/ai-sdk';
 import { createUIMessageStream, pipeUIMessageStreamToResponse } from 'ai';
 import { ChatMessageRefSchema } from '@agent-os/contracts';
 import { MASTRA } from '../mastra/mastra.constants.js';
+import type { ReasoningEffort } from '../mastra/models.js';
+import {
+  researchTurnContext,
+  researchTurnOf,
+  researchTurnStreamOptions,
+} from '../research-chat/research-turn.js';
 import { SessionGuard } from '../auth/session.guard.js';
 import type { AuthedRequest } from '../auth/auth.types.js';
 import { toStreamErrorText } from '../common/stream-error-text.js';
@@ -36,7 +43,24 @@ export class ChatController {
     private readonly threads: ThreadsService,
     private readonly titles: ThreadTitleService,
     private readonly runs: ThreadRunRegistry,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Options of a research turn (design-chat-entry.md, KD-1, KD-9): with the research mode on the last message, the
+   * turn is one forced `deepResearch` call without thinking, and its `requestContext` carries the mode and the user
+   * message id — the agent takes its research model from it and the tool reads it. An ordinary turn gets none.
+   */
+  private researchTurnOptions(lastMessage: unknown) {
+    const turn = researchTurnOf(lastMessage);
+    if (turn === null) return {};
+    return {
+      ...researchTurnStreamOptions(
+        this.config.get<ReasoningEffort>('REASONING_EFFORT', 'medium'),
+      ),
+      requestContext: researchTurnContext(turn),
+    };
+  }
 
   @Post(':agentId')
   @UseGuards(SessionGuard)
@@ -82,6 +106,7 @@ export class ChatController {
       });
 
       const stream = await agent.stream(body.messages as MessageListInput, {
+        ...this.researchTurnOptions(body.messages.at(-1)),
         memory: { thread: threadId, resource: req.user.id },
         abortSignal: run.signal,
         onFinish: ({ totalUsage: u }) => {
