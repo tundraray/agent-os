@@ -665,3 +665,116 @@ export const researchLlmCalls = app.table(
       .where(sql`${t.status} = ${literal(RESERVED)}`),
   ],
 );
+
+// ---------------------------------------------------------------------------------------------
+// Chat entry table (design-chat-entry.md, Data Model, KD-3). The only FK is to the investigation;
+// rows without one are removed by the thread's `purge` hook (KD-7).
+// ---------------------------------------------------------------------------------------------
+
+/** How the launch started: research mode on the user message, or a proposal of the agent. */
+const LAUNCH_MODES = ['explicit', 'proposal'] as const;
+const EXPLICIT: (typeof LAUNCH_MODES)[number] = 'explicit';
+/** States of a launch row (design-chat-entry.md, State Transitions). */
+const LAUNCH_STATES = [
+  'proposed',
+  'launching',
+  'running',
+  'answer_pending',
+  'answered',
+  'answer_reappend',
+  'declined',
+  'superseded',
+  'failed',
+  'stopped',
+  'discarded',
+] as const;
+/** States reached only through a started investigation: the row carries it and its controller task. */
+const STARTED_LAUNCH_STATES = [
+  'running',
+  'answer_pending',
+  'answered',
+  'answer_reappend',
+] as const satisfies readonly (typeof LAUNCH_STATES)[number][];
+/** States whose answer the delivery loop writes into the thread (KD-4). */
+const ANSWER_DUE_LAUNCH_STATES = [
+  'answer_pending',
+  'answer_reappend',
+] as const satisfies readonly (typeof LAUNCH_STATES)[number][];
+
+export const researchChatLaunches = app.table(
+  'research_chat_launches',
+  {
+    /** `toolCallId` of the `deepResearch` call that started or proposed the research. */
+    launchKey: text('launch_key').primaryKey(),
+    resourceId: text('resource_id').notNull(),
+    threadId: text('thread_id').notNull(),
+    mode: text('mode').notNull(),
+    goal: text('goal').notNull(),
+    tokenBudget: integer('token_budget').notNull(),
+    /** Id of the user message that carried research mode; null for a proposal. */
+    userMessageId: text('user_message_id'),
+    state: text('state').notNull(),
+    investigationId: uuid('investigation_id').references(
+      () => researchInvestigations.investigationId,
+      { onDelete: 'cascade' },
+    ),
+    controllerTaskId: uuid('controller_task_id'),
+    /** Copied once from `InvestigationView` after the start; null before it (invariant 6, KD-8). */
+    sourceMode: text('source_mode'),
+    createdAt: createdAt(),
+    /** When the investigation ended; orders the answers of a thread (invariant 5). */
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    /** First failed answer write: the give-up window counts from it (DC-4). */
+    appendFailedAt: timestamp('append_failed_at', { withTimezone: true }),
+    nextAppendAt: timestamp('next_append_at', { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      'research_chat_launches_mode_check',
+      isOneOf(t.mode, LAUNCH_MODES),
+    ),
+    check(
+      'research_chat_launches_state_check',
+      isOneOf(t.state, LAUNCH_STATES),
+    ),
+    check(
+      'research_chat_launches_source_mode_check',
+      isOneOf(t.sourceMode, SOURCE_MODES),
+    ),
+    check(
+      'research_chat_launches_keys_check',
+      sql`${t.launchKey} <> '' and ${t.resourceId} <> '' and ${t.threadId} <> ''`,
+    ),
+    check(
+      'research_chat_launches_token_budget_check',
+      sql`${t.tokenBudget} > 0`,
+    ),
+    check(
+      'research_chat_launches_user_message_check',
+      sql`(${t.mode} = ${literal(EXPLICIT)}) = (${t.userMessageId} is not null)`,
+    ),
+    check(
+      'research_chat_launches_started_check',
+      sql`not (${isOneOf(t.state, STARTED_LAUNCH_STATES)}) or (${t.investigationId} is not null and ${t.controllerTaskId} is not null)`,
+    ),
+    check(
+      'research_chat_launches_source_mode_investigation_check',
+      sql`${t.sourceMode} is null or ${t.investigationId} is not null`,
+    ),
+    index('research_chat_launches_thread_created_idx').on(
+      t.resourceId,
+      t.threadId,
+      t.createdAt,
+    ),
+    index('research_chat_launches_controller_task_idx')
+      .on(t.controllerTaskId)
+      .where(sql`${t.controllerTaskId} is not null`),
+    index('research_chat_launches_investigation_idx')
+      .on(t.investigationId)
+      .where(sql`${t.investigationId} is not null`),
+    index('research_chat_launches_answer_due_idx')
+      .on(t.finishedAt)
+      .where(isOneOf(t.state, ANSWER_DUE_LAUNCH_STATES)),
+  ],
+);

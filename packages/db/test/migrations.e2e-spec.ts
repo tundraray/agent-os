@@ -9,6 +9,8 @@
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
 // AC-RT-8: "Домены CHECK статусов, классов и типов в схеме app совпадают со значениями enum в packages/contracts."
 // design-engine.md, Data Model: the engine tables and their CHECK domains (literals; the engine contract is not in packages/contracts).
+// design-chat-entry.md, Data Model and State Transitions: `research_chat_launches` and its CHECK domains (literals; the row
+// states are not a contract enum).
 //
 // Primary failure mode: the migrator applies twice or partially, touches `public`, or a CHECK domain drifts from the contract enums.
 // Isolation: the row runs in its own scratch database, created with CREATE DATABASE and dropped afterwards.
@@ -30,9 +32,10 @@ import { ScratchDatabases, withDatabase } from './support/scratch-db.js';
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;
 
-/** Tables of the Data Models (design-runtime.md, design-engine.md) plus the migration journal. */
+/** Tables of the Data Models (design-runtime.md, design-engine.md, design-chat-entry.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
+  'research_chat_launches',
   'research_claims',
   'research_decisions',
   'research_engine_runs',
@@ -244,6 +247,29 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
           'failed',
           'reserved',
           'settled',
+        ],
+        // Chat entry domains (design-chat-entry.md, Data Model, State Transitions).
+        research_chat_launches_mode_check: ['explicit', 'proposal'],
+        research_chat_launches_source_mode_check: ['model_knowledge', 'sources'],
+        research_chat_launches_state_check: [
+          'answer_pending',
+          'answer_reappend',
+          'answered',
+          'declined',
+          'discarded',
+          'failed',
+          'launching',
+          'proposed',
+          'running',
+          'stopped',
+          'superseded',
+        ],
+        // States that require a started investigation and its controller task (invariant 1).
+        research_chat_launches_started_check: [
+          'answer_pending',
+          'answer_reappend',
+          'answered',
+          'running',
         ],
       });
     });
