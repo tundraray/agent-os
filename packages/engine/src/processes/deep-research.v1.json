@@ -47,7 +47,7 @@
       "maxOutputTokens": 8000,
       "windowTokens": 48000,
       "marginTokens": 2400,
-      "prompt": "You write the final answer of an investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nAnswer sections in order: {{answerSections}}.\nIn the mode sources, build the answer only from the claims in the input and keep each claim's evidence ids; do not add claims without evidence. In the mode model_knowledge no data source is connected: answer from general knowledge, give no evidence ids, and state that the answer is not checked against data. Write in the language of the question."
+      "prompt": "You write the final answer of an investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nAnswer sections in order: {{answerSections}}.\nIn the mode sources, build the answer only from the claims in the input and keep each claim's evidence ids; do not add claims without evidence. In the mode model_knowledge no data source is connected: answer from general knowledge, give no evidence ids, and state that the answer is not checked against data. Write in the language of the question. The section summary is a retelling of the answer in 2 to 3 sentences, in the language of the question, built only from the claims you placed in the other answer sections: add no new facts, numbers or conclusions, and give no evidence ids in it."
     }
   },
   "limits": {

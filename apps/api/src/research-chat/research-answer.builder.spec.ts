@@ -111,6 +111,7 @@ const EVIDENCE = new Map<string, AnswerSourceRecord>([
 
 const MC_32 =
   'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.';
+const MC_34 = 'Краткий пересказ — основания в утверждениях ниже';
 
 interface Row {
   view: InvestigationView;
@@ -123,7 +124,7 @@ interface Row {
 describe('buildResearchAnswer', () => {
   it.each<[string, Row]>([
     [
-      'sources, answered: footnotes by first appearance, removed left out',
+      'sources, answered, summary null: footnotes by first appearance, removed left out, no MC-34',
       {
         view: viewOf(
           'sources',
@@ -365,7 +366,7 @@ describe('buildResearchAnswer', () => {
       },
     ],
     [
-      'sources with a summary (UC-4, DC-10): summary paragraph between the header and the groups',
+      'sources with a summary (UC-4, DC-10, MC-34): summary, then MC-34, between the header and the groups',
       {
         view: viewOf(
           'sources',
@@ -383,6 +384,8 @@ describe('buildResearchAnswer', () => {
           'Цель: Why did checkout latency grow last week?',
           '',
           'Latency grew because release 4.2 doubled payment retries.',
+          '',
+          MC_34,
           '',
           '### Установлено',
           '- Checkout p95 grew [1]',
@@ -452,7 +455,7 @@ describe('buildResearchAnswer', () => {
       },
     ],
     [
-      'model_knowledge with a summary (DC-9, DC-10): MC-32 first, the summary after the header',
+      'model_knowledge with a summary (DC-9, DC-10, MC-34): MC-32, header, summary, MC-34',
       {
         view: viewOf(
           'model_knowledge',
@@ -474,6 +477,8 @@ describe('buildResearchAnswer', () => {
           '',
           'Add backoff with jitter to the retries.',
           '',
+          MC_34,
+          '',
           '### Предположения',
           '- Retries need backoff with jitter (из знаний модели, без источника)',
         ].join('\n'),
@@ -492,6 +497,84 @@ describe('buildResearchAnswer', () => {
           unknown: [],
           sources: [],
           sourceMode: 'model_knowledge',
+        },
+      },
+    ],
+    [
+      'sources, only unknown claims with a summary (MC-34): summary and MC-34 stay',
+      {
+        view: viewOf(
+          'sources',
+          answerOf({
+            outcome: 'inconclusive',
+            stopReason: null,
+            summary: 'The data does not show whether mobile is affected.',
+            unknown: [claim('c1', 'Whether mobile is affected', [], false)],
+          }),
+        ),
+        cited: [],
+        text: [
+          '**Ответ ресерча** · Вывода нет',
+          'Цель: Why did checkout latency grow last week?',
+          '',
+          'The data does not show whether mobile is affected.',
+          '',
+          MC_34,
+          '',
+          '### Не выяснено',
+          '- Whether mobile is affected (не проверено)',
+        ].join('\n'),
+        metadata: {
+          summary: 'The data does not show whether mobile is affected.',
+          outcome: 'inconclusive',
+          stopReason: null,
+          established: [],
+          assumed: [],
+          unknown: [
+            {
+              text: 'Whether mobile is affected',
+              footnotes: [],
+              verified: false,
+            },
+          ],
+          sources: [],
+          sourceMode: 'sources',
+        },
+      },
+    ],
+    [
+      'engine summary with no claims (DC-10, MC-34): summary null, no summary paragraph, no MC-34',
+      {
+        view: viewOf(
+          'sources',
+          answerOf({
+            outcome: 'inconclusive',
+            stopReason: 'step_limit',
+            summary: 'Latency grew because of the retries.',
+            removed: [
+              {
+                claimId: 'c1',
+                text: 'The database is the cause',
+                reason: 'refuted',
+              },
+            ],
+          }),
+        ),
+        cited: [],
+        text: [
+          '**Ответ ресерча** · Вывода нет',
+          'Цель: Why did checkout latency grow last week?',
+          'Остановлен: достигнут лимит шагов',
+        ].join('\n'),
+        metadata: {
+          summary: null,
+          outcome: 'inconclusive',
+          stopReason: 'step_limit',
+          established: [],
+          assumed: [],
+          unknown: [],
+          sources: [],
+          sourceMode: 'sources',
         },
       },
     ],
