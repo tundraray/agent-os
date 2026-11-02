@@ -71,7 +71,9 @@ async function startController(options: {
             options.journal?.push('getOwnedThread');
             return Promise.resolve({ id: 't-1' });
           }),
-          discardRepliesAfter: vi.fn(() => Promise.resolve()),
+          discardRepliesAfter: vi.fn(() =>
+            Promise.resolve({ repeated: false }),
+          ),
         },
       },
       { provide: ThreadTitleService, useValue: { schedule: vi.fn() } },

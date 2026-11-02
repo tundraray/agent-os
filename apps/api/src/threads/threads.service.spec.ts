@@ -9,16 +9,28 @@ import { threadNotFound } from './threads.errors.js';
 import { ThreadsService } from './threads.service.js';
 
 type Role = 'user' | 'assistant';
+type StoredSpec = [Role, string] | [Role, string, Record<string, unknown>];
+
+/** Metadata of the hidden user message of a launch card decision (KD-2). */
+const decision = { researchDecision: { action: 'confirm', launchKey: 'k-1' } };
+/** Metadata of the hidden assistant reply of a decision turn. */
+const decisionReply = { researchDecisionReply: { launchKey: 'k-1' } };
+/** Metadata of the assistant message carrying a research answer. */
+const researchAnswer = { researchAnswer: { launchKey: 'k-1' } };
 
 /** Stored messages in the order the installed Mastra `recall` returns them: oldest first. */
-const stored = (...messages: [Role, string][]): MastraDBMessage[] =>
-  messages.map(([role, id], index) => ({
+const stored = (...messages: StoredSpec[]): MastraDBMessage[] =>
+  messages.map(([role, id, metadata], index) => ({
     id,
     role,
     threadId: 't-1',
     resourceId: 'u-1',
     createdAt: new Date(Date.UTC(2026, 9, 29, 10, 0, index)),
-    content: { format: 2, parts: [{ type: 'text', text: id }] },
+    content: {
+      format: 2,
+      parts: [{ type: 'text', text: id }],
+      ...(metadata ? { metadata } : {}),
+    },
   }));
 
 /** A real Memory whose storage calls are replaced: no database is touched. */
@@ -34,22 +46,36 @@ const fakeMemory = (messages: MastraDBMessage[]) => {
   const deleteMessages = vi
     .spyOn(memory, 'deleteMessages')
     .mockResolvedValue(undefined);
-  return { memory, recall, deleteMessages };
+  const service = new ThreadsService(
+    memory,
+    new ThreadWriteLock(),
+    new ThreadRunRegistry(5_000),
+    new ThreadDeletionHooks(),
+    5_000,
+  );
+  return { service, recall, deleteMessages };
 };
 
-// AC-14.6: the stored reply after the newest user message is discarded only on a resend of that same message.
+const ids = (messages: MastraDBMessage[]): string[] =>
+  messages.map((message) => message.id);
+
+// AC-14.6, AC-22.2 (tail rule), KD-7, KD-8: the stored replies after the newest user message without
+// `researchDecision` are discarded only on a resend of that same message; hidden decision pairs and
+// research answers go with the tail; `repeated` tells a resend from a new message.
 describe('ThreadsService.discardRepliesAfter', () => {
   it.each<{
     name: string;
     messages: MastraDBMessage[];
     userMessageId: string;
     deleted: string[] | null;
+    repeated: boolean;
   }>([
     {
       name: 'resend of the newest user message with one reply → reply deleted',
       messages: stored(['user', 'u1'], ['assistant', 'a1']),
       userMessageId: 'u1',
       deleted: ['a1'],
+      repeated: true,
     },
     {
       name: 'resend with two replies after it → both deleted',
@@ -60,21 +86,24 @@ describe('ThreadsService.discardRepliesAfter', () => {
       ),
       userMessageId: 'u1',
       deleted: ['a1', 'a2'],
+      repeated: true,
     },
     {
-      name: 'ordinary send (new id) → nothing deleted',
+      name: 'ordinary send (new id) → nothing deleted, not repeated',
       messages: stored(['user', 'u1'], ['assistant', 'a1']),
       userMessageId: 'u-new',
       deleted: null,
+      repeated: false,
     },
     {
-      name: 'newest user message has no reply → nothing deleted',
+      name: 'newest user message has no reply → nothing deleted, repeated',
       messages: stored(['user', 'u0'], ['assistant', 'a0'], ['user', 'u1']),
       userMessageId: 'u1',
       deleted: null,
+      repeated: true,
     },
     {
-      name: 'resend of an older user message → nothing deleted',
+      name: 'resend of an older user message → nothing deleted, not repeated',
       messages: stored(
         ['user', 'u0'],
         ['assistant', 'a0'],
@@ -83,23 +112,74 @@ describe('ThreadsService.discardRepliesAfter', () => {
       ),
       userMessageId: 'u0',
       deleted: null,
+      repeated: false,
     },
     {
-      name: 'no user message among the newest 20 → nothing deleted',
+      name: 'no user message among the newest 20 → nothing deleted, not repeated',
       messages: stored(['assistant', 'a1'], ['assistant', 'a2']),
       userMessageId: 'a1',
       deleted: null,
+      repeated: false,
     },
-  ])('$name', async ({ messages, userMessageId, deleted }) => {
-    const { memory, recall, deleteMessages } = fakeMemory(messages);
+    {
+      name: 'tail with a hidden decision pair → reply and the pair deleted',
+      messages: stored(
+        ['user', 'u1'],
+        ['assistant', 'a1'],
+        ['user', 'd1', decision],
+        ['assistant', 'r1', decisionReply],
+      ),
+      userMessageId: 'u1',
+      deleted: ['a1', 'd1', 'r1'],
+      repeated: true,
+    },
+    {
+      name: 'tail with a hidden pair and a research answer → all deleted',
+      messages: stored(
+        ['user', 'u1'],
+        ['assistant', 'a1'],
+        ['user', 'd1', decision],
+        ['assistant', 'r1', decisionReply],
+        ['assistant', 'ans1', researchAnswer],
+      ),
+      userMessageId: 'u1',
+      deleted: ['a1', 'd1', 'r1', 'ans1'],
+      repeated: true,
+    },
+    {
+      name: 'decision message without a reply in the tail → deleted with the tail',
+      messages: stored(
+        ['user', 'u1'],
+        ['assistant', 'a1'],
+        ['user', 'd1', decision],
+      ),
+      userMessageId: 'u1',
+      deleted: ['a1', 'd1'],
+      repeated: true,
+    },
+    {
+      name: 'only a decision message after the newest user message → repeated, decision deleted',
+      messages: stored(['user', 'u1'], ['user', 'd1', decision]),
+      userMessageId: 'u1',
+      deleted: ['d1'],
+      repeated: true,
+    },
+    {
+      name: 'new message after a hidden pair → nothing deleted, not repeated',
+      messages: stored(
+        ['user', 'u1'],
+        ['assistant', 'a1'],
+        ['user', 'd1', decision],
+        ['assistant', 'r1', decisionReply],
+      ),
+      userMessageId: 'u-new',
+      deleted: null,
+      repeated: false,
+    },
+  ])('$name', async ({ messages, userMessageId, deleted, repeated }) => {
+    const { service, recall, deleteMessages } = fakeMemory(messages);
 
-    await new ThreadsService(
-      memory,
-      new ThreadWriteLock(),
-      new ThreadRunRegistry(5_000),
-      new ThreadDeletionHooks(),
-      5_000,
-    ).discardRepliesAfter({
+    const result = await service.discardRepliesAfter({
       threadId: 't-1',
       userId: 'u-1',
       userMessageId,
@@ -113,8 +193,67 @@ describe('ThreadsService.discardRepliesAfter', () => {
       orderBy: { field: 'createdAt', direction: 'DESC' },
       includeTotal: false,
     });
+    expect(result).toEqual({ repeated });
     if (deleted) expect(deleteMessages).toHaveBeenCalledWith(deleted);
     else expect(deleteMessages).not.toHaveBeenCalled();
+  });
+
+  // KD-7, KD-8: `beforeDelete` sees the tail before it is deleted, only when it will be deleted,
+  // and its exception cancels the delete and propagates.
+  it.each<{
+    name: string;
+    userMessageId: string;
+    fails: boolean;
+    journal: string[];
+  }>([
+    {
+      name: 'resend → called with the tail oldest first, then the tail is deleted',
+      userMessageId: 'u1',
+      fails: false,
+      journal: ['beforeDelete:a1,d1,r1', 'delete:a1,d1,r1'],
+    },
+    {
+      name: 'its exception → nothing deleted, the exception propagates',
+      userMessageId: 'u1',
+      fails: true,
+      journal: ['beforeDelete:a1,d1,r1'],
+    },
+    {
+      name: 'new message → not called, nothing deleted',
+      userMessageId: 'u-new',
+      fails: false,
+      journal: [],
+    },
+  ])('beforeDelete: $name', async ({ userMessageId, fails, journal }) => {
+    const { service, deleteMessages } = fakeMemory(
+      stored(
+        ['user', 'u1'],
+        ['assistant', 'a1'],
+        ['user', 'd1', decision],
+        ['assistant', 'r1', decisionReply],
+      ),
+    );
+    const failure = new Error('hook failed');
+    const calls: string[] = [];
+    deleteMessages.mockImplementation((messageIds) => {
+      calls.push(`delete:${(messageIds as string[]).join(',')}`);
+      return Promise.resolve();
+    });
+    const beforeDelete = (tail: MastraDBMessage[]): Promise<void> => {
+      calls.push(`beforeDelete:${ids(tail).join(',')}`);
+      return fails ? Promise.reject(failure) : Promise.resolve();
+    };
+
+    const result = service.discardRepliesAfter({
+      threadId: 't-1',
+      userId: 'u-1',
+      userMessageId,
+      beforeDelete,
+    });
+
+    if (fails) await expect(result).rejects.toBe(failure);
+    else await expect(result).resolves.toBeDefined();
+    expect(calls).toEqual(journal);
   });
 });
 

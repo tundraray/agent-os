@@ -73,6 +73,11 @@ export class ThreadRunRegistry {
     };
   }
 
+  /** Whether the thread has a registered, not yet released chat run in this process. */
+  hasRuns(threadId: string): boolean {
+    return (this.runs.get(threadId)?.size ?? 0) > 0;
+  }
+
   /**
    * Marks the thread as being deleted, aborts its runs, waits for their
    * `release()` (at most `THREAD_RUN_SETTLE_TIMEOUT_MS`), then runs `action`;

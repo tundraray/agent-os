@@ -118,3 +118,58 @@ describe('ThreadRunRegistry', () => {
     expect(registry.register('t-1').signal.aborted).toBe(false);
   });
 });
+
+// KD-4 (design-chat-entry.md): the delivery loop asks whether a thread has a chat run in flight; a released run no longer counts.
+describe('ThreadRunRegistry.hasRuns', () => {
+  it.each<{
+    name: string;
+    arrange: (registry: ThreadRunRegistry) => void;
+    threadId: string;
+    expected: boolean;
+  }>([
+    {
+      name: 'before any run is registered → false',
+      arrange: () => undefined,
+      threadId: 't-1',
+      expected: false,
+    },
+    {
+      name: 'after register → true',
+      arrange: (registry) => {
+        registry.register('t-1');
+      },
+      threadId: 't-1',
+      expected: true,
+    },
+    {
+      name: 'after release → false',
+      arrange: (registry) => {
+        registry.register('t-1').release();
+      },
+      threadId: 't-1',
+      expected: false,
+    },
+    {
+      name: 'one of two runs released → true',
+      arrange: (registry) => {
+        registry.register('t-1');
+        registry.register('t-1').release();
+      },
+      threadId: 't-1',
+      expected: true,
+    },
+    {
+      name: 'a run of another thread → false',
+      arrange: (registry) => {
+        registry.register('t-2');
+      },
+      threadId: 't-1',
+      expected: false,
+    },
+  ])('$name', ({ arrange, threadId, expected }) => {
+    const registry = new ThreadRunRegistry(60_000);
+    arrange(registry);
+
+    expect(registry.hasRuns(threadId)).toBe(expected);
+  });
+});
