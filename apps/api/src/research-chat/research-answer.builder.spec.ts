@@ -63,6 +63,12 @@ const answerOf = (
   ...fields,
 });
 
+/** An answer whose process config leaves the `summary` section out: the view omits the key (investigation-view.ts). */
+function withoutSummary(answer: AnswerView): AnswerView {
+  const { summary: _omitted, ...rest } = answer;
+  return rest;
+}
+
 // The map lists `ev-a` before `ev-b`, the answer cites `ev-b` first: numbering by the map's order is wrong.
 const EVIDENCE = new Map<string, AnswerSourceRecord>([
   [
@@ -113,7 +119,7 @@ interface Row {
   metadata: Omit<ResearchAnswerMetadata, 'launchKey' | 'goal' | 'launch'>;
 }
 
-// AC-20.7 (server), AC-27.3 (server), DC-9, UC-E8, invariant 4: text and `researchAnswer` of one answer message.
+// AC-20.7 (server), AC-27.3 (server), DC-9, DC-10, UC-4, UC-E8, invariant 4: text and `researchAnswer` of one answer message.
 describe('buildResearchAnswer', () => {
   it.each<[string, Row]>([
     [
@@ -179,6 +185,7 @@ describe('buildResearchAnswer', () => {
           '3. traces · get_trace · snap-c',
         ].join('\n'),
         metadata: {
+          summary: null,
           outcome: 'answered',
           stopReason: null,
           established: [
@@ -258,6 +265,7 @@ describe('buildResearchAnswer', () => {
           '1. logs · aggregate_logs · snap-a · данные усечены',
         ].join('\n'),
         metadata: {
+          summary: null,
           outcome: 'partial',
           stopReason: 'step_limit',
           established: [
@@ -306,6 +314,7 @@ describe('buildResearchAnswer', () => {
           "- The provider's exact limit (из знаний модели, без источника)",
         ].join('\n'),
         metadata: {
+          summary: null,
           outcome: 'answered',
           stopReason: null,
           established: [],
@@ -344,10 +353,142 @@ describe('buildResearchAnswer', () => {
           'Остановлен: исчерпан бюджет',
         ].join('\n'),
         metadata: {
+          summary: null,
           outcome: 'inconclusive',
           stopReason: 'budget_exhausted',
           established: [],
           assumed: [],
+          unknown: [],
+          sources: [],
+          sourceMode: 'model_knowledge',
+        },
+      },
+    ],
+    [
+      'sources with a summary (UC-4, DC-10): summary paragraph between the header and the groups',
+      {
+        view: viewOf(
+          'sources',
+          answerOf({
+            outcome: 'answered',
+            stopReason: null,
+            summary:
+              'Latency grew because release 4.2 doubled payment retries.',
+            established: [claim('c1', 'Checkout p95 grew', ['ev-a'], true)],
+          }),
+        ),
+        cited: ['ev-a'],
+        text: [
+          '**Ответ ресерча** · Есть ответ',
+          'Цель: Why did checkout latency grow last week?',
+          '',
+          'Latency grew because release 4.2 doubled payment retries.',
+          '',
+          '### Установлено',
+          '- Checkout p95 grew [1]',
+          '',
+          '### Источники (1)',
+          '1. logs · aggregate_logs · snap-a · данные усечены',
+        ].join('\n'),
+        metadata: {
+          summary: 'Latency grew because release 4.2 doubled payment retries.',
+          outcome: 'answered',
+          stopReason: null,
+          established: [
+            { text: 'Checkout p95 grew', footnotes: [1], verified: true },
+          ],
+          assumed: [],
+          unknown: [],
+          sources: [
+            {
+              number: 1,
+              sourceId: 'logs',
+              toolName: 'aggregate_logs',
+              snapshot: 'snap-a',
+              truncated: true,
+            },
+          ],
+          sourceMode: 'sources',
+        },
+      },
+    ],
+    [
+      'sources, the process config leaves the summary section out (DC-10): no paragraph, summary null',
+      {
+        view: viewOf(
+          'sources',
+          withoutSummary(
+            answerOf({
+              outcome: 'answered',
+              stopReason: null,
+              unknown: [claim('c1', 'Whether mobile is affected', [], false)],
+            }),
+          ),
+        ),
+        cited: [],
+        text: [
+          '**Ответ ресерча** · Есть ответ',
+          'Цель: Why did checkout latency grow last week?',
+          '',
+          '### Не выяснено',
+          '- Whether mobile is affected (не проверено)',
+        ].join('\n'),
+        metadata: {
+          summary: null,
+          outcome: 'answered',
+          stopReason: null,
+          established: [],
+          assumed: [],
+          unknown: [
+            {
+              text: 'Whether mobile is affected',
+              footnotes: [],
+              verified: false,
+            },
+          ],
+          sources: [],
+          sourceMode: 'sources',
+        },
+      },
+    ],
+    [
+      'model_knowledge with a summary (DC-9, DC-10): MC-32 first, the summary after the header',
+      {
+        view: viewOf(
+          'model_knowledge',
+          answerOf({
+            outcome: 'answered',
+            stopReason: null,
+            summary: 'Add backoff with jitter to the retries.',
+            assumed: [
+              claim('c1', 'Retries need backoff with jitter', [], false),
+            ],
+          }),
+        ),
+        cited: [],
+        text: [
+          MC_32,
+          '',
+          '**Ответ ресерча** · Есть ответ',
+          'Цель: Why did checkout latency grow last week?',
+          '',
+          'Add backoff with jitter to the retries.',
+          '',
+          '### Предположения',
+          '- Retries need backoff with jitter (из знаний модели, без источника)',
+        ].join('\n'),
+        metadata: {
+          summary: 'Add backoff with jitter to the retries.',
+          outcome: 'answered',
+          stopReason: null,
+          established: [],
+          assumed: [
+            {
+              text: 'Retries need backoff with jitter',
+              footnotes: [],
+              verified: false,
+            },
+          ],
           unknown: [],
           sources: [],
           sourceMode: 'model_knowledge',

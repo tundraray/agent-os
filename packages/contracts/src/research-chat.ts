@@ -77,13 +77,14 @@ const CLAIM_GROUPS = ["established", "assumed", "unknown"] as const;
 
 /**
  * Value of `researchAnswer` on the answer message. `launch` points at the user message of an explicit launch or at
- * the card's tool call of a proposal. Without sources nothing is established, no claim cites a footnote and there are
- * no sources (KD-8, DC-9).
+ * the card's tool call of a proposal. `summary` is the synthesis's brief conclusion, null in an answer built by code
+ * (DC-10). Without sources nothing is established, no claim cites a footnote and there are no sources (KD-8, DC-9).
  */
 export const ResearchAnswerMetadataSchema = z
   .object({
     launchKey: LaunchKeySchema,
     goal: InvestigationSpecSchema.shape.query,
+    summary: z.string().nullable(),
     outcome: z.enum(["answered", "partial", "inconclusive"]),
     stopReason: ResearchStopReasonSchema.nullable(),
     launch: z.union([

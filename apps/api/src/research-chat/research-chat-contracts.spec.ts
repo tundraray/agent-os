@@ -28,6 +28,7 @@ const claim = (text: string, footnotes: number[]) => ({
 const sourcesAnswer = {
   launchKey: 'launch-1',
   goal: 'Why did checkout latency grow last week?',
+  summary: 'The deploy doubled the p95 latency.',
   outcome: 'answered',
   stopReason: null,
   launch: { messageId: 'msg-user-1' },
@@ -49,6 +50,7 @@ const sourcesAnswer = {
 const modelKnowledgeAnswer = {
   ...sourcesAnswer,
   launch: { toolCallId: 'call-1' },
+  summary: null,
   established: [],
   assumed: [claim('Retries need backoff with jitter', [])],
   sources: [],

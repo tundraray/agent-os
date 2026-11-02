@@ -82,8 +82,9 @@ export function citedEvidenceIds(view: InvestigationView): string[] {
 
 /**
  * Builds the answer message of a completed investigation (design-chat-entry.md, KD-5, KD-8, DC-9). Footnote numbers
- * follow the first appearance of a source; the `removed` section stays out. Without sources the text opens with
- * MC-32 and marks each claim with MC-33 instead of footnotes, and lists no sources.
+ * follow the first appearance of a source; the `removed` section stays out. The synthesis's summary, when there is
+ * one, follows the header and goal as its own paragraph (DC-10). Without sources the text opens with MC-32 and marks
+ * each claim with MC-33 instead of footnotes, and lists no sources.
  */
 export function buildResearchAnswer({
   view,
@@ -109,6 +110,7 @@ export function buildResearchAnswer({
   const researchAnswer = ResearchAnswerMetadataSchema.parse({
     launchKey: launch.launchKey,
     goal: launch.goal,
+    summary: answer.summary ?? null,
     outcome: answer.outcome,
     stopReason: answer.stopReason,
     launch: launch.launch,
@@ -160,6 +162,7 @@ function answerText(answer: ResearchAnswerMetadata): string {
   return [
     ...(withoutSources ? [MC_32_WITHOUT_SOURCES] : []),
     header,
+    ...(answer.summary === null ? [] : [answer.summary]),
     ...groups,
     ...sourceList,
   ].join('\n\n');
