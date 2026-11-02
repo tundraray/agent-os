@@ -1,5 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type {
+  DeepResearchToolResult,
+  ResearchDecision,
   ResearchLaunchView,
   ThreadResearchResponse,
 } from '@agent-os/contracts';
@@ -10,9 +12,13 @@ import {
   type InvestigationView,
   loadProcessConfig,
 } from '@agent-os/engine';
+import type { Runtime } from '@agent-os/runtime';
 import { withFields } from '../common/log-fields.js';
 import { RESEARCH_ENGINE } from '../engine/engine.tokens.js';
-import { RESEARCH_DATABASE } from '../research/research.tokens.js';
+import {
+  RESEARCH_DATABASE,
+  RESEARCH_RUNTIME,
+} from '../research/research.tokens.js';
 import { ThreadsService } from '../threads/threads.service.js';
 import {
   type LaunchAction,
@@ -40,6 +46,27 @@ export interface LaunchRequest extends LaunchThread {
 export interface ExplicitLaunchRequest extends LaunchRequest {
   readonly userMessageId: string;
 }
+
+/** A card decision of a decision turn in the thread of the turn (the turn's owner). */
+export interface DecisionRequest extends LaunchThread {
+  readonly decision: ResearchDecision;
+}
+
+/** What a decision found under the thread lock: a proposal to start outside it, or the result as it stands. */
+type DecisionStep =
+  | { readonly kind: 'start'; readonly row: LaunchRecord }
+  | { readonly kind: 'done'; readonly result: DeepResearchToolResult };
+
+/** States a stop cancels the investigation in (Flow 4). */
+const STOPPABLE: ReadonlySet<LaunchRecord['state']> = new Set([
+  'running',
+  'answer_pending',
+]);
+
+const NOT_FOUND: DeepResearchToolResult = {
+  launch: null,
+  decisionError: 'not_found',
+};
 
 /** Bounds of a launch's token budget: `investigationTokens` of the shipped `deep-research` configuration. */
 export function investigationTokenLimits(): { default: number; max: number } {
@@ -76,6 +103,7 @@ export class ResearchLaunchService {
   constructor(
     @Inject(RESEARCH_DATABASE) database: DatabaseConnection,
     @Inject(RESEARCH_ENGINE) private readonly engine: Engine,
+    @Inject(RESEARCH_RUNTIME) private readonly runtime: Runtime,
     private readonly threads: ThreadsService,
   ) {
     this.db = database.db;
@@ -128,19 +156,116 @@ export class ResearchLaunchService {
           tokenBudget: request.tokenBudget ?? this.defaultTokenBudget,
         }),
     );
-    return this.view(await this.start(row));
+    return this.view((await this.start(row)).row);
   }
 
-  /** Starts the investigation of a `launching` row and returns the row as it stands afterwards. */
-  private async start(row: LaunchRecord): Promise<LaunchRecord> {
+  /**
+   * A decision turn (KD-2, Flow 2, Flow 4): the row of `launchKey` in this owner's thread is read and changed under the
+   * thread lock; a confirmed proposal starts outside it with its recorded goal and budget. A decision the row has no
+   * edge for changes nothing and returns the current view without an error (DC-1); a row not in this thread of this
+   * owner, or discarded, is `not_found`.
+   */
+  async decide(request: DecisionRequest): Promise<DeepResearchToolResult> {
+    const step = await this.threads.withOwnedThread(
+      request.threadId,
+      request.resourceId,
+      () => this.applyDecision(request),
+    );
+    if (step.kind === 'done') return step.result;
+    const started = await this.start(step.row);
+    return started.refused
+      ? this.result(started.row, 'launch_failed')
+      : this.result(started.row);
+  }
+
+  /**
+   * The next user message closes the thread's open proposals (DC-2); the caller decides that the message is one — not
+   * a decision and not a repeat of the stored one.
+   */
+  async supersedeProposals(thread: LaunchThread): Promise<void> {
+    await this.threads.withOwnedThread(
+      thread.threadId,
+      thread.resourceId,
+      async () => {
+        const rows = await launches.listByThread(this.db, thread);
+        for (const row of rows) {
+          if (row.state === 'proposed') await this.move(row, 'supersede', {});
+        }
+      },
+    );
+  }
+
+  /** The decision's change under the thread lock; a confirm only moves the row to `launching`. */
+  private async applyDecision(request: DecisionRequest): Promise<DecisionStep> {
+    const { action, launchKey } = request.decision;
+    const row = await launches.findByLaunchKey(this.db, request, launchKey);
+    if (row === undefined || row.state === 'discarded') {
+      return { kind: 'done', result: NOT_FOUND };
+    }
+    if (action === 'stop')
+      return { kind: 'done', result: await this.stop(row) };
+    const moved = await this.move(row, action, {});
+    return row.state === 'proposed' && moved.state === 'launching'
+      ? { kind: 'start', row: moved }
+      : { kind: 'done', result: this.result(moved) };
+  }
+
+  /**
+   * A stop of a running launch (Flow 4): the investigation is cancelled, then the row is `stopped`. A refused cancel
+   * leaves the row as it is and answers `stop_failed`.
+   */
+  private async stop(row: LaunchRecord): Promise<DeepResearchToolResult> {
+    if (!STOPPABLE.has(row.state) || row.investigationId === null) {
+      return this.result(row);
+    }
+    try {
+      await this.runtime.investigations.cancel(
+        row.investigationId,
+        row.resourceId,
+      );
+    } catch (error) {
+      this.logger.error(
+        withFields('research stop failed', {
+          launchKey: row.launchKey,
+          threadId: row.threadId,
+          investigationId: row.investigationId,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+      return this.result(row, 'stop_failed');
+    }
+    return this.result(
+      await this.move(row, 'stop', { finishedAt: new Date() }),
+    );
+  }
+
+  /**
+   * Starts the investigation of a `launching` row and returns the row as it stands afterwards; `refused` when the
+   * engine refused or failed the start.
+   */
+  private async start(
+    row: LaunchRecord,
+  ): Promise<{ row: LaunchRecord; refused: boolean }> {
     const started = await this.startInvestigation(row);
     if (started === null) {
-      return this.move(row, 'start_failed', { finishedAt: new Date() });
+      return {
+        // A confirmed proposal goes back to its card unfinished; an explicit launch has failed.
+        row: await this.move(
+          row,
+          'start_failed',
+          row.mode === 'explicit' ? { finishedAt: new Date() } : {},
+        ),
+        refused: true,
+      };
     }
     const running = await this.move(row, 'started', started);
-    return running.state === 'running'
-      ? this.reconcile(running, started.investigationId)
-      : running;
+    return {
+      row:
+        running.state === 'running'
+          ? await this.reconcile(running, started.investigationId)
+          : running,
+      refused: false,
+    };
   }
 
   /** The engine's start; `null` when it refused or failed (logged with the launch's identifiers only). */
@@ -244,5 +369,15 @@ export class ResearchLaunchService {
 
   private view(row: LaunchRecord): ResearchLaunchView {
     return toLaunchView(row, this.engine.sourceMode);
+  }
+
+  /** The tool's result for a decision; a row discarded meanwhile has no view and is `not_found`. */
+  private result(
+    row: LaunchRecord,
+    decisionError?: 'launch_failed' | 'stop_failed',
+  ): DeepResearchToolResult {
+    if (row.state === 'discarded') return NOT_FOUND;
+    const launch = this.view(row);
+    return decisionError === undefined ? { launch } : { launch, decisionError };
   }
 }

@@ -12,7 +12,7 @@ import { DEEP_RESEARCH_TOOL, readResearchTurn } from './research-turn.js';
 /** The launch service as the tool reaches it: resolved when the tool runs, not when the agent is built. */
 export type ResolveLaunches = () => Pick<
   ResearchLaunchService,
-  'launch' | 'propose'
+  'launch' | 'propose' | 'decide'
 >;
 
 /** The tool's input: the contract's, with the budget bounded by the configuration so the model sees the limit. */
@@ -26,9 +26,10 @@ const inputSchema = DeepResearchToolInputSchema.extend({
 /**
  * The `deepResearch` tool of the chat agent (design-chat-entry.md, KD-1, C3 api). In a research mode turn it starts an
  * investigation, in any other turn it only records a proposal, so the agent never launches one by itself (AC-19.5).
- * The thread and the owner come from the agent's memory, the new launch's `launchKey` is the call's `toolCallId`, and
- * the mode from the turn's `requestContext` — never from the model's arguments. It does not depend on the source mode
- * (KD-8).
+ * In a decision turn it applies the card's decision (KD-2). The thread and the owner come from the agent's memory, the
+ * new launch's `launchKey` is the call's `toolCallId`, and the mode or the decision with its `launchKey` from the turn's
+ * `requestContext` — never from the model's arguments; a decision reads none of them. It does not depend on the source
+ * mode (KD-8).
  *
  * `launches` is a function so that the agent can be built before the Nest provider of the service exists: the service
  * depends on the threads' memory, which depends on the Mastra instance that holds this agent.
@@ -48,6 +49,14 @@ export function createDeepResearchTool(launches: ResolveLaunches) {
           'deepResearch runs only in a chat turn with a thread and a resource',
         );
       }
+      const turn = readResearchTurn(context.requestContext);
+      if (turn?.kind === 'decision') {
+        return launches().decide({
+          threadId,
+          resourceId,
+          decision: turn.decision,
+        });
+      }
       const request = {
         threadId,
         resourceId,
@@ -55,11 +64,7 @@ export function createDeepResearchTool(launches: ResolveLaunches) {
         goal: input.goal,
         tokenBudget: input.tokenBudget,
       };
-      const turn = readResearchTurn(context.requestContext);
       if (turn === null) return { launch: await launches().propose(request) };
-      if (turn.kind === 'decision') {
-        throw new Error('deepResearch does not apply card decisions');
-      }
       return {
         launch: await launches().launch({
           ...request,

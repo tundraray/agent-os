@@ -41,7 +41,10 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  ApiErrorSchema,
+  DeepResearchToolResultSchema,
   RESEARCH_METADATA_KEYS,
+  type ResearchDecision,
   ThreadMessagesResponseSchema,
   ThreadResearchResponseSchema,
 } from '@agent-os/contracts';
@@ -56,6 +59,7 @@ import {
   it,
   vi,
 } from 'vitest';
+import { ASSISTANT_INSTRUCTIONS } from '../src/mastra/agents/assistant.agent.js';
 import { ThreadRunRegistry } from '../src/threads/thread-run-registry.js';
 import {
   deepResearchCallStep,
@@ -67,7 +71,12 @@ import {
   createResearchChatApp,
   type ResearchChatApp,
 } from './support/researchChatApp.js';
-import { investigationsOf, launchesOf } from './support/researchChatDb.js';
+import {
+  investigationsOf,
+  launchesOf,
+  launchOf,
+  launchVersionsOf,
+} from './support/researchChatDb.js';
 import { closeRuntimeDb } from './support/wiring-handlers.js';
 
 /** The model of the research mode and decision turns (design-chat-entry.md, KD-9, Runtime settings). */
@@ -94,16 +103,26 @@ function userMessage(text: string, metadata?: Record<string, unknown>) {
   };
 }
 
+/** The UI message chunks of a chat response's SSE body (`data: {...}` lines). */
+function sseChunks(body: string): Record<string, unknown>[] {
+  return body
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => line.slice('data: '.length))
+    .filter((data) => data !== '[DONE]')
+    .map((data) => JSON.parse(data) as Record<string, unknown>);
+}
+
 /**
  * Sends one chat turn and waits until its run has ended (the run is released after Mastra's end-of-run save), so the
- * stored messages and launch rows are final.
+ * stored messages and launch rows are final. Returns the UI message chunks the turn streamed.
  */
 async function chat(
   user: string,
   threadId: string,
   message: ReturnType<typeof userMessage>,
-): Promise<void> {
-  await request(t.app.getHttpServer())
+): Promise<Record<string, unknown>[]> {
+  const res = await request(t.app.getHttpServer())
     .post('/api/chat/assistant')
     .set('x-user-id', user)
     .send({ id: threadId, messages: [message] })
@@ -116,6 +135,77 @@ async function chat(
     },
     { timeout: TURN_TIMEOUT_MS, interval: 25 },
   );
+  return sseChunks(res.text);
+}
+
+/** The `deepResearch` result a research turn streamed: its one tool output. */
+function toolResult(chunks: Record<string, unknown>[]) {
+  const outputs = chunks.filter(
+    (chunk) => chunk.type === 'tool-output-available',
+  );
+  if (outputs.length !== 1) {
+    throw new Error(
+      `a research turn streams one tool result, got ${outputs.length}`,
+    );
+  }
+  return DeepResearchToolResultSchema.parse(outputs[0]?.output);
+}
+
+/** Labels of the card's buttons: the text of a decision message. */
+const DECISION_LABELS: Record<ResearchDecision['action'], string> = {
+  confirm: 'Запустить',
+  decline: 'Не нужно',
+  stop: 'Остановить',
+};
+
+/**
+ * A plain turn where the model proposes research (the `deepResearch` call, then a text answer); returns the proposal's
+ * `launchKey`.
+ */
+async function propose(
+  user: string,
+  threadId: string,
+  input: { goal: string; tokenBudget?: number },
+): Promise<string> {
+  const call = deepResearchCallStep(input);
+  t.chatModel.script(
+    call.step,
+    textStep('Могу запустить глубокое исследование.'),
+  );
+  await chat(user, threadId, userMessage(`Разберись: ${input.goal}`));
+  return call.toolCallId;
+}
+
+/**
+ * A decision turn as the card's button sends it. The model's `deepResearch` call carries a goal and a budget of its own,
+ * which a decision must not read. Returns the tool result and the reply's metadata as streamed, and the options of the
+ * turn's model call.
+ */
+async function decide(
+  user: string,
+  threadId: string,
+  decision: ResearchDecision,
+) {
+  t.chatModel.script(
+    deepResearchCallStep({
+      goal: 'Цель из аргументов модели в ходе решения',
+      tokenBudget: 900_000,
+    }).step,
+  );
+  const callsBefore = t.chatModel.calls.length;
+  const chunks = await chat(
+    user,
+    threadId,
+    userMessage(DECISION_LABELS[decision.action], {
+      [RESEARCH_METADATA_KEYS.researchDecision]: decision,
+    }),
+  );
+  return {
+    result: toolResult(chunks),
+    streamedMetadata: chunks.find((chunk) => chunk.type === 'start')
+      ?.messageMetadata,
+    turns: t.chatModel.calls.slice(callsBefore).map(turnOptions),
+  };
 }
 
 async function research(user: string, threadId: string) {
@@ -133,6 +223,56 @@ async function messages(user: string, threadId: string) {
     .expect(200);
   return ThreadMessagesResponseSchema.parse(res.body).messages;
 }
+
+/** A stored message as GET /messages returns it. */
+type HistoryMessage = Awaited<ReturnType<typeof messages>>[number];
+
+/** The metadata value of `key` on a returned message. */
+function metadataValue(message: HistoryMessage | undefined, key: string) {
+  const metadata = message?.metadata;
+  return typeof metadata === 'object' && metadata !== null
+    ? (metadata as Record<string, unknown>)[key]
+    : undefined;
+}
+
+/**
+ * Each stored decision message with the message that follows it: its role, its `researchDecisionReply` mark and how
+ * many tool parts it kept.
+ */
+function decisionPairs(stored: HistoryMessage[]) {
+  return stored.flatMap((message, index) => {
+    const decision = metadataValue(
+      message,
+      RESEARCH_METADATA_KEYS.researchDecision,
+    );
+    if (decision === undefined) return [];
+    const reply = stored[index + 1];
+    return [
+      {
+        decision,
+        reply: {
+          role: reply?.role,
+          mark: metadataValue(
+            reply,
+            RESEARCH_METADATA_KEYS.researchDecisionReply,
+          ),
+          toolParts: (reply?.parts ?? []).filter(
+            (part) => part.type === `tool-${DEEP_RESEARCH_TOOL}`,
+          ).length,
+        },
+      },
+    ];
+  });
+}
+
+/** The turn options of a research mode or decision turn (KD-1, KD-9). */
+const RESEARCH_TURN_OPTIONS = {
+  modelId: RESEARCH_TURN_MODEL,
+  toolChoice: { type: 'tool', toolName: DEEP_RESEARCH_TOOL },
+  tools: [DEEP_RESEARCH_TOOL],
+  thinking: { type: 'disabled' },
+  effort: 'high',
+};
 
 /** The turn options a model call received, without the prompt. */
 function turnOptions(call: RecordedChatCall | undefined) {
@@ -372,10 +512,12 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         await chat(user, threadId, userMessage('А когда это началось?'));
 
         // Assert: a second row with its own launchKey and the configuration's default budget; still no investigation.
+        // The later message closed the first proposal (DC-2, INT-1 A4).
         expect(await research(user, threadId)).toEqual([
           expect.objectContaining({
             launchKey: first.toolCallId,
-            state: 'proposed',
+            state: 'not_launched',
+            notLaunchedReason: 'superseded',
           }),
           expect.objectContaining({
             launchKey: second.toolCallId,
@@ -391,10 +533,280 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       },
       TURN_TIMEOUT_MS * 2,
     );
-    it.todo('INT-1 A3: confirm starts exactly one investigation with the recorded goal and budget, decline starts none, repeated and stale decisions change nothing and answer no error, stop cancels once, refused start or stop returns decisionError, and every decision reply is marked');
-    it.todo('INT-1 A4: a plain follow-up message closes open proposals as superseded, a decision turn does not close the other proposals, and a confirm on a superseded card starts nothing');
-    it.todo('INT-1 A5: another user cannot read the launches of the thread (404) and a foreign launchKey in a decision turn changes nothing (not_found)');
-    it.todo('INT-1 A6: without sources the chat still proposes and launches research with no source check by the part, each launch view carries the mode (current engine mode until the investigation exists, the investigation\'s own mode after), a restart with a source changes proposals but not a running launch, and with a source no view carries the no-source mode');
+    it(
+      'INT-1 A3: confirm starts exactly one investigation with the recorded goal and budget, decline starts none, repeated and stale decisions change nothing and answer no error, stop cancels once, refused start or stop returns decisionError, and every decision reply is marked',
+      async () => {
+        // Arrange: a proposal of an ordinary turn.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const first = await propose(user, threadId, {
+          goal: 'Сравнить ошибки импорта за неделю',
+          tokenBudget: 400_000,
+        });
+        const decisions: Awaited<ReturnType<typeof decide>>[] = [];
+        const send = async (decision: ResearchDecision) => {
+          const sent = await decide(user, threadId, decision);
+          decisions.push(sent);
+          return sent;
+        };
+
+        // Act: confirm, the model's call carrying another goal and a bigger budget.
+        const confirmed = await send({ action: 'confirm', launchKey: first });
+
+        // Assert (AC-19.3): one investigation, started with the recorded goal and budget; the card is running.
+        const [investigation, ...moreInvestigations] =
+          await investigationsOf(user);
+        expect(moreInvestigations).toEqual([]);
+        expect(investigation).toMatchObject({
+          threadId,
+          query: 'Сравнить ошибки импорта за неделю',
+        });
+        expect(t.engine.startCalls).toEqual([
+          expect.objectContaining({
+            launchKey: first,
+            threadId,
+            query: 'Сравнить ошибки импорта за неделю',
+            tokenBudget: 400_000,
+          }),
+        ]);
+        expect(confirmed.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: first,
+            mode: 'proposal',
+            state: 'running',
+            goal: 'Сравнить ошибки импорта за неделю',
+            tokenBudget: 400_000,
+          }),
+        });
+        expect(await launchesOf(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: first,
+            state: 'running',
+            investigationId: investigation?.investigationId,
+          }),
+        ]);
+
+        // Act + Assert (AC-19.7, DC-1): confirm again and decline from a second tab — the same view, no error, still
+        // one investigation.
+        for (const action of ['confirm', 'decline'] as const) {
+          const repeated = await send({ action, launchKey: first });
+          expect(repeated.result).toEqual({ launch: confirmed.result.launch });
+        }
+        expect(await investigationsOf(user)).toHaveLength(1);
+        expect(t.engine.startCalls).toHaveLength(1);
+
+        // Act + Assert (AC-19.4): a second proposal declined — not launched, nothing started.
+        const second = await propose(user, threadId, {
+          goal: 'Найти первый сбой импорта',
+          tokenBudget: 500_000,
+        });
+        const declined = await send({ action: 'decline', launchKey: second });
+        expect(declined.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: second,
+            state: 'not_launched',
+            notLaunchedReason: 'declined',
+          }),
+        });
+        expect(t.engine.startCalls).toHaveLength(1);
+
+        // Act + Assert (AC-21.1 stop half): stop cancels the investigation once; a second stop changes nothing.
+        const stopped = await send({ action: 'stop', launchKey: first });
+        expect(t.cancels.calls).toEqual([
+          { investigationId: investigation?.investigationId, resourceId: user },
+        ]);
+        expect(stopped.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: first,
+            state: 'stopped',
+          }),
+        });
+        const stoppedAgain = await send({ action: 'stop', launchKey: first });
+        expect(stoppedAgain.result).toEqual({ launch: stopped.result.launch });
+        expect(t.cancels.calls).toHaveLength(1);
+
+        // Act + Assert (UC-E1): the engine refuses the start of a third proposal — back to proposed, launch_failed.
+        const third = await propose(user, threadId, {
+          goal: 'Проверить схему заказов',
+          tokenBudget: 600_000,
+        });
+        t.engine.refuseStarts(new Error('engine unavailable'));
+        const refused = await send({ action: 'confirm', launchKey: third });
+        expect(refused.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: third,
+            state: 'proposed',
+          }),
+          decisionError: 'launch_failed',
+        });
+        expect(await launchesOf(user, threadId)).toEqual([
+          expect.objectContaining({ launchKey: first, state: 'stopped' }),
+          expect.objectContaining({ launchKey: second, state: 'declined' }),
+          expect.objectContaining({
+            launchKey: third,
+            state: 'proposed',
+            investigationId: null,
+          }),
+        ]);
+
+        // The card is active again: a confirm starts it; then the runtime refuses the cancel — row unchanged,
+        // stop_failed.
+        t.engine.refuseStarts(null);
+        const retried = await send({ action: 'confirm', launchKey: third });
+        expect(retried.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: third,
+            state: 'running',
+          }),
+        });
+        t.cancels.refuse(new Error('runtime unavailable'));
+        const stopRefused = await send({ action: 'stop', launchKey: third });
+        expect(stopRefused.result).toEqual({
+          launch: retried.result.launch,
+          decisionError: 'stop_failed',
+        });
+        expect(await launchOf(third)).toMatchObject({ state: 'running' });
+        expect(await investigationsOf(user)).toHaveLength(2);
+
+        // Assert (KD-9): every decision turn ran on Haiku 5.5 with the one forced tool, thinking off, effort at most
+        // high.
+        expect(decisions.flatMap((sent) => sent.turns)).toEqual(
+          decisions.map(() => RESEARCH_TURN_OPTIONS),
+        );
+        // Assert (DC-7, KD-2): every reply carried the mark while it streamed, and GET /messages returns each decision
+        // message followed by its marked reply, with the tool part kept.
+        const sent: ResearchDecision[] = [
+          { action: 'confirm', launchKey: first },
+          { action: 'confirm', launchKey: first },
+          { action: 'decline', launchKey: first },
+          { action: 'decline', launchKey: second },
+          { action: 'stop', launchKey: first },
+          { action: 'stop', launchKey: first },
+          { action: 'confirm', launchKey: third },
+          { action: 'confirm', launchKey: third },
+          { action: 'stop', launchKey: third },
+        ];
+        expect(decisions.map((d) => d.streamedMetadata)).toEqual(
+          sent.map(({ launchKey }) => ({
+            [RESEARCH_METADATA_KEYS.researchDecisionReply]: { launchKey },
+          })),
+        );
+        expect(decisionPairs(await messages(user, threadId))).toEqual(
+          sent.map((decision) => ({
+            decision,
+            reply: {
+              role: 'assistant',
+              mark: { launchKey: decision.launchKey },
+              toolParts: 1,
+            },
+          })),
+        );
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
+    );
+
+    it(
+      'INT-1 A4: a plain follow-up message closes open proposals as superseded, a decision turn does not close the other proposals, and a confirm on a superseded card starts nothing',
+      async () => {
+        // Arrange: a proposal.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const first = await propose(user, threadId, {
+          goal: 'Проверить задержки синхронизации',
+          tokenBudget: 300_000,
+        });
+
+        // Act: a plain next message.
+        t.chatModel.script(textStep('Хорошо, продолжим без исследования.'));
+        await chat(user, threadId, userMessage('Давай пока без исследования'));
+
+        // Assert (DC-2): the open proposal is closed as superseded.
+        const superseded = {
+          launchKey: first,
+          state: 'not_launched',
+          notLaunchedReason: 'superseded',
+        };
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining(superseded),
+        ]);
+
+        // Act: a new proposal, then a decision turn for the superseded card.
+        const second = await propose(user, threadId, {
+          goal: 'Сравнить задержки по регионам',
+          tokenBudget: 350_000,
+        });
+        const late = await decide(user, threadId, {
+          action: 'confirm',
+          launchKey: first,
+        });
+
+        // Assert (UC-E2, DC-1, DC-2): the late confirm answers the superseded view and starts nothing, and the decision
+        // turn leaves the other proposal open.
+        expect(late.result).toEqual({
+          launch: expect.objectContaining(superseded),
+        });
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining(superseded),
+          expect.objectContaining({ launchKey: second, state: 'proposed' }),
+        ]);
+        expect(t.engine.startCalls).toEqual([]);
+        expect(await investigationsOf(user)).toEqual([]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 2,
+    );
+
+    it(
+      'INT-1 A5: another user cannot read the launches of the thread (404) and a foreign launchKey in a decision turn changes nothing (not_found)',
+      async () => {
+        // Arrange: U's proposal and the versions of U's launch rows; V with a thread of their own.
+        const owner = t.user();
+        const ownerThread = await t.createThread(owner);
+        const launchKey = await propose(owner, ownerThread, {
+          goal: 'Разобрать отчёт о продажах',
+          tokenBudget: 250_000,
+        });
+        const versions = await launchVersionsOf(owner);
+        const other = t.user();
+        const otherThread = await t.createThread(other);
+
+        // Act + Assert (AC-20.5): V reads U's launches — the threads API's 404.
+        const read = await request(t.app.getHttpServer())
+          .get(`/api/threads/${ownerThread}/research`)
+          .set('x-user-id', other)
+          .expect(404);
+        expect(ApiErrorSchema.parse(read.body)).toEqual({
+          statusCode: 404,
+          message: 'Thread not found',
+          error: 'Not Found',
+          errorCode: 'THREAD_NOT_FOUND',
+        });
+
+        // Act + Assert (UC-E5): decisions with U's launchKey in V's own thread — not_found.
+        for (const action of ['confirm', 'decline'] as const) {
+          const foreign = await decide(other, otherThread, {
+            action,
+            launchKey,
+          });
+          expect(foreign.result).toEqual({
+            launch: null,
+            decisionError: 'not_found',
+          });
+        }
+
+        // Nothing of U changed, and V has no investigation.
+        expect(await launchVersionsOf(owner)).toEqual(versions);
+        expect(await research(owner, ownerThread)).toEqual([
+          expect.objectContaining({ launchKey, state: 'proposed' }),
+        ]);
+        expect(await investigationsOf(other)).toEqual([]);
+        expect(t.engine.startCalls).toEqual([]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 2,
+    );
+    // INT-1 A6 needs an assembly without source adapters: it is in the describe after this one.
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -491,6 +903,250 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
     it.todo('INT-3 T2: regenerating while another launch\'s answer sits in the tail re-appends that answer exactly once after the new reply, keeps its launch completed, and fails it only after the give-up window');
     it.todo('INT-3 T3: a failure of the tail selection or of the delete leaves the tail in place, and a retry completes without a second effect');
     it.todo('INT-3 T4: deleting a thread with running, proposed and answered launches stops the investigation, removes every launch row, and no later event writes an answer');
+  });
+});
+
+// INT-1 A6 (verification items under INT-1 above): the app composed with no source adapter and the engine double in the
+// mode `model_knowledge`. A describe of its own, after the first one's app is closed, so the two runtimes never run at
+// once against one database (plan rule 2).
+describe('deep-research / chat-entry - integration without source adapters (in-process Nest + real runtime + real Postgres, scripted chat model)', () => {
+  beforeAll(async () => {
+    t = await createResearchChatApp({
+      env: { REASONING_EFFORT },
+      sourceMode: 'model_knowledge',
+      withoutSourceAdapters: true,
+    });
+  }, BOOT_TIMEOUT_MS);
+
+  afterAll(async () => {
+    try {
+      await t?.close();
+    } finally {
+      await closeRuntimeDb();
+    }
+  }, BOOT_TIMEOUT_MS);
+
+  beforeEach(() => t.reset());
+  afterEach(() => t.reset());
+
+  describe('INT-1', () => {
+    it(
+      "INT-1 A6: without sources the chat still proposes and launches research with no source check by the part, each launch view carries the mode (current engine mode until the investigation exists, the investigation's own mode after), a restart with a source changes proposals but not a running launch, and with a source no view carries the no-source mode",
+      async () => {
+        const user = t.user();
+
+        // Act: proposals without sources — one closed by the next message, one declined, one left open.
+        const proposals = await t.createThread(user);
+        const superseded = await propose(user, proposals, {
+          goal: 'Оценить риски миграции',
+          tokenBudget: 200_000,
+        });
+        const noSourceTurn = t.chatModel.calls[0];
+        const declined = await propose(user, proposals, {
+          goal: 'Сравнить тарифы поставщиков',
+          tokenBudget: 200_000,
+        });
+        await decide(user, proposals, {
+          action: 'decline',
+          launchKey: declined,
+        });
+        const open = await propose(user, proposals, {
+          goal: 'Найти причины оттока',
+          tokenBudget: 200_000,
+        });
+
+        // Assert (AC-26.1 chat share, AC-27.1): the chat took the message and offered the tool with the production
+        // instruction; the same tool and instruction as with sources are compared below.
+        expect(noSourceTurn?.tools).toEqual([DEEP_RESEARCH_TOOL]);
+        expect(noSourceTurn?.system).toContain(ASSISTANT_INSTRUCTIONS);
+
+        // Act: mode launches without sources — started, refused, and held at the start.
+        const launches = await t.createThread(user);
+        const running = deepResearchCallStep({
+          goal: 'Почему растут возвраты',
+          tokenBudget: 300_000,
+        });
+        t.chatModel.script(running.step);
+        const runningTurn = await chat(
+          user,
+          launches,
+          userMessage('Разберись, почему растут возвраты', {
+            [RESEARCH_METADATA_KEYS.deepResearch]: true,
+          }),
+        );
+        const failed = deepResearchCallStep({
+          goal: 'Проверить отчёт по складу',
+        });
+        t.engine.refuseStarts(new Error('engine unavailable'));
+        t.chatModel.script(failed.step);
+        await chat(
+          user,
+          launches,
+          userMessage('Проверь отчёт по складу', {
+            [RESEARCH_METADATA_KEYS.deepResearch]: true,
+          }),
+        );
+        t.engine.refuseStarts(null);
+        const held = t.engine.holdStarts();
+        const launching = deepResearchCallStep({
+          goal: 'Сверить остатки',
+          tokenBudget: 300_000,
+        });
+        t.chatModel.script(launching.step);
+        const launchingTurn = chat(
+          user,
+          launches,
+          userMessage('Сверь остатки', {
+            [RESEARCH_METADATA_KEYS.deepResearch]: true,
+          }),
+        );
+        await vi.waitFor(
+          async () => {
+            expect(await launchOf(launching.toolCallId)).toMatchObject({
+              state: 'launching',
+            });
+          },
+          { timeout: TURN_TIMEOUT_MS, interval: 25 },
+        );
+
+        // Assert (AC-27.2, DC-8): the first view of the mode turn already has the mode, the row stores the
+        // investigation's mode, and rows without an investigation show the engine's current mode.
+        expect(toolResult(runningTurn)).toEqual({
+          launch: expect.objectContaining({
+            launchKey: running.toolCallId,
+            state: 'running',
+            sourceMode: 'model_knowledge',
+          }),
+        });
+        expect(await launchOf(running.toolCallId)).toMatchObject({
+          state: 'running',
+          sourceMode: 'model_knowledge',
+        });
+        expect(await research(user, proposals)).toEqual([
+          expect.objectContaining({
+            launchKey: superseded,
+            notLaunchedReason: 'superseded',
+            sourceMode: 'model_knowledge',
+          }),
+          expect.objectContaining({
+            launchKey: declined,
+            notLaunchedReason: 'declined',
+            sourceMode: 'model_knowledge',
+          }),
+          expect.objectContaining({
+            launchKey: open,
+            state: 'proposed',
+            sourceMode: 'model_knowledge',
+          }),
+        ]);
+        expect(await research(user, launches)).toEqual([
+          expect.objectContaining({
+            launchKey: running.toolCallId,
+            state: 'running',
+            sourceMode: 'model_knowledge',
+          }),
+          expect.objectContaining({
+            launchKey: failed.toolCallId,
+            state: 'failed',
+            sourceMode: 'model_knowledge',
+          }),
+          expect.objectContaining({
+            launchKey: launching.toolCallId,
+            state: 'running',
+            sourceMode: 'model_knowledge',
+          }),
+        ]);
+        expect(await launchOf(launching.toolCallId)).toMatchObject({
+          state: 'launching',
+          sourceMode: null,
+        });
+        held.release();
+        await launchingTurn;
+        expect(await launchOf(launching.toolCallId)).toMatchObject({
+          state: 'running',
+          sourceMode: 'model_knowledge',
+        });
+
+        // Act: the restart with a source.
+        t.engine.setSourceMode('sources');
+
+        // Assert (DC-8): rows without an investigation follow the new mode, started ones keep their investigation's.
+        expect(
+          (await research(user, proposals)).map((view) => view.sourceMode),
+        ).toEqual(['sources', 'sources', 'sources']);
+        expect(
+          (await research(user, launches)).map((view) => [
+            view.launchKey,
+            view.sourceMode,
+          ]),
+        ).toEqual([
+          [running.toolCallId, 'model_knowledge'],
+          [failed.toolCallId, 'sources'],
+          [launching.toolCallId, 'model_knowledge'],
+        ]);
+
+        // Act + Assert: a confirm of the open proposal starts an investigation viewed and stored as `sources`.
+        const confirmed = await decide(user, proposals, {
+          action: 'confirm',
+          launchKey: open,
+        });
+        expect(confirmed.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: open,
+            state: 'running',
+            sourceMode: 'sources',
+          }),
+        });
+        expect(await launchOf(open)).toMatchObject({
+          state: 'running',
+          sourceMode: 'sources',
+        });
+
+        // Act: with a source from the start — a proposal, then a mode launch.
+        const withSources = await t.createThread(user);
+        const callsBefore = t.chatModel.calls.length;
+        const proposal = await propose(user, withSources, {
+          goal: 'Сравнить выручку по кварталам',
+          tokenBudget: 200_000,
+        });
+        const sourcesTurn = t.chatModel.calls[callsBefore];
+        const explicit = deepResearchCallStep({
+          goal: 'Почему упала выручка',
+          tokenBudget: 300_000,
+        });
+        t.chatModel.script(explicit.step);
+        const explicitTurn = await chat(
+          user,
+          withSources,
+          userMessage('Разберись, почему упала выручка', {
+            [RESEARCH_METADATA_KEYS.deepResearch]: true,
+          }),
+        );
+
+        // Assert (AC-27.1, AC-27.4): the same tool and instruction as without sources, and no view has the no-source
+        // mode.
+        expect(sourcesTurn?.tools).toEqual(noSourceTurn?.tools);
+        expect(sourcesTurn?.system).toBe(noSourceTurn?.system);
+        expect(toolResult(explicitTurn)).toEqual({
+          launch: expect.objectContaining({
+            launchKey: explicit.toolCallId,
+            sourceMode: 'sources',
+          }),
+        });
+        expect(
+          (await research(user, withSources)).map((view) => [
+            view.launchKey,
+            view.sourceMode,
+          ]),
+        ).toEqual([
+          [proposal, 'sources'],
+          [explicit.toolCallId, 'sources'],
+        ]);
+        expect(await investigationsOf(user)).toHaveLength(4);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
+    );
   });
 });
 

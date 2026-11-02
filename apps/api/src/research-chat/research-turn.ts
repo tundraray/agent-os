@@ -33,6 +33,15 @@ export type ResearchTurn =
       readonly userMessageId: string;
     };
 
+/** The `researchDecisionReply` mark of the reply of a decision turn (KD-2): in the stream and in the store. */
+export function decisionReplyMetadata(decision: ResearchDecision) {
+  return {
+    [RESEARCH_METADATA_KEYS.researchDecisionReply]: {
+      launchKey: decision.launchKey,
+    },
+  };
+}
+
 /** A user message of the request whose metadata turned the research mode on. */
 const ModeMessageSchema = z.object({
   id: z.string().min(1),
@@ -42,8 +51,28 @@ const ModeMessageSchema = z.object({
   }),
 });
 
-/** The research turn the last message of a chat request asks for, or `null` for an ordinary turn. */
+/** A hidden user message of a card decision (KD-2). */
+const DecisionMessageSchema = z.object({
+  id: z.string().min(1),
+  role: z.literal('user'),
+  metadata: z.looseObject({
+    [RESEARCH_METADATA_KEYS.researchDecision]: ResearchDecisionSchema,
+  }),
+});
+
+/**
+ * The research turn the last message of a chat request asks for, or `null` for an ordinary turn. A card decision wins
+ * over the mode: the decision message is the card's, never a new question.
+ */
 export function researchTurnOf(lastMessage: unknown): ResearchTurn | null {
+  const decision = DecisionMessageSchema.safeParse(lastMessage);
+  if (decision.success) {
+    return {
+      kind: 'decision',
+      decision: decision.data.metadata[RESEARCH_METADATA_KEYS.researchDecision],
+      userMessageId: decision.data.id,
+    };
+  }
   const mode = ModeMessageSchema.safeParse(lastMessage);
   return mode.success ? { kind: 'mode', userMessageId: mode.data.id } : null;
 }
