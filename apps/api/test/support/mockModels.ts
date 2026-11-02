@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 
@@ -12,14 +13,18 @@ type CallOptions = Parameters<MockLanguageModelV4['doStream']>[0];
 
 /**
  * A queued model call: a stream to return, an error `doStream` rejects with,
- * or a function building the stream from the call options.
+ * or a function building the stream (or a promise of it) from the call options.
  */
 export type AssistantStep =
-  StreamStep | Error | ((options: CallOptions) => StreamStep);
+  | StreamStep
+  | Error
+  | ((options: CallOptions) => StreamStep | Promise<StreamStep>);
 
 /** Tool names registered on the test `assistant` agent (see `createTestApp`). */
 export const WEATHER_TOOL = 'getWeather';
 export const FAILING_TOOL = 'failing';
+/** The part's research tool (design-chat-entry.md, KD-1); the research chat app registers it on the test agent. */
+export const DEEP_RESEARCH_TOOL = 'deepResearch';
 
 const USAGE = {
   inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
@@ -154,6 +159,66 @@ export function partialTextUntilAbortStep(partialText: string): AbortableStep {
   return { step: stepFor, aborted };
 }
 
+/** A scripted `deepResearch` call; `toolCallId` is the `launchKey` the tool gives the new launch. */
+export interface DeepResearchCall {
+  step: StreamStep;
+  toolCallId: string;
+}
+
+/**
+ * Scenario "deepResearch call": the model calls the part's tool with `goal`
+ * and, when given, `tokenBudget`, and ends the step for the tool (one model
+ * call). The tool call id is unique across runs: the launch key of the row
+ * the tool writes is derived from it.
+ */
+export function deepResearchCallStep(input: {
+  goal: string;
+  tokenBudget?: number;
+}): DeepResearchCall {
+  const toolCallId = `call-${DEEP_RESEARCH_TOOL}-${randomUUID()}`;
+  return {
+    toolCallId,
+    step: step([
+      {
+        type: 'tool-call',
+        toolCallId,
+        toolName: DEEP_RESEARCH_TOOL,
+        input: JSON.stringify(input),
+      },
+      finish('tool-calls'),
+    ]),
+  };
+}
+
+/**
+ * Scenario "held turn": the model call answers `answer` only once `until`
+ * resolves, so the chat run stays registered in `ThreadRunRegistry` meanwhile.
+ * Hold it with a latch the harness releases on reset (`ResearchChatApp.gate`).
+ */
+export function heldStep(
+  until: Promise<void>,
+  answer: StreamStep,
+): AssistantStep {
+  return async () => {
+    await until;
+    return answer;
+  };
+}
+
+/** The answer of the next queued step for `options`; an exhausted queue rejects. */
+function nextFromQueue(
+  queue: AssistantStep[],
+  options: CallOptions,
+  label: string,
+): Promise<StreamStep> {
+  const next = queue.shift();
+  if (next === undefined) {
+    return Promise.reject(new Error(`${label}: no scripted response left`));
+  }
+  if (next instanceof Error) return Promise.reject(next);
+  return Promise.resolve(typeof next === 'function' ? next(options) : next);
+}
+
 /**
  * Mock assistant model answering model calls from a queue, in order, one entry
  * per `doStream` call; multi-turn conversations queue one entry per turn
@@ -165,17 +230,86 @@ export function assistantModel(...steps: AssistantStep[]): MockLanguageModelV4 {
   return new MockLanguageModelV4({
     provider: 'mock',
     modelId: 'mock-assistant',
+    doStream: (options) =>
+      nextFromQueue(queue, options, 'mock assistant model'),
+  });
+}
+
+/** What one chat model call received, as the turn options reached the model. */
+export interface RecordedChatCall {
+  /** The tool choice of the call; `{ type: 'tool', toolName }` when a tool is forced. */
+  toolChoice: CallOptions['toolChoice'];
+  /** Names of the tools offered to the model, in the order of the call. */
+  tools: string[];
+  /** The call's `reasoning` setting. */
+  reasoning: CallOptions['reasoning'];
+  /** `providerOptions.anthropic.thinking` of the call: the thinking setting of the turn. */
+  thinking: unknown;
+  /** The whole `providerOptions` object of the call. */
+  providerOptions: CallOptions['providerOptions'];
+  /** The system text (the agent's instruction), the system messages joined by a blank line. */
+  system: string;
+  /** The messages the model received, without the system messages. */
+  messages: CallOptions['prompt'];
+}
+
+/**
+ * The chat model of the research chat app: a queue scripted per test (the queue
+ * of {@link assistantModel}) that records the options of every call. One
+ * instance serves the app for the whole file; `reset` empties the queue and
+ * the records between tests.
+ */
+export interface ScriptedChatModel {
+  readonly model: MockLanguageModelV4;
+  /** Every call in arrival order. */
+  readonly calls: readonly RecordedChatCall[];
+  /** Appends steps to the queue. */
+  script(...steps: AssistantStep[]): void;
+  /** Steps still queued: a finished test expects zero. */
+  remaining(): number;
+  reset(): void;
+}
+
+function recordCall(options: CallOptions): RecordedChatCall {
+  const anthropic = options.providerOptions?.anthropic;
+  return {
+    toolChoice: options.toolChoice,
+    tools: (options.tools ?? []).map((tool) => tool.name),
+    reasoning: options.reasoning,
+    thinking: anthropic?.thinking,
+    providerOptions: options.providerOptions,
+    system: options.prompt
+      .flatMap((message) =>
+        message.role === 'system' ? [message.content] : [],
+      )
+      .join('\n\n'),
+    messages: options.prompt.filter((message) => message.role !== 'system'),
+  };
+}
+
+export function scriptedChatModel(): ScriptedChatModel {
+  const queue: AssistantStep[] = [];
+  const calls: RecordedChatCall[] = [];
+  const model = new MockLanguageModelV4({
+    provider: 'mock',
+    modelId: 'mock-chat',
     doStream: (options) => {
-      const next = queue.shift();
-      if (next === undefined) {
-        return Promise.reject(
-          new Error('mock assistant model: no scripted response left'),
-        );
-      }
-      if (next instanceof Error) return Promise.reject(next);
-      return Promise.resolve(typeof next === 'function' ? next(options) : next);
+      calls.push(recordCall(options));
+      return nextFromQueue(queue, options, 'scripted chat model');
     },
   });
+  return {
+    model,
+    calls,
+    script: (...steps) => {
+      queue.push(...steps);
+    },
+    remaining: () => queue.length,
+    reset: () => {
+      queue.length = 0;
+      calls.length = 0;
+    },
+  };
 }
 
 /** Title every e2e app gets unless a test scripts the title model. */
