@@ -2,9 +2,11 @@ import type { ZodType } from "zod";
 import {
   ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
+  ThreadResearchResponseSchema,
   ThreadSummarySchema,
   type RenameThreadRequest,
   type ThreadListResponse,
+  type ThreadResearchResponse,
   type ThreadSummary,
 } from "@agent-os/contracts";
 import { safeValidateUIMessages, type UIMessage } from "ai";
@@ -80,6 +82,14 @@ export async function getThreadMessages(threadId: string): Promise<UIMessage[]> 
   return deep.data;
 }
 
+/** Launches of the thread in creation order (design-chat-entry.md, `GET /api/threads/:threadId/research`). */
+export async function getThreadResearch(threadId: string): Promise<ThreadResearchResponse> {
+  return parse(
+    await send({ path: `${threadRoute(threadId)}/research`, treatBadRequestAsNotFound: true }),
+    ThreadResearchResponseSchema,
+  );
+}
+
 export async function createThread(): Promise<ThreadSummary> {
   return parse(await send({ path: "/api/threads", method: "POST" }), ThreadSummarySchema);
 }
@@ -107,6 +117,7 @@ export type ThreadsApiClient = {
   listThreads: typeof listThreads;
   getThread: typeof getThread;
   getThreadMessages: typeof getThreadMessages;
+  getThreadResearch: typeof getThreadResearch;
   createThread: typeof createThread;
   renameThread: typeof renameThread;
   deleteThread: typeof deleteThread;
@@ -116,6 +127,7 @@ export const threadsApiClient: ThreadsApiClient = {
   listThreads,
   getThread,
   getThreadMessages,
+  getThreadResearch,
   createThread,
   renameThread,
   deleteThread,

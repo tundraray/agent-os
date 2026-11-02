@@ -1,9 +1,22 @@
 import {
+  DeepResearchToolInputSchema,
+  DeepResearchToolResultSchema,
+  HistoryMessageSchema,
+  RESEARCH_METADATA_KEYS,
+  ResearchAnswerMetadataSchema,
+  ResearchDecisionSchema,
+  ResearchLaunchViewSchema,
   ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
+  ThreadResearchResponseSchema,
   ThreadSummarySchema,
+  type DeepResearchToolResult,
   type HistoryMessage,
+  type ResearchAnswerMetadata,
+  type ResearchDecision,
+  type ResearchLaunchView,
   type ThreadListResponse,
+  type ThreadResearchResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
 import type { UIMessageChunk } from 'ai';
@@ -46,6 +59,121 @@ export function historyMessages(turns: number | readonly HistoryTurn[]): History
     parts: [{ type: 'text', text }],
   }));
   return ThreadMessagesResponseSchema.parse({ messages }).messages;
+}
+
+/** A launch as the card shows it; validated by ResearchLaunchViewSchema. Defaults: an explicit launch that is running. */
+export function researchLaunchView(
+  overrides: Partial<ResearchLaunchView> & Pick<ResearchLaunchView, 'launchKey'>,
+): ResearchLaunchView {
+  return ResearchLaunchViewSchema.parse({
+    mode: 'explicit',
+    state: 'running',
+    notLaunchedReason: null,
+    goal: 'Почему выросли расходы на облако',
+    tokenBudget: 200_000,
+    createdAt: FIXTURE_TIME,
+    answerMessageId: null,
+    answerPending: false,
+    sourceMode: 'sources',
+    ...overrides,
+  });
+}
+
+/** Body of GET /api/threads/:id/research; validated by ThreadResearchResponseSchema. */
+export function threadResearch(launches: ResearchLaunchView[]): ThreadResearchResponse {
+  return ThreadResearchResponseSchema.parse({ launches });
+}
+
+export type DeepResearchToolPartInput = {
+  toolCallId: string;
+  goal: string;
+  /** Without a result the part is the call alone (`input-available`), as while the turn still streams. */
+  result?: DeepResearchToolResult;
+};
+
+/** A `deepResearch` tool part of an assistant message (AI SDK v7 `tool-<name>`), input and result validated by the contracts. */
+export function deepResearchToolPart({ toolCallId, goal, result }: DeepResearchToolPartInput): HistoryMessage['parts'][number] {
+  const input = DeepResearchToolInputSchema.parse({ goal });
+  return result === undefined
+    ? { type: 'tool-deepResearch', toolCallId, state: 'input-available', input }
+    : {
+        type: 'tool-deepResearch',
+        toolCallId,
+        state: 'output-available',
+        input,
+        output: DeepResearchToolResultSchema.parse(result),
+      };
+}
+
+/**
+ * The assistant message carrying a research answer under `researchAnswer`. Defaults follow `sourceMode`: from the sources,
+ * one established claim citing one source; from the model's knowledge, one assumed claim and no sources (DC-9).
+ */
+export function researchAnswerMessage({
+  id,
+  text = 'Ответ ресерча',
+  answer,
+}: {
+  id: string;
+  text?: string;
+  answer: Partial<ResearchAnswerMetadata> & Pick<ResearchAnswerMetadata, 'launchKey'>;
+}): HistoryMessage {
+  const claim = 'В октябре добавлены два кластера.';
+  const groups =
+    answer.sourceMode === 'model_knowledge'
+      ? { established: [], assumed: [{ text: claim, footnotes: [], verified: false }], sources: [] }
+      : {
+          established: [{ text: claim, footnotes: [1], verified: true }],
+          assumed: [],
+          sources: [{ number: 1, sourceId: 'billing', toolName: 'get_costs', snapshot: 'snap-1', truncated: false }],
+        };
+  const metadata = ResearchAnswerMetadataSchema.parse({
+    goal: 'Почему выросли расходы на облако',
+    summary: 'Расходы выросли из-за новых кластеров.',
+    outcome: 'answered',
+    stopReason: null,
+    launch: { messageId: 'm-launch' },
+    unknown: [],
+    sourceMode: 'sources',
+    ...groups,
+    ...answer,
+  });
+  return HistoryMessageSchema.parse({
+    id,
+    role: 'assistant',
+    metadata: { [RESEARCH_METADATA_KEYS.researchAnswer]: metadata },
+    parts: [{ type: 'text', text }],
+  });
+}
+
+/**
+ * A card decision as the history stores it: the hidden user message labelled `researchDecision` and the hidden assistant
+ * reply labelled `researchDecisionReply`, whose `deepResearch` call returns the launch after the decision.
+ */
+export function researchDecisionPair({
+  idPrefix,
+  decision,
+  launch,
+}: {
+  idPrefix: string;
+  decision: ResearchDecision;
+  launch: ResearchLaunchView;
+}): [HistoryMessage, HistoryMessage] {
+  const { launchKey } = ResearchDecisionSchema.parse(decision);
+  return [
+    HistoryMessageSchema.parse({
+      id: `${idPrefix}-decision`,
+      role: 'user',
+      metadata: { [RESEARCH_METADATA_KEYS.researchDecision]: decision },
+      parts: [{ type: 'text', text: decision.action }],
+    }),
+    HistoryMessageSchema.parse({
+      id: `${idPrefix}-reply`,
+      role: 'assistant',
+      metadata: { [RESEARCH_METADATA_KEYS.researchDecisionReply]: { launchKey } },
+      parts: [deepResearchToolPart({ toolCallId: `${idPrefix}-call`, goal: launch.goal, result: { launch } })],
+    }),
+  ];
 }
 
 /** UI message chunks of a complete one-text assistant reply. */
