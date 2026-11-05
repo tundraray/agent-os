@@ -44,7 +44,9 @@ import {
   ApiErrorSchema,
   DeepResearchToolResultSchema,
   RESEARCH_METADATA_KEYS,
+  type EventEnvelope,
   type ResearchDecision,
+  ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
   ThreadResearchResponseSchema,
 } from '@agent-os/contracts';
@@ -60,11 +62,16 @@ import {
   vi,
 } from 'vitest';
 import type { EvidenceInput } from '@agent-os/contracts';
+import type { DatabaseConnection } from '@agent-os/db';
 import type { HandlerRegistry, Runtime } from '@agent-os/runtime';
 import { ASSISTANT_INSTRUCTIONS } from '../src/mastra/agents/assistant.agent.js';
-import { RESEARCH_ANSWER_CONSUMER } from '../src/research-chat/research-answer.consumer.js';
+import {
+  RESEARCH_ANSWER_CONSUMER,
+  researchAnswerConsumer,
+} from '../src/research-chat/research-answer.consumer.js';
 import {
   HANDLER_REGISTRY,
+  RESEARCH_DATABASE,
   RESEARCH_RUNTIME,
 } from '../src/research/research.tokens.js';
 import { ThreadRunRegistry } from '../src/threads/thread-run-registry.js';
@@ -490,6 +497,48 @@ async function answerLaunch(launch: StartedLaunch, text: string) {
   await launchReaching(launch.launchKey, 'answer_pending');
   await t.runAppenderOnce();
   await launchReaching(launch.launchKey, 'answered');
+}
+
+/** The thread answers 404 THREAD_NOT_FOUND and its owner's list does not show it. */
+async function threadGone(user: string, threadId: string): Promise<void> {
+  const res = await request(t.app.getHttpServer())
+    .get(`/api/threads/${threadId}`)
+    .set('x-user-id', user)
+    .expect(404);
+  expect(ApiErrorSchema.parse(res.body).errorCode).toBe('THREAD_NOT_FOUND');
+  const list = await request(t.app.getHttpServer())
+    .get('/api/threads')
+    .set('x-user-id', user)
+    .expect(200);
+  expect(
+    ThreadListResponseSchema.parse(list.body).threads.map(
+      (thread) => thread.id,
+    ),
+  ).not.toContain(threadId);
+}
+
+/**
+ * A `TaskSucceeded` of the launch's controller handed to the part's consumer in a transaction of the app's pool, as
+ * the relay would hand an event it read before the investigation was purged (the purge deletes the stored event).
+ */
+async function deliverLateSuccess(launch: StartedLaunch): Promise<void> {
+  const { db } = t.moduleRef.get<DatabaseConnection>(RESEARCH_DATABASE, {
+    strict: false,
+  });
+  const event: EventEnvelope = {
+    eventId: randomUUID(),
+    type: 'TaskSucceeded',
+    schemaVersion: 1,
+    investigationId: launch.investigationId,
+    taskId: launch.controllerTaskId,
+    causationId: null,
+    correlationId: randomUUID(),
+    stateRevision: 1,
+    payloadRef: null,
+    payload: {},
+    createdAt: new Date().toISOString(),
+  };
+  await db.transaction((tx) => researchAnswerConsumer.handle(tx, event));
 }
 
 describe('deep-research / chat-entry - integration (in-process Nest + real runtime + real Postgres, scripted chat model)', () => {
@@ -2282,8 +2331,80 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       },
       TURN_TIMEOUT_MS * 4,
     );
-    it.todo(
+    it(
       'INT-3 T4: deleting a thread with running, proposed and answered launches stops the investigation, removes every launch row, and no later event writes an answer',
+      async () => {
+        // Arrange (UC-8 server half): an answered launch, a running one whose controller attempt is held, and an open
+        // proposal without an investigation, all in one thread.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const answered = await launchResearch(
+          user,
+          threadId,
+          'Почему выросла задержка',
+        );
+        await answerLaunch(answered, 'Задержка выросла из-за кэша');
+        const running = await launchResearch(
+          user,
+          threadId,
+          'Почему падает конверсия',
+        );
+        await t.engine.controllerRunning(running.investigationId);
+        const proposalKey = await propose(user, threadId, {
+          goal: 'Почему растут жалобы',
+          tokenBudget: 500_000,
+        });
+        expect((await launchOf(proposalKey))?.investigationId).toBeNull();
+
+        // Assert (DC-6 server half): the delete dialog's read counts one running launch.
+        expect(
+          (await research(user, threadId)).map((view) => [
+            view.launchKey,
+            view.state,
+          ]),
+        ).toEqual([
+          [answered.launchKey, 'completed'],
+          [running.launchKey, 'running'],
+          [proposalKey, 'proposed'],
+        ]);
+
+        // Act: the thread is deleted.
+        await request(t.app.getHttpServer())
+          .delete(`/api/threads/${threadId}`)
+          .set('x-user-id', user)
+          .expect(204);
+
+        // Assert (AC-22.1, KD-7): the runtime hook removed the thread's investigations, the `purge` hook every launch
+        // row - the proposal without an investigation included - and the thread is gone.
+        expect(
+          (await investigationsOf(user)).filter(
+            (investigation) => investigation.threadId === threadId,
+          ),
+        ).toEqual([]);
+        expect(await launchesOf(user, threadId)).toEqual([]);
+        await threadGone(user, threadId);
+
+        // Act (Flow 3, Failure handling; regression guard): the deleted investigation's controller succeeds late, a
+        // `TaskSucceeded` read before the purge reaches the part's consumer, then a pass of the loop. This block does not
+        // prove the `purge` hook - the FK cascade from `research_investigations` already removed the running and answered
+        // rows, and the hook is proven above by the proposal row in `launchesOf(...) == []`. It guards that nothing is
+        // resurrected after the delete: a weakened FK, a consumer that upserts a missing row, or a loop that writes for
+        // a missing row.
+        const writes = t.memoryFaults.answerWrites;
+        t.engine.succeed(running.investigationId, {
+          answer: () => assumedAnswer('Конверсия падает из-за формы оплаты'),
+        });
+        await deliverLateSuccess(running);
+        await t.runAppenderOnce();
+
+        // Assert: no row came back, no answer was written, and the thread did not reappear.
+        expect(await launchesOf(user, threadId)).toEqual([]);
+        expect(t.memoryFaults.answerWrites).toBe(writes);
+        expect(await storedMessagesOf(threadId)).toEqual([]);
+        await threadGone(user, threadId);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
   });
 });

@@ -205,6 +205,21 @@ export const researchLaunchRepository = {
     return rows.map(toRecord);
   },
 
+  /**
+   * Deletes every launch of the thread, with or without an investigation (the `purge` hook of a thread delete, KD-7);
+   * a repeat deletes nothing.
+   */
+  async deleteByThread(db: Queries, thread: LaunchThread): Promise<void> {
+    await db
+      .delete(researchChatLaunches)
+      .where(
+        and(
+          eq(researchChatLaunches.resourceId, thread.resourceId),
+          eq(researchChatLaunches.threadId, thread.threadId),
+        ),
+      );
+  },
+
   /** The launch whose investigation's controller task is `controllerTaskId`; the consumer matches events by it. */
   async findByControllerTaskId(
     db: Queries,
