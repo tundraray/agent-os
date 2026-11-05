@@ -39,8 +39,8 @@ export function createDeepResearchTool(launches: ResolveLaunches) {
     id: DEEP_RESEARCH_TOOL,
     description:
       'Deep research: a long, multi-step investigation of the question over the connected data sources that ' +
-      'answers later in this conversation. Call it with the goal as you understood the question and, when the ' +
-      'user named one, the token budget.',
+      'answers later in this conversation. Call it with the goal as you understood the question, written in the ' +
+      "language of the user's question, and, when the user named one, the token budget.",
     inputSchema,
     execute: async (input, context): Promise<DeepResearchToolResult> => {
       const { threadId, resourceId, toolCallId } = context.agent ?? {};

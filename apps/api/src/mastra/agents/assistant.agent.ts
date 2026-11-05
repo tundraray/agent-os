@@ -18,7 +18,11 @@ export const ASSISTANT_INSTRUCTIONS =
   'Deep research: when answering a question needs a long, multi-step investigation over the connected data ' +
   'sources (logs and similar records) rather than what you already know, call the deepResearch tool with the goal as ' +
   'you understood it; unless the user turned the research mode on, it only proposes the research and the user ' +
-  'decides whether to launch it. Do not call it for questions you can answer directly.';
+  'decides whether to launch it. Do not call it for questions you can answer directly. Write the goal in the language ' +
+  "of the user's question.\n\n" +
+  'Never show the user internal values of a research or its tool results — source mode, states, ids and keys (for ' +
+  'example model_knowledge, proposed or a launchKey); describe them in plain words instead, such as "no data source ' +
+  "is connected, so the answer will come from the model's general knowledge\".";
 
 /**
  * The model of a turn (KD-9): `RESEARCH_TURN_MODEL` when the turn's `requestContext` carries the research mode or a

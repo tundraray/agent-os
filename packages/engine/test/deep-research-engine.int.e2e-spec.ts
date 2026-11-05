@@ -1065,7 +1065,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         return overBudgetCounts === 1 ? undefined : 300_000;
       };
 
-      const { resourceId, investigationId } = await startDeepResearch('L1: why did the services reset their connections?');
+      // The investigation's budget is set well above the counted call, so only the task's maxTokens can refuse it.
+      const { resourceId, investigationId } = await startDeepResearch('L1: why did the services reset their connections?', 3_000_000);
       const done = await finished(investigationId, resourceId);
 
       expect(done).toMatchObject({ status: 'completed', answer: { outcome: 'inconclusive', stopReason: null } });
@@ -1250,7 +1251,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         );
         expect(done.usage.byRoleAndModel.map((row) => row.calls)).toEqual([1, 3, 1, 1, 1]);
         const { run } = await engineRowsOf(investigationId);
-        expect(done.usage).toMatchObject({ totalTokens: run!.tokensSpent, tokenBudget: 3_000_000 });
+        expect(done.usage).toMatchObject({ totalTokens: run!.tokensSpent, tokenBudget: 300_000 });
         expect(done.usage.totalCostUsd).toBeGreaterThan(0);
       } finally {
         harness.tokenCounter.offset = 0;

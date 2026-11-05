@@ -1,6 +1,6 @@
 # Глубокое исследование — Design Doc — engine
 
-**Статус:** Approved · **Дата:** 2026-11-02 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) — часть без UI · **Зависит от:** внутри фичи — ничего; внешние контракты — [design-runtime.md](../research-runtime/design-runtime.md#contract-definitions), [design-mcp-source.md](../research-runtime/design-mcp-source.md#contract-definitions)
+**Статус:** Approved · **Дата:** 2026-11-05 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) — часть без UI · **Зависит от:** внутри фичи — ничего; внешние контракты — [design-runtime.md](../research-runtime/design-runtime.md#contract-definitions), [design-mcp-source.md](../research-runtime/design-mcp-source.md#contract-definitions)
 
 ## Snapshot
 
@@ -758,7 +758,7 @@ sequenceDiagram
 | `maxFanOut` | 4 |
 | `maxVerifyRounds` | 3 (дайджест, раздел 11, п. 6) |
 | `deadlineMarginMs` | 120 000 |
-| `investigationTokens` | 3 000 000, верхняя граница 10 000 000 |
+| `investigationTokens` | 300 000, верхняя граница 10 000 000 |
 | `maxTasks`, `maxToolCalls` расследования | 300, 3 000 |
 | Дедлайн задачи контроллера | 3 600 000 мс |
 | `maxTokens` задачи контроллера | бюджет токенов расследования |
@@ -990,3 +990,4 @@ stateDiagram-v2
 | 1.13 | 2026-11-01 | По приёмочному прогону и решениям оркестратора: провайдер отклоняет схему вывода с `additionalProperties` не false, поэтому все схемы вывода ролей закрыты на всех уровнях (табличный unit-тест), а `args` контроллер и проверяющий отдают JSON-строкой, которую код разбирает и проверяет до `DecisionGate` и проверки; хранимое `Decision` держит объект (KD-7, «Вывод модели контроллера и проверяющего», Error handling, Fact Disposition). Проваленный счёт `count_tokens` в логе — с кодом статуса HTTP и классом ошибки, без текста промпта; принятое `proposeAnswer` всегда ждёт синтез; утверждение `insufficient` в ответе — в `unknown` (UC-E7); заметка Test Strategy о двойнике модели и схемах вывода; статус Approved сохранён |
 | 1.14 | 2026-11-01 | По приёмочному прогону (план T7.3) и решению оркестратора: вход контроллера (`DecisionInput.tools`) и вход проверяющего несут разрешённые пары `sourceId` и `toolName` с JSON Schema аргументов по `SourceRegistry.resolveTool`, в обязательной части пакета, а промпты велят брать только их; `completeness` контроллера — закрытый перечень `all`, `sample`, запрос проверяющего его не несёт и собирается с `all`; описания инструмента в секции нет — дескриптор `mcp-source` его не несёт (KD-7, C3, «Вход и вывод модели контроллера и проверяющего», Test Strategy, Fact Disposition); статус Approved сохранён |
 | 1.15 | 2026-11-02 | Решение пользователя: `summary` ответа — пересказ утверждений ответа, а не самостоятельное утверждение; правило provenance действует только на утверждения. Промпт роли `synthesis` в `deep-research.v1.json` велит писать `summary` только из утверждений, которые синтез кладёт в ответ, без новых фактов; код `summary` не проверяет (`InvestigationView`, инвариант 8). По PRD 1.14 — AC-09.4 в FR-09, UC-7 (шлюз не удаляет `summary` без ссылок) и UC-E4 (ответ кодом без `summary`). Статус Approved сохранён |
+| 1.16 | 2026-11-05 | Решение пользователя после приёмки входа из чата: умолчание `investigationTokens` снижено с 3 000 000 до 300 000 токенов, верхняя граница 10 000 000 не изменилась (`deep-research.v1.json`). Причина: предложение без названного бюджета запускало расследование с риском большого расхода. Статус Approved сохранён |

@@ -31,7 +31,7 @@
       "maxOutputTokens": 8000,
       "windowTokens": 64000,
       "marginTokens": 3200,
-      "prompt": "You analyse log records for one sub-question of an investigation. Question of the investigation: {{query}}\nUse only the records in the input. Every claim names the evidence ids it rests on and the atoms it asserts: traceId, service, event, interval or number. If the records are not enough to answer, say so instead of guessing. Code later checks the atoms against source records, so write them as it reads them: traceId, service and event exactly as in the records; interval as ISO start/end that contains every record of the claim's service and event; number only as a plain count of records in digits, as an aggregate_logs bucket or a sum of buckets gives it. Leave out an atom you cannot write that way."
+      "prompt": "You analyse log records for one sub-question of an investigation. Question of the investigation: {{query}}\nUse only the records in the input. Every claim names the evidence ids it rests on and the atoms it asserts: traceId, service, event, interval or number. If the records are not enough to answer, say so instead of guessing. Code later checks the atoms against source records, so write them as it reads them: traceId, service and event exactly as in the records; interval as ISO start/end that contains every record of the claim's service and event; number only as a plain count of records in digits, as an aggregate_logs bucket or a sum of buckets gives it. Leave out an atom you cannot write that way. Write the text of each claim in the language of the question of the investigation; the atoms stay as in the records."
     },
     "verifier": {
       "model": "anthropic/claude-haiku-5-5",
@@ -47,7 +47,7 @@
       "maxOutputTokens": 8000,
       "windowTokens": 48000,
       "marginTokens": 2400,
-      "prompt": "You write the final answer of an investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nAnswer sections in order: {{answerSections}}.\nIn the mode sources, build the answer only from the claims in the input and keep each claim's evidence ids; do not add claims without evidence. In the mode model_knowledge no data source is connected: answer from general knowledge, give no evidence ids, and state that the answer is not checked against data. Write in the language of the question. The section summary is a retelling of the answer in 2 to 3 sentences, in the language of the question, built only from the claims you placed in the other answer sections: add no new facts, numbers or conclusions, and give no evidence ids in it."
+      "prompt": "You write the final answer of an investigation. Goal: {{goal}}\nQuestion: {{query}}\nSource mode: {{sourceMode}}.\nAnswer sections in order: {{answerSections}}.\nIn the mode sources, build the answer only from the claims in the input and keep each claim's evidence ids; do not add claims without evidence. In the mode model_knowledge no data source is connected: answer from general knowledge, give no evidence ids, and state that the answer is not checked against data. Never write the source mode or any other internal value (such as sources or model_knowledge) in the claims or the summary; say it in plain words, for example that no data source was connected. Write in the language of the question. The section summary is a retelling of the answer in 2 to 3 sentences, in the language of the question, built only from the claims you placed in the other answer sections: add no new facts, numbers or conclusions, and give no evidence ids in it."
     }
   },
   "limits": {
@@ -58,7 +58,7 @@
     "maxFanOut": 4,
     "maxVerifyRounds": 3,
     "deadlineMarginMs": 120000,
-    "investigationTokens": { "default": 3000000, "max": 10000000 },
+    "investigationTokens": { "default": 300000, "max": 10000000 },
     "maxTasks": 300,
     "maxToolCalls": 3000,
     "taskBudgets": {

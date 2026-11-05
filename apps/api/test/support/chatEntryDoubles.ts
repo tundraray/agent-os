@@ -103,7 +103,7 @@ const REQUESTER_KEY = 'chat-entry-e2e-engine-double';
 const PROCESS_ID = 'deep-research';
 const INVESTIGATION_BUDGET = { maxTasks: 10, maxToolCalls: 20 } as const;
 /** The view's `tokenBudget` of a start without one (the engine would take its configuration's default). */
-const DEFAULT_TOKEN_BUDGET = 3_000_000;
+const DEFAULT_TOKEN_BUDGET = 300_000;
 /** The text of the answer's one claim; the answer is a function of the investigation id only. */
 const ANSWER_CLAIM = 'Платежи падали из-за просроченного сертификата.';
 

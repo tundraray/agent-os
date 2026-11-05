@@ -111,7 +111,7 @@ const RESEARCH_TURN_MODEL = 'anthropic/claude-haiku-5-5';
 /** The scripted chat model's id: the model of ordinary turns. */
 const CHAT_MODEL = 'mock/chat';
 /** `investigationTokens.default` of the shipped deep-research configuration. */
-const DEFAULT_TOKEN_BUDGET = 3_000_000;
+const DEFAULT_TOKEN_BUDGET = 300_000;
 /** Above `high`: a research turn must still run with `high` (Haiku 5.5 turns thinking off only up to it, KD-9). */
 const REASONING_EFFORT = 'max';
 /** Long enough for a chat turn with the real Memory and lock; not a latency check. */
