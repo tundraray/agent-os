@@ -38,6 +38,8 @@ export function ChatRuntimeProvider({ children }: ChatRuntimeProviderProps) {
       return useChatRuntime({
         transport: services.transport,
         sendAutomaticallyWhen: shouldResendTurn,
+        // One feed message per stored message: a hidden decision reply must not swallow the research answer after it (KD-2).
+        joinStrategy: 'none',
         toCreateMessage: toResearchCreateMessage,
         adapters: { history: services.history.adapterFor(aui) },
         onError: (error) => services.handleChatError({ error, aui }),
