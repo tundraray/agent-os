@@ -366,6 +366,47 @@ describe('buildResearchAnswer', () => {
       },
     ],
     [
+      'model_knowledge with a claim citing evidence (KD-8): no evidence is cited or listed, the claim carries MC-33',
+      {
+        view: viewOf(
+          'model_knowledge',
+          answerOf({
+            outcome: 'answered',
+            stopReason: null,
+            assumed: [
+              claim('c1', 'Retries need backoff with jitter', ['ev-1'], false),
+            ],
+          }),
+        ),
+        cited: [],
+        text: [
+          MC_32,
+          '',
+          '**Ответ ресерча** · Есть ответ',
+          'Цель: Why did checkout latency grow last week?',
+          '',
+          '### Предположения',
+          '- Retries need backoff with jitter (из знаний модели, без источника)',
+        ].join('\n'),
+        metadata: {
+          summary: null,
+          outcome: 'answered',
+          stopReason: null,
+          established: [],
+          assumed: [
+            {
+              text: 'Retries need backoff with jitter',
+              footnotes: [],
+              verified: false,
+            },
+          ],
+          unknown: [],
+          sources: [],
+          sourceMode: 'model_knowledge',
+        },
+      },
+    ],
+    [
       'sources with a summary (UC-4, DC-10, MC-34): summary, then MC-34, between the header and the groups',
       {
         view: viewOf(

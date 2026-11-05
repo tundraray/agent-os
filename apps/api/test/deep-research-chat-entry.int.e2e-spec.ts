@@ -92,6 +92,7 @@ import {
   closeRuntimeDb,
   completed,
   evidenceInput,
+  latch,
   query,
   taskSpec,
   testHandler,
@@ -1421,8 +1422,135 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       },
       TURN_TIMEOUT_MS * 4,
     );
-    it.todo(
+    it(
       'INT-2 D3: a stop decision on a launch whose controller already finished leaves the launch stopped and appends no answer, while an already delivered answer is untouched',
+      async () => {
+        // Arrange: two finished launches of one user in two threads — `delivered` finished first, so a pass takes it
+        // before `stoppable`.
+        const user = t.user();
+        const deliveredThread = await t.createThread(user);
+        const stoppableThread = await t.createThread(user);
+        const delivered = await launchResearch(
+          user,
+          deliveredThread,
+          'Почему вырос средний чек',
+        );
+        const stoppable = await launchResearch(
+          user,
+          stoppableThread,
+          'Почему растут жалобы на доставку',
+        );
+        t.engine.succeed(delivered.investigationId, {
+          answer: () => assumedAnswer('Средний чек вырос после акции'),
+        });
+        await launchReaching(delivered.launchKey, 'answer_pending');
+        t.engine.succeed(stoppable.investigationId, {
+          answer: () => assumedAnswer('Жалобы растут из-за нового курьера'),
+        });
+        await launchReaching(stoppable.launchKey, 'answer_pending');
+
+        // Act (Flow 4, race branch): a pass that already listed both rows `answer_pending` is held while it reads the
+        // first answer, under the lock of the other thread; meanwhile the stop decision turn runs to its end.
+        const hold = t.gate();
+        const reached = latch();
+        const readInvestigation = t.engine.readInvestigation.bind(t.engine);
+        const reads = vi
+          .spyOn(t.engine, 'readInvestigation')
+          .mockImplementation(async (input) => {
+            if (input.investigationId === delivered.investigationId) {
+              reached.release();
+              await hold.promise;
+            }
+            return readInvestigation(input);
+          });
+        let stop: Awaited<ReturnType<typeof decide>>;
+        try {
+          const pass = t.runAppenderOnce();
+          await reached.promise;
+          stop = await decide(user, stoppableThread, {
+            action: 'stop',
+            launchKey: stoppable.launchKey,
+          });
+          // The stop has won before the held pass reaches the row.
+          expect(await launchOf(stoppable.launchKey)).toMatchObject({
+            state: 'stopped',
+          });
+          hold.release();
+          await pass;
+        } finally {
+          reads.mockRestore();
+        }
+
+        // Assert (AC-21.1): the stop cancelled the investigation once and the card says stopped; the pass that listed
+        // the row before the stop wrote only the other thread's answer.
+        expect(t.cancels.calls).toEqual([
+          { investigationId: stoppable.investigationId, resourceId: user },
+        ]);
+        expect(stop.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: stoppable.launchKey,
+            state: 'stopped',
+          }),
+        });
+        expect(t.memoryFaults.answerWrites).toBe(1);
+        expect(await storedIdsOf(stoppableThread)).not.toContain(
+          answerIdOf(stoppable.investigationId),
+        );
+        expect(await launchOf(delivered.launchKey)).toMatchObject({
+          state: 'answered',
+        });
+
+        // Act: a pass after the stop.
+        await t.runAppenderOnce();
+
+        // Assert: still no answer of the stopped launch; the card stays stopped with no answer link.
+        expect(t.memoryFaults.answerWrites).toBe(1);
+        expect(await storedIdsOf(stoppableThread)).not.toContain(
+          answerIdOf(stoppable.investigationId),
+        );
+        expect(
+          (await research(user, stoppableThread)).map((view) => [
+            view.launchKey,
+            view.state,
+            view.answerMessageId,
+          ]),
+        ).toEqual([[stoppable.launchKey, 'stopped', null]]);
+
+        // Act: a stop of the launch whose answer was already delivered.
+        const deliveredAnswerId = answerIdOf(delivered.investigationId);
+        const answerBefore = (await storedMessagesOf(deliveredThread)).find(
+          (message) => message.id === deliveredAnswerId,
+        );
+        const rowBefore = await launchOf(delivered.launchKey);
+        const late = await decide(user, deliveredThread, {
+          action: 'stop',
+          launchKey: delivered.launchKey,
+        });
+        await t.runAppenderOnce();
+
+        // Assert: nothing changed — no cancel, the row, the completed card and the one stored answer are as they were.
+        expect(t.cancels.calls).toHaveLength(1);
+        expect(late.result).toEqual({
+          launch: expect.objectContaining({
+            launchKey: delivered.launchKey,
+            state: 'completed',
+            answerMessageId: deliveredAnswerId,
+          }),
+        });
+        expect(await launchOf(delivered.launchKey)).toEqual(rowBefore);
+        expect(answerBefore).toMatchObject({
+          role: 'assistant',
+          text: expect.stringContaining('Средний чек вырос после акции'),
+        });
+        expect(
+          (await storedMessagesOf(deliveredThread)).filter(
+            (message) => message.id === deliveredAnswerId,
+          ),
+        ).toEqual([answerBefore]);
+        expect(t.memoryFaults.answerWrites).toBe(1);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
     it(
       'INT-2 D4: a write that keeps failing is retried with growing pauses and holds the later answers of its thread until RESEARCH_APPEND_GIVE_UP_MS, then the launch is failed and the queue moves on',
@@ -1529,8 +1657,195 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       },
       TURN_TIMEOUT_MS * 4,
     );
-    it.todo(
+    it(
       'INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat, and a stop before the synthesis ends gives a warning with the reason and no claims',
+      async () => {
+        // Arrange: the engine runs without sources (the double's investigations take `model_knowledge`); one launch
+        // answers with two assumed claims, the other stops on its budget before the synthesis (UC-E8).
+        t.engine.setSourceMode('model_knowledge');
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const knowledge = await launchResearch(
+          user,
+          threadId,
+          'Как снизить отток подписчиков',
+        );
+        const stoppedEarly = await launchResearch(
+          user,
+          threadId,
+          'Почему упали продления',
+        );
+        t.engine.succeed(knowledge.investigationId, {
+          answer: () => ({
+            answerId: 'answer-d5',
+            outcome: 'answered',
+            stopReason: null,
+            summary: null,
+            established: [],
+            assumed: [
+              {
+                claimId: 'c1',
+                text: 'Отток снижают напоминания перед списанием',
+                evidenceIds: [],
+                verified: false,
+              },
+              {
+                claimId: 'c2',
+                text: 'Годовой тариф удерживает дольше месячного',
+                evidenceIds: [],
+                verified: false,
+              },
+            ],
+            unknown: [],
+            removed: [],
+          }),
+        });
+        await launchReaching(knowledge.launchKey, 'answer_pending');
+        t.engine.succeed(stoppedEarly.investigationId, {
+          answer: () => ({
+            answerId: 'answer-d5-early',
+            outcome: 'inconclusive',
+            stopReason: 'budget_exhausted',
+            summary: null,
+            established: [],
+            assumed: [],
+            unknown: [],
+            removed: [],
+          }),
+        });
+        await launchReaching(stoppedEarly.launchKey, 'answer_pending');
+
+        // Act: one pass.
+        await t.runAppenderOnce();
+
+        // Assert (DC-9, AC-27.3): the text opens with MC-32 and marks each claim with MC-33 — no `[n]`, no
+        // «не проверено», no source list; the metadata carries the mode with no footnotes or sources; no evidence read.
+        const knowledgeId = answerIdOf(knowledge.investigationId);
+        const earlyId = answerIdOf(stoppedEarly.investigationId);
+        const knowledgeText = [
+          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
+          '',
+          '**Ответ ресерча** · Есть ответ',
+          'Цель: Как снизить отток подписчиков',
+          '',
+          '### Предположения',
+          '- Отток снижают напоминания перед списанием (из знаний модели, без источника)',
+          '- Годовой тариф удерживает дольше месячного (из знаний модели, без источника)',
+        ].join('\n');
+        const earlyText = [
+          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
+          '',
+          '**Ответ ресерча** · Вывода нет',
+          'Цель: Почему упали продления',
+          'Остановлен: исчерпан бюджет',
+        ].join('\n');
+        const stored = await storedMessagesOf(threadId);
+        expect(
+          stored.slice(-2).map((message) => [message.id, message.text]),
+        ).toEqual([
+          [knowledgeId, knowledgeText],
+          [earlyId, earlyText],
+        ]);
+        const answerMetadata = (id: string) =>
+          stored.find((message) => message.id === id)?.metadata?.[
+            RESEARCH_METADATA_KEYS.researchAnswer
+          ];
+        expect(answerMetadata(knowledgeId)).toEqual({
+          launchKey: knowledge.launchKey,
+          goal: 'Как снизить отток подписчиков',
+          summary: null,
+          outcome: 'answered',
+          stopReason: null,
+          launch: { messageId: knowledge.messageId },
+          established: [],
+          assumed: [
+            {
+              text: 'Отток снижают напоминания перед списанием',
+              footnotes: [],
+              verified: false,
+            },
+            {
+              text: 'Годовой тариф удерживает дольше месячного',
+              footnotes: [],
+              verified: false,
+            },
+          ],
+          unknown: [],
+          sources: [],
+          sourceMode: 'model_knowledge',
+        });
+        // UC-E8: a stop before the synthesis ended — MC-32 and the stop reason MC-25, no claims.
+        expect(answerMetadata(earlyId)).toEqual({
+          launchKey: stoppedEarly.launchKey,
+          goal: 'Почему упали продления',
+          summary: null,
+          outcome: 'inconclusive',
+          stopReason: 'budget_exhausted',
+          launch: { messageId: stoppedEarly.messageId },
+          established: [],
+          assumed: [],
+          unknown: [],
+          sources: [],
+          sourceMode: 'model_knowledge',
+        });
+        expect(t.evidenceReads).toBe(0);
+        expect(
+          (await research(user, threadId)).map((view) => [
+            view.launchKey,
+            view.state,
+            view.answerMessageId,
+            view.sourceMode,
+          ]),
+        ).toEqual([
+          [knowledge.launchKey, 'completed', knowledgeId, 'model_knowledge'],
+          [stoppedEarly.launchKey, 'completed', earlyId, 'model_knowledge'],
+        ]);
+
+        // Act + Assert (AC-27.3, reload): GET /messages returns each answer once with its text and mode.
+        const history = await messages(user, threadId);
+        expect(
+          history
+            .filter((message) => message.id.startsWith('research-answer-'))
+            .map((message) => [
+              message.id,
+              message.parts,
+              metadataValue(message, RESEARCH_METADATA_KEYS.researchAnswer),
+            ]),
+        ).toEqual([
+          [
+            knowledgeId,
+            [expect.objectContaining({ type: 'text', text: knowledgeText })],
+            answerMetadata(knowledgeId),
+          ],
+          [
+            earlyId,
+            [expect.objectContaining({ type: 'text', text: earlyText })],
+            answerMetadata(earlyId),
+          ],
+        ]);
+
+        // Act (DC-9): the next plain chat turn of the thread.
+        t.chatModel.script(textStep('Начните с напоминаний перед списанием.'));
+        const nextCall = t.chatModel.calls.length;
+        await chat(user, threadId, userMessage('С чего начать?'));
+
+        // Assert: the model received the answer with the caveat — MC-32 and MC-33 after both claims, no footnotes.
+        const prompt = JSON.stringify(t.chatModel.calls[nextCall]?.messages);
+        expect(prompt).toContain(
+          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
+        );
+        expect(prompt).toContain(
+          '- Отток снижают напоминания перед списанием (из знаний модели, без источника)',
+        );
+        expect(prompt).toContain(
+          '- Годовой тариф удерживает дольше месячного (из знаний модели, без источника)',
+        );
+        expect(prompt).not.toContain('[1]');
+        expect(prompt).not.toContain('(не проверено)');
+        expect(t.memoryFaults.answerWrites).toBe(2);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
   });
 
