@@ -59,11 +59,20 @@ import {
   it,
   vi,
 } from 'vitest';
+import type { EvidenceInput } from '@agent-os/contracts';
+import type { HandlerRegistry, Runtime } from '@agent-os/runtime';
 import { ASSISTANT_INSTRUCTIONS } from '../src/mastra/agents/assistant.agent.js';
+import { RESEARCH_ANSWER_CONSUMER } from '../src/research-chat/research-answer.consumer.js';
+import {
+  HANDLER_REGISTRY,
+  RESEARCH_RUNTIME,
+} from '../src/research/research.tokens.js';
 import { ThreadRunRegistry } from '../src/threads/thread-run-registry.js';
+import type { ScriptedAnswer } from './support/engineDouble.js';
 import {
   deepResearchCallStep,
   DEEP_RESEARCH_TOOL,
+  heldStep,
   type RecordedChatCall,
   textStep,
 } from './support/mockModels.js';
@@ -73,11 +82,21 @@ import {
 } from './support/researchChatApp.js';
 import {
   investigationsOf,
+  type LaunchRow,
   launchesOf,
   launchOf,
   launchVersionsOf,
+  storedMessagesOf,
 } from './support/researchChatDb.js';
-import { closeRuntimeDb } from './support/wiring-handlers.js';
+import {
+  closeRuntimeDb,
+  completed,
+  evidenceInput,
+  query,
+  taskSpec,
+  testHandler,
+  uniqueWorkflowType,
+} from './support/wiring-handlers.js';
 
 /** The model of the research mode and decision turns (design-chat-entry.md, KD-9, Runtime settings). */
 const RESEARCH_TURN_MODEL = 'anthropic/claude-haiku-5-5';
@@ -284,6 +303,133 @@ function turnOptions(call: RecordedChatCall | undefined) {
     thinking: call.thinking,
     effort: call.providerOptions?.anthropic?.effort,
   };
+}
+
+/** `value`, or a failure naming `what` when it is null or undefined. */
+function required<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined)
+    throw new Error(`${what} is missing`);
+  return value;
+}
+
+/** Waits until the launch row of `launchKey` is in `state` (moved by a turn, the consumer or the loop); returns it. */
+async function launchReaching(
+  launchKey: string,
+  state: string,
+): Promise<LaunchRow> {
+  let row: LaunchRow | undefined;
+  await vi.waitFor(
+    async () => {
+      row = await launchOf(launchKey);
+      expect(row?.state).toBe(state);
+    },
+    { timeout: TURN_TIMEOUT_MS, interval: 25 },
+  );
+  return required(row, `launch ${launchKey}`);
+}
+
+/** A launch started by a mode turn: its key, investigation, controller task and the user message that carried the mode. */
+interface StartedLaunch {
+  launchKey: string;
+  investigationId: string;
+  controllerTaskId: string;
+  messageId: string;
+}
+
+/** A mode turn whose `deepResearch` call starts an investigation in the thread. */
+async function launchResearch(
+  user: string,
+  threadId: string,
+  goal: string,
+): Promise<StartedLaunch> {
+  const call = deepResearchCallStep({ goal, tokenBudget: 400_000 });
+  t.chatModel.script(call.step);
+  const message = userMessage(`Разберись: ${goal}`, {
+    [RESEARCH_METADATA_KEYS.deepResearch]: true,
+  });
+  await chat(user, threadId, message);
+  const row = await launchReaching(call.toolCallId, 'running');
+  return {
+    launchKey: call.toolCallId,
+    investigationId: required(row.investigationId, 'investigationId'),
+    controllerTaskId: required(row.controllerTaskId, 'controllerTaskId'),
+    messageId: message.id,
+  };
+}
+
+/** Id of the answer message of an investigation (design-chat-entry.md, KD-4, invariant 4). */
+const answerIdOf = (investigationId: string) =>
+  `research-answer-${investigationId}`;
+
+/** The delivery of the task's `TaskSucceeded` to the part's consumer; `undefined` while there is no such event. */
+async function answerDelivery(taskId: string) {
+  const [row] = await query<{ status: string }>(
+    `SELECT d.status FROM app.research_event_deliveries d
+       JOIN app.research_events e ON e.event_id = d.event_id
+      WHERE e.task_id = $1 AND e.type = 'TaskSucceeded' AND d.consumer = $2`,
+    [taskId, RESEARCH_ANSWER_CONSUMER],
+  );
+  return row;
+}
+
+/** Waits until the relay has handed the task's `TaskSucceeded` to the part's consumer. */
+async function deliveredToConsumer(taskId: string): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      expect((await answerDelivery(taskId))?.status).toBe('done');
+    },
+    { timeout: TURN_TIMEOUT_MS, interval: 25 },
+  );
+}
+
+/** A redelivery: the delivery row is pending again, so the relay hands the same event to the consumer once more. */
+async function redeliver(taskId: string): Promise<void> {
+  await query(
+    `UPDATE app.research_event_deliveries d
+        SET status = 'pending', next_attempt_at = now() - interval '1 minute'
+       FROM app.research_events e
+      WHERE e.event_id = d.event_id AND e.task_id = $1 AND e.type = 'TaskSucceeded' AND d.consumer = $2`,
+    [taskId, RESEARCH_ANSWER_CONSUMER],
+  );
+  await deliveredToConsumer(taskId);
+}
+
+/** Evidence of a source page with the given provenance; a truncated result is partial. */
+function sourceEvidence(
+  evidenceKey: string,
+  provenance: { sourceId: string; toolName: string; snapshot: string },
+  truncated: boolean,
+): EvidenceInput {
+  const base = evidenceInput(
+    evidenceKey,
+    new TextEncoder().encode(evidenceKey),
+  );
+  return {
+    ...base,
+    provenance: { ...base.provenance, ...provenance },
+    coverage: truncated
+      ? { ...base.coverage, completeness: 'partial', truncated: true }
+      : base.coverage,
+  };
+}
+
+/** An answer with one claim the model assumed without evidence. */
+function assumedAnswer(text: string): ScriptedAnswer {
+  return {
+    answerId: `answer-${randomUUID()}`,
+    outcome: 'answered',
+    stopReason: null,
+    summary: null,
+    established: [],
+    assumed: [{ claimId: 'c1', text, evidenceIds: [], verified: false }],
+    unknown: [],
+    removed: [],
+  };
+}
+
+/** The ids of the thread's stored messages, in stored order. */
+async function storedIdsOf(threadId: string): Promise<string[]> {
+  return (await storedMessagesOf(threadId)).map((message) => message.id);
 }
 
 describe('deep-research / chat-entry - integration (in-process Nest + real runtime + real Postgres, scripted chat model)', () => {
@@ -859,11 +1005,533 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   //   (the model is not told the claims are checked); GET /research shows `completed` with `answerMessageId`.
   //   UC-E8 row: the view is a stop before the synthesis ended (outcome `inconclusive`, stop reason `budget_exhausted`, no claims) -> the stored text starts with MC-32 and states the stop reason MC-25, the metadata has no claims, and the launch is `completed`
   describe('INT-2', () => {
-    it.todo('INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata (mode sources, no no-source warning or mark) at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing');
-    it.todo('INT-2 D2: answers are appended in completion order, only after the running chat turn of the thread has ended, never between a user message and its reply, and a client copy of an answer does not overwrite the stored one');
-    it.todo('INT-2 D3: a stop decision on a launch whose controller already finished leaves the launch stopped and appends no answer, while an already delivered answer is untouched');
-    it.todo('INT-2 D4: a write that keeps failing is retried with growing pauses and holds the later answers of its thread until RESEARCH_APPEND_GIVE_UP_MS, then the launch is failed and the queue moves on');
-    it.todo('INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat, and a stop before the synthesis ends gives a warning with the reason and no claims');
+    it(
+      'INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata (mode sources, no no-source warning or mark) at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing',
+      async () => {
+        // Arrange: a running launch of a mode turn, its controller held.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const answered = await launchResearch(
+          user,
+          threadId,
+          'Почему выросло время ответа API',
+        );
+        await t.engine.controllerRunning(answered.investigationId);
+        const runtime = t.moduleRef.get<Runtime>(RESEARCH_RUNTIME, {
+          strict: false,
+        });
+
+        // Act: a child task of the same investigation succeeds, and so does an investigation of the thread that no
+        // launch started.
+        const childWorkflow = uniqueWorkflowType('chat-entry-child');
+        t.moduleRef
+          .get<HandlerRegistry>(HANDLER_REGISTRY, { strict: false })
+          .register(
+            testHandler(childWorkflow, () => Promise.resolve(completed())),
+          );
+        const child = await runtime.scheduler.propose(
+          taskSpec({
+            investigationId: answered.investigationId,
+            workflowType: childWorkflow,
+            input: {},
+          }),
+          'chat-entry-int-d1',
+        );
+        if (child.outcome !== 'created') throw new Error('child task refused');
+        const foreign = await t.engine.startInvestigation({
+          resourceId: user,
+          threadId,
+          query: 'Расследование вне карточки',
+          processId: 'deep-research',
+          launchKey: `foreign-${randomUUID()}`,
+          tokenBudget: 100_000,
+        });
+        if (foreign.outcome === 'rejected') {
+          throw new Error('foreign start refused');
+        }
+        const versions = await launchVersionsOf(user);
+        t.engine.succeed(foreign.investigationId, {
+          answer: () => assumedAnswer('Чужой ответ'),
+        });
+        await deliveredToConsumer(child.taskId);
+        await deliveredToConsumer(foreign.controllerTaskId);
+
+        // Assert: neither event touched the launch row.
+        expect(await launchVersionsOf(user)).toEqual(versions);
+        expect(await launchOf(answered.launchKey)).toMatchObject({
+          state: 'running',
+        });
+
+        // Act: the controller stores two evidence and succeeds; one pass.
+        t.engine.succeed(answered.investigationId, {
+          evidence: [
+            sourceEvidence(
+              'd1-latency',
+              {
+                sourceId: 'logs',
+                toolName: 'aggregate_logs',
+                snapshot: 'snap-a',
+              },
+              true,
+            ),
+            sourceEvidence(
+              'd1-release',
+              {
+                sourceId: 'deploys',
+                toolName: 'list_releases',
+                snapshot: 'snap-b',
+              },
+              false,
+            ),
+          ],
+          answer: ([latency = '', release = '']) => ({
+            answerId: 'answer-d1',
+            outcome: 'answered',
+            stopReason: null,
+            summary: 'Время ответа выросло после релиза 4.2.',
+            established: [
+              {
+                claimId: 'c1',
+                text: 'p95 вырос с 180 до 420 мс',
+                evidenceIds: [release, latency],
+                verified: true,
+              },
+            ],
+            assumed: [
+              {
+                claimId: 'c2',
+                text: 'Рост вызван новой политикой повторов',
+                evidenceIds: [latency],
+                verified: false,
+              },
+            ],
+            unknown: [
+              {
+                claimId: 'c3',
+                text: 'Затронуты ли мобильные клиенты',
+                evidenceIds: [],
+                verified: false,
+              },
+            ],
+            removed: [
+              {
+                claimId: 'c4',
+                text: 'Виновата база данных',
+                reason: 'refuted',
+              },
+            ],
+          }),
+        });
+        await launchReaching(answered.launchKey, 'answer_pending');
+        await t.runAppenderOnce();
+
+        // Assert (AC-20.1, AC-20.7, AC-27.4, DC-10): one answer message at the end of the thread; its text is the whole
+        // answer in Markdown — summary and MC-34, footnotes by first appearance, no `removed`, no MC-32 or MC-33.
+        const answerId = answerIdOf(answered.investigationId);
+        const stored = await storedMessagesOf(threadId);
+        expect(
+          stored.filter((message) => message.id === answerId),
+        ).toHaveLength(1);
+        const answer = stored.at(-1);
+        expect(answer).toMatchObject({ id: answerId, role: 'assistant' });
+        expect(answer?.text).toBe(
+          [
+            '**Ответ ресерча** · Есть ответ',
+            'Цель: Почему выросло время ответа API',
+            '',
+            'Время ответа выросло после релиза 4.2.',
+            '',
+            'Краткий пересказ — основания в утверждениях ниже',
+            '',
+            '### Установлено',
+            '- p95 вырос с 180 до 420 мс [1][2]',
+            '',
+            '### Предположения',
+            '- Рост вызван новой политикой повторов [2] (не проверено)',
+            '',
+            '### Не выяснено',
+            '- Затронуты ли мобильные клиенты (не проверено)',
+            '',
+            '### Источники (2)',
+            '1. deploys · list_releases · snap-b',
+            '2. logs · aggregate_logs · snap-a · данные усечены',
+          ].join('\n'),
+        );
+        expect(
+          answer?.metadata?.[RESEARCH_METADATA_KEYS.researchAnswer],
+        ).toEqual({
+          launchKey: answered.launchKey,
+          goal: 'Почему выросло время ответа API',
+          summary: 'Время ответа выросло после релиза 4.2.',
+          outcome: 'answered',
+          stopReason: null,
+          launch: { messageId: answered.messageId },
+          established: [
+            {
+              text: 'p95 вырос с 180 до 420 мс',
+              footnotes: [1, 2],
+              verified: true,
+            },
+          ],
+          assumed: [
+            {
+              text: 'Рост вызван новой политикой повторов',
+              footnotes: [2],
+              verified: false,
+            },
+          ],
+          unknown: [
+            {
+              text: 'Затронуты ли мобильные клиенты',
+              footnotes: [],
+              verified: false,
+            },
+          ],
+          sources: [
+            {
+              number: 1,
+              sourceId: 'deploys',
+              toolName: 'list_releases',
+              snapshot: 'snap-b',
+              truncated: false,
+            },
+            {
+              number: 2,
+              sourceId: 'logs',
+              toolName: 'aggregate_logs',
+              snapshot: 'snap-a',
+              truncated: true,
+            },
+          ],
+          sourceMode: 'sources',
+        });
+        expect(t.evidenceReads).toBe(2);
+        // The card is completed with its answer link and no no-source mode; GET /messages returns the answer once.
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: answered.launchKey,
+            state: 'completed',
+            answerMessageId: answerId,
+            sourceMode: 'sources',
+          }),
+        ]);
+        expect(
+          (await messages(user, threadId)).filter(
+            (message) => message.id === answerId,
+          ),
+        ).toHaveLength(1);
+
+        // Act (AC-20.2, NFR-03): the same TaskSucceeded delivered again, then a second pass.
+        const afterAnswer = await launchVersionsOf(user);
+        await redeliver(answered.controllerTaskId);
+        await t.runAppenderOnce();
+
+        // Assert: nothing changed — the row, the one write, the message and its place.
+        expect(await launchVersionsOf(user)).toEqual(afterAnswer);
+        expect(t.memoryFaults.answerWrites).toBe(1);
+        expect(await storedMessagesOf(threadId)).toEqual(stored);
+
+        // Act (AC-20.4): one launch whose controller fails, one whose investigation is cancelled outside a stop.
+        const failed = await launchResearch(
+          user,
+          threadId,
+          'Почему падает экспорт',
+        );
+        const cancelled = await launchResearch(
+          user,
+          threadId,
+          'Почему растёт очередь',
+        );
+        t.engine.fail(failed.investigationId);
+        await runtime.investigations.cancel(cancelled.investigationId, user);
+        await launchReaching(failed.launchKey, 'failed');
+        await launchReaching(cancelled.launchKey, 'stopped');
+        await t.runAppenderOnce();
+
+        // Assert: failed and stopped, no answer for either, nothing written.
+        expect(
+          (await research(user, threadId)).map((view) => [
+            view.launchKey,
+            view.state,
+            view.answerMessageId,
+          ]),
+        ).toEqual([
+          [answered.launchKey, 'completed', answerId],
+          [failed.launchKey, 'failed', null],
+          [cancelled.launchKey, 'stopped', null],
+        ]);
+        const ids = await storedIdsOf(threadId);
+        expect(ids).not.toContain(answerIdOf(failed.investigationId));
+        expect(ids).not.toContain(answerIdOf(cancelled.investigationId));
+        expect(t.memoryFaults.answerWrites).toBe(1);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
+    );
+
+    it(
+      'INT-2 D2: answers are appended in completion order, only after the running chat turn of the thread has ended, never between a user message and its reply, and a client copy of an answer does not overwrite the stored one',
+      async () => {
+        // Arrange: two launches of one thread; the one started second finishes first.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const first = await launchResearch(
+          user,
+          threadId,
+          'Почему вырос отток',
+        );
+        const second = await launchResearch(
+          user,
+          threadId,
+          'Почему упала конверсия',
+        );
+        t.engine.succeed(second.investigationId, {
+          answer: () => assumedAnswer('Конверсия упала после смены цен'),
+        });
+        await launchReaching(second.launchKey, 'answer_pending');
+        t.engine.succeed(first.investigationId, {
+          answer: () => assumedAnswer('Отток вырос у новых клиентов'),
+        });
+        await launchReaching(first.launchKey, 'answer_pending');
+
+        // Act (DC-3, UC-E3): a chat turn whose model call is held, so its run stays registered; a pass meanwhile.
+        const gate = t.gate(threadId);
+        t.chatModel.script(
+          heldStep(gate.promise, textStep('Пока идёт ресерч, проверь цены.')),
+        );
+        const callsBefore = t.chatModel.calls.length;
+        const question = userMessage('Что проверить, пока ждём?');
+        const turn = chat(user, threadId, question);
+        const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
+        await vi.waitFor(
+          () => {
+            expect(runs.hasRuns(threadId)).toBe(true);
+            expect(t.chatModel.calls).toHaveLength(callsBefore + 1);
+          },
+          { timeout: TURN_TIMEOUT_MS, interval: 25 },
+        );
+        await t.runAppenderOnce();
+
+        // Assert: nothing is written while the run is registered.
+        expect(t.memoryFaults.answerWrites).toBe(0);
+        expect((await launchOf(first.launchKey))?.state).toBe('answer_pending');
+        expect((await launchOf(second.launchKey))?.state).toBe(
+          'answer_pending',
+        );
+
+        // Act (UC-E7): the run ends; then a decision turn fails before its reply; then a pass.
+        gate.release();
+        await turn;
+        t.chatModel.script(new Error('model unavailable'));
+        const decision = userMessage(DECISION_LABELS.confirm, {
+          [RESEARCH_METADATA_KEYS.researchDecision]: {
+            action: 'confirm',
+            launchKey: first.launchKey,
+          },
+        });
+        await chat(user, threadId, decision);
+        await t.runAppenderOnce();
+
+        // Assert (AC-20.3, AC-20.6, DC-3): the answers follow the reply of the held turn and the failed decision
+        // message, the second-finished one first, each with its own launch reference, in stored and createdAt order.
+        const stored = await storedMessagesOf(threadId);
+        const ids = stored.map((message) => message.id);
+        const questionAt = ids.indexOf(question.id);
+        expect(stored[questionAt + 1]).toMatchObject({
+          role: 'assistant',
+          text: 'Пока идёт ресерч, проверь цены.',
+        });
+        expect(ids.indexOf(decision.id)).toBeGreaterThan(questionAt + 1);
+        // What Mastra kept of the failed decision turn's reply is marked, so the web hides it with the decision (KD-2).
+        expect(stored[ids.indexOf(decision.id) + 1]).toMatchObject({
+          role: 'assistant',
+          metadata: {
+            [RESEARCH_METADATA_KEYS.researchDecisionReply]: {
+              launchKey: first.launchKey,
+            },
+          },
+        });
+        expect(ids.slice(-2)).toEqual([
+          answerIdOf(second.investigationId),
+          answerIdOf(first.investigationId),
+        ]);
+        const times = stored.map((message) => message.createdAt.getTime());
+        expect(times).toEqual([...times].sort((a, b) => a - b));
+        expect(
+          stored
+            .slice(-2)
+            .map(
+              (message) =>
+                message.metadata?.[RESEARCH_METADATA_KEYS.researchAnswer],
+            ),
+        ).toEqual([
+          expect.objectContaining({ launch: { messageId: second.messageId } }),
+          expect.objectContaining({ launch: { messageId: first.messageId } }),
+        ]);
+        expect(await launchOf(first.launchKey)).toMatchObject({
+          state: 'answered',
+        });
+        expect(await launchOf(second.launchKey)).toMatchObject({
+          state: 'answered',
+        });
+
+        // Act (KD-5): the next request carries an edited client copy of the first answer.
+        const original = stored.at(-1);
+        t.chatModel.script(textStep('Дальше — сравнить с прошлым кварталом.'));
+        const copyCallIndex = t.chatModel.calls.length;
+        const res = await request(t.app.getHttpServer())
+          .post('/api/chat/assistant')
+          .set('x-user-id', user)
+          .send({
+            id: threadId,
+            messages: [
+              {
+                id: answerIdOf(first.investigationId),
+                role: 'assistant',
+                parts: [
+                  { type: 'text', text: 'Отредактированная копия ответа' },
+                ],
+              },
+              userMessage('Что дальше?'),
+            ],
+          })
+          .expect(200);
+        expect(
+          sseChunks(res.text).some((chunk) => chunk.type === 'error'),
+        ).toBe(false);
+        await vi.waitFor(
+          () => {
+            expect(runs.hasRuns(threadId)).toBe(false);
+          },
+          { timeout: TURN_TIMEOUT_MS, interval: 25 },
+        );
+
+        // Assert: the copy reached neither the model nor the store; the stored answer is unchanged.
+        const prompt = JSON.stringify(
+          t.chatModel.calls[copyCallIndex]?.messages,
+        );
+        expect(prompt).not.toContain('Отредактированная копия ответа');
+        expect(prompt).toContain('Отток вырос у новых клиентов');
+        const after = await storedMessagesOf(threadId);
+        expect(after.filter((message) => message.id === original?.id)).toEqual([
+          original,
+        ]);
+        expect(t.memoryFaults.answerWrites).toBe(2);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
+    );
+    it.todo(
+      'INT-2 D3: a stop decision on a launch whose controller already finished leaves the launch stopped and appends no answer, while an already delivered answer is untouched',
+    );
+    it(
+      'INT-2 D4: a write that keeps failing is retried with growing pauses and holds the later answers of its thread until RESEARCH_APPEND_GIVE_UP_MS, then the launch is failed and the queue moves on',
+      async () => {
+        // Arrange: two finished launches of one thread, the earlier-finished first; every answer write fails.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const earlier = await launchResearch(
+          user,
+          threadId,
+          'Почему растут возвраты',
+        );
+        const later = await launchResearch(
+          user,
+          threadId,
+          'Почему падают продажи',
+        );
+        t.engine.succeed(earlier.investigationId, {
+          answer: () => assumedAnswer('Возвраты растут из-за брака'),
+        });
+        await launchReaching(earlier.launchKey, 'answer_pending');
+        t.engine.succeed(later.investigationId, {
+          answer: () => assumedAnswer('Продажи падают из-за сезона'),
+        });
+        await launchReaching(later.launchKey, 'answer_pending');
+        t.memoryFaults.failAnswerWrites(new Error('memory unavailable'));
+        // The process time stands still; only `clock.advance` moves the clock of the loop.
+        vi.useFakeTimers({ toFake: ['Date'] });
+
+        // Act: a pass, then a pass each time the pause has elapsed.
+        const firstFailure = t.clock.now();
+        const pauses: number[] = [];
+        for (let attempt = 1; attempt <= 6; attempt += 1) {
+          const at = t.clock.now();
+          await t.runAppenderOnce();
+          const row = required(await launchOf(earlier.launchKey), 'row');
+          pauses.push(
+            required(row.nextAppendAt, 'nextAppendAt').getTime() - at.getTime(),
+          );
+          // A pass before the pause has elapsed does not try again.
+          await t.runAppenderOnce();
+          t.clock.advance(pauses.at(-1) ?? 0);
+        }
+
+        // Assert (KD-4): pauses from RUNTIME_POLL_MS (50) doubling up to 16 times it; one write per try, all of the
+        // earlier answer — the later one waits; the window counts from the first failure.
+        expect(pauses).toEqual([50, 100, 200, 400, 800, 800]);
+        expect(t.memoryFaults.answerWrites).toBe(6);
+        expect(await launchOf(earlier.launchKey)).toMatchObject({
+          state: 'answer_pending',
+          appendFailedAt: firstFailure,
+        });
+        expect(await launchOf(later.launchKey)).toMatchObject({
+          state: 'answer_pending',
+          appendFailedAt: null,
+        });
+
+        // Act (DC-4): a try just before the give-up window ends.
+        const giveUpAt = firstFailure.getTime() + 300_000;
+        t.clock.advance(giveUpAt - 1 - t.clock.now().getTime());
+        await t.runAppenderOnce();
+
+        // Assert: not given up early, the later answer still waits.
+        expect((await launchOf(earlier.launchKey))?.state).toBe(
+          'answer_pending',
+        );
+        expect(t.memoryFaults.answerWrites).toBe(7);
+
+        // Act: a pass at the end of the window, the pause of the last try not yet elapsed.
+        t.clock.advance(1);
+        await t.runAppenderOnce();
+
+        // Assert (AC-20.6): the earlier launch is failed without another try, and the queue moved on to the later one.
+        expect(await launchOf(earlier.launchKey)).toMatchObject({
+          state: 'failed',
+        });
+        expect(await launchOf(later.launchKey)).toMatchObject({
+          state: 'answer_pending',
+          appendFailedAt: t.clock.now(),
+        });
+        expect(t.memoryFaults.answerWrites).toBe(8);
+
+        // Act: the store heals; a pass after the later answer's pause.
+        t.memoryFaults.failAnswerWrites(null);
+        t.clock.advance(50);
+        await t.runAppenderOnce();
+
+        // Assert: the later answer is written, the failed one is not tried again; the cards say so.
+        expect(t.memoryFaults.answerWrites).toBe(9);
+        const ids = await storedIdsOf(threadId);
+        expect(ids).toContain(answerIdOf(later.investigationId));
+        expect(ids).not.toContain(answerIdOf(earlier.investigationId));
+        expect(
+          (await research(user, threadId)).map((view) => [
+            view.launchKey,
+            view.state,
+            view.answerMessageId,
+          ]),
+        ).toEqual([
+          [earlier.launchKey, 'failed', null],
+          [later.launchKey, 'completed', answerIdOf(later.investigationId)],
+        ]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
+    );
+    it.todo(
+      'INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat, and a stop before the synthesis ends gives a warning with the reason and no claims',
+    );
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -899,10 +1567,18 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // - T4 thread deletion (UC-8 server half, AC-22.1, DC-6 server half): thread with a `running` launch, a `proposed` launch (no investigation) and an `answered` one; GET /research counts one `running` -> DELETE /threads/:id -> the running
   //   investigation is cancelled and deleted by the runtime hook, all three launch rows are gone (the `purge` hook), a later TaskSucceeded of the deleted investigation writes nothing and GET /threads/:id answers 404, the thread does not reappear
   describe('INT-3', () => {
-    it.todo('INT-3 T1: regenerating a reply whose tail holds a card, its hidden decision pair or its answer discards the launch, cancels its investigation, removes the whole tail and never brings the answer back');
-    it.todo('INT-3 T2: regenerating while another launch\'s answer sits in the tail re-appends that answer exactly once after the new reply, keeps its launch completed, and fails it only after the give-up window');
-    it.todo('INT-3 T3: a failure of the tail selection or of the delete leaves the tail in place, and a retry completes without a second effect');
-    it.todo('INT-3 T4: deleting a thread with running, proposed and answered launches stops the investigation, removes every launch row, and no later event writes an answer');
+    it.todo(
+      'INT-3 T1: regenerating a reply whose tail holds a card, its hidden decision pair or its answer discards the launch, cancels its investigation, removes the whole tail and never brings the answer back',
+    );
+    it.todo(
+      "INT-3 T2: regenerating while another launch's answer sits in the tail re-appends that answer exactly once after the new reply, keeps its launch completed, and fails it only after the give-up window",
+    );
+    it.todo(
+      'INT-3 T3: a failure of the tail selection or of the delete leaves the tail in place, and a retry completes without a second effect',
+    );
+    it.todo(
+      'INT-3 T4: deleting a thread with running, proposed and answered launches stops the investigation, removes every launch row, and no later event writes an answer',
+    );
   });
 });
 
@@ -1141,6 +1817,42 @@ describe('deep-research / chat-entry - integration without source adapters (in-p
         ).toEqual([
           [proposal, 'sources'],
           [explicit.toolCallId, 'sources'],
+        ]);
+
+        // Act: the launch with a source completes and its answer is delivered. The controllers held so far fail first:
+        // they occupy the runtime's slots (RUNTIME_CONCURRENCY 2), and this controller would never run.
+        for (const launchKey of [
+          running.toolCallId,
+          launching.toolCallId,
+          open,
+        ]) {
+          const heldRow = await launchOf(launchKey);
+          t.engine.fail(required(heldRow?.investigationId, 'investigationId'));
+          await launchReaching(launchKey, 'failed');
+        }
+        const explicitRow = await launchReaching(
+          explicit.toolCallId,
+          'running',
+        );
+        t.engine.succeed(
+          required(explicitRow.investigationId, 'investigationId'),
+          {
+            answer: () => assumedAnswer('Выручка упала из-за сезона'),
+          },
+        );
+        await launchReaching(explicit.toolCallId, 'answer_pending');
+        await t.runAppenderOnce();
+
+        // Assert (AC-27.4): the completed launch has the mode `sources` too.
+        expect(
+          (await research(user, withSources)).map((view) => [
+            view.launchKey,
+            view.state,
+            view.sourceMode,
+          ]),
+        ).toEqual([
+          [proposal, 'not_launched', 'sources'],
+          [explicit.toolCallId, 'completed', 'sources'],
         ]);
         expect(await investigationsOf(user)).toHaveLength(4);
         expect(t.chatModel.remaining()).toBe(0);

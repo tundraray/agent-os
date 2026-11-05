@@ -4,7 +4,7 @@ import {
 } from '@agent-os/contracts';
 import { type Database, researchChatLaunches } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, asc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm';
 import {
   LAUNCH_MODES,
   LAUNCH_STATES,
@@ -163,6 +163,48 @@ export const researchLaunchRepository = {
       .from(researchChatLaunches)
       .where(eq(researchChatLaunches.controllerTaskId, controllerTaskId));
     return toRecordOrUndefined(row);
+  },
+
+  /**
+   * Launches whose answer the delivery loop writes (`answer_pending`, `answer_reappend`), in the order their
+   * investigations ended (invariant 5).
+   */
+  async listAwaitingAnswer(db: Queries): Promise<LaunchRecord[]> {
+    const rows = await db
+      .select()
+      .from(researchChatLaunches)
+      .where(
+        inArray(researchChatLaunches.state, [
+          'answer_pending',
+          'answer_reappend',
+        ]),
+      )
+      .orderBy(
+        asc(researchChatLaunches.finishedAt),
+        asc(researchChatLaunches.launchKey),
+      );
+    return rows.map(toRecord);
+  },
+
+  /** Launches left in `launching` that were created before `cutoff`: candidates of the loop's recovery (KD-3). */
+  async listLaunchingCreatedBefore(
+    db: Queries,
+    cutoff: Date,
+  ): Promise<LaunchRecord[]> {
+    const rows = await db
+      .select()
+      .from(researchChatLaunches)
+      .where(
+        and(
+          eq(researchChatLaunches.state, 'launching'),
+          lte(researchChatLaunches.createdAt, cutoff),
+        ),
+      )
+      .orderBy(
+        asc(researchChatLaunches.createdAt),
+        asc(researchChatLaunches.launchKey),
+      );
+    return rows.map(toRecord);
   },
 
   /**

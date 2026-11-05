@@ -44,6 +44,23 @@ import { threadNotFound } from '../threads/threads.errors.js';
 import { ThreadsService } from '../threads/threads.service.js';
 import { ChatDto } from './chat.dto.js';
 
+/** Id prefix of research answer messages (`research-answer-<investigationId>`, design-chat-entry.md KD-4). */
+const ANSWER_MESSAGE_PREFIX = 'research-answer-';
+
+/**
+ * The turn's input without the client's copies of research answers (KD-5): the server owns those messages, and the
+ * model gets them from memory, so an edited copy neither reaches the model nor touches the stored answer.
+ */
+function withoutAnswerCopies(messages: unknown[]): MessageListInput {
+  return messages.filter((message) => {
+    const id =
+      typeof message === 'object' && message !== null && 'id' in message
+        ? message.id
+        : undefined;
+    return !(typeof id === 'string' && id.startsWith(ANSWER_MESSAGE_PREFIX));
+  }) as MessageListInput;
+}
+
 @Controller('chat')
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
@@ -126,7 +143,7 @@ export class ChatController {
         if (!res.writableFinished) run.abort();
       });
 
-      const stream = await agent.stream(body.messages as MessageListInput, {
+      const stream = await agent.stream(withoutAnswerCopies(body.messages), {
         ...this.researchTurnOptions(turn),
         memory: { thread: threadId, resource: req.user.id },
         abortSignal: run.signal,

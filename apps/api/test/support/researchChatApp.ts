@@ -21,6 +21,7 @@ import {
 } from '../../src/mastra/agents/assistant.agent.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import { createDeepResearchTool } from '../../src/research-chat/deep-research.tool.js';
+import { ResearchAnswerAppender } from '../../src/research-chat/research-answer.appender.js';
 import { ResearchLaunchService } from '../../src/research-chat/research-launch.service.js';
 import {
   HANDLER_REGISTRY,
@@ -150,7 +151,10 @@ export interface ResearchChatApp {
    * the latch holds a chat run of that thread: `reset` returns only once the thread has no registered run.
    */
   gate(threadId?: string): Latch;
-  /** One pass of the delivery loop (`ResearchAnswerAppender`). */
+  /**
+   * One pass of the delivery loop (`ResearchAnswerAppender.runOnce`). The timed loop runs only while the assembly
+   * checks that it starts after the runtime; from then on passes happen only here.
+   */
   runAppenderOnce(): Promise<void>;
   /** Back to the initial state of every double; call in `beforeEach` and `afterEach`. */
   reset(): Promise<void>;
@@ -289,6 +293,51 @@ function countEvidenceReads(runtime: Runtime) {
   };
 }
 
+type Phase =
+  'runtime.start' | 'runtime.stop' | 'appender.start' | 'appender.stop';
+
+/**
+ * Records, in place, when the runtime and the delivery loop start and stop, so the assembly checks the order of the
+ * Nest hooks (design-chat-entry.md, KD-4): the loop starts after `Runtime.start` and stops before `Runtime.stop`.
+ */
+function recordPhases(runtime: Runtime, appender: ResearchAnswerAppender) {
+  const phases: Phase[] = [];
+  const startRuntime = runtime.start.bind(runtime);
+  const stopRuntime = runtime.stop.bind(runtime);
+  const startAppender = appender.start.bind(appender);
+  const stopAppender = appender.stop.bind(appender);
+  runtime.start = () => {
+    phases.push('runtime.start');
+    startRuntime();
+  };
+  runtime.stop = () => {
+    phases.push('runtime.stop');
+    return stopRuntime();
+  };
+  appender.start = () => {
+    phases.push('appender.start');
+    startAppender();
+  };
+  appender.stop = () => {
+    phases.push('appender.stop');
+    return stopAppender();
+  };
+  return {
+    /** Throws unless the phases recorded since the last check are `expected`; starts a new record. */
+    expect(expected: readonly Phase[], what: string): void {
+      const recorded = phases.splice(0);
+      if (recorded.join() !== expected.join()) {
+        throw new Error(
+          `${what} of the chat-entry app ran ${recorded.join(' → ') || 'nothing'}, expected ${expected.join(' → ')}`,
+        );
+      }
+    },
+    clear: () => {
+      phases.length = 0;
+    },
+  };
+}
+
 /** The production chat agent's instruction and `deepResearch` tool; the tool resolves its service when it runs. */
 function productionAgent(resolve: ResolveProvider): TestAgentDefinition {
   return {
@@ -394,11 +443,16 @@ export async function createResearchChatApp(
   const cancels = observeCancels(runtime);
   const memoryFaults = injectMemoryFaults(memory);
   const evidenceReads = countEvidenceReads(runtime);
+  const appender = moduleRef.get(ResearchAnswerAppender, { strict: false });
+  const phases = recordPhases(runtime, appender);
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);
   try {
     await app.init();
+    phases.expect(['runtime.start', 'appender.start'], 'start');
+    // Passes are driven by `runAppenderOnce` from here on: no timed pass races a test's steps.
+    await appender.stop();
     await cancelLeftovers({ cancel: cancels.original });
   } catch (error) {
     await app.close();
@@ -479,12 +533,7 @@ export async function createResearchChatApp(
       if (threadId !== undefined) heldThreads.add(threadId);
       return gate;
     },
-    runAppenderOnce: () =>
-      Promise.reject(
-        new Error(
-          'runAppenderOnce: the delivery loop (ResearchAnswerAppender) does not exist yet — task-12 wires it here',
-        ),
-      ),
+    runAppenderOnce: () => appender.runOnce(),
     reset: async () => {
       vi.useRealTimers();
       await releaseGates();
@@ -509,7 +558,9 @@ export async function createResearchChatApp(
         await deleteThreadsOf(moduleRef, memory, owners);
       } finally {
         try {
+          phases.clear();
           await app.close();
+          phases.expect(['appender.stop', 'runtime.stop'], 'shutdown');
         } finally {
           restoreEnv();
         }

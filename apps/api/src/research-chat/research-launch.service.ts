@@ -99,6 +99,11 @@ export class ResearchLaunchService {
   private readonly logger = new Logger(ResearchLaunchService.name);
   private readonly db: Database;
   private readonly defaultTokenBudget = investigationTokenLimits().default;
+  /**
+   * Launch keys whose start runs in this process. A confirmed proposal enters `launching` long after its row was
+   * created, so recovery tells a lost start from a running one by this set, not by the row's age alone.
+   */
+  private readonly starting = new Set<string>();
 
   constructor(
     @Inject(RESEARCH_DATABASE) database: DatabaseConnection,
@@ -195,6 +200,27 @@ export class ResearchLaunchService {
     );
   }
 
+  /**
+   * Finishes launches left in `launching` by a failed process (KD-3): each row created before `cutoff` whose start is
+   * not in flight in this process is started again with the same `launchKey` — the engine returns the investigation
+   * a lost start already created — and ends `running`, or, when the start is refused, `failed` for an explicit launch
+   * and `proposed` for a confirmed proposal.
+   */
+  async recoverLaunching(cutoff: Date): Promise<void> {
+    const rows = await launches.listLaunchingCreatedBefore(this.db, cutoff);
+    for (const row of rows) {
+      if (this.starting.has(row.launchKey)) continue;
+      this.logger.log(
+        withFields('research launch recovered', {
+          launchKey: row.launchKey,
+          threadId: row.threadId,
+          state: row.state,
+        }),
+      );
+      await this.start(row);
+    }
+  }
+
   /** The decision's change under the thread lock; a confirm only moves the row to `launching`. */
   private async applyDecision(request: DecisionRequest): Promise<DecisionStep> {
     const { action, launchKey } = request.decision;
@@ -205,9 +231,12 @@ export class ResearchLaunchService {
     if (action === 'stop')
       return { kind: 'done', result: await this.stop(row) };
     const moved = await this.move(row, action, {});
-    return row.state === 'proposed' && moved.state === 'launching'
-      ? { kind: 'start', row: moved }
-      : { kind: 'done', result: this.result(moved) };
+    if (row.state !== 'proposed' || moved.state !== 'launching') {
+      return { kind: 'done', result: this.result(moved) };
+    }
+    // Marked before the lock is released, so the loop's recovery never takes this start for a lost one.
+    this.starting.add(moved.launchKey);
+    return { kind: 'start', row: moved };
   }
 
   /**
@@ -244,6 +273,17 @@ export class ResearchLaunchService {
    * engine refused or failed the start.
    */
   private async start(
+    row: LaunchRecord,
+  ): Promise<{ row: LaunchRecord; refused: boolean }> {
+    this.starting.add(row.launchKey);
+    try {
+      return await this.startAndRecord(row);
+    } finally {
+      this.starting.delete(row.launchKey);
+    }
+  }
+
+  private async startAndRecord(
     row: LaunchRecord,
   ): Promise<{ row: LaunchRecord; refused: boolean }> {
     const started = await this.startInvestigation(row);
