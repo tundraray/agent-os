@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/test-child",
+    "rootDir": ".",
+    "incremental": false,
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["test/support/chatEntryChildMain.ts"]
+}

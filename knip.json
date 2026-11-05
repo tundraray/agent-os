@@ -10,7 +10,8 @@
     "apps/api": {
       "entry": [
         "src/main.ts",
-        "src/research/migrate-cli.ts"
+        "src/research/migrate-cli.ts",
+        "test/support/chatEntryChildMain.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
     },
