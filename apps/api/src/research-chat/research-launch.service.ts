@@ -13,6 +13,7 @@ import {
   loadProcessConfig,
 } from '@agent-os/engine';
 import type { Runtime } from '@agent-os/runtime';
+import type { MastraDBMessage } from '@mastra/core/memory';
 import { withFields } from '../common/log-fields.js';
 import { RESEARCH_ENGINE } from '../engine/engine.tokens.js';
 import {
@@ -31,6 +32,7 @@ import {
   type LaunchThread,
   researchLaunchRepository as launches,
 } from './research-launch.repository.js';
+import { DEEP_RESEARCH_TOOL } from './research-turn.js';
 
 /** The process a chat launch starts, at its highest loaded version (design-chat-entry.md, Contract Definitions). */
 const PROCESS_ID = 'deep-research';
@@ -67,6 +69,26 @@ const NOT_FOUND: DeepResearchToolResult = {
   launch: null,
   decisionError: 'not_found',
 };
+
+/** Id prefix of answer messages (`research-answer-<investigationId>`, invariant 4). */
+const ANSWER_MESSAGE_PREFIX = 'research-answer-';
+
+/** The `launchKey`s of the cards a stored message carries: its `deepResearch` calls (KD-1). */
+function cardLaunchKeys(message: MastraDBMessage): string[] {
+  return (message.content.parts ?? []).flatMap((part) =>
+    part.type === 'tool-invocation' &&
+    part.toolInvocation.toolName === DEEP_RESEARCH_TOOL
+      ? [part.toolInvocation.toolCallId]
+      : [],
+  );
+}
+
+/** The investigation whose answer the stored message is, or none. */
+function answeredInvestigationIds(message: MastraDBMessage): string[] {
+  return message.id.startsWith(ANSWER_MESSAGE_PREFIX)
+    ? [message.id.slice(ANSWER_MESSAGE_PREFIX.length)]
+    : [];
+}
 
 /** Bounds of a launch's token budget: `investigationTokens` of the shipped `deep-research` configuration. */
 export function investigationTokenLimits(): { default: number; max: number } {
@@ -201,6 +223,45 @@ export class ResearchLaunchService {
   }
 
   /**
+   * The selection of a regenerated tail (KD-7, Flow 5), run by `discardRepliesAfter` before it deletes `tail`. Under
+   * the thread lock every launch whose card is in the tail becomes `discarded` and its investigation is cancelled; a
+   * launch whose card is outside the tail but whose answer is in it becomes `answer_reappend`, and the delivery loop
+   * writes that answer again. A row already moved by an earlier selection whose delete failed stays as it is, and the
+   * repeated cancel changes nothing in the runtime. An error (a refused cancel) propagates and cancels the delete.
+   */
+  async discardTail(
+    thread: LaunchThread,
+    tail: readonly MastraDBMessage[],
+  ): Promise<void> {
+    const cards = new Set(tail.flatMap(cardLaunchKeys));
+    const investigationIds = tail.flatMap(answeredInvestigationIds);
+    if (cards.size === 0 && investigationIds.length === 0) return;
+    await this.threads.withOwnedThread(
+      thread.threadId,
+      thread.resourceId,
+      async () => {
+        const rows = await launches.listByCardsOrAnswers(this.db, thread, {
+          launchKeys: [...cards],
+          investigationIds,
+        });
+        const discarded: LaunchRecord[] = [];
+        for (const row of rows) {
+          if (cards.has(row.launchKey)) discarded.push(await this.discard(row));
+          else await this.move(row, 'answer_removed', {});
+        }
+        for (const row of discarded) {
+          if (row.state === 'discarded' && row.investigationId !== null) {
+            await this.runtime.investigations.cancel(
+              row.investigationId,
+              row.resourceId,
+            );
+          }
+        }
+      },
+    );
+  }
+
+  /**
    * Finishes launches left in `launching` by a failed process (KD-3): each row created before `cutoff` whose start is
    * not in flight in this process is started again with the same `launchKey` — the engine returns the investigation
    * a lost start already created — and ends `running`, or, when the start is refused, `failed` for an explicit launch
@@ -299,6 +360,14 @@ export class ResearchLaunchService {
       };
     }
     const running = await this.move(row, 'started', started);
+    if (running.state === 'discarded') {
+      // A regenerate discarded the card while the start ran (Flow 2): the investigation just created goes with it.
+      await this.runtime.investigations.cancel(
+        started.investigationId,
+        row.resourceId,
+      );
+      return { row: running, refused: false };
+    }
     return {
       row:
         running.state === 'running'
@@ -371,6 +440,21 @@ export class ResearchLaunchService {
     return finished === undefined
       ? copied
       : this.move(copied, finished, { finishedAt: new Date() });
+  }
+
+  /**
+   * Moves the row to `discarded` from whatever state it reaches meanwhile: the answer consumer does not take the thread
+   * lock, so a `running` row may become `answer_pending` between the read and the write. A row with no `discard` edge
+   * (settled, or already discarded) is returned as it stands.
+   */
+  private async discard(row: LaunchRecord): Promise<LaunchRecord> {
+    let current = row;
+    while (nextLaunchState(current, 'discard') !== null) {
+      const moved = await this.move(current, 'discard', {});
+      if (moved.state === current.state) return moved;
+      current = moved;
+    }
+    return current;
   }
 
   /**

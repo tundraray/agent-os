@@ -433,6 +433,65 @@ async function storedIdsOf(threadId: string): Promise<string[]> {
   return (await storedMessagesOf(threadId)).map((message) => message.id);
 }
 
+/**
+ * A regenerate the server refuses before streaming (Flow 5, Failure handling): 500 with a JSON error body, no SSE, and
+ * no model call.
+ */
+async function refusedRegenerate(
+  user: string,
+  threadId: string,
+  message: ReturnType<typeof userMessage>,
+): Promise<void> {
+  const callsBefore = t.chatModel.calls.length;
+  const res = await request(t.app.getHttpServer())
+    .post('/api/chat/assistant')
+    .set('x-user-id', user)
+    .send({ id: threadId, messages: [message] })
+    .expect(500);
+  expect(res.headers['content-type']).toMatch(/application\/json/);
+  expect(t.chatModel.calls).toHaveLength(callsBefore);
+}
+
+/** How many times the runtime cancelled the investigation: its `InvestigationCancelled` events. */
+async function cancellationsOf(investigationId: string): Promise<number> {
+  const [row] = await query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM app.research_events
+      WHERE investigation_id = $1 AND type = 'InvestigationCancelled'`,
+    [investigationId],
+  );
+  return row?.count ?? 0;
+}
+
+/** The runtime status of the user's investigation. */
+async function investigationStatus(
+  user: string,
+  investigationId: string,
+): Promise<string | undefined> {
+  return (await investigationsOf(user)).find(
+    (investigation) => investigation.investigationId === investigationId,
+  )?.status;
+}
+
+/** The research mode message of {@link launchResearch} again, with its id: a regenerate resends it. */
+function modeMessageOf(launch: StartedLaunch, goal: string) {
+  return {
+    ...userMessage(`Разберись: ${goal}`, {
+      [RESEARCH_METADATA_KEYS.deepResearch]: true,
+    }),
+    id: launch.messageId,
+  };
+}
+
+/** A launch finished by the engine double and its answer written by a pass of the loop after the thread's last message. */
+async function answerLaunch(launch: StartedLaunch, text: string) {
+  t.engine.succeed(launch.investigationId, {
+    answer: () => assumedAnswer(text),
+  });
+  await launchReaching(launch.launchKey, 'answer_pending');
+  await t.runAppenderOnce();
+  await launchReaching(launch.launchKey, 'answered');
+}
+
 describe('deep-research / chat-entry - integration (in-process Nest + real runtime + real Postgres, scripted chat model)', () => {
   beforeAll(async () => {
     t = await createResearchChatApp({ env: { REASONING_EFFORT } });
@@ -1882,14 +1941,346 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // - T4 thread deletion (UC-8 server half, AC-22.1, DC-6 server half): thread with a `running` launch, a `proposed` launch (no investigation) and an `answered` one; GET /research counts one `running` -> DELETE /threads/:id -> the running
   //   investigation is cancelled and deleted by the runtime hook, all three launch rows are gone (the `purge` hook), a later TaskSucceeded of the deleted investigation writes nothing and GET /threads/:id answers 404, the thread does not reappear
   describe('INT-3', () => {
-    it.todo(
+    it(
       'INT-3 T1: regenerating a reply whose tail holds a card, its hidden decision pair or its answer discards the launch, cancels its investigation, removes the whole tail and never brings the answer back',
+      async () => {
+        const user = t.user();
+
+        // Arrange, row (a) (UC-9 first half, UC-10 server half): U1's reply proposes X, a second tab confirmed it, so the
+        // hidden decision pair follows the reply and X runs.
+        const decisionThread = await t.createThread(user);
+        const proposal = deepResearchCallStep({
+          goal: 'Почему вырос отток',
+          tokenBudget: 500_000,
+        });
+        t.chatModel.script(
+          proposal.step,
+          textStep('Могу запустить глубокое исследование.'),
+        );
+        const question = userMessage('Разберись, почему вырос отток');
+        await chat(user, decisionThread, question);
+        await decide(user, decisionThread, {
+          action: 'confirm',
+          launchKey: proposal.toolCallId,
+        });
+        const confirmed = await launchReaching(proposal.toolCallId, 'running');
+        const confirmedInvestigation = required(
+          confirmed.investigationId,
+          'investigationId',
+        );
+        const withPair = await storedIdsOf(decisionThread);
+        expect(
+          decisionPairs(await messages(user, decisionThread)),
+        ).toHaveLength(1);
+
+        // Act: a regenerate of U1 whose delete fails after the selection.
+        t.memoryFaults.failNextDelete(new Error('delete failed'));
+        await refusedRegenerate(user, decisionThread, question);
+
+        // Assert: the tail is still there, X is already discarded and its investigation cancelled once.
+        expect(await storedIdsOf(decisionThread)).toEqual(withPair);
+        expect((await launchOf(proposal.toolCallId))?.state).toBe('discarded');
+        expect(t.cancels.calls).toEqual([
+          { investigationId: confirmedInvestigation, resourceId: user },
+        ]);
+
+        // Act: the same regenerate again; then a pass of the loop.
+        t.chatModel.script(textStep('Отток вырос после смены тарифа.'));
+        await chat(user, decisionThread, question);
+        await t.runAppenderOnce();
+
+        // Assert (AC-22.2, KD-2): the regenerate took U1, not the decision message, for the last user message; the
+        // whole tail with the pair is gone and the new reply directly follows U1; the retry found X discarded, and its
+        // second cancel had no effect in the runtime; GET /research no longer lists X.
+        expect(
+          (await storedMessagesOf(decisionThread)).map((message) => [
+            message.role,
+            message.text,
+          ]),
+        ).toEqual([
+          ['user', 'Разберись, почему вырос отток'],
+          ['assistant', 'Отток вырос после смены тарифа.'],
+        ]);
+        expect((await storedIdsOf(decisionThread))[0]).toBe(question.id);
+        expect(decisionPairs(await messages(user, decisionThread))).toEqual([]);
+        expect((await launchOf(proposal.toolCallId))?.state).toBe('discarded');
+        expect(await investigationStatus(user, confirmedInvestigation)).toBe(
+          'cancelled',
+        );
+        expect(await cancellationsOf(confirmedInvestigation)).toBe(1);
+        expect(await research(user, decisionThread)).toEqual([]);
+
+        // Arrange, row (b) (UC-11): the reply of a mode message carries the card of X, X has finished and its answer
+        // was written after that reply.
+        const answerThread = await t.createThread(user);
+        const goal = 'Почему упала выручка';
+        const answered = await launchResearch(user, answerThread, goal);
+        await answerLaunch(answered, 'Выручка упала из-за скидок');
+        expect(await storedIdsOf(answerThread)).toContain(
+          answerIdOf(answered.investigationId),
+        );
+        const cancelsBefore = t.cancels.calls.length;
+
+        // Act: the regenerate resends the mode message; the new turn calls `deepResearch` again (a new launch Z); then
+        // two passes of the loop.
+        const relaunch = deepResearchCallStep({ goal, tokenBudget: 400_000 });
+        t.chatModel.script(relaunch.step);
+        await chat(user, answerThread, modeMessageOf(answered, goal));
+        await launchReaching(relaunch.toolCallId, 'running');
+        await t.runAppenderOnce();
+        await t.runAppenderOnce();
+
+        // Assert (AC-22.2, UC-11): X is discarded and its finished investigation got the cancel; the answer went with
+        // the tail and the passes after the run do not bring it back; U1 is followed only by the new reply with Z's
+        // card; GET /research lists Z only.
+        expect((await launchOf(answered.launchKey))?.state).toBe('discarded');
+        expect(t.cancels.calls.slice(cancelsBefore)).toEqual([
+          { investigationId: answered.investigationId, resourceId: user },
+        ]);
+        expect(await cancellationsOf(answered.investigationId)).toBe(1);
+        const stored = await storedMessagesOf(answerThread);
+        expect(stored.map((message) => message.role)).toEqual([
+          'user',
+          'assistant',
+        ]);
+        expect(stored[0]?.id).toBe(answered.messageId);
+        expect(JSON.stringify(stored[1]?.content)).toContain(
+          relaunch.toolCallId,
+        );
+        expect(JSON.stringify(stored[1]?.content)).not.toContain(
+          answered.launchKey,
+        );
+        expect(
+          (await research(user, answerThread)).map((view) => view.launchKey),
+        ).toEqual([relaunch.toolCallId]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
-    it.todo(
+    it(
       "INT-3 T2: regenerating while another launch's answer sits in the tail re-appends that answer exactly once after the new reply, keeps its launch completed, and fails it only after the give-up window",
+      async () => {
+        // Arrange (UC-9 second half): Y's card is above U1, U1 got a reply, then Y finished and its answer was written
+        // after that reply, so it is in the tail of U1.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const other = await launchResearch(
+          user,
+          threadId,
+          'Почему растут возвраты',
+        );
+        t.chatModel.script(textStep('Сначала проверь брак.'));
+        const question = userMessage('Что проверить в первую очередь?');
+        await chat(user, threadId, question);
+        await answerLaunch(other, 'Возвраты растут из-за брака');
+        const answerId = answerIdOf(other.investigationId);
+        expect((await storedIdsOf(threadId)).at(-1)).toBe(answerId);
+
+        // Act: the regenerate of U1, its model call held so the run stays registered; a pass meanwhile.
+        const gate = t.gate(threadId);
+        t.chatModel.script(
+          heldStep(gate.promise, textStep('Проверь брак и логистику.')),
+        );
+        const callsBefore = t.chatModel.calls.length;
+        const writesBefore = t.memoryFaults.answerWrites;
+        const turn = chat(user, threadId, question);
+        const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
+        await vi.waitFor(
+          () => {
+            expect(runs.hasRuns(threadId)).toBe(true);
+            expect(t.chatModel.calls).toHaveLength(callsBefore + 1);
+          },
+          { timeout: TURN_TIMEOUT_MS, interval: 25 },
+        );
+        await t.runAppenderOnce();
+
+        // Assert (DC-5, KD-4): Y waits to be re-appended and its card stays completed, without a link to the removed
+        // answer; its investigation is not cancelled; nothing is written while the run is registered.
+        expect((await launchOf(other.launchKey))?.state).toBe(
+          'answer_reappend',
+        );
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: other.launchKey,
+            state: 'completed',
+            answerPending: true,
+            answerMessageId: null,
+          }),
+        ]);
+        expect(t.cancels.calls).toEqual([]);
+        expect(await investigationStatus(user, other.investigationId)).toBe(
+          'active',
+        );
+        expect(t.memoryFaults.answerWrites).toBe(writesBefore);
+        expect(await storedIdsOf(threadId)).not.toContain(answerId);
+
+        // Act: the run ends; a pass.
+        gate.release();
+        await turn;
+        await t.runAppenderOnce();
+
+        // Assert (AC-20.2 exception, DC-5): the answer comes back once, after the new reply, and the card links to it.
+        const stored = await storedMessagesOf(threadId);
+        const ids = stored.map((message) => message.id);
+        expect(ids.filter((id) => id === answerId)).toHaveLength(1);
+        const questionAt = ids.indexOf(question.id);
+        expect(
+          stored.slice(questionAt).map((message) => [message.id, message.text]),
+        ).toEqual([
+          [question.id, 'Что проверить в первую очередь?'],
+          [expect.any(String), 'Проверь брак и логистику.'],
+          [answerId, expect.stringContaining('Возвраты растут из-за брака')],
+        ]);
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: other.launchKey,
+            state: 'completed',
+            answerPending: false,
+            answerMessageId: answerId,
+          }),
+        ]);
+
+        // Act: a second pass.
+        const versions = await launchVersionsOf(user);
+        const writes = t.memoryFaults.answerWrites;
+        await t.runAppenderOnce();
+
+        // Assert: it changes nothing.
+        expect(await launchVersionsOf(user)).toEqual(versions);
+        expect(t.memoryFaults.answerWrites).toBe(writes);
+        expect(await storedIdsOf(threadId)).toEqual(ids);
+
+        // Act (DC-4): another regenerate removes the answer again; every write of it fails, before and at the end of
+        // the give-up window.
+        t.chatModel.script(textStep('Проверь брак, логистику и упаковку.'));
+        await chat(user, threadId, question);
+        t.memoryFaults.failAnswerWrites(new Error('memory unavailable'));
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await t.runAppenderOnce();
+        const failing = required(await launchOf(other.launchKey), 'row');
+        t.clock.advance(300_000);
+        await t.runAppenderOnce();
+
+        // Assert: the failed try kept the row waiting; at the end of the window it is failed, the card says so, and
+        // the answer is not in the thread.
+        expect(failing).toMatchObject({
+          state: 'answer_reappend',
+          appendFailedAt: expect.any(Date),
+        });
+        expect((await launchOf(other.launchKey))?.state).toBe('failed');
+        expect(await research(user, threadId)).toEqual([
+          expect.objectContaining({
+            launchKey: other.launchKey,
+            state: 'failed',
+            answerPending: false,
+            answerMessageId: null,
+          }),
+        ]);
+        expect(await storedIdsOf(threadId)).not.toContain(answerId);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
-    it.todo(
+    it(
       'INT-3 T3: a failure of the tail selection or of the delete leaves the tail in place, and a retry completes without a second effect',
+      async () => {
+        // Arrange (Flow 5): Y's card is above U1; U1 is a mode message whose reply carries the card of X; Y's answer
+        // was written after that reply. The tail of U1 holds X's card and Y's answer.
+        const user = t.user();
+        const threadId = await t.createThread(user);
+        const other = await launchResearch(
+          user,
+          threadId,
+          'Почему растут возвраты',
+        );
+        const goal = 'Почему падают продажи';
+        const current = await launchResearch(user, threadId, goal);
+        await answerLaunch(other, 'Возвраты растут из-за брака');
+        const answerId = answerIdOf(other.investigationId);
+        const question = modeMessageOf(current, goal);
+        const full = await storedIdsOf(threadId);
+        expect(full.slice(-3)).toEqual([
+          current.messageId,
+          expect.any(String),
+          answerId,
+        ]);
+
+        // Act: the selection fails (the runtime refuses the cancel).
+        t.cancels.refuse(new Error('runtime unavailable'));
+        await refusedRegenerate(user, threadId, question);
+
+        // Assert: the request answered an error before streaming, the tail is intact and X still runs.
+        expect(await storedIdsOf(threadId)).toEqual(full);
+        expect(await investigationStatus(user, current.investigationId)).toBe(
+          'active',
+        );
+
+        // Act: the cancel goes through, but the delete after the selection fails.
+        t.cancels.refuse(null);
+        t.memoryFaults.failNextDelete(new Error('delete failed'));
+        await refusedRegenerate(user, threadId, question);
+
+        // Assert: the tail is intact, the rows are already selected and X's investigation is cancelled.
+        expect(await storedIdsOf(threadId)).toEqual(full);
+        expect((await launchOf(current.launchKey))?.state).toBe('discarded');
+        expect((await launchOf(other.launchKey))?.state).toBe(
+          'answer_reappend',
+        );
+        expect(await investigationStatus(user, current.investigationId)).toBe(
+          'cancelled',
+        );
+
+        // Act: no retry comes; a pass.
+        const before = required(
+          (await storedMessagesOf(threadId)).find(
+            (message) => message.id === answerId,
+          ),
+          'stored answer',
+        );
+        const writes = t.memoryFaults.answerWrites;
+        await t.runAppenderOnce();
+
+        // Assert (KD-4): the answer is rewritten in place - same id, same position, `createdAt` unchanged.
+        expect(t.memoryFaults.answerWrites).toBe(writes + 1);
+        expect((await launchOf(other.launchKey))?.state).toBe('answered');
+        expect(await storedIdsOf(threadId)).toEqual(full);
+        const rewritten = (await storedMessagesOf(threadId)).find(
+          (message) => message.id === answerId,
+        );
+        expect(rewritten?.createdAt).toEqual(before.createdAt);
+
+        // Act: the regenerate is retried; the mode turn calls `deepResearch` again (a new launch Z); then a pass.
+        const relaunch = deepResearchCallStep({ goal, tokenBudget: 400_000 });
+        t.chatModel.script(relaunch.step);
+        await chat(user, threadId, question);
+        await launchReaching(relaunch.toolCallId, 'running');
+        await t.runAppenderOnce();
+
+        // Assert: the retry deleted the tail and finished without a second effect - X cancelled once in the runtime,
+        // Y's answer once, after the new reply; GET /research lists Y and Z, not X.
+        const ids = await storedIdsOf(threadId);
+        const questionAt = ids.indexOf(current.messageId);
+        expect(ids.slice(0, questionAt)).toEqual(full.slice(0, questionAt));
+        expect(ids.slice(questionAt)).toEqual([
+          current.messageId,
+          expect.any(String),
+          answerId,
+        ]);
+        expect(ids.filter((id) => id === answerId)).toHaveLength(1);
+        expect(await cancellationsOf(current.investigationId)).toBe(1);
+        expect((await launchOf(current.launchKey))?.state).toBe('discarded');
+        expect(
+          (await research(user, threadId)).map((view) => [
+            view.launchKey,
+            view.state,
+          ]),
+        ).toEqual([
+          [other.launchKey, 'completed'],
+          [relaunch.toolCallId, 'running'],
+        ]);
+        expect(t.chatModel.remaining()).toBe(0);
+      },
+      TURN_TIMEOUT_MS * 4,
     );
     it.todo(
       'INT-3 T4: deleting a thread with running, proposed and answered launches stops the investigation, removes every launch row, and no later event writes an answer',

@@ -213,7 +213,10 @@ const REFUSED: StartInvestigationResult = {
   code: 'process_unknown',
 };
 
-function serviceUnderTest(startInvestigation: Engine['startInvestigation']) {
+function serviceUnderTest(
+  startInvestigation: Engine['startInvestigation'],
+  runtime: unknown = {},
+) {
   const engine = {
     sourceMode: 'sources',
     startInvestigation: vi.fn(startInvestigation),
@@ -226,7 +229,7 @@ function serviceUnderTest(startInvestigation: Engine['startInvestigation']) {
   const service = new ResearchLaunchService(
     { db: {} } as unknown as DatabaseConnection,
     engine as unknown as Engine,
-    {} as Runtime,
+    runtime as Runtime,
     threads as unknown as ThreadsService,
   );
   return { service, engine };
@@ -282,5 +285,48 @@ describe('ResearchLaunchService.recoverLaunching', () => {
         { launchKey: 'launch-1', from: 'launching', to: 'proposed', set: {} },
       ],
     ]);
+  });
+});
+
+// Flow 2, Failure handling: a regenerate discards the card while its confirmed start runs. Risk: the investigation the
+// start just created keeps running with no card and no row to deliver it to.
+describe('ResearchLaunchService start of a launch discarded meanwhile', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('cancels the investigation the start created and answers not_found', async () => {
+    const held = gate<StartInvestigationResult>();
+    const cancel = vi.fn(() => Promise.resolve());
+    const { service } = serviceUnderTest(() => held.promise, {
+      investigations: { cancel },
+    });
+    launches.findByLaunchKey.mockResolvedValueOnce(
+      launchRow({ state: 'proposed' }),
+    );
+    launches.transition.mockResolvedValueOnce(
+      launchRow({ state: 'launching' }),
+    );
+
+    const deciding = service.decide({
+      threadId: 'thread-1',
+      resourceId: 'user-1',
+      decision: { action: 'confirm', launchKey: 'launch-1' },
+    });
+    await settle();
+    // While the start is held the row is discarded: the `started` write finds it no longer `launching`.
+    launches.transition.mockResolvedValueOnce(undefined);
+    launches.findByLaunchKey.mockResolvedValueOnce(
+      launchRow({ state: 'discarded' }),
+    );
+    held.open({
+      outcome: 'created',
+      investigationId: 'inv-1',
+      controllerTaskId: 'task-1',
+    });
+
+    expect(await deciding).toEqual({
+      launch: null,
+      decisionError: 'not_found',
+    });
+    expect(cancel.mock.calls).toEqual([['inv-1', 'user-1']]);
   });
 });

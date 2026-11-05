@@ -4,7 +4,17 @@ import {
 } from '@agent-os/contracts';
 import { type Database, researchChatLaunches } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, asc, eq, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+} from 'drizzle-orm';
 import {
   LAUNCH_MODES,
   LAUNCH_STATES,
@@ -151,6 +161,48 @@ export const researchLaunchRepository = {
         ),
       );
     return toRecordOrUndefined(row);
+  },
+
+  /**
+   * The thread's launches whose card is one of `launchKeys` or whose investigation is one of `investigationIds`: what a
+   * regenerated tail holds (KD-7). Discarded rows are included, so a repeated selection sees them.
+   */
+  async listByCardsOrAnswers(
+    db: Queries,
+    thread: LaunchThread,
+    refs: {
+      readonly launchKeys: readonly string[];
+      readonly investigationIds: readonly string[];
+    },
+  ): Promise<LaunchRecord[]> {
+    const matches = [
+      ...(refs.launchKeys.length > 0
+        ? [inArray(researchChatLaunches.launchKey, [...refs.launchKeys])]
+        : []),
+      ...(refs.investigationIds.length > 0
+        ? [
+            inArray(researchChatLaunches.investigationId, [
+              ...refs.investigationIds,
+            ]),
+          ]
+        : []),
+    ];
+    if (matches.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(researchChatLaunches)
+      .where(
+        and(
+          eq(researchChatLaunches.resourceId, thread.resourceId),
+          eq(researchChatLaunches.threadId, thread.threadId),
+          or(...matches),
+        ),
+      )
+      .orderBy(
+        asc(researchChatLaunches.createdAt),
+        asc(researchChatLaunches.launchKey),
+      );
+    return rows.map(toRecord);
   },
 
   /** The launch whose investigation's controller task is `controllerTaskId`; the consumer matches events by it. */

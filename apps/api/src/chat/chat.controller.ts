@@ -124,6 +124,12 @@ export class ChatController {
           threadId,
           userId: req.user.id,
           userMessageId: lastMessage.data.id,
+          // KD-7: the launches of the tail are discarded or set to be re-appended before it is deleted.
+          beforeDelete: (tail) =>
+            this.launches.discardTail(
+              { threadId, resourceId: req.user.id },
+              tail,
+            ),
         });
         // DC-2: the next user message closes the open proposals; a decision or a regenerate does not.
         if (!repeated && turn?.kind !== 'decision') {
