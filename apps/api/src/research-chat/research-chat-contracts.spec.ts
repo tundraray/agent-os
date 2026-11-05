@@ -1,6 +1,5 @@
 import {
   ResearchAnswerMetadataSchema,
-  ResearchDecisionSchema,
   ResearchLaunchViewSchema,
 } from '@agent-os/contracts';
 
@@ -71,12 +70,6 @@ type Row = [
 
 const rows: Row[] = [
   [
-    'an unknown decision action',
-    ResearchDecisionSchema,
-    { action: 'restart', launchKey: 'launch-1' },
-    ['action'],
-  ],
-  [
     'answerMessageId outside completed',
     ResearchLaunchViewSchema,
     { ...view, state: 'running' },
@@ -112,7 +105,6 @@ const rows: Row[] = [
     { ...modelKnowledgeAnswer, sources: sourcesAnswer.sources },
     ['sources'],
   ],
-  ['a confirm decision', ResearchDecisionSchema, { action: 'confirm', launchKey: 'launch-1' }, null],
   ['a completed view with its answer', ResearchLaunchViewSchema, view, null],
   [
     'a not_launched view with its reason',

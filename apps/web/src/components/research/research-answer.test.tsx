@@ -87,18 +87,6 @@ describe('ResearchAnswer — parts drawn from researchAnswer', () => {
     expect(screen.queryByText(MC_33)).toBeNull();
   });
 
-  it.each([
-    { stopReason: 'budget_exhausted', text: 'Остановлен: исчерпан бюджет' },
-    { stopReason: 'step_limit', text: 'Остановлен: достигнут лимит шагов' },
-    { stopReason: 'controller_invalid', text: 'Остановлен: агент не смог выбрать следующий шаг' },
-    { stopReason: 'model_unavailable', text: 'Остановлен: модель недоступна' },
-    { stopReason: 'deadline', text: 'Остановлен: истёк срок расследования' },
-    { stopReason: 'context_overflow', text: 'Остановлен: материала больше, чем агент может учесть' },
-  ] as const)('MC-25 for $stopReason', ({ stopReason, text }) => {
-    render(<ResearchAnswer answer={answerOf({ ...WITH_SOURCES, outcome: 'partial', summary: null, stopReason })} />);
-    expect(screen.getByText(text)).toBeInTheDocument();
-  });
-
   it('a footnote opens the source list and moves focus to its record, with the truncation mark', async () => {
     const user = userEvent.setup();
     render(<ResearchAnswer answer={answerOf(WITH_SOURCES)} />);

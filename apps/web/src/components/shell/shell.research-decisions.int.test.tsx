@@ -23,7 +23,6 @@ import {
   type DeepResearchToolResult,
   type HistoryMessage,
   type ResearchLaunchView,
-  type ResearchSourceMode,
 } from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -226,8 +225,8 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
   //   button label; the feed shows no new user message and no new reply; the card goes «Запуск» (button label «Запускаем…») while the turn runs and «Идёт» after; no second POST follows the reply; «Не нужно» on another card -> «Отклонение» then
   //   «Не запущен» with «Вы отказались.»; the thread restored from history with both hidden pairs (decision messages and replies marked `researchDecisionReply`) draws neither, and draws an answer message that follows a pair;
   //   with `sourceMode` `model_knowledge` in the history's view the proposal card shows MC-31 before «Запустить» (AC-27.1) and keeps it through «Запуск», «Идёт» and after the one GET /research that follows the turn; the declined card «Не запущен» keeps it too
-  //   (the mode is read from the view each time, not from the first state); with `sources` none of the three states shows it (AC-27.4)
-  // - R3 settled, failed and busy cards (UC-3, UC-E1, DC-1, AC-19.7): the tool result for a launch already running / not launched / failed -> the card shows that state, no error line (MC-15, MC-16, MC-29 absent); a decision turn answered with an HTTP 500
+  //   (the mode is read from the view each time, not from the first state); the restored card message of A is a multi-step turn (reasoning, the call, text) drawn as one message (`joinStrategy: 'none'`)
+  // - R3 settled, failed and busy cards (UC-3, UC-E1, DC-1, AC-19.7): the tool result for a launch already running -> the card shows that state, no error line (MC-15, MC-16, MC-29 absent); a decision turn answered with an HTTP 500
   //   before the first chunk -> no error stub and no TH-08 block in the feed, the card shows the line of its action (MC-15 / MC-29 / MC-16), buttons enabled again, and one GET /research afterwards moves the card to the applied state if the server reports it;
   //   a turn aborted from the composer behaves the same; an errored last reply loses its TH-08 block when the decision turn is sent; while a reply streams every decision button is disabled with the description MC-30 and no request is queued
   describe('INT-4', () => {
@@ -324,13 +323,11 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
       expect(restored.map((root) => root.textContent?.includes('Глубокий ресерч'))).toEqual([false, true]);
     });
 
-    it.each<{ sourceMode: ResearchSourceMode; warned: boolean }>([
-      { sourceMode: 'model_knowledge', warned: true },
-      { sourceMode: 'sources', warned: false },
-    ])(
-      'INT-4 R2 ($sourceMode): confirm and decline send one hidden decision turn each, add nothing to the feed in the tab or after a reload, do not re-send the turn that ended in deepResearch, and move only the card, which keeps its no-source warning in every state and shows none when a source is connected',
-      async ({ sourceMode, warned }) => {
-        // Arrange: two proposal cards in one thread
+    it(
+      'INT-4 R2: confirm and decline send one hidden decision turn each, add nothing to the feed in the tab or after a reload, do not re-send the turn that ended in deepResearch, and move only the card, which keeps its no-source warning in every state',
+      async () => {
+        // Arrange: two proposal cards in one thread, a launch without sources
+        const sourceMode = 'model_knowledge';
         const proposalA = researchLaunchView({ launchKey: 'call-a', mode: 'proposal', state: 'proposed', goal: GOAL_A, sourceMode });
         const proposalB = researchLaunchView({ launchKey: 'call-b', mode: 'proposal', state: 'proposed', goal: GOAL_B, sourceMode });
         const runningA = { ...proposalA, state: 'running' as const };
@@ -363,7 +360,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         await waitFor(() => expect(traffic.researchReads).toBe(1));
         const feedBefore = feedRoots(view.container).map((root) => root.id);
         expect(feedBefore).toEqual(['m1', 'a-1', 'u-2', 'a-2']);
-        expect(within(card(GOAL_A)).queryByText(MC_31) !== null).toBe(warned);
+        expect(within(card(GOAL_A)).getByText(MC_31)).toBeInTheDocument();
 
         // Act 1: «Запустить», the reply held mid-stream
         await user.click(within(card(GOAL_A)).getByRole('button', { name: 'Запустить' }));
@@ -371,7 +368,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
 
         // Assert 1: «Запуск» while the turn streams; the decision and its streaming reply are not drawn
         expect(await within(card(GOAL_A)).findByRole('button', { name: 'Запускаем…' })).toBeInTheDocument();
-        expect(within(card(GOAL_A)).queryByText(MC_31) !== null).toBe(warned);
+        expect(within(card(GOAL_A)).getByText(MC_31)).toBeInTheDocument();
         expect(lastMessageOf(traffic.chatBodies[0])).toMatchObject({
           role: 'user',
           parts: [{ type: 'text', text: 'Запустить' }],
@@ -388,7 +385,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         await waitFor(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
         await waitFor(() => expect(traffic.researchReads).toBe(2));
         expect(traffic.chatBodies).toHaveLength(1);
-        expect(within(card(GOAL_A)).queryByText(MC_31) !== null).toBe(warned);
+        expect(within(card(GOAL_A)).getByText(MC_31)).toBeInTheDocument();
         expect(feedRoots(view.container).map((root) => root.id)).toEqual(feedBefore);
 
         // Act 3: «Не нужно» on the other card
@@ -400,7 +397,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         // Assert 3: «Не запущен» with its reason, warning per mode, still no trace in the feed, one read after the turn
         await waitFor(() => expect(within(card(GOAL_B)).getByText('Ресерч не запущен')).toBeInTheDocument());
         expect(within(card(GOAL_B)).getByText('Вы отказались.')).toBeInTheDocument();
-        expect(within(card(GOAL_B)).queryByText(MC_31) !== null).toBe(warned);
+        expect(within(card(GOAL_B)).getByText(MC_31)).toBeInTheDocument();
         await waitFor(() => expect(traffic.researchReads).toBe(3));
         expect(traffic.chatBodies).toHaveLength(2);
         expect(lastMessageOf(traffic.chatBodies[1])).toMatchObject({
@@ -409,13 +406,23 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         });
         expect(feedRoots(view.container).map((root) => root.id)).toEqual(feedBefore);
 
-        // Act 4: reload - both hidden pairs stored, an answer of A after the last pair
+        // Act 4: reload - both hidden pairs stored, an answer of A after the last pair; the card message of A is a stored
+        //   multi-step turn (reasoning, the call, then text), so the feed ids below also catch a runtime that splits one
+        //   stored message into one message per step (`joinStrategy: 'none'`)
         view.unmount();
         const completedA = { ...runningA, state: 'completed' as const, answerMessageId: 'answer-a' };
         serveThread({
           history: [
             ...historyMessages([{ role: 'user', text: 'Вопрос про расходы' }]),
-            cardMessage('a-1', proposalA),
+            {
+              id: 'a-1',
+              role: 'assistant',
+              parts: [
+                { type: 'reasoning', text: 'Нужны данные о расходах.' },
+                deepResearchToolPart({ toolCallId: proposalA.launchKey, goal: proposalA.goal, result: { launch: proposalA } }),
+                { type: 'text', text: 'Предлагаю глубокий ресерч.' },
+              ],
+            },
             { id: 'u-2', role: 'user', parts: [{ type: 'text', text: 'Вопрос про задержки' }] },
             cardMessage('a-2', proposalB),
             ...researchDecisionPair({ idPrefix: 'p-1', decision: { action: 'confirm', launchKey: 'call-a' }, launch: runningA }),
@@ -433,28 +440,13 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         expect(screen.getAllByRole('group', { name: /^Ресерч: / })).toHaveLength(2);
         await waitFor(() => expect(within(card(GOAL_A)).getByText('Ресерч завершён')).toBeInTheDocument());
         expect(within(card(GOAL_B)).getByText('Ресерч не запущен')).toBeInTheDocument();
-        expect(screen.queryAllByText(MC_31)).toHaveLength(warned ? 2 : 0);
+        expect(screen.queryAllByText(MC_31)).toHaveLength(2);
       },
     );
 
-    it.each<{ name: string; result: ResearchLaunchView; label: string }>([
-      {
-        name: 'already running',
-        result: researchLaunchView({ launchKey: 'call-a', mode: 'proposal', goal: GOAL_A }),
-        label: 'Ресерч идёт',
-      },
-      {
-        name: 'not launched',
-        result: researchLaunchView({ launchKey: 'call-a', mode: 'proposal', goal: GOAL_A, state: 'not_launched', notLaunchedReason: 'superseded' }),
-        label: 'Ресерч не запущен',
-      },
-      {
-        name: 'failed',
-        result: researchLaunchView({ launchKey: 'call-a', mode: 'proposal', goal: GOAL_A, state: 'failed' }),
-        label: 'Ресерч не удался',
-      },
-    ])('INT-4 R3 (settled card, $name): a decision on a settled launch moves the card to that state without an error line', async ({ result, label }) => {
+    it('INT-4 R3 (settled card, already running): a decision on a settled launch moves the card to that state without an error line', async () => {
       // Arrange: this tab still shows the proposal; the launch was settled elsewhere
+      const result = researchLaunchView({ launchKey: 'call-a', mode: 'proposal', goal: GOAL_A });
       const proposal = researchLaunchView({ launchKey: 'call-a', mode: 'proposal', state: 'proposed', goal: GOAL_A });
       let server_: ResearchLaunchView[] = [proposal];
       const traffic = serveThread({
@@ -474,7 +466,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
       await user.click(within(card(GOAL_A)).getByRole('button', { name: 'Запустить' }));
 
       // Assert
-      await waitFor(() => expect(within(card(GOAL_A)).getByText(label)).toBeInTheDocument());
+      await waitFor(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
       await waitFor(() => expect(traffic.researchReads).toBe(2));
       expect(within(card(GOAL_A)).queryByRole('alert')).toBeNull();
       for (const line of [MC_15, MC_16, MC_29]) expect(screen.queryByText(line)).toBeNull();

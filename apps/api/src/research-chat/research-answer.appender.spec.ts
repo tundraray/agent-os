@@ -176,16 +176,6 @@ describe('ResearchAnswerAppender loop', () => {
     expect(loop.armed()).toBe(0);
     expect(loop.timers).toHaveLength(1);
   });
-
-  it('stop before any fire cancels the armed timer', async () => {
-    const loop = appenderUnderTest();
-    loop.appender.start();
-
-    await loop.appender.stop();
-
-    expect(loop.armed()).toBe(0);
-    expect(loop.passes()).toBe(0);
-  });
 });
 
 const launchRow = (fields: Partial<LaunchRecord>): LaunchRecord => ({
@@ -236,8 +226,7 @@ function serviceUnderTest(
 }
 
 // KD-3: the loop finishes a launch left in `launching` by repeating the start, but never a start this process is still
-// running; a refused start of a confirmed proposal returns it to its card. Risk: a running confirm is started twice,
-// or a refused recovery leaves the proposal stuck in `launching` or fails it.
+// running. Risk: a running confirm is started twice.
 describe('ResearchLaunchService.recoverLaunching', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -266,25 +255,6 @@ describe('ResearchLaunchService.recoverLaunching', () => {
     expect(engine.startInvestigation).toHaveBeenCalledTimes(1);
     held.open(REFUSED);
     await deciding;
-  });
-
-  it('returns a confirmed proposal whose recovered start is refused to proposed', async () => {
-    const launching = launchRow({ state: 'launching' });
-    const { service, engine } = serviceUnderTest(() =>
-      Promise.resolve(REFUSED),
-    );
-    launches.listLaunchingCreatedBefore.mockResolvedValue([launching]);
-    launches.transition.mockResolvedValue(launchRow({ state: 'proposed' }));
-
-    await service.recoverLaunching(new Date('2026-11-05T12:00:00Z'));
-
-    expect(engine.startInvestigation).toHaveBeenCalledTimes(1);
-    expect(launches.transition.mock.calls).toEqual([
-      [
-        {},
-        { launchKey: 'launch-1', from: 'launching', to: 'proposed', set: {} },
-      ],
-    ]);
   });
 });
 

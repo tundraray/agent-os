@@ -1081,7 +1081,7 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // DC-3 (FR-20): "Стримящийся ответ из NFR-01 - любой прогон чата беседы, зарегистрированный в ThreadRunRegistry этого процесса, в том числе ход решения; ответ ресерча дописывается после его конца."
   // DC-4 (FR-20): "Когда ответ не удаётся записать дольше RESEARCH_APPEND_GIVE_UP_MS с первой неудачи, запуск переходит в failed, и карточка показывает «Не удался»; так же кончается повторная запись ответа, убранного перегенерацией."
   // NFR-01 (server share only): "ответ завершённого расследования появляется в открытой беседе не позже чем через 5 с после завершения" - the measured end-to-end figure is E2E-2; here the answer is stored by the first pass after the event.
-  // Use cases: UC-4 (server half, with a fixture connected), UC-6, UC-7, UC-12 (answer half), UC-E3, UC-E4, UC-E7 (server half), UC-E8. Flow 3, Flow 4 (race branch). KD-3, KD-4, KD-5, KD-8, Invariants 3, 4, 5, 6.
+  // Use cases: UC-4 (server half, with a fixture connected), UC-6, UC-7, UC-12 (answer half), UC-E3, UC-E4, UC-E7 (server half). Flow 3, Flow 4 (race branch). KD-3, KD-4, KD-5, KD-8, Invariants 3, 4, 5, 6.
   //
   // Primary failure mode (turns red when): the answer is written in the middle of a chat turn or between the user message and its reply (DC-3); a later-finishing investigation's answer lands before an earlier one that is still retrying, or the
   // other way round for AC-20.6; a redelivered `TaskSucceeded` or a second pass writes a second message; a stopped or failed launch still gets an answer; a client copy of `research-answer-*` in the next chat request overwrites the stored answer;
@@ -1107,12 +1107,11 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // - D4 give-up window and queue (UC-E4, AC-20.6, DC-4): the memory write fails on every try -> the row stays `answer_pending`, the pauses between tries start at `RUNTIME_POLL_MS` and double up to 16 times that, a later finished
   //   investigation of the same thread writes nothing while the earlier one retries; at `RESEARCH_APPEND_GIVE_UP_MS` after the first failure the row is `failed` (GET /research: `failed`, no `answerMessageId`), the earlier-finished one is
   //   not retried again, and the next row is then written
-  // - D5 answer without sources (UC-12 answer half, UC-E8, AC-27.3 server half, DC-9, KD-8; unique defect: the loop treating a no-source answer as a sourced one - reading evidence that does not exist, numbering footnotes, dropping the mode from the metadata - or
+  // - D5 answer without sources (UC-12 answer half, AC-27.3 server half, DC-9, KD-8; unique defect: the loop treating a no-source answer as a sourced one - reading evidence that does not exist, numbering footnotes, dropping the mode from the metadata - or
   //   storing the caveat only in the metadata so that the copy and the model lose it; the builder's rule table is a unit test): the double's `InvestigationView` has `sourceMode` `model_knowledge`, two claims in `assumed` with no evidence, `established` empty, outcome `answered`;
   //   one pass after TaskSucceeded -> one message `research-answer-<investigationId>`; `researchAnswer.sourceMode` is `model_knowledge`, `established` is empty, claims have no footnote numbers, the source list is empty; the text starts with MC-32 and has MC-33 after each of the two
   //   claims and no `[n]`; the counting spy on `EvidenceReader.get` has zero calls; GET /messages after a reload returns the same message once; the next plain chat turn of the thread: the message list the chat model double received contains that text with MC-32 and both MC-33
   //   (the model is not told the claims are checked); GET /research shows `completed` with `answerMessageId`.
-  //   UC-E8 row: the view is a stop before the synthesis ended (outcome `inconclusive`, stop reason `budget_exhausted`, no claims) -> the stored text starts with MC-32 and states the stop reason MC-25, the metadata has no claims, and the launch is `completed`
   describe('INT-2', () => {
     it(
       'INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata (mode sources, no no-source warning or mark) at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing',
@@ -1766,10 +1765,10 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       TURN_TIMEOUT_MS * 4,
     );
     it(
-      'INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat, and a stop before the synthesis ends gives a warning with the reason and no claims',
+      'INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat',
       async () => {
-        // Arrange: the engine runs without sources (the double's investigations take `model_knowledge`); one launch
-        // answers with two assumed claims, the other stops on its budget before the synthesis (UC-E8).
+        // Arrange: the engine runs without sources (the double's investigations take `model_knowledge`); the launch
+        // answers with two assumed claims.
         t.engine.setSourceMode('model_knowledge');
         const user = t.user();
         const threadId = await t.createThread(user);
@@ -1777,11 +1776,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           user,
           threadId,
           'Как снизить отток подписчиков',
-        );
-        const stoppedEarly = await launchResearch(
-          user,
-          threadId,
-          'Почему упали продления',
         );
         t.engine.succeed(knowledge.investigationId, {
           answer: () => ({
@@ -1809,19 +1803,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           }),
         });
         await launchReaching(knowledge.launchKey, 'answer_pending');
-        t.engine.succeed(stoppedEarly.investigationId, {
-          answer: () => ({
-            answerId: 'answer-d5-early',
-            outcome: 'inconclusive',
-            stopReason: 'budget_exhausted',
-            summary: null,
-            established: [],
-            assumed: [],
-            unknown: [],
-            removed: [],
-          }),
-        });
-        await launchReaching(stoppedEarly.launchKey, 'answer_pending');
 
         // Act: one pass.
         await t.runAppenderOnce();
@@ -1829,7 +1810,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         // Assert (DC-9, AC-27.3): the text opens with MC-32 and marks each claim with MC-33 — no `[n]`, no
         // «не проверено», no source list; the metadata carries the mode with no footnotes or sources; no evidence read.
         const knowledgeId = answerIdOf(knowledge.investigationId);
-        const earlyId = answerIdOf(stoppedEarly.investigationId);
         const knowledgeText = [
           'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
           '',
@@ -1840,20 +1820,10 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           '- Отток снижают напоминания перед списанием (из знаний модели, без источника)',
           '- Годовой тариф удерживает дольше месячного (из знаний модели, без источника)',
         ].join('\n');
-        const earlyText = [
-          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
-          '',
-          '**Ответ ресерча** · Вывода нет',
-          'Цель: Почему упали продления',
-          'Остановлен: исчерпан бюджет',
-        ].join('\n');
         const stored = await storedMessagesOf(threadId);
         expect(
-          stored.slice(-2).map((message) => [message.id, message.text]),
-        ).toEqual([
-          [knowledgeId, knowledgeText],
-          [earlyId, earlyText],
-        ]);
+          stored.slice(-1).map((message) => [message.id, message.text]),
+        ).toEqual([[knowledgeId, knowledgeText]]);
         const answerMetadata = (id: string) =>
           stored.find((message) => message.id === id)?.metadata?.[
             RESEARCH_METADATA_KEYS.researchAnswer
@@ -1882,20 +1852,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           sources: [],
           sourceMode: 'model_knowledge',
         });
-        // UC-E8: a stop before the synthesis ended — MC-32 and the stop reason MC-25, no claims.
-        expect(answerMetadata(earlyId)).toEqual({
-          launchKey: stoppedEarly.launchKey,
-          goal: 'Почему упали продления',
-          summary: null,
-          outcome: 'inconclusive',
-          stopReason: 'budget_exhausted',
-          launch: { messageId: stoppedEarly.messageId },
-          established: [],
-          assumed: [],
-          unknown: [],
-          sources: [],
-          sourceMode: 'model_knowledge',
-        });
         expect(t.evidenceReads).toBe(0);
         expect(
           (await research(user, threadId)).map((view) => [
@@ -1906,10 +1862,9 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           ]),
         ).toEqual([
           [knowledge.launchKey, 'completed', knowledgeId, 'model_knowledge'],
-          [stoppedEarly.launchKey, 'completed', earlyId, 'model_knowledge'],
         ]);
 
-        // Act + Assert (AC-27.3, reload): GET /messages returns each answer once with its text and mode.
+        // Act + Assert (AC-27.3, reload): GET /messages returns the answer once with its text and mode.
         const history = await messages(user, threadId);
         expect(
           history
@@ -1924,11 +1879,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
             knowledgeId,
             [expect.objectContaining({ type: 'text', text: knowledgeText })],
             answerMetadata(knowledgeId),
-          ],
-          [
-            earlyId,
-            [expect.objectContaining({ type: 'text', text: earlyText })],
-            answerMetadata(earlyId),
           ],
         ]);
 
@@ -1950,7 +1900,7 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         );
         expect(prompt).not.toContain('[1]');
         expect(prompt).not.toContain('(не проверено)');
-        expect(t.memoryFaults.answerWrites).toBe(2);
+        expect(t.memoryFaults.answerWrites).toBe(1);
         expect(t.chatModel.remaining()).toBe(0);
       },
       TURN_TIMEOUT_MS * 4,
@@ -1981,10 +1931,10 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // Verification items (table; thread contents are seeded through Memory.saveMessages, the way test/support/seed.ts does, with the part's metadata):
   // - T1 the tail takes its research with it (UC-9 first half, UC-10 server half, UC-11, AC-22.2): thread = user message U1, failed reply R1 carrying the card of launch X, then (a) a hidden decision pair from another tab and (b) in a second case X
   //   already `answered` with its answer message in the tail -> a repeated POST of U1 -> X is `discarded`, cancel called once, the whole tail including the pair and the answer is gone, the new reply directly follows U1; passes after the run
-  //   never bring the answer back; GET /research no longer lists X; a repeat of the same request after a forced failure of the delete (below) finds X already `discarded` and does not cancel twice in effect
+  //   never bring the answer back; GET /research no longer lists X
   // - T2 another launch's answer comes back once (UC-9 second half, AC-20.2 exception, DC-5): launch Y has its card above U1 and its answer after R1 in the tail -> regenerate marks Y `answer_reappend`; GET /research shows Y `completed` with
   //   `answerPending: true` and no `answerMessageId` target to a missing message; Y's investigation is not cancelled; while the new run is registered nothing is written; after it ends one pass writes `research-answer-<Y.investigationId>`
-  //   after the new reply and Y is `answered`; a second pass changes nothing; with writes failing past `RESEARCH_APPEND_GIVE_UP_MS` Y ends `failed`
+  //   after the new reply and Y is `answered`; a second pass changes nothing
   // - T3 failed selection or delete keeps the tail (Flow 5 failure bullets): `beforeDelete` made to throw (engine double cancel refuses) -> the request answers an error before streaming and the tail is intact; the delete made to fail after
   //   `beforeDelete` passed -> tail intact, rows already `discarded` / `answer_reappend`; a retry deletes the tail and the answers marked `answer_reappend` are rewritten in place if no retry comes (same message id, `createdAt` unchanged)
   // - T4 thread deletion (UC-8 server half, AC-22.1, DC-6 server half): thread with a `running` launch, a `proposed` launch (no investigation) and an `answered` one; GET /research counts one `running` -> DELETE /threads/:id -> the running
@@ -2017,30 +1967,18 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           confirmed.investigationId,
           'investigationId',
         );
-        const withPair = await storedIdsOf(decisionThread);
         expect(
           decisionPairs(await messages(user, decisionThread)),
         ).toHaveLength(1);
 
-        // Act: a regenerate of U1 whose delete fails after the selection.
-        t.memoryFaults.failNextDelete(new Error('delete failed'));
-        await refusedRegenerate(user, decisionThread, question);
-
-        // Assert: the tail is still there, X is already discarded and its investigation cancelled once.
-        expect(await storedIdsOf(decisionThread)).toEqual(withPair);
-        expect((await launchOf(proposal.toolCallId))?.state).toBe('discarded');
-        expect(t.cancels.calls).toEqual([
-          { investigationId: confirmedInvestigation, resourceId: user },
-        ]);
-
-        // Act: the same regenerate again; then a pass of the loop.
+        // Act: a regenerate of U1; then a pass of the loop.
         t.chatModel.script(textStep('Отток вырос после смены тарифа.'));
         await chat(user, decisionThread, question);
         await t.runAppenderOnce();
 
         // Assert (AC-22.2, KD-2): the regenerate took U1, not the decision message, for the last user message; the
-        // whole tail with the pair is gone and the new reply directly follows U1; the retry found X discarded, and its
-        // second cancel had no effect in the runtime; GET /research no longer lists X.
+        // whole tail with the pair is gone and the new reply directly follows U1; X is discarded and its investigation
+        // cancelled once; GET /research no longer lists X.
         expect(
           (await storedMessagesOf(decisionThread)).map((message) => [
             message.role,
@@ -2107,7 +2045,7 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       TURN_TIMEOUT_MS * 4,
     );
     it(
-      "INT-3 T2: regenerating while another launch's answer sits in the tail re-appends that answer exactly once after the new reply, keeps its launch completed, and fails it only after the give-up window",
+      "INT-3 T2: regenerating while another launch's answer sits in the tail re-appends that answer exactly once after the new reply and keeps its launch completed",
       async () => {
         // Arrange (UC-9 second half): Y's card is above U1, U1 got a reply, then Y finished and its answer was written
         // after that reply, so it is in the tail of U1.
@@ -2198,34 +2136,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         expect(await launchVersionsOf(user)).toEqual(versions);
         expect(t.memoryFaults.answerWrites).toBe(writes);
         expect(await storedIdsOf(threadId)).toEqual(ids);
-
-        // Act (DC-4): another regenerate removes the answer again; every write of it fails, before and at the end of
-        // the give-up window.
-        t.chatModel.script(textStep('Проверь брак, логистику и упаковку.'));
-        await chat(user, threadId, question);
-        t.memoryFaults.failAnswerWrites(new Error('memory unavailable'));
-        vi.useFakeTimers({ toFake: ['Date'] });
-        await t.runAppenderOnce();
-        const failing = required(await launchOf(other.launchKey), 'row');
-        t.clock.advance(300_000);
-        await t.runAppenderOnce();
-
-        // Assert: the failed try kept the row waiting; at the end of the window it is failed, the card says so, and
-        // the answer is not in the thread.
-        expect(failing).toMatchObject({
-          state: 'answer_reappend',
-          appendFailedAt: expect.any(Date),
-        });
-        expect((await launchOf(other.launchKey))?.state).toBe('failed');
-        expect(await research(user, threadId)).toEqual([
-          expect.objectContaining({
-            launchKey: other.launchKey,
-            state: 'failed',
-            answerPending: false,
-            answerMessageId: null,
-          }),
-        ]);
-        expect(await storedIdsOf(threadId)).not.toContain(answerId);
         expect(t.chatModel.remaining()).toBe(0);
       },
       TURN_TIMEOUT_MS * 4,

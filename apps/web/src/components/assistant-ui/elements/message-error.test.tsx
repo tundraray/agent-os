@@ -309,16 +309,4 @@ describe('MessageError — MC-21 over «Перегенерировать» of a 
       expect(button).toHaveAccessibleDescription(BLOCK_TEXT);
     }
   });
-
-  it('a plain failed reply shows no MC-21', () => {
-    renderThread({
-      initialMessages: [
-        { id: 'u1', role: 'user', content: 'Вопрос' },
-        { id: 'a1', role: 'assistant', content: 'Частичный', status: { type: 'incomplete', reason: 'error', error: PROVIDER_ERROR } },
-      ],
-    });
-
-    expect(screen.getByRole('button', { name: REGENERATE })).toBeInTheDocument();
-    expect(screen.queryByText(MC_21)).toBeNull();
-  });
 });

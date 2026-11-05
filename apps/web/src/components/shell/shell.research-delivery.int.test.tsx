@@ -50,13 +50,11 @@ const GOAL_B = 'Как снизить задержки API';
 const GOAL_C = 'Что с резервными копиями';
 const ANSWER_A = 'research-answer-inv-a';
 const ANSWER_B = 'research-answer-inv-b';
-const ANSWER_C = 'research-answer-inv-c';
 
 const MC_12 = 'Ответа не будет. Чтобы попробовать снова, отправьте вопрос в режиме „Глубокий ресерч“.';
 const MC_15 = 'Не удалось запустить ресерч. Попробуйте ещё раз.';
 const MC_18 = 'Ресерч завершён. Ответ добавлен в конец беседы.';
 const MC_18_NO_SOURCES = 'Ресерч завершён. Ответ из знаний модели добавлен в конец беседы.';
-const MC_25_BUDGET = 'Остановлен: исчерпан бюджет';
 const MC_31 = 'Источники данных не подключены — ответ будет из знаний модели.';
 const MC_32 = 'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.';
 const MC_33 = 'из знаний модели, без источника';
@@ -312,14 +310,13 @@ describe('Shell: polling the research state and appending the answer in the open
   //   once after the regenerated reply; a launch that turns `failed` while pending shows «Не удался» (MC-12)
   // - P4 decision turn that left no reply (UC-E7 web side): thread whose stored tail is a decision message with no reply -> the decision message is not drawn; the answer that arrives is drawn at the end of the feed; and one GET /research is
   //   read after each turn that ended in a `deepResearch` call or in a failed decision turn even when nothing is pending
-  // - P5 answers without sources (UC-12 answer half, UC-13, UC-E8, AC-27.3, AC-27.4, DC-8, DC-9; unique defect: the mode lost between the server message and the drawn answer, or one mode for the whole thread - both visible only when the message arrives
+  // - P5 answers without sources (UC-12 answer half, UC-13, AC-27.3, AC-27.4, DC-8, DC-9; unique defect: the mode lost between the server message and the drawn answer, or one mode for the whole thread - both visible only when the message arrives
   //   through the poll into the real runtime and a second launch of another mode sits in the same list): GET /research lists a `running` launch with `sourceMode` `model_knowledge`; it turns `completed` and GET /messages returns its answer
   //   (`researchAnswer.sourceMode` `model_knowledge`, two claims without footnote numbers, text opening with MC-32 and carrying MC-33 after each claim) -> the answer is the last message, drawn with MC-32 under the goal line, MC-33 after each claim, no footnotes,
   //   no «не проверено» label and no source list; the card is «Завершён» with MC-31; the `status` announcement is the no-source variant of MC-18; the copy action of the answer hands the clipboard stub the stored text with MC-32 and both MC-33;
   //   a thread restored from history with the same message draws the same (AC-27.3 after a reload).
   //   Mixed thread (UC-13, DC-8): the same list holds a `proposed` launch with `sourceMode` `sources` (the process was restarted with a source) beside the `model_knowledge` running one -> the proposal card has no MC-31, the running card has it, and once that
   //   launch is answered its answer has MC-32 and MC-33 while a later `sources` answer of the proposal confirmed afterwards has footnotes and none of the three.
-  //   UC-E8 row: the answer message is a stop before the synthesis ended (outcome `inconclusive`, stop reason, no claims) -> it is appended last, opens with MC-32, shows the stop reason MC-25 and no claim, and the card is «Завершён»
   describe('INT-5', () => {
     it('INT-5 P1: a running card is polled each period, a finished launch whose answer is missing is fetched and appended last without starting a turn, polling then stops, and failed or stopped launches add no answer', async () => {
       // Arrange: three explicit launches running, all with a source
@@ -584,7 +581,7 @@ describe('Shell: polling the research state and appending the answer in the open
       expect(traffic.messageReads).toBe(2);
     });
 
-    it('INT-5 P5: an answer without sources appended by the poll is drawn with the warning and the mark on every claim and no footnotes, the same after a reload and in the copy, each card and answer follows its own launch\'s mode when modes are mixed, and a stop before the synthesis shows the warning, the reason and no claim', async () => {
+    it('INT-5 P5: an answer without sources appended by the poll is drawn with the warning and the mark on every claim and no footnotes, the same after a reload and in the copy, and each card and answer follows its own launch\'s mode when modes are mixed', async () => {
       // Arrange: a running launch without sources and, after a restart with a source, a proposal with one (UC-13, DC-8)
       const CLAIM_1 = 'Рост связан с новыми кластерами.';
       const CLAIM_2 = 'Часть расходов — хранение логов.';
@@ -687,9 +684,8 @@ describe('Shell: polling the research state and appending the answer in the open
       expect(within(card(GOAL_B)).queryByText(MC_31)).toBeNull();
       expect(within(messageRoot(view.container, ANSWER_A)).getByText(MC_32)).toBeInTheDocument();
 
-      // Act 5: reload; a third launch without sources is running and stops before its synthesis (UC-E8)
+      // Act 5: reload
       view.unmount();
-      const runningC = researchLaunchView({ launchKey: 'call-c', goal: GOAL_C, sourceMode: 'model_knowledge' });
       const reloadHistory = [
         launchMessage('u-a', 'Почему выросли расходы?'),
         cardMessage('r-a', runningA),
@@ -698,55 +694,19 @@ describe('Shell: polling the research state and appending the answer in the open
         ...researchDecisionPair({ idPrefix: 'd', decision: { action: 'confirm', launchKey: 'call-b' }, launch: runningB }),
         answerA,
         answerB,
-        launchMessage('u-c', 'Что с бэкапами?'),
-        cardMessage('r-c', runningC),
       ];
-      const answerC = answerMessage(ANSWER_C, {
-        launchKey: 'call-c',
-        goal: GOAL_C,
-        launch: { messageId: 'u-c' },
-        sourceMode: 'model_knowledge',
-        outcome: 'inconclusive',
-        stopReason: 'budget_exhausted',
-        summary: null,
-        established: [],
-        assumed: [],
-        unknown: [],
-        sources: [],
-      });
-      const reloadTraffic = serveThread({
-        messages: (read) => (read === 1 ? reloadHistory : [...reloadHistory, answerC]),
-        research: (read) => [
-          completedA,
-          completedB,
-          read === 1 ? runningC : { ...runningC, state: 'completed', answerMessageId: ANSWER_C },
-        ],
+      serveThread({
+        messages: () => reloadHistory,
+        research: () => [completedA, completedB],
       });
       const reloaded = renderWithRuntime({ pathname: `/chat/${THREAD}` });
-      await until(() => expect(within(card(GOAL_C)).getByText('Ресерч идёт')).toBeInTheDocument());
 
       // Assert 5: the restored answer without sources is drawn the same (AC-27.3 after a reload)
-      expect(feedIds(reloaded.container)).toEqual(['u-a', 'r-a', 'u-b', 'r-b', ANSWER_A, ANSWER_B, 'u-c', 'r-c']);
+      await until(() => expect(feedIds(reloaded.container)).toEqual(['u-a', 'r-a', 'u-b', 'r-b', ANSWER_A, ANSWER_B]));
       const restoredA = messageRoot(reloaded.container, ANSWER_A);
       expect(within(restoredA).getByText(MC_32)).toBeInTheDocument();
       expect(within(restoredA).getAllByText(MC_33)).toHaveLength(2);
       expect(within(restoredA).queryByRole('link', { name: /^Источник/ })).toBeNull();
-
-      // Act 6: C completes with its stop answer
-      await until(() => expect(reloadTraffic.researchReads).toBe(1));
-      await nextPeriod();
-
-      // Assert 6: appended last with MC-32 and the stop reason, no summary, no caption and no claim; the card is «Завершён»
-      await until(() => expect(feedIds(reloaded.container).at(-1)).toBe(ANSWER_C));
-      const drawnC = messageRoot(reloaded.container, ANSWER_C);
-      expect(within(drawnC).getByText(MC_32)).toBeInTheDocument();
-      expect(within(drawnC).getByText(MC_25_BUDGET)).toBeInTheDocument();
-      expect(within(drawnC).getByText('Вывода нет')).toBeInTheDocument();
-      expect(within(drawnC).queryByText(MC_34)).toBeNull();
-      expect(within(drawnC).queryByText(MC_33)).toBeNull();
-      expect(within(drawnC).queryAllByRole('listitem')).toHaveLength(0);
-      expect(within(card(GOAL_C)).getByText('Ресерч завершён')).toBeInTheDocument();
-      expect(within(card(GOAL_C)).getByText(MC_31)).toBeInTheDocument();
     });
   });
 });

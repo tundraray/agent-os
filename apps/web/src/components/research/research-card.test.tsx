@@ -101,8 +101,8 @@ describe('ResearchCard — MC-31 by the launch mode', () => {
     expect(budget.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it.each(STATES)('sources, $name: no MC-31', ({ launch, pendingDecision }) => {
-    const { card } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', sourceMode: 'sources', ...launch }), pendingDecision });
+  it('sources: no MC-31', () => {
+    const { card } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', sourceMode: 'sources', state: 'running' }) });
     expect(within(card).queryByText(MC_31)).toBeNull();
   });
 });

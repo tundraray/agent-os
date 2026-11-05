@@ -225,40 +225,4 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     expect(screen.queryByRole('heading', { name: 'Не удалось загрузить беседу' })).toBeNull();
     expect(within(history).getByRole('link', { name: 'Отчёт' })).toBeInTheDocument();
   });
-  // Guard for `joinStrategy: 'none'` (deep-research chat-entry, task-19): one stored assistant message of a multi-step
-  //   turn - reasoning, a tool call with its result, then text - is one message in the feed, never one per step.
-  // Primary failure mode: the runtime splits the parts of one stored message into several assistant messages.
-  it('one stored multi-step assistant message is drawn as one assistant message', async () => {
-    // Arrange
-    server.use(
-      http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'a', title: 'Беседа A' })]))),
-      http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' }))),
-      http.get(`${API}/api/threads/a/research`, () => HttpResponse.json({ launches: [] })),
-      http.get(`${API}/api/threads/a/messages`, () =>
-        HttpResponse.json({
-          messages: [
-            { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Сколько стоит кластер?' }] },
-            {
-              id: 'r1',
-              role: 'assistant',
-              parts: [
-                { type: 'reasoning', text: 'Нужно спросить биллинг.' },
-                { type: 'tool-x', toolCallId: 'call-x', state: 'output-available', input: { q: 'cost' }, output: { total: 42 } },
-                { type: 'text', text: 'Кластер стоит 42.' },
-              ],
-            },
-          ],
-        }),
-      ),
-    );
-
-    // Act
-    const { container } = renderWithRuntime({ pathname: '/chat/a' });
-    await screen.findByText('Кластер стоит 42.');
-
-    // Assert
-    const assistants = container.querySelectorAll<HTMLElement>('[data-role="assistant"]');
-    expect(assistants).toHaveLength(1);
-    expect(assistants[0]).toHaveAttribute('id', 'r1');
-  });
 });
