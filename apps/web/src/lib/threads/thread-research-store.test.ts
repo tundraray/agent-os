@@ -10,6 +10,9 @@ const THREAD_ID = 't-1';
 
 type Reply = ThreadResearchResponse | Error;
 
+/** The answer read (KD-6) is covered by INT-5; the poll here never needs the thread's messages. */
+const noMessages = (): Promise<never> => Promise.reject(new Error('stub: messages are not served'));
+
 /**
  * Stub of `getThreadResearch` (the external boundary): answers each request with the next queued reply, the last
  * reply repeating once the queue is down to it, and records the thread of every request.
@@ -22,7 +25,7 @@ function stubApi(...replies: Reply[]) {
     if (reply === undefined) return Promise.reject(new Error('stub: no reply queued'));
     return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
   });
-  return { api: { getThreadResearch }, getThreadResearch };
+  return { api: { getThreadResearch, getThreadMessages: noMessages }, getThreadResearch };
 }
 
 const launch = (overrides: Partial<ResearchLaunchView>): ResearchLaunchView =>
@@ -154,7 +157,7 @@ describe('useThreadResearch — polling (design-chat-entry.md KD-6)', () => {
           }),
       )
       .mockResolvedValue(threadResearch([launch({ state: 'stopped' })]));
-    research = createThreadResearch({ api: { getThreadResearch } });
+    research = createThreadResearch({ api: { getThreadResearch, getThreadMessages: noMessages } });
 
     research.open(THREAD_ID);
     research.refresh();
@@ -177,7 +180,7 @@ describe('useThreadResearch — polling (design-chat-entry.md KD-6)', () => {
           }),
       )
       .mockResolvedValue(threadResearch([launch({ state: 'running' })]));
-    const shown = createThreadResearch({ api: { getThreadResearch } });
+    const shown = createThreadResearch({ api: { getThreadResearch, getThreadMessages: noMessages } });
     research = shown;
     const hook = renderHook(({ threadId }) => useThreadResearch(shown, threadId), {
       initialProps: { threadId: THREAD_ID },
@@ -204,7 +207,7 @@ describe('useThreadResearch — polling (design-chat-entry.md KD-6)', () => {
           : threadResearch([launch({ launchKey: 'call-2', state: 'proposed' })]),
       ),
     );
-    const shown = createThreadResearch({ api: { getThreadResearch } });
+    const shown = createThreadResearch({ api: { getThreadResearch, getThreadMessages: noMessages } });
     research = shown;
     const hook = renderHook(({ threadId }) => useThreadResearch(shown, threadId), {
       initialProps: { threadId: THREAD_ID as string | null },

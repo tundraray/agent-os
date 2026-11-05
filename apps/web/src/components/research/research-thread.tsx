@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAui, useAuiState, useAssistantToolUI, type ToolCallMessagePartComponent } from '@assistant-ui/react';
+import { useAISDKChat } from '@assistant-ui/ai-sdk';
 import {
   DeepResearchToolResultSchema,
   RESEARCH_METADATA_KEYS,
@@ -9,6 +10,7 @@ import {
   type ResearchDecision,
   type ResearchLaunchView,
 } from '@agent-os/contracts';
+import type { UIMessage } from 'ai';
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { createThreadResearch, useThreadResearch, type ThreadResearch } from '@/lib/threads/thread-research-store';
@@ -43,6 +45,8 @@ type ThreadResearchContextValue = {
   launchOf: (launchKey: string) => ResearchLaunchView | undefined;
   decisionOf: (launchKey: string) => CardDecision | undefined;
   decide: (launchKey: string, action: ResearchCardAction) => void;
+  /** `true` once for an answer this tab appended to the feed, not for one restored with the history (UXRD KD-5). */
+  takeAnswerArrival: (messageId: string) => boolean;
 };
 
 const ThreadResearchContext = createContext<ThreadResearchContextValue | null>(null);
@@ -62,8 +66,18 @@ function eventOf(launch: ResearchLaunchView): ResearchAnnouncementEvent | null {
   }
 }
 
-type FeedPart = { readonly type: string; readonly toolName?: string; readonly result?: unknown };
+type FeedPart = { readonly type: string; readonly toolName?: string; readonly toolCallId?: string; readonly result?: unknown };
 type FeedMessage = { readonly role: string; readonly content: readonly FeedPart[] };
+
+/** The launches whose card a message carries: a `deepResearch` result for the launch its own call created. */
+function ownLaunchesOf(parts: readonly FeedPart[]): ResearchLaunchView[] {
+  return parts.flatMap((part) => {
+    if (part.type !== 'tool-call' || part.toolName !== DEEP_RESEARCH_TOOL || part.result === undefined) return [];
+    const parsed = DeepResearchToolResultSchema.safeParse(part.result);
+    const launch = parsed.success ? parsed.data.launch : null;
+    return launch !== null && launch.launchKey === part.toolCallId ? [launch] : [];
+  });
+}
 
 /** Every `deepResearch` result of the feed in message order; a result outside the contract is not a launch. */
 function toolLaunchesOf(messages: readonly FeedMessage[]): ToolLaunch[] {
@@ -129,7 +143,8 @@ type TabResearch = {
   turnViews: ReadonlyMap<string, ResearchLaunchView>;
   readBase: readonly ResearchLaunchView[] | null;
   decisions: ReadonlyMap<string, CardDecision>;
-  announcement: { id: number; text: string } | null;
+  /** The texts of one event batch: several events of one read are announced together, none replacing another. */
+  announcement: { id: number; texts: string[] } | null;
 };
 
 const createTabResearch = () =>
@@ -146,7 +161,12 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
   const { launches, announcements } = useThreadResearch(research, threadId);
   const messages = useAuiState((s) => s.thread.messages);
   const isRunning = useAuiState((s) => s.thread.isRunning);
+  const historyLoading = useAuiState((s) => s.thread.isLoading);
+  const chat = useAISDKChat();
   const toolLaunches = useMemo(() => toolLaunchesOf(messages), [messages]);
+  const feedIds = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
+  /** Answers this tab appended and whose message has not mounted yet (UXRD KD-5). */
+  const arrivals = useRef(new Set<string>());
 
   const [tab] = useState(createTabResearch);
   const { turnViews, readBase, decisions, announcement } = useStore(tab);
@@ -156,20 +176,41 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
   const activeDecision = useRef<{ launchKey: string; action: ResearchCardAction } | null>(null);
   const turns = useRef<TurnTracker>({ threadId, seen: new Set(), baseline: threadId !== null, pending: false });
 
-  const say = (event: ResearchAnnouncementEvent, sourceMode: ResearchLaunchView['sourceMode']): void => {
+  const say = (texts: string[]): void => {
+    if (texts.length === 0) return;
     announcementId.current += 1;
-    tab.setState({ announcement: { id: announcementId.current, text: researchAnnouncement(event, sourceMode) } });
+    tab.setState({ announcement: { id: announcementId.current, texts } });
   };
 
   useEffect(() => {
+    const texts: string[] = [];
     for (const item of announcements) {
       const echo = echoes.current.get(item.launchKey);
       echoes.current.delete(item.launchKey);
-      if (echo !== item.kind) say(item.kind, item.sourceMode);
+      if (echo !== item.kind) texts.push(researchAnnouncement(item.kind, item.sourceMode));
     }
+    say(texts);
     // `say` only writes the tab store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [announcements]);
+
+  // KD-6: a completed launch whose answer the feed lacks — appended after this tab's stream, without a turn. A history
+  // still loading counts as streaming: the runtime takes the history only into an empty feed.
+  useEffect(() => {
+    if (chat === undefined) return;
+    const append = (answers: UIMessage[]): void => {
+      // A turn may have started while the messages were read; the effect runs again once it ends.
+      if (aui.thread().getState().isRunning || chat.status === 'submitted' || chat.status === 'streaming') return;
+      // `setMessages` changes the list without a turn: `sendAutomaticallyWhen` is not consulted.
+      chat.setMessages((current) => {
+        const present = new Set(current.map((message) => message.id));
+        const fresh = answers.filter((answer) => !present.has(answer.id));
+        for (const answer of fresh) arrivals.current.add(answer.id);
+        return fresh.length === 0 ? current : [...current, ...fresh];
+      });
+    };
+    research.appendMissingAnswers({ messageIds: feedIds, streaming: isRunning || historyLoading }, append);
+  }, [aui, chat, feedIds, historyLoading, isRunning, launches, research]);
 
   // KD-6: one read after every turn with a `deepResearch` call and after every decision turn, failed or aborted too.
   useEffect(() => {
@@ -188,7 +229,7 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
       if (event === null || (known !== undefined && eventOf(known) === event)) continue;
       if (echoes.current.get(view.launchKey) === event) continue;
       echoes.current.set(view.launchKey, event);
-      say(event, view.sourceMode);
+      say([researchAnnouncement(event, view.sourceMode)]);
     }
     if (views.length > 0) {
       const current = tab.getState();
@@ -212,11 +253,16 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
     }
     // A read after the turn supersedes what the turn reported.
     const fromTurn = readBase === launches ? turnViews : new Map<string, ResearchLaunchView>();
+    // «К ответу» leads only to an answer the feed shows: until it is appended the card is «Завершён» without the link.
+    const linkable = (launch: ResearchLaunchView | undefined): ResearchLaunchView | undefined =>
+      launch?.answerMessageId != null && !feedIds.has(launch.answerMessageId) ? { ...launch, answerMessageId: null } : launch;
     return {
       launchOf: (launchKey) =>
-        fromTurn.get(launchKey) ??
-        launches.find((launch) => launch.launchKey === launchKey) ??
-        lastToolView.get(launchKey),
+        linkable(
+          fromTurn.get(launchKey) ??
+            launches.find((launch) => launch.launchKey === launchKey) ??
+            lastToolView.get(launchKey),
+        ),
       decisionOf: (launchKey) => decisions.get(launchKey),
       decide: (launchKey, action) => {
         // UXRD KD-8: the tab runs one reply stream; a press during it is not queued.
@@ -227,14 +273,15 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
         const metadata = { custom: {}, [RESEARCH_METADATA_KEYS.researchDecision]: decision };
         aui.thread().append({ role: 'user', content: [{ type: 'text', text: DECISION_TEXT[action] }], metadata });
       },
+      takeAnswerArrival: (messageId) => arrivals.current.delete(messageId),
     };
-  }, [aui, decisions, isRunning, launches, readBase, tab, toolLaunches, turnViews]);
+  }, [aui, decisions, feedIds, isRunning, launches, readBase, tab, toolLaunches, turnViews]);
 
   return (
     <ThreadResearchContext.Provider value={value}>
       {children}
       <p role="status" className="sr-only">
-        {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
+        {announcement?.texts.map((text, index) => <span key={`${announcement.id}-${index}`}>{text}</span>)}
       </p>
     </ThreadResearchContext.Provider>
   );
@@ -246,8 +293,33 @@ function useThreadResearchContext(): ThreadResearchContextValue {
   return value;
 }
 
+/**
+ * MC-21: the reply carries the card of a launch that regenerating it would stop — `proposed` or `running` as the card
+ * shows it. Outside the provider the card's own result decides.
+ */
+export function useReplyCarriesActiveResearch(): boolean {
+  const context = useContext(ThreadResearchContext);
+  const parts = useAuiState((s) => s.message.parts);
+  return useMemo(
+    () =>
+      ownLaunchesOf(parts).some((own) => {
+        const { state } = context?.launchOf(own.launchKey) ?? own;
+        return state === 'proposed' || state === 'running';
+      }),
+    [context, parts],
+  );
+}
+
+/** Whether the answer message `messageId` was just appended by this tab; answers once per arrival (UXRD KD-5). */
+export function useTakeAnswerArrival(): (messageId: string) => boolean {
+  const context = useContext(ThreadResearchContext);
+  return context?.takeAnswerArrival ?? noArrival;
+}
+
+const noArrival = (): boolean => false;
+
 /** «К ответу» and «К запросу»: scroll to the anchored message or card and focus its heading, or the element itself. */
-function showResearchAnchor(anchorId: string): void {
+export function showResearchAnchor(anchorId: string): void {
   const target = document.getElementById(anchorId);
   if (target === null) return;
   const heading = target.querySelector<HTMLElement>('h2[tabindex="-1"]');

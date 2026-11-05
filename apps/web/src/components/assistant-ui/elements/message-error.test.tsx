@@ -6,10 +6,12 @@ import {
   type ChatModelAdapter,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
+import type { ResearchLaunchViewState } from '@agent-os/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { researchLaunchView } from '@/test/fixtures';
 
 const flags = vi.hoisted(() => ({ regenerateAfterError: true }));
 
@@ -254,5 +256,69 @@ describe('MessageError — DeletedNotice slot (AC-08.5e; UXRD E-8, TH-07 «Delet
 
     await user.click(screen.getByRole('button', { name: 'Новый чат' }));
     expect(onNewChat).toHaveBeenCalledOnce();
+  });
+});
+
+describe('MessageError — MC-21 over «Перегенерировать» of a reply with a research card (deep-research AC-22.2, UXRD KD-7)', () => {
+  const MC_21 = 'Перегенерация остановит ресерч из этого ответа.';
+  const GOAL = 'Почему выросли расходы на облако';
+
+  /** A failed last reply whose only part is a `deepResearch` call with its result. */
+  const failedReplyWithCall = ({ toolCallId, launchKey, state }: { toolCallId: string; launchKey: string; state: ResearchLaunchViewState }) => {
+    const launch = researchLaunchView({
+      launchKey,
+      state,
+      mode: 'proposal',
+      notLaunchedReason: state === 'not_launched' ? 'declined' : null,
+      answerMessageId: state === 'completed' ? 'research-answer-inv-1' : null,
+    });
+    const messages: ThreadMessageLike[] = [
+      { id: 'u1', role: 'user', content: 'Вопрос' },
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId, toolName: 'deepResearch', args: { goal: GOAL }, result: { launch } }],
+        status: { type: 'incomplete', reason: 'error', error: PROVIDER_ERROR },
+      },
+    ];
+    return messages;
+  };
+
+  // The rule: the card the reply carries is `proposed` or `running` — a regeneration would stop it (AC-22.2).
+  it.each<{ name: string; state: ResearchLaunchViewState; ownCall: boolean; warned: boolean }>([
+    { name: 'a proposal', state: 'proposed', ownCall: true, warned: true },
+    { name: 'a running research', state: 'running', ownCall: true, warned: true },
+    { name: 'a completed research', state: 'completed', ownCall: true, warned: false },
+    { name: 'a failed research', state: 'failed', ownCall: true, warned: false },
+    { name: 'a stopped research', state: 'stopped', ownCall: true, warned: false },
+    { name: 'a declined proposal', state: 'not_launched', ownCall: true, warned: false },
+    { name: 'a call returning another launch (a decision turn)', state: 'running', ownCall: false, warned: false },
+  ])('the block over «Перегенерировать» of a reply carrying $name shows MC-21: $warned', ({ state, ownCall, warned }) => {
+    renderThread({
+      initialMessages: failedReplyWithCall({ toolCallId: 'call-1', launchKey: ownCall ? 'call-1' : 'call-0', state }),
+    });
+
+    const button = screen.getByRole('button', { name: REGENERATE });
+    expect(screen.queryByText(MC_21) !== null).toBe(warned);
+    if (warned) {
+      const block = button.closest<HTMLElement>('[data-slot="message-error"]');
+      if (block === null) throw new Error('«Перегенерировать» is not inside [data-slot="message-error"]');
+      expect(within(block).getByText(MC_21).compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(button).toHaveAccessibleDescription(`${BLOCK_TEXT} ${MC_21}`);
+    } else {
+      expect(button).toHaveAccessibleDescription(BLOCK_TEXT);
+    }
+  });
+
+  it('a plain failed reply shows no MC-21', () => {
+    renderThread({
+      initialMessages: [
+        { id: 'u1', role: 'user', content: 'Вопрос' },
+        { id: 'a1', role: 'assistant', content: 'Частичный', status: { type: 'incomplete', reason: 'error', error: PROVIDER_ERROR } },
+      ],
+    });
+
+    expect(screen.getByRole('button', { name: REGENERATE })).toBeInTheDocument();
+    expect(screen.queryByText(MC_21)).toBeNull();
   });
 });

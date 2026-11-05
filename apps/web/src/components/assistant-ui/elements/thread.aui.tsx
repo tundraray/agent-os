@@ -28,9 +28,19 @@ import { regenerateAfterError } from "@/lib/config";
 import { focusAfterNewChat } from "@/lib/focus";
 import { ResearchLaunchLabel } from "@/components/research/research-launch-label";
 import { RESEARCH_MODE_COMPOSER_COPY } from "@/components/research/research-mode-toggle";
-import { useResearchModeOn } from "@/components/research/research-thread";
+import { ResearchAnswer } from "@/components/research/research-answer";
+import {
+  showResearchAnchor,
+  useReplyCarriesActiveResearch,
+  useResearchModeOn,
+  useTakeAnswerArrival,
+} from "@/components/research/research-thread";
 import { isHiddenMessageAt, isLastVisibleMessageAt } from "@/lib/threads/research-messages";
-import { RESEARCH_METADATA_KEYS } from "@agent-os/contracts";
+import {
+  RESEARCH_METADATA_KEYS,
+  ResearchAnswerMetadataSchema,
+  type ResearchAnswerMetadata,
+} from "@agent-os/contracts";
 import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
@@ -41,6 +51,7 @@ import {
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
+  useThreadViewport,
   type FileMessagePartComponent,
   type ImageMessagePartComponent,
   type TextMessagePartComponent,
@@ -65,8 +76,10 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -646,8 +659,13 @@ const MessageError: FC = () => {
   );
 };
 
+/** MC-21 (deep-research UXRD, KD-7): over «Перегенерировать» when the reply carries a research a regeneration would stop. */
+const RESEARCH_REGENERATE_WARNING = "Перегенерация остановит ресерч из этого ответа.";
+
 const ReplyErrorBlock: FC = () => {
   const textId = useId();
+  const warningId = useId();
+  const stopsResearch = useReplyCarriesActiveResearch();
   return (
     <div
       data-slot="message-error"
@@ -662,8 +680,13 @@ const ReplyErrorBlock: FC = () => {
         </p>
         {regenerateAfterError && (
           <AuiIf condition={(s) => s.message.isLast}>
+            {stopsResearch && (
+              <p id={warningId} className="text-foreground">
+                {RESEARCH_REGENERATE_WARNING}
+              </p>
+            )}
             <ActionBarPrimitive.Reload
-              aria-describedby={textId}
+              aria-describedby={stopsResearch ? `${textId} ${warningId}` : textId}
               onClick={focusAfterNewChat}
               render={<Button variant="outline" size="sm" className={REGENERATE_CLASS} />}
             >
@@ -687,6 +710,7 @@ const AssistantMessage: FC = () => {
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
   const isBlank = useAuiState(isBlankReply);
   const messageId = useAuiState((s) => s.message.id);
+  const researchAnswer = useResearchAnswerOf();
 
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
@@ -710,6 +734,9 @@ const AssistantMessage: FC = () => {
             data-slot="aui_assistant-message-content"
             className="text-foreground px-2 leading-relaxed wrap-break-word"
           >
+            {researchAnswer !== null ? (
+              <ResearchAnswerContent answer={researchAnswer} />
+            ) : (
             <MessagePrimitive.GroupedParts groupBy={groupBy}>
               {({ part, children }) => {
                 switch (part.type) {
@@ -780,6 +807,7 @@ const AssistantMessage: FC = () => {
                 }
               }}
             </MessagePrimitive.GroupedParts>
+            )}
             <MessageError />
           </div>
 
@@ -792,6 +820,47 @@ const AssistantMessage: FC = () => {
         </>
       )}
     </MessagePrimitive.Root>
+  );
+};
+
+/**
+ * DR-04: the research answer drawn from its `researchAnswer` metadata in place of the text, which stays for the model and
+ * «Копировать» (design-chat-entry.md, KD-5). Metadata outside the contract leaves the message drawn as text.
+ */
+const useResearchAnswerOf = (): ResearchAnswerMetadata | null => {
+  const raw = useAuiState((s) => s.message.metadata.custom[RESEARCH_METADATA_KEYS.researchAnswer]);
+  return useMemo(() => {
+    if (raw === undefined) return null;
+    const parsed = ResearchAnswerMetadataSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn("[deep-research] research answer metadata outside the contract; drawn as text");
+      return null;
+    }
+    return parsed.data;
+  }, [raw]);
+};
+
+/**
+ * UXRD KD-5: an answer this tab appended moves neither focus nor, unless the reader stands at the end of the feed with
+ * nothing streaming, the reading position; then the feed shows the answer from its header.
+ */
+const ResearchAnswerContent: FC<{ answer: ResearchAnswerMetadata }> = ({ answer }) => {
+  const messageId = useAuiState((s) => s.message.id);
+  const takeArrival = useTakeAnswerArrival();
+  const atEnd = useThreadViewport((s) => s.isAtBottom);
+  const streaming = useAuiState((s) => s.thread.isRunning);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // On mount only: the position the reader had when the answer arrived decides, not a later scroll.
+  useEffect(() => {
+    if (takeArrival(messageId) && atEnd && !streaming) rootRef.current?.scrollIntoView({ block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div ref={rootRef} className="scroll-mt-4">
+      <ResearchAnswer answer={answer} onShowLaunch={showResearchAnchor} />
+    </div>
   );
 };
 

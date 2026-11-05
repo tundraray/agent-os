@@ -15,7 +15,260 @@
 // Unique defect no other test catches (why this is an extra slot): the api rows prove that the answer is stored and listed; nothing else proves that an open tab fetches the missing answer, appends it at the end of the feed without a turn
 // and not in the middle of a stream, keeps polling exactly as long as something is pending, and shows the card states without a reload. Without it the user sees «Завершён» with a link to a message that is not in the feed.
 
-import { describe, it } from 'vitest';
+import {
+  RESEARCH_METADATA_KEYS,
+  type DeepResearchToolResult,
+  type HistoryMessage,
+  type ResearchAnswerMetadata,
+  type ResearchLaunchView,
+} from '@agent-os/contracts';
+import { act, fireEvent, screen, within } from '@testing-library/react';
+import type { UIMessageChunk } from 'ai';
+import { http, HttpResponse } from 'msw';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { RESEARCH_POLL_INTERVAL_MS } from '@/lib/threads/research-poll';
+import {
+  assistantTextChunks,
+  deepResearchToolPart,
+  deferred,
+  researchDecisionPair,
+  researchAnswerMessage,
+  researchLaunchView,
+  sseFromChunks,
+  threadList,
+  threadResearch,
+  threadSummary,
+  type Deferred,
+} from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+const API = 'http://api.test';
+const THREAD = 'a';
+const GOAL_A = 'Почему выросли расходы на облако';
+const GOAL_B = 'Как снизить задержки API';
+const GOAL_C = 'Что с резервными копиями';
+const ANSWER_A = 'research-answer-inv-a';
+const ANSWER_B = 'research-answer-inv-b';
+const ANSWER_C = 'research-answer-inv-c';
+
+const MC_12 = 'Ответа не будет. Чтобы попробовать снова, отправьте вопрос в режиме „Глубокий ресерч“.';
+const MC_15 = 'Не удалось запустить ресерч. Попробуйте ещё раз.';
+const MC_18 = 'Ресерч завершён. Ответ добавлен в конец беседы.';
+const MC_18_NO_SOURCES = 'Ресерч завершён. Ответ из знаний модели добавлен в конец беседы.';
+const MC_25_BUDGET = 'Остановлен: исчерпан бюджет';
+const MC_31 = 'Источники данных не подключены — ответ будет из знаний модели.';
+const MC_32 = 'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.';
+const MC_33 = 'из знаний модели, без источника';
+const MC_34 = 'Краткий пересказ — основания в утверждениях ниже';
+const SUMMARY = 'Расходы выросли из-за новых кластеров.';
+
+type ChatReply = (body: unknown) => Response | Promise<Response>;
+
+/** What MSW received; every counter belongs to one test. The first GET /messages is the history load. */
+type Traffic = { chatBodies: unknown[]; researchReads: number; messageReads: number };
+
+/**
+ * Serves thread `a`: its summary, its messages and its research list (functions of the read number, so a test changes
+ * what the next read returns), and the chat turns, answered in order by `replies`.
+ */
+function serveThread({
+  messages,
+  research,
+  replies = [],
+}: {
+  messages: (read: number) => HistoryMessage[];
+  research: (read: number) => ResearchLaunchView[];
+  replies?: ChatReply[];
+}): Traffic {
+  const traffic: Traffic = { chatBodies: [], researchReads: 0, messageReads: 0 };
+  server.use(
+    http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: THREAD, title: 'Беседа A' })]))),
+    http.get(`${API}/api/threads/${THREAD}`, () => HttpResponse.json(threadSummary({ id: THREAD, title: 'Беседа A' }))),
+    http.get(`${API}/api/threads/${THREAD}/messages`, () => {
+      traffic.messageReads += 1;
+      return HttpResponse.json({ messages: messages(traffic.messageReads) });
+    }),
+    http.get(`${API}/api/threads/${THREAD}/research`, () => {
+      traffic.researchReads += 1;
+      return HttpResponse.json(threadResearch(research(traffic.researchReads)));
+    }),
+    http.post(`${API}/api/chat/assistant`, async ({ request }) => {
+      const body: unknown = await request.json();
+      traffic.chatBodies.push(body);
+      const reply = replies[traffic.chatBodies.length - 1];
+      if (reply === undefined) throw new Error(`no reply queued for chat request ${traffic.chatBodies.length}`);
+      return reply(body);
+    }),
+  );
+  return traffic;
+}
+
+// The clock moves only when a test says so: `settle` lets the network and React run with the clock standing, and
+// `nextPeriod` moves it by one poll period. RTL's `waitFor` / `findBy*` wait on the faked `setTimeout`; `until` replaces them.
+
+/** Lets the network, React and the timers already due run, without moving the clock. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+}
+
+/** Settles until `check` passes; the clock stands still, so no poll period passes while waiting. */
+async function until(check: () => void): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      check();
+      return;
+    } catch {
+      await settle();
+    }
+  }
+  check();
+}
+
+/** Settles long enough for anything already started to finish, so the caller can assert that nothing more happened. */
+async function quiet(): Promise<void> {
+  for (let round = 0; round < 20; round += 1) await settle();
+}
+
+async function nextPeriod(): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(RESEARCH_POLL_INTERVAL_MS);
+  });
+  await settle();
+}
+
+/** An SSE reply that sends `before`, waits for `gate`, then sends `after` - the latch that holds a turn mid-stream. */
+function heldStream(before: UIMessageChunk[], gate: Deferred<void>, after: UIMessageChunk[]): Response {
+  const encoder = new TextEncoder();
+  const event = (chunk: UIMessageChunk | '[DONE]') =>
+    encoder.encode(`data: ${chunk === '[DONE]' ? chunk : JSON.stringify(chunk)}\n\n`);
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const chunk of before) controller.enqueue(event(chunk));
+      await gate.promise;
+      for (const chunk of after) controller.enqueue(event(chunk));
+      controller.enqueue(event('[DONE]'));
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1' },
+  });
+}
+
+/** The chunks of a reply whose only part is a `deepResearch` call; a decision reply carries its label in the stream. */
+function toolReplyChunks({
+  messageId,
+  toolCallId,
+  goal,
+  result,
+  decisionReplyOf,
+}: {
+  messageId: string;
+  toolCallId: string;
+  goal: string;
+  result: DeepResearchToolResult;
+  decisionReplyOf?: string;
+}): UIMessageChunk[] {
+  return [
+    decisionReplyOf === undefined
+      ? { type: 'start', messageId }
+      : {
+          type: 'start',
+          messageId,
+          messageMetadata: { [RESEARCH_METADATA_KEYS.researchDecisionReply]: { launchKey: decisionReplyOf } },
+        },
+    { type: 'tool-input-available', toolCallId, toolName: 'deepResearch', input: { goal } },
+    { type: 'tool-output-available', toolCallId, output: result },
+    { type: 'finish' },
+  ];
+}
+
+/** A user message sent in the research mode: the launch message of an explicit research. */
+function launchMessage(id: string, text: string): HistoryMessage {
+  return { id, role: 'user', metadata: { [RESEARCH_METADATA_KEYS.deepResearch]: true }, parts: [{ type: 'text', text }] };
+}
+
+const userMessage = (id: string, text: string): HistoryMessage => ({ id, role: 'user', parts: [{ type: 'text', text }] });
+const assistantMessage = (id: string, text: string): HistoryMessage => ({
+  id,
+  role: 'assistant',
+  parts: [{ type: 'text', text }],
+});
+
+/** A restored assistant message holding the card of one launch: its `deepResearch` call and result. */
+function cardMessage(id: string, launch: ResearchLaunchView): HistoryMessage {
+  return {
+    id,
+    role: 'assistant',
+    parts: [deepResearchToolPart({ toolCallId: launch.launchKey, goal: launch.goal, result: { launch } })],
+  };
+}
+
+/** An answer message as the delivery loop stores it. */
+function answerMessage(
+  id: string,
+  answer: Partial<ResearchAnswerMetadata> & Pick<ResearchAnswerMetadata, 'launchKey'>,
+  text?: string,
+): HistoryMessage {
+  return researchAnswerMessage({ id, text, answer });
+}
+
+/** The drawn feed: the id of every user and assistant message root, in order. */
+function feedIds(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-role="user"], [data-role="assistant"]')).map(
+    (root) => root.id,
+  );
+}
+
+function messageRoot(container: HTMLElement, id: string): HTMLElement {
+  const root = container.querySelector<HTMLElement>(`[data-role][id="${id}"]`);
+  if (root === null) throw new Error(`no message ${id} in the feed`);
+  return root;
+}
+
+const card = (goal: string) => screen.getByRole('group', { name: `Ресерч: ${goal}` });
+/** Every text the polite regions announce now: one per announcement span, or the region's own text. */
+const statusText = () =>
+  screen
+    .getAllByRole('status')
+    .flatMap((region) =>
+      region.children.length > 0
+        ? Array.from(region.children, (child) => child.textContent ?? '')
+        : [region.textContent ?? ''],
+    );
+const composer = () => screen.getByRole('textbox', { name: 'Сообщение' });
+
+// user-event and RTL's async helpers drain on the faked `setTimeout`, so interactions are dispatched directly.
+function click(element: HTMLElement): void {
+  act(() => {
+    fireEvent.click(element);
+  });
+}
+
+/** Types `text` into the composer and sends it with «Отправить». */
+function sendMessage(text: string): void {
+  act(() => {
+    fireEvent.change(composer(), { target: { value: text } });
+  });
+  click(screen.getByRole('button', { name: 'Отправить' }));
+}
+
+beforeEach(() => {
+  // Only the timers the poll runs on; the network, React's scheduler and `Date` stay real.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  // handleChatError and the research store log failures; the tests assert what the user sees instead.
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('Shell: polling the research state and appending the answer in the open thread (FR-20, FR-21, KD-6)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -68,11 +321,433 @@ describe('Shell: polling the research state and appending the answer in the open
   //   launch is answered its answer has MC-32 and MC-33 while a later `sources` answer of the proposal confirmed afterwards has footnotes and none of the three.
   //   UC-E8 row: the answer message is a stop before the synthesis ended (outcome `inconclusive`, stop reason, no claims) -> it is appended last, opens with MC-32, shows the stop reason MC-25 and no claim, and the card is «Завершён»
   describe('INT-5', () => {
-    it.todo('INT-5 P1: a running card is polled each period, a finished launch whose answer is missing is fetched and appended last without starting a turn, polling then stops, and failed or stopped launches add no answer');
-    it.todo('INT-5 P2: an answer that completes while another reply streams is appended only after that stream ends, as a separate message, in the same order after a reload');
-    it.todo('INT-5 P3: a launch whose answer was removed by a regenerate keeps polling without «К ответу», and its answer returns once after the new reply or the card turns failed');
-    it.todo('INT-5 P4: a decision message with no reply stays hidden, the answer is still appended, and the state is read once after each deepResearch turn and each failed decision turn');
-    it.todo('INT-5 P5: an answer without sources appended by the poll is drawn with the warning and the mark on every claim and no footnotes, the same after a reload and in the copy, each card and answer follows its own launch\'s mode when modes are mixed, and a stop before the synthesis shows the warning, the reason and no claim');
+    it('INT-5 P1: a running card is polled each period, a finished launch whose answer is missing is fetched and appended last without starting a turn, polling then stops, and failed or stopped launches add no answer', async () => {
+      // Arrange: three explicit launches running, all with a source
+      const runningA = researchLaunchView({ launchKey: 'call-a', goal: GOAL_A });
+      const runningB = researchLaunchView({ launchKey: 'call-b', goal: GOAL_B });
+      const runningC = researchLaunchView({ launchKey: 'call-c', goal: GOAL_C });
+      const history = [
+        launchMessage('u-a', 'Почему выросли расходы?'),
+        cardMessage('r-a', runningA),
+        launchMessage('u-b', 'Как снизить задержки?'),
+        cardMessage('r-b', runningB),
+        launchMessage('u-c', 'Что с бэкапами?'),
+        cardMessage('r-c', runningC),
+      ];
+      const answer = answerMessage(
+        ANSWER_A,
+        { launchKey: 'call-a', goal: GOAL_A, launch: { messageId: 'u-a' } },
+        'Текстовая часть ответа для модели',
+      );
+      const traffic = serveThread({
+        messages: (read) => (read === 1 ? history : [...history, answer]),
+        research: (read) =>
+          read < 3
+            ? [runningA, runningB, runningC]
+            : [
+                { ...runningA, state: 'completed', answerMessageId: ANSWER_A },
+                { ...runningB, state: 'failed' },
+                { ...runningC, state: 'stopped' },
+              ],
+      });
+      const view = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(1));
+
+      // Act 1: one period - the launches are still running
+      await nextPeriod();
+
+      // Assert 1: one read per period, nothing else
+      await until(() => expect(traffic.researchReads).toBe(2));
+      expect(traffic.messageReads).toBe(1);
+
+      // Act 2: the next period reports, in one read, A completed, B failed and C stopped
+      await nextPeriod();
+
+      // Assert 2: all three events are announced together, none replacing another
+      await until(() => expect(statusText()).toEqual(expect.arrayContaining([MC_18, 'Ресерч не удался', 'Ресерч остановлен'])));
+      expect(within(card(GOAL_B)).getByText('Ресерч не удался')).toBeInTheDocument();
+      expect(within(card(GOAL_C)).getByText('Ресерч остановлен')).toBeInTheDocument();
+
+      // Assert 3: one GET /messages, only A's answer; the answer is the last message, drawn as DR-04; no turn started
+      await until(() => expect(feedIds(view.container).at(-1)).toBe(ANSWER_A));
+      expect(feedIds(view.container)).toEqual(['u-a', 'r-a', 'u-b', 'r-b', 'u-c', 'r-c', ANSWER_A]);
+      expect(traffic.messageReads).toBe(2);
+      expect(traffic.chatBodies).toHaveLength(0);
+      const drawn = messageRoot(view.container, ANSWER_A);
+      expect(within(drawn).getByRole('heading', { name: 'Ответ ресерча' })).toBeInTheDocument();
+      expect(within(drawn).getByText('Есть ответ')).toBeInTheDocument();
+      expect(within(drawn).getByText(GOAL_A)).toBeInTheDocument();
+      expect(within(drawn).getByText(SUMMARY)).toBeInTheDocument();
+      expect(within(drawn).getByText(MC_34)).toBeInTheDocument();
+      expect(within(drawn).getByRole('heading', { name: 'Установлено' })).toBeInTheDocument();
+      expect(within(drawn).getByRole('link', { name: 'Источник 1' })).toBeInTheDocument();
+      expect(within(drawn).getByRole('button', { name: 'Источники (1)' })).toBeInTheDocument();
+      expect(drawn).not.toHaveTextContent('Текстовая часть ответа для модели');
+      // AC-27.4: with a source neither the card nor the answer carries a no-source warning
+      for (const text of [MC_31, MC_32, MC_33]) expect(view.container).not.toHaveTextContent(text);
+      expect(within(card(GOAL_A)).getByText('Ресерч завершён')).toBeInTheDocument();
+      expect(within(card(GOAL_A)).getByRole('link', { name: 'К ответу' })).toHaveAttribute('href', `#${ANSWER_A}`);
+
+      // Act 4: two more periods
+      await nextPeriod();
+      await nextPeriod();
+      await quiet();
+
+      // Assert 4: nothing is pending - no more reads, the answer is drawn once
+      expect(traffic.researchReads).toBe(3);
+      expect(traffic.messageReads).toBe(2);
+      expect(feedIds(view.container).filter((id) => id === ANSWER_A)).toHaveLength(1);
+
+      // Act 5 / Assert 5: «К запросу» leads to the launch message, «К ответу» to the answer's header (AC-20.6)
+      click(within(drawn).getByRole('link', { name: 'К запросу ресерча' }));
+      expect(messageRoot(view.container, 'u-a')).toHaveFocus();
+      click(within(card(GOAL_A)).getByRole('link', { name: 'К ответу' }));
+      expect(within(drawn).getByRole('heading', { name: 'Ответ ресерча' })).toHaveFocus();
+    });
+    it('INT-5 P2: an answer that completes while another reply streams is appended only after that stream ends, as a separate message, in the same order after a reload', async () => {
+      // Arrange: a running launch; the next chat reply is held mid-stream by a latch
+      const runningA = researchLaunchView({ launchKey: 'call-a', goal: GOAL_A });
+      const history = [launchMessage('u-a', 'Почему выросли расходы?'), cardMessage('r-a', runningA)];
+      const answer = answerMessage(ANSWER_A, { launchKey: 'call-a', goal: GOAL_A, launch: { messageId: 'u-a' } });
+      const gate = deferred();
+      const [start, textStart, delta, ...tail] = assistantTextChunks('Обычный ответ', 'r-2');
+      let stored: HistoryMessage[] = history;
+      const traffic = serveThread({
+        messages: () => stored,
+        research: (read) => (read === 1 ? [runningA] : [{ ...runningA, state: 'completed', answerMessageId: ANSWER_A }]),
+        replies: [() => heldStream([start, textStart, delta], gate, tail)],
+      });
+      const view = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(1));
+
+      // Act 1: a message is sent; its reply streams and stops at the latch
+      sendMessage('Ещё вопрос');
+      await until(() => expect(screen.getByText('Обычный ответ')).toBeInTheDocument());
+      expect(traffic.chatBodies).toHaveLength(1);
+
+      // Act 2: a period passes while the reply streams; the launch is now completed
+      await nextPeriod();
+      await until(() => expect(traffic.researchReads).toBe(2));
+      await quiet();
+
+      // Assert 2: nothing is read or inserted mid-stream; the card is «Завершён» without a link to a missing answer
+      expect(traffic.messageReads).toBe(1);
+      expect(feedIds(view.container)).not.toContain(ANSWER_A);
+      expect(within(card(GOAL_A)).getByText('Ресерч завершён')).toBeInTheDocument();
+      expect(within(card(GOAL_A)).queryByRole('link', { name: 'К ответу' })).toBeNull();
+
+      // Act 3: the reply ends; the server has stored the answer after it (DC-3)
+      const userId = feedIds(view.container).at(-2) ?? '';
+      stored = [...history, userMessage(userId, 'Ещё вопрос'), assistantMessage('r-2', 'Обычный ответ'), answer];
+      gate.resolve();
+
+      // Assert 3: one GET /messages after the stream; the answer follows the finished reply as its own message
+      await until(() => expect(feedIds(view.container).at(-1)).toBe(ANSWER_A));
+      expect(feedIds(view.container)).toEqual(['u-a', 'r-a', userId, 'r-2', ANSWER_A]);
+      expect(traffic.messageReads).toBe(2);
+      expect(traffic.chatBodies).toHaveLength(1);
+      expect(messageRoot(view.container, 'r-2')).toHaveTextContent('Обычный ответ');
+      expect(messageRoot(view.container, 'r-2')).not.toHaveTextContent('Ответ ресерча');
+      expect(messageRoot(view.container, ANSWER_A)).not.toHaveTextContent('Обычный ответ');
+      expect(within(card(GOAL_A)).getByRole('link', { name: 'К ответу' })).toHaveAttribute('href', `#${ANSWER_A}`);
+
+      // Act 4: reload - the history holds both
+      view.unmount();
+      serveThread({ messages: () => stored, research: () => [{ ...runningA, state: 'completed', answerMessageId: ANSWER_A }] });
+      const reloaded = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+
+      // Assert 4: the same order
+      await until(() => expect(feedIds(reloaded.container)).toEqual(['u-a', 'r-a', userId, 'r-2', ANSWER_A]));
+    });
+
+    it('INT-5 P3: a launch whose answer was removed by a regenerate keeps polling without «К ответу», and its answer returns once after the new reply or the card turns failed', async () => {
+      // Arrange: two finished launches whose answers a regeneration removed (`answerPending`), after the regenerated reply
+      const completedA = researchLaunchView({ launchKey: 'call-a', goal: GOAL_A, state: 'completed', answerPending: true });
+      const completedB = researchLaunchView({ launchKey: 'call-b', goal: GOAL_B, state: 'completed', answerPending: true });
+      const history = [
+        launchMessage('u-a', 'Почему выросли расходы?'),
+        cardMessage('r-a', researchLaunchView({ launchKey: 'call-a', goal: GOAL_A })),
+        launchMessage('u-b', 'Как снизить задержки?'),
+        cardMessage('r-b', researchLaunchView({ launchKey: 'call-b', goal: GOAL_B })),
+        userMessage('u-3', 'Вопрос'),
+        assistantMessage('r-3', 'Новый ответ'),
+      ];
+      const answer = answerMessage(ANSWER_A, { launchKey: 'call-a', goal: GOAL_A, launch: { messageId: 'u-a' } });
+      const traffic = serveThread({
+        messages: (read) => (read === 1 ? history : [...history, answer]),
+        research: (read) => {
+          if (read < 3) return [completedA, completedB];
+          const answeredA = { ...completedA, answerPending: false, answerMessageId: ANSWER_A };
+          return read === 3 ? [answeredA, completedB] : [answeredA, { ...completedB, state: 'failed', answerPending: false }];
+        },
+      });
+      const view = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_A)).getByText('Ресерч завершён')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(1));
+
+      // Assert 1: «Завершён» without «К ответу» on both, and the poll goes on
+      expect(within(card(GOAL_A)).queryByRole('link', { name: 'К ответу' })).toBeNull();
+      expect(within(card(GOAL_B)).queryByRole('link', { name: 'К ответу' })).toBeNull();
+      await nextPeriod();
+      await until(() => expect(traffic.researchReads).toBe(2));
+      expect(traffic.messageReads).toBe(1);
+
+      // Act 2: the server reports A's answer stored again
+      await nextPeriod();
+
+      // Assert 2: it is fetched once and appended after the regenerated reply; MC-18 is announced again
+      await until(() => expect(feedIds(view.container).at(-1)).toBe(ANSWER_A));
+      expect(feedIds(view.container)).toEqual(['u-a', 'r-a', 'u-b', 'r-b', 'u-3', 'r-3', ANSWER_A]);
+      expect(traffic.messageReads).toBe(2);
+      expect(within(card(GOAL_A)).getByRole('link', { name: 'К ответу' })).toHaveAttribute('href', `#${ANSWER_A}`);
+      expect(statusText()).toContain(MC_18);
+
+      // Act 3: B's answer could not be written again
+      await nextPeriod();
+
+      // Assert 3: B is «Не удался» with MC-12, nothing is pending, and nothing more is read or appended
+      await until(() => expect(within(card(GOAL_B)).getByText('Ресерч не удался')).toBeInTheDocument());
+      expect(within(card(GOAL_B)).getByText(MC_12)).toBeInTheDocument();
+      await nextPeriod();
+      await quiet();
+      expect(traffic.researchReads).toBe(4);
+      expect(traffic.messageReads).toBe(2);
+      expect(feedIds(view.container).filter((id) => id === ANSWER_A)).toHaveLength(1);
+      expect(traffic.chatBodies).toHaveLength(0);
+    });
+    it('INT-5 P4: a decision message with no reply stays hidden, the answer is still appended, and the state is read once after each deepResearch turn and each failed decision turn', async () => {
+      // Arrange: the stored tail is a «Остановить» decision whose turn failed before its reply (UC-E7)
+      const runningA = researchLaunchView({ launchKey: 'call-a', goal: GOAL_A });
+      const completedA = { ...runningA, state: 'completed' as const, answerMessageId: ANSWER_A };
+      const proposalB = researchLaunchView({ launchKey: 'call-b', mode: 'proposal', state: 'proposed', goal: GOAL_B });
+      const history: HistoryMessage[] = [
+        launchMessage('u-a', 'Почему выросли расходы?'),
+        cardMessage('r-a', runningA),
+        {
+          id: 'd-1',
+          role: 'user',
+          metadata: { [RESEARCH_METADATA_KEYS.researchDecision]: { action: 'stop', launchKey: 'call-a' } },
+          parts: [{ type: 'text', text: 'Остановить' }],
+        },
+      ];
+      const answer = answerMessage(ANSWER_A, { launchKey: 'call-a', goal: GOAL_A, launch: { messageId: 'u-a' } });
+      const traffic = serveThread({
+        messages: (read) => (read === 1 ? history : [...history, answer]),
+        research: (read) => (read === 1 ? [runningA] : read === 2 ? [completedA] : [completedA, proposalB]),
+        replies: [
+          () =>
+            sseFromChunks(
+              toolReplyChunks({ messageId: 'r-b', toolCallId: 'call-b', goal: GOAL_B, result: { launch: proposalB } }),
+            ),
+          () => HttpResponse.json({ message: 'provider unavailable' }, { status: 500 }),
+        ],
+      });
+      const view = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(1));
+
+      // Assert 1: the decision message is not drawn
+      expect(feedIds(view.container)).toEqual(['u-a', 'r-a']);
+
+      // Act 2: the research completes
+      await nextPeriod();
+
+      // Assert 2: its answer is the last message drawn, the decision stays hidden, and the poll ends
+      await until(() => expect(feedIds(view.container)).toEqual(['u-a', 'r-a', ANSWER_A]));
+      expect(within(card(GOAL_A)).getByRole('link', { name: 'К ответу' })).toBeInTheDocument();
+      await nextPeriod();
+      await quiet();
+      expect(traffic.researchReads).toBe(2);
+
+      // Act 3: a turn that ends in a `deepResearch` call (a proposal: nothing pending)
+      sendMessage('Предложи ресерч про задержки');
+      await until(() => expect(within(card(GOAL_B)).getByText('Ждёт подтверждения')).toBeInTheDocument());
+
+      // Assert 3: exactly one read after the turn, no poll after it
+      await until(() => expect(traffic.researchReads).toBe(3));
+      await nextPeriod();
+      await quiet();
+      expect(traffic.researchReads).toBe(3);
+
+      // Act 4: a decision turn that fails before streaming
+      click(within(card(GOAL_B)).getByRole('button', { name: 'Запустить' }));
+
+      // Assert 4: the card shows MC-15, and the state is read once after the failed turn, then no more
+      await until(() => expect(within(card(GOAL_B)).getByText(MC_15)).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(4));
+      await nextPeriod();
+      await quiet();
+      expect(traffic.researchReads).toBe(4);
+      expect(traffic.chatBodies).toHaveLength(2);
+      expect(traffic.messageReads).toBe(2);
+    });
+
+    it('INT-5 P5: an answer without sources appended by the poll is drawn with the warning and the mark on every claim and no footnotes, the same after a reload and in the copy, each card and answer follows its own launch\'s mode when modes are mixed, and a stop before the synthesis shows the warning, the reason and no claim', async () => {
+      // Arrange: a running launch without sources and, after a restart with a source, a proposal with one (UC-13, DC-8)
+      const CLAIM_1 = 'Рост связан с новыми кластерами.';
+      const CLAIM_2 = 'Часть расходов — хранение логов.';
+      const STORED_TEXT = [MC_32, '', 'Ответ ресерча · Вывода нет', '', `- ${CLAIM_1} (${MC_33})`, `- ${CLAIM_2} (${MC_33})`].join('\n');
+      const runningA = researchLaunchView({ launchKey: 'call-a', goal: GOAL_A, sourceMode: 'model_knowledge' });
+      const completedA = { ...runningA, state: 'completed' as const, answerMessageId: ANSWER_A };
+      const proposalB = researchLaunchView({ launchKey: 'call-b', mode: 'proposal', state: 'proposed', goal: GOAL_B });
+      const runningB = { ...proposalB, state: 'running' as const };
+      const completedB = { ...runningB, state: 'completed' as const, answerMessageId: ANSWER_B };
+      const answerA = answerMessage(
+        ANSWER_A,
+        {
+          launchKey: 'call-a',
+          goal: GOAL_A,
+          launch: { messageId: 'u-a' },
+          sourceMode: 'model_knowledge',
+          assumed: [
+            { text: CLAIM_1, footnotes: [], verified: false },
+            { text: CLAIM_2, footnotes: [], verified: false },
+          ],
+        },
+        STORED_TEXT,
+      );
+      const answerB = answerMessage(ANSWER_B, { launchKey: 'call-b', goal: GOAL_B, launch: { toolCallId: 'call-b' } });
+      const history = [
+        launchMessage('u-a', 'Почему выросли расходы?'),
+        cardMessage('r-a', runningA),
+        userMessage('u-b', 'Вопрос про задержки'),
+        cardMessage('r-b', proposalB),
+      ];
+      let launches: ResearchLaunchView[] = [runningA, proposalB];
+      let stored: HistoryMessage[] = history;
+      const traffic = serveThread({
+        messages: () => stored,
+        research: () => launches,
+        replies: [
+          () =>
+            sseFromChunks(
+              toolReplyChunks({
+                messageId: 'd-reply',
+                toolCallId: 'd-call',
+                goal: GOAL_B,
+                result: { launch: runningB },
+                decisionReplyOf: 'call-b',
+              }),
+            ),
+        ],
+      });
+      const writeText = vi.fn((text: string) => Promise.resolve(void text));
+      // The clipboard is a browser API boundary jsdom does not provide.
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      onTestFinished(() => {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      });
+      const view = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_A)).getByText('Ресерч идёт')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(1));
+
+      // Assert 1: each card follows its own launch's mode
+      expect(within(card(GOAL_A)).getByText(MC_31)).toBeInTheDocument();
+      expect(within(card(GOAL_B)).queryByText(MC_31)).toBeNull();
+
+      // Act 2: A completes; its answer is stored
+      launches = [completedA, proposalB];
+      stored = [...history, answerA];
+      await nextPeriod();
+
+      // Assert 2: the answer is last, with MC-32, MC-33 after each claim, and no footnote, label or source list
+      await until(() => expect(feedIds(view.container).at(-1)).toBe(ANSWER_A));
+      const drawnA = messageRoot(view.container, ANSWER_A);
+      expect(within(drawnA).getByText(MC_32)).toBeInTheDocument();
+      expect(within(drawnA).getAllByText(MC_33)).toHaveLength(2);
+      expect(within(drawnA).getByText(CLAIM_1)).toHaveTextContent(`${CLAIM_1} ${MC_33}`);
+      expect(within(drawnA).getByText(CLAIM_2)).toHaveTextContent(`${CLAIM_2} ${MC_33}`);
+      expect(within(drawnA).queryByRole('link', { name: /^Источник/ })).toBeNull();
+      expect(within(drawnA).queryByText('не проверено')).toBeNull();
+      expect(within(drawnA).queryByRole('button', { name: /^Источники/ })).toBeNull();
+      expect(within(card(GOAL_A)).getByText('Ресерч завершён')).toBeInTheDocument();
+      expect(within(card(GOAL_A)).getByText(MC_31)).toBeInTheDocument();
+      expect(statusText()).toContain(MC_18_NO_SOURCES);
+
+      // Act 3 / Assert 3: «Копировать» takes the stored text, caveats included (DC-9)
+      click(within(drawnA).getByRole('button', { name: 'Копировать' }));
+      expect(writeText).toHaveBeenCalledWith(STORED_TEXT);
+
+      // Act 4: the proposal with a source is confirmed; it runs, then completes
+      click(within(card(GOAL_B)).getByRole('button', { name: 'Запустить' }));
+      launches = [completedA, runningB];
+      await until(() => expect(within(card(GOAL_B)).getByText('Ресерч идёт')).toBeInTheDocument());
+      await until(() => expect(traffic.researchReads).toBe(3));
+      launches = [completedA, completedB];
+      stored = [...stored, answerB];
+      await nextPeriod();
+
+      // Assert 4: B's answer has its footnote and none of the no-source warnings; A's keeps its own
+      await until(() => expect(feedIds(view.container).at(-1)).toBe(ANSWER_B));
+      const drawnB = messageRoot(view.container, ANSWER_B);
+      expect(within(drawnB).getByRole('link', { name: 'Источник 1' })).toBeInTheDocument();
+      for (const text of [MC_32, MC_33]) expect(drawnB).not.toHaveTextContent(text);
+      expect(within(card(GOAL_B)).queryByText(MC_31)).toBeNull();
+      expect(within(messageRoot(view.container, ANSWER_A)).getByText(MC_32)).toBeInTheDocument();
+
+      // Act 5: reload; a third launch without sources is running and stops before its synthesis (UC-E8)
+      view.unmount();
+      const runningC = researchLaunchView({ launchKey: 'call-c', goal: GOAL_C, sourceMode: 'model_knowledge' });
+      const reloadHistory = [
+        launchMessage('u-a', 'Почему выросли расходы?'),
+        cardMessage('r-a', runningA),
+        userMessage('u-b', 'Вопрос про задержки'),
+        cardMessage('r-b', proposalB),
+        ...researchDecisionPair({ idPrefix: 'd', decision: { action: 'confirm', launchKey: 'call-b' }, launch: runningB }),
+        answerA,
+        answerB,
+        launchMessage('u-c', 'Что с бэкапами?'),
+        cardMessage('r-c', runningC),
+      ];
+      const answerC = answerMessage(ANSWER_C, {
+        launchKey: 'call-c',
+        goal: GOAL_C,
+        launch: { messageId: 'u-c' },
+        sourceMode: 'model_knowledge',
+        outcome: 'inconclusive',
+        stopReason: 'budget_exhausted',
+        summary: null,
+        established: [],
+        assumed: [],
+        unknown: [],
+        sources: [],
+      });
+      const reloadTraffic = serveThread({
+        messages: (read) => (read === 1 ? reloadHistory : [...reloadHistory, answerC]),
+        research: (read) => [
+          completedA,
+          completedB,
+          read === 1 ? runningC : { ...runningC, state: 'completed', answerMessageId: ANSWER_C },
+        ],
+      });
+      const reloaded = renderWithRuntime({ pathname: `/chat/${THREAD}` });
+      await until(() => expect(within(card(GOAL_C)).getByText('Ресерч идёт')).toBeInTheDocument());
+
+      // Assert 5: the restored answer without sources is drawn the same (AC-27.3 after a reload)
+      expect(feedIds(reloaded.container)).toEqual(['u-a', 'r-a', 'u-b', 'r-b', ANSWER_A, ANSWER_B, 'u-c', 'r-c']);
+      const restoredA = messageRoot(reloaded.container, ANSWER_A);
+      expect(within(restoredA).getByText(MC_32)).toBeInTheDocument();
+      expect(within(restoredA).getAllByText(MC_33)).toHaveLength(2);
+      expect(within(restoredA).queryByRole('link', { name: /^Источник/ })).toBeNull();
+
+      // Act 6: C completes with its stop answer
+      await until(() => expect(reloadTraffic.researchReads).toBe(1));
+      await nextPeriod();
+
+      // Assert 6: appended last with MC-32 and the stop reason, no summary, no caption and no claim; the card is «Завершён»
+      await until(() => expect(feedIds(reloaded.container).at(-1)).toBe(ANSWER_C));
+      const drawnC = messageRoot(reloaded.container, ANSWER_C);
+      expect(within(drawnC).getByText(MC_32)).toBeInTheDocument();
+      expect(within(drawnC).getByText(MC_25_BUDGET)).toBeInTheDocument();
+      expect(within(drawnC).getByText('Вывода нет')).toBeInTheDocument();
+      expect(within(drawnC).queryByText(MC_34)).toBeNull();
+      expect(within(drawnC).queryByText(MC_33)).toBeNull();
+      expect(within(drawnC).queryAllByRole('listitem')).toHaveLength(0);
+      expect(within(card(GOAL_C)).getByText('Ресерч завершён')).toBeInTheDocument();
+      expect(within(card(GOAL_C)).getByText(MC_31)).toBeInTheDocument();
+    });
   });
 });
 

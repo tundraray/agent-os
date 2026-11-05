@@ -228,6 +228,7 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
         <DeleteThreadDialog
           open={deleteOpen}
           threadTitle={liveDeleteEntry.title ?? UNTITLED_THREAD_TITLE}
+          threadId={liveDeleteEntry.remoteId}
           isRunning={liveDeleteEntry.isRunning}
           onConfirm={confirmDelete}
           onOpenChange={setDeleteOpen}

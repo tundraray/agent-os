@@ -1,4 +1,5 @@
 import type { ResearchLaunchView, ResearchSourceMode } from "@agent-os/contracts";
+import type { UIMessage } from "ai";
 import { useEffect } from "react";
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
@@ -28,7 +29,14 @@ export type ThreadResearchState = {
 };
 
 export type ThreadResearchDeps = {
-  api: Pick<ThreadsApiClient, "getThreadResearch">;
+  api: Pick<ThreadsApiClient, "getThreadResearch" | "getThreadMessages">;
+};
+
+/** What the open tab's feed holds when the answers are checked (KD-6). */
+export type AnswerFeed = {
+  messageIds: ReadonlySet<string>;
+  /** A reply streams in this tab: an answer joins the feed only after it (NFR-01, AC-20.3). */
+  streaming: boolean;
 };
 
 export type ThreadResearch = {
@@ -42,6 +50,11 @@ export type ThreadResearch = {
   refresh: () => void;
   /** Stops polling and forgets the thread; a reply still in flight is ignored. */
   close: () => void;
+  /**
+   * KD-6: when a completed launch's answer is missing from the feed and nothing streams, reads the thread's messages
+   * once and hands the missing answers, in their stored order, to `append`. A failed read is retried after one period.
+   */
+  appendMissingAnswers: (feed: AnswerFeed, append: (answers: UIMessage[]) => void) => void;
 };
 
 const EMPTY: Pick<ThreadResearchState, "threadId" | "launches" | "announcements"> = {
@@ -53,6 +66,21 @@ const EMPTY: Pick<ThreadResearchState, "threadId" | "launches" | "announcements"
 /** KD-6: a running launch, or a completed one whose answer a regeneration removed and the loop has not appended yet. */
 const keepsPollAlive = (launch: ResearchLaunchView): boolean =>
   launch.state === "running" || (launch.state === "completed" && launch.answerPending);
+
+/**
+ * The answers the feed lacks: of completed launches whose answer is stored — not of one a regeneration removed and the
+ * loop has not appended again (`answerPending`), which the poll waits for.
+ */
+function missingAnswerIds(launches: readonly ResearchLaunchView[], feedMessageIds: ReadonlySet<string>): string[] {
+  return launches.flatMap((launch) =>
+    launch.state === "completed" &&
+    !launch.answerPending &&
+    launch.answerMessageId !== null &&
+    !feedMessageIds.has(launch.answerMessageId)
+      ? [launch.answerMessageId]
+      : [],
+  );
+}
 
 /** What a launch's state means to the announcer; `null` — nothing to announce for it. */
 function eventOf(launch: ResearchLaunchView): ResearchAnnouncementKind | null {
@@ -82,6 +110,8 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
   /** The last event seen per launch, so each event is announced once. */
   let lastEvent = new Map<string, ResearchAnnouncementKind | null>();
   let nextAnnouncementId = 1;
+  /** One GET /messages at a time: the feed is checked again once its answers have been handed over. */
+  let answersInFlight = false;
 
   const stopTimer = (): void => {
     if (timer !== undefined) clearTimeout(timer);
@@ -147,10 +177,52 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
     void read(threadId, generation);
   };
 
+  const readAnswers = async (
+    threadId: string,
+    readGeneration: number,
+    wanted: ReadonlySet<string>,
+    append: (answers: UIMessage[]) => void,
+  ): Promise<void> => {
+    try {
+      const messages = await api.getThreadMessages(threadId);
+      if (readGeneration !== generation) return;
+      const answers = messages.filter((message) => wanted.has(message.id));
+      if (answers.length < wanted.size) {
+        console.warn("[deep-research] answer listed by the research state is missing from the thread", {
+          threadId,
+          missing: [...wanted].filter((id) => !answers.some((answer) => answer.id === id)),
+        });
+      }
+      if (answers.length > 0) append(answers);
+    } catch (error) {
+      if (readGeneration !== generation) return;
+      console.warn("[deep-research] answer read failed", { threadId, ...describeThreadsError(error) });
+      // A new read of the state brings the feed check back, one period later.
+      if (timer === undefined && !inFlight) {
+        timer = setTimeout(() => {
+          timer = undefined;
+          start(threadId);
+        }, RESEARCH_POLL_INTERVAL_MS);
+      }
+    } finally {
+      if (readGeneration === generation) answersInFlight = false;
+    }
+  };
+
+  const appendMissingAnswers = (feed: AnswerFeed, append: (answers: UIMessage[]) => void): void => {
+    const { threadId, launches } = store.getState();
+    if (threadId === null || feed.streaming || answersInFlight) return;
+    const wanted = missingAnswerIds(launches, feed.messageIds);
+    if (wanted.length === 0) return;
+    answersInFlight = true;
+    void readAnswers(threadId, generation, new Set(wanted), append);
+  };
+
   const close = (): void => {
     generation += 1;
     stopTimer();
     inFlight = false;
+    answersInFlight = false;
     readAgain = false;
     baselineTaken = false;
     lastEvent = new Map();
@@ -170,6 +242,7 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
       if (threadId !== null) start(threadId);
     },
     close,
+    appendMissingAnswers,
   };
 }
 
