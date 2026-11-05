@@ -11,7 +11,9 @@
     "knip": "knip",
     "check": "turbo lint typecheck build test && knip",
     "db:up": "docker compose -f infra/docker-compose.yml up -d",
-    "prepare": "husky"
+    "prepare": "husky",
+    "db:generate": "pnpm --filter @agent-os/db db:generate",
+    "db:migrate": "pnpm --filter api db:migrate"
   },
   "keywords": [],
   "author": "",

@@ -8,7 +8,28 @@
   },
   "workspaces": {
     "apps/api": {
+      "entry": [
+        "src/main.ts",
+        "src/research/migrate-cli.ts",
+        "test/support/chatEntryChildMain.ts"
+      ],
       "ignoreDependencies": ["@nestjs/mau"]
+    },
+    "packages/runtime": {
+      "entry": [
+        "src/index.ts",
+        "test/support/runtimeChildMain.ts",
+        "test/verify/**/*.verify.ts"
+      ]
+    },
+    "packages/mcp-fixture": {
+      "entry": ["src/server.ts", "src/generate-ground-truth.ts"]
+    },
+    "packages/sources": {
+      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/fetchChildMain.ts"]
+    },
+    "packages/engine": {
+      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/engineChildMain.ts"]
     }
   }
 }

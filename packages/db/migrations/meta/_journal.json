@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793444716921,
+      "tag": "0000_certain_orphan",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793444726790,
+      "tag": "0001_research_evidence_provenance_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793540379236,
+      "tag": "0002_flashy_shinko_yamashiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793620381918,
+      "tag": "0003_flimsy_the_santerians",
+      "breakpoints": true
+    }
+  ]
+}

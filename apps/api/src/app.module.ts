@@ -5,6 +5,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { ThreadsModule } from './threads/threads.module.js';
+import { ResearchModule } from './research/research.module.js';
+import { SourcesModule } from './sources/sources.module.js';
+import { EngineModule } from './engine/engine.module.js';
+import { ResearchChatModule } from './research-chat/research-chat.module.js';
 
 @Module({
   imports: [
@@ -14,6 +18,10 @@ import { ThreadsModule } from './threads/threads.module.js';
     AuditModule,
     ChatModule,
     ThreadsModule,
+    ResearchModule,
+    SourcesModule,
+    EngineModule,
+    ResearchChatModule,
   ],
 })
 export class AppModule {}

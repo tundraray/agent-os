@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
 import {
   THREAD_MEMORY,
   threadMemoryProvider,
@@ -25,6 +26,7 @@ import { ThreadsService } from './threads.service.js';
     { provide: THREAD_RUN_SETTLE_TIMEOUT_MS, useValue: 5_000 },
     ThreadWriteLock,
     ThreadRunRegistry,
+    ThreadDeletionHooks,
     ThreadsService,
     ThreadTitleService,
   ],
@@ -33,6 +35,7 @@ import { ThreadsService } from './threads.service.js';
     ThreadsService,
     ThreadTitleService,
     ThreadRunRegistry,
+    ThreadDeletionHooks,
   ],
 })
 export class ThreadsModule {}

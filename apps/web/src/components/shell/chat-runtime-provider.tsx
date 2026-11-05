@@ -10,7 +10,7 @@ import {
   useRemoteThreadListRuntime,
 } from '@assistant-ui/react';
 import { useChatRuntime } from '@assistant-ui/ai-sdk';
-import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { shouldResendTurn, toResearchCreateMessage } from '@/lib/threads/research-messages';
 import { parseRouteThreadId } from '@/lib/threads/route-thread-id';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { syncUrlWithThread } from '@/lib/threads/url-sync';
@@ -37,7 +37,10 @@ export function ChatRuntimeProvider({ children }: ChatRuntimeProviderProps) {
       const aui = useAui();
       return useChatRuntime({
         transport: services.transport,
-        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+        sendAutomaticallyWhen: shouldResendTurn,
+        // One feed message per stored message: a hidden decision reply must not swallow the research answer after it (KD-2).
+        joinStrategy: 'none',
+        toCreateMessage: toResearchCreateMessage,
         adapters: { history: services.history.adapterFor(aui) },
         onError: (error) => services.handleChatError({ error, aui }),
       });

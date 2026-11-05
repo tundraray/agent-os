@@ -26,6 +26,21 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { regenerateAfterError } from "@/lib/config";
 import { focusAfterNewChat } from "@/lib/focus";
+import { ResearchLaunchLabel } from "@/components/research/research-launch-label";
+import { RESEARCH_MODE_COMPOSER_COPY } from "@/components/research/research-mode-toggle";
+import { ResearchAnswer } from "@/components/research/research-answer";
+import {
+  showResearchAnchor,
+  useReplyCarriesActiveResearch,
+  useResearchModeOn,
+  useTakeAnswerArrival,
+} from "@/components/research/research-thread";
+import { isHiddenMessageAt, isLastVisibleMessageAt } from "@/lib/threads/research-messages";
+import {
+  RESEARCH_METADATA_KEYS,
+  ResearchAnswerMetadataSchema,
+  type ResearchAnswerMetadata,
+} from "@agent-os/contracts";
 import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
@@ -36,6 +51,7 @@ import {
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
+  useThreadViewport,
   type FileMessagePartComponent,
   type ImageMessagePartComponent,
   type TextMessagePartComponent,
@@ -60,8 +76,10 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -308,11 +326,26 @@ const ThreadMessage: FC = () => {
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
+  const isHidden = useAuiState((s) => isHiddenMessageAt(s.thread.messages, s.message.index));
+  const isDecisionErrorStub = useAuiState(isFailedDecisionStub);
 
+  if (isHidden || isDecisionErrorStub) return null;
   if (isSpoken) return <SpokenMessage />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessageComponent />;
 };
+
+/**
+ * KD-2: a decision turn that failed or was interrupted before its first chunk leaves the reply stub with the chat error
+ * right after the hidden decision message; the card shows that error (MC-15, MC-29, MC-16), so the stub is not drawn.
+ * Only the stub of this tab's turn is meant: an empty stored reply after a decision is complete, not incomplete.
+ */
+const isFailedDecisionStub = (s: AssistantState) =>
+  s.message.role === "assistant" &&
+  s.message.parts.length === 0 &&
+  s.message.status?.type === "incomplete" &&
+  s.thread.messages[s.message.index - 1]?.role === "user" &&
+  isHiddenMessageAt(s.thread.messages, s.message.index - 1);
 
 type VoiceRunPosition = "single" | "start" | "middle" | "end";
 
@@ -528,6 +561,7 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean }> = ({
   autoFocus,
   sendBlocked,
 }) => {
+  const researchMode = useResearchModeOn();
   return (
     <ComposerPrimitive.Root
       className="aui-composer-root relative flex w-full flex-col"
@@ -540,7 +574,7 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean }> = ({
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder="Спросите что-нибудь…"
+          placeholder={researchMode ? RESEARCH_MODE_COMPOSER_COPY.placeholder : "Спросите что-нибудь…"}
           className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
           rows={1}
           autoFocus={autoFocus}
@@ -558,6 +592,8 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean }> = ({
 
 const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
   const { ComposerExtra } = useContext(ThreadComponentsContext);
+  // MC-3: in the deep research mode the send button says what it starts.
+  const sendLabel = useResearchModeOn() ? RESEARCH_MODE_COMPOSER_COPY.sendLabel : "Отправить";
   // The stop control only cancels the send while no run it could stop is going.
   const isSending = useAuiState(
     (s) =>
@@ -587,7 +623,7 @@ const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
             !shouldShowComposerResume(s)
           }
         >
-          <ComposerPrimitive.Send disabled={sendBlocked} render={<TooltipIconButton tooltip="Отправить" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label="Отправить" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+          <ComposerPrimitive.Send disabled={sendBlocked} render={<TooltipIconButton tooltip={sendLabel} side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label={sendLabel} />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={shouldShowComposerResume}>
           <ComposerPrimitive.Resume render={<TooltipIconButton tooltip="Продолжить генерацию" side="bottom" type="button" variant="default" size="icon" className="aui-composer-resume size-7 rounded-full" aria-label="Продолжить генерацию" />}><PlayIcon className="aui-composer-resume-icon size-4" /></ComposerPrimitive.Resume>
@@ -623,12 +659,17 @@ const MessageError: FC = () => {
   );
 };
 
+/** MC-21 (deep-research UXRD, KD-7): over «Перегенерировать» when the reply carries a research a regeneration would stop. */
+const RESEARCH_REGENERATE_WARNING = "Перегенерация остановит ресерч из этого ответа.";
+
 const ReplyErrorBlock: FC = () => {
   const textId = useId();
+  const warningId = useId();
+  const stopsResearch = useReplyCarriesActiveResearch();
   return (
     <div
       data-slot="message-error"
-      className="border-destructive bg-destructive/10 dark:bg-destructive/5 mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
+      className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
     >
       <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
       <div className="flex min-w-0 flex-col items-start gap-2">
@@ -639,8 +680,13 @@ const ReplyErrorBlock: FC = () => {
         </p>
         {regenerateAfterError && (
           <AuiIf condition={(s) => s.message.isLast}>
+            {stopsResearch && (
+              <p id={warningId} className="text-foreground">
+                {RESEARCH_REGENERATE_WARNING}
+              </p>
+            )}
             <ActionBarPrimitive.Reload
-              aria-describedby={textId}
+              aria-describedby={stopsResearch ? `${textId} ${warningId}` : textId}
               onClick={focusAfterNewChat}
               render={<Button variant="outline" size="sm" className={REGENERATE_CLASS} />}
             >
@@ -663,6 +709,8 @@ const AssistantMessage: FC = () => {
   } = useContext(ThreadComponentsContext);
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
   const isBlank = useAuiState(isBlankReply);
+  const messageId = useAuiState((s) => s.message.id);
+  const researchAnswer = useResearchAnswerOf();
 
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
@@ -670,6 +718,7 @@ const AssistantMessage: FC = () => {
 
   return (
     <MessagePrimitive.Root
+      id={messageId}
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       className={cn(
@@ -685,6 +734,9 @@ const AssistantMessage: FC = () => {
             data-slot="aui_assistant-message-content"
             className="text-foreground px-2 leading-relaxed wrap-break-word"
           >
+            {researchAnswer !== null ? (
+              <ResearchAnswerContent answer={researchAnswer} />
+            ) : (
             <MessagePrimitive.GroupedParts groupBy={groupBy}>
               {({ part, children }) => {
                 switch (part.type) {
@@ -755,6 +807,7 @@ const AssistantMessage: FC = () => {
                 }
               }}
             </MessagePrimitive.GroupedParts>
+            )}
             <MessageError />
           </div>
 
@@ -770,6 +823,47 @@ const AssistantMessage: FC = () => {
   );
 };
 
+/**
+ * DR-04: the research answer drawn from its `researchAnswer` metadata in place of the text, which stays for the model and
+ * «Копировать» (design-chat-entry.md, KD-5). Metadata outside the contract leaves the message drawn as text.
+ */
+const useResearchAnswerOf = (): ResearchAnswerMetadata | null => {
+  const raw = useAuiState((s) => s.message.metadata.custom[RESEARCH_METADATA_KEYS.researchAnswer]);
+  return useMemo(() => {
+    if (raw === undefined) return null;
+    const parsed = ResearchAnswerMetadataSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn("[deep-research] research answer metadata outside the contract; drawn as text");
+      return null;
+    }
+    return parsed.data;
+  }, [raw]);
+};
+
+/**
+ * UXRD KD-5: an answer this tab appended moves neither focus nor, unless the reader stands at the end of the feed with
+ * nothing streaming, the reading position; then the feed shows the answer from its header.
+ */
+const ResearchAnswerContent: FC<{ answer: ResearchAnswerMetadata }> = ({ answer }) => {
+  const messageId = useAuiState((s) => s.message.id);
+  const takeArrival = useTakeAnswerArrival();
+  const atEnd = useThreadViewport((s) => s.isAtBottom);
+  const streaming = useAuiState((s) => s.thread.isRunning);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // On mount only: the position the reader had when the answer arrived decides, not a later scroll.
+  useEffect(() => {
+    if (takeArrival(messageId) && atEnd && !streaming) rootRef.current?.scrollIntoView({ block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div ref={rootRef} className="scroll-mt-4">
+      <ResearchAnswer answer={answer} onShowLaunch={showResearchAnchor} />
+    </div>
+  );
+};
+
 // A reply with no parts that is not being generated (e.g. the stub an error before the first token
 // leaves) shows no row: only its error block, if any.
 const isBlankReply = (s: AssistantState) =>
@@ -782,13 +876,14 @@ const isGeneratingReply = (s: AssistantState) =>
   s.message.status?.type === "running";
 
 /**
- * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last message
+ * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last visible
+ * message (KD-2: hidden decision pairs do not count)
  * shows it at rest; earlier ones reveal it on hover or focus within the message, and a coarse
  * pointer always shows it. Hidden by opacity only — never display:none or visibility:hidden.
  */
 const useActionBarVisibility = () => {
-  const isLast = useAuiState((s) => s.message.isLast);
-  return isLast
+  const isLastVisible = useAuiState((s) => isLastVisibleMessageAt(s.thread.messages, s.message.index));
+  return isLastVisible
     ? undefined
     : "opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none";
 };
@@ -869,13 +964,25 @@ const UserImagePart: ImageMessagePartComponent = (part) => (
 );
 
 const UserMessage: FC = () => {
+  const messageId = useAuiState((s) => s.message.id);
+  // DR-02: the message started a deep research by the user's choice (KD-1); the label is read before the text.
+  const startedResearch = useAuiState(
+    (s) => s.message.metadata.custom[RESEARCH_METADATA_KEYS.deepResearch] === true,
+  );
   return (
     <MessagePrimitive.Root
+      id={messageId}
       data-slot="aui_user-message-root"
       className="group/message fade-in slide-in-from-bottom-1 animate-in motion-reduce:animate-none grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
       <UserMessageAttachments />
+
+      {startedResearch && (
+        <div className="col-start-2 -mb-1">
+          <ResearchLaunchLabel />
+        </div>
+      )}
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">

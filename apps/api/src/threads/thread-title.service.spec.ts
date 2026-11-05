@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
 import type { MockInstance } from 'vitest';
+import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
 import { ThreadRunRegistry } from './thread-run-registry.js';
 import { ThreadWriteLock } from './thread-write-lock.js';
 import type { ThreadTitleAgent } from './thread-title.agent.js';
@@ -108,6 +109,8 @@ function setup(options: {
     store.memory,
     lock,
     new ThreadRunRegistry(5_000),
+    new ThreadDeletionHooks(),
+    5_000,
   );
   const schedule = async () => {
     service.schedule({ threadId: 't-1', resourceId: 'u-1' });

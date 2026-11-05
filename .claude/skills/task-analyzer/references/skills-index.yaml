@@ -1,0 +1,522 @@
+# Skills Metadata Index
+# Used to select appropriate skills based on task analysis
+# Project-local copy generated from the plugin template (fullstack-overture 0.18.14)
+# source: plugin = bundled skill, local = .claude/skills override
+
+skills:
+  coding-principles:
+    skill: "coding-principles"
+    source: plugin
+    tags: [code-quality, refactoring, clean-code, error-handling, maintainability, readability, function-design, dependency-management, security]
+    typical-use: "Language-agnostic code creation, modification, and refactoring principles applicable to all programming languages"
+    size: large
+    key-references:
+      - "YAGNI Principle - Kent Beck"
+      - "Clean Code - Robert C. Martin"
+      - "DRY Principle - The Pragmatic Programmer"
+      - "Refactoring - Martin Fowler"
+      - "Single Responsibility Principle - SOLID"
+    sections:
+      - "Core Philosophy"
+      - "Code Quality"
+      - "Function Design"
+      - "Error Handling"
+      - "Dependency Management"
+      - "Performance Considerations"
+      - "Code Organization"
+      - "Commenting Principles"
+      - "Refactoring Approach"
+      - "Clean Code Guidelines"
+      - "Testing Considerations"
+      - "Security Principles"
+      - "Documentation"
+      - "Version Control Practices"
+      - "Language-Specific Adaptations"
+
+  testing-principles:
+    skill: "testing-principles"
+    source: plugin
+    tags: [testing, tdd, unit-testing, integration-testing, e2e-testing, coverage, mocking, test-design, test-quality]
+    typical-use: "Universal testing principles, TDD practice, test quality criteria, test creation and quality assurance for all programming languages"
+    size: large
+    key-references:
+      - "Test-Driven Development - Kent Beck"
+      - "Red-Green-Refactor Cycle - Kent Beck"
+      - "AAA Pattern - Arrange-Act-Assert"
+      - "Test Pyramid - Mike Cohn"
+    sections:
+      - "Core Testing Philosophy"
+      - "Test Selection"
+      - "Test-Driven Development (TDD)"
+      - "Quality Requirements"
+      - "Test Types"
+      - "Test Design Principles"
+      - "Test Independence"
+      - "Mocking and Test Doubles"
+      - "Test Quality Practices"
+      - "What to Test"
+      - "Test Quality Criteria"
+      - "Verification Requirements"
+      - "Test Organization"
+      - "Performance Considerations"
+      - "Common Anti-Patterns to Avoid"
+      - "Regression Testing"
+      - "Testing Best Practices by Language Paradigm"
+      - "Documentation and Communication"
+      - "Expert References (Reasoning Calibration)"
+
+  ai-development-guide:
+    skill: "ai-development-guide"
+    source: plugin
+    tags: [anti-patterns, debugging, quality-check, fail-fast, technical-decisions, rule-of-three, error-handling]
+    typical-use: "Technical decision criteria, anti-pattern detection, debugging techniques, quality check workflows, implementation completeness"
+    size: large
+    key-references:
+      - "Rule of Three - Martin Fowler"
+      - "5 Whys - Toyota Production System"
+      - "DRY Principle - The Pragmatic Programmer"
+      - "YAGNI Principle - Extreme Programming"
+    sections:
+      - "Technical Anti-patterns (Red Flag Patterns)"
+      - "Fail-Fast Fallback Design Principles"
+      - "Rule of Three - Criteria for Code Duplication"
+      - "Common Failure Patterns and Avoidance Methods"
+      - "Debugging Techniques"
+      - "Quality Check Workflow"
+      - "Situations Requiring Technical Decisions"
+      - "Implementation Completeness Assurance"
+
+  documentation-criteria:
+    skill: "documentation-criteria"
+    source: plugin
+    tags: [documentation, prd, uxrd, adr, design-doc, work-plan, task-files, decision-matrix, templates, cold-reader, document-revision]
+    typical-use: "Document creation criteria and templates, writing for a cold reader, revising a document, ADR/PRD/UXRD/Design Doc/Work Plan standards"
+    size: large
+    key-references:
+      - "ADR Method - Michael Nygard"
+      - "Design Doc Culture - Google Engineering Practices"
+      - "Single Source of Truth"
+    sections:
+      - "Templates"
+      - "Creation Decision Matrix"
+      - "ADR Creation Conditions"
+      - "Writing for the Reader"
+      - "Revising a Document"
+      - "Detailed Document Definitions"
+      - "Creation Process"
+      - "Storage Locations"
+      - "ADR Status"
+      - "Diagram Requirements"
+      - "Common ADR Relationships"
+
+  mermaid-diagrams:
+    skill: "mermaid-diagrams"
+    source: plugin
+    tags: [mermaid, diagrams, c4-model, sequence-diagram, runtime-flow, palette, path-animation, render-check, documentation]
+    typical-use: "Drawing, animating, and render-checking the Mermaid diagrams in PRD, UXRD, Design Doc, ADR, and work plans"
+    size: medium
+    key-references:
+      - "C4 Model - Simon Brown"
+    sections:
+      - "Rendering target"
+      - "Diagram first"
+      - "Redraw test"
+      - "Palette and frontmatter"
+      - "Path animation"
+      - "Runtime flow diagrams"
+      - "Do not use"
+      - "Render check"
+      - "Revisions"
+
+  implementation-approach:
+    skill: "implementation-approach"
+    source: plugin
+    tags: [implementation-strategy, vertical-slice, horizontal-slice, risk-assessment, verification-levels, strangler-pattern, meta-cognitive]
+    typical-use: "Implementation strategy selection, task decomposition, design decisions, large-scale change planning"
+    size: medium
+    key-references:
+      - "Strangler Fig Pattern - Martin Fowler"
+      - "Feature Slicing - Martin Fowler"
+      - "Walking Skeleton - Alistair Cockburn"
+    sections:
+      - "Meta-cognitive Strategy Selection Process"
+      - "Verification Level Definitions"
+      - "Integration Point Definitions"
+      - "Anti-patterns"
+      - "Guidelines for Meta-cognitive Execution"
+
+  integration-e2e-testing:
+    skill: "integration-e2e-testing"
+    source: plugin
+    tags: [integration-testing, e2e-testing, test-skeleton, test-review, behavior-first, acceptance-testing]
+    typical-use: "Integration and E2E test design principles, behavior-first test selection, test skeleton specification"
+    size: medium
+    key-references:
+      - "Test Pyramid - Mike Cohn"
+      - "Behavior-Driven Development"
+      - "EARS Format"
+    sections:
+      - "Test Type Definition and Limits"
+      - "Behavior-First Principle"
+      - "Test Skeleton Specification"
+      - "EARS Format Mapping"
+      - "Test File Naming Convention"
+      - "Review Criteria"
+      - "Quality Standards"
+      - "Property-Based Testing"
+
+  workflow-orchestration:
+    skill: "workflow-orchestration"
+    source: plugin
+    tags: [orchestration, workflow, subagents, delegation, response-contracts, stop-points, file-ownership]
+    typical-use: "Shared orchestration mechanics: agent invocation, response contracts, delegation boundary, conflict precedence, file ownership, stop points"
+    size: large
+    key-references:
+      - "Orchestrator Pattern"
+      - "Conductor Pattern"
+    sections:
+      - "Role: The Orchestrator"
+      - "Decision Flow When Receiving Tasks"
+      - "Available Subagents"
+      - "Orchestration Principles"
+      - "Constraints Between Subagents"
+      - "Explicit Stop Points"
+      - "Scale Determination and Document Requirements"
+      - "How to Call Subagents"
+      - "Structured Response Specification"
+      - "Handling Requirement Changes"
+      - "Workflow Phases"
+      - "Autonomous Execution Mode"
+      - "TodoWrite Management"
+      - "Main Orchestrator Roles"
+      - "Important Constraints"
+      - "Required Dialogue Points with Humans"
+      - "Action Checklist"
+
+  project-context:
+    skill: "project-context"
+    source: local
+    tags: [project-context, agent-os, deep-research, rbac, mcp, audit, token-budget, provenance, haiku-class-models, business-constraints]
+    typical-use: "Agent OS constraints for any feature: RBAC on MCP tools and data, per-user isolation, agent action audit, token budgets, fact provenance, Haiku-class quality vs large-model baseline at cost parity; target users, scenarios and performance thresholds"
+    size: small
+    key-references:
+      - "docs/side_reserch/agent_os_workflow_spec.md"
+      - "docs/features/research-runtime/prd.md"
+      - "docs/features/chat-shell/prd.md"
+    sections:
+      - "Project Overview"
+      - "Development Structure"
+      - "Business Constraints"
+      - "Performance Requirements"
+      - "External Integrations"
+
+  technical-spec:
+    skill: "technical-spec"
+    source: plugin
+    tags: [architecture, environment-variables, data-flow, quality-check, security]
+    typical-use: "Technical design, environment configuration, quality check execution"
+    size: small
+    key-references:
+      - "Single Source of Truth"
+    sections:
+      - "Basic Technology Stack Policy"
+      - "Environment Variable Management and Security"
+      - "Architecture Design"
+      - "Unified Data Flow Principles"
+      - "Build and Testing"
+
+  task-analyzer:
+    skill: "task-analyzer"
+    source: plugin
+    tags: [task-analysis, skill-selection, scale-estimation, metacognition, tag-matching]
+    typical-use: "Analyzing task complexity, selecting appropriate skills, estimating work scale"
+    size: medium
+    key-references:
+      - "Metacognitive Analysis"
+    sections:
+      - "Skills Index"
+      - "Task Analysis Process"
+      - "Output Format"
+      - "Process Gates"
+      - "Skill Selection Priority"
+      - "Metacognitive Question Design"
+      - "Warning Patterns"
+
+  # Backend-Specific Skills
+  typescript-rules-backend:
+    skill: "typescript-rules-backend"
+    source: plugin
+    tags: [backend, typescript, nestjs, typeorm, type-safety, error-handling, streaming, dependency-injection, api-design]
+    typical-use: "Backend TypeScript development rules, NestJS patterns, layered error handling, stream processing, memory management"
+    size: large
+    key-references:
+      - "Functions Over Classes"
+      - "NestJS Best Practices"
+      - "TypeORM Patterns"
+      - "YAGNI Principle - Kent Beck"
+    sections:
+      - "Basic Principles"
+      - "Comment Writing Rules"
+      - "Type Safety"
+      - "Coding Conventions"
+      - "Error Handling"
+      - "Streaming and Memory Management"
+      - "Refactoring Techniques"
+      - "Performance Optimization"
+
+  typescript-testing-backend:
+    skill: "typescript-testing-backend"
+    source: plugin
+    tags: [backend, testing, vitest, jest, supertest, fast-check, tdd, coverage, integration-testing, database-testing]
+    typical-use: "Backend testing rules, service testing patterns, Supertest API tests, fast-check property tests, database testing"
+    size: large
+    key-references:
+      - "Test-Driven Development - Kent Beck"
+      - "Property-Based Testing - fast-check"
+      - "Supertest - HTTP Assertions"
+    sections:
+      - "Test Framework"
+      - "Basic Testing Policy"
+      - "Red-Green-Refactor Process (Test-First Development)"
+      - "Test Design Principles"
+      - "Test Implementation Conventions"
+      - "Service Testing Patterns"
+      - "Test Quality Criteria"
+      - "Database Testing Patterns"
+
+  # Frontend-Specific Skills
+  typescript-rules:
+    skill: "typescript-rules"
+    source: plugin
+    tags: [frontend, react, typescript, type-safety, component-design, state-management, props-design, error-handling]
+    typical-use: "Frontend TypeScript development rules, React function components, Props-driven design, type safety, state management patterns"
+    size: large
+    key-references:
+      - "React Function Components"
+      - "TypeScript Best Practices"
+      - "Props-Driven Design"
+      - "YAGNI Principle - Kent Beck"
+    sections:
+      - "Basic Principles"
+      - "Comment Writing Rules"
+      - "Type Safety"
+      - "Coding Conventions"
+      - "Error Handling"
+      - "Refactoring Techniques"
+      - "Performance Optimization"
+
+  typescript-testing:
+    skill: "typescript-testing"
+    source: plugin
+    tags: [frontend, react, testing, vitest, jest, react-testing-library, msw, tdd, coverage, component-testing]
+    typical-use: "Frontend testing rules, React Testing Library patterns, MSW for API mocking, coverage targets"
+    size: large
+    key-references:
+      - "React Testing Library - Kent C. Dodds"
+      - "Mock Service Worker (MSW)"
+      - "Test-Driven Development - Kent Beck"
+    sections:
+      - "Test Framework"
+      - "Basic Testing Policy"
+      - "Red-Green-Refactor Process (Test-First Development)"
+      - "Test Design Principles"
+      - "Test Helper Utilization Rules"
+      - "Test Implementation Conventions"
+      - "Test Granularity Principles"
+      - "Test Quality Criteria"
+      - "Mock Type Safety Enforcement"
+      - "Continuity Test Scope"
+      - "Basic React Testing Library Example"
+
+  frontend-ai-guide:
+    skill: "frontend-ai-guide"
+    source: plugin
+    tags: [frontend, react, anti-patterns, debugging, quality-check, component-quality, fail-fast, rule-of-three]
+    typical-use: "Frontend technical decision criteria, React anti-pattern detection, component quality check workflows"
+    size: large
+    key-references:
+      - "Rule of Three - Martin Fowler"
+      - "React Best Practices"
+    sections:
+      - "Technical Anti-patterns (Red Flag Patterns)"
+      - "Fallback Design Principles"
+      - "Common Failure Patterns and Avoidance Methods"
+      - "Debugging Techniques"
+      - "Quality Check Workflow"
+      - "Situations Requiring Technical Decisions"
+
+  design-system:
+    skill: "design-system"
+    source: plugin
+    tags: [design-system, design-tokens, foundations, components, branding, typography, colors, dark-mode, accessibility, wcag, visual-verification, screenshots]
+    typical-use: "Designing or extending the project design system, implementing UI from its tokens and component specs, visual verification in a browser"
+    size: medium
+    key-references:
+      - "WCAG 2.x Contrast - W3C"
+      - "Design Tokens"
+    sections:
+      - "Reading the System"
+      - "Part A — Designing (ux-designer)"
+      - "Part B — Implementing (frontend designer, executor, quality-fixer)"
+
+  llm-friendly-context:
+    skill: "llm-friendly-context"
+    source: plugin
+    tags: [prompt-quality, handoff, delegation, ambiguity, output-shape, escalation, subagent-prompts]
+    typical-use: "Writing subagent prompts, agent handoffs, or generated instructions"
+    size: small
+    key-references:
+      - "Positive Instruction Framing"
+      - "Explicit Output Contracts"
+    sections:
+      - "Core Rules"
+      - "Rewrite Patterns"
+      - "Handoff Checklist"
+
+  expert-analysis-guide:
+    skill: "expert-analysis-guide"
+    source: plugin
+    tags: [expert-analysis, multi-perspective, parallel-analysis, security, api-design, architecture, performance, data-modeling, testability, error-handling, ux-impact]
+    typical-use: "Pre-design expert evaluation, parallel expert spawning, aspect selection, synthesis of expert recommendations"
+    size: medium
+    key-references:
+      - "Fan-Out / Fan-In Parallelism"
+      - "Multi-Perspective Review"
+    sections:
+      - "Purpose"
+      - "Expert Persona Reference Table"
+      - "Fan-Out Pattern (Parallel Spawning)"
+      - "Fan-In Synthesis (Merging Results)"
+      - "Aspect Selection Heuristics"
+      - "Skip Conditions"
+
+  security-checks:
+    skill: "security-checks"
+    source: plugin
+    tags: [security, vulnerability, cve, xss, sql-injection, path-traversal, ssrf, credentials, jwt, dependency-audit, owasp]
+    typical-use: "Security review, vulnerability detection, security compliance validation, dependency auditing"
+    size: medium
+    key-references:
+      - "OWASP Top 10"
+      - "CWE - Common Weakness Enumeration"
+    sections:
+      - "Stable Detection Patterns"
+      - "Trend-Sensitive Patterns"
+      - "Severity Classification Guide"
+
+  skill-optimization:
+    skill: "skill-optimization"
+    source: plugin
+    tags: [skill-quality, optimization, grading, bp-patterns, skill-assessment, prompt-engineering, skill-creation]
+    typical-use: "Creating new skills, evaluating skill quality, improving existing skills, skill review"
+    size: small
+    key-references:
+      - "Progressive Disclosure"
+      - "Context Window Optimization"
+    sections:
+      - "BP Patterns (Best Practice Patterns)"
+      - "Editing Principles"
+      - "Grading System"
+      - "Assessment Checklist"
+
+  type-safety-standards:
+    skill: "type-safety-standards"
+    source: plugin
+    tags: [type-safety, typescript, react, zod, runtime-validation, type-guards, branded-types, discriminated-unions, generics, props]
+    typical-use: "Ensuring type safety in React components, API boundaries, form handling, and state management"
+    size: medium
+    key-references:
+      - "Parse, Don't Validate - Alexis King"
+      - "Zod - Runtime Schema Validation"
+    sections:
+      - "Runtime Validation with Zod"
+      - "Discriminated Unions and Type Guards"
+      - "Branded Types"
+      - "Type Assertion Avoidance"
+      - "Generic Component Typing"
+      - "State Type Safety"
+      - "Result Type Pattern for Typed Error Handling"
+      - "Zod Performance Optimization"
+      - "Testing Type Safety"
+      - "Risks and Mitigations"
+
+  workflow-execution:
+    skill: "workflow-execution"
+    source: plugin
+    tags: [work-plan, task-decomposition, batch-approval, autonomous-execution, task-cycle, commit-strategy, auto-stop, post-implementation-verification, fix-mode, escalation]
+    typical-use: "Work plan creation and review, task decomposition, batch approval, running the implementation loop, whole-implementation verification, auto-stop enforcement"
+    size: medium
+    key-references:
+      - "Delegated Authority"
+      - "5 Whys - Toyota Production System"
+    sections:
+      - "Entry Gate [BLOCKING]"
+      - "Planning"
+      - "Resolving the Plan to Execute"
+      - "Entry Conditions"
+      - "Commit Strategy Selection"
+      - "The Per-Task Cycle"
+      - "Post-Implementation Verification"
+      - "Final Cleanup"
+      - "Stopping Autonomous Execution"
+      - "Error-Fixing Impulse Control Protocol"
+      - "Exit Gate [BLOCKING]"
+      - "Execution Flow"
+
+  workflow-product:
+    skill: "workflow-product"
+    source: plugin
+    tags: [requirements, prd, uxrd, product-scope, user-value, parts, stop-points]
+    typical-use: "Requirement analysis, PRD creation and review, UXRD creation and review, product-phase stop points"
+    size: small
+    key-references:
+      - "Problem Before Solution"
+    sections:
+      - "Scope"
+      - "Entry Gate [BLOCKING]"
+      - "Flow"
+      - "Parts"
+      - "Document Requirements by Scale"
+      - "Stop Points"
+      - "Requirement Changes"
+      - "Revision Loop"
+      - "Exit Gate [BLOCKING]"
+
+  workflow-technical:
+    skill: "workflow-technical"
+    source: plugin
+    tags: [technical-design, adr, design-doc, fact-gathering, design-sync, test-skeletons]
+    typical-use: "Codebase fact gathering, Design Doc creation, consistency verification, and a conditional ADR, up to Design Doc approval"
+    size: medium
+    key-references:
+      - "Fact Disposition"
+      - "Authority Boundary"
+    sections:
+      - "Domain Independence"
+      - "Entry Gate [BLOCKING]"
+      - "Flow"
+      - "Why the ADR Comes After the Design"
+      - "Why Fact Gathering Precedes Design"
+      - "Document Requirements by Scale"
+      - "Stop Points"
+      - "Revision Loop"
+      - "Part Sequencing"
+      - "Exit Gate [BLOCKING]"
+
+  code-navigation:
+    skill: "code-navigation"
+    source: plugin
+    tags: [lsp, code-search, symbol-lookup, references, call-hierarchy, rename-impact, grep, navigation]
+    typical-use: "Finding where a symbol is defined, finding usages and call sites, assessing rename impact, choosing between semantic and textual lookup"
+    size: small
+    key-references:
+      - "Language Server Protocol"
+      - "Refactoring - Martin Fowler"
+    sections:
+      - "The Rule"
+      - "Tool by Question"
+      - "Legitimate Fallback"
+      - "Worked Examples"
+      - "Sequencing Rules"
+      - "Delegating a Wide Search"
+      - "Escalation"

@@ -3,6 +3,11 @@
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
+import {
+  ComposerResearchModeToggle,
+  ThreadResearchProvider,
+  useDeepResearchToolUI,
+} from '@/components/research/research-thread';
 import { resolveMainView, type MainView as MainViewKind } from '@/lib/threads/resolve-main-view';
 import { parseRouteThreadId } from '@/lib/threads/route-thread-id';
 import { useShellActions, useShellStatus } from './shell-actions';
@@ -34,13 +39,18 @@ export function useMainViewState(): MainViewState {
   };
 }
 
-const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome };
+const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, ComposerExtra: ComposerResearchModeToggle };
 /** E-8: the open thread was deleted elsewhere — the feed stays, the composer goes, the notice replaces the TH-08 block. */
-const DELETED_THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, DeletedNotice };
+const DELETED_THREAD_COMPONENTS: ThreadComponents = {
+  Welcome: ShellWelcome,
+  DeletedNotice,
+  ComposerExtra: ComposerResearchModeToggle,
+};
 
 /** The main area: the feed (its skeleton with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07. */
 export function MainView() {
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
+  useDeepResearchToolUI();
   const { newChat, retrySwitch, retryHistory } = useShellActions();
   // The history adapter reports 'ready' before the runtime has put the messages into the thread:
   // until they land, a URL thread keeps the skeleton (no welcome flash while the list is still loading).
@@ -52,11 +62,13 @@ export function MainView() {
     case 'thread':
     case 'switching':
       return (
-        <Thread
-          autoFocus={false}
-          components={view.kind === 'thread' && view.deleted ? DELETED_THREAD_COMPONENTS : THREAD_COMPONENTS}
-          historyPending={view.kind === 'switching' || (routeThreadId !== undefined && bodyLoading)}
-        />
+        <ThreadResearchProvider threadId={mainRemoteId ?? null}>
+          <Thread
+            autoFocus={false}
+            components={view.kind === 'thread' && view.deleted ? DELETED_THREAD_COMPONENTS : THREAD_COMPONENTS}
+            historyPending={view.kind === 'switching' || (routeThreadId !== undefined && bodyLoading)}
+          />
+        </ThreadResearchProvider>
       );
     case 'not-found':
       return <ThreadNotice variant="not-found" onNewChat={onNewChat} />;

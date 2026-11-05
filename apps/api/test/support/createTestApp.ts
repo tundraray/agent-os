@@ -1,8 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { Agent } from '@mastra/core/agent';
+import { Agent, type ToolsInput } from '@mastra/core/agent';
 import { Mastra } from '@mastra/core/mastra';
+import type { RequestContext } from '@mastra/core/request-context';
 import { createTool } from '@mastra/core/tools';
 import { Memory } from '@mastra/memory';
 import { PostgresStore } from '@mastra/pg';
@@ -56,20 +57,39 @@ const failing = createTool({
   execute: () => Promise.reject(new Error('boom')),
 });
 
-function createTestMastra(
+/** The test `assistant` agent: its mock model, and the instruction and tools that replace the defaults. */
+export interface TestAgentOptions {
+  /** A mock model, or a function of the turn's `requestContext` picking one (an agent whose model follows the turn). */
+  model:
+    | MockLanguageModelV4
+    | ((turn: { requestContext: RequestContext }) => MockLanguageModelV4);
+  /** Default `'You are a test assistant.'`. */
+  instructions?: string;
+  /** Default: `getWeather` and `failing`. */
+  tools?: ToolsInput;
+}
+
+/**
+ * `Mastra` with the test `assistant` agent on a mock model and the shared `PostgresStore` — the `MASTRA` of every
+ * e2e app that runs chat turns.
+ */
+export function createTestMastra(
   config: ConfigService,
-  model: MockLanguageModelV4,
+  agent: TestAgentOptions,
 ): Mastra {
   return new Mastra({
     agents: {
       assistant: new Agent({
         id: 'assistant',
         name: 'Assistant',
-        instructions: 'You are a test assistant.',
-        model,
+        instructions: agent.instructions ?? 'You are a test assistant.',
+        model: agent.model,
         // Storage is inherited from the Mastra instance, as in production.
         memory: new Memory({ options: { lastMessages: 20 } }),
-        tools: { [WEATHER_TOOL]: getWeather, [FAILING_TOOL]: failing },
+        tools: agent.tools ?? {
+          [WEATHER_TOOL]: getWeather,
+          [FAILING_TOOL]: failing,
+        },
       }),
     },
     storage: new PostgresStore({
@@ -95,7 +115,7 @@ export async function createTestApp(
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
     .useFactory({
-      factory: (config: ConfigService) => createTestMastra(config, model),
+      factory: (config: ConfigService) => createTestMastra(config, { model }),
       inject: [ConfigService],
     })
     .overrideProvider(THREAD_TITLE_AGENT)

@@ -5,6 +5,8 @@ import { pipeUIMessageStreamToResponse } from 'ai';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { MASTRA } from '../mastra/mastra.constants.js';
+import { ResearchLaunchService } from '../research-chat/research-launch.service.js';
+import { THREAD_MEMORY } from '../threads/thread-memory.provider.js';
 import { ThreadTitleService } from '../threads/thread-title.service.js';
 import { ThreadRunRegistry } from '../threads/thread-run-registry.js';
 import { threadNotFound } from '../threads/threads.errors.js';
@@ -71,12 +73,19 @@ async function startController(options: {
             options.journal?.push('getOwnedThread');
             return Promise.resolve({ id: 't-1' });
           }),
-          discardRepliesAfter: vi.fn(() => Promise.resolve()),
+          discardRepliesAfter: vi.fn(() =>
+            Promise.resolve({ repeated: false }),
+          ),
         },
       },
       { provide: ThreadTitleService, useValue: { schedule: vi.fn() } },
       { provide: ThreadRunRegistry, useValue: runs },
       { provide: ConfigService, useValue: new ConfigService() },
+      {
+        provide: ResearchLaunchService,
+        useValue: { supersedeProposals: vi.fn(() => Promise.resolve()) },
+      },
+      { provide: THREAD_MEMORY, useValue: {} },
     ],
   }).compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
