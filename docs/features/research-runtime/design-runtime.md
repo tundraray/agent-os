@@ -9,6 +9,7 @@
 - **Не меняется**: таблицы `mastra_*` и `audit_events`, контракты чата и `main.ts`; Mastra не владеет ни задачами, ни событиями, ни восстановлением.
 - **Главный риск**: собственная механика может ошибиться под конкуренцией или при убийстве процесса. Дедупликацию, отказ цикла и fencing подтвердил spike (Appendix: Evidence), а матрица убийств проверяется первой.
 - **Открытые вопросы**: нет; одно допущение проверяет план (Appendix: Evidence, Code Inspection Evidence).
+- **Изменено фичей `agent-quality`**: у расследования появились окончательные статусы `completed` и `failed`, у задачи — сроки ожидания в очереди и одной попытки рядом с общим сроком, а у `withAttemptGuard` — режим, который отказывает в остановленной или закрытой работе. Как это устроено — в [`design-lifecycle.md`](../agent-quality/design-lifecycle.md#key-decisions), KD-1–KD-3; подробнее — в отметках у KD-9, FR-19, `Investigation`, `withAttemptGuard`, Runtime Settings и State Transitions.
 
 ### Key Decisions
 
@@ -73,6 +74,8 @@ Runtime уже реализован в `apps/api`, и перенос в паке
 #### KD-9: Клиентский пакет охраняет записи в свои таблицы через `TaskContext.withAttemptGuard`, не читая таблиц runtime
 
 Обработчик может вести собственные таблицы, и писать в них должна только текущая попытка: иначе попытка-зомби после перехвата lease оставит там свои строки. `withAttemptGuard` проверяет попытку под той же блокировкой строки задачи, что и записи runtime, и выполняет запись клиента в той же транзакции. Таблицы расследований, задач, событий, доставок и evidence остаются за runtime (ADR-0001). Операция обратно совместима: прежние функции `TaskContext` и обработчики она не меняет. Её реализует план части `engine` фичи `deep-research` ([design-engine.md](../deep-research/design-engine.md)).
+
+> **Изменено фичей `agent-quality`.** У `withAttemptGuard` появился необязательный режим `requireActive`: в нём охрана отвечает `stopping` и ничего не пишет, если у задачи стоит запрос отмены или расследование не `active`. Через этот режим резервирует вызов модели движок ([`design-lifecycle.md`](../agent-quality/design-lifecycle.md#key-decisions), KD-2).
 
 Отвергнуто чтение `research_tasks` клиентом: оно открыло бы ему таблицы runtime и повторило бы охрану вне runtime. Хранение записей клиента как evidence через `putEvidence` отвергнуто, потому что evidence нельзя искать и обновлять как строки. Отдельная проверка попытки перед записью отвергнута: между проверкой и commit reaper успевает вернуть задачу.
 
@@ -177,6 +180,7 @@ Runtime уже реализован в `apps/api`, и перенос в паке
 ### FR-19: Дедлайн задачи
 
 - Применяются как написаны: задача дольше дедлайна завершается `failed` с причиной «дедлайн», а независимые задачи — как обычно (AC-19.1); после подъёма процесса позже дедлайна задача `failed`, и источник больше не вызывается (AC-19.2); прерванная по дедлайну задача не повторяется (AC-19.3).
+  > **Изменено фичей `agent-quality`.** Общий срок от первого захвата (`deadline_at`) остаётся, а рядом появились срок ожидания в очереди и срок одной попытки: готовая задача, которая ждёт дольше `RUNTIME_QUEUE_WAIT_MS`, завершается `failed` с кодом `queue_wait_exceeded`, а попытка дольше `RUNTIME_ATTEMPT_MS` прерывается и повторяется как потерянная. Как это устроено — в [`design-lifecycle.md`](../agent-quality/design-lifecycle.md#key-decisions), KD-3.
 
 ### FR-20: Отмена расследования
 
@@ -842,6 +846,8 @@ sequenceDiagram
 | `investigationId`, `status`, `createdAt` | uuid, enum (`active`, `cancelled`, `deleting`), datetime | только в `Investigation` | идентичность и состояние |
 | `tasks` | `Task[]` | только в ответе `listForThread` | задачи расследования |
 
+> **Изменено фичей `agent-quality`.** У `status` появились окончательные значения `completed` и `failed`: их ставит новая операция `InvestigationService.closeInTx`, когда кончилась задача контроллера, и тем же действием отменяет незаконченные задачи ([`design-lifecycle.md`](../agent-quality/design-lifecycle.md#key-decisions), KD-1).
+
 #### Task (модель чтения)
 
 | Поле | Тип | Ограничение | Смысл |
@@ -921,6 +927,7 @@ sequenceDiagram
 - Транзакция ограничена `RUNTIME_LEASE_MS`. Если `work` не завершился в срок, база прерывает транзакцию, runtime откатывает её и бросает исключение, поэтому reaper и `purge` ждут не дольше lease.
 - Таблицы клиента ссылаются по FK только на своё расследование или свою задачу, и `purge` удаляет их строки каскадом.
 - `cancel_requested_at` охрану не меняет, как и у `putEvidence`.
+  > **Изменено фичей `agent-quality`.** Это правило теперь действует только в обычном режиме: в режиме `requireActive` выставленный `cancel_requested_at` или неактивное расследование дают отказ `stopping`. Подробнее — в отметке у KD-9.
 - Отказ `withAttemptGuard` — значение, как отказ `propose` и резерва. `putEvidence`, `saveCheckpoint` и `registerWait` сообщают `fenced` исключением `AttemptFencedError` с полем `reason: 'fenced'`, которое распознаёт `mcp-source`. Оба сигнала значат одно: попытка не текущая, и ничего не записано.
 - Первый потребитель — движок `deep-research`: так он пишет `research_decisions`, `research_claims` и `research_llm_calls` ([design-engine.md](../deep-research/design-engine.md)).
 
@@ -1077,6 +1084,8 @@ Runtime не повторяет задачу сам: повторная попы
 
 Точки `RUNTIME_CRASH_AT`: `admission.after-commit`, `dispatch.after-claim`, `handler.after-evidence`, `dispatch.before-terminal`, `dispatch.after-terminal` (события записаны, но не доставлены), `relay.before-done` (внутри транзакции доставки), `relay.after-done`, `reaper.after-requeue`, `cancel.after-commit`.
 
+> **Изменено фичей `agent-quality`.** К настройкам добавились `RUNTIME_QUEUE_WAIT_MS` (по умолчанию 600 000) — предел ожидания готовой задачи в очереди — и `RUNTIME_ATTEMPT_MS` (по умолчанию 900 000) — предел одной попытки ([`design-lifecycle.md`](../agent-quality/design-lifecycle.md#contract-definitions), Contract Definitions). Подробнее — в отметке у FR-19.
+
 ### Data Model
 
 Схема `app` описана в модуле `packages/db/src/schema.ts` через `pgSchema('app')`; домены CHECK строятся там из enum контрактов (AC-RT-8). Каскад удаления идёт от `research_investigations`; каждый FK — `ON DELETE CASCADE`, его цель указана в столбце ограничений. Статусы и классы — `text` с CHECK, не ENUM.
@@ -1142,6 +1151,8 @@ stateDiagram-v2
 ```
 
 Расследование имеет статусы `active`, `cancelled` и `deleting`; claim и приём работают только для `active`.
+
+> **Изменено фичей `agent-quality`.** У расследования появились окончательные статусы `completed` и `failed` (отметка у `Investigation`), а у задачи — переход `queued → failed` по сроку ожидания в очереди, и попытку, вышедшую за свой срок, сборщик обрабатывает как потерянную (отметка у FR-19). Схемы состояний и переходы задаёт [`design-lifecycle.md`](../agent-quality/design-lifecycle.md#state-transitions-and-invariants), KD-1 и KD-3.
 
 **Инварианты**
 
@@ -1424,3 +1435,4 @@ Node 24.11, `pg` 8.23.1, Postgres 16.15 из `infra/docker-compose.yml`, одн�
 | 1.16 | 2026-10-31 | Приведено к текущему шаблону: порядок и состав разделов, Snapshot с обзором, Key Decisions с отвергнутыми вариантами, Terms, критерии по требованиям; решения, контракты, критерии и use cases не менялись |
 | 1.17 | 2026-11-01 | FailureReason: обработчик, вызывающий внешний сервис, возвращает `transport_protocol` со своим кодом (`model_unavailable` у движка `deep-research`); классы и коды сбоев источника — у `mcp-source`; поведение и схемы не менялись |
 | 1.18 | 2026-11-01 | `TaskContext.withAttemptGuard` (KD-9): запись клиента в свои таблицы в транзакции под блокировкой строки задачи с проверкой попытки, отказ — значение `fenced`; транзакция ограничена `RUNTIME_LEASE_MS`, вложенный вызов `TaskContext` отклоняется, FK таблиц клиента только на своё расследование или задачу; AC-RT-1, инварианты 13 и 14 и Error Handling охватывают её; первый потребитель — движок `deep-research`; добавление к контракту с обратной совместимостью, реализуется в плане части `engine`; UC-E9; прочее поведение не менялось |
+| 1.19 | 2026-11-06 | Отметки о правилах, которые заменила утверждённая фича `agent-quality` (`design-lifecycle.md` KD-1–KD-3): окончательные статусы расследования `completed` и `failed` и операция `InvestigationService.closeInTx`; сроки ожидания в очереди и одной попытки рядом с `deadline_at` и настройки `RUNTIME_QUEUE_WAIT_MS`, `RUNTIME_ATTEMPT_MS`; режим `requireActive` у `withAttemptGuard` с отказом `stopping`. Отмечены Snapshot, KD-9, FR-19, `Investigation`, правило `cancel_requested_at` у `withAttemptGuard`, Runtime Settings, статусы расследования в State Transitions. Утверждённый текст не менялся; статус Approved сохранён |
