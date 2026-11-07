@@ -107,12 +107,16 @@ export class ChatController {
     }
     const threadId = body.threadId ?? body.id;
     if (!threadId) throw new BadRequestException('threadId or id is required');
-    // Registered before the ownership check, so a delete started at any later
-    // moment either sees this run or has already marked the thread (KD-6).
+    // Registered in this process before the ownership check, so a delete started
+    // at any later moment either sees this run or has already marked the thread
+    // (KD-6); the run's mark is written only once the thread is known to be the
+    // user's, and before anything streams, so every instance's delivery loop sees
+    // it (design-lifecycle.md, KD-6) and a made-up or foreign thread writes no row.
     const run = this.runs.register(threadId);
     let outputCreated = false;
     try {
       await this.threads.getOwnedThread(threadId, req.user.id);
+      await run.mark();
 
       // AC-14.6: a regenerate resends the newest user message; its stored replies
       // are discarded before the agent writes the new one. Only a last element

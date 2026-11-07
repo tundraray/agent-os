@@ -59,6 +59,8 @@ export type ControllerPacketResult = PackedPacket | ContextOverflow | CountFaile
 export interface ContextBuilder {
   /** Every slot is mandatory: the packet fits whole or is `needs_narrowing`. */
   buildSlotPacket(frame: PacketFrame, slots: RoleSlots): Promise<SlotPacketResult>;
+  /** Messages a caller built itself (the verifier's claim check): they fit whole or are `needs_narrowing`. */
+  fitMessages(frame: PacketFrame, messages: RoleMessage[]): Promise<SlotPacketResult>;
   buildWorkerPacket(frame: PacketFrame, material: WorkerMaterial): Promise<SlotPacketResult>;
   /** The mandatory part whole, then earlier claims newest first while they fit. */
   buildControllerPacket(
@@ -113,11 +115,11 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
   const limitOf = (frame: PacketFrame): number =>
     frame.roleConfig.windowTokens - frame.roleConfig.marginTokens;
 
-  const buildSlotPacket = async (
+  const fitMessages = async (
     frame: PacketFrame,
-    slots: RoleSlots,
+    messages: RoleMessage[],
   ): Promise<SlotPacketResult> => {
-    const counted = await count(frame, slotMessages(slots));
+    const counted = await count(frame, messages);
     if (counted.outcome === 'count_failed') return counted;
     const limitTokens = limitOf(frame);
     if (counted.packet.inputTokens > limitTokens) {
@@ -154,8 +156,12 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     return best;
   };
 
+  const buildSlotPacket = (frame: PacketFrame, slots: RoleSlots): Promise<SlotPacketResult> =>
+    fitMessages(frame, slotMessages(slots));
+
   return {
     buildSlotPacket,
+    fitMessages,
     buildWorkerPacket: (frame, material) => buildSlotPacket(frame, workerSlots(material)),
     async buildControllerPacket(frame, material) {
       const mandatory = await count(frame, controllerMessages(material, []));

@@ -43,7 +43,7 @@ describe('noSourceEnd: the answer code writes on the no-source path follows KD-8
     }
     expect(end).not.toBeNull();
     const answer = buildCodeAnswer(ANSWER_ID, [], end!);
-    expect(answer).toEqual({ answerId: ANSWER_ID, summary: null, established: [], assumed: [], unknown: [], removed: [], ...expected });
+    expect(answer).toEqual({ answerId: ANSWER_ID, summary: null, summaryItems: [], established: [], assumed: [], unknown: [], removed: [], ...expected });
   });
 
   it('a synthesis that failed for a reason with no stop reason is a defect, not an answer', () => {

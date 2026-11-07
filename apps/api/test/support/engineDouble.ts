@@ -1,18 +1,30 @@
-import type { EvidenceInput } from '@agent-os/contracts';
-import type {
-  Engine,
-  InvestigationView,
-  ReadInvestigationResult,
-  SourceMode,
-  StartInvestigationInput,
-  StartInvestigationResult,
+import {
+  type EventEnvelope,
+  type EvidenceInput,
+  RuntimeEventTypeSchema,
+} from '@agent-os/contracts';
+import { researchTasks } from '@agent-os/db';
+import {
+  type AnswerPage,
+  buildResearchAnswer,
+  type Engine,
+  type InvestigationView,
+  type ReadAnswerMessageResult,
+  type ReadInvestigationResult,
+  type SourceMode,
+  type StartInvestigationInput,
+  type StartInvestigationResult,
 } from '@agent-os/engine';
 import type {
+  EventConsumer,
   HandlerResult,
+  InvestigationService,
   Runtime,
+  RuntimeTx,
   TaskContext,
   TaskHandler,
 } from '@agent-os/runtime';
+import { and, eq } from 'drizzle-orm';
 import {
   completed,
   type Latch,
@@ -26,12 +38,80 @@ import {
 /**
  * The engine port double of the chat-entry integration file (design-chat-entry.md, Test Strategy): the engine's
  * contract (design-engine.md, Contract Definitions) is the boundary, the runtime under it is real. A start creates a
- * real investigation of the thread whose controller task is a test handler held until the test settles it; a read
- * answers a scripted `InvestigationView`. Nothing here talks to a model or a source.
+ * real investigation of the thread whose controller task is a test handler held until the test settles it; the end
+ * of that task closes the investigation through `lifecycleConsumer`, as `engine.lifecycle` does; a read answers a
+ * scripted `InvestigationView` whose status follows the investigation row, and `readAnswerMessage` the message the
+ * engine's `buildResearchAnswer` builds from the scripted answer. Nothing here talks to a model or a source.
  */
 
 /** Workflow types of the double's controller tasks; the leftover fence of the harness finds them by it. */
 export const DOUBLE_CONTROLLER_PREFIX = 'chat-entry-controller';
+
+const { TaskSucceeded, TaskFailed } = RuntimeEventTypeSchema.enum;
+
+/** Name of the doubles' stand-in for the engine's `engine.lifecycle` consumer. */
+export const DOUBLE_LIFECYCLE_CONSUMER = 'test.engine-double.lifecycle';
+
+/**
+ * The doubles' stand-in for `engine.lifecycle` (design-lifecycle.md, KD-1, Flow 3): the end of a double's controller
+ * task closes its investigation in the delivery transaction of that event through `InvestigationService.closeInTx` —
+ * `TaskSucceeded` as `completed`, `TaskFailed` as `failed`. The real consumer, registered by `EngineModule` as well,
+ * skips these tasks: they have no engine run. A task whose workflow type `isController` refuses is skipped, and
+ * `closeInTx` leaves a closed or stopped investigation as it is.
+ */
+export function doubleLifecycleConsumer(
+  investigations: Pick<InvestigationService, 'closeInTx'>,
+  isController: (workflowType: string) => boolean,
+): EventConsumer {
+  return {
+    name: DOUBLE_LIFECYCLE_CONSUMER,
+    eventTypes: [TaskSucceeded, TaskFailed],
+    schemaVersions: [1],
+    async handle(tx: RuntimeTx, event: EventEnvelope): Promise<void> {
+      const { taskId, investigationId } = event;
+      if (taskId === null) {
+        throw new Error(`${event.type} ${event.eventId} names no task`);
+      }
+      const [task] = await tx
+        .select({ workflowType: researchTasks.workflowType })
+        .from(researchTasks)
+        .where(
+          and(
+            eq(researchTasks.taskId, taskId),
+            eq(researchTasks.investigationId, investigationId),
+          ),
+        );
+      if (task === undefined || !isController(task.workflowType)) return;
+      await investigations.closeInTx(
+        tx,
+        investigationId,
+        event.type === TaskSucceeded ? 'completed' : 'failed',
+      );
+    },
+  };
+}
+
+/** The view's status of each investigation status, as the engine maps it (design-lifecycle.md, KD-1). */
+const VIEW_STATUS_OF: Readonly<Record<string, InvestigationView['status']>> = {
+  active: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  deleting: 'cancelled',
+};
+
+/** The view's status follows the investigation's own status, never the controller task's outcome. */
+export function viewStatusOf(
+  investigationStatus: string,
+): InvestigationView['status'] {
+  const status = VIEW_STATUS_OF[investigationStatus];
+  if (status === undefined) {
+    throw new Error(
+      `engine double: unknown investigation status ${investigationStatus}`,
+    );
+  }
+  return status;
+}
 
 /** The answer of a view (`InvestigationView.answer` once answered). */
 export type ScriptedAnswer = NonNullable<InvestigationView['answer']>;
@@ -79,21 +159,20 @@ interface InvestigationRecord {
   held: boolean;
   /** The handler returned (the attempt ended), or the harness already cancelled the investigation. */
   done: boolean;
-  /** The scripted answer, stored when the controller succeeds; the view shows it once the task is `succeeded`. */
+  /** The scripted answer, stored when the controller succeeds; the view shows it once the investigation is `completed`. */
   answer: ScriptedAnswer | null;
+  /** What the answer message says about each stored evidence: its provenance and `coverage.truncated`. */
+  readonly pages: Map<string, AnswerPage>;
 }
-
-/** Final statuses of the controller task, as the engine maps them (design-engine.md, InvestigationView). */
-const TERMINAL_STATUSES: Readonly<Record<string, InvestigationView['status']>> =
-  {
-    succeeded: 'completed',
-    failed: 'failed',
-    cancelled: 'cancelled',
-  };
 
 export interface EngineDouble extends Engine {
   /** The handler of the double's controller tasks; the harness registers it before the workers start. */
   readonly controllerHandler: TaskHandler;
+  /**
+   * Closes the double's investigations the way `engine.lifecycle` does; the harness registers it with the runtime's
+   * event consumers before the workers start.
+   */
+  readonly lifecycleConsumer: EventConsumer;
   /** Every `startInvestigation` input in call order, refused ones included. */
   readonly startCalls: readonly StartInvestigationInput[];
   /** Accepted starts in call order. */
@@ -106,7 +185,7 @@ export interface EngineDouble extends Engine {
   refuseStarts(refusal: StartRefusal | null): void;
   /** Resolves once the controller attempt of the investigation is running. */
   controllerRunning(investigationId: string): Promise<void>;
-  /** The controller stores the evidence and succeeds; the view shows the answer once the task row is `succeeded`. */
+  /** The controller stores the evidence and succeeds; the view shows the answer once the investigation is closed `completed`. */
   succeed(investigationId: string, success: ControllerSuccess): void;
   /** The controller task fails (`TaskFailed`). */
   fail(investigationId: string, message?: string): void;
@@ -196,7 +275,14 @@ export function createEngineDouble(
       }
       const evidenceIds: string[] = [];
       for (const evidence of outcome.success.evidence ?? []) {
-        evidenceIds.push((await ctx.putEvidence(evidence)).evidenceId);
+        const { evidenceId } = await ctx.putEvidence(evidence);
+        evidenceIds.push(evidenceId);
+        record.pages.set(evidenceId, {
+          sourceId: evidence.provenance.sourceId,
+          toolName: evidence.provenance.toolName,
+          snapshot: evidence.provenance.snapshot,
+          truncated: evidence.coverage.truncated,
+        });
       }
       record.answer = outcome.success.answer(evidenceIds);
       return completed({ evidenceRefs: evidenceIds });
@@ -247,6 +333,7 @@ export function createEngineDouble(
       held: false,
       done: false,
       answer: null,
+      pages: new Map(),
     });
     byLaunchKey.set(
       `${start.input.resourceId}:${start.input.launchKey}`,
@@ -256,33 +343,19 @@ export function createEngineDouble(
   }
 
   /**
-   * The view's status from the real rows, as the engine derives it: the controller task's final status decides;
-   * until it ends, an active investigation is `running` and any other `cancelled`. `undefined` when the owner's
-   * investigation row is gone or belongs to someone else.
+   * The view's status from the investigation row, as the engine derives it (`viewStatusOf`); `undefined` when the
+   * owner's investigation row is gone or belongs to someone else.
    */
   async function statusOf(
     record: InvestigationRecord,
     resourceId: string,
   ): Promise<InvestigationView['status'] | undefined> {
-    const [row] = await query<{
-      investigationStatus: string;
-      taskStatus: string | null;
-    }>(
-      `SELECT i.status AS "investigationStatus", t.status AS "taskStatus"
-         FROM app.research_investigations i
-         LEFT JOIN app.research_tasks t ON t.task_id = $3
-        WHERE i.investigation_id = $1 AND i.resource_id = $2`,
-      [
-        record.started.investigationId,
-        resourceId,
-        record.started.controllerTaskId,
-      ],
+    const [row] = await query<{ status: string }>(
+      `SELECT status FROM app.research_investigations
+        WHERE investigation_id = $1 AND resource_id = $2`,
+      [record.started.investigationId, resourceId],
     );
-    if (!row) return undefined;
-    const final =
-      row.taskStatus === null ? undefined : TERMINAL_STATUSES[row.taskStatus];
-    if (final) return final;
-    return row.investigationStatus === 'active' ? 'running' : 'cancelled';
+    return row === undefined ? undefined : viewStatusOf(row.status);
   }
 
   async function start(
@@ -334,6 +407,11 @@ export function createEngineDouble(
       return sourceMode;
     },
     controllerHandler: testHandler(workflowType, runController),
+    lifecycleConsumer: doubleLifecycleConsumer(
+      { closeInTx: (...args) => runtime().investigations.closeInTx(...args) },
+      (taskWorkflowType) =>
+        taskWorkflowType.startsWith(`test-${DOUBLE_CONTROLLER_PREFIX}-`),
+    ),
     startCalls,
     started,
 
@@ -360,10 +438,44 @@ export function createEngineDouble(
         : { outcome: 'found', view: view(record, status) };
     },
 
+    async readAnswerMessage({
+      investigationId,
+      resourceId,
+    }): Promise<ReadAnswerMessageResult> {
+      const record = records.get(investigationId);
+      const status =
+        record === undefined ? undefined : await statusOf(record, resourceId);
+      if (record === undefined || status === undefined) {
+        return { outcome: 'rejected', code: 'investigation_not_found' };
+      }
+      if (status !== 'completed' || record.answer === null) {
+        return { outcome: 'rejected', code: 'no_answer' };
+      }
+      const { input, sourceMode: mode } = record.started;
+      return {
+        outcome: 'found',
+        message: buildResearchAnswer({
+          answer: record.answer,
+          goal: input.query,
+          launchKey: input.launchKey,
+          sourceMode: mode,
+          pages: mode === 'sources' ? record.pages : new Map(),
+        }),
+      };
+    },
+
     recordSignal() {
       return Promise.reject(
         new Error(
           'engine double: recordSignal is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
+    assess() {
+      return Promise.reject(
+        new Error(
+          'engine double: assess is not part of the chat-entry boundary',
         ),
       );
     },

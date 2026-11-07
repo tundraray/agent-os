@@ -1,156 +1,174 @@
-import type { Coverage, Task } from '@agent-os/contracts';
+import { CoverageSchema, type EvidenceRecord, type Task } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
-import type {
-  Clock,
-  EvidenceReader,
-  HandlerResult,
-  InvestigationService,
-  TaskContext,
-  TaskHandler,
-  TaskScheduler,
-} from '@agent-os/runtime';
-import type { SourceRegistry } from '@agent-os/sources';
+import type { Clock, EvidenceReader, HandlerResult, InvestigationService, TaskContext, TaskHandler } from '@agent-os/runtime';
 import { z } from 'zod';
 import { answerSaver, checkpointedAnswer } from '../attempt/checkpoint.js';
 import { abandon as abandonAttempt, failed, readTaskFrame, succeeded, type TaskFrame } from '../attempt/task-attempt.js';
-import { createCapabilityRegistry } from '../capabilities/capability-registry.js';
-import { type DecisionFrame, proposeGather } from '../capabilities/gather.js';
+import { findGroupTable, type GroupTable } from '../calibration/group-table.js';
 import { VERIFY_WORKFLOW, VerifyInputSchema } from '../capabilities/verify.js';
 import { type ClaimRevisionRow, claimsRepository as claims, type VerifiedRevision } from '../claims/claims.repository.js';
-import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { ContextBuilder } from '../context/context-builder.js';
-import type { EvidenceItem } from '../context/role-packets.js';
-import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
-import { ModelArgsObjectSchema, parseModelArgs } from '../model/model-args.js';
 import type { ModelGateway } from '../model/model-gateway.js';
-import type { EngineLogger } from '../ports.js';
-import { type Atom, type SourceRecord, verifyClaim } from './claim-verifier.js';
+import { promptVersion } from '../model/prompt-version.js';
+import { ClaimAssessmentSchema } from './claim-assessment.js';
+import { buildClaimCheck, type ClaimCheck, type ClaimCheckPage } from './claim-check.js';
+import { type ClaimDecision, decideClaim } from './decide-claim.js';
+import { checkPointer, PageSchema, type Pointer } from './pointer.js';
 
 export interface VerifyDeps {
   readonly database: Database;
-  /** The fetch tasks of the round, read as the controller reads its tasks. */
+  /** The tasks of the investigation: a page of the pointer must be the output of one of them. */
   readonly investigations: Pick<InvestigationService, 'listForThread'>;
-  /** Content of the cited and the fetched evidence, for the investigation's owner. */
+  /** The pages of the pointer, for the investigation's owner only. */
   readonly evidence: Pick<EvidenceReader, 'get'>;
-  /** Proposes the round's `source.fetch` tasks (ADR-0001). */
-  readonly scheduler: Pick<TaskScheduler, 'propose'>;
-  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
   readonly gateway: ModelGateway;
   readonly contextBuilder: ContextBuilder;
+  /** The calibrated group tables; the investigation's is the one of its `verifier` model and prompt (KD-3). */
+  readonly groupTables: readonly GroupTable[];
   readonly clock: Clock;
-  readonly logger: EngineLogger;
 }
 
-/** The checkpoint name of the verifier's one model call. */
-const VERIFY_CALL = 'verify';
+/**
+ * The output schema of the `verifier` role: the closed assessment of one claim (Contract «Вывод `verifier` —
+ * `ClaimAssessment`»), the schema `buildClaimCheck` gives the call.
+ */
+export const VerifierOutputSchema = ClaimAssessmentSchema;
+
+/** Checkpoint names of the verifier call and of its one retry after an answer off the form (DC-7). */
+const FIRST_CALL = 'verify';
+const RETRY_CALL = 'verify-retry';
 const INVALID_MODEL_OUTPUT = 'invalid_model_output';
-const FINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'cancelled']);
 
-/**
- * What the `verifier` role returns: the source records to fetch and the claims each request checks. It judges no
- * claim — code does (KD-6). No top-level `claims`: that is the worker's output.
- */
-export const VerifierOutputSchema = z.object({
-  requests: z.array(
-    z.object({
-      claimIds: z.array(z.string()),
-      sourceId: z.string(),
-      toolName: z.string(),
-      args: ModelArgsObjectSchema,
-    }),
-  ),
-});
-type VerifierRequest = z.infer<typeof VerifierOutputSchema>['requests'][number];
-
-/**
- * A collection of the round: the claims it checks and its fetch task, or no task with the reason — `source_unavailable`
- * when the snapshot could not be read (KD-10), the stop reason when the runtime refused the task.
- */
-const CollectionSchema = z.object({
-  claimIds: z.array(z.uuid()),
-  taskId: z.uuid().nullable(),
-  failureCode: z.string().nullable(),
-});
-type Collection = z.infer<typeof CollectionSchema>;
-
-/** The checkpoint after the round's tasks are proposed: the verifier answer and the collections, read after the wake. */
-const ProposedRoundSchema = z.object({ call: z.literal(VERIFY_CALL), output: z.unknown(), collections: z.array(CollectionSchema) });
+/** Why a check revision is `insufficient` (Contract «`research.verify` версии 2»). */
+type InsufficientReason = 'pointer_invalid' | 'needs_narrowing' | NonNullable<ClaimDecision['reason']>;
 
 const StoredAtomsSchema = z.array(z.object({ kind: z.string(), value: z.string() }));
-/** A page of `source.fetch` evidence: its records are `items` (design-mcp-source.md, evidence of a page). */
-const PageSchema = z.object({ items: z.array(z.unknown()) });
+const ArgsSchema = z.record(z.string(), z.unknown());
+const StoredCoverageSchema = CoverageSchema.nullable();
 
 const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(VERIFY_WORKFLOW, cause);
 
 type Step<T> = { readonly next: 'go'; readonly value: T } | { readonly next: 'result'; readonly result: HandlerResult };
 
+/** A page the pointer may name: of this investigation, readable for its owner, holding records. */
+interface PointedPage {
+  readonly items: readonly unknown[];
+  readonly origin: Omit<ClaimCheckPage, 'records'>;
+}
+
+/** The claim as the task checks it: its latest revision with the pointer that passed the rule and its pages. */
+interface CheckedClaim {
+  readonly revision: ClaimRevisionRow;
+  readonly pointer: Pointer;
+  readonly pages: ReadonlyMap<string, PointedPage>;
+}
+
+const isEvidenceNotFound = (error: unknown): boolean =>
+  error instanceof Error && (error as Error & { code?: unknown }).code === 'evidence_not_found';
+
+/** The records of a page, or null when its content is not a page of records. */
+function recordsOf(bytes: Uint8Array): readonly unknown[] | null {
+  let content: unknown;
+  try {
+    content = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+  const page = PageSchema.safeParse(content);
+  return page.success ? page.data.items : null;
+}
+
+/** Where the records of a page came from, as the verifier input shows each page (DC-14). */
+const originOf = (record: EvidenceRecord): PointedPage['origin'] => ({
+  source: record.provenance.sourceId,
+  tool: record.provenance.toolName,
+  args: ArgsSchema.parse(record.provenance.normalizedArgs),
+  snapshot: record.provenance.snapshot,
+  complete: record.coverage.completeness === 'complete',
+});
+
 /**
- * `research.verify` v1 (design-engine.md, Flow 4). The `verifier` role chooses which source records would check the
- * claims; its answer is saved to the checkpoint, the task proposes their `source.fetch` tasks, registers the wait and
- * returns `wait`, as the controller does (KD-6). After the wake code compares each claim's atoms with the records
- * fetched for it and appends a revision per claim: `supported` with its basis (`evidenceIds`) and scope (`coverage`),
- * `refuted` only by a contradicting record, `insufficient` with its missing atoms — also when the collection failed or
- * its snapshot could not be read (DC-10, KD-10). An output still invalid after the gateway's retry ends the task
- * without revisions and with the warning `invalid_model_output`.
+ * `research.verify` v2 (design-engine.md, Flow 1; «Как утверждение получает статус»): the check of one claim. The task
+ * reads the claim's latest revision and the pages of its pointer for the investigation's owner; a pointer that names a
+ * page of another investigation or owner, an unknown page, a record outside its page, or no record at all ends
+ * `insufficient` with `pointer_invalid`, with no model call and no reservation (DC-6). `buildClaimCheck` builds the
+ * packet of the pointed records only; a packet over the role window ends `insufficient` with `needs_narrowing`, again
+ * without a call. One `verifier` call answers the closed assessment; an answer the form rules of `decideClaim` refuse is
+ * asked once more, and one still off the form ends `insufficient` with `invalid_assessment` (DC-7). `decideClaim`
+ * with the investigation's group table gives the status, and one guarded write appends the revision: status, pointer,
+ * type, the assessment with its broken-form flag (with no answer and the reason when no call decided), the group of a `supported` claim and the basis in `evidenceIds`. The
+ * task proposes no collection and never waits. A refused reservation, a stop or a cancel, a passed `notAfter` and an
+ * unavailable provider end the task without a revision (DC-8).
  */
 export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   const { database: db } = deps;
-  const decoder = new TextDecoder();
-  const gatherDeps = { scheduler: deps.scheduler, sources: deps.sourceRegistry, clock: deps.clock, logger: deps.logger };
-  const capabilities = createCapabilityRegistry(gatherDeps);
 
-  async function tasksOf(frame: TaskFrame): Promise<readonly Task[]> {
+  async function ownTaskIds(frame: TaskFrame): Promise<ReadonlySet<string>> {
     const thread = await deps.investigations.listForThread(frame.resourceId, frame.threadId);
-    return thread.find((candidate) => candidate.investigationId === frame.investigationId)?.tasks ?? [];
+    const tasks: readonly Task[] = thread.find((candidate) => candidate.investigationId === frame.investigationId)?.tasks ?? [];
+    return new Set(tasks.map((task) => task.taskId));
   }
 
-  const readEvidence = (frame: TaskFrame, evidenceId: string) =>
-    deps.evidence.get(evidenceId, frame.resourceId).then((stored) => decoder.decode(stored.bytes));
+  /** The page for the owner, or undefined when it is no page of this investigation's tasks readable for them. */
+  async function pointedPage(frame: TaskFrame, own: ReadonlySet<string>, pageId: string): Promise<PointedPage | undefined> {
+    if (!z.uuid().safeParse(pageId).success) return undefined;
+    let stored: Awaited<ReturnType<VerifyDeps['evidence']['get']>>;
+    try {
+      stored = await deps.evidence.get(pageId, frame.resourceId);
+    } catch (error) {
+      if (isEvidenceNotFound(error)) return undefined;
+      throw error;
+    }
+    if (!own.has(stored.record.taskId)) return undefined;
+    const items = recordsOf(stored.bytes);
+    return items === null ? undefined : { items, origin: originOf(stored.record) };
+  }
 
-  /** The verifier's call over the claims, their atoms and the evidence they cite (Flow 4). */
-  async function callVerifier(
-    ctx: TaskContext,
-    frame: TaskFrame,
-    revisions: readonly ClaimRevisionRow[],
-  ): Promise<Step<readonly VerifierRequest[]>> {
-    const roleConfig = frame.config.roles.verifier;
-    const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
-    const tools = capabilities.fetchToolCatalog(frame.config);
-    const cited = [...new Set(revisions.flatMap((revision) => revision.evidenceIds))];
-    const evidence: EvidenceItem[] = await Promise.all(
-      cited.map(async (evidenceId) => ({ evidenceId, text: await readEvidence(frame, evidenceId) })),
-    );
-    const assignment = JSON.stringify({
-      claims: revisions.map((revision) => ({ claimId: revision.claimId, text: revision.text, atoms: revision.atoms })),
-      tools,
+  /** The pointer rule over the pages the pointer names (DC-6); null when it fails. */
+  async function checkClaimPointer(frame: TaskFrame, revision: ClaimRevisionRow): Promise<CheckedClaim | null> {
+    const named = z.array(z.object({ pageId: z.string() })).safeParse(revision.pointer);
+    const pages = new Map<string, PointedPage>();
+    if (named.success) {
+      const own = await ownTaskIds(frame);
+      for (const pageId of new Set(named.data.map((entry) => entry.pageId))) {
+        const page = await pointedPage(frame, own, pageId);
+        if (page !== undefined) pages.set(pageId, page);
+      }
+    }
+    const sizes = new Map([...pages].map(([pageId, page]) => [pageId, page.items.length]));
+    const checked = checkPointer(revision.pointer, sizes);
+    return checked.valid ? { revision, pointer: checked.pointer, pages } : null;
+  }
+
+  /** The verifier input: the claim text and, page by page in pointer order, only the records the pointer names. */
+  function claimCheckOf(frame: TaskFrame, claim: CheckedClaim): ClaimCheck {
+    const pages = claim.pointer.map(({ pageId, records }): ClaimCheckPage => {
+      const page = claim.pages.get(pageId)!;
+      return { ...page.origin, records: records.map((number) => page.items[number]) };
     });
-    const packet = await deps.contextBuilder.buildSlotPacket(
-      { roleConfig, instructions, outputSchema: VerifierOutputSchema, signal: ctx.signal },
-      { assignment, evidence },
-    );
-    if (packet.outcome === 'needs_narrowing') {
-      const narrowing = { materialTokens: packet.materialTokens, limitTokens: packet.limitTokens };
-      return { next: 'result', result: succeeded({ needsNarrowing: narrowing, verdicts: [] }) };
-    }
-    if (packet.outcome === 'count_failed') {
-      return { next: 'result', result: failed(ctx, 'model_unavailable', 'the verifier packet could not be counted') };
-    }
+    return buildClaimCheck({ roleConfig: frame.config.roles.verifier, claimText: claim.revision.text, pages });
+  }
+
+  /** One verifier call: its answer, null when the gateway found it off the schema twice, or the task's result. */
+  async function callVerifier(ctx: TaskContext, frame: TaskFrame, check: ClaimCheck, call: string): Promise<Step<unknown>> {
+    const roleConfig = frame.config.roles.verifier;
     const answered = await deps.gateway.call({
       ctx,
       role: 'verifier',
       roleConfig,
-      instructions,
-      messages: packet.messages,
-      outputSchema: VerifierOutputSchema,
+      instructions: check.instructions,
+      promptVersion: promptVersion(roleConfig.prompt),
+      messages: check.messages,
+      outputSchema: check.outputSchema,
       notAfter: frame.notAfter,
-      checkpointAnswer: answerSaver(ctx, VERIFY_CALL),
+      checkpointAnswer: answerSaver(ctx, call),
     });
     switch (answered.outcome) {
       case 'answered':
-        return { next: 'go', value: answered.output.requests };
+        return { next: 'go', value: answered.output };
       case INVALID_MODEL_OUTPUT:
-        return { next: 'result', result: succeeded({ verdicts: [] }, { warnings: [INVALID_MODEL_OUTPUT] }) };
+        return { next: 'go', value: null };
       case 'no_answer':
         if (answered.reason === 'cancelled') return abandon('cancelled');
         return { next: 'result', result: failed(ctx, 'deadline', 'the verifier call reached notAfter') };
@@ -162,108 +180,48 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
   }
 
   /**
-   * Proposes a `source.fetch` task per request the investigation may fetch (the gate's check of the tool and its
-   * arguments, parsed from the JSON text the model writes — an output whose text is not a JSON object never gets here,
-   * the gateway refuses it as invalid); a request for another claim set or tool, or with arguments the tool's schema
-   * refuses, is dropped, and its claims stay without records.
+   * The answer the status is decided from: the retry's when the checkpoint holds it; otherwise the first call's (saved
+   * or asked now), asked once more when `decideClaim` finds it off the form. A schema failure was already retried by
+   * the gateway, so a null answer is final.
    */
-  async function collect(
+  async function assess(
     ctx: TaskContext,
     frame: TaskFrame,
-    revisions: readonly ClaimRevisionRow[],
-    requests: readonly VerifierRequest[],
-  ): Promise<Step<Collection[]>> {
-    const known = new Set(revisions.map((revision) => revision.claimId));
-    const fetchTool = capabilities.fetchTools(frame.config);
-    const decision: DecisionFrame = {
-      ctx,
-      investigationId: frame.investigationId,
-      config: frame.config,
-      notAfter: frame.notAfter,
-      requesterKey: `${VERIFY_WORKFLOW}:${ctx.taskId}`,
-    };
-    const collections: Collection[] = [];
-    for (const request of requests) {
-      const claimIds = request.claimIds.filter((claimId) => known.has(claimId));
-      const tool = fetchTool(request);
-      const args = parseModelArgs(request.args);
-      if (claimIds.length === 0 || tool === null || args === null || !tool.argsSchema.safeParse(args).success) continue;
-      const { sourceId, toolName } = request;
-      const gathered = await proposeGather(gatherDeps, decision, {
-        kind: 'requestEvidence',
-        rationale: 'verification round',
-        evidenceIds: [],
-        await: true,
-        sourceId,
-        toolName,
-        args,
-        completeness: 'all',
-      });
-      if (gathered.outcome === 'abandon') return abandon(gathered.cause);
-      if (gathered.outcome === 'stop') {
-        if (gathered.reason === 'deadline') {
-          return { next: 'result', result: failed(ctx, 'deadline', 'no time left for the verification collections') };
-        }
-        collections.push({ claimIds, taskId: null, failureCode: gathered.reason });
-        continue;
-      }
-      const [unavailable] = gathered.unavailable;
-      collections.push({
-        claimIds,
-        taskId: gathered.taskIds[0] ?? null,
-        failureCode: unavailable === undefined ? null : unavailable.failureCode,
-      });
-    }
-    return { next: 'go', value: collections };
+    check: ClaimCheck,
+    offForm: (answer: unknown) => boolean,
+  ): Promise<Step<unknown>> {
+    const retried = checkpointedAnswer(ctx, RETRY_CALL);
+    if (retried !== undefined) return { next: 'go', value: retried.output };
+    const saved = checkpointedAnswer(ctx, FIRST_CALL);
+    const first = saved === undefined ? await callVerifier(ctx, frame, check, FIRST_CALL) : { next: 'go' as const, value: saved.output };
+    if (first.next === 'result' || first.value === null || !offForm(first.value)) return first;
+    return callVerifier(ctx, frame, check, RETRY_CALL);
   }
 
-  async function recordsOf(frame: TaskFrame, task: Task | undefined): Promise<SourceRecord[]> {
-    if (task?.status !== 'succeeded') return [];
-    const pages = await Promise.all(
-      task.outputRefs.map(async (evidenceId) => ({ evidenceId, page: PageSchema.parse(JSON.parse(await readEvidence(frame, evidenceId))) })),
+  async function append(ctx: TaskContext, revision: VerifiedRevision, reason: InsufficientReason | null, extra: object = {}): Promise<HandlerResult> {
+    const written = await ctx.withAttemptGuard((tx) =>
+      claims.appendRevisions(tx, { investigationId: ctx.investigationId, taskId: ctx.taskId, revisions: [revision] }),
     );
-    return pages.flatMap(({ evidenceId, page }) => page.items.map((record) => ({ evidenceId, record })));
+    if (written.outcome === 'fenced') return abandon('fenced');
+    return succeeded({ claimId: revision.claimId, status: revision.status, reason, ...extra });
   }
 
-  /** Code compares every claim's atoms with the records fetched for it (KD-6, DC-10). */
-  async function judge(frame: TaskFrame, revisions: readonly ClaimRevisionRow[], collections: readonly Collection[], tasks: readonly Task[]) {
-    const byId = new Map(tasks.map((task) => [task.taskId, task]));
-    const fetched = new Map<Collection, { records: SourceRecord[]; coverage: Coverage | null }>();
-    for (const collection of collections) {
-      const task = collection.taskId === null ? undefined : byId.get(collection.taskId);
-      fetched.set(collection, { records: await recordsOf(frame, task), coverage: task?.status === 'succeeded' ? task.coverage : null });
-    }
-    return revisions.map((revision): VerifiedRevision & { readonly missingAtoms: readonly Atom[] } => {
-      const own = collections.filter((collection) => collection.claimIds.includes(revision.claimId)).map((collection) => fetched.get(collection)!);
-      const records = own.flatMap((item) => item.records);
-      const verdict = verifyClaim({ atoms: StoredAtomsSchema.parse(revision.atoms), records });
-      const basis = new Set(verdict.basis);
-      const scope = own.find((item) => item.records.some((record) => basis.has(record.evidenceId)))?.coverage ?? null;
-      return {
-        claimId: revision.claimId,
-        text: revision.text,
-        atoms: verdict.atoms,
-        evidenceIds: verdict.basis,
-        coverage: scope,
-        status: verdict.status,
-        missingAtoms: verdict.missingAtoms,
-      };
-    });
-  }
-
-  /** The verifier's requests and the round's collections, from the checkpoint or by calling and proposing now. */
-  async function round(ctx: TaskContext, frame: TaskFrame, revisions: readonly ClaimRevisionRow[]): Promise<Step<Collection[]>> {
-    const proposed = ProposedRoundSchema.safeParse(ctx.checkpoint);
-    if (proposed.success) return { next: 'go', value: proposed.data.collections };
-    const saved = checkpointedAnswer(ctx, VERIFY_CALL);
-    const called: Step<readonly VerifierRequest[]> =
-      saved === undefined ? await callVerifier(ctx, frame, revisions) : { next: 'go', value: VerifierOutputSchema.parse(saved.output).requests };
-    if (called.next === 'result') return called;
-    const collected = await collect(ctx, frame, revisions, called.value);
-    if (collected.next === 'result') return collected;
-    await ctx.saveCheckpoint({ call: VERIFY_CALL, output: { requests: called.value }, collections: collected.value });
-    return collected;
-  }
+  /**
+   * A revision decided before any call: `insufficient`, with the pointer as stored. Its assessment holds no answer and
+   * the reason, the way an answer off the form is stored with its flag, so the stored revision says why it was not checked.
+   */
+  const uncheckedRevision = (revision: ClaimRevisionRow, reason: 'pointer_invalid' | 'needs_narrowing'): VerifiedRevision => ({
+    claimId: revision.claimId,
+    text: revision.text,
+    atoms: StoredAtomsSchema.parse(revision.atoms),
+    evidenceIds: [],
+    coverage: StoredCoverageSchema.parse(revision.coverage),
+    status: 'insufficient',
+    pointer: revision.pointer,
+    claimType: null,
+    assessment: { answer: null, invalidForm: false, reason },
+    confidence: null,
+  });
 
   async function run(ctx: TaskContext): Promise<HandlerResult> {
     const input = VerifyInputSchema.parse(ctx.input);
@@ -274,40 +232,55 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
       return failed(ctx, 'deadline', 'the verification task ran at or after notAfter');
     }
     const frame = await readTaskFrame(db, ctx, notAfter);
-    // In the order the decision named them: a revision's number in this task is its claim's place in the round.
-    const order = (claimId: string) => input.claimIds.indexOf(claimId);
-    const revisions = (await claims.latestRevisions(db, ctx.investigationId, input.claimIds)).sort(
-      (left, right) => order(left.claimId) - order(right.claimId),
-    );
-    if (revisions.length === 0) return succeeded({ verdicts: [] });
+    const [revision] = await claims.latestRevisions(db, ctx.investigationId, [input.claimId]);
+    if (revision === undefined) return succeeded({ claimId: input.claimId, status: null, reason: null });
 
-    const collected = await round(ctx, frame, revisions);
-    if (collected.next === 'result') return collected.result;
-    const collections = collected.value;
-    const tasks = await tasksOf(frame);
-    const roundTaskIds = new Set(collections.flatMap((collection) => (collection.taskId === null ? [] : [collection.taskId])));
-    const open = tasks.filter((task) => roundTaskIds.has(task.taskId) && !FINAL_STATUSES.has(task.status)).map((task) => task.taskId);
-    if (open.length > 0) {
-      const registered = await ctx.registerWait(open);
-      if (registered.outcome !== 'ok') {
-        throw new Error(`wait of verification task ${ctx.taskId} refused: ${registered.reason}`);
-      }
-      return { kind: 'wait', answerOrDelta: null, waitFor: open, evidenceRefs: [], coverage: null, missingEvidence: [], warnings: [], proposedTasks: [] };
+    const claim = await checkClaimPointer(frame, revision);
+    if (claim === null) return append(ctx, uncheckedRevision(revision, 'pointer_invalid'), 'pointer_invalid');
+
+    const check = claimCheckOf(frame, claim);
+    const roleConfig = frame.config.roles.verifier;
+    const packet = await deps.contextBuilder.fitMessages(
+      { roleConfig, instructions: check.instructions, outputSchema: check.outputSchema, signal: ctx.signal },
+      check.messages,
+    );
+    if (packet.outcome === 'needs_narrowing') {
+      const needsNarrowing = { materialTokens: packet.materialTokens, limitTokens: packet.limitTokens };
+      return append(ctx, uncheckedRevision(revision, 'needs_narrowing'), 'needs_narrowing', { needsNarrowing });
+    }
+    if (packet.outcome === 'count_failed') {
+      return failed(ctx, 'model_unavailable', 'the verifier packet could not be counted');
     }
 
-    const judged = await judge(frame, revisions, collections, tasks);
-    const written = await ctx.withAttemptGuard((tx) =>
-      claims.appendRevisions(tx, { investigationId: ctx.investigationId, taskId: ctx.taskId, revisions: judged }),
+    const atoms = StoredAtomsSchema.parse(revision.atoms);
+    const groupTable = findGroupTable(deps.groupTables, roleConfig);
+    const items = new Map([...claim.pages].map(([pageId, page]) => [pageId, page.items]));
+    const decide = (answer: unknown): ClaimDecision => decideClaim({ assessment: answer, pointer: claim.pointer, atoms, pages: items, groupTable });
+    const assessed = await assess(ctx, frame, check, (answer) => decide(answer).reason === 'invalid_assessment');
+    if (assessed.next === 'result') return assessed.result;
+
+    const decision = decide(assessed.value);
+    return append(
+      ctx,
+      {
+        claimId: revision.claimId,
+        text: revision.text,
+        atoms: decision.values?.atoms ?? atoms,
+        evidenceIds: decision.basis,
+        coverage: StoredCoverageSchema.parse(revision.coverage),
+        status: decision.status,
+        pointer: revision.pointer,
+        claimType: decision.claimType,
+        assessment: { answer: assessed.value, invalidForm: decision.reason === 'invalid_assessment' },
+        confidence: decision.confidence,
+      },
+      decision.reason,
     );
-    if (written.outcome === 'fenced') return abandon('fenced');
-    return succeeded({
-      verdicts: judged.map((item) => ({ claimId: item.claimId, status: item.status, missingAtoms: item.missingAtoms.map(({ kind, value }) => ({ kind, value })) })),
-    });
   }
 
   return {
     workflowType: VERIFY_WORKFLOW,
-    workflowVersion: 1,
+    workflowVersion: 2,
     inputSchema: VerifyInputSchema,
     run,
   };

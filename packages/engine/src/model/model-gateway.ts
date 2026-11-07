@@ -8,12 +8,19 @@ import {
   type EngineWarningCode,
 } from '../engine-errors.js';
 import type { EngineLogger, RoleModel } from '../ports.js';
+import type {
+  TranscriptClosing,
+  TranscriptOpening,
+  TranscriptResponse,
+} from '../transcripts/transcript-writes.js';
 import { type CallUsage, callCostUsd, chargedTokens } from './cost.js';
 import {
   type CallLedger,
   type ModelRole,
   postgresCallLedger,
   type ReservationClosing,
+  type ReservationOutcome,
+  type ReservationRequest,
 } from './ledger.js';
 import {
   classifyRejection,
@@ -25,7 +32,9 @@ import {
 } from './retry-policy.js';
 import {
   mastraRoleModelClient,
+  providerMessages,
   type ReportedUsage,
+  type RoleGeneration,
   type RoleCall,
   type RoleModelClient,
 } from './role-agent.js';
@@ -45,6 +54,8 @@ export interface ModelCallRequest<T> {
     RoleConfig,
     'model' | 'effort' | 'maxOutputTokens' | 'marginTokens'
   >;
+  /** Fingerprint of the role's prompt template, `promptVersion(roleConfig.prompt)` (design-self-check.md, KD-2). */
+  readonly promptVersion: string;
   /** The rendered role prompt. */
   readonly instructions: string;
   readonly messages: readonly RoleMessage[];
@@ -90,6 +101,14 @@ export interface ModelGatewayDeps {
 export interface ModelGateway {
   call<T>(request: ModelCallRequest<T>): Promise<ModelCallResult<T>>;
 }
+
+/** Wait between two reserves of a call that other calls' open reserves keep out (design-engine.md, Runtime settings). */
+const RESERVE_WAIT_MS = 2_000;
+
+/** A reserve that got past `busy`, or the wait for it ended by a cancel or `notAfter`. */
+type ReserveAfterWait =
+  | Exclude<ReservationOutcome, { readonly outcome: 'busy' }>
+  | { readonly outcome: 'stopped'; readonly reason: 'cancelled' | 'deadline' };
 
 type CallStep<T> =
   | { readonly next: 'done'; readonly result: ModelCallResult<T> }
@@ -171,15 +190,33 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     return 'closed';
   };
 
+  /**
+   * Reserves the call; on `busy` waits 2 seconds on the clock and asks again with the same request — the input is not
+   * counted again (DC-5). The wait writes nothing and ends with any other answer of the ledger (`stopping` among them),
+   * a cancel or `notAfter`.
+   */
+  const reserveWhenFree = async (
+    request: Pick<ModelCallRequest<unknown>, 'ctx' | 'notAfter'>,
+    reservation: ReservationRequest,
+  ): Promise<ReserveAfterWait> => {
+    for (;;) {
+      const reserved = await ledger.reserve(request.ctx, reservation);
+      if (reserved.outcome !== 'busy') return reserved;
+      await delay(RESERVE_WAIT_MS, request.ctx.signal);
+      const stop = stopReason(request.ctx, request.notAfter);
+      if (stop !== null) return { outcome: 'stopped', reason: stop };
+    }
+  };
+
   /** One counted, reserved and closed call; `next` says whether the loop retries. */
   const callOnce = async <T>(
     request: ModelCallRequest<T>,
-    countRequest: TokenCountRequest,
+    prepared: { readonly countRequest: TokenCountRequest; readonly opening: TranscriptOpening },
     attempt: number,
   ): Promise<CallStep<T>> => {
     const { ctx, roleConfig } = request;
     const counted = await deps.tokenCounter.countInputTokens(
-      countRequest,
+      prepared.countRequest,
       ctx.signal,
     );
     const stopAfterCount = stopReason(ctx, request.notAfter);
@@ -193,13 +230,21 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
 
     const reservedTokens =
       counted.inputTokens + roleConfig.marginTokens + roleConfig.maxOutputTokens;
-    const reservation = await ledger.reserve(ctx, {
+    const reservation = await reserveWhenFree(request, {
       role: request.role,
       model: roleConfig.model,
       countedInputTokens: counted.inputTokens,
       reservedTokens,
+      transcript: prepared.opening,
     });
+    if (reservation.outcome === 'stopped') {
+      return { next: 'done', result: { outcome: 'no_answer', reason: reservation.reason } };
+    }
     if (reservation.outcome === 'fenced') return { next: 'done', result: reservation };
+    // Stopped or closed work (design-lifecycle.md, KD-2): no call, as if the cancel had interrupted it.
+    if (reservation.outcome === 'stopping') {
+      return { next: 'done', result: { outcome: 'no_answer', reason: 'cancelled' } };
+    }
     if (reservation.outcome === 'refused') {
       return { next: 'done', result: failed(reservation.code) };
     }
@@ -215,6 +260,7 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
           usage: null,
           chargedTokens: 0,
           costUsd: 0,
+          transcript: { outcome: 'provider_error', response: null },
         });
         if (closed === 'fenced') return { next: 'done', result: { outcome: 'fenced' } };
         return resolved.retryable
@@ -236,6 +282,10 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
       settledClosing(request.roleConfig.model, reservation.callId, {
         reported: resolved.usage,
         reservedTokens,
+        transcript: {
+          outcome: resolved.kind === 'answer' ? 'answered' : 'invalid_output',
+          response: transcriptResponse(resolved.generation),
+        },
       }),
     );
     if (closed === 'fenced') return { next: 'done', result: { outcome: 'fenced' } };
@@ -247,7 +297,11 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
   const settledClosing = (
     model: string,
     callId: string,
-    spend: { readonly reported: ReportedUsage; readonly reservedTokens: number },
+    spend: {
+      readonly reported: ReportedUsage;
+      readonly reservedTokens: number;
+      readonly transcript: TranscriptClosing;
+    },
   ): ReservationClosing => {
     const entry = deps.catalog[model];
     if (entry === undefined) {
@@ -261,11 +315,12 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
       // No usage reported: charge the whole reservation — the ledger may overstate, never understate.
       chargedTokens: usage === null ? spend.reservedTokens : chargedTokens(usage),
       costUsd: usage === null ? 0 : callCostUsd(entry, usage),
+      transcript: spend.transcript,
     };
   };
 
   type Generated<T> =
-    | (ResolvedCall<T> & { readonly usage: ReportedUsage })
+    | (ResolvedCall<T> & { readonly usage: ReportedUsage; readonly generation: RoleGeneration })
     | { readonly kind: 'stopped'; readonly reason: 'cancelled' | 'deadline' }
     | { readonly kind: 'provider_error'; readonly retryable: boolean };
 
@@ -305,6 +360,7 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
       return {
         ...classifyResolution(generation, request.outputSchema),
         usage: generation.usage,
+        generation,
       };
     } catch (error) {
       const stop = stopAfterCall(ctx, deadline.signal);
@@ -327,13 +383,20 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
         effort: request.roleConfig.effort,
         outputSchema: z.toJSONSchema(request.outputSchema),
       };
+      const opening: TranscriptOpening = {
+        promptVersion: request.promptVersion,
+        input: {
+          instructions: request.instructions,
+          messages: providerMessages(request.messages),
+        },
+      };
       let providerRetries = 0;
       let outputRetries = 0;
       for (let attempt = 1; ; attempt += 1) {
         const stop = stopReason(request.ctx, request.notAfter);
         if (stop !== null) return { outcome: 'no_answer', reason: stop };
 
-        const step = await callOnce(request, countRequest, attempt);
+        const step = await callOnce(request, { countRequest, opening }, attempt);
         if (step.next === 'done') return step.result;
         if (step.next === 'output_retry') {
           if (outputRetries === INVALID_OUTPUT_RETRIES) {
@@ -357,6 +420,15 @@ function stopAfterCall(
 ): 'cancelled' | 'deadline' | null {
   if (ctx.signal.aborted) return 'cancelled';
   return deadline.aborted ? 'deadline' : null;
+}
+
+/** The answer as the client returned it, before the schema check; the raw text only when it is not empty. */
+function transcriptResponse(generation: RoleGeneration): TranscriptResponse {
+  return {
+    object: generation.object ?? null,
+    finishReason: generation.finishReason ?? null,
+    ...(generation.text === '' ? {} : { text: generation.text }),
+  };
 }
 
 /** Usage with the input and output the provider reported, or null when it reported neither. */

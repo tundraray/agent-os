@@ -1,8 +1,10 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { INestApplication, InjectionToken } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { ToolsInput } from '@mastra/core/agent';
 import type { Memory } from '@mastra/memory';
+import type { AuditEvent } from '@agent-os/contracts';
 import type { SourceMode } from '@agent-os/engine';
 import {
   type Clock,
@@ -10,11 +12,16 @@ import {
   type Runtime,
   systemClock,
 } from '@agent-os/runtime';
+import pg from 'pg';
 import type { App } from 'supertest/types.js';
 import { vi } from 'vitest';
 import { AppModule } from '../../src/app.module.js';
+import { AuditService } from '../../src/audit/audit.service.js';
 import { configureApp } from '../../src/app.setup.js';
-import { RESEARCH_ENGINE } from '../../src/engine/engine.tokens.js';
+import {
+  ENGINE_GROUP_TABLES,
+  RESEARCH_ENGINE,
+} from '../../src/engine/engine.tokens.js';
 import {
   ASSISTANT_INSTRUCTIONS,
   turnModelId,
@@ -23,6 +30,7 @@ import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import { createDeepResearchTool } from '../../src/research-chat/deep-research.tool.js';
 import { ResearchAnswerAppender } from '../../src/research-chat/research-answer.appender.js';
 import { ResearchLaunchService } from '../../src/research-chat/research-launch.service.js';
+import { createStopResearchTool } from '../../src/research-chat/stop-research.tool.js';
 import {
   HANDLER_REGISTRY,
   RESEARCH_RUNTIME,
@@ -34,20 +42,34 @@ import {
   createThreadTitleAgent,
   THREAD_TITLE_AGENT,
 } from '../../src/threads/thread-title.agent.js';
-import { ThreadRunRegistry } from '../../src/threads/thread-run-registry.js';
+import {
+  THREAD_RUN_MARKS,
+  type ThreadRunMarks,
+  ThreadRunRegistry,
+} from '../../src/threads/thread-run-registry.js';
+import {
+  THREAD_LOCK_NAMESPACE,
+  ThreadWriteLock,
+} from '../../src/threads/thread-write-lock.js';
 import { ThreadsService } from '../../src/threads/threads.service.js';
 import { createTestMastra } from './createTestApp.js';
-import { createEngineDouble, type EngineDouble } from './engineDouble.js';
+import {
+  createEngineDouble,
+  DOUBLE_LIFECYCLE_CONSUMER,
+  type EngineDouble,
+} from './engineDouble.js';
 import {
   DEEP_RESEARCH_TOOL,
   SCRIPTED_CHAT_MODEL_ID,
   type ScriptedChatModel,
+  STOP_RESEARCH_TOOL,
   scriptedChatModel,
   titleModel,
 } from './mockModels.js';
 import { cancelLeftovers, unfinishedTaskCount } from './researchChatDb.js';
 import { newUser, seed } from './seed.js';
-import { type Latch, latch } from './wiring-handlers.js';
+import { TEST_GROUP_TABLES } from './testGroupTables.js';
+import { type Latch, latch, query } from './wiring-handlers.js';
 
 /**
  * The in-process app of the chat-entry integration file (design-chat-entry.md, Test Strategy): the real `AppModule`
@@ -55,9 +77,15 @@ import { type Latch, latch } from './wiring-handlers.js';
  * runtime with its workers on, and the part's `ResearchChatModule` — with the doubled
  * boundaries only: the scripted chat model and the engine port (`RESEARCH_ENGINE`). Around the real pieces it puts
  * observers and scripted faults: calls of `investigations.cancel`, failed writes of answer messages and of the tail
- * delete, reads of `EvidenceReader.get`, and the clock of the runtime and the delivery loop.
+ * delete, reads of `EvidenceReader.get`, a refused thread lock, a refused move of a launch to `stopped`, the audit
+ * records of the real `AuditInterceptor`, and the clock of the runtime and the delivery loop.
  *
- * Isolation (plan rule 9): one app per file (`afterAll` → `close`); `reset` in `beforeEach` and `afterEach` returns
+ * Two instances (design-lifecycle.md, INT-2): `createResearchChatApp` may run twice over the one database; each app has
+ * its own label, pools, clock, `ThreadRunRegistry`, doubles and runtime workers (a worker claims only the workflow types
+ * its runtime registered, so neither runs the other's controller tasks). They share Postgres only — the thread lock, the
+ * run marks, the launch rows, the investigations — and the environment, which stays set until the last live app closes.
+ *
+ * Isolation (plan rule 9): one app per file, or two for the two-instance tests (`afterAll` → `close`); `reset` in `beforeEach` and `afterEach` returns
  * every double, observer, fault and the clock to their initial state, releases the gates, restores real timers and
  * cancels the investigations a test left running. Environment variables are set for the app's lifetime and restored
  * by `close`. Each test takes its own user from `user()` (a fresh `newUser()`); `close` deletes their threads through
@@ -89,6 +117,8 @@ export interface TestAgentDefinition {
 export type ResolveProvider = <T>(token: InjectionToken) => T;
 
 export interface ResearchChatAppOptions {
+  /** Label of the instance in the harness's failure messages (two instances over one database); default `app`. */
+  instance?: string;
   /**
    * Variables set before the module compiles and kept until `close` (the part's `RESEARCH_APPEND_GIVE_UP_MS`,
    * `RESEARCH_LAUNCH_RECOVERY_MS`, runtime settings over {@link RUNTIME_ENV}); `undefined` unsets one.
@@ -106,7 +136,7 @@ export interface ResearchChatAppOptions {
   withoutSourceAdapters?: boolean;
 }
 
-/** The clock of the runtime and the delivery loop: the system time moved by `advance`. Timers stay real. */
+/** The clock of the runtime, the delivery loop and the run marks: the system time moved by `advance`. Timers stay real. */
 export interface TestClock extends Clock {
   /** Moves `now()` forward by `ms` (give-up window, launch recovery, retry pause). */
   advance(ms: number): void;
@@ -118,6 +148,11 @@ export interface CancelObserver {
   readonly calls: readonly { investigationId: string; resourceId: string }[];
   /** Refuses the following calls with `error` (INT-1 A3 `stop_failed`, INT-3 T3); `null` lets them through. */
   refuse(error: Error | null): void;
+  /**
+   * Runs `hook` before each following call goes on, after it is recorded: work that cancels under the thread lock
+   * (a stop, the tail selection of a regenerate) holds the lock while the hook runs (INT-2). `null` removes it.
+   */
+  beforeCancel(hook: (() => Promise<void>) | null): void;
 }
 
 /** Scripted failures of `THREAD_MEMORY` writes. */
@@ -128,9 +163,35 @@ export interface MemoryFaults {
   failAnswerWrites(error: Error | null): void;
   /** Fails the next `deleteMessages` call — the tail delete after `beforeDelete` (INT-3 T3). */
   failNextDelete(error: Error): void;
+  /**
+   * Holds every write of a `research-answer-*` message until `gate` settles, after it is counted: a delivery pass
+   * holds the thread lock meanwhile (INT-2 M2). `null` stops holding.
+   */
+  holdAnswerWrites(gate: Promise<void> | null): void;
+}
+
+/** Scripted refusals of a stop (design-lifecycle.md, INT-1 S3), each healed by `null`, `reset` and `close`. */
+export interface StopFaults {
+  /**
+   * Refuses `ThreadWriteLock.run` for `threadId` with an error, as a lock not obtained in time; the hook sits on the
+   * lock's `run`, so it holds whatever implementation the lock has.
+   */
+  refuseThreadLock(threadId: string | null): void;
+  /**
+   * Refuses, at the database, every write of `state = 'stopped'` to the launch row of `launchKey`: a test trigger on
+   * `app.research_chat_launches` raises an exception (not `RETURN NULL`: a skipped row would read as a lost race).
+   */
+  refuseStopTransition(launchKey: string | null): Promise<void>;
+}
+
+/** The thread lock held from outside the app instances; `release` frees it and closes its connection. */
+export interface HeldThreadLock {
+  release(): Promise<void>;
 }
 
 export interface ResearchChatApp {
+  /** The instance label of {@link ResearchChatAppOptions.instance}. */
+  readonly instance: string;
   /** Initialised app with `configureApp` applied: requests go to `/api/...`. */
   readonly app: INestApplication<App>;
   /** Providers of the app (e.g. `ThreadRunRegistry`, `ThreadsService`). */
@@ -139,6 +200,9 @@ export interface ResearchChatApp {
   readonly engine: EngineDouble;
   readonly cancels: CancelObserver;
   readonly memoryFaults: MemoryFaults;
+  readonly stopFaults: StopFaults;
+  /** Events the real `AuditInterceptor` recorded since the last reset, in order (`AuditService` is a recorder). */
+  readonly auditRecords: readonly AuditEvent[];
   /** Calls of `EvidenceReader.get` since the last reset. */
   readonly evidenceReads: number;
   readonly clock: TestClock;
@@ -152,31 +216,92 @@ export interface ResearchChatApp {
    */
   gate(threadId?: string): Latch;
   /**
-   * One pass of the delivery loop (`ResearchAnswerAppender.runOnce`). The timed loop runs only while the assembly
-   * checks that it starts after the runtime; from then on passes happen only here.
+   * Takes the thread lock of `threadId` through a `ThreadWriteLock` of its own over a connection of its own — outside
+   * every app instance — and resolves once it is held. `reset` and `close` release a lock still held.
+   */
+  holdThreadLock(threadId: string): Promise<HeldThreadLock>;
+  /**
+   * Holds the next task of this instance for `threadId` before it asks for the thread lock, until `until` settles (use
+   * a `gate`, which `reset` releases); resolves once a task has reached that point (INT-2 M3: a delivery pass that has
+   * already read its launch and found no run mark).
+   */
+  holdLockEntry(threadId: string, until: Promise<void>): Promise<void>;
+  /**
+   * One pass of the delivery loop (`ResearchAnswerAppender.runOnce`), once the relay has delivered every pending
+   * closure of the double's investigations. The timed loop runs only while the assembly checks that it starts after
+   * the runtime; from then on passes happen only here.
    */
   runAppenderOnce(): Promise<void>;
+  /**
+   * Stops renewing the run marks of this instance, as after a crash (INT-2 M5): a mark keeps the lease of its last
+   * write. Its run still ends normally and deletes its mark. `reset` and `close` renew again.
+   */
+  pauseMarkRenewal(): void;
   /** Back to the initial state of every double; call in `beforeEach` and `afterEach`. */
   reset(): Promise<void>;
   /** Cancels what is still running, deletes the users' threads, closes the app and restores the environment. */
   close(): Promise<void>;
 }
 
-/** Sets `variables` in `process.env`; returns the function restoring the previous values. */
+/**
+ * Waits until no closure of an investigation by the double's lifecycle consumer is pending and due at `clock`. The
+ * end of a controller task is delivered to that consumer and to the part's consumer separately, in no fixed order: a
+ * single pass taken between the two would find a launch waiting for its answer and its investigation still `active`.
+ * Production retries that write after a pause (design-lifecycle.md, invariant 4); a test's single pass is taken after
+ * the closure instead.
+ */
+async function closuresDelivered(clock: Clock): Promise<void> {
+  // Polled on the timers of `node:timers/promises`: `vi.waitFor` would move faked timers and `Date` (INT-2 D4).
+  for (let tries = SETTLE_TIMEOUT_MS / SETTLE_POLL_MS; ; tries -= 1) {
+    const [row] = await query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM app.research_event_deliveries
+        WHERE consumer = $1 AND status = 'pending' AND next_attempt_at <= $2`,
+      [DOUBLE_LIFECYCLE_CONSUMER, clock.now()],
+    );
+    const pending = row?.count ?? 0;
+    if (pending === 0) return;
+    if (tries <= 0) {
+      throw new Error(
+        `${pending} closures of the engine double still pending after ${SETTLE_TIMEOUT_MS} ms`,
+      );
+    }
+    await delay(SETTLE_POLL_MS);
+  }
+}
+
+/** Values the variables had before the first live app set them; restored when the last live app closes. */
+const envBeforeApps = new Map<string, string | undefined>();
+let liveApps = 0;
+
+function assignEnv(values: Iterable<[string, string | undefined]>): void {
+  for (const [name, value] of values) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+}
+
+/**
+ * Sets `variables` in `process.env` for the app's lifetime; returns the function ending it. The environment is one per
+ * process, so the values before any app are kept once and restored only when no app is live: two instances close in
+ * any order without leaving one's variables behind or taking the other's away.
+ */
 function overrideEnv(
   variables: Record<string, string | undefined>,
 ): () => void {
-  const previous = Object.fromEntries(
-    Object.keys(variables).map((name) => [name, process.env[name]]),
-  );
-  const assign = (values: Record<string, string | undefined>) => {
-    for (const [name, value] of Object.entries(values)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
+  for (const name of Object.keys(variables)) {
+    if (!envBeforeApps.has(name)) envBeforeApps.set(name, process.env[name]);
+  }
+  liveApps += 1;
+  assignEnv(Object.entries(variables));
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    liveApps -= 1;
+    if (liveApps > 0) return;
+    assignEnv(envBeforeApps);
+    envBeforeApps.clear();
   };
-  assign(variables);
-  return () => assign(previous);
 }
 
 /**
@@ -212,11 +337,12 @@ function observeCancels(runtime: Runtime) {
   const original = investigations.cancel.bind(investigations);
   const calls: { investigationId: string; resourceId: string }[] = [];
   let refusal: Error | null = null;
-  investigations.cancel = (investigationId, resourceId) => {
+  let before: (() => Promise<void>) | null = null;
+  investigations.cancel = async (investigationId, resourceId) => {
     calls.push({ investigationId, resourceId });
-    return refusal
-      ? Promise.reject(refusal)
-      : original(investigationId, resourceId);
+    await before?.();
+    if (refusal) throw refusal;
+    return original(investigationId, resourceId);
   };
   return {
     original,
@@ -225,10 +351,14 @@ function observeCancels(runtime: Runtime) {
       refuse: (error: Error | null) => {
         refusal = error;
       },
+      beforeCancel: (hook: (() => Promise<void>) | null) => {
+        before = hook;
+      },
     } satisfies CancelObserver,
     reset: () => {
       calls.length = 0;
       refusal = null;
+      before = null;
     },
   };
 }
@@ -240,14 +370,16 @@ function injectMemoryFaults(memory: Memory) {
   let answerWrites = 0;
   let answerWriteError: Error | null = null;
   let deleteError: Error | null = null;
-  memory.saveMessages = (args) => {
+  let answerWriteGate: Promise<void> | null = null;
+  memory.saveMessages = async (args) => {
     if (
       args.messages.some((message) =>
         message.id.startsWith(ANSWER_MESSAGE_PREFIX),
       )
     ) {
       answerWrites += 1;
-      if (answerWriteError) return Promise.reject(answerWriteError);
+      await answerWriteGate;
+      if (answerWriteError) throw answerWriteError;
     }
     return save(args);
   };
@@ -267,13 +399,173 @@ function injectMemoryFaults(memory: Memory) {
       failNextDelete: (error: Error) => {
         deleteError = error;
       },
+      holdAnswerWrites: (gate: Promise<void> | null) => {
+        answerWriteGate = gate;
+      },
     } satisfies MemoryFaults,
     reset: () => {
       answerWrites = 0;
       answerWriteError = null;
       deleteError = null;
+      answerWriteGate = null;
     },
   };
+}
+
+/**
+ * Wraps `run` of the app's `ThreadWriteLock` in place: a refused thread's tasks are rejected without running; the
+ * next task of a held thread enters the lock only once its gate settles.
+ */
+function injectLockFaults(lock: ThreadWriteLock) {
+  const run = lock.run.bind(lock);
+  let refused: string | null = null;
+  let held: {
+    threadId: string;
+    until: Promise<void>;
+    reached: () => void;
+  } | null = null;
+  lock.run = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+    if (key === refused) {
+      return Promise.reject(new Error('scripted: thread lock not obtained'));
+    }
+    if (held?.threadId !== key) return run(key, fn);
+    const { until, reached } = held;
+    held = null;
+    reached();
+    return until.then(() => run(key, fn));
+  };
+  return {
+    refuse: (threadId: string | null) => {
+      refused = threadId;
+    },
+    holdEntry: (threadId: string, until: Promise<void>): Promise<void> => {
+      const entered = latch();
+      held = { threadId, until, reached: () => entered.release() };
+      return entered.promise;
+    },
+    reset: () => {
+      refused = null;
+      held = null;
+    },
+  };
+}
+
+/** Takes the thread lock through a `ThreadWriteLock` over a one-connection pool of its own; resolves once it is held. */
+async function holdLockOutside(threadId: string): Promise<HeldThreadLock> {
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 1,
+  });
+  const held = latch();
+  const gate = latch();
+  const run = new ThreadWriteLock(pool).run(threadId, async () => {
+    held.release();
+    await gate.promise;
+  });
+  try {
+    await Promise.race([held.promise, run]);
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
+  let released: Promise<void> | undefined;
+  return {
+    release: () => {
+      gate.release();
+      released ??= run.finally(() => pool.end());
+      return released;
+    },
+  };
+}
+
+/**
+ * Sessions of the thread lock of `threadId` in Postgres (`pg_locks`), granted or waiting. The key is the one
+ * `ThreadWriteLock` asks for — `THREAD_LOCK_NAMESPACE` and `hashtext(threadId)` — as `pg_locks` shows a two-key
+ * advisory lock: `classid`, `objid` (the int4 as oid), `objsubid` 2.
+ */
+async function threadLockSessions(
+  threadId: string,
+  granted: boolean,
+): Promise<number> {
+  const [row] = await query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM pg_locks
+      WHERE locktype = 'advisory' AND granted = $3 AND objsubid = 2
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND classid = $1::bigint::oid AND objid = (hashtext($2)::bigint & 4294967295)::oid`,
+    [THREAD_LOCK_NAMESPACE, threadId, granted],
+  );
+  return row?.count ?? 0;
+}
+
+/** How many requests of either instance wait in Postgres for the thread lock of `threadId`. */
+export function threadLockWaiters(threadId: string): Promise<number> {
+  return threadLockSessions(threadId, false);
+}
+
+const REFUSE_STOP_FUNCTION = 'app.test_refuse_stop_transition';
+const REFUSE_STOP_TRIGGER = 'test_refuse_stop_transition';
+
+/** Whether {@link refuseStopTransition} installed its trigger since the last heal. */
+let stopTransitionRefused = false;
+
+/** Drops the trigger and function of {@link refuseStopTransition}; nothing happens when none was installed. */
+async function healStopTransition(): Promise<void> {
+  if (!stopTransitionRefused) return;
+  stopTransitionRefused = false;
+  await query(
+    `DROP TRIGGER IF EXISTS ${REFUSE_STOP_TRIGGER} ON app.research_chat_launches`,
+    [],
+  );
+  await query(`DROP FUNCTION IF EXISTS ${REFUSE_STOP_FUNCTION}()`, []);
+}
+
+/** Installs a trigger raising on every write of `state = 'stopped'` to the launch row of `launchKey`. */
+async function refuseStopTransition(launchKey: string): Promise<void> {
+  await healStopTransition();
+  stopTransitionRefused = true;
+  await query(
+    `CREATE FUNCTION ${REFUSE_STOP_FUNCTION}() RETURNS trigger LANGUAGE plpgsql AS $$
+     BEGIN
+       IF NEW.launch_key = TG_ARGV[0] AND NEW.state = 'stopped' THEN
+         RAISE EXCEPTION 'scripted: the move of launch % to stopped is refused', NEW.launch_key;
+       END IF;
+       RETURN NEW;
+     END $$`,
+    [],
+  );
+  // A trigger argument is a literal, not a parameter: the key is quoted as one.
+  await query(
+    `CREATE TRIGGER ${REFUSE_STOP_TRIGGER} BEFORE UPDATE ON app.research_chat_launches
+       FOR EACH ROW EXECUTE FUNCTION ${REFUSE_STOP_FUNCTION}('${launchKey.replaceAll("'", "''")}')`,
+    [],
+  );
+}
+
+/** Wraps `renew` of the app's run marks in place: while paused, a renewal writes nothing. */
+function injectRenewalPause(marks: ThreadRunMarks) {
+  const renew = marks.renew.bind(marks);
+  let paused = false;
+  marks.renew = (runId, leaseExpiresAt) =>
+    paused ? Promise.resolve() : renew(runId, leaseExpiresAt);
+  return {
+    pause: () => {
+      paused = true;
+    },
+    reset: () => {
+      paused = false;
+    },
+  };
+}
+
+/** The run marks of `threadId` in `app.chat_thread_runs`, of any instance, live or expired. */
+export function runMarksOf(
+  threadId: string,
+): Promise<{ runId: string; leaseExpiresAt: Date }[]> {
+  return query(
+    `SELECT run_id AS "runId", lease_expires_at AS "leaseExpiresAt" FROM app.chat_thread_runs
+      WHERE thread_id = $1 ORDER BY lease_expires_at`,
+    [threadId],
+  );
 }
 
 /** Counts `EvidenceReader.get` calls in place. */
@@ -300,7 +592,11 @@ type Phase =
  * Records, in place, when the runtime and the delivery loop start and stop, so the assembly checks the order of the
  * Nest hooks (design-chat-entry.md, KD-4): the loop starts after `Runtime.start` and stops before `Runtime.stop`.
  */
-function recordPhases(runtime: Runtime, appender: ResearchAnswerAppender) {
+function recordPhases(
+  runtime: Runtime,
+  appender: ResearchAnswerAppender,
+  instance: string,
+) {
   const phases: Phase[] = [];
   const startRuntime = runtime.start.bind(runtime);
   const stopRuntime = runtime.stop.bind(runtime);
@@ -328,7 +624,7 @@ function recordPhases(runtime: Runtime, appender: ResearchAnswerAppender) {
       const recorded = phases.splice(0);
       if (recorded.join() !== expected.join()) {
         throw new Error(
-          `${what} of the chat-entry app ran ${recorded.join(' → ') || 'nothing'}, expected ${expected.join(' → ')}`,
+          `${what} of the chat-entry app ${instance} ran ${recorded.join(' → ') || 'nothing'}, expected ${expected.join(' → ')}`,
         );
       }
     },
@@ -338,14 +634,14 @@ function recordPhases(runtime: Runtime, appender: ResearchAnswerAppender) {
   };
 }
 
-/** The production chat agent's instruction and `deepResearch` tool; the tool resolves its service when it runs. */
+/** The production chat agent's instruction and tools, as `mastraProvider` registers them; each resolves its service when it runs. */
 function productionAgent(resolve: ResolveProvider): TestAgentDefinition {
+  const launches = () => resolve<ResearchLaunchService>(ResearchLaunchService);
   return {
     instructions: ASSISTANT_INSTRUCTIONS,
     tools: {
-      [DEEP_RESEARCH_TOOL]: createDeepResearchTool(() =>
-        resolve<ResearchLaunchService>(ResearchLaunchService),
-      ),
+      [DEEP_RESEARCH_TOOL]: createDeepResearchTool(launches),
+      [STOP_RESEARCH_TOOL]: createStopResearchTool(launches),
     },
   };
 }
@@ -357,9 +653,10 @@ async function compile(
     clock: TestClock;
     engine: (runtime: Runtime) => EngineDouble;
     resolve: ResolveProvider;
+    audit: Pick<AuditService, 'record'>;
   },
 ): Promise<TestingModule> {
-  const { chatModel, clock, engine, resolve } = assembly;
+  const { chatModel, clock, engine, resolve, audit } = assembly;
   // A function of `resolve` lets a tool reach providers when it executes, not while MASTRA is built: this avoids the
   // DI cycle of the deepResearch tool (its service needs THREAD_MEMORY, which needs MASTRA).
   const agent =
@@ -385,8 +682,12 @@ async function compile(
     .useValue(createThreadTitleAgent(titleModel().model))
     .overrideProvider(RUNTIME_CLOCK)
     .useValue(clock)
+    .overrideProvider(AuditService)
+    .useValue(audit)
     .overrideProvider(RESEARCH_ENGINE)
-    .useFactory({ factory: engine, inject: [RESEARCH_RUNTIME] });
+    .useFactory({ factory: engine, inject: [RESEARCH_RUNTIME] })
+    .overrideProvider(ENGINE_GROUP_TABLES)
+    .useValue(TEST_GROUP_TABLES);
   if (options.withoutSourceAdapters) {
     builder = builder.overrideProvider(SOURCE_ADAPTERS).useValue([]);
   }
@@ -401,6 +702,7 @@ async function compile(
 export async function createResearchChatApp(
   options: ResearchChatAppOptions = {},
 ): Promise<ResearchChatApp> {
+  const instance = options.instance ?? 'app';
   const chatModel = scriptedChatModel();
   let double: EngineDouble | undefined;
   const clock = testClock(() => double?.hasRunningController() ?? false);
@@ -412,12 +714,14 @@ export async function createResearchChatApp(
     return compiled.get<T>(token, { strict: false });
   };
   const restoreEnv = overrideEnv({ ...RUNTIME_ENV, ...options.env });
+  const auditRecords: AuditEvent[] = [];
   let moduleRef: TestingModule;
   try {
     moduleRef = await compile(options, {
       chatModel,
       clock,
       resolve,
+      audit: { record: (event) => void auditRecords.push(event) },
       engine: (runtime) => {
         double = createEngineDouble(
           () => runtime,
@@ -439,12 +743,19 @@ export async function createResearchChatApp(
   moduleRef
     .get<HandlerRegistry>(HANDLER_REGISTRY, { strict: false })
     .register(engine.controllerHandler);
+  runtime.eventConsumers.register(engine.lifecycleConsumer);
   const memory = moduleRef.get<Memory>(THREAD_MEMORY, { strict: false });
   const cancels = observeCancels(runtime);
   const memoryFaults = injectMemoryFaults(memory);
+  const lockFaults = injectLockFaults(
+    moduleRef.get(ThreadWriteLock, { strict: false }),
+  );
   const evidenceReads = countEvidenceReads(runtime);
+  const renewal = injectRenewalPause(
+    moduleRef.get<ThreadRunMarks>(THREAD_RUN_MARKS, { strict: false }),
+  );
   const appender = moduleRef.get(ResearchAnswerAppender, { strict: false });
-  const phases = recordPhases(runtime, appender);
+  const phases = recordPhases(runtime, appender, instance);
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);
@@ -462,6 +773,12 @@ export async function createResearchChatApp(
 
   const owners = new Set<string>();
   const gates: Latch[] = [];
+  const heldLocks = new Set<HeldThreadLock>();
+  const releaseHeldLocks = async () => {
+    const held = [...heldLocks];
+    heldLocks.clear();
+    await Promise.all(held.map((lock) => lock.release()));
+  };
   const heldThreads = new Set<string>();
   const runs = moduleRef.get(ThreadRunRegistry, { strict: false });
   /** Releases every gate and waits until the chat runs they held have ended (their threads have no run). */
@@ -471,8 +788,11 @@ export async function createResearchChatApp(
     heldThreads.clear();
     if (threadIds.length === 0) return;
     await vi.waitFor(
-      () => {
-        const running = threadIds.filter((threadId) => runs.hasRuns(threadId));
+      async () => {
+        const marked = await Promise.all(
+          threadIds.map((threadId) => runs.hasRuns(threadId)),
+        );
+        const running = threadIds.filter((_threadId, i) => marked[i]);
         if (running.length > 0) {
           throw new Error(`chat runs still registered: ${running.join(', ')}`);
         }
@@ -502,12 +822,21 @@ export async function createResearchChatApp(
   };
 
   return {
+    instance,
     app,
     moduleRef,
     chatModel,
     engine,
     cancels: cancels.observer,
     memoryFaults: memoryFaults.faults,
+    stopFaults: {
+      refuseThreadLock: lockFaults.refuse,
+      refuseStopTransition: (launchKey) =>
+        launchKey === null
+          ? healStopTransition()
+          : refuseStopTransition(launchKey),
+    },
+    auditRecords,
     get evidenceReads() {
       return evidenceReads.count();
     },
@@ -533,26 +862,45 @@ export async function createResearchChatApp(
       if (threadId !== undefined) heldThreads.add(threadId);
       return gate;
     },
-    runAppenderOnce: () => appender.runOnce(),
+    holdLockEntry: lockFaults.holdEntry,
+    holdThreadLock: async (threadId) => {
+      const held = await holdLockOutside(threadId);
+      heldLocks.add(held);
+      return held;
+    },
+    runAppenderOnce: async () => {
+      await closuresDelivered(clock);
+      await appender.runOnce();
+    },
+    pauseMarkRenewal: renewal.pause,
     reset: async () => {
+      await healStopTransition();
       vi.useRealTimers();
+      renewal.reset();
+      await releaseHeldLocks();
       await releaseGates();
       // Held starts land first, so `takeUnsettled` below sees their investigations.
       await engine.reset();
       chatModel.reset();
       cancels.reset();
       memoryFaults.reset();
+      lockFaults.reset();
+      auditRecords.length = 0;
       evidenceReads.reset();
       clock.reset();
       await cancelUnsettled();
     },
     close: async () => {
       try {
+        await healStopTransition();
         vi.useRealTimers();
+        await releaseHeldLocks();
         await releaseGates();
         await engine.reset();
         cancels.reset();
         memoryFaults.reset();
+        lockFaults.reset();
+        renewal.reset();
         clock.reset();
         await cancelUnsettled();
         await deleteThreadsOf(moduleRef, memory, owners);

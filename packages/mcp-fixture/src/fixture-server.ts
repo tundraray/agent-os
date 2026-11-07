@@ -15,6 +15,7 @@ import { aggregateLogsTool } from './tools/aggregate-logs.js';
 import type { FixtureTool } from './tools/fixture-tool.js';
 import { getTraceTool } from './tools/get-trace.js';
 import { searchLogsTool } from './tools/search-logs.js';
+import { SCENARIO_VERSION, type DatasetVersion } from './versions.js';
 
 const SOURCE_INFO_URI = 'fixture://source-info';
 /** Above this many bytes of `structuredContent` JSON the result carries no `text` copy, so a page is not sent twice. */
@@ -92,7 +93,7 @@ export class FixtureServer {
       return toolError(outcome.error);
     }
     if (fault?.mode === 'snapshot_flip') {
-      this.dataset = createLogDataset(fault.version ?? (this.dataset.version === 'v1' ? 'v2' : 'v1'));
+      this.dataset = flipped(this.dataset, fault.version);
     }
     const result = fault === undefined ? outcome.result : applyResultFault(outcome.result, fault);
     if (typeof result === 'string') {
@@ -100,6 +101,14 @@ export class FixtureServer {
     }
     return this.server.projectCallToolResult(jsonResult(result), undefined);
   }
+}
+
+/** The `snapshot_flip` switch acts only between `v1` and `v2`; a scenario process keeps its one scenario. */
+function flipped(dataset: LogDataset, version: DatasetVersion | undefined): LogDataset {
+  if (dataset.version === SCENARIO_VERSION) {
+    return dataset;
+  }
+  return createLogDataset(version ?? (dataset.version === 'v1' ? 'v2' : 'v1'));
 }
 
 function toolError(text: string): CallToolResult {

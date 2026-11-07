@@ -9,6 +9,8 @@ export interface DatabaseOptions {
   connectionString: string;
   /** Upper bound of the pool's connections (`DB_POOL_MAX` of Runtime Settings). */
   poolMax: number;
+  /** How long a caller waits for a free connection before `connect` fails; unset waits without a limit. */
+  connectionTimeoutMillis?: number;
 }
 
 /** The application's single `pg.Pool` and the Drizzle client over it (KD-7). */
@@ -27,6 +29,7 @@ export function createDatabase(options: DatabaseOptions): DatabaseConnection {
   const pool = new pg.Pool({
     connectionString: options.connectionString,
     max: options.poolMax,
+    connectionTimeoutMillis: options.connectionTimeoutMillis,
   });
   return {
     db: drizzle({ client: pool, schema }),

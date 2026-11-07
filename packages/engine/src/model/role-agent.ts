@@ -23,11 +23,33 @@ export interface ReportedUsage {
   readonly cacheCreationInputTokens: number | null;
 }
 
-/** A resolved `generate`: its finish reason, structured output (not yet checked) and usage. */
+/** A resolved `generate`: its finish reason, structured output (not yet checked), raw text and usage. */
 export interface RoleGeneration {
   readonly finishReason: string | undefined;
   readonly object: unknown;
+  /** `FullOutput.text` of the result; empty when the provider returned no text. */
+  readonly text: string;
   readonly usage: ReportedUsage;
+}
+
+/** The provider options of the message the cache mark ends at: an `ephemeral` cache breakpoint (KD-6). */
+const CACHE_MARK = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const;
+
+/**
+ * One message as the role agent sends it to the provider; the transcript stores the same form. A message with
+ * `providerOptions` carries the cache mark on its last part; the request itself never carries one.
+ */
+export type ProviderMessage = (
+  | { readonly role: 'user'; readonly content: string }
+  | { readonly role: 'assistant'; readonly content: string }
+) & { readonly providerOptions?: typeof CACHE_MARK };
+
+/** The messages of a role packet in the form `generate` sends them. */
+export function providerMessages(messages: readonly RoleMessage[]): ProviderMessage[] {
+  return messages.map(({ role, content, cacheMark }) => {
+    const message: ProviderMessage = role === 'user' ? { role: 'user', content } : { role: 'assistant', content };
+    return cacheMark === true ? { ...message, providerOptions: CACHE_MARK } : message;
+  });
 }
 
 /**
@@ -60,12 +82,7 @@ function createRoleAgent<T>(call: RoleCall<T>): Agent {
 /** The production client: one role agent per call, structured output in the native JSON format. */
 export const mastraRoleModelClient: RoleModelClient = {
   async generate(call, signal) {
-    const messages = call.messages.map(({ role, content }) =>
-      role === 'user'
-        ? { role: 'user' as const, content }
-        : { role: 'assistant' as const, content },
-    );
-    const result = await createRoleAgent(call).generate(messages, {
+    const result = await createRoleAgent(call).generate(providerMessages(call.messages), {
       // `warn` resolves an output the schema refuses instead of rejecting; ModelGateway checks it.
       structuredOutput: { schema: call.outputSchema, errorStrategy: 'warn' },
       modelSettings: { maxOutputTokens: call.maxOutputTokens },
@@ -76,6 +93,7 @@ export const mastraRoleModelClient: RoleModelClient = {
     return {
       finishReason: result.finishReason,
       object: result.object,
+      text: result.text,
       usage: {
         inputTokens: usage.inputTokens ?? null,
         outputTokens: usage.outputTokens ?? null,

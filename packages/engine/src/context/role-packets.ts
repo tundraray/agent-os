@@ -13,10 +13,16 @@ export interface RoleSlots {
   readonly evidence: readonly EvidenceItem[];
 }
 
-/** The material of a worker: its own subquestion and its own evidence, nothing else (AC-05.2). */
+/** A page of records as the worker reads it: its evidence id and its records in the order of the page's `items`. */
+export interface EvidencePage {
+  readonly evidenceId: string;
+  readonly records: readonly unknown[];
+}
+
+/** The material of a worker: its own subquestion and its own pages, nothing else (AC-05.2). */
 export interface WorkerMaterial {
   readonly subquestion: string;
-  readonly evidence: readonly EvidenceItem[];
+  readonly pages: readonly EvidencePage[];
 }
 
 /** Tasks outside the mandatory part, reduced to a count per type, status and failure reason (C3). */
@@ -37,12 +43,31 @@ export interface ClaimLine {
 }
 
 /**
- * The controller input split as in C3. `mandatory` — plan revision, budget, admissible decisions, unread
- * signals, and the tasks and claim revisions that appeared or changed status since the previous step;
- * the controller handler assembles it. `taskCounts` go with it; `claims` are compressible.
+ * The start of the controller input that stays the same for the whole investigation between two plan revisions
+ * (invariant 7): the source tools, then the current plan revision. It goes first and ends at the cache mark (KD-6).
+ */
+export interface StableControllerBlock {
+  readonly tools: readonly unknown[];
+  readonly planRevision: Readonly<Record<string, unknown>>;
+}
+
+/** A rejected attempt of the current step as the retry sees it: the kind the model named, or null, and the code's reason. */
+export interface RejectedAttempt {
+  readonly kind: string | null;
+  readonly reason: string;
+}
+
+/**
+ * The controller input split as in C3 and KD-6. `stable` goes first, under the cache mark. The changing block follows:
+ * `changing` — budget, admissible decisions, unread signals and the observations of what appeared or changed since the
+ * previous step — then the rejected attempts of this step, the task counts, and the compressible earlier `claims`.
+ * Everything but `claims` is mandatory; the controller handler assembles it.
  */
 export interface ControllerMaterial {
-  readonly mandatory: Readonly<Record<string, unknown>>;
+  readonly stable: StableControllerBlock;
+  readonly changing: Readonly<Record<string, unknown>>;
+  /** Empty on the first attempt of a step. */
+  readonly rejectedAttempts: readonly RejectedAttempt[];
   readonly taskCounts: readonly TaskCount[];
   readonly claims: readonly ClaimLine[];
 }
@@ -61,8 +86,14 @@ export function slotMessages(slots: RoleSlots): RoleMessage[] {
   return [{ role: 'user', content: sections.join('\n') }];
 }
 
+/** A page's records, each numbered by its position from 0 — the numbers a claim's pointer names (KD-1). */
+function numberedRecords(page: EvidencePage): EvidenceItem {
+  const lines = page.records.map((record, number) => `<record number="${number}">${JSON.stringify(record)}</record>`);
+  return { evidenceId: page.evidenceId, text: lines.join('\n') };
+}
+
 export function workerSlots(material: WorkerMaterial): RoleSlots {
-  return { assignment: material.subquestion, evidence: material.evidence };
+  return { assignment: material.subquestion, evidence: material.pages.map(numberedRecords) };
 }
 
 /** Earlier claims in packing order: newest revision first. */
@@ -70,13 +101,30 @@ export function newestFirst(claims: readonly ClaimLine[]): ClaimLine[] {
   return [...claims].sort((left, right) => right.revisedAt.getTime() - left.revisedAt.getTime());
 }
 
-/** The controller message with the mandatory part and the first `claims` of the compressible part. */
+/**
+ * The stable block of the controller input. It is built from the block's values alone, so equal tools and plan revision
+ * give equal bytes on every step.
+ */
+function stableBlockMessage(stable: StableControllerBlock): RoleMessage {
+  const content = [
+    `<tools>\n${JSON.stringify(stable.tools)}\n</tools>`,
+    `<plan_revision>\n${JSON.stringify(stable.planRevision)}\n</plan_revision>`,
+  ].join('\n');
+  return { role: 'user', content, cacheMark: true };
+}
+
+/**
+ * The controller messages (KD-6): the stable block with the cache mark, then the changing block with the mandatory part
+ * and the first `claims` of the compressible part. Two user messages in a row reach the provider as one turn of two
+ * blocks, so the mark ends the first block and everything after it changes freely.
+ */
 export function controllerMessages(
   material: ControllerMaterial,
   claims: readonly ClaimLine[],
 ): RoleMessage[] {
+  const decisionInput = { ...material.changing, rejectedAttempts: material.rejectedAttempts };
   const sections = [
-    `<decision_input>\n${JSON.stringify(material.mandatory)}\n</decision_input>`,
+    `<decision_input>\n${JSON.stringify(decisionInput)}\n</decision_input>`,
     `<task_counts>\n${JSON.stringify(material.taskCounts)}\n</task_counts>`,
   ];
   if (claims.length > 0) {
@@ -85,5 +133,5 @@ export function controllerMessages(
     );
     sections.push(`<earlier_claims>\n${lines.join('\n')}\n</earlier_claims>`);
   }
-  return [{ role: 'user', content: sections.join('\n') }];
+  return [stableBlockMessage(material.stable), { role: 'user', content: sections.join('\n') }];
 }

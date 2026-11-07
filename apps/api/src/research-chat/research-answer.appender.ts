@@ -1,26 +1,24 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { RESEARCH_METADATA_KEYS } from '@agent-os/contracts';
+import {
+  RESEARCH_METADATA_KEYS,
+  type ResearchAnswerMetadata,
+  ResearchAnswerMetadataSchema,
+} from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { Engine } from '@agent-os/engine';
-import type { CancelTimer, Clock, Runtime } from '@agent-os/runtime';
+import type { CancelTimer, Clock } from '@agent-os/runtime';
 import type { MastraDBMessage } from '@mastra/core/memory';
 import type { Memory } from '@mastra/memory';
 import { withFields } from '../common/log-fields.js';
 import { RESEARCH_ENGINE } from '../engine/engine.tokens.js';
 import {
   RESEARCH_DATABASE,
-  RESEARCH_RUNTIME,
   RUNTIME_CLOCK,
 } from '../research/research.tokens.js';
 import { THREAD_MEMORY } from '../threads/thread-memory.provider.js';
 import { ThreadRunRegistry } from '../threads/thread-run-registry.js';
 import { ThreadsService } from '../threads/threads.service.js';
 import { type LaunchRecord, nextLaunchState } from './launch-state.js';
-import {
-  type AnswerSourceRecord,
-  buildResearchAnswer,
-  citedEvidenceIds,
-} from './research-answer.builder.js';
 import { researchLaunchRepository as launches } from './research-launch.repository.js';
 import { ResearchLaunchService } from './research-launch.service.js';
 import { retryPauseMs } from './retry-pause.js';
@@ -76,7 +74,6 @@ export class ResearchAnswerAppender {
     private readonly settings: AnswerAppenderSettings,
     @Inject(RESEARCH_DATABASE) database: DatabaseConnection,
     @Inject(RESEARCH_ENGINE) private readonly engine: Engine,
-    @Inject(RESEARCH_RUNTIME) private readonly runtime: Runtime,
     @Inject(RUNTIME_CLOCK) private readonly clock: Clock,
     @Inject(THREAD_MEMORY) private readonly memory: Memory,
     private readonly threads: ThreadsService,
@@ -160,7 +157,8 @@ export class ResearchAnswerAppender {
     if (row.nextAppendAt !== null && row.nextAppendAt > now) return 'waiting';
     // Taken before the run check (DC-3): a message sent after the check is stored after the answer, never before it.
     const createdAt = now;
-    if (this.runs.hasRuns(row.threadId)) return 'waiting';
+    // A chat run of any instance holds the thread (design-lifecycle.md, KD-6, invariant 7).
+    if (await this.runs.hasRuns(row.threadId)) return 'waiting';
     try {
       await this.threads.withOwnedThread(row.threadId, row.resourceId, () =>
         this.write(row, createdAt),
@@ -218,43 +216,33 @@ export class ResearchAnswerAppender {
     );
   }
 
-  /** The answer message of a completed investigation; without sources no evidence is read (KD-8). */
+  /**
+   * The engine's answer message as it is, with only `launch` added (design-engine.md, KD-8, invariant 9). The id
+   * `research-answer-<investigationId>` makes a retried or repeated write overwrite the same message (invariant 4). An
+   * answer not ready yet (`no_answer`) or a failed read is a failed write, retried after the pause.
+   */
   private async answerOf(row: LaunchRecord, investigationId: string) {
-    const read = await this.engine.readInvestigation({
+    const read = await this.engine.readAnswerMessage({
       investigationId,
       resourceId: row.resourceId,
     });
-    if (read.outcome !== 'found' || read.view.status !== 'completed') {
+    if (read.outcome !== 'found') {
       throw new Error(
-        `investigation ${investigationId} of launch ${row.launchKey} has no answer to deliver`,
+        `investigation ${investigationId} of launch ${row.launchKey} has no answer to deliver: ${read.code}`,
       );
     }
-    const { view } = read;
-    const evidence = new Map<string, AnswerSourceRecord>();
-    for (const evidenceId of citedEvidenceIds(view)) {
-      const { record } = await this.runtime.evidence.get(
-        evidenceId,
-        row.resourceId,
-      );
-      evidence.set(evidenceId, {
-        sourceId: record.provenance.sourceId,
-        toolName: record.provenance.toolName,
-        snapshot: record.provenance.snapshot,
-        truncated: record.coverage.truncated,
-      });
-    }
-    return buildResearchAnswer({
-      view,
-      launch: {
-        launchKey: row.launchKey,
-        goal: row.goal,
-        launch:
-          row.mode === 'explicit' && row.userMessageId !== null
-            ? { messageId: row.userMessageId }
-            : { toolCallId: row.launchKey },
-      },
-      evidence,
-    });
+    const launch: ResearchAnswerMetadata['launch'] =
+      row.mode === 'explicit' && row.userMessageId !== null
+        ? { messageId: row.userMessageId }
+        : { toolCallId: row.launchKey };
+    return {
+      id: `research-answer-${investigationId}`,
+      text: read.message.text,
+      researchAnswer: ResearchAnswerMetadataSchema.parse({
+        ...read.message.metadata,
+        launch,
+      }),
+    };
   }
 
   /**

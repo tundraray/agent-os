@@ -1,3 +1,5 @@
+import { type InvestigationStatus, InvestigationStatusSchema } from '@agent-os/contracts';
+import type { z } from 'zod';
 import { type InvestigationAnswer, InvestigationAnswerSchema } from '../answer/code-answer.js';
 import { type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
@@ -10,11 +12,19 @@ export type InvestigationViewStatus = 'running' | 'completed' | 'failed' | 'canc
 type AnswerSection = ProcessConfig['answer']['sections'][number];
 
 /**
- * The answer as the view shows it: `outcome` and `stopReason`, then the sections the investigation's configuration
- * names, in its order (ProcessConfig `answer`); a section the configuration leaves out is absent.
+ * A stored answer as any version of the engine wrote it. The view always fills `summaryItems`, `confidence` and
+ * `causal` — an answer written before agent-quality reads as an empty list, null and false — but the type keeps them
+ * optional, so a reader or a double written before them still compiles.
  */
-type InvestigationAnswerView = Pick<InvestigationAnswer, 'answerId' | 'outcome' | 'stopReason'> &
-  Partial<Pick<InvestigationAnswer, AnswerSection>>;
+type StoredAnswer = z.input<typeof InvestigationAnswerSchema>;
+
+/**
+ * The answer as the view shows it: `outcome` and `stopReason`, then the sections the investigation's configuration
+ * names, in its order (ProcessConfig `answer`); a section the configuration leaves out is absent. The section `summary`
+ * is the summary string of an answer written before agent-quality and the summary items after it (KD-4).
+ */
+type InvestigationAnswerView = Pick<StoredAnswer, 'answerId' | 'outcome' | 'stopReason'> &
+  Partial<Pick<StoredAnswer, AnswerSection | 'summaryItems'>>;
 
 /**
  * An investigation as the engine shows it (design-engine.md, InvestigationView). `processId`, `version` and
@@ -65,31 +75,30 @@ export type ReadInvestigationResult =
   | { readonly outcome: 'found'; readonly view: InvestigationView }
   | { readonly outcome: 'rejected'; readonly code: 'investigation_not_found' };
 
-const TERMINAL_CONTROLLER_STATUSES: Readonly<Record<string, InvestigationViewStatus>> = {
-  succeeded: 'completed',
+/**
+ * The status of the view follows the investigation's own status (design-lifecycle.md, KD-1): `running` while it is
+ * `active`, its closed status once closed, and `cancelled` for one whose conversation is being deleted. The outcome of
+ * the controller task does not decide it: an investigation is `completed` only once `engine.lifecycle` has closed it.
+ */
+const VIEW_STATUS_OF: Readonly<Record<InvestigationStatus, InvestigationViewStatus>> = {
+  active: 'running',
+  completed: 'completed',
   failed: 'failed',
   cancelled: 'cancelled',
+  deleting: 'cancelled',
 };
 
-/**
- * The final status of the controller task decides; until it ends, a cancelled or deleted investigation is
- * `cancelled` (its controller is being stopped) and any other is `running`.
- */
-function viewStatus(investigationStatus: string, controllerTaskStatus: string | null): InvestigationViewStatus {
-  const final = controllerTaskStatus === null ? undefined : TERMINAL_CONTROLLER_STATUSES[controllerTaskStatus];
-  if (final !== undefined) {
-    return final;
-  }
-  return investigationStatus === 'active' ? 'running' : 'cancelled';
+function viewStatus(investigationStatus: string): InvestigationViewStatus {
+  return VIEW_STATUS_OF[InvestigationStatusSchema.parse(investigationStatus)];
 }
 
 export function toInvestigationView(
-  { run, investigationStatus, controllerTaskStatus }: EngineRunStatus,
+  { run, investigationStatus }: EngineRunStatus,
   usageRows: readonly RoleModelUsageRow[],
 ): InvestigationView {
   return {
     investigationId: run.investigationId,
-    status: viewStatus(investigationStatus, controllerTaskStatus),
+    status: viewStatus(investigationStatus),
     controllerTaskId: run.controllerTaskId,
     processId: run.processId,
     version: run.processVersion,
@@ -122,11 +131,15 @@ function recordedRole(value: string): ModelRole {
   return role;
 }
 
-/** The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15). */
+/**
+ * The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15). An
+ * answer written before agent-quality reads with the same schema: no summary items, no group, no causal flag (UC-E5).
+ */
 function answerView(answer: InvestigationAnswer, processConfig: unknown): InvestigationAnswerView {
-  const sections: Partial<Pick<InvestigationAnswer, AnswerSection>> = {};
+  const sections: Partial<Pick<InvestigationAnswer, AnswerSection | 'summaryItems'>> = {};
   const copy = <Section extends AnswerSection>(section: Section): void => {
     sections[section] = answer[section];
+    if (section === 'summary') sections.summaryItems = answer.summaryItems;
   };
   ProcessConfigSchema.parse(processConfig).answer.sections.forEach(copy);
   return { answerId: answer.answerId, outcome: answer.outcome, stopReason: answer.stopReason, ...sections };

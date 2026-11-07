@@ -6,23 +6,33 @@ import { z } from 'zod';
 import { answerSaver, checkpointedAnswer } from '../attempt/checkpoint.js';
 import { abandon as abandonAttempt, failed, readTaskFrame, succeeded, type TaskFrame } from '../attempt/task-attempt.js';
 import { SYNTHESIZE_WORKFLOW, SynthesizeInputSchema } from '../capabilities/synthesize.js';
-import { WorkerOutputSchema } from '../claims/claim.schema.js';
+import { pointerPages, WorkerOutputSchema } from '../claims/claim.schema.js';
 import { claimsRepository as claims } from '../claims/claims.repository.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { ContextBuilder } from '../context/context-builder.js';
-import { controllerRepository, type LatestClaimRow } from '../controller/decisions.repository.js';
+import { controllerRepository, type LatestClaimRevision } from '../controller/decisions.repository.js';
 import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
+import { promptVersion } from '../model/prompt-version.js';
+import { prepareAnswerMessage } from './answer-message.js';
 import { answerRepository as answers } from './answer.repository.js';
 import { InvestigationAnswerSchema } from './code-answer.js';
-import { composeAnswer, type DraftClaim, type ReferenceCheck, screenDraft, type SynthesisDraft } from './reference-gateway.js';
+import {
+  composeAnswer,
+  type DraftClaim,
+  type ReferenceCheck,
+  referencedPages,
+  type ScreenedDraft,
+  screenDraft,
+  type SynthesisDraft,
+} from './reference-gateway.js';
 
 export interface SynthesizeDeps {
   readonly database: Database;
   /** The tasks of the investigation: cited evidence must come from one of them (AC-09.1). */
   readonly investigations: Pick<InvestigationService, 'listForThread'>;
-  /** Provenance of the cited evidence, for the investigation's owner. */
+  /** Provenance of the cited evidence, for the investigation's owner: the reference check and the answer message. */
   readonly evidence: Pick<EvidenceReader, 'get'>;
   readonly gateway: ModelGateway;
   readonly contextBuilder: ContextBuilder;
@@ -35,12 +45,13 @@ const INVALID_MODEL_OUTPUT = 'invalid_model_output';
 const EvidenceIdSchema = z.uuid();
 
 /**
- * What the `synthesis` role returns: the draft answer. A claim names the input claim it states by `claimId`, or is new
- * (`claimId` null) with its atoms, so it can be verified like a worker claim (AC-09.3).
+ * What the `synthesis` role returns: the draft answer. `summaryClaimIds` is its choice of claims for the summary, most
+ * important first — it writes no summary text (KD-4). A claim names the input claim it states by `claimId`, or is new
+ * (`claimId` null) with its atoms and pointer, so it can be verified like a worker claim (AC-09.3).
  */
 export const SynthesisOutputSchema = z.object({
   outcome: z.enum(['answered', 'partial', 'inconclusive']),
-  summary: z.string(),
+  summaryClaimIds: z.array(z.string()).describe('The claimIds of input claims for the summary, most important first'),
   claims: z.array(
     WorkerOutputSchema.shape.claims.element.extend({
       claimId: z.string().nullable().describe('The claimId of an input claim; null for a claim the answer adds'),
@@ -53,12 +64,14 @@ const abandon = (cause: 'cancelled' | 'fenced'): never => abandonAttempt(SYNTHES
 type Drafted = { readonly next: 'draft'; readonly draft: SynthesisDraft } | { readonly next: 'result'; readonly result: HandlerResult };
 
 /**
- * `research.synthesize` v1 (design-engine.md, Flow 3). The `synthesis` role gets the claims of the investigation with
- * their status, the answer sections of the configuration and the investigation's `sourceMode` in its prompt; its draft
- * is saved to the checkpoint. Code then checks every cited evidence through `EvidenceReader.get` for the owner and
- * against the investigation's tasks, and the reference gateway decides the answer (KD-6): new claims are written as
+ * `research.synthesize` v1 (design-engine.md, Flow 2). The `synthesis` role gets the claims of the investigation with
+ * their status, the group of a supported one and their pointer, the answer sections of the configuration and the investigation's `sourceMode` in its prompt; its draft
+ * is saved to the checkpoint. Code then checks every page the gateway needs — the stored pages of an input claim, the pointer pages of a new
+ * one — through `EvidenceReader.get` for the owner and against the investigation's tasks, and the reference gateway decides the answer (KD-6): new claims are written as
  * `unverified` revisions and either sent to verification first (`needs_verification`, AC-09.3) or delivered as assumed;
- * the answer is written once with the claims the gateway removed and why (AC-09.1). In the mode `model_knowledge`
+ * the answer is written once with the claims the gateway removed and why (AC-09.1) and the summary items code kept of
+ * the draft's `summaryClaimIds` (KD-4, DC-12), together with its message for the chat, built from it and the details of
+ * the pages it cites (KD-8). In the mode `model_knowledge`
  * (Flow 5) nothing is looked up or verified: the claims are written and delivered as assumed (DC-17).
  */
 export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
@@ -89,11 +102,12 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
     return checks;
   }
 
-  async function callSynthesis(ctx: TaskContext, frame: TaskFrame, known: readonly LatestClaimRow[]): Promise<Drafted> {
+  async function callSynthesis(ctx: TaskContext, frame: TaskFrame, known: readonly LatestClaimRevision[]): Promise<Drafted> {
     const roleConfig = frame.config.roles.synthesis;
     const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
+    // The claims with their status, the group of a supported one and the pointer a new claim may rest on (C3).
     const assignment = JSON.stringify({
-      claims: known.map(({ claimId, status, text, evidenceIds }) => ({ claimId, status, text, evidenceIds })),
+      claims: known.map(({ claimId, status, confidence, text, pointer }) => ({ claimId, status, confidence, text, pointer })),
     });
     const packet = await deps.contextBuilder.buildSlotPacket(
       { roleConfig, instructions, outputSchema: SynthesisOutputSchema, signal: ctx.signal },
@@ -111,6 +125,7 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
       role: 'synthesis',
       roleConfig,
       instructions,
+      promptVersion: promptVersion(roleConfig.prompt),
       messages: packet.messages,
       outputSchema: SynthesisOutputSchema,
       notAfter: frame.notAfter,
@@ -150,18 +165,22 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
     const { draft } = drafted;
 
     const draftClaims: readonly DraftClaim[] = draft.claims;
+    const knownById = new Map(known.map((claim) => [claim.claimId, claim]));
     const screened = screenDraft({
       sourceMode,
       claims: draftClaims,
-      known: new Map(known.map((claim) => [claim.claimId, claim])),
-      // DC-17: without sources there is no evidence to look up; the gateway removes every reference.
-      references:
-        sourceMode === 'sources' ? await checkReferences(frame, draftClaims.flatMap((claim) => claim.evidenceIds)) : new Map(),
+      known: knownById,
+      // The stored pages of each input claim the draft names and the pointer pages of each new one. DC-17: without
+      // sources there is no evidence to look up; the gateway removes every reference.
+      references: sourceMode === 'sources' ? await checkReferences(frame, referencedPages(draftClaims, knownById)) : new Map(),
     });
     const { limits, capabilities } = frame.config;
     const verifyRoundsLeft = sourceMode === 'sources' && capabilities.includes('verify')
       ? Math.max(0, limits.maxVerifyRounds - (await answers.verifyRoundsUsed(db, ctx.investigationId)))
       : 0;
+    // C3 step 4: the page details are read before the guarded write — a page that cannot be read fails the task before
+    // any answer is written (Flow 2). The answer cites only pages of the screened claims.
+    const buildMessage = await prepareAnswerMessage(deps, ctx.investigationId, screenedPages(screened));
     const answerId = randomUUID();
     const written = await ctx.withAttemptGuard(async (tx) => {
       // A replayed attempt gets the ids written first (unique by task and number).
@@ -173,7 +192,8 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
       });
       const result = composeAnswer({ sourceMode, answerId, draft, screened, freshClaimIds, verifyRoundsLeft, removedClaimId: randomUUID });
       if (result.outcome === 'needs_verification') return result;
-      return { outcome: 'answer' as const, answer: InvestigationAnswerSchema.parse(await answers.writeAnswer(tx, ctx.investigationId, result.answer)) };
+      const recorded = await answers.writeAnswer(tx, ctx.investigationId, result.answer, buildMessage(result.answer));
+      return { outcome: 'answer' as const, answer: InvestigationAnswerSchema.parse(recorded) };
     });
     if (written.outcome === 'fenced') return abandon('fenced');
     const result = written.value;
@@ -189,4 +209,12 @@ export function createSynthesizeHandler(deps: SynthesizeDeps): TaskHandler {
     inputSchema: SynthesizeInputSchema,
     run,
   };
+}
+
+/** The pages the answer of a screened draft may cite: those of the claims kept in a section and of the new claims. */
+function screenedPages(screened: ScreenedDraft): string[] {
+  return [
+    ...[...screened.established, ...screened.assumed, ...screened.unknown].flatMap((claim) => claim.evidenceIds),
+    ...screened.fresh.flatMap((claim) => pointerPages(claim.pointer)),
+  ];
 }

@@ -8,10 +8,12 @@ import { WorkerOutputSchema, type WorkerClaim } from '../claims/claim.schema.js'
 import { claimsRepository as claims } from '../claims/claims.repository.js';
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { ContextBuilder } from '../context/context-builder.js';
-import type { EvidenceItem } from '../context/role-packets.js';
+import type { EvidencePage } from '../context/role-packets.js';
 import { promptValues } from '../controller/plan-role.js';
 import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
+import { promptVersion } from '../model/prompt-version.js';
+import { PageSchema } from '../verify/pointer.js';
 
 export interface AnalyzeDeps {
   readonly database: Database;
@@ -35,8 +37,9 @@ type WorkerAnswer = { readonly next: 'claims'; readonly claims: readonly WorkerC
 
 /**
  * `research.analyze` v1 (design-engine.md, Flow 1): one worker call over its own sub-question and the evidence of its
- * own gather task, nothing else (AC-05.2). The answer is saved to the checkpoint before the guarded write of its claim
- * revisions — `unverified`, with their atoms, the cited evidence of this task and the gather task's coverage (AC-05.3)
+ * own gather task, its records numbered within each page (KD-1), nothing else (AC-05.2). The answer is saved to the
+ * checkpoint before the guarded write of its claim revisions — `unverified`, with their atoms, their pointers and the
+ * gather task's coverage (AC-05.3)
  * — and a replayed attempt writes from the checkpoint without a call (invariant 3). Material over the role window ends
  * `needs_narrowing` without a call (DC-7); `notAfter` before or during the call fails the task `deadline` (DC-3); a
  * refused reservation or an unavailable model fails it with its code (AC-07.2, DC-12); an output still invalid after
@@ -53,11 +56,13 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
     return tasks.find((task) => task.taskId === gatherTaskId)?.coverage ?? null;
   }
 
-  async function readEvidence(frame: TaskFrame, evidenceIds: readonly string[]): Promise<EvidenceItem[]> {
+  /** The gather task's pages with their records in `items` order — the order the worker numbers them in (KD-1). */
+  async function readPages(frame: TaskFrame, evidenceIds: readonly string[]): Promise<EvidencePage[]> {
     return Promise.all(
       evidenceIds.map(async (evidenceId) => {
         const stored = await deps.evidence.get(evidenceId, frame.resourceId);
-        return { evidenceId, text: decoder.decode(stored.bytes) };
+        const page = PageSchema.parse(JSON.parse(decoder.decode(stored.bytes)));
+        return { evidenceId, records: page.items };
       }),
     );
   }
@@ -72,7 +77,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
     const instructions = renderPromptTemplate(roleConfig.prompt, promptValues(frame));
     const packet = await deps.contextBuilder.buildWorkerPacket(
       { roleConfig, instructions, outputSchema: WorkerOutputSchema, signal: ctx.signal },
-      { subquestion: request.subquestion, evidence: await readEvidence(frame, request.evidenceIds) },
+      { subquestion: request.subquestion, pages: await readPages(frame, request.evidenceIds) },
     );
     if (packet.outcome === 'needs_narrowing') {
       // DC-7: nothing is cut and the model is not called; the controller reads the sign in its next observations.
@@ -87,6 +92,7 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
       role: 'worker',
       roleConfig,
       instructions,
+      promptVersion: promptVersion(roleConfig.prompt),
       messages: packet.messages,
       outputSchema: WorkerOutputSchema,
       notAfter: frame.notAfter,
@@ -126,11 +132,9 @@ export function createAnalyzeHandler(deps: AnalyzeDeps): TaskHandler {
         : { next: 'claims', claims: WorkerOutputSchema.parse(saved.output).claims };
     if (answer.next === 'result') return answer.result;
 
-    // A claim cites only the evidence this worker read; any other id is dropped and the reference gateway judges the rest.
-    const own = new Set(evidenceIds);
-    const cited = answer.claims.map((claim) => ({ ...claim, evidenceIds: claim.evidenceIds.filter((id) => own.has(id)) }));
+    // The pointer is stored as the worker wrote it: `research.verify` checks it against the investigation's pages (DC-6).
     const written = await ctx.withAttemptGuard((tx) =>
-      claims.writeTaskClaims(tx, { investigationId: ctx.investigationId, taskId: ctx.taskId, coverage, claims: cited }),
+      claims.writeTaskClaims(tx, { investigationId: ctx.investigationId, taskId: ctx.taskId, coverage, claims: answer.claims }),
     );
     if (written.outcome === 'fenced') return abandon('fenced');
     return succeeded({ claimIds: written.value }, { coverage });

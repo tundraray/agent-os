@@ -4,12 +4,16 @@ import { ProcessConfigSchema, type ProcessConfig } from '../config/process-confi
 import type { ProcessSet } from '../config/process-set.js';
 import type { SourceMode } from '../config/source-check.js';
 import { type EngineRunRow, engineRunsRepository as runs } from './engine-runs.repository.js';
+import { readSourceSnapshots, type SourceSnapshotDeps, type SourceSnapshots } from './source-snapshots.js';
 import { controllerTaskSpec, ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget } from './start-rules.js';
 
-/** Runtime services the engine uses, narrowed to the methods it calls (an E2E child may wrap `propose`). */
+/**
+ * Runtime services the engine uses, narrowed to the methods it calls (an E2E child may wrap `propose`); `closeInTx`
+ * is called by the `engine.lifecycle` consumer only.
+ */
 export interface EngineRuntimePorts {
   readonly scheduler: Pick<TaskScheduler, 'propose'>;
-  readonly investigations: Pick<InvestigationService, 'create' | 'listForThread' | 'cancel'>;
+  readonly investigations: Pick<InvestigationService, 'create' | 'listForThread' | 'cancel' | 'closeInTx'>;
 }
 
 export interface StartInvestigationInput {
@@ -33,7 +37,8 @@ export type StartInvestigationResult =
     }
   | { readonly outcome: 'rejected'; readonly code: 'process_unknown' | 'budget_out_of_range' };
 
-export interface StartDeps extends EngineRuntimePorts {
+/** `sources`, `clock` and `logger` read the slice of each configured source at start (KD-7). */
+export interface StartDeps extends EngineRuntimePorts, SourceSnapshotDeps {
   readonly database: Database;
   readonly processes: ProcessSet;
   readonly sourceMode: SourceMode;
@@ -48,11 +53,15 @@ interface Launch {
   readonly input: StartInvestigationInput;
   readonly config: ProcessConfig;
   readonly tokenBudget: number;
+  /** Read once per call, before the first write; a repeated start of a recorded launch reads none. */
+  readonly sourceSnapshots: SourceSnapshots;
 }
 
 /**
  * `Engine.startInvestigation` (design-engine.md, Contract Definitions; KD-9, DC-15, DC-16, DC-19). Refusals come
- * before any write; the thread-ownership error of `InvestigationService.create` propagates unchanged.
+ * before any write; the thread-ownership error of `InvestigationService.create` propagates unchanged. A new launch
+ * records the slice of each configured source in its engine row (design-self-check.md, KD-7): a slice not read within
+ * 2 seconds or failed is recorded empty and the start goes on; the row of a recorded launch is never rewritten.
  */
 export function startInvestigation(deps: StartDeps) {
   /** Proposes the run's controller task (again) and records its id; `subscribed` when it already exists. */
@@ -66,6 +75,11 @@ export function startInvestigation(deps: StartDeps) {
       ENGINE_REQUESTER_KEY,
     );
     if (proposed.outcome === 'rejected') {
+      // A closed or stopped investigation takes no task any more (design-lifecycle.md, KD-1); its recorded controller
+      // task is still the launch's, so a repeated start returns it as before the closure.
+      if (proposed.reason === 'investigation_inactive' && run.controllerTaskId !== null) {
+        return { outcome, investigationId: run.investigationId, controllerTaskId: run.controllerTaskId };
+      }
       throw new StartInvestigationError(
         `controller task of investigation ${run.investigationId} refused: ${proposed.reason}`,
       );
@@ -112,6 +126,7 @@ export function startInvestigation(deps: StartDeps) {
       config: request.config,
       sourceMode: deps.sourceMode,
       tokenBudget: request.tokenBudget,
+      sourceSnapshots: request.sourceSnapshots,
     });
     if (inserted !== undefined) {
       return proposeController(inserted, 'created');
@@ -146,6 +161,7 @@ export function startInvestigation(deps: StartDeps) {
     if (recorded !== undefined) {
       return proposeController(recorded, 'existing');
     }
-    return launch({ input, config: resolution.config, tokenBudget: budget.tokenBudget }, 1);
+    const sourceSnapshots = await readSourceSnapshots(deps, resolution.config);
+    return launch({ input, config: resolution.config, tokenBudget: budget.tokenBudget, sourceSnapshots }, 1);
   };
 }

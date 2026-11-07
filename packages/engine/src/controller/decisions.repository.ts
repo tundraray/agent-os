@@ -1,3 +1,4 @@
+import { type ResearchAnswerConfidence, ResearchAnswerConfidenceSchema } from '@agent-os/contracts';
 import {
   type Database,
   researchClaims,
@@ -64,6 +65,15 @@ export interface LatestClaimRow {
   readonly createdAt: Date;
 }
 
+/** A latest revision as the answer reads it: also its pointer and the group of a `supported` revision. */
+export interface LatestClaimRevision extends LatestClaimRow {
+  /** Null on revisions written before agent-quality. */
+  readonly pointer: unknown;
+  readonly confidence: ResearchAnswerConfidence | null;
+}
+
+const StoredConfidenceSchema = ResearchAnswerConfidenceSchema.nullable();
+
 /**
  * Queries of the controller (ADR-0003: drizzle-orm). Reads go over the engine's database; every write takes the
  * transaction of `TaskContext.withAttemptGuard` (invariant 3). The runtime's `research_investigations` is only read.
@@ -111,19 +121,22 @@ export const controllerRepository = {
     await tx.insert(researchDecisions).values(decision).onConflictDoNothing();
   },
 
-  /** The latest revision of every claim of the investigation. */
-  latestClaims(db: Database, investigationId: string): Promise<LatestClaimRow[]> {
-    return db
+  /** The latest revision of every claim of the investigation; a group the closed list does not name is a defect. */
+  async latestClaims(db: Database, investigationId: string): Promise<LatestClaimRevision[]> {
+    const rows = await db
       .selectDistinctOn([researchClaims.claimId], {
         claimId: researchClaims.claimId,
         text: researchClaims.text,
         evidenceIds: researchClaims.evidenceIds,
         status: researchClaims.status,
+        pointer: researchClaims.pointer,
+        confidence: researchClaims.confidence,
         createdAt: researchClaims.createdAt,
       })
       .from(researchClaims)
       .where(eq(researchClaims.investigationId, investigationId))
       .orderBy(asc(researchClaims.claimId), desc(researchClaims.seq));
+    return rows.map((row) => ({ ...row, confidence: StoredConfidenceSchema.parse(row.confidence) }));
   },
 
   /**

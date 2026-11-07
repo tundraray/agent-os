@@ -6,6 +6,7 @@ import type { SourceMode } from '../config/source-check.js';
 import { type PromptField, renderPromptTemplate } from '../config/prompt-template.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { ModelGateway } from '../model/model-gateway.js';
+import { promptVersion } from '../model/prompt-version.js';
 import { controllerRepository as repository, type PlanRevisionRow } from './decisions.repository.js';
 import { callOrReplay } from './role-call.js';
 
@@ -89,6 +90,7 @@ export async function writePlanRevision(
     roleConfig,
     call,
     instructions,
+    promptVersion: promptVersion(roleConfig.prompt),
     messages: packet.messages,
     outputSchema: PlanOutputSchema,
     notAfter: frame.notAfter,

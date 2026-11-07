@@ -29,6 +29,27 @@
       "when": 1793620381918,
       "tag": "0003_flimsy_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794005869110,
+      "tag": "0004_wonderful_inhumans",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794039479284,
+      "tag": "0005_even_kabuki",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794066273054,
+      "tag": "0006_red_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

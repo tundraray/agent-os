@@ -1,4 +1,20 @@
 // The package entry `.`; the engine components are exported here as they land.
+export type { ReadAnswerMessageResult } from './answer/answer-message.js';
+export {
+  type AnswerMessage,
+  type AnswerPage,
+  type AnswerToBuild,
+  buildResearchAnswer,
+  type BuildResearchAnswerInput,
+} from './answer/research-answer.builder.js';
+export type {
+  AssessBinding,
+  AssessRequest,
+  AssessResult,
+  AssessRole,
+  AssessUsage,
+} from './assess/assess.js';
+export { type GroupTable, GroupTableSchema } from './calibration/group-table.js';
 export type { ModelCatalog, ModelCatalogEntry } from './config/model-catalog.js';
 export type { SourceMode } from './config/source-check.js';
 export { createEngine, type CreateEngineOptions } from './create-engine.js';
@@ -13,6 +29,7 @@ export {
   AnthropicTokenCounter,
   type AnthropicTokenCounterOptions,
 } from './model/anthropic-token-counter.js';
+export { promptVersion } from './model/prompt-version.js';
 export type {
   RoleMessage,
   TokenCounter,
@@ -20,13 +37,42 @@ export type {
   TokenCountResult,
 } from './model/token-counter.js';
 export type { EngineLogFields, EngineLogger, ResolveModel, RoleModel } from './ports.js';
-export { deepResearchProcessV1 } from './processes/shipped-processes.js';
+export { deepResearchProcessV2 } from './processes/shipped-processes.js';
+export { shippedGroupTables } from './processes/shipped-group-tables.js';
 export type { SignalKind, SignalPayloadSchema } from './signals/signal-registry.js';
+export { configFingerprint, readRunRecord, type ReadRunRecordResult, type RunRecord } from './runs/run-record.js';
+export { purgeExpiredTranscripts } from './transcripts/purge-transcripts.js';
+export {
+  readTranscripts,
+  type ReadTranscriptsInput,
+  type ReadTranscriptsResult,
+  type Transcript,
+  type TranscriptOutcome,
+  type TranscriptRetention,
+  type TranscriptSelector,
+} from './transcripts/read-transcripts.js';
+export type { TranscriptUsage } from './transcripts/transcript-writes.js';
 export type {
   EngineRuntimePorts,
   StartInvestigationInput,
   StartInvestigationResult,
 } from './runs/start-investigation.js';
+export {
+  type ClaimAssessment,
+  ClaimAssessmentSchema,
+  type ClaimProfile,
+  type ClaimType,
+} from './verify/claim-assessment.js';
+export { buildClaimCheck, type ClaimCheck, type ClaimCheckInput, type ClaimCheckPage } from './verify/claim-check.js';
+export type { Atom } from './verify/claim-verifier.js';
+export {
+  type ClaimDecision,
+  type DecideClaimInput,
+  decideClaim,
+  type DecidedStatus,
+  type InsufficientReason,
+} from './verify/decide-claim.js';
+export { type Pointer, pointerOverAll } from './verify/pointer.js';
 export type {
   InvestigationView,
   InvestigationViewStatus,

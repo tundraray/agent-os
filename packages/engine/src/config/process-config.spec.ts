@@ -1,10 +1,10 @@
 import type { ResolvedSourceTool, SourceRegistry, SourceToolRequest } from '@agent-os/sources';
-import shippedDeepResearch from '../processes/deep-research.v1.json' with { type: 'json' };
+import * as shippedProcesses from '../processes/shipped-processes.js';
 import { loadProcessConfig, type ProcessConfig } from './load-process-config.js';
 import { DEFAULT_MODEL_CATALOG } from './model-catalog.js';
 import { checkRoleModels } from './process-config.schema.js';
 import { createProcessSet } from './process-set.js';
-import { renderPromptTemplate } from './prompt-template.js';
+import { findPromptTemplateFault, PROMPT_FIELDS, renderPromptTemplate } from './prompt-template.js';
 import { checkProcessSources } from './source-check.js';
 
 // AC-12.2, AC-12.3, UC-E8, UC-10, DC-14, DC-15 (version resolution), DC-18 (rule): the loader and the engine-creation
@@ -130,11 +130,23 @@ describe('loadProcessConfig', () => {
     expect(prompt).toBe('Answer why do payments fail. Mode: model_knowledge.');
   });
 
-  it('accepts the shipped deep-research configuration through the same loader', () => {
-    const config = loaded(shippedDeepResearch);
+  // KD-7, DC-14: the shipped set is deep-research version 2 alone, and it passes the same loader as any configuration.
+  it('ships one configuration, deep-research version 2, accepted by the same loader', () => {
+    const shipped = Object.values(shippedProcesses).map(loaded);
 
-    expect(config).toMatchObject({ processId: 'deep-research', version: 1 });
-    expect(checkRoleModels(config, DEFAULT_MODEL_CATALOG)).toBeNull();
+    expect(shipped.map(({ processId, version }) => ({ processId, version }))).toEqual([{ processId: 'deep-research', version: 2 }]);
+    expect(checkRoleModels(shipped[0]!, DEFAULT_MODEL_CATALOG)).toBeNull();
+  });
+
+  // DC-14: the verifier instructions are the template unchanged, so a field in it would fail calibration
+  // (`calibration_prompt_has_fields`); rendering with any field values must leave the template as it is.
+  it('ships a verifier prompt without template fields', () => {
+    const [shipped] = Object.values(shippedProcesses).map(loaded);
+    const prompt = shipped!.roles.verifier.prompt;
+    const marked = Object.fromEntries(PROMPT_FIELDS.map((field) => [field, `<<${field}>>`])) as Record<(typeof PROMPT_FIELDS)[number], string>;
+
+    expect(findPromptTemplateFault(prompt)).toBeNull();
+    expect(renderPromptTemplate(prompt, marked)).toBe(prompt);
   });
 });
 

@@ -13,6 +13,8 @@ const DEFAULTS: RuntimeConfig = {
   maxRecoveries: 3,
   deliveryMaxAttempts: 5,
   shutdownGraceMs: 5_000,
+  queueWaitMs: 600_000,
+  attemptMs: 900_000,
   dbPoolMax: 10,
   crashAt: undefined,
   nodeEnv: undefined,
@@ -33,6 +35,14 @@ describe('parseRuntimeConfig', () => {
     ],
     ['RUNTIME_WORKERS=maybe is rejected', { RUNTIME_WORKERS: 'maybe' }, /RUNTIME_WORKERS/],
     ['RUNTIME_CONCURRENCY=0 is rejected', { RUNTIME_CONCURRENCY: '0' }, /RUNTIME_CONCURRENCY/],
+    // design-lifecycle.md, Runtime settings: both task limits are integers of at least 1000 ms.
+    ['RUNTIME_QUEUE_WAIT_MS=999 is rejected', { RUNTIME_QUEUE_WAIT_MS: '999' }, /RUNTIME_QUEUE_WAIT_MS/],
+    ['RUNTIME_ATTEMPT_MS=999 is rejected', { RUNTIME_ATTEMPT_MS: '999' }, /RUNTIME_ATTEMPT_MS/],
+    [
+      'RUNTIME_QUEUE_WAIT_MS=1000 and RUNTIME_ATTEMPT_MS=1000 are the lowest accepted',
+      { RUNTIME_QUEUE_WAIT_MS: '1000', RUNTIME_ATTEMPT_MS: '1000' },
+      { ...DEFAULTS, queueWaitMs: 1000, attemptMs: 1000 },
+    ],
   ])('%s', (_, env, expected) => {
     if (expected instanceof RegExp) {
       expect(() => parseRuntimeConfig(env)).toThrow(expected);

@@ -34,6 +34,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AppModule } from '../src/app.module.js';
 import {
+  ENGINE_GROUP_TABLES,
   ENGINE_RESOLVE_MODEL,
   ENGINE_TOKEN_COUNTER,
   RESEARCH_ENGINE,
@@ -50,6 +51,7 @@ import {
 import { assistantModel, titleModel } from './support/mockModels.js';
 import { createRuntimeApp } from './support/runtimeApp.js';
 import { newUser } from './support/seed.js';
+import { TEST_GROUP_TABLES } from './support/testGroupTables.js';
 import { closeRuntimeDb, query } from './support/wiring-handlers.js';
 
 describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-process Nest + real Postgres)', () => {
@@ -60,7 +62,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   const ENGINE_REGISTRATIONS = [
     'register research.controller@1',
     'register research.analyze@1',
-    'register research.verify@1',
+    'register research.verify@2',
     'register research.synthesize@1',
   ];
 
@@ -161,7 +163,9 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
       ]);
       // EngineModule creates the engine after SourcesModule binds the registry: with the fixture connected it runs in
       // the sources mode (DC-14 checked against the bound registry, not the empty one).
-      expect(runtime.app.get<Engine>(RESEARCH_ENGINE).sourceMode).toBe('sources');
+      expect(runtime.app.get<Engine>(RESEARCH_ENGINE).sourceMode).toBe(
+        'sources',
+      );
 
       // The fixture process starts on the first call through the registry SourcesModule provides.
       const registry = runtime.app.get<SourceRegistry>(SOURCE_REGISTRY);
@@ -238,6 +242,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
         .useValue(createThreadTitleAgent(titleModel().model))
         .overrideProvider(SOURCE_ADAPTERS)
         .useValue([writable])
+        .overrideProvider(ENGINE_GROUP_TABLES)
+        .useValue(TEST_GROUP_TABLES)
         .compile();
       app = moduleRef.createNestApplication();
     } finally {

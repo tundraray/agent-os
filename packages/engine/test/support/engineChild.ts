@@ -19,13 +19,14 @@ import { fixtureFiles } from './fixtureHarness.js';
 import { newLaunchKey, newUser } from './new-user.js';
 
 /**
- * Child-process harness of E2E-2 (NFR-03, DC-9, DC-19), modelled on `packages/runtime/test/support/runtimeChild.ts`.
+ * Child-process harness of deep-research E2E-2 (NFR-03, DC-9, DC-19) and agent-quality lifecycle E2E-1 (AC-19.1, KD-1),
+ * modelled on `packages/runtime/test/support/runtimeChild.ts`.
  * The child runs only compiled code (`pnpm --filter @agent-os/engine build:child` → `dist/test-child/`) and imports the
  * packages by name, so it executes the same built `dist` as `apps/api`; a build older than its sources is refused before
  * anything is spawned (KD-8 of the runtime part). A run starts the scenario's investigation in a child that may die at
- * an engine crash point, reads what the dead child left, starts a fresh child that repeats the start with the same
- * `launchKey` and waits until the investigation has its answer. It synchronises only on proven states: the exit of the
- * dying child, then rows of the test database.
+ * an engine or a runtime crash point, reads what the dead child left, starts a fresh child that repeats the start with
+ * the same `launchKey` and waits until the investigation has its answer and is closed. It synchronises only on proven
+ * states: the exit of the dying child, then rows of the test database.
  */
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -74,11 +75,15 @@ const CRASH_MS = 60_000;
 /** Harness timeout of the recovery: the PRD target (Reliability, AC-08.4); no latency is asserted. */
 const RECOVERY_MS = 60_000;
 const STOP_MS = 30_000;
+/** How long the fence's relay may take to deliver what the fence's cancel wrote. */
+const DRAIN_MS = 10_000;
 const POLL_MS = 100;
 const OUTPUT_TAIL_LINES = 60;
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 /** Workflow types whose tasks a child claims: the engine's handlers and `source.fetch`. */
 const CHILD_WORKFLOWS = ['research.controller', 'research.analyze', 'research.verify', 'research.synthesize', 'source.fetch'];
+/** Event consumers a child registers: the runtime's scheduler and the engine's closure (design-lifecycle.md, KD-1). */
+const CHILD_CONSUMERS = ['runtime.scheduler', 'engine.lifecycle'];
 
 function newestMtime(dir: string): { file: string; mtimeMs: number } {
   let newest = { file: dir, mtimeMs: 0 };
@@ -185,41 +190,64 @@ class EngineChild {
 
 type Pool = DatabaseConnection['pool'];
 
+async function pendingSchedulerDeliveries(pool: Pool): Promise<number> {
+  const { rows } = await pool.query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM app.research_event_deliveries
+      WHERE consumer = 'runtime.scheduler' AND status = 'pending'`,
+  );
+  return rows[0]?.count ?? 0;
+}
+
 /**
- * The fence of a run ({@link cancelLeftovers}) over a runtime without workers, so a child never claims a foreign
- * controller task that would spend its crash pass.
+ * The fence of a run ({@link cancelLeftovers}), so a child never claims a foreign controller task that would spend its
+ * crash pass. The cancel writes `TaskCancelled` deliveries to `runtime.scheduler`; the fence's own relay delivers them,
+ * so the child's relay does not count them as passes. Its dispatcher has no handler, so it claims nothing. What is
+ * still pending after {@link DRAIN_MS} is left to {@link assertNoForeignEngineWork}.
  */
 async function fenceLeftovers(connection: DatabaseConnection): Promise<void> {
   const runtime = createRuntime({
     database: connection,
-    config: parseRuntimeConfig({ RUNTIME_WORKERS: 'off' }),
+    config: parseRuntimeConfig({ RUNTIME_WORKERS: 'on', RUNTIME_NOTIFY: 'off', RUNTIME_POLL_MS: '50' }),
     threads: {
-      withOwnedThread: () => Promise.reject(new Error('the fence of E2E-2 owns no thread')),
+      withOwnedThread: () => Promise.reject(new Error('the fence of the engine child owns no thread')),
     },
     logger: { log: () => undefined, warn: () => undefined, error: () => undefined },
     clock: systemClock,
   });
   await cancelLeftovers(connection.db, runtime.investigations);
+  runtime.start();
+  try {
+    const startedAt = Date.now();
+    while ((await pendingSchedulerDeliveries(connection.pool)) > 0 && Date.now() - startedAt < DRAIN_MS) {
+      await delay(POLL_MS);
+    }
+  } finally {
+    await runtime.stop();
+  }
 }
 
 /**
- * Crash points count their passes over the whole process, and the dispatcher of a child claims every ready task of the
- * engine's types and of `source.fetch`: such work the fence does not reach (a task of an investigation without an engine
- * row) would be run by the child and spend the pass the row aims at. Fails before the first start, naming what is left.
+ * Crash points count their passes over the whole process: the dispatcher of a child claims every ready task of the
+ * engine's types and of `source.fetch`, and its relay delivers every pending delivery to its consumers. Such work the
+ * fence does not reach (a task of an investigation without an engine row, an undelivered event of another run) would be
+ * done by the child and spend the pass the row aims at. Fails before the first start, naming what is left.
  */
 async function assertNoForeignEngineWork(pool: Pool): Promise<void> {
-  const { rows } = await pool.query<{ claimable: number }>(
-    `SELECT count(*)::int AS claimable FROM app.research_tasks
-      WHERE workflow_type = ANY($1)
-        AND (status = 'queued' OR (status = 'running' AND lease_expires_at < now()))`,
-    [CHILD_WORKFLOWS],
+  const { rows } = await pool.query<{ claimable: number; undelivered: number }>(
+    `SELECT (SELECT count(*)::int FROM app.research_tasks
+              WHERE workflow_type = ANY($1)
+                AND (status = 'queued' OR (status = 'running' AND lease_expires_at < now()))) AS claimable,
+            (SELECT count(*)::int FROM app.research_event_deliveries
+              WHERE consumer = ANY($2) AND status = 'pending') AS undelivered`,
+    [CHILD_WORKFLOWS, CHILD_CONSUMERS],
   );
-  const [{ claimable }] = rows;
-  if (claimable === 0) return;
+  const [{ claimable, undelivered }] = rows;
+  if (claimable === 0 && undelivered === 0) return;
   throw new Error(
-    `E2E-2 needs a database free of other investigations' engine work, but ${claimable} queued or lease-expired ` +
-      `running tasks of the engine's types or of source.fetch are left (a run killed before its end leaves them); ` +
-      `finish or remove them, or run against a fresh database.`,
+    `The engine child needs a database free of other investigations' engine work, but ${claimable} queued or ` +
+      `lease-expired running tasks of the engine's types or of source.fetch and ${undelivered} pending deliveries to ` +
+      `${CHILD_CONSUMERS.join(', ')} are left (a run killed before its end leaves them); finish or remove them, or run ` +
+      `against a fresh database.`,
   );
 }
 
@@ -229,6 +257,52 @@ async function investigationsOf(pool: Pool, resourceId: string): Promise<number>
     [resourceId],
   );
   return rows[0]?.count ?? 0;
+}
+
+/**
+ * The closure of the investigation (design-lifecycle.md, KD-1, Flow 3), kept apart from {@link EndState}: its status,
+ * its `InvestigationCompleted` events and where the delivery of its controller task's end event stands.
+ */
+export interface Closure {
+  readonly status: string;
+  readonly completedEvents: number;
+  /** `[consumer, delivery status]` of the controller task's `TaskSucceeded` or `TaskFailed`, by consumer. */
+  readonly controllerEndDeliveries: [string, string][];
+  /** Deliveries of the investigation's events to the child's consumers that are still pending. */
+  readonly pendingDeliveries: number;
+}
+
+/** Reads the {@link Closure} of the investigation by the test's own connection. */
+async function closureOf(pool: Pool, investigationId: string): Promise<Closure> {
+  const { rows } = await pool.query<{ status: string; completed_events: number; pending_deliveries: number }>(
+    `SELECT i.status,
+            (SELECT count(*)::int FROM app.research_events e
+              WHERE e.investigation_id = i.investigation_id AND e.type = 'InvestigationCompleted') AS completed_events,
+            (SELECT count(*)::int FROM app.research_event_deliveries d
+               JOIN app.research_events e ON e.event_id = d.event_id
+              WHERE e.investigation_id = i.investigation_id AND d.consumer = ANY($2) AND d.status = 'pending')
+              AS pending_deliveries
+       FROM app.research_investigations i
+      WHERE i.investigation_id = $1`,
+    [investigationId, CHILD_CONSUMERS],
+  );
+  const [investigation] = rows;
+  if (investigation === undefined) throw new Error(`Investigation ${investigationId} not found`);
+  const deliveries = await pool.query<{ consumer: string; status: string }>(
+    `SELECT d.consumer, d.status
+       FROM app.research_engine_runs r
+       JOIN app.research_events e ON e.investigation_id = r.investigation_id AND e.task_id = r.controller_task_id
+       JOIN app.research_event_deliveries d ON d.event_id = e.event_id
+      WHERE r.investigation_id = $1 AND e.type IN ('TaskSucceeded', 'TaskFailed')
+      ORDER BY d.consumer`,
+    [investigationId],
+  );
+  return {
+    status: investigation.status,
+    completedEvents: investigation.completed_events,
+    controllerEndDeliveries: deliveries.rows.map((row) => [row.consumer, row.status]),
+    pendingDeliveries: investigation.pending_deliveries,
+  };
 }
 
 type Rows = Awaited<ReturnType<typeof engineRowsOf>>;
@@ -243,6 +317,7 @@ export interface RunRows {
   readonly engineRuns: number;
   readonly tasks: TaskRows;
   readonly rows: Rows;
+  readonly closure: Closure;
 }
 
 async function rowsOf(pool: Pool, resourceId: string): Promise<RunRows | undefined> {
@@ -255,6 +330,7 @@ async function rowsOf(pool: Pool, resourceId: string): Promise<RunRows | undefin
     engineRuns: runs.length,
     tasks: await tasksOf(run.investigationId),
     rows: await engineRowsOf(run.investigationId),
+    closure: await closureOf(pool, run.investigationId),
   };
 }
 
@@ -300,8 +376,10 @@ export function endStateOf({ tasks, rows }: RunRows): EndState {
 // -------------------------------------------------------------------------------------------
 
 export interface ScenarioOptions {
-  /** `ENGINE_CRASH_AT` of the first child; without it the run is the reference run. */
+  /** `ENGINE_CRASH_AT` of the first child; without it and {@link runtimeCrashAt} the run is the reference run. */
   readonly crashAt?: string;
+  /** `RUNTIME_CRASH_AT` of the first child: a point of the runtime's closed list. */
+  readonly runtimeCrashAt?: string;
   /** Runtime Settings of the restarted child over the children's defaults. */
   readonly restartSettings?: Readonly<Record<string, string>>;
 }
@@ -318,17 +396,21 @@ export interface ScenarioRun {
   readonly callLog: string[];
 }
 
-/** The investigation has its answer and every task of it ended. */
+/**
+ * The investigation has its answer, every task of it ended, it is no longer `active`, and every event of it reached the
+ * child's consumers: a run leaves no delivery that a later child would make and count as a pass of its crash point.
+ */
 function answered(rows: RunRows | undefined): RunRows | undefined {
   if (rows?.rows.run?.answer == null) return undefined;
+  if (rows.closure.status === 'active' || rows.closure.pendingDeliveries > 0) return undefined;
   return rows.tasks.every((task) => TERMINAL.includes(task.status)) ? rows : undefined;
 }
 
 /**
- * Starts the scenario's investigation in a compiled child: without `crashAt`, to its end in that child (the reference
- * run); with it, until the child exits at the crash point, then in a fresh child that repeats the start with the same
- * `launchKey`, to the end. Each run has its own user, thread, launch key and fixture call log; nothing of the test's
- * database is cleaned (isolation by `resourceId`).
+ * Starts the scenario's investigation in a compiled child: without a crash point, to its end in that child (the
+ * reference run); with `crashAt` or `runtimeCrashAt`, until the child exits at the crash point, then in a fresh child
+ * that repeats the start with the same `launchKey`, to the end. Each run has its own user, thread, launch key and
+ * fixture call log; nothing of the test's database is cleaned (isolation by `resourceId`).
  */
 export async function runScenario(options: ScenarioOptions = {}): Promise<ScenarioRun> {
   assertChildBuildFresh();
@@ -341,7 +423,8 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
     query: 'Why did the payments fail after the release?',
   };
   const children: EngineChild[] = [];
-  const start = (crashAt: string | undefined, settings: Readonly<Record<string, string>> = {}): EngineChild => {
+  const crashAt = options.crashAt ?? options.runtimeCrashAt;
+  const start = (crash: Pick<ScenarioOptions, 'crashAt' | 'runtimeCrashAt'>, settings: Readonly<Record<string, string>> = {}): EngineChild => {
     const child = new EngineChild({
       ...files.env,
       ...settings,
@@ -350,8 +433,8 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
       NODE_ENV: 'test',
       RUNTIME_WORKERS: 'on',
       // Empty means unset, also over a value inherited from the environment.
-      RUNTIME_CRASH_AT: '',
-      ENGINE_CRASH_AT: crashAt ?? '',
+      RUNTIME_CRASH_AT: crash.runtimeCrashAt ?? '',
+      ENGINE_CRASH_AT: crash.crashAt ?? '',
       [SCENARIO_ENV]: JSON.stringify(scenario),
     });
     children.push(child);
@@ -360,16 +443,16 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
   try {
     await fenceLeftovers(reader);
     await assertNoForeignEngineWork(reader.pool);
-    let child = start(options.crashAt);
+    let child = start(options);
     let firstExitCode: number | null = null;
     let atKill: RunRows | undefined;
-    if (options.crashAt !== undefined) {
+    if (crashAt !== undefined) {
       const dying = child;
       firstExitCode = await within(dying.exited, CRASH_MS, () =>
-        dying.failure(`did not exit at ${options.crashAt} within ${CRASH_MS} ms`),
+        dying.failure(`did not exit at ${crashAt} within ${CRASH_MS} ms`),
       );
       atKill = await rowsOf(reader.pool, scenario.resourceId);
-      child = start(undefined, options.restartSettings);
+      child = start({}, options.restartSettings);
     }
 
     const last = child;
@@ -384,7 +467,7 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
     }
     const lastExitCode = await last.stop();
     return {
-      firstExitCode: options.crashAt === undefined ? lastExitCode : firstExitCode,
+      firstExitCode: crashAt === undefined ? lastExitCode : firstExitCode,
       ...(atKill && { atKill }),
       last: { started: last.started, proposals: last.proposals },
       end,

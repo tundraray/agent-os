@@ -7,7 +7,8 @@ import type { TokenCountRequest } from './token-counter.js';
 // it, with or without a trailing `/` — with the model without its `anthropic/` prefix and the body
 // of the call (role messages and `output_config` with the output JSON schema). A provider 5xx and a
 // broken connection come back as a refusal, not as an exception.
-// Defects caught: the base path is lost, the model keeps its prefix, the body has no `output_config`.
+// Defects caught: the base path is lost, the model keeps its prefix, the body has no `output_config`, the body carries
+// the cache mark of a role message (the provider refuses the count).
 
 interface SeenRequest {
   method: string | undefined;
@@ -28,7 +29,8 @@ const OUTPUT_SCHEMA = {
 const REQUEST: TokenCountRequest = {
   model: 'anthropic/claude-haiku-5-5',
   system: 'You analyse log records.',
-  messages: [{ role: 'user', content: 'Which service failed first?' }],
+  // The controller's stable block carries the cache mark; the provider's message has no such field (KD-6).
+  messages: [{ role: 'user', content: 'Which service failed first?', cacheMark: true }],
   effort: 'low',
   outputSchema: OUTPUT_SCHEMA,
 };

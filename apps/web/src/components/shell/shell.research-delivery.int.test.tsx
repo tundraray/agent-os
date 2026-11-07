@@ -599,8 +599,8 @@ describe('Shell: polling the research state and appending the answer in the open
           launch: { messageId: 'u-a' },
           sourceMode: 'model_knowledge',
           assumed: [
-            { text: CLAIM_1, footnotes: [], verified: false },
-            { text: CLAIM_2, footnotes: [], verified: false },
+            { text: CLAIM_1, footnotes: [], verified: false, confidence: null, causal: false },
+            { text: CLAIM_2, footnotes: [], verified: false, confidence: null, causal: false },
           ],
         },
         STORED_TEXT,

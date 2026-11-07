@@ -1,5 +1,11 @@
 import { blockSeed, mulberry32, randomHex, randomInt, type Random } from './prng.js';
-import { DATASET_PARAMS, snapshotOf, type DatasetParams, type DatasetVersion } from './versions.js';
+import {
+  DATASET_PARAMS,
+  snapshotOf,
+  type DatasetVersion,
+  type GeneratorParams,
+  type LogDatasetVersion,
+} from './versions.js';
 
 export const LOG_SERVICES = ['checkout-web', 'payment-api', 'provider-adapter', 'fraud-check', 'ledger'] as const;
 export type LogService = (typeof LOG_SERVICES)[number];
@@ -32,9 +38,10 @@ export interface IndexRange {
  * time never decreases with the index, so a time interval is an index range. Nothing is materialized up front.
  */
 export interface LogDataset {
-  readonly version: DatasetVersion;
+  readonly version: LogDatasetVersion;
   readonly snapshot: string;
   readonly recordCount: number;
+  /** Moment of the change the data carries: the release of `v1`/`v2` or a scenario's moment of change. */
   readonly releaseAt: string;
   recordAt(index: number): LogRecord;
   /** Indices of records with `from <= ts < to`. */
@@ -58,28 +65,78 @@ interface BlockLayout {
   blockSpanMs: number;
 }
 
-interface Draft extends Omit<LogRecord, 'ts'> {
+/** A record before it is placed in time: `offsetMs` counts from the start of its block. */
+export interface RecordDraft extends Omit<LogRecord, 'ts'> {
   offsetMs: number;
 }
 
-interface BlockContext {
-  random: Random;
+/** Time span of one block; records planted into it take offsets in `[0, spanMs)`. */
+export interface BlockSpan {
   startMs: number;
   spanMs: number;
 }
 
+interface BlockContext extends BlockSpan {
+  random: Random;
+}
+
+/** Provider latency and the local `provider-adapter` timeout of one request. */
+export interface ProviderCall {
+  latencyMs: number;
+  timeoutMs: number;
+}
+
+/** How a payment whose provider replied in time settles. */
+export type Settlement = 'ok' | 'ledger_error' | 'unexplained_error';
+
+/** How payment traces unfold; `requestMs` is the absolute time the request to the provider is sent. */
+export interface PaymentModel {
+  provider(random: Random, requestMs: number): ProviderCall;
+  /** Settlement after an in-time provider reply; absent keeps the pinned trace shape without a `ledger.write` span. */
+  settlement?(random: Random, requestMs: number): Settlement;
+}
+
+/** Everything a generated dataset is built from; `params` alone name the snapshot. */
+export interface GenerationPlan {
+  params: GeneratorParams;
+  /** Moment of the change the data carries, reported as `LogDataset.releaseAt`. */
+  changeAt: string;
+  payment: PaymentModel;
+  /** Records placed into a block besides its payment trace, at most `PLANTED_PER_BLOCK_MAX`. */
+  planted?(block: BlockSpan): RecordDraft[];
+}
+
+/** Room a block keeps for planted records next to its longest payment trace. */
+export const PLANTED_PER_BLOCK_MAX = 2;
+
 export function createLogDataset(version: DatasetVersion): LogDataset {
   const params = DATASET_PARAMS[version];
+  const releaseMs = Date.parse(params.releaseAt);
+  const { beforeRelease, afterRelease } = params.providerTimeoutMs;
+  return createGeneratedDataset({
+    params,
+    changeAt: params.releaseAt,
+    payment: {
+      provider: (random, requestMs) => ({
+        latencyMs: providerLatency(random),
+        timeoutMs: requestMs >= releaseMs ? afterRelease : beforeRelease,
+      }),
+    },
+  });
+}
+
+/** A dataset generated block by block from `plan`; the shared engine of the pinned versions and the scenarios. */
+export function createGeneratedDataset(plan: GenerationPlan): LogDataset {
+  const { params } = plan;
   const layouts = blockLayouts(params);
   const blockCount = layouts.reduce((sum, layout) => sum + layout.blockCount, 0);
   const recordCount = blockCount * params.recordsPerBlock;
-  const releaseMs = Date.parse(params.releaseAt);
   let cached: { blockIndex: number; records: LogRecord[] } | undefined;
   let traceIndex: Map<string, number> | undefined;
 
   function block(blockIndex: number): LogRecord[] {
     if (cached?.blockIndex !== blockIndex) {
-      cached = { blockIndex, records: generateBlock(params, layoutOf(layouts, blockIndex), blockIndex, releaseMs) };
+      cached = { blockIndex, records: generateBlock(plan, layoutOf(layouts, blockIndex), blockIndex) };
     }
     return cached.records;
   }
@@ -112,10 +169,10 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
   }
 
   return {
-    version,
+    version: params.version,
     snapshot: snapshotOf(params),
     recordCount,
-    releaseAt: params.releaseAt,
+    releaseAt: plan.changeAt,
     recordAt,
     indexRange: (from, to) => {
       const start = firstIndexAtOrAfter(Date.parse(from));
@@ -125,7 +182,7 @@ export function createLogDataset(version: DatasetVersion): LogDataset {
   };
 }
 
-function blockLayouts(params: DatasetParams): BlockLayout[] {
+function blockLayouts(params: GeneratorParams): BlockLayout[] {
   let firstBlock = 0;
   return params.segments.map((segment) => {
     if (segment.records % params.recordsPerBlock !== 0) {
@@ -163,13 +220,19 @@ function buildTraceIndex(blockCount: number, block: (blockIndex: number) => LogR
   return index;
 }
 
-function generateBlock(params: DatasetParams, layout: BlockLayout, blockIndex: number, releaseMs: number): LogRecord[] {
+function generateBlock(plan: GenerationPlan, layout: BlockLayout, blockIndex: number): LogRecord[] {
+  const { params } = plan;
   const context: BlockContext = {
     random: mulberry32(blockSeed(params.seed, blockIndex)),
     startMs: Math.floor(layout.startMs + (blockIndex - layout.firstBlock) * layout.blockSpanMs),
     spanMs: Math.floor(layout.blockSpanMs),
   };
-  const drafts = paymentTrace(context, params, releaseMs);
+  const drafts = paymentTrace(context, plan.payment);
+  const planted = plan.planted?.({ startMs: context.startMs, spanMs: context.spanMs }) ?? [];
+  if (planted.length > PLANTED_PER_BLOCK_MAX) {
+    throw new RangeError(`block ${blockIndex}: ${planted.length} planted records exceed ${PLANTED_PER_BLOCK_MAX}`);
+  }
+  drafts.push(...planted);
   while (drafts.length < params.recordsPerBlock) {
     drafts.push(backgroundRecord(context));
   }
@@ -183,10 +246,11 @@ function generateBlock(params: DatasetParams, layout: BlockLayout, blockIndex: n
 }
 
 /**
- * checkout-web -> payment-api -> provider-adapter -> provider. Latency comes from one distribution before and after
- * the release; only the local timeout changes, so a slow provider reply becomes `provider.timeout` + late `provider.response`.
+ * checkout-web -> payment-api -> provider-adapter -> provider [-> ledger]. The model gives each request its provider
+ * latency and local timeout; a reply slower than the timeout becomes `provider.timeout` + late `provider.response`.
+ * Without a settlement model the trace keeps the pinned `v1`/`v2` shape and draws exactly the same random numbers.
  */
-function paymentTrace(context: BlockContext, params: DatasetParams, releaseMs: number): Draft[] {
+function paymentTrace(context: BlockContext, model: PaymentModel): RecordDraft[] {
   const { random } = context;
   const traceId = randomHex(random, 16);
   const orderId = `ord-${randomHex(random, 4)}`;
@@ -194,23 +258,29 @@ function paymentTrace(context: BlockContext, params: DatasetParams, releaseMs: n
   const submitAt = randomInt(random, 0, MAX_TRACE_START_MS);
   const authorizeAt = submitAt + randomInt(random, 5, 30);
   const requestAt = authorizeAt + randomInt(random, 5, 50);
-  const latencyMs = providerLatency(random);
-  const timeoutMs =
-    context.startMs + requestAt >= releaseMs
-      ? params.providerTimeoutMs.afterRelease
-      : params.providerTimeoutMs.beforeRelease;
+  const { latencyMs, timeoutMs } = model.provider(random, context.startMs + requestAt);
   const timedOut = latencyMs > timeoutMs;
   const resolvedAt = requestAt + (timedOut ? timeoutMs : latencyMs);
-  const resultAt = resolvedAt + randomInt(random, 1, 20);
+  const ledger =
+    timedOut || model.settlement === undefined
+      ? undefined
+      : ledgerStep(random, model.settlement(random, context.startMs + requestAt), resolvedAt);
+  const resultAt = (ledger === undefined ? resolvedAt : ledger.offsetMs + ledger.durationMs) + randomInt(random, 1, 20);
+  const outcome: PaymentOutcome = timedOut ? 'provider_timeout' : (ledger?.settlement ?? 'ok');
+  const failed = outcome !== 'ok';
 
-  const span = (seq: number, draft: Omit<Draft, 'traceId' | 'spanSeq'>): Draft => ({ ...draft, traceId, spanSeq: seq });
-  const drafts: Draft[] = [
+  const span = (seq: number, draft: Omit<RecordDraft, 'traceId' | 'spanSeq'>): RecordDraft => ({
+    ...draft,
+    traceId,
+    spanSeq: seq,
+  });
+  const drafts: RecordDraft[] = [
     span(0, {
       offsetMs: submitAt,
       service: 'checkout-web',
       level: 'info',
       event: 'checkout.submit',
-      status: timedOut ? 'error' : 'ok',
+      status: failed ? 'error' : 'ok',
       durationMs: resultAt - submitAt,
       message: `checkout submitted for order ${orderId}`,
     }),
@@ -267,29 +337,65 @@ function paymentTrace(context: BlockContext, params: DatasetParams, releaseMs: n
       }),
     );
   }
+  if (ledger !== undefined) {
+    drafts.push(span(drafts.length, ledgerDraft(ledger, orderId)));
+  }
   drafts.push(
     span(drafts.length, {
       offsetMs: resultAt,
       service: 'payment-api',
-      level: timedOut ? 'error' : 'info',
+      level: failed ? 'error' : 'info',
       event: 'payment.result',
-      status: timedOut ? 'error' : 'ok',
+      status: failed ? 'error' : 'ok',
       durationMs: resultAt - authorizeAt,
-      message: timedOut
-        ? `payment failed for order ${orderId}: provider timeout`
-        : `payment authorized for order ${orderId}`,
+      message: PAYMENT_RESULT_MESSAGE[outcome](orderId),
     }),
   );
   return drafts;
 }
 
-/** Shifted exponential, capped so a trace always fits in its block. */
-function providerLatency(random: Random): number {
-  const excess = Math.floor(-Math.log(1 - random()) * PROVIDER_LATENCY_MEAN_EXCESS_MS);
+type PaymentOutcome = 'provider_timeout' | Settlement;
+
+const PAYMENT_RESULT_MESSAGE: Readonly<Record<PaymentOutcome, (orderId: string) => string>> = {
+  ok: (orderId) => `payment authorized for order ${orderId}`,
+  provider_timeout: (orderId) => `payment failed for order ${orderId}: provider timeout`,
+  ledger_error: (orderId) => `payment failed for order ${orderId}: ledger write failed`,
+  unexplained_error: (orderId) => `payment failed for order ${orderId}`,
+};
+
+interface LedgerStep {
+  settlement: Settlement;
+  offsetMs: number;
+  durationMs: number;
+}
+
+function ledgerStep(random: Random, settlement: Settlement, resolvedAt: number): LedgerStep {
+  const offsetMs = resolvedAt + randomInt(random, 1, 10);
+  return { settlement, offsetMs, durationMs: randomInt(random, 2, 40) };
+}
+
+function ledgerDraft(ledger: LedgerStep, orderId: string): Omit<RecordDraft, 'traceId' | 'spanSeq'> {
+  const failed = ledger.settlement === 'ledger_error';
+  return {
+    offsetMs: ledger.offsetMs,
+    service: 'ledger',
+    level: failed ? 'error' : 'info',
+    event: 'ledger.write',
+    status: failed ? 'error' : 'ok',
+    durationMs: ledger.durationMs,
+    message: failed
+      ? `ledger write failed for order ${orderId}: row lock not acquired`
+      : `ledger entry written for order ${orderId}`,
+  };
+}
+
+/** Shifted exponential, capped so a trace always fits in its block; a slower provider passes a larger mean excess. */
+export function providerLatency(random: Random, meanExcessMs: number = PROVIDER_LATENCY_MEAN_EXCESS_MS): number {
+  const excess = Math.floor(-Math.log(1 - random()) * meanExcessMs);
   return Math.min(PROVIDER_LATENCY_MAX_MS, PROVIDER_LATENCY_MIN_MS + excess);
 }
 
-function backgroundRecord(context: BlockContext): Draft {
+function backgroundRecord(context: BlockContext): RecordDraft {
   const { random } = context;
   const offsetMs = randomInt(random, 0, context.spanMs - 1);
   const traceId = randomHex(random, 16);

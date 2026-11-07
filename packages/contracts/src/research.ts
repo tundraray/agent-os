@@ -51,9 +51,14 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-/** Status of an investigation. */
+/**
+ * Status of an investigation. `completed`, `failed` and `cancelled` are closed: the only way out
+ * of them is `deleting` when the thread is deleted.
+ */
 export const InvestigationStatusSchema = z.enum([
   "active",
+  "completed",
+  "failed",
   "cancelled",
   "deleting",
 ]);
@@ -136,6 +141,8 @@ export const AbortReasonKindSchema = z.enum([
   "deadline",
   "shutdown",
   "lease_lost",
+  /** The attempt ran past `RUNTIME_ATTEMPT_MS` before the task's deadline: it is retried as a lost one. */
+  "attempt_timeout",
 ]);
 export type AbortReasonKind = z.infer<typeof AbortReasonKindSchema>;
 
@@ -143,6 +150,10 @@ export type AbortReasonKind = z.infer<typeof AbortReasonKindSchema>;
 export const RuntimeEventTypeSchema = z.enum([
   "InvestigationCreated",
   "InvestigationCancelled",
+  /** The investigation closed `completed` after its controller task succeeded; no payload beyond the envelope. */
+  "InvestigationCompleted",
+  /** The investigation closed `failed` after its controller task failed; no payload beyond the envelope. */
+  "InvestigationFailed",
   "TaskQueued",
   "TaskStarted",
   "TaskWaiting",

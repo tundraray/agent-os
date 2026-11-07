@@ -34,7 +34,7 @@ import { closeEngineDb, engineRowsOf, tasksOf } from './support/engineDb.js';
 import { createEngineHarness, type EngineHarness } from './support/engineHarness.js';
 import { FIXTURE_ALLOWLIST, type FixtureFiles, fixtureAdapter, fixtureFiles } from './support/fixtureHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
-import type { RecordedModelCall, ScriptedStep, ScriptedUsage } from './support/scriptedModel.js';
+import { assessment, type RecordedModelCall, type ScriptedStep, type ScriptedUsage, verifierPacketOf, workerPagesOf } from './support/scriptedModel.js';
 
 describe('deep-research / engine - E2E (real fixture, real Postgres, scripted model)', () => {
   // ---------------------------------------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
   //
   // Primary failure mode (turns red when): a stage works alone but breaks when chained on real data - a call's input exceeds its role's window on a real slice (the sum of 120 000 records is over 3.6M tokens, so any unpaged read overflows);
   // the "all matches" worker reports `complete` coverage while pages remain; a worker packet carries the controller history or another worker's evidence; the answer cites evidence that is not this investigation's or lacks provenance fields.
-  // Behavior: question -> controller decisions (scripted) -> source.fetch tasks over the real fixture with paging -> three research.analyze tasks -> research.verify with source.fetch -> research.synthesize -> answer
+  // Behavior: question -> controller decisions (scripted) -> source.fetch tasks over the real fixture with paging -> three research.analyze tasks -> research.verify per claim over the records its pointer names -> research.synthesize -> answer
   // @category: e2e
   // @dependency: full-system (runtime, engine, sources, mcp-fixture process, Postgres)
   // @complexity: high
@@ -94,17 +94,17 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
       completeness: 'sample',
     };
     const SUBQUESTIONS = [ALL_TIMEOUTS, WHOLE_SLICE, ONE_TRACE];
-    const AGGREGATE_TIMEOUTS = { ...TIMEOUTS, groupBy: 'event', bucket: '1h' };
     /** Runtime settings of deep-research: the window of each role; its margin is 5 %. */
     const WINDOWS: Readonly<Record<string, number>> = { plan: 16_000, controller: 32_000, worker: 64_000, verifier: 32_000, synthesis: 48_000 };
 
+    // Since agent-quality engine T2.4 a claim is checked on the records its pointer names, and A's worker reads log records,
+    // not counts: its claim states the timeouts without their number (the number check is a row of `decide-claim.spec.ts`).
     const claimOfA = {
-      text: `After the release the provider adapter timed out ${truth.providerTimeouts.afterRelease} times`,
+      text: 'After the release the provider adapter timed out',
       atoms: [
         { kind: 'event', value: 'provider.timeout' },
-        { kind: 'number', value: String(truth.providerTimeouts.afterRelease) },
+        { kind: 'service', value: 'provider-adapter' },
       ],
-      evidenceIds: [],
     };
     const claimOfC = {
       text: `Trace ${truth.affectedTraceIds[0]} got its provider reply late`,
@@ -113,8 +113,20 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
         { kind: 'service', value: truth.cause.service },
         { kind: 'event', value: 'provider.response' },
       ],
-      evidenceIds: [],
     };
+    /**
+     * The claim pointing, on the packet's first page, at the first record that carries each of its atoms, by typed field
+     * equality (a record of the page carries the trace of C's atom).
+     */
+    function pointed(call: RecordedModelCall, claim: typeof claimOfA) {
+      const [page] = workerPagesOf(call);
+      const fieldsOf = (number: number) => page!.records[number] as Record<string, unknown>;
+      const numbers = claim.atoms.map((atom) => page!.records.findIndex((_, number) => fieldsOf(number)[atom.kind] === atom.value));
+      const records = [...new Set(numbers)].sort((left, right) => left - right);
+      return { ...claim, pointer: [{ pageId: page!.pageId, records }] };
+    }
+    /** A synthesis pointer naming the first record of each page: the gateway takes a claim's pages from its pointer. */
+    const pointAt = (pages: readonly string[]) => pages.map((pageId) => ({ pageId, records: [0] }));
 
     /** The double reports the packet it got as the actual input: one token per character, as the harness counter counts. */
     const actual = (call: RecordedModelCall): ScriptedUsage => ({ inputTokens: call.system.length + call.user.length, outputTokens: 50 });
@@ -125,8 +137,8 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
      */
     function worker(call: RecordedModelCall): ScriptedStep | undefined {
       if (call.role !== 'worker') return undefined;
-      if (call.user.includes(ALL_TIMEOUTS.text)) return { output: { claims: [claimOfA] }, usage: actual };
-      if (call.user.includes(ONE_TRACE.text)) return { output: { claims: [claimOfC] }, usage: actual };
+      if (call.user.includes(ALL_TIMEOUTS.text)) return { output: { claims: [pointed(call, claimOfA)] }, usage: actual };
+      if (call.user.includes(ONE_TRACE.text)) return { output: { claims: [pointed(call, claimOfC)] }, usage: actual };
       return { output: { claims: [] }, usage: actual };
     }
 
@@ -199,22 +211,25 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
         },
         { output: { kind: 'proposeAnswer', rationale: 'both claims are verified' }, usage: actual, holdUntil: verified.wait },
       );
-      harness.model.script('verifier', {
-        output: () => ({
-          requests: [
-            { claimIds: [claimIds.A], sourceId: 'fixture', toolName: 'aggregate_logs', args: AGGREGATE_TIMEOUTS },
-            { claimIds: [claimIds.C], sourceId: 'fixture', toolName: 'get_trace', args: ONE_TRACE.args },
-          ],
-        }),
+      // One check per claim, in either order: each confirms every record it was given.
+      const confirmAll: ScriptedStep = {
+        output: (call: RecordedModelCall) =>
+          assessment({
+            support: 'yes',
+            claimType: 'observation',
+            records: verifierPacketOf(call).records.map(({ number }) => ({ record: number, relation: 'supports' })),
+          }),
         usage: actual,
-      });
+      };
+      harness.model.script('verifier', confirmAll, confirmAll);
       harness.model.script('synthesis', {
         output: () => ({
           outcome: 'answered',
-          summary: truth.cause.summary,
+          // KD-4: synthesis chooses the summary claims, C first and once; code writes their stored texts and groups.
+          summaryClaimIds: [claimIds.C, claimIds.A, claimIds.C],
           claims: [
-            { claimId: claimIds.A, text: claimOfA.text, atoms: claimOfA.atoms, evidenceIds: basis.A },
-            { claimId: claimIds.C, text: claimOfC.text, atoms: claimOfC.atoms, evidenceIds: basis.C },
+            { claimId: claimIds.A, text: claimOfA.text, atoms: claimOfA.atoms, pointer: pointAt(basis.A) },
+            { claimId: claimIds.C, text: claimOfC.text, atoms: claimOfC.atoms, pointer: pointAt(basis.C) },
           ],
         }),
         usage: actual,
@@ -241,10 +256,12 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
         claimIds.A = workerClaims.find((row) => row.taskId === analysisOf(ALL_TIMEOUTS).taskId)!.claimId;
         claimIds.C = workerClaims.find((row) => row.taskId === analysisOf(ONE_TRACE).taskId)!.claimId;
         analysed.open();
-        const verify = await until('the verification round', async () =>
-          (await tasksOf(investigationId)).find((task) => task.workflowType === 'research.verify' && task.status === 'succeeded'),
-        );
-        const revisions = (await engineRowsOf(investigationId)).claims.filter((row) => row.taskId === verify.taskId);
+        const checks = await until('the verification round', async () => {
+          const found = (await tasksOf(investigationId)).filter((task) => task.workflowType === 'research.verify');
+          return found.length === 2 && found.every((task) => task.status === 'succeeded') ? found : undefined;
+        });
+        const checkTaskIds = new Set(checks.map((task) => task.taskId));
+        const revisions = (await engineRowsOf(investigationId)).claims.filter((row) => checkTaskIds.has(row.taskId));
         basis.A = revisions.find((row) => row.claimId === claimIds.A)!.evidenceIds;
         basis.C = revisions.find((row) => row.claimId === claimIds.C)!.evidenceIds;
         verified.open();
@@ -266,7 +283,7 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
         expect(
           llmCalls.filter((row) => row.inputTokens! > WINDOWS[row.role]! || Math.abs(row.countedInputTokens - row.inputTokens!) > WINDOWS[row.role]! * 0.05),
         ).toEqual([]);
-        expect(llmCalls.map((row) => row.role)).toEqual(['plan', 'controller', 'worker', 'worker', 'controller', 'verifier', 'controller', 'synthesis']);
+        expect(llmCalls.map((row) => row.role)).toEqual(['plan', 'controller', 'worker', 'worker', 'controller', 'verifier', 'verifier', 'controller', 'synthesis']);
         // The real read B is larger than the largest window: its worker called no model and asked to narrow (DC-7).
         expect(coverageOf(gatherOf(WHOLE_SLICE))).toMatchObject({ completeness: 'partial', totalMatched: 120_000, returned: 500, truncated: true });
         const narrowing = (analysisOf(WHOLE_SLICE).outcome as { answerOrDelta: { needsNarrowing: { materialTokens: number; limitTokens: number } } })
@@ -315,17 +332,21 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
         expect(coverageOf(timeoutsGather.taskId)).toMatchObject(partial);
         expect(coverageOf(analysisOf(ALL_TIMEOUTS).taskId)).toMatchObject(partial);
         expect(claims.find((row) => row.taskId === analysisOf(ALL_TIMEOUTS).taskId)!.coverage).toMatchObject(partial);
-        // The independent counter: one fixture `tools/call` line per call the tasks counted — 20 for A, one each for B, C and the
-        // two collections of the verification round.
+        // The independent counter: one fixture `tools/call` line per call the tasks counted — 20 for A, one each for B and C;
+        // the verification round fetches nothing.
         const counted = fetches.reduce((sum, task) => sum + task.toolCallsUsed, 0);
-        expect(counted).toBe(24);
+        expect(counted).toBe(22);
         expect(files.readCallLog()).toHaveLength(counted);
 
         // AC-09.2: the established claims are the verified ones; each resolves to fixture evidence of this investigation with all provenance fields.
-        expect(done).toMatchObject({ status: 'completed', sourceMode: 'sources', answer: { outcome: 'answered', stopReason: null, summary: truth.cause.summary, assumed: [] } });
+        expect(done).toMatchObject({ status: 'completed', sourceMode: 'sources', answer: { outcome: 'answered', stopReason: null, summary: null, assumed: [] } });
         expect(done.answer!.established).toEqual([
-          { claimId: claimIds.A, text: claimOfA.text, evidenceIds: basis.A, verified: true },
-          { claimId: claimIds.C, text: claimOfC.text, evidenceIds: basis.C, verified: true },
+          { claimId: claimIds.A, text: claimOfA.text, evidenceIds: basis.A, verified: true, confidence: 'low' },
+          { claimId: claimIds.C, text: claimOfC.text, evidenceIds: basis.C, verified: true, confidence: 'low' },
+        ]);
+        expect(done.answer!.summaryItems).toEqual([
+          { claimId: claimIds.C, text: claimOfC.text, confidence: 'low' },
+          { claimId: claimIds.A, text: claimOfA.text, confidence: 'low' },
         ]);
         expect(revisions).toHaveLength(2);
         expect(Object.fromEntries(revisions.map((row) => [row.claimId, [row.status, row.atoms]]))).toEqual({
@@ -341,10 +362,11 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
               return record.provenance;
             }),
           );
-        expect(basis.A.length).toBeGreaterThan(0);
-        expect(await provenance(basis.A)).toEqual(
-          basis.A.map(() => ({ sourceId: 'fixture', toolName: 'aggregate_logs', normalizedArgs: { ...AGGREGATE_TIMEOUTS, cursor: null }, snapshot: 'fx-v1-2157485c' })),
-        );
+        // The basis is the page the worker's claim points at: A's first page of timeouts.
+        expect(basis.A).toEqual([timeoutsGather.outputRefs[0]]);
+        expect(await provenance(basis.A)).toEqual([
+          { sourceId: 'fixture', toolName: 'search_logs', normalizedArgs: { ...ALL_TIMEOUTS.args, cursor: null }, snapshot: 'fx-v1-2157485c' },
+        ]);
         expect(basis.C.length).toBeGreaterThan(0);
         expect(await provenance(basis.C)).toEqual(
           basis.C.map(() => ({ sourceId: 'fixture', toolName: 'get_trace', normalizedArgs: { ...ONE_TRACE.args, cursor: null }, snapshot: 'fx-v1-2157485c' })),
@@ -359,7 +381,7 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
           ['plan', 1],
           ['controller', 3],
           ['worker', 2],
-          ['verifier', 1],
+          ['verifier', 2],
           ['synthesis', 1],
         ]);
         expect(llmCalls.filter((row) => row.status !== 'settled')).toEqual([]);

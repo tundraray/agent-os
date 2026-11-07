@@ -7,6 +7,7 @@ import {
   researchEngineRuns,
   researchInvestigations,
   researchLlmCalls,
+  researchLlmTranscripts,
   researchPlanRevisions,
   researchSignals,
   researchTasks,
@@ -77,6 +78,18 @@ export async function engineRowsOf(investigationId: string) {
       .where(eq(researchLlmCalls.investigationId, investigationId))
       .orderBy(asc(researchLlmCalls.createdAt), asc(researchLlmCalls.callId)),
   };
+}
+
+/**
+ * The `research_llm_transcripts` rows of the investigation as stored, in the order of its `research_llm_calls` rows
+ * above: a transcript is written in the same guarded transaction as its ledger row (design-self-check.md, KD-1).
+ */
+export function llmTranscriptsOf(investigationId: string) {
+  return db()
+    .select()
+    .from(researchLlmTranscripts)
+    .where(eq(researchLlmTranscripts.investigationId, investigationId))
+    .orderBy(asc(researchLlmTranscripts.createdAt), asc(researchLlmTranscripts.callId));
 }
 
 /** Tasks of the investigation as the runtime stored them, oldest first. */

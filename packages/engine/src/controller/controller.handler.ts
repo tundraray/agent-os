@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { Task } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
-import type { Clock, HandlerResult, InvestigationService, TaskContext, TaskHandler, TaskScheduler } from '@agent-os/runtime';
+import type {
+  Clock,
+  EvidenceReader,
+  HandlerResult,
+  InvestigationService,
+  TaskContext,
+  TaskHandler,
+  TaskScheduler,
+} from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { z } from 'zod';
+import { answerPages, prepareAnswerMessage } from '../answer/answer-message.js';
 import { answerRepository as answers } from '../answer/answer.repository.js';
 import { buildCodeAnswer, type CodeAnswerEnd, InvestigationAnswerSchema, type StopReason } from '../answer/code-answer.js';
 import { checkpointedAnswer } from '../attempt/checkpoint.js';
@@ -17,11 +26,12 @@ import type { SourceMode } from '../config/source-check.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import { abandonEarlierAttempts, abandonReservations } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
+import { promptVersion } from '../model/prompt-version.js';
 import type { RoleMessage } from '../model/token-counter.js';
 import type { EngineLogger } from '../ports.js';
 import { signalsRepository as signals } from '../signals/signals.repository.js';
 import { admissibleDecisions, type GateState, type GateVerdict, judgeControllerOutput } from './decision-gate.js';
-import { controllerMaterial, openTasks, otherTasks, stepsWithoutNovelty } from './decision-input.js';
+import { controllerMaterial, openTasks, otherTasks, rejectedAttemptsOf, stepsWithoutNovelty } from './decision-input.js';
 import { ControllerOutputSchema, DecisionSchema } from './decision.schema.js';
 import { controllerRepository as repository, type DecisionRow, proposeAnswerByCode } from './decisions.repository.js';
 import { type InvestigationFrame, type PlanRevisionResult, promptValues, writePlanRevision } from './plan-role.js';
@@ -36,6 +46,8 @@ export interface ControllerDeps {
   /** Proposes the tasks of accepted decisions (ADR-0001: the engine writes runtime state only through its services). */
   readonly scheduler: Pick<TaskScheduler, 'propose'>;
   readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
+  /** Details of the pages a code-built answer cites, for the investigation's owner: its message (KD-8). */
+  readonly evidence: Pick<EvidenceReader, 'get'>;
   readonly gateway: ModelGateway;
   readonly contextBuilder: ContextBuilder;
   readonly clock: Clock;
@@ -81,7 +93,9 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
   async function finish(ctx: TaskContext, investigationId: string, end: CodeAnswerEnd): Promise<HandlerResult> {
     const claims = await repository.latestClaims(db, investigationId);
     const answer = buildCodeAnswer(randomUUID(), claims, end);
-    const written = await ctx.withAttemptGuard((tx) => answers.writeAnswer(tx, investigationId, answer));
+    // C3 step 4: a page that cannot be read fails the controller task before the answer is written (Flow 2).
+    const message = (await prepareAnswerMessage(deps, investigationId, answerPages(answer)))(answer);
+    const written = await ctx.withAttemptGuard((tx) => answers.writeAnswer(tx, investigationId, answer, message));
     if (written.outcome === 'fenced') return abandon('fenced');
     return completed(InvestigationAnswerSchema.parse(written.value));
   }
@@ -200,6 +214,9 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       openTasks: openTasks(tasks).length,
     };
     const { run } = readRun;
+    // DC-3: the attempts of this step recorded so far, also by an attempt of the task before a restart; each new
+    // rejection below is added, so every retry is told the code of each earlier attempt.
+    const rejectedAttempts = rejectedAttemptsOf(decisions, step);
     const material = controllerMaterial({
       plan,
       admissible: admissibleDecisions(state),
@@ -209,6 +226,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       tasks,
       claims,
       previous: accepted.at(-1),
+      rejectedAttempts,
       budget: {
         tokensLeft: run.tokenBudget - run.tokensSpent - run.tokensReserved,
         stepsLeft: config.limits.maxSteps - step + 1,
@@ -230,7 +248,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       if (checkpointedAnswer(ctx, call) === undefined) {
         const packet = await deps.contextBuilder.buildControllerPacket(
           { roleConfig, instructions, outputSchema: ControllerOutputSchema, signal: ctx.signal },
-          material,
+          { ...material, rejectedAttempts: [...rejectedAttempts] },
         );
         // DC-8: the mandatory part does not fit, so the model is not called with a cut input.
         if (packet.outcome === 'context_overflow') return stop(ctx, investigation, 'context_overflow');
@@ -244,6 +262,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
         roleConfig,
         call,
         instructions,
+        promptVersion: promptVersion(roleConfig.prompt),
         messages,
         outputSchema: ControllerOutputSchema,
         notAfter: investigation.notAfter,
@@ -278,6 +297,7 @@ export function createControllerHandler(deps: ControllerDeps): TaskHandler {
       });
       if (written.outcome === 'fenced') return abandon('fenced');
       if (verdict.verdict === 'accepted') return { next: 'continue' };
+      rejectedAttempts.push({ kind: verdict.kind, reason: verdict.reason });
     }
     return stop(ctx, investigation, 'controller_invalid');
   }

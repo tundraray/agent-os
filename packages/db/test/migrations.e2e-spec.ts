@@ -11,6 +11,8 @@
 // design-engine.md, Data Model: the engine tables and their CHECK domains (literals; the engine contract is not in packages/contracts).
 // design-chat-entry.md, Data Model and State Transitions: `research_chat_launches` and its CHECK domains (literals; the row
 // states are not a contract enum).
+// agent-quality/design-self-check.md, Data Model and Contract Definitions (`Transcript`): `research_llm_transcripts` and its
+// CHECK domains (literals).
 //
 // Primary failure mode: the migrator applies twice or partially, touches `public`, or a CHECK domain drifts from the contract enums.
 // Isolation: the row runs in its own scratch database, created with CREATE DATABASE and dropped afterwards.
@@ -32,9 +34,10 @@ import { ScratchDatabases, withDatabase } from './support/scratch-db.js';
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;
 
-/** Tables of the Data Models (design-runtime.md, design-engine.md, design-chat-entry.md) plus the migration journal. */
+/** Tables of the Data Models (design-runtime.md, design-engine.md, design-chat-entry.md, design-self-check.md, design-lifecycle.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
+  'chat_thread_runs',
   'research_chat_launches',
   'research_claims',
   'research_decisions',
@@ -45,6 +48,7 @@ const APP_TABLES = [
   'research_evidence_contents',
   'research_investigations',
   'research_llm_calls',
+  'research_llm_transcripts',
   'research_plan_revisions',
   'research_signals',
   'research_task_dependencies',
@@ -218,6 +222,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         // Engine domains (design-engine.md, Data Model): the engine contract is not in
         // packages/contracts, so the expected values are literals.
         research_claims_status_check: [
+          'causal',
           'insufficient',
           'refuted',
           'supported',
@@ -247,6 +252,22 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
           'failed',
           'reserved',
           'settled',
+        ],
+        // Transcript domains (agent-quality/design-self-check.md, Contract Definitions, `Transcript`): the
+        // five process roles plus `judge`; only closed outcomes are stored — `open` is a row without one,
+        // `abandoned` is read from the journal row.
+        research_llm_transcripts_role_check: [
+          'controller',
+          'judge',
+          'plan',
+          'synthesis',
+          'verifier',
+          'worker',
+        ],
+        research_llm_transcripts_outcome_check: [
+          'answered',
+          'invalid_output',
+          'provider_error',
         ],
         // Chat entry domains (design-chat-entry.md, Data Model, State Transitions).
         research_chat_launches_mode_check: ['explicit', 'proposal'],

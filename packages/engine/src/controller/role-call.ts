@@ -14,6 +14,8 @@ export interface ControllerRoleCall<T> {
   readonly roleConfig: ProcessConfig['roles']['plan'];
   readonly call: string;
   readonly instructions: string;
+  /** `promptVersion(roleConfig.prompt)`: the fingerprint of the template, not of the rendered instructions (KD-2). */
+  readonly promptVersion: string;
   readonly messages: readonly RoleMessage[];
   readonly outputSchema: z.ZodType<T>;
   readonly notAfter: Date;
@@ -33,6 +35,7 @@ export async function callOrReplay<T>(gateway: ModelGateway, request: Controller
     role: request.role,
     roleConfig: request.roleConfig,
     instructions: request.instructions,
+    promptVersion: request.promptVersion,
     messages: request.messages,
     outputSchema: request.outputSchema,
     notAfter: request.notAfter,

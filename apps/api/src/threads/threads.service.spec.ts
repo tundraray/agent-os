@@ -3,10 +3,31 @@ import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
 import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
-import { ThreadRunRegistry } from './thread-run-registry.js';
-import { ThreadWriteLock } from './thread-write-lock.js';
+import {
+  type ThreadRunClock,
+  type ThreadRunMarks,
+  ThreadRunRegistry,
+} from './thread-run-registry.js';
+import { type ThreadLockPool, ThreadWriteLock } from './thread-write-lock.js';
 import { threadNotFound } from './threads.errors.js';
 import { ThreadsService } from './threads.service.js';
+
+/** The run registry of a service whose tests register no chat run: its marks and clock are never reached. */
+const idleRunRegistry = () =>
+  new ThreadRunRegistry({
+    settleTimeoutMs: 5_000,
+    marks: {} as ThreadRunMarks,
+    clock: {} as ThreadRunClock,
+  });
+
+/** A lock pool double granting every advisory lock at once (the lock itself: thread-write-lock.spec.ts). */
+const grantedLocks: ThreadLockPool = {
+  connect: () =>
+    Promise.resolve({
+      query: () => Promise.resolve({}),
+      release: () => undefined,
+    }),
+};
 
 type Role = 'user' | 'assistant';
 type StoredSpec = [Role, string] | [Role, string, Record<string, unknown>];
@@ -48,8 +69,8 @@ const fakeMemory = (messages: MastraDBMessage[]) => {
     .mockResolvedValue(undefined);
   const service = new ThreadsService(
     memory,
-    new ThreadWriteLock(),
-    new ThreadRunRegistry(5_000),
+    new ThreadWriteLock(grantedLocks),
+    idleRunRegistry(),
     new ThreadDeletionHooks(),
     5_000,
   );
@@ -281,8 +302,8 @@ const fakeThreadMemory = () => {
   const updateThread = vi.spyOn(memory, 'updateThread');
   const service = new ThreadsService(
     memory,
-    new ThreadWriteLock(),
-    new ThreadRunRegistry(5_000),
+    new ThreadWriteLock(grantedLocks),
+    idleRunRegistry(),
     new ThreadDeletionHooks(),
     5_000,
   );
@@ -339,8 +360,8 @@ describe('ThreadsService rejects an empty userId in list and getOwnedThread', ()
         .mockResolvedValue(thread('Чужая'));
       const service = new ThreadsService(
         memory,
-        new ThreadWriteLock(),
-        new ThreadRunRegistry(5_000),
+        new ThreadWriteLock(grantedLocks),
+        idleRunRegistry(),
         new ThreadDeletionHooks(),
         5_000,
       );
@@ -429,8 +450,8 @@ describe('ThreadsService.rename', () => {
 describe('ThreadsService.delete', () => {
   const setup = () => {
     const memory = new Memory({ options: { lastMessages: 20 } });
-    const lock = new ThreadWriteLock();
-    const runs = new ThreadRunRegistry(5_000);
+    const lock = new ThreadWriteLock(grantedLocks);
+    const runs = idleRunRegistry();
     const journal: string[] = [];
     const getThreadById = vi.spyOn(memory, 'getThreadById');
     const deleteThread = vi

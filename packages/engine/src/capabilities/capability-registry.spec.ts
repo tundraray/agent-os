@@ -1,7 +1,7 @@
 import { systemClock, type TaskContext } from '@agent-os/runtime';
 import type { ResolvedSourceTool, SourceRegistry, SourceSchema } from '@agent-os/sources';
 import { loadProcessConfig } from '../config/load-process-config.js';
-import shippedDeepResearch from '../processes/deep-research.v1.json' with { type: 'json' };
+import shippedDeepResearch from '../processes/deep-research.v2.json' with { type: 'json' };
 import { type GateState, judgeControllerOutput, type RejectionReason } from '../controller/decision-gate.js';
 import { z } from 'zod';
 import { createCapabilityRegistry } from './capability-registry.js';

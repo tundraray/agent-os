@@ -4,7 +4,7 @@ import {
   EventEnvelopeSchema,
   RuntimeEventTypeSchema,
 } from '@agent-os/contracts';
-import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
 import type { RuntimeLogger } from './ports.js';
 import type { RuntimeConfig } from './runtime-config.js';
 import {
@@ -212,6 +212,9 @@ export class OutboxRelay {
       .orderBy(
         asc(researchEventDeliveries.nextAttemptAt),
         asc(researchEvents.seq),
+        // Only for determinism: the deliveries of one event share `next_attempt_at` and `seq`, so the
+        // consumer name fixes their order (`runtime.scheduler` before `engine.lifecycle`).
+        desc(researchEventDeliveries.consumer),
       )
       .limit(DELIVERY_BATCH);
     for (const key of due) await this.deliver(key);

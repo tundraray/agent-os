@@ -1,13 +1,14 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import type {
   DeepResearchToolResult,
   ResearchDecision,
   ResearchLaunchView,
+  StopResearchToolResult,
   ThreadResearchResponse,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import {
-  deepResearchProcessV1,
+  deepResearchProcessV2,
   type Engine,
   type InvestigationView,
   loadProcessConfig,
@@ -33,6 +34,7 @@ import {
   researchLaunchRepository as launches,
 } from './research-launch.repository.js';
 import { DEEP_RESEARCH_TOOL } from './research-turn.js';
+import { STOPPABLE_STATES, stopTarget } from './stop-target.js';
 
 /** The process a chat launch starts, at its highest loaded version (design-chat-entry.md, Contract Definitions). */
 const PROCESS_ID = 'deep-research';
@@ -54,16 +56,39 @@ export interface DecisionRequest extends LaunchThread {
   readonly decision: ResearchDecision;
 }
 
+/** A stop of the launch `launchKey` in the caller's thread (design-lifecycle.md, KD-4). */
+export interface StopRequest extends LaunchThread {
+  readonly launchKey: string;
+}
+
+/** A `stopResearch` call of an ordinary turn: the thread from the agent's memory and the key the model named, if any. */
+export interface AgentStopRequest extends LaunchThread {
+  readonly launchKey?: string;
+}
+
+/**
+ * What a stop did. `launch` alone: the launch after the stop, `stopped` or as it already was. `not_found`: no such
+ * launch in the caller's thread, or it is `discarded`. `stop_failed`: the lock, the cancel or the move to `stopped`
+ * refused and the launch is unchanged; `launch` is `null` when the lock refused before the launch was read.
+ */
+export type StopLaunchResult =
+  | { readonly launch: ResearchLaunchView; readonly error?: undefined }
+  | { readonly launch: null; readonly error: 'not_found' }
+  | {
+      readonly launch: ResearchLaunchView | null;
+      readonly error: 'stop_failed';
+    };
+
+/** A card decision the decision turn applies itself; a stop goes to `stopLaunch`. */
+type CardDecision = {
+  readonly action: Exclude<ResearchDecision['action'], 'stop'>;
+  readonly launchKey: string;
+};
+
 /** What a decision found under the thread lock: a proposal to start outside it, or the result as it stands. */
 type DecisionStep =
   | { readonly kind: 'start'; readonly row: LaunchRecord }
   | { readonly kind: 'done'; readonly result: DeepResearchToolResult };
-
-/** States a stop cancels the investigation in (Flow 4). */
-const STOPPABLE: ReadonlySet<LaunchRecord['state']> = new Set([
-  'running',
-  'answer_pending',
-]);
 
 const NOT_FOUND: DeepResearchToolResult = {
   launch: null,
@@ -92,7 +117,7 @@ function answeredInvestigationIds(message: MastraDBMessage): string[] {
 
 /** Bounds of a launch's token budget: `investigationTokens` of the shipped `deep-research` configuration. */
 export function investigationTokenLimits(): { default: number; max: number } {
-  const loaded = loadProcessConfig(deepResearchProcessV1);
+  const loaded = loadProcessConfig(deepResearchProcessV2);
   if (!loaded.ok) {
     throw new Error(
       `the shipped ${PROCESS_ID} configuration is refused: ${loaded.rejection.message}`,
@@ -187,22 +212,87 @@ export class ResearchLaunchService {
   }
 
   /**
-   * A decision turn (KD-2, Flow 2, Flow 4): the row of `launchKey` in this owner's thread is read and changed under the
+   * A decision turn (KD-2, Flow 2): the row of `launchKey` in this owner's thread is read and changed under the
    * thread lock; a confirmed proposal starts outside it with its recorded goal and budget. A decision the row has no
    * edge for changes nothing and returns the current view without an error (DC-1); a row not in this thread of this
-   * owner, or discarded, is `not_found`.
+   * owner, or discarded, is `not_found`. A `stop` is `stopLaunch`, called before any lock is taken: the lock is not
+   * reentrant (design-lifecycle.md, KD-4).
    */
   async decide(request: DecisionRequest): Promise<DeepResearchToolResult> {
+    const { action, launchKey } = request.decision;
+    if (action === 'stop') return this.stopDecision({ ...request, launchKey });
     const step = await this.threads.withOwnedThread(
       request.threadId,
       request.resourceId,
-      () => this.applyDecision(request),
+      () => this.applyDecision(request, { action, launchKey }),
     );
     if (step.kind === 'done') return step.result;
     const started = await this.start(step.row);
     return started.refused
       ? this.result(started.row, 'launch_failed')
       : this.result(started.row);
+  }
+
+  /**
+   * The single stop operation (design-lifecycle.md, KD-4, Flow 1), with no model call: under the thread lock, after
+   * the ownership check, the launch of `launchKey` in the caller's thread is read; a `running` or `answer_pending`
+   * launch has its investigation cancelled and then moves to `stopped` with its end time, any other launch is returned
+   * as it is. A missing or foreign thread is the threads API's 404, thrown. A refusal of the lock, the cancel or the
+   * move is `stop_failed` with the launch unchanged; a retry cancels again (a no-op for an investigation that is no
+   * longer `active`) and finishes the move.
+   */
+  async stopLaunch(request: StopRequest): Promise<StopLaunchResult> {
+    try {
+      return await this.threads.withOwnedThread(
+        request.threadId,
+        request.resourceId,
+        () => this.stopUnderLock(request),
+      );
+    } catch (error) {
+      // The ownership 404 is the caller's answer; anything else here is a refused lock or a failed read.
+      if (error instanceof HttpException) throw error;
+      this.logStopFailure(request, error);
+      return { launch: null, error: 'stop_failed' };
+    }
+  }
+
+  /**
+   * The agent's stop (design-lifecycle.md, KD-4, Flow 2): the code chooses the launch among the thread's launches by
+   * `stopTarget` — never the model beyond naming a key — and stops it with `stopLaunch`. A key that is not in this
+   * thread of this owner is `not_found`; without a key, no running launch is `nothing_to_stop` and several are
+   * `ambiguous` with their keys and goals, and nothing changes. When the lock refused before the launch was read, the
+   * launch as the choice read it is the unchanged launch of `stop_failed`.
+   */
+  async stopResearch(
+    request: AgentStopRequest,
+  ): Promise<StopResearchToolResult> {
+    const target = stopTarget(
+      await launches.listByThread(this.db, request),
+      request.launchKey,
+    );
+    if (target.kind === 'ambiguous') {
+      return {
+        launch: null,
+        error: 'ambiguous',
+        candidates: target.running.map(({ launchKey, goal }) => ({
+          launchKey,
+          goal,
+        })),
+      };
+    }
+    if (target.kind !== 'stop') return { launch: null, error: target.kind };
+    const stopped = await this.stopLaunch({
+      threadId: request.threadId,
+      resourceId: request.resourceId,
+      launchKey: target.launch.launchKey,
+    });
+    if (stopped.error === undefined) return { launch: stopped.launch };
+    if (stopped.error === 'not_found')
+      return { launch: null, error: 'not_found' };
+    return {
+      launch: stopped.launch ?? this.view(target.launch),
+      error: 'stop_failed',
+    };
   }
 
   /**
@@ -283,14 +373,14 @@ export class ResearchLaunchService {
   }
 
   /** The decision's change under the thread lock; a confirm only moves the row to `launching`. */
-  private async applyDecision(request: DecisionRequest): Promise<DecisionStep> {
-    const { action, launchKey } = request.decision;
-    const row = await launches.findByLaunchKey(this.db, request, launchKey);
+  private async applyDecision(
+    thread: LaunchThread,
+    { action, launchKey }: CardDecision,
+  ): Promise<DecisionStep> {
+    const row = await launches.findByLaunchKey(this.db, thread, launchKey);
     if (row === undefined || row.state === 'discarded') {
       return { kind: 'done', result: NOT_FOUND };
     }
-    if (action === 'stop')
-      return { kind: 'done', result: await this.stop(row) };
     const moved = await this.move(row, action, {});
     if (row.state !== 'proposed' || moved.state !== 'launching') {
       return { kind: 'done', result: this.result(moved) };
@@ -300,32 +390,77 @@ export class ResearchLaunchService {
     return { kind: 'start', row: moved };
   }
 
-  /**
-   * A stop of a running launch (Flow 4): the investigation is cancelled, then the row is `stopped`. A refused cancel
-   * leaves the row as it is and answers `stop_failed`.
-   */
-  private async stop(row: LaunchRecord): Promise<DeepResearchToolResult> {
-    if (!STOPPABLE.has(row.state) || row.investigationId === null) {
-      return this.result(row);
+  /** `stopLaunch` under the thread lock: the launch is read; a running one is cancelled, then moved. */
+  private async stopUnderLock(request: StopRequest): Promise<StopLaunchResult> {
+    const row = await launches.findByLaunchKey(
+      this.db,
+      request,
+      request.launchKey,
+    );
+    if (row === undefined || row.state === 'discarded') {
+      return { launch: null, error: 'not_found' };
+    }
+    if (!STOPPABLE_STATES.has(row.state) || row.investigationId === null) {
+      return { launch: this.view(row) };
     }
     try {
       await this.runtime.investigations.cancel(
         row.investigationId,
         row.resourceId,
       );
+      return { launch: this.view(await this.moveToStopped(row)) };
     } catch (error) {
-      this.logger.error(
-        withFields('research stop failed', {
-          launchKey: row.launchKey,
-          threadId: row.threadId,
-          investigationId: row.investigationId,
-        }),
-        error instanceof Error ? error.stack : undefined,
-      );
-      return this.result(row, 'stop_failed');
+      this.logStopFailure(request, error);
+      return { launch: this.view(row), error: 'stop_failed' };
     }
-    return this.result(
-      await this.move(row, 'stop', { finishedAt: new Date() }),
+  }
+
+  /**
+   * Moves the row to `stopped` from whatever stoppable state it reaches meanwhile: the answer consumer does not take
+   * the thread lock, so a `running` row may become `answer_pending` between the read and the write. A row that left
+   * the stoppable states (settled, already stopped) is returned as it stands.
+   */
+  private async moveToStopped(row: LaunchRecord): Promise<LaunchRecord> {
+    let current = row;
+    for (;;) {
+      const moved = await this.move(current, 'stop', {
+        finishedAt: new Date(),
+      });
+      if (moved.state === current.state || !STOPPABLE_STATES.has(moved.state)) {
+        return moved;
+      }
+      current = moved;
+    }
+  }
+
+  /**
+   * The legacy decision turn with `stop` (a tab opened before the update): `stopLaunch`, answered as a
+   * `DeepResearchToolResult`. When the lock refused before the launch was read, the launch is read outside it.
+   */
+  private async stopDecision(
+    request: StopRequest,
+  ): Promise<DeepResearchToolResult> {
+    const stopped = await this.stopLaunch(request);
+    if (stopped.error === undefined) return { launch: stopped.launch };
+    if (stopped.error === 'not_found') return NOT_FOUND;
+    if (stopped.launch !== null) {
+      return { launch: stopped.launch, decisionError: 'stop_failed' };
+    }
+    const row = await launches.findByLaunchKey(
+      this.db,
+      request,
+      request.launchKey,
+    );
+    return row === undefined ? NOT_FOUND : this.result(row, 'stop_failed');
+  }
+
+  private logStopFailure(request: StopRequest, error: unknown): void {
+    this.logger.error(
+      withFields('research stop failed', {
+        launchKey: request.launchKey,
+        threadId: request.threadId,
+      }),
+      error instanceof Error ? error.stack : undefined,
     );
   }
 

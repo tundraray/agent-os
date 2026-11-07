@@ -18,7 +18,12 @@ import type { TokenCounter, TokenCountResult } from './token-counter.js';
 // and a refusal (`content-filter`) are retried once, then `invalid_model_output`, the refusal's
 // usage charged; an aborted call is no answer and is not retried.
 // Defects caught: a retry without a new reservation, an aborted call retried or taken as an answer,
-// a refusal that charges nothing or is retried more than once.
+// a refusal that charges nothing or is retried more than once, a reservation refused as `stopping` that still calls the
+// model or is retried.
+// Transcript (design-self-check.md, Flow 3, AC-01.1, DC-1): every reservation carries the transcript input and
+// prompt version, every close the transcript outcome and the response as the client returned it — a provider error
+// `provider_error` without a response, a refusal `invalid_output`. Defects caught: an attempt whose close carries no
+// outcome, a response validated or replaced before it is stored, a refusal stored as an answer.
 // Boundary doubles: the model client, the reservation ledger, the token counter and the clock.
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
@@ -28,6 +33,9 @@ const MARGIN = 3_200;
 const MAX_OUTPUT = 8_000;
 const RESERVED = COUNTED + MARGIN + MAX_OUTPUT;
 const HAIKU = 'anthropic/claude-haiku-5-5';
+const PROMPT_VERSION = '0123456789ab';
+const INSTRUCTIONS = 'You analyse log records.';
+const QUESTION = 'Which service failed first?';
 
 const OutputSchema = z.object({ claims: z.array(z.string()) });
 type Output = z.infer<typeof OutputSchema>;
@@ -48,16 +56,19 @@ const usage = (inputTokens: number, outputTokens: number) => ({
 const answer: RoleGeneration = {
   finishReason: 'stop',
   object: { claims: ['payments failed first'] },
+  text: '{"claims":["payments failed first"]}',
   usage: usage(1_000, 200),
 };
 const invalid: RoleGeneration = {
   finishReason: 'stop',
   object: { claims: 'not a list' },
+  text: '',
   usage: usage(1_000, 150),
 };
 const refusal: RoleGeneration = {
   finishReason: 'content-filter',
   object: undefined,
+  text: '',
   usage: usage(900, 40),
 };
 const apiError = (statusCode?: number): Error =>
@@ -80,13 +91,15 @@ const interruptedAtNotAfter = (controls: CallControls): RoleGeneration => {
 const aborted: RoleGeneration = {
   finishReason: 'aborted',
   object: undefined,
+  text: '',
   usage: usage(0, 0),
 };
 
 interface Scenario {
   steps: Step[];
   counts?: TokenCountResult[];
-  refuse?: 'task_tokens_exhausted';
+  /** The ledger refuses the reservation: the task budget, or stopped or closed work (design-lifecycle.md, KD-2). */
+  refuse?: 'task_tokens_exhausted' | 'stopping';
   notAfter?: Date;
   /** The investigation is cancelled before the call is asked for. */
   cancelledBefore?: boolean;
@@ -97,7 +110,7 @@ interface Observed {
   generateCalls: number;
   countCalls: number;
   reservations: ReservationRequest[];
-  closings: Pick<ReservationClosing, 'callId' | 'status' | 'chargedTokens'>[];
+  closings: Pick<ReservationClosing, 'callId' | 'status' | 'chargedTokens' | 'transcript'>[];
   delays: number[];
   events: string[];
 }
@@ -141,6 +154,7 @@ async function run(scenario: Scenario): Promise<Observed> {
 
   const ledger: CallLedger = {
     reserve(_ctx, request): Promise<ReservationOutcome> {
+      if (scenario.refuse === 'stopping') return Promise.resolve({ outcome: 'stopping' });
       if (scenario.refuse !== undefined) {
         return Promise.resolve({ outcome: 'refused', code: scenario.refuse });
       }
@@ -149,7 +163,12 @@ async function run(scenario: Scenario): Promise<Observed> {
       return Promise.resolve({ outcome: 'reserved', callId: `call-${reservations.length}` });
     },
     close(_ctx, closing) {
-      closings.push({ callId: closing.callId, status: closing.status, chargedTokens: closing.chargedTokens });
+      closings.push({
+        callId: closing.callId,
+        status: closing.status,
+        chargedTokens: closing.chargedTokens,
+        transcript: closing.transcript,
+      });
       events.push(`close:${closing.status}`);
       return Promise.resolve('closed');
     },
@@ -204,8 +223,9 @@ async function run(scenario: Scenario): Promise<Observed> {
     ctx: taskContext(controller.signal),
     role: 'worker',
     roleConfig: { model: HAIKU, effort: 'low', maxOutputTokens: MAX_OUTPUT, marginTokens: MARGIN },
-    instructions: 'You analyse log records.',
-    messages: [{ role: 'user', content: 'Which service failed first?' }],
+    promptVersion: PROMPT_VERSION,
+    instructions: INSTRUCTIONS,
+    messages: [{ role: 'user', content: QUESTION }],
     outputSchema: OutputSchema,
     notAfter: scenario.notAfter ?? IN_ONE_HOUR,
     checkpointAnswer: () => {
@@ -217,7 +237,39 @@ async function run(scenario: Scenario): Promise<Observed> {
 }
 
 const failedClosings = (n: number) =>
-  Array.from({ length: n }, (_, i) => ({ callId: `call-${i + 1}`, status: 'failed' as const, chargedTokens: 0 }));
+  Array.from({ length: n }, (_, i) => ({
+    callId: `call-${i + 1}`,
+    status: 'failed' as const,
+    chargedTokens: 0,
+    transcript: { outcome: 'provider_error' as const, response: null },
+  }));
+/** The transcript input every reservation of the call carries: the instructions and messages as sent. */
+const reservationOf: ReservationRequest = {
+  role: 'worker',
+  model: HAIKU,
+  countedInputTokens: COUNTED,
+  reservedTokens: RESERVED,
+  transcript: {
+    promptVersion: PROMPT_VERSION,
+    input: { instructions: INSTRUCTIONS, messages: [{ role: 'user', content: QUESTION }] },
+  },
+};
+const answeredTranscript = {
+  outcome: 'answered',
+  response: {
+    object: { claims: ['payments failed first'] },
+    finishReason: 'stop',
+    text: '{"claims":["payments failed first"]}',
+  },
+} as const;
+const invalidTranscript = {
+  outcome: 'invalid_output',
+  response: { object: { claims: 'not a list' }, finishReason: 'stop' },
+} as const;
+const refusalTranscript = {
+  outcome: 'invalid_output',
+  response: { object: null, finishReason: 'content-filter' },
+} as const;
 const modelUnavailable = { outcome: 'failed', code: 'model_unavailable', failureClass: 'transport_protocol' } as const;
 
 describe('ModelGateway retry policy', () => {
@@ -243,7 +295,11 @@ describe('ModelGateway retry policy', () => {
       {
         result: { outcome: 'answered', output: { claims: ['payments failed first'] } },
         generateCalls: 3,
-        closings: [...failedClosings(2), { callId: 'call-3', status: 'settled', chargedTokens: 1_200 }],
+        reservations: [reservationOf, reservationOf, reservationOf],
+        closings: [
+          ...failedClosings(2),
+          { callId: 'call-3', status: 'settled', chargedTokens: 1_200, transcript: answeredTranscript },
+        ],
         events: ['reserve', 'close:failed', 'reserve', 'close:failed', 'reserve', 'checkpoint', 'close:settled'],
       },
     ],
@@ -271,8 +327,8 @@ describe('ModelGateway retry policy', () => {
         result: { outcome: 'invalid_model_output' },
         generateCalls: 2,
         closings: [
-          { callId: 'call-1', status: 'settled', chargedTokens: 1_150 },
-          { callId: 'call-2', status: 'settled', chargedTokens: 1_150 },
+          { callId: 'call-1', status: 'settled', chargedTokens: 1_150, transcript: invalidTranscript },
+          { callId: 'call-2', status: 'settled', chargedTokens: 1_150, transcript: invalidTranscript },
         ],
         delays: [],
       },
@@ -284,8 +340,8 @@ describe('ModelGateway retry policy', () => {
         result: { outcome: 'invalid_model_output' },
         generateCalls: 2,
         closings: [
-          { callId: 'call-1', status: 'settled', chargedTokens: 940 },
-          { callId: 'call-2', status: 'settled', chargedTokens: 940 },
+          { callId: 'call-1', status: 'settled', chargedTokens: 940, transcript: refusalTranscript },
+          { callId: 'call-2', status: 'settled', chargedTokens: 940, transcript: refusalTranscript },
         ],
       },
     ],
@@ -340,6 +396,11 @@ describe('ModelGateway retry policy', () => {
         result: { outcome: 'failed', code: 'task_tokens_exhausted', failureClass: 'budget_exhausted' },
         generateCalls: 0,
       },
+    ],
+    [
+      'a reservation refused with stopping — no answer as by a cancel, no call, nothing closed (KD-2)',
+      { steps: [answer], refuse: 'stopping' },
+      { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 0, closings: [], delays: [] },
     ],
   ])('%s', async (_case, scenario, expected) => {
     const observed = await run(scenario);

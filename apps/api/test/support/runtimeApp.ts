@@ -15,6 +15,7 @@ import type {
   TaskScheduler,
 } from '@agent-os/runtime';
 import { AppModule } from '../../src/app.module.js';
+import { ENGINE_GROUP_TABLES } from '../../src/engine/engine.tokens.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import {
   HANDLER_REGISTRY,
@@ -26,6 +27,7 @@ import {
 } from '../../src/threads/thread-title.agent.js';
 import { assistantModel, titleModel } from './mockModels.js';
 import { cleanupUsers, seed } from './seed.js';
+import { TEST_GROUP_TABLES } from './testGroupTables.js';
 
 export interface RuntimeAppOptions {
   /** Test handlers, registered before the workers start. */
@@ -68,6 +70,8 @@ const SETTING_VARIABLES: Record<keyof RuntimeConfig, string> = {
   maxRecoveries: 'RUNTIME_MAX_RECOVERIES',
   deliveryMaxAttempts: 'RUNTIME_DELIVERY_MAX_ATTEMPTS',
   shutdownGraceMs: 'RUNTIME_SHUTDOWN_GRACE_MS',
+  queueWaitMs: 'RUNTIME_QUEUE_WAIT_MS',
+  attemptMs: 'RUNTIME_ATTEMPT_MS',
   dbPoolMax: 'DB_POOL_MAX',
   crashAt: 'RUNTIME_CRASH_AT',
   nodeEnv: 'NODE_ENV',
@@ -131,7 +135,9 @@ export async function createRuntimeApp(
       .overrideProvider(MASTRA)
       .useFactory({ factory: createRuntimeMastra, inject: [ConfigService] })
       .overrideProvider(THREAD_TITLE_AGENT)
-      .useValue(createThreadTitleAgent(titleModel().model));
+      .useValue(createThreadTitleAgent(titleModel().model))
+      .overrideProvider(ENGINE_GROUP_TABLES)
+      .useValue(TEST_GROUP_TABLES);
     for (const { token, value } of options.overrides ?? []) {
       builder = builder.overrideProvider(token).useValue(value);
     }

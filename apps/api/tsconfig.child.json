@@ -7,5 +7,9 @@
     "declaration": false,
     "types": ["node"]
   },
-  "include": ["test/support/chatEntryChildMain.ts"]
+  "include": [
+    "test/support/apiBootChildMain.ts",
+    "test/support/chatEntryChildMain.ts",
+    "test/support/selfCheckChildMain.ts"
+  ]
 }

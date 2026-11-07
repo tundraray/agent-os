@@ -1,4 +1,4 @@
-import { deepResearchProcessV1 } from '@agent-os/engine';
+import { deepResearchProcessV2 } from '@agent-os/engine';
 
 /**
  * Process configurations of the integration file, as data — each passes the same loader as the shipped one (KD-1).
@@ -15,7 +15,7 @@ interface ConfigData extends Fields {
   readonly limits: Fields;
 }
 
-const base = deepResearchProcessV1 as ConfigData;
+const base = deepResearchProcessV2 as ConfigData;
 
 function withRoles(overrides: Partial<Record<Role, Fields>>): ConfigData['roles'] {
   const roles: Record<Role, Fields> = { ...base.roles };

@@ -17,14 +17,14 @@ export type ScriptedRole = 'plan' | 'controller' | 'worker' | 'verifier' | 'synt
 
 /**
  * A property only the output schema of that role has, looked up in this order: the synthesis output also has
- * `claims`, so its `summary` is checked before the worker's marker.
+ * `claims`, so its `summaryClaimIds` is checked before the worker's marker.
  */
 const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
-  synthesis: 'summary',
+  synthesis: 'summaryClaimIds',
   plan: 'readinessCriteria',
   controller: 'kind',
   worker: 'claims',
-  verifier: 'requests',
+  verifier: 'records',
 };
 
 /** Token usage the double reports for a call; `inputTokens` is the whole input, the cached parts included. */
@@ -39,9 +39,9 @@ export interface ScriptedUsage {
 export type ScriptedStep =
   /**
    * A structured output (any JSON value: a test may script one the schema refuses). With `holdUntil` the call is
-   * recorded at once and answers when that promise settles. A function is called when the call answers, for an output
-   * that names ids the test learns only while the investigation runs. `usage` may be a function of the call, for a
-   * usage that follows the packet (the actual input next to the counted one, DC-13).
+   * recorded at once and answers when that promise settles. A function is called with the call when it answers, for an
+   * output that names ids the test learns only while the investigation runs or that follows the packet. `usage` may be
+   * a function of the call, for a usage that follows the packet (the actual input next to the counted one, DC-13).
    */
   | {
       readonly output: unknown;
@@ -66,6 +66,15 @@ export interface RecordedModelCall {
   readonly system: string;
   /** The user text of the packet. */
   readonly user: string;
+  /**
+   * The characters of the system and user texts as sent, with no separator between messages: what the harness counter
+   * counts (one token per character), also for the controller's two user messages (KD-6).
+   */
+  readonly inputChars: number;
+  /** The provider options of the request itself (KD-6: never a cache mark). */
+  readonly providerOptions: unknown;
+  /** The provider options of each prompt message, in prompt order, `undefined` where it has none: where the cache mark is. */
+  readonly messageOptions: readonly { readonly role: string; readonly providerOptions: unknown }[];
 }
 
 export interface ScriptedModel {
@@ -103,14 +112,16 @@ function roleOf(options: GenerateOptions): ScriptedRole | 'unknown' {
   return role ?? 'unknown';
 }
 
+function textsOf(options: GenerateOptions, role: 'system' | 'user'): string[] {
+  return options.prompt.flatMap((message) => {
+    if (message.role !== role) return [];
+    if (typeof message.content === 'string') return [message.content];
+    return message.content.flatMap((part) => (part.type === 'text' ? [part.text] : []));
+  });
+}
+
 function textOf(options: GenerateOptions, role: 'system' | 'user'): string {
-  return options.prompt
-    .flatMap((message) => {
-      if (message.role !== role) return [];
-      if (typeof message.content === 'string') return [message.content];
-      return message.content.flatMap((part) => (part.type === 'text' ? [part.text] : []));
-    })
-    .join('\n');
+  return textsOf(options, role).join('\n');
 }
 
 /** An `args` object written as the JSON text the model returns; text (a test's own, maybe broken) stays as it is. */
@@ -121,21 +132,67 @@ function argsAsText<T>(item: T): T {
 }
 
 /**
- * The output as the provider sends it: the controller's and the verifier's tool `args` are JSON text in their output
- * schemas (`ModelArgsSchema`), so a script may write them as objects and the double writes the text.
+ * The output as the provider sends it: the controller's tool `args` are JSON text in its output schema
+ * (`ModelArgsSchema`), so a script may write them as objects and the double writes the text.
  */
 function asSent(role: ScriptedRole, output: unknown): unknown {
-  if (typeof output !== 'object' || output === null) return output;
-  if (role === 'controller') {
-    const withArgs = argsAsText(output);
-    const { subquestions } = withArgs as { subquestions?: unknown };
-    return Array.isArray(subquestions) ? { ...withArgs, subquestions: subquestions.map(argsAsText) } : withArgs;
-  }
-  if (role === 'verifier') {
-    const { requests } = output as { requests?: unknown };
-    return Array.isArray(requests) ? { ...output, requests: requests.map(argsAsText) } : output;
-  }
-  return output;
+  if (role !== 'controller' || typeof output !== 'object' || output === null) return output;
+  const withArgs = argsAsText(output);
+  const { subquestions } = withArgs as { subquestions?: unknown };
+  return Array.isArray(subquestions) ? { ...withArgs, subquestions: subquestions.map(argsAsText) } : withArgs;
+}
+
+/** The closed form the `verifier` answers (Contract «Вывод `verifier` — `ClaimAssessment`»); a test may pass values off it. */
+export interface ScriptedAssessment {
+  readonly support: string;
+  readonly claimType: string;
+  readonly records: readonly { readonly record: number; readonly relation: string }[];
+}
+
+/** A verifier answer in the closed form, field by field as the test gives it. */
+export function assessment({ support, claimType, records }: ScriptedAssessment): ScriptedAssessment {
+  return { support, claimType, records: records.map(({ record, relation }) => ({ record, relation })) };
+}
+
+/** The input of a verifier call as `buildClaimCheck` lays it out: the claim text, then each given record with its number. */
+export interface VerifierPacket {
+  readonly claimText: string;
+  readonly records: readonly { readonly number: number; readonly record: unknown }[];
+}
+
+/** The content of the `<tag>` section of a packet, or undefined when it has none. */
+function sectionOf(user: string, tag: string): string | undefined {
+  const open = `<${tag}>\n`;
+  const start = user.indexOf(open);
+  if (start < 0) return undefined;
+  const end = user.indexOf(`\n</${tag}>`, start + open.length);
+  return end < 0 ? undefined : user.slice(start + open.length, end);
+}
+
+/**
+ * Reads a verifier packet by its structure only: the claim JSON in `<claim>` and, in `<data>`, the JSON lines of the
+ * records (each with its `number`; the page lines carry none). A double that tells claims apart compares the text with
+ * the exact text the test wrote — it recognises its own script, it does not interpret text.
+ */
+export function verifierPacketOf(call: RecordedModelCall): VerifierPacket {
+  const claim = sectionOf(call.user, 'claim');
+  const data = sectionOf(call.user, 'data');
+  if (claim === undefined || data === undefined) throw new Error('scripted model: the call is no claim check');
+  const records = data
+    .split('\n')
+    .map((line) => JSON.parse(line) as { number?: number; record?: unknown })
+    .flatMap((line) => (line.number === undefined ? [] : [{ number: line.number, record: line.record }]));
+  return { claimText: (JSON.parse(claim) as { text: string }).text, records };
+}
+
+/** The pages of a worker packet: the evidence id of each and its records, numbered from 0 (`role-packets.ts`, KD-1). */
+export function workerPagesOf(call: RecordedModelCall): { readonly pageId: string; readonly records: readonly unknown[] }[] {
+  const pattern = /<evidence id="([^"]+)">\n([\s\S]*?)\n<\/evidence>/g;
+  const record = /<record number="\d+">(.*)<\/record>/g;
+  return [...call.user.matchAll(pattern)].map((match) => ({
+    pageId: match[1]!,
+    records: [...match[2]!.matchAll(record)].map((line) => JSON.parse(line[1]!) as unknown),
+  }));
 }
 
 /** A held call that no abort ends fails the test instead of hanging the suite. */
@@ -176,7 +233,15 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
     const role = roleOf(options);
-    const call: RecordedModelCall = { role, modelId, system: textOf(options, 'system'), user: textOf(options, 'user') };
+    const call: RecordedModelCall = {
+      role,
+      modelId,
+      system: textOf(options, 'system'),
+      user: textOf(options, 'user'),
+      inputChars: textsOf(options, 'system').concat(textsOf(options, 'user')).reduce((sum, text) => sum + text.length, 0),
+      providerOptions: options.providerOptions,
+      messageOptions: options.prompt.map((message) => ({ role: message.role, providerOptions: message.providerOptions })),
+    };
     calls.push(call);
     if (role === 'unknown') {
       throw new Error(`scripted model ${modelId}: a call of an unscripted role`);
@@ -203,7 +268,7 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
     }
     await step.holdUntil;
     return {
-      content: [{ type: 'text', text: JSON.stringify(asSent(role, typeof step.output === 'function' ? step.output() : step.output)) }],
+      content: [{ type: 'text', text: JSON.stringify(asSent(role, typeof step.output === 'function' ? step.output(call) : step.output)) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },
       usage: usageOf(typeof step.usage === 'function' ? step.usage(call) : (step.usage ?? DEFAULT_USAGE)),
       warnings: [],

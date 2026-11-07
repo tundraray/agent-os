@@ -20,12 +20,16 @@
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
-    "test:e2e:runtime": "nest build && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring",
+    "test:e2e:runtime": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/research-runtime-wiring test/research-runtime-boot test/sources-wiring",
     "test:e2e:chat-entry": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/deep-research-chat-entry",
+    "test:e2e:self-check": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/agent-quality-self-check",
+    "test:e2e:lifecycle": "nest build && vitest run --config ./vitest.config.e2e.ts test/agent-quality-lifecycle",
+    "test:e2e:engine": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/agent-quality-engine",
     "build:child": "tsc -p tsconfig.child.json",
     "dev": "nest start --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:migrate": "node --env-file-if-exists=.env dist/research/migrate-cli.js"
+    "db:migrate": "node --env-file-if-exists=.env dist/research/migrate-cli.js",
+    "self-check": "node --env-file-if-exists=.env dist/self-check/main.js"
   },
   "dependencies": {
     "@agent-os/contracts": "workspace:*",

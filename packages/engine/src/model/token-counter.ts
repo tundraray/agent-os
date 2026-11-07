@@ -6,6 +6,11 @@ export type RoleEffort = ProcessConfig['roles']['worker']['effort'];
 export interface RoleMessage {
   readonly role: 'user' | 'assistant';
   readonly content: string;
+  /**
+   * The provider cache mark ends at this message (KD-6): it closes the stable block of the controller input, so the
+   * provider caches the input up to here. Only the controller packet sets it; a counted input is the same with or without it.
+   */
+  readonly cacheMark?: boolean;
 }
 
 /**

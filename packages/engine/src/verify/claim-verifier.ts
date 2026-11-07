@@ -1,9 +1,9 @@
 /**
- * The status of a claim is decided by code against source records (KD-6, invariant 7): the model only chose which
- * records to fetch. A claim is `supported` when each of its atoms is found in the records fetched for it, `refuted`
- * only when a fetched record contradicts a number or an interval, and `insufficient` otherwise — an atom not found, a
- * failed collection or an unreadable snapshot gives no record and so never refutes (DC-10). The worker's summary is
- * not a record: only what the verification round fetched counts (AC-08.2).
+ * The value check of a claim (design-engine.md, KD-2, step 5 of «Как утверждение получает статус»; FR-13): each atom
+ * is compared by its kind with the records of the claim's pointer — the only records `decideClaim` passes. An atom is
+ * `found` in them, `missing` from them, or `contradicted` — only a number or an interval can be. A claim is `refuted`
+ * when an atom is contradicted, `insufficient` when one is missing or it has no atoms, `supported` otherwise; a missing
+ * atom never refutes (DC-9). Whether the records mean what the claim says is the verifier's assessment, not this check.
  */
 
 /** An atom as the model stated it (flat: the value is text in every kind). */
@@ -14,7 +14,7 @@ export interface Atom {
 
 export type AtomVerdict = 'found' | 'missing' | 'contradicted';
 
-/** One record of a fetched page (a log record or an aggregate bucket) and the evidence that holds it. */
+/** One record the pointer names (a log record or an aggregate bucket) and the id of its page (`evidenceId`). */
 export interface SourceRecord {
   readonly evidenceId: string;
   readonly record: unknown;
@@ -22,7 +22,7 @@ export interface SourceRecord {
 
 export interface ClaimToVerify {
   readonly atoms: readonly Atom[];
-  /** The records the round fetched for this claim; empty when its collections failed or created no task. */
+  /** The records of the claim's pointer, in pointer order. */
   readonly records: readonly SourceRecord[];
 }
 
@@ -30,7 +30,7 @@ export interface ClaimVerdict {
   readonly status: 'supported' | 'refuted' | 'insufficient';
   /** Each atom with its verdict, as the new revision stores it in `atoms`. */
   readonly atoms: readonly (Atom & { readonly verdict: AtomVerdict })[];
-  /** Evidence the status rests on: the records that found the atoms, or the contradicting record (`evidenceIds`). */
+  /** Pages the status rests on: of the records that found the atoms, or of the contradicting records. */
   readonly basis: readonly string[];
   readonly missingAtoms: readonly Atom[];
 }

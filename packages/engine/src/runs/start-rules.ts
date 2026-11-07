@@ -50,7 +50,8 @@ export function resolveTokenBudget(
   return { ok: true, tokenBudget: requested };
 }
 
-const CONTROLLER_WORKFLOW = 'research.controller';
+/** Workflow type of an investigation's controller task. */
+export const CONTROLLER_WORKFLOW = 'research.controller';
 
 /** Subscriber key of the tasks the engine proposes from a start. */
 export const ENGINE_REQUESTER_KEY = 'research.engine';

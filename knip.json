@@ -11,7 +11,10 @@
       "entry": [
         "src/main.ts",
         "src/research/migrate-cli.ts",
-        "test/support/chatEntryChildMain.ts"
+        "src/self-check/main.ts",
+        "test/support/apiBootChildMain.ts",
+        "test/support/chatEntryChildMain.ts",
+        "test/support/selfCheckChildMain.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
     },
@@ -23,7 +26,7 @@
       ]
     },
     "packages/mcp-fixture": {
-      "entry": ["src/server.ts", "src/generate-ground-truth.ts"]
+      "entry": ["src/index.ts", "src/server.ts", "src/generate-ground-truth.ts"]
     },
     "packages/sources": {
       "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/fetchChildMain.ts"]

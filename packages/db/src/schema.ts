@@ -387,6 +387,7 @@ const CLAIM_STATUSES = [
   'supported',
   'refuted',
   'insufficient',
+  'causal',
 ] as const;
 /** Roles of `ProcessConfig.roles`. */
 const MODEL_ROLES = [
@@ -439,6 +440,11 @@ export const researchEngineRuns = app.table(
     tokensSpent: integer('tokens_spent').notNull().default(0),
     answerId: uuid('answer_id'),
     answer: jsonb('answer'),
+    /**
+     * Snapshot of each configured source read at start (agent-quality/design-self-check.md, KD-7);
+     * null for investigations started before it was recorded (no backfill).
+     */
+    sourceSnapshots: jsonb('source_snapshots'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -597,6 +603,14 @@ export const researchClaims = app.table(
       .notNull()
       .default(sql`'{}'::uuid[]`),
     coverage: jsonb('coverage'),
+    /** Pages and record numbers the claim rests on; null on revisions written before agent-quality. */
+    pointer: jsonb('pointer'),
+    /** Type from the verifier's assessment; set on check revisions only. Values come from the engine's closed schema. */
+    claimType: text('claim_type'),
+    /** The verifier's assessment and the broken-form flag; set on check revisions only. */
+    assessment: jsonb('assessment'),
+    /** Confidence group of a `supported` check revision; values come from the calibration table. */
+    confidence: text('confidence'),
     status: text('status').notNull(),
     createdAt: createdAt(),
   },
@@ -663,6 +677,95 @@ export const researchLlmCalls = app.table(
     index('research_llm_calls_reserved_task_idx')
       .on(t.taskId)
       .where(sql`${t.status} = ${literal(RESERVED)}`),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Transcript table (agent-quality/design-self-check.md, Data Model, KD-1): one row per model call.
+// A call inside an investigation is bound one to one to its ledger row; a call outside one
+// (`Engine.assess`) is bound to an investigation of the same database, to a self-check run, or both.
+// ---------------------------------------------------------------------------------------------
+
+/** Roles of a transcript: the process roles plus the self-check judge (Contract `Transcript`). */
+const TRANSCRIPT_ROLES = [...MODEL_ROLES, 'judge'] as const;
+/**
+ * Outcomes stored on close. A row without one is `open`; `abandoned` is not stored but read from
+ * the ledger row whose reservation was abandoned (Contract `Transcript`).
+ */
+const TRANSCRIPT_OUTCOMES = [
+  'answered',
+  'invalid_output',
+  'provider_error',
+] as const;
+
+export const researchLlmTranscripts = app.table(
+  'research_llm_transcripts',
+  {
+    /** Equals the ledger `call_id` for a call inside an investigation. */
+    callId: uuid('call_id').primaryKey(),
+    /** One-to-one link to the ledger row; null for a call outside an investigation. */
+    llmCallId: uuid('llm_call_id')
+      .unique('research_llm_transcripts_llm_call_key')
+      .references(() => researchLlmCalls.callId, { onDelete: 'cascade' }),
+    investigationId: uuid('investigation_id').references(
+      () => researchInvestigations.investigationId,
+      { onDelete: 'cascade' },
+    ),
+    taskId: uuid('task_id'),
+    attempt: integer('attempt'),
+    /** Self-check run that made a call outside an investigation; its format belongs to the program. */
+    selfCheckRunId: text('self_check_run_id'),
+    role: text('role').notNull(),
+    model: text('model').notNull(),
+    /** First 12 hex digits of the SHA-256 of the prompt template (KD-2). */
+    promptVersion: text('prompt_version').notNull(),
+    /** Instructions and messages as sent to the provider, with their provider options. */
+    input: jsonb('input').notNull(),
+    /** Response object and finish reason; null while the call is open. */
+    response: jsonb('response'),
+    /** Null while the call is open. */
+    outcome: text('outcome'),
+    inputTokens: integer('input_tokens'),
+    cacheReadTokens: integer('cache_read_tokens'),
+    cacheWriteTokens: integer('cache_write_tokens'),
+    outputTokens: integer('output_tokens'),
+    costUsd: numeric('cost_usd', { precision: 14, scale: 8 }),
+    createdAt: createdAt(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      'research_llm_transcripts_role_check',
+      isOneOf(t.role, TRANSCRIPT_ROLES),
+    ),
+    check(
+      'research_llm_transcripts_outcome_check',
+      isOneOf(t.outcome, TRANSCRIPT_OUTCOMES),
+    ),
+    check(
+      'research_llm_transcripts_binding_check',
+      sql`${t.investigationId} is not null or ${t.selfCheckRunId} is not null`,
+    ),
+    check(
+      'research_llm_transcripts_ledger_check',
+      sql`(${t.llmCallId} is null or (${t.llmCallId} = ${t.callId} and ${t.investigationId} is not null)) and (${t.llmCallId} is null) = (${t.taskId} is null) and (${t.taskId} is null) = (${t.attempt} is null)`,
+    ),
+    check(
+      'research_llm_transcripts_closed_check',
+      sql`(${t.outcome} is null) = (${t.closedAt} is null) and (${t.response} is null or ${t.outcome} is not null)`,
+    ),
+    check(
+      'research_llm_transcripts_prompt_version_check',
+      sql`${t.promptVersion} ~ '^[0-9a-f]{12}$'`,
+    ),
+    index('research_llm_transcripts_investigation_idx').on(
+      t.investigationId,
+      t.createdAt,
+    ),
+    index('research_llm_transcripts_self_check_run_idx')
+      .on(t.selfCheckRunId, t.createdAt)
+      .where(sql`${t.selfCheckRunId} is not null`),
+    index('research_llm_transcripts_created_idx').on(t.createdAt),
   ],
 );
 
@@ -776,5 +879,28 @@ export const researchChatLaunches = app.table(
     index('research_chat_launches_answer_due_idx')
       .on(t.finishedAt)
       .where(isOneOf(t.state, ANSWER_DUE_LAUNCH_STATES)),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Chat run marks (agent-quality/design-lifecycle.md, Data Model, KD-6). No FK to the thread:
+// threads live in Mastra's tables; the run registry removes its own and expired rows.
+// ---------------------------------------------------------------------------------------------
+
+export const chatThreadRuns = app.table(
+  'chat_thread_runs',
+  {
+    /** One row per agent reply in flight. */
+    runId: uuid('run_id').primaryKey(),
+    threadId: text('thread_id').notNull(),
+    /** The run counts only while its lease has not expired; the owning instance extends it. */
+    leaseExpiresAt: timestamp('lease_expires_at', {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (t) => [
+    check('chat_thread_runs_thread_id_check', sql`${t.threadId} <> ''`),
+    index('chat_thread_runs_thread_idx').on(t.threadId),
+    index('chat_thread_runs_lease_idx').on(t.leaseExpiresAt),
   ],
 );

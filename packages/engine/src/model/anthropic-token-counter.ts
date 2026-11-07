@@ -89,7 +89,8 @@ function countTokensBody(request: TokenCountRequest) {
   return {
     model: request.model.replace(PROVIDER_PREFIX, ''),
     system: request.system,
-    messages: request.messages,
+    // The cache mark is not a field of the provider's message; the input counts the same with or without it.
+    messages: request.messages.map(({ role, content }) => ({ role, content })),
     output_config: {
       effort: request.effort,
       format: { type: 'json_schema', schema: request.outputSchema },

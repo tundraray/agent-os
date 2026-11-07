@@ -1,0 +1,2562 @@
+{
+  "id": "874c71ee-ca8c-4019-a3ae-2b42176c1de3",
+  "prevId": "8fc55f97-6289-4884-a477-84b7cf95aa45",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "app.chat_thread_runs": {
+      "name": "chat_thread_runs",
+      "schema": "app",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "chat_thread_runs_thread_idx": {
+          "name": "chat_thread_runs_thread_idx",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_thread_runs_lease_idx": {
+          "name": "chat_thread_runs_lease_idx",
+          "columns": [
+            {
+              "expression": "lease_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_thread_runs_thread_id_check": {
+          "name": "chat_thread_runs_thread_id_check",
+          "value": "\"app\".\"chat_thread_runs\".\"thread_id\" <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_chat_launches": {
+      "name": "research_chat_launches",
+      "schema": "app",
+      "columns": {
+        "launch_key": {
+          "name": "launch_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "goal": {
+          "name": "goal",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_budget": {
+          "name": "token_budget",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_message_id": {
+          "name": "user_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "controller_task_id": {
+          "name": "controller_task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_mode": {
+          "name": "source_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "append_failed_at": {
+          "name": "append_failed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_append_at": {
+          "name": "next_append_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "research_chat_launches_thread_created_idx": {
+          "name": "research_chat_launches_thread_created_idx",
+          "columns": [
+            {
+              "expression": "resource_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_chat_launches_controller_task_idx": {
+          "name": "research_chat_launches_controller_task_idx",
+          "columns": [
+            {
+              "expression": "controller_task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_chat_launches\".\"controller_task_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_chat_launches_investigation_idx": {
+          "name": "research_chat_launches_investigation_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_chat_launches\".\"investigation_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_chat_launches_answer_due_idx": {
+          "name": "research_chat_launches_answer_due_idx",
+          "columns": [
+            {
+              "expression": "finished_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_chat_launches\".\"state\" in ('answer_pending', 'answer_reappend')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_chat_launches_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_chat_launches_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_chat_launches",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_chat_launches_mode_check": {
+          "name": "research_chat_launches_mode_check",
+          "value": "\"app\".\"research_chat_launches\".\"mode\" in ('explicit', 'proposal')"
+        },
+        "research_chat_launches_state_check": {
+          "name": "research_chat_launches_state_check",
+          "value": "\"app\".\"research_chat_launches\".\"state\" in ('proposed', 'launching', 'running', 'answer_pending', 'answered', 'answer_reappend', 'declined', 'superseded', 'failed', 'stopped', 'discarded')"
+        },
+        "research_chat_launches_source_mode_check": {
+          "name": "research_chat_launches_source_mode_check",
+          "value": "\"app\".\"research_chat_launches\".\"source_mode\" in ('sources', 'model_knowledge')"
+        },
+        "research_chat_launches_keys_check": {
+          "name": "research_chat_launches_keys_check",
+          "value": "\"app\".\"research_chat_launches\".\"launch_key\" <> '' and \"app\".\"research_chat_launches\".\"resource_id\" <> '' and \"app\".\"research_chat_launches\".\"thread_id\" <> ''"
+        },
+        "research_chat_launches_token_budget_check": {
+          "name": "research_chat_launches_token_budget_check",
+          "value": "\"app\".\"research_chat_launches\".\"token_budget\" > 0"
+        },
+        "research_chat_launches_user_message_check": {
+          "name": "research_chat_launches_user_message_check",
+          "value": "(\"app\".\"research_chat_launches\".\"mode\" = 'explicit') = (\"app\".\"research_chat_launches\".\"user_message_id\" is not null)"
+        },
+        "research_chat_launches_started_check": {
+          "name": "research_chat_launches_started_check",
+          "value": "not (\"app\".\"research_chat_launches\".\"state\" in ('running', 'answer_pending', 'answered', 'answer_reappend')) or (\"app\".\"research_chat_launches\".\"investigation_id\" is not null and \"app\".\"research_chat_launches\".\"controller_task_id\" is not null)"
+        },
+        "research_chat_launches_source_mode_investigation_check": {
+          "name": "research_chat_launches_source_mode_investigation_check",
+          "value": "\"app\".\"research_chat_launches\".\"source_mode\" is null or \"app\".\"research_chat_launches\".\"investigation_id\" is not null"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_claims": {
+      "name": "research_claims",
+      "schema": "app",
+      "columns": {
+        "claim_revision_id": {
+          "name": "claim_revision_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "research_claims_seq_seq",
+            "schema": "app",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_index": {
+          "name": "claim_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "atoms": {
+          "name": "atoms",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_ids": {
+          "name": "evidence_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "research_claims_claim_seq_idx": {
+          "name": "research_claims_claim_seq_idx",
+          "columns": [
+            {
+              "expression": "claim_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_claims_investigation_idx": {
+          "name": "research_claims_investigation_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_claims_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_claims_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_claims",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_claims_task_fk": {
+          "name": "research_claims_task_fk",
+          "tableFrom": "research_claims",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "task_id"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_claims_task_claim_key": {
+          "name": "research_claims_task_claim_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "task_id",
+            "claim_index"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_claims_status_check": {
+          "name": "research_claims_status_check",
+          "value": "\"app\".\"research_claims\".\"status\" in ('unverified', 'supported', 'refuted', 'insufficient')"
+        },
+        "research_claims_claim_index_check": {
+          "name": "research_claims_claim_index_check",
+          "value": "\"app\".\"research_claims\".\"claim_index\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_decisions": {
+      "name": "research_decisions",
+      "schema": "app",
+      "columns": {
+        "decision_id": {
+          "name": "decision_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "call_index": {
+          "name": "call_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rejection_reason": {
+          "name": "rejection_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by": {
+          "name": "decided_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision": {
+          "name": "decision",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "plan_revision": {
+          "name": "plan_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "proposed_task_ids": {
+          "name": "proposed_task_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "not_after": {
+          "name": "not_after",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "research_decisions_accepted_step_idx": {
+          "name": "research_decisions_accepted_step_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "step",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"app\".\"research_decisions\".\"status\" = 'accepted'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_decisions_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_decisions_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_decisions",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_decisions_plan_revision_fk": {
+          "name": "research_decisions_plan_revision_fk",
+          "tableFrom": "research_decisions",
+          "tableTo": "research_plan_revisions",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "plan_revision"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "revision"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_decisions_step_call_key": {
+          "name": "research_decisions_step_call_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "investigation_id",
+            "step",
+            "call_index"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_decisions_status_check": {
+          "name": "research_decisions_status_check",
+          "value": "\"app\".\"research_decisions\".\"status\" in ('accepted', 'rejected')"
+        },
+        "research_decisions_decided_by_check": {
+          "name": "research_decisions_decided_by_check",
+          "value": "\"app\".\"research_decisions\".\"decided_by\" in ('model', 'code')"
+        },
+        "research_decisions_kind_check": {
+          "name": "research_decisions_kind_check",
+          "value": "\"app\".\"research_decisions\".\"kind\" in ('requestEvidence', 'requestAnalysis', 'requestVerification', 'replan', 'wait', 'proposeAnswer', 'concludeInconclusive')"
+        },
+        "research_decisions_accepted_kind_check": {
+          "name": "research_decisions_accepted_kind_check",
+          "value": "\"app\".\"research_decisions\".\"status\" <> 'accepted' or \"app\".\"research_decisions\".\"kind\" is not null"
+        },
+        "research_decisions_rejection_reason_check": {
+          "name": "research_decisions_rejection_reason_check",
+          "value": "(\"app\".\"research_decisions\".\"status\" = 'rejected') = (\"app\".\"research_decisions\".\"rejection_reason\" is not null)"
+        },
+        "research_decisions_step_check": {
+          "name": "research_decisions_step_check",
+          "value": "\"app\".\"research_decisions\".\"step\" >= 1 and \"app\".\"research_decisions\".\"call_index\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_engine_runs": {
+      "name": "research_engine_runs",
+      "schema": "app",
+      "columns": {
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "launch_key": {
+          "name": "launch_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "process_id": {
+          "name": "process_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "process_version": {
+          "name": "process_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "process_config": {
+          "name": "process_config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_mode": {
+          "name": "source_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "controller_task_id": {
+          "name": "controller_task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "token_budget": {
+          "name": "token_budget",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tokens_reserved": {
+          "name": "tokens_reserved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "tokens_spent": {
+          "name": "tokens_spent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "answer_id": {
+          "name": "answer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "answer": {
+          "name": "answer",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_snapshots": {
+          "name": "source_snapshots",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_engine_runs_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_engine_runs_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_engine_runs",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_engine_runs_launch_key": {
+          "name": "research_engine_runs_launch_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "resource_id",
+            "launch_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_engine_runs_source_mode_check": {
+          "name": "research_engine_runs_source_mode_check",
+          "value": "\"app\".\"research_engine_runs\".\"source_mode\" in ('sources', 'model_knowledge')"
+        },
+        "research_engine_runs_tokens_check": {
+          "name": "research_engine_runs_tokens_check",
+          "value": "\"app\".\"research_engine_runs\".\"token_budget\" > 0 and \"app\".\"research_engine_runs\".\"tokens_reserved\" >= 0 and \"app\".\"research_engine_runs\".\"tokens_spent\" >= 0 and \"app\".\"research_engine_runs\".\"tokens_spent\" <= \"app\".\"research_engine_runs\".\"token_budget\""
+        },
+        "research_engine_runs_process_version_check": {
+          "name": "research_engine_runs_process_version_check",
+          "value": "\"app\".\"research_engine_runs\".\"process_version\" > 0"
+        },
+        "research_engine_runs_keys_check": {
+          "name": "research_engine_runs_keys_check",
+          "value": "\"app\".\"research_engine_runs\".\"resource_id\" <> '' and \"app\".\"research_engine_runs\".\"launch_key\" <> ''"
+        },
+        "research_engine_runs_answer_check": {
+          "name": "research_engine_runs_answer_check",
+          "value": "(\"app\".\"research_engine_runs\".\"answer_id\" is null) = (\"app\".\"research_engine_runs\".\"answer\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_event_deliveries": {
+      "name": "research_event_deliveries",
+      "schema": "app",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumer": {
+          "name": "consumer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "research_event_deliveries_pending_idx": {
+          "name": "research_event_deliveries_pending_idx",
+          "columns": [
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_event_deliveries\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_event_deliveries_event_id_research_events_event_id_fk": {
+          "name": "research_event_deliveries_event_id_research_events_event_id_fk",
+          "tableFrom": "research_event_deliveries",
+          "tableTo": "research_events",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "event_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "research_event_deliveries_event_id_consumer_pk": {
+          "name": "research_event_deliveries_event_id_consumer_pk",
+          "columns": [
+            "event_id",
+            "consumer"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_event_deliveries_status_check": {
+          "name": "research_event_deliveries_status_check",
+          "value": "\"app\".\"research_event_deliveries\".\"status\" in ('pending', 'done', 'needs_attention')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_events": {
+      "name": "research_events",
+      "schema": "app",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "research_events_seq_seq",
+            "schema": "app",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "causation_id": {
+          "name": "causation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state_revision": {
+          "name": "state_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_ref": {
+          "name": "payload_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "research_events_correlation_seq_idx": {
+          "name": "research_events_correlation_seq_idx",
+          "columns": [
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_events_causation_idx": {
+          "name": "research_events_causation_idx",
+          "columns": [
+            {
+              "expression": "causation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_events_task_seq_idx": {
+          "name": "research_events_task_seq_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_events_investigation_idx": {
+          "name": "research_events_investigation_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_events_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_events_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_events",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_events_payload_size_check": {
+          "name": "research_events_payload_size_check",
+          "value": "octet_length(\"app\".\"research_events\".\"payload\"::text) <= 8192"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_evidence": {
+      "name": "research_evidence",
+      "schema": "app",
+      "columns": {
+        "evidence_id": {
+          "name": "evidence_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_key": {
+          "name": "evidence_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "written_by_attempt": {
+          "name": "written_by_attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "knowledge_status": {
+          "name": "knowledge_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'observed'"
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "basis": {
+          "name": "basis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_version": {
+          "name": "evidence_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provenance": {
+          "name": "provenance",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_evidence_task_fk": {
+          "name": "research_evidence_task_fk",
+          "tableFrom": "research_evidence",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "task_id"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_evidence_task_key": {
+          "name": "research_evidence_task_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "task_id",
+            "evidence_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_evidence_knowledge_status_check": {
+          "name": "research_evidence_knowledge_status_check",
+          "value": "\"app\".\"research_evidence\".\"knowledge_status\" in ('observed', 'candidate', 'supported', 'refuted', 'unknown', 'stale')"
+        },
+        "research_evidence_supported_check": {
+          "name": "research_evidence_supported_check",
+          "value": "\"app\".\"research_evidence\".\"knowledge_status\" <> 'supported' or (\"app\".\"research_evidence\".\"scope\" is not null and \"app\".\"research_evidence\".\"basis\" is not null and \"app\".\"research_evidence\".\"evidence_version\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_evidence_contents": {
+      "name": "research_evidence_contents",
+      "schema": "app",
+      "columns": {
+        "evidence_id": {
+          "name": "evidence_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "media_type": {
+          "name": "media_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "byte_size": {
+          "name": "byte_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_evidence_contents_evidence_id_research_evidence_evidence_id_fk": {
+          "name": "research_evidence_contents_evidence_id_research_evidence_evidence_id_fk",
+          "tableFrom": "research_evidence_contents",
+          "tableTo": "research_evidence",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "evidence_id"
+          ],
+          "columnsTo": [
+            "evidence_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_evidence_contents_byte_size_check": {
+          "name": "research_evidence_contents_byte_size_check",
+          "value": "\"app\".\"research_evidence_contents\".\"byte_size\" = octet_length(\"app\".\"research_evidence_contents\".\"bytes\") and \"app\".\"research_evidence_contents\".\"byte_size\" <= 16777216"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_investigations": {
+      "name": "research_investigations",
+      "schema": "app",
+      "columns": {
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "query": {
+          "name": "query",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "max_tasks": {
+          "name": "max_tasks",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tasks_reserved": {
+          "name": "tasks_reserved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "max_tool_calls": {
+          "name": "max_tool_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tool_calls_reserved": {
+          "name": "tool_calls_reserved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "research_investigations_resource_thread_idx": {
+          "name": "research_investigations_resource_thread_idx",
+          "columns": [
+            {
+              "expression": "resource_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_investigations_status_check": {
+          "name": "research_investigations_status_check",
+          "value": "\"app\".\"research_investigations\".\"status\" in ('active', 'completed', 'failed', 'cancelled', 'deleting')"
+        },
+        "research_investigations_tasks_reserved_check": {
+          "name": "research_investigations_tasks_reserved_check",
+          "value": "\"app\".\"research_investigations\".\"tasks_reserved\" >= 0 and \"app\".\"research_investigations\".\"tasks_reserved\" <= \"app\".\"research_investigations\".\"max_tasks\""
+        },
+        "research_investigations_tool_calls_reserved_check": {
+          "name": "research_investigations_tool_calls_reserved_check",
+          "value": "\"app\".\"research_investigations\".\"tool_calls_reserved\" >= 0 and \"app\".\"research_investigations\".\"tool_calls_reserved\" <= \"app\".\"research_investigations\".\"max_tool_calls\""
+        },
+        "research_investigations_resource_id_check": {
+          "name": "research_investigations_resource_id_check",
+          "value": "\"app\".\"research_investigations\".\"resource_id\" <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_llm_calls": {
+      "name": "research_llm_calls",
+      "schema": "app",
+      "columns": {
+        "call_id": {
+          "name": "call_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'reserved'"
+        },
+        "reserved_tokens": {
+          "name": "reserved_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "counted_input_tokens": {
+          "name": "counted_input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_tokens": {
+          "name": "input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_tokens": {
+          "name": "output_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cache_read_tokens": {
+          "name": "cache_read_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cache_write_tokens": {
+          "name": "cache_write_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "charged_tokens": {
+          "name": "charged_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_usd": {
+          "name": "cost_usd",
+          "type": "numeric(14, 8)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "research_llm_calls_investigation_idx": {
+          "name": "research_llm_calls_investigation_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_llm_calls_reserved_task_idx": {
+          "name": "research_llm_calls_reserved_task_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_llm_calls\".\"status\" = 'reserved'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_llm_calls_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_llm_calls_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_llm_calls",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_llm_calls_task_fk": {
+          "name": "research_llm_calls_task_fk",
+          "tableFrom": "research_llm_calls",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "task_id"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_llm_calls_status_check": {
+          "name": "research_llm_calls_status_check",
+          "value": "\"app\".\"research_llm_calls\".\"status\" in ('reserved', 'settled', 'failed', 'abandoned')"
+        },
+        "research_llm_calls_role_check": {
+          "name": "research_llm_calls_role_check",
+          "value": "\"app\".\"research_llm_calls\".\"role\" in ('plan', 'controller', 'worker', 'verifier', 'synthesis')"
+        },
+        "research_llm_calls_closed_check": {
+          "name": "research_llm_calls_closed_check",
+          "value": "(\"app\".\"research_llm_calls\".\"status\" = 'reserved') = (\"app\".\"research_llm_calls\".\"closed_at\" is null) and (\"app\".\"research_llm_calls\".\"closed_at\" is null) = (\"app\".\"research_llm_calls\".\"charged_tokens\" is null)"
+        },
+        "research_llm_calls_tokens_check": {
+          "name": "research_llm_calls_tokens_check",
+          "value": "\"app\".\"research_llm_calls\".\"reserved_tokens\" > 0 and \"app\".\"research_llm_calls\".\"counted_input_tokens\" >= 0 and \"app\".\"research_llm_calls\".\"attempt\" >= 1 and (\"app\".\"research_llm_calls\".\"charged_tokens\" is null or \"app\".\"research_llm_calls\".\"charged_tokens\" >= 0)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_llm_transcripts": {
+      "name": "research_llm_transcripts",
+      "schema": "app",
+      "columns": {
+        "call_id": {
+          "name": "call_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "llm_call_id": {
+          "name": "llm_call_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "self_check_run_id": {
+          "name": "self_check_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prompt_version": {
+          "name": "prompt_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input": {
+          "name": "input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response": {
+          "name": "response",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "input_tokens": {
+          "name": "input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cache_read_tokens": {
+          "name": "cache_read_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cache_write_tokens": {
+          "name": "cache_write_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_tokens": {
+          "name": "output_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_usd": {
+          "name": "cost_usd",
+          "type": "numeric(14, 8)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "research_llm_transcripts_investigation_idx": {
+          "name": "research_llm_transcripts_investigation_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_llm_transcripts_self_check_run_idx": {
+          "name": "research_llm_transcripts_self_check_run_idx",
+          "columns": [
+            {
+              "expression": "self_check_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_llm_transcripts\".\"self_check_run_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_llm_transcripts_created_idx": {
+          "name": "research_llm_transcripts_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_llm_transcripts_llm_call_id_research_llm_calls_call_id_fk": {
+          "name": "research_llm_transcripts_llm_call_id_research_llm_calls_call_id_fk",
+          "tableFrom": "research_llm_transcripts",
+          "tableTo": "research_llm_calls",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "llm_call_id"
+          ],
+          "columnsTo": [
+            "call_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_llm_transcripts_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_llm_transcripts_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_llm_transcripts",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_llm_transcripts_llm_call_key": {
+          "name": "research_llm_transcripts_llm_call_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "llm_call_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_llm_transcripts_role_check": {
+          "name": "research_llm_transcripts_role_check",
+          "value": "\"app\".\"research_llm_transcripts\".\"role\" in ('plan', 'controller', 'worker', 'verifier', 'synthesis', 'judge')"
+        },
+        "research_llm_transcripts_outcome_check": {
+          "name": "research_llm_transcripts_outcome_check",
+          "value": "\"app\".\"research_llm_transcripts\".\"outcome\" in ('answered', 'invalid_output', 'provider_error')"
+        },
+        "research_llm_transcripts_binding_check": {
+          "name": "research_llm_transcripts_binding_check",
+          "value": "\"app\".\"research_llm_transcripts\".\"investigation_id\" is not null or \"app\".\"research_llm_transcripts\".\"self_check_run_id\" is not null"
+        },
+        "research_llm_transcripts_ledger_check": {
+          "name": "research_llm_transcripts_ledger_check",
+          "value": "(\"app\".\"research_llm_transcripts\".\"llm_call_id\" is null or (\"app\".\"research_llm_transcripts\".\"llm_call_id\" = \"app\".\"research_llm_transcripts\".\"call_id\" and \"app\".\"research_llm_transcripts\".\"investigation_id\" is not null)) and (\"app\".\"research_llm_transcripts\".\"llm_call_id\" is null) = (\"app\".\"research_llm_transcripts\".\"task_id\" is null) and (\"app\".\"research_llm_transcripts\".\"task_id\" is null) = (\"app\".\"research_llm_transcripts\".\"attempt\" is null)"
+        },
+        "research_llm_transcripts_closed_check": {
+          "name": "research_llm_transcripts_closed_check",
+          "value": "(\"app\".\"research_llm_transcripts\".\"outcome\" is null) = (\"app\".\"research_llm_transcripts\".\"closed_at\" is null) and (\"app\".\"research_llm_transcripts\".\"response\" is null or \"app\".\"research_llm_transcripts\".\"outcome\" is not null)"
+        },
+        "research_llm_transcripts_prompt_version_check": {
+          "name": "research_llm_transcripts_prompt_version_check",
+          "value": "\"app\".\"research_llm_transcripts\".\"prompt_version\" ~ '^[0-9a-f]{12}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_plan_revisions": {
+      "name": "research_plan_revisions",
+      "schema": "app",
+      "columns": {
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "plan": {
+          "name": "plan",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_plan_revisions_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_plan_revisions_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_plan_revisions",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "research_plan_revisions_investigation_id_revision_pk": {
+          "name": "research_plan_revisions_investigation_id_revision_pk",
+          "columns": [
+            "investigation_id",
+            "revision"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_plan_revisions_revision_check": {
+          "name": "research_plan_revisions_revision_check",
+          "value": "\"app\".\"research_plan_revisions\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_signals": {
+      "name": "research_signals",
+      "schema": "app",
+      "columns": {
+        "signal_id": {
+          "name": "signal_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "read_by_decision_id": {
+          "name": "read_by_decision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "research_signals_unread_idx": {
+          "name": "research_signals_unread_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recorded_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_signals\".\"read_by_decision_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_signals_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_signals_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_signals",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_signals_read_by_decision_id_research_decisions_decision_id_fk": {
+          "name": "research_signals_read_by_decision_id_research_decisions_decision_id_fk",
+          "tableFrom": "research_signals",
+          "tableTo": "research_decisions",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "read_by_decision_id"
+          ],
+          "columnsTo": [
+            "decision_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_signals_payload_size_check": {
+          "name": "research_signals_payload_size_check",
+          "value": "octet_length(\"app\".\"research_signals\".\"payload\"::text) <= 4096"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_task_dependencies": {
+      "name": "research_task_dependencies",
+      "schema": "app",
+      "columns": {
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "depends_on_task_id": {
+          "name": "depends_on_task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "research_task_dependencies_depends_on_idx": {
+          "name": "research_task_dependencies_depends_on_idx",
+          "columns": [
+            {
+              "expression": "depends_on_task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_task_dependencies_task_fk": {
+          "name": "research_task_dependencies_task_fk",
+          "tableFrom": "research_task_dependencies",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "task_id"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "research_task_dependencies_depends_on_fk": {
+          "name": "research_task_dependencies_depends_on_fk",
+          "tableFrom": "research_task_dependencies",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id",
+            "depends_on_task_id"
+          ],
+          "columnsTo": [
+            "investigation_id",
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "research_task_dependencies_task_id_depends_on_task_id_kind_pk": {
+          "name": "research_task_dependencies_task_id_depends_on_task_id_kind_pk",
+          "columns": [
+            "task_id",
+            "depends_on_task_id",
+            "kind"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "research_task_dependencies_kind_check": {
+          "name": "research_task_dependencies_kind_check",
+          "value": "\"app\".\"research_task_dependencies\".\"kind\" in ('depends_on', 'waits_for')"
+        },
+        "research_task_dependencies_no_loop_check": {
+          "name": "research_task_dependencies_no_loop_check",
+          "value": "\"app\".\"research_task_dependencies\".\"task_id\" <> \"app\".\"research_task_dependencies\".\"depends_on_task_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.research_task_subscribers": {
+      "name": "research_task_subscribers",
+      "schema": "app",
+      "columns": {
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subscriber_key": {
+          "name": "subscriber_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subscribed_at": {
+          "name": "subscribed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "notified_event_id": {
+          "name": "notified_event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "research_task_subscribers_task_id_research_tasks_task_id_fk": {
+          "name": "research_task_subscribers_task_id_research_tasks_task_id_fk",
+          "tableFrom": "research_task_subscribers",
+          "tableTo": "research_tasks",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "task_id"
+          ],
+          "columnsTo": [
+            "task_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "research_task_subscribers_task_id_subscriber_key_pk": {
+          "name": "research_task_subscribers_task_id_subscriber_key_pk",
+          "columns": [
+            "task_id",
+            "subscriber_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "app.research_tasks": {
+      "name": "research_tasks",
+      "schema": "app",
+      "columns": {
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "investigation_id": {
+          "name": "investigation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflow_type": {
+          "name": "workflow_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workflow_version": {
+          "name": "workflow_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input": {
+          "name": "input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_refs": {
+          "name": "input_refs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_output": {
+          "name": "expected_output",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dedup_key": {
+          "name": "dedup_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "wait_condition": {
+          "name": "wait_condition",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state_version": {
+          "name": "state_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recovery_count": {
+          "name": "recovery_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "deadline_at": {
+          "name": "deadline_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancel_requested_at": {
+          "name": "cancel_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_tool_calls": {
+          "name": "max_tool_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_retries": {
+          "name": "max_retries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deadline_ms": {
+          "name": "deadline_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_tokens": {
+          "name": "max_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tool_calls_used": {
+          "name": "tool_calls_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "retries_used": {
+          "name": "retries_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "attempt_tool_calls": {
+          "name": "attempt_tool_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "attempt_retries": {
+          "name": "attempt_retries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_refs": {
+          "name": "output_refs",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "checkpoint": {
+          "name": "checkpoint",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "research_tasks_live_dedup_key_idx": {
+          "name": "research_tasks_live_dedup_key_idx",
+          "columns": [
+            {
+              "expression": "investigation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dedup_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"app\".\"research_tasks\".\"status\" in ('queued', 'running', 'waiting', 'succeeded')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_tasks_queued_idx": {
+          "name": "research_tasks_queued_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_tasks\".\"status\" = 'queued'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_tasks_running_lease_idx": {
+          "name": "research_tasks_running_lease_idx",
+          "columns": [
+            {
+              "expression": "lease_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_tasks\".\"status\" = 'running'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "research_tasks_unfinished_deadline_idx": {
+          "name": "research_tasks_unfinished_deadline_idx",
+          "columns": [
+            {
+              "expression": "deadline_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"research_tasks\".\"status\" in ('queued', 'running', 'waiting')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "research_tasks_investigation_id_research_investigations_investigation_id_fk": {
+          "name": "research_tasks_investigation_id_research_investigations_investigation_id_fk",
+          "tableFrom": "research_tasks",
+          "tableTo": "research_investigations",
+          "schemaTo": "app",
+          "columnsFrom": [
+            "investigation_id"
+          ],
+          "columnsTo": [
+            "investigation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "research_tasks_investigation_task_key": {
+          "name": "research_tasks_investigation_task_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "investigation_id",
+            "task_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "research_tasks_status_check": {
+          "name": "research_tasks_status_check",
+          "value": "\"app\".\"research_tasks\".\"status\" in ('queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled')"
+        },
+        "research_tasks_wait_condition_check": {
+          "name": "research_tasks_wait_condition_check",
+          "value": "(\"app\".\"research_tasks\".\"status\" = 'waiting') = (\"app\".\"research_tasks\".\"wait_condition\" is not null)"
+        },
+        "research_tasks_tool_calls_check": {
+          "name": "research_tasks_tool_calls_check",
+          "value": "\"app\".\"research_tasks\".\"tool_calls_used\" >= 0 and \"app\".\"research_tasks\".\"attempt_tool_calls\" >= 0 and \"app\".\"research_tasks\".\"tool_calls_used\" + \"app\".\"research_tasks\".\"attempt_tool_calls\" <= \"app\".\"research_tasks\".\"max_tool_calls\""
+        },
+        "research_tasks_retries_check": {
+          "name": "research_tasks_retries_check",
+          "value": "\"app\".\"research_tasks\".\"retries_used\" >= 0 and \"app\".\"research_tasks\".\"attempt_retries\" >= 0 and \"app\".\"research_tasks\".\"retries_used\" + \"app\".\"research_tasks\".\"attempt_retries\" <= \"app\".\"research_tasks\".\"max_retries\""
+        },
+        "research_tasks_dedup_key_check": {
+          "name": "research_tasks_dedup_key_check",
+          "value": "\"app\".\"research_tasks\".\"dedup_key\" like 'v1:%'"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "app": "app"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -1226,6 +1226,8 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       cancelRequested: boolean;
       toolCalls: number;
       failureClass: string | null;
+      failureCode: string | null;
+      failureMessage: string | null;
       answer: string | null;
     }
 
@@ -1234,7 +1236,8 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         `SELECT status, attempt, recovery_count AS "recoveryCount",
                 cancel_requested_at IS NOT NULL AS "cancelRequested",
                 tool_calls_used + attempt_tool_calls AS "toolCalls",
-                failure_reason->>'class' AS "failureClass", outcome->>'answerOrDelta' AS answer
+                failure_reason->>'class' AS "failureClass", failure_reason->>'code' AS "failureCode",
+                failure_reason->>'message' AS "failureMessage", outcome->>'answerOrDelta' AS answer
            FROM app.research_tasks WHERE task_id = $1`,
         [taskId],
       );
@@ -1436,10 +1439,14 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       }
 
       await settledAs(taskId, 'failed');
+      // The code and the message are the ones the card shows for a task whose every attempt was lost (design-lifecycle.md, DC-6).
       expect(await taskState(taskId)).toMatchObject({
         attempt: MAX_RECOVERIES + 1,
         recoveryCount: MAX_RECOVERIES,
         failureClass: 'recovery_exhausted',
+        failureCode: 'recovery_exhausted',
+        failureMessage:
+          'Every attempt of the task was lost or ran past its limit',
       });
       expect(runs.get('r2')).toBe(MAX_RECOVERIES + 1);
       await settledAs(siblingId, 'succeeded');
@@ -1451,7 +1458,9 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       const resume = gate();
       const lateReserved = gate();
       let lateReserve: ToolCallGrant | undefined;
+      let signal: AbortSignal | undefined;
       scripts.set('r3', async (ctx) => {
+        signal = ctx.signal;
         started.release();
         await resume.promise;
         lateReserve = await ctx.reserveToolCall('fixture.read', false);
@@ -1481,11 +1490,14 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         );
         // The handler is still held: the deadline outcome does not wait for it, nor does the slot.
         await settledAs(taskId, 'failed');
+        // Code `deadline_exceeded` (design-lifecycle.md, DC-7); the attempt's signal is aborted with the deadline as its reason.
         expect(await taskState(taskId)).toMatchObject({
           attempt: 1,
           failureClass: 'deadline',
+          failureCode: 'deadline_exceeded',
           toolCalls: 0,
         });
+        expect(signal?.reason).toEqual({ kind: 'deadline' });
         const before = await taskRow(taskId);
         await settledAs(siblingId, 'succeeded');
 
@@ -2452,6 +2464,57 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       );
       return { relay, schedulerConsumer };
     }
+
+    it('INT-4 order: the deliveries of one event are applied by descending consumer name, not in the order their rows were written', async () => {
+      // Lifecycle E2E-1 K2 counts relay passes, so it needs `runtime.scheduler` before `engine.lifecycle` for the
+      // controller's end event: both rows share `next_attempt_at` and `seq`, and only the last order key separates them.
+      // The consumer that sorts first by name is registered, and so written, second.
+      const suffix = randomUUID();
+      const applied: string[] = [];
+      const recorder = (name: string): EventConsumer => ({
+        name,
+        eventTypes: ['TaskSucceeded'],
+        schemaVersions: [1],
+        handle: async (_tx, event) => {
+          if (event.eventId === eventId) applied.push(name);
+        },
+      });
+      const consumers = new EventConsumerRegistry();
+      consumers.register(recorder(`int4-order-a-${suffix}`));
+      consumers.register(recorder(`int4-order-z-${suffix}`));
+      const investigationId = await newInvestigation('delivery order');
+      const { eventId } = await runtime.db.transaction((tx) =>
+        new EventLog(consumers).append(tx, {
+          type: 'TaskSucceeded',
+          investigationId,
+          taskId: null,
+          causationId: null,
+          stateRevision: 1,
+          payload: {},
+        }),
+      );
+      // A relay of only these two consumers: the harness's relay does not deliver them.
+      const relay = new OutboxRelay(
+        runtime.db,
+        runtime.config,
+        runtime.clock,
+        runtime.logger,
+        consumers,
+        new TaskRepository(),
+        CrashPoints.fromConfig(runtime.config),
+      );
+      relay.start();
+      try {
+        const startedAt = Date.now();
+        while (applied.length < 2 && Date.now() - startedAt < LATCH_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      } finally {
+        await relay.shutdown();
+      }
+
+      expect(applied).toEqual([`int4-order-z-${suffix}`, `int4-order-a-${suffix}`]);
+    });
 
     it('INT-4 cascade and redelivery: a failed dependency cancels its descendants with direct and root cause; a redelivered done event and a second consumer pass change no row', async () => {
       const investigationId = await newInvestigation('cascade');

@@ -1,14 +1,16 @@
 import { type ClaimToVerify, type ClaimVerdict, verifyClaim } from './claim-verifier.js';
 
-// AC-08.1, AC-08.2, DC-10 (UC-6, the comparison half): the status of a claim is decided by code against the records the
-// verification round fetched. Defect caught: the worker's summary (or a failed collection) counts as a source record, an
-// absent atom refutes instead of being insufficient, or a contradicting record does not refute.
+// DC-9 (FR-13, AC-13.1): the value check compares each atom by its kind with the records of the claim's pointer — the
+// only records `decideClaim` gives it (which records those are is proven in decide-claim.spec.ts). Defect caught: an
+// absent atom refutes instead of being insufficient, a contradicting record does not refute, or atoms the pointed records
+// do not hold pass.
 
 const TRACE = 'a'.repeat(32);
+/** A record of the pointer: `evidenceId` is the id of its page. */
 const record = (evidenceId: string, fields: Record<string, unknown>) => ({ evidenceId, record: fields });
 const payments = (ts: string) => ({ ts, service: 'payments', event: 'refund', traceId: TRACE, status: 'error' });
 
-describe('verifyClaim: atoms against fetched source records', () => {
+describe('verifyClaim: atoms against the records of the pointer', () => {
   it.each<[string, ClaimToVerify, Pick<ClaimVerdict, 'status' | 'basis'> & { missing: string[] }]>([
     [
       'a traceId absent from the records is missing: insufficient, not refuted',
@@ -39,8 +41,11 @@ describe('verifyClaim: atoms against fetched source records', () => {
       { status: 'refuted', basis: ['e4'], missing: [] },
     ],
     [
-      'a claim resting on the worker summary only (no record fetched, a failed collection) is not supported',
-      { atoms: [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }], records: [] },
+      'pointed records of another service and no count: both atoms missing, not refuted',
+      {
+        atoms: [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }],
+        records: [record('e5', { ts: '2026-10-01T12:00:00Z', service: 'checkout', event: 'refund' })],
+      },
       { status: 'insufficient', basis: [], missing: ['service', 'number'] },
     ],
   ])('%s', (_, claim, expected) => {

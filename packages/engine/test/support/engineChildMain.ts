@@ -1,7 +1,7 @@
 import { createDatabase } from '@agent-os/db';
 import {
   createEngine,
-  deepResearchProcessV1,
+  deepResearchProcessV2,
   type EngineLogger,
   type StartInvestigationResult,
   type TokenCounter,
@@ -151,9 +151,9 @@ function program(hit: (point: CrashPoint) => void) {
             };
       case 'worker':
         hit('worker-call');
-        return { output: { claims: [{ text: 'The provider adapter logged errors.', atoms: [], evidenceIds: [] }] } };
+        return { output: { claims: [{ text: 'The provider adapter logged errors.', atoms: [], pointer: [] }] } };
       case 'synthesis':
-        return { output: { outcome: 'answered', summary: 'E2E-2 answer', claims: [] } };
+        return { output: { outcome: 'answered', summaryClaimIds: [], claims: [] } };
       default:
         return undefined;
     }
@@ -225,10 +225,11 @@ async function main(): Promise<{ close(): Promise<void> }> {
       investigations: runtime.investigations,
       evidence: runtime.evidence,
       handlers: runtime.handlers,
+      eventConsumers: runtime.eventConsumers,
     },
     sourceRegistry: sources.registry,
     connectedSources: [FIXTURE_SOURCE_ID],
-    processes: [deepResearchProcessV1],
+    processes: [deepResearchProcessV2],
     resolveModel: createScriptedModel({ fallback: program(hit) }).resolveModel,
     tokenCounter: characterCounter,
     clock: systemClock,

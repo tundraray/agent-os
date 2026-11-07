@@ -356,6 +356,9 @@ export class ToolExecutor {
       case 'shutdown':
       case 'lease_lost':
         return { kind: 'stopped', reason: kind };
+      // The attempt ran past its limit: as a lost lease, the runtime writes what follows.
+      case 'attempt_timeout':
+        return { kind: 'stopped', reason: 'lease_lost' };
     }
   }
 

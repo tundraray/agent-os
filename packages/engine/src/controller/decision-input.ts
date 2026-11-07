@@ -3,9 +3,9 @@ import { unavailableRequestsOf } from '../capabilities/proposed-tasks.repository
 import { SOURCE_FETCH_WORKFLOW } from '../capabilities/gather-key.js';
 import type { FetchToolLine } from '../capabilities/capability-registry.js';
 import type { DecisionKind } from '../config/capabilities.js';
-import type { ClaimLine, ControllerMaterial, TaskCount } from '../context/role-packets.js';
+import type { ClaimLine, ControllerMaterial, RejectedAttempt, TaskCount } from '../context/role-packets.js';
 import { type InputSignal, toInputSignal } from '../signals/signal-registry.js';
-import type { DecisionRow, LatestClaimRow, PlanRevisionRow } from './decisions.repository.js';
+import type { DecisionRow, LatestClaimRevision, LatestClaimRow, PlanRevisionRow } from './decisions.repository.js';
 
 const FINAL_STATUSES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -43,6 +43,9 @@ export function stepsWithoutNovelty(
   return count;
 }
 
+/** A latest claim revision as the controller observes it: also the group of a `supported` one. */
+type ObservedClaim = LatestClaimRow & Pick<LatestClaimRevision, 'confidence'>;
+
 export interface DecisionInputParts {
   readonly plan: PlanRevisionRow;
   readonly budget: Readonly<Record<string, number>>;
@@ -54,9 +57,24 @@ export interface DecisionInputParts {
   readonly stepsWithoutNovelty: number;
   /** Tasks other than the controller. */
   readonly tasks: readonly Task[];
-  readonly claims: readonly LatestClaimRow[];
+  readonly claims: readonly ObservedClaim[];
   /** The previous accepted decision; what appeared or changed since it is mandatory (C3). */
   readonly previous: DecisionRow | undefined;
+  /** The rejected attempts of this step recorded so far, in their order (DC-3). */
+  readonly rejectedAttempts: readonly RejectedAttempt[];
+}
+
+/**
+ * The rejected attempts of `step` as its retry sees them (AC-08.1, DC-3): read from the stored decision rows, so an
+ * attempt after a restart of the task sees those written before it. Only the kind and the code's reason; the rejected
+ * output stays in the decision row and the transcript.
+ */
+export function rejectedAttemptsOf(decisions: readonly DecisionRow[], step: number): RejectedAttempt[] {
+  // A row has a rejection reason exactly when it is rejected (`research_decisions_rejection_reason_check`).
+  return decisions
+    .filter((row) => row.step === step)
+    .sort((left, right) => left.callIndex - right.callIndex)
+    .flatMap((row) => (row.rejectionReason === null ? [] : [{ kind: row.kind, reason: row.rejectionReason }]));
 }
 
 function taskObservation(task: Task) {
@@ -96,10 +114,18 @@ function countTasks(tasks: readonly Task[]): TaskCount[] {
   return [...counts.values()];
 }
 
+/** A new claim revision as the controller observes it: its status, `causal` included, and the group of a `supported` one. */
+function claimObservation(claim: ObservedClaim) {
+  const observed = { claimId: claim.claimId, status: claim.status, text: claim.text, evidenceIds: claim.evidenceIds };
+  return claim.status === 'supported' ? { ...observed, group: claim.confidence } : observed;
+}
+
 /**
- * The controller input split as in C3: the plan revision, budget, admissible decisions, signals and what appeared or
- * changed since the previous step are mandatory — open tasks, tasks the previous step proposed, requests of it that
- * created no task (KD-10), claim revisions written after it; the other tasks are counted and the other claims become compressible lines.
+ * The controller input split as in C3 and KD-6. The stable block — the tools, then the plan revision — changes only
+ * with `replan`. The changing block: budget, admissible decisions, signals and what appeared or changed since the
+ * previous step are mandatory — open tasks, tasks the previous step proposed, requests of it that created no task
+ * (KD-10), claim revisions written after it — then the rejected attempts of this step; the other tasks are counted and
+ * the other claims become compressible lines.
  */
 export function controllerMaterial(parts: DecisionInputParts): ControllerMaterial {
   const proposedByPrevious = new Set(parts.previous?.proposedTaskIds ?? []);
@@ -111,23 +137,21 @@ export function controllerMaterial(parts: DecisionInputParts): ControllerMateria
     .filter((claim) => !isNewClaim(claim))
     .map((claim) => ({ claimId: claim.claimId, status: claim.status, text: claim.text, revisedAt: claim.createdAt }));
   return {
-    mandatory: {
+    stable: {
+      tools: parts.tools,
       planRevision: { revision: parts.plan.revision, ...(parts.plan.plan as object) },
+    },
+    changing: {
       budget: parts.budget,
       admissible: parts.admissible,
-      tools: parts.tools,
       signals: parts.signals.map(toInputSignal),
       observations: {
         tasks: [...parts.tasks.filter(isNewTask).map(taskObservation), ...unavailableObservations(parts.previous)],
-        claims: newClaims.map((claim) => ({
-          claimId: claim.claimId,
-          status: claim.status,
-          text: claim.text,
-          evidenceIds: claim.evidenceIds,
-        })),
+        claims: newClaims.map(claimObservation),
         stepsWithoutNovelty: parts.stepsWithoutNovelty,
       },
     },
+    rejectedAttempts: parts.rejectedAttempts,
     taskCounts: countTasks(parts.tasks.filter((task) => !isNewTask(task))),
     claims: earlierClaims,
   };

@@ -8,8 +8,12 @@
 // Primary failure mode (turns red when): the startup check of ResearchModule lets an unapplied migration through, does not name the files,
 // or runs after the api binds its port; or the api does not start on a migrated database. Which files count as pending (an edited applied
 // file, a file timestamped before the last applied one) is the rule of packages/db/src/pending-migrations.spec.ts.
-// Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the api runs from `dist/main.js`
-// (`pnpm --filter api test:e2e:runtime` builds it first). Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
+// Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the refusal rows run the api from
+// `dist/main.js`. The "api starts" row runs the test entry `test/support/apiBootChildMain.ts` (`dist/test-child/`): it starts the api as
+// `main.ts` does, with the test group table in `ENGINE_GROUP_TABLES`, because the server start requires the table of its verifier
+// (`requireCalibration`, DC-2) and the shipped one comes from the owner's calibration. The refusal rows stay on `dist/main.js`: the
+// migration check of `ResearchModule.onModuleInit` refuses before `EngineModule` looks for a table. `pnpm --filter api test:e2e:runtime`
+// builds both first. Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -43,6 +47,11 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
     const API_ROOT = fileURLToPath(new URL('..', import.meta.url));
     /** `nest build` output, built by `test:e2e:runtime` first. */
     const API_ENTRY = join(API_ROOT, 'dist/main.js');
+    /** `main.ts` with the test group table (`pnpm build:child`, run by `test:e2e:runtime` first). */
+    const BOOT_ENTRY = join(
+      API_ROOT,
+      'dist/test-child/test/support/apiBootChildMain.js',
+    );
     /** A migrator run or an api boot, the scratch database included. */
     const PROCESS_MS = 60_000;
     const ROW_TIMEOUT_MS = 3 * PROCESS_MS;
@@ -174,8 +183,12 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
       }
     }
 
-    function startApi(url: string, port: number): Started {
-      return startProcess(process.execPath, [API_ENTRY], {
+    function startApi(
+      url: string,
+      port: number,
+      entry: string = API_ENTRY,
+    ): Started {
+      return startProcess(process.execPath, [entry], {
         DATABASE_URL: url,
         PORT: String(port),
       });
@@ -209,7 +222,7 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
         const url = await createScratchDatabase();
         await applyMigrations(url);
         const apiPort = await freePort();
-        const api = startApi(url, apiPort);
+        const api = startApi(url, apiPort, BOOT_ENTRY);
         try {
           const status = await within(
             (async () => {

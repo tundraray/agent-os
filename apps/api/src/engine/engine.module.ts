@@ -1,15 +1,26 @@
-import { Inject, Logger, Module, type OnModuleInit } from '@nestjs/common';
+import {
+  type BeforeApplicationShutdown,
+  Inject,
+  Logger,
+  Module,
+  type OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DatabaseConnection } from '@agent-os/db';
 import {
   AnthropicTokenCounter,
+  type AssessRequest,
+  type AssessResult,
   createEngine,
-  deepResearchProcessV1,
+  deepResearchProcessV2,
   type Engine,
   type EngineLogFields,
   type EngineLogger,
+  purgeExpiredTranscripts,
   type ResolveModel,
+  shippedGroupTables,
   type TokenCounter,
+  type TranscriptRetention,
 } from '@agent-os/engine';
 import type { Clock, Runtime } from '@agent-os/runtime';
 import type { SourceAdapter, SourceRegistry } from '@agent-os/sources';
@@ -27,11 +38,18 @@ import {
 } from '../sources/sources.module.js';
 import { type EngineSettings, parseEngineSettings } from './engine-settings.js';
 import {
+  ENGINE_GROUP_TABLES,
+  ENGINE_PROCESSES,
   ENGINE_RESOLVE_MODEL,
   ENGINE_TOKEN_COUNTER,
   RESEARCH_ENGINE,
 } from './engine.tokens.js';
 import { createResolveModel } from './resolve-model.js';
+import {
+  parseTranscriptRetention,
+  startTranscriptPurge,
+  type TranscriptPurgeScheduler,
+} from './transcript-retention.js';
 
 /** Workflow types `createEngine` registers, for the start log line. */
 const ENGINE_HANDLERS =
@@ -39,6 +57,9 @@ const ENGINE_HANDLERS =
 
 /** Engine settings parsed from the environment; internal to this module. */
 const ENGINE_SETTINGS = Symbol('ENGINE_SETTINGS');
+
+/** The transcript retention term from `TRANSCRIPT_RETENTION_DAYS`; internal to this module. */
+const TRANSCRIPT_RETENTION = Symbol('TRANSCRIPT_RETENTION');
 
 /**
  * `EngineLogger` over the Nest `Logger`: the level is kept, and the fields follow the message as `key=value`. The
@@ -94,6 +115,16 @@ class BoundEngine implements Engine {
     return this.engine().readInvestigation(input);
   }
 
+  readAnswerMessage(
+    input: Parameters<Engine['readAnswerMessage']>[0],
+  ): ReturnType<Engine['readAnswerMessage']> {
+    return this.engine().readAnswerMessage(input);
+  }
+
+  assess<T>(request: AssessRequest<T>): Promise<AssessResult<T>> {
+    return this.engine().assess(request);
+  }
+
   private engine(): Engine {
     if (this.current === null) {
       throw new Error(
@@ -106,16 +137,23 @@ class BoundEngine implements Engine {
 
 /**
  * Assembly point of `@agent-os/engine` in `apps/api` (design-engine.md, C2; ADR-0004): reads the engine settings and
- * calls `createEngine` with the shipped `deep-research` configuration, the runtime's ports, the source registry and
- * the connected sources, the clock, `resolveModel` and `AnthropicTokenCounter` on one base.
+ * calls `createEngine` with the configurations of `ENGINE_PROCESSES` (the shipped `deep-research`) and the group tables
+ * of `ENGINE_GROUP_TABLES` (the shipped ones), the runtime's ports, the source registry and the connected sources, the
+ * clock, `resolveModel` and `AnthropicTokenCounter` on one base. It passes `requireCalibration`: without the group
+ * table of the configuration's `verifier` model and prompt version the start stops with `calibration_missing` (DC-2).
  *
  * Phase: `onModuleInit`, after `SourcesModule` (imported here, so Nest initialises it first) registered `source.fetch`
  * and bound the registry, and before `ResearchModule` starts the workers in `onApplicationBootstrap` — the four engine
- * handlers are registered before the first claim. A refused configuration stops the start here (DC-14).
+ * handlers are registered before the first claim. A refused configuration or a missing group table stops the start
+ * here (DC-14, DC-2): `app.init()` inside `listen` throws, so the port is never bound.
  *
  * `connectedSources` are the `sourceId` of the adapters `SourcesModule` built — neither the allowlist nor the
  * registry: without `@agent-os/mcp-fixture` the list is empty, the engine runs on model knowledge and writes one
  * warning (KD-8, DC-18). The engine's role agents are not registered in the application's `MASTRA` (ADR-0001).
+ *
+ * The transcript purge timer (design-self-check.md, C3 api) starts in `onModuleInit` on the runtime clock with the term
+ * of `TRANSCRIPT_RETENTION_DAYS` (an invalid value stops the start naming the variable) and stops in
+ * `beforeApplicationShutdown`, before `ResearchModule` closes the pool in `onApplicationShutdown`.
  */
 @Module({
   imports: [ResearchModule, SourcesModule],
@@ -124,6 +162,12 @@ class BoundEngine implements Engine {
       provide: ENGINE_SETTINGS,
       useFactory: (config: ConfigService): EngineSettings =>
         parseEngineSettings((name) => config.get<string>(name)),
+      inject: [ConfigService],
+    },
+    {
+      provide: TRANSCRIPT_RETENTION,
+      useFactory: (config: ConfigService): TranscriptRetention =>
+        parseTranscriptRetention((name) => config.get<string>(name)),
       inject: [ConfigService],
     },
     {
@@ -141,11 +185,15 @@ class BoundEngine implements Engine {
         }),
       inject: [ENGINE_SETTINGS],
     },
+    { provide: ENGINE_PROCESSES, useValue: [deepResearchProcessV2] },
+    { provide: ENGINE_GROUP_TABLES, useValue: shippedGroupTables },
     { provide: RESEARCH_ENGINE, useFactory: () => new BoundEngine() },
   ],
   exports: [RESEARCH_ENGINE],
 })
-export class EngineModule implements OnModuleInit {
+export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
+  private transcriptPurge: TranscriptPurgeScheduler | null = null;
+
   constructor(
     @Inject(RESEARCH_DATABASE) private readonly database: DatabaseConnection,
     @Inject(RESEARCH_RUNTIME) private readonly runtime: Runtime,
@@ -155,19 +203,33 @@ export class EngineModule implements OnModuleInit {
     @Inject(ENGINE_RESOLVE_MODEL) private readonly resolveModel: ResolveModel,
     @Inject(ENGINE_TOKEN_COUNTER) private readonly tokenCounter: TokenCounter,
     @Inject(RESEARCH_ENGINE) private readonly engine: BoundEngine,
+    @Inject(TRANSCRIPT_RETENTION)
+    private readonly transcriptRetention: TranscriptRetention,
+    @Inject(ENGINE_PROCESSES) private readonly processes: readonly unknown[],
+    @Inject(ENGINE_GROUP_TABLES)
+    private readonly groupTables: readonly unknown[],
   ) {}
 
   onModuleInit(): void {
-    const { handlers, scheduler, investigations, evidence } = this.runtime;
+    const { handlers, eventConsumers, scheduler, investigations, evidence } =
+      this.runtime;
     const logger = new NestEngineLogger();
     const engine = createEngine({
       database: this.database.db,
-      runtime: { handlers, scheduler, investigations, evidence },
+      runtime: {
+        handlers,
+        eventConsumers,
+        scheduler,
+        investigations,
+        evidence,
+      },
       sourceRegistry: this.sourceRegistry,
       connectedSources: this.adapters.map(
         (adapter) => adapter.descriptor.sourceId,
       ),
-      processes: [deepResearchProcessV1],
+      processes: this.processes,
+      groupTables: this.groupTables,
+      requireCalibration: true,
       resolveModel: this.resolveModel,
       tokenCounter: this.tokenCounter,
       clock: this.clock,
@@ -177,5 +239,16 @@ export class EngineModule implements OnModuleInit {
     logger.log(
       `Research engine handlers registered (${ENGINE_HANDLERS}), sourceMode ${engine.sourceMode}`,
     );
+    this.transcriptPurge = startTranscriptPurge({
+      clock: this.clock,
+      retention: this.transcriptRetention,
+      purge: (retention) =>
+        purgeExpiredTranscripts(this.database.db, retention),
+    });
+  }
+
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.transcriptPurge?.stop();
+    this.transcriptPurge = null;
   }
 }

@@ -27,9 +27,9 @@ function answerOf(overrides: AnswerOverrides): ResearchAnswerMetadata {
 const WITH_SOURCES: AnswerOverrides = {
   launchKey: 'k1',
   established: [
-    { text: 'В октябре добавлены два кластера.', footnotes: [1, 2], verified: true },
+    { text: 'В октябре добавлены два кластера.', footnotes: [1, 2], verified: true, confidence: null, causal: false },
   ],
-  assumed: [{ text: 'Рост связан с выкладкой.', footnotes: [3], verified: false }],
+  assumed: [{ text: 'Рост связан с выкладкой.', footnotes: [3], verified: false, confidence: null, causal: false }],
   sources: [
     { number: 1, sourceId: 'billing', toolName: 'get_costs', snapshot: '30.10 14:00–15:00', truncated: false },
     { number: 2, sourceId: 'k8s', toolName: 'list_clusters', snapshot: '30.10', truncated: true },
@@ -42,8 +42,8 @@ const WITHOUT_SOURCES: AnswerOverrides = {
   sourceMode: 'model_knowledge',
   established: [],
   assumed: [
-    { text: 'Нужен backoff с джиттером.', footnotes: [], verified: false },
-    { text: 'Число попыток ограничивают.', footnotes: [], verified: false },
+    { text: 'Нужен backoff с джиттером.', footnotes: [], verified: false, confidence: null, causal: false },
+    { text: 'Число попыток ограничивают.', footnotes: [], verified: false, confidence: null, causal: false },
   ],
   sources: [],
 };
@@ -67,7 +67,7 @@ describe('ResearchAnswer — parts drawn from researchAnswer', () => {
   }>([
     { name: 'answered from sources', answer: WITH_SOURCES, outcome: 'Есть ответ', summary: true, stopReason: null, groups: ['Установлено', 'Предположения'], footnotes: ['Источник 1', 'Источник 2', 'Источник 3'], unverified: 1, sourceList: 'Источники (3)' },
     { name: 'partial, stopped by force', answer: { ...WITH_SOURCES, outcome: 'partial', summary: null, stopReason: 'budget_exhausted' }, outcome: 'Частичный ответ', summary: false, stopReason: 'Остановлен: исчерпан бюджет', groups: ['Установлено', 'Предположения'], footnotes: ['Источник 1', 'Источник 2', 'Источник 3'], unverified: 1, sourceList: 'Источники (3)' },
-    { name: 'only «Не выяснено» keeps the summary', answer: { launchKey: 'k1', outcome: 'inconclusive', established: [], unknown: [{ text: 'Причина роста не найдена.', footnotes: [], verified: false }], sources: [] }, outcome: 'Вывода нет', summary: true, stopReason: null, groups: ['Не выяснено'], footnotes: [], unverified: 1, sourceList: null },
+    { name: 'only «Не выяснено» keeps the summary', answer: { launchKey: 'k1', outcome: 'inconclusive', established: [], unknown: [{ text: 'Причина роста не найдена.', footnotes: [], verified: false, confidence: null, causal: false }], sources: [] }, outcome: 'Вывода нет', summary: true, stopReason: null, groups: ['Не выяснено'], footnotes: [], unverified: 1, sourceList: null },
     { name: 'no claim drops a given summary', answer: { launchKey: 'k1', outcome: 'inconclusive', stopReason: 'step_limit', established: [], sources: [] }, outcome: 'Вывода нет', summary: false, stopReason: 'Остановлен: достигнут лимит шагов', groups: [], footnotes: [], unverified: 0, sourceList: null },
   ])('$name', ({ answer, outcome, summary, stopReason, groups, footnotes, unverified, sourceList }) => {
     render(<ResearchAnswer answer={answerOf(answer)} />);

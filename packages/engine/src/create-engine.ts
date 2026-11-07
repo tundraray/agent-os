@@ -1,7 +1,10 @@
 import type { Database } from '@agent-os/db';
-import type { Clock, EvidenceReader, HandlerRegistry } from '@agent-os/runtime';
+import type { Clock, EventConsumerRegistry, EvidenceReader, HandlerRegistry } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
+import { z } from 'zod';
 import { createSynthesizeHandler } from './answer/synthesize.handler.js';
+import { createAssess } from './assess/assess.js';
+import { findGroupTable, type GroupTable, GroupTableSchema } from './calibration/group-table.js';
 import { loadProcessConfig } from './config/load-process-config.js';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
 import { checkRoleModels, type ProcessConfig, type ProcessConfigRejection } from './config/process-config.schema.js';
@@ -10,11 +13,16 @@ import { checkProcessSources } from './config/source-check.js';
 import { createContextBuilder } from './context/context-builder.js';
 import { createControllerHandler } from './controller/controller.handler.js';
 import { buildEngine, type Engine } from './engine.js';
+import { CalibrationMissingError } from './engine-errors.js';
+import { createLifecycleConsumer } from './lifecycle/lifecycle.consumer.js';
 import { createModelGateway } from './model/model-gateway.js';
+import { promptVersion } from './model/prompt-version.js';
 import type { TokenCounter } from './model/token-counter.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
+import { shippedGroupTables } from './processes/shipped-group-tables.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
 import { createSignalRegistry, type SignalKind } from './signals/signal-registry.js';
+import { postgresOutsideTaskTranscripts } from './transcripts/transcript-writes.js';
 import { createVerifyHandler } from './verify/verify.handler.js';
 import { createAnalyzeHandler } from './workers/analyze.handler.js';
 
@@ -22,11 +30,14 @@ import { createAnalyzeHandler } from './workers/analyze.handler.js';
 export interface CreateEngineOptions {
   readonly database: Database;
   /**
-   * Runtime services; `handlers` receives the engine's task handlers before `Runtime.start`, `evidence` serves the
-   * workers the content of their gather task's evidence and the synthesis the provenance of the cited evidence.
+   * Runtime services; `handlers` receives the engine's task handlers and `eventConsumers` its `engine.lifecycle`
+   * consumer before `Runtime.start`, `evidence` serves the workers the content of their gather task's evidence, and the
+   * synthesis, the answer message and `Engine.readAnswerMessage` the provenance of the cited evidence. `eventConsumers` is required: an assembly without it would leave
+   * every finished investigation `active` (design-lifecycle.md, KD-1).
    */
   readonly runtime: EngineRuntimePorts & {
     readonly handlers: Pick<HandlerRegistry, 'register'>;
+    readonly eventConsumers: Pick<EventConsumerRegistry, 'register'>;
     readonly evidence: Pick<EvidenceReader, 'get'>;
   };
   /** Checks the configured sources (DC-14) and serves the gather capability: tools, argument schemas and snapshots. */
@@ -47,6 +58,22 @@ export interface CreateEngineOptions {
    * is a new entry here, the decision input keeps its form (AC-04.2).
    */
   readonly signalKinds?: readonly SignalKind[];
+  /**
+   * Catalog models `Engine.assess` may call, resolved through `resolveModel` at creation; none by default. A model
+   * outside this list is refused with `model_unavailable` without a provider call, a process role's model included.
+   */
+  readonly assessModels?: readonly string[];
+  /**
+   * Group tables as data, each through `GroupTableSchema`; the shipped tables by default. A verification takes the table
+   * of its frozen configuration's `verifier` model and prompt version; without one its claims get the lowest group (KD-3, DC-11).
+   */
+  readonly groupTables?: readonly unknown[];
+  /**
+   * The server start passes it: creation is refused with `calibration_missing` when a loaded configuration with the
+   * `verify` capability has no table for its `verifier` model and prompt version (DC-2). The self-check program does not:
+   * it starts without a table and its claims get the lowest group (DC-11).
+   */
+  readonly requireCalibration?: boolean;
   readonly logger: EngineLogger;
 }
 
@@ -103,11 +130,67 @@ function resolveRoleModels(configs: readonly ProcessConfig[], resolveModel: Reso
 }
 
 /**
+ * The `assessModels`, resolved now and kept apart from the role models: `Engine.assess` calls only these. A model
+ * outside the catalog or a throwing port refuses creation at `assessModels.<index>`.
+ */
+function resolveAssessModels(
+  assessModels: readonly string[],
+  catalog: ModelCatalog,
+  resolveModel: ResolveModel,
+): Map<string, RoleModel> {
+  const models = new Map<string, RoleModel>();
+  for (const [index, model] of assessModels.entries()) {
+    const path = ['assessModels', index];
+    if (catalog[model] === undefined) {
+      const message = `${model} is not in the model catalog`;
+      throw new ProcessConfigRejectedError({ code: 'process_config_rejected', path, message });
+    }
+    try {
+      models.set(model, resolveModel(model));
+    } catch (error) {
+      const message = `resolveModel failed for ${model}: ${error instanceof Error ? error.message : String(error)}`;
+      throw new ProcessConfigRejectedError({ code: 'process_config_rejected', path, message }, { cause: error });
+    }
+  }
+  return models;
+}
+
+/** The group tables, each through its schema; a table that does not pass refuses creation at `groupTables.<index>`. */
+function loadGroupTables(tables: readonly unknown[]): GroupTable[] {
+  return tables.map((data, index) => {
+    const parsed = GroupTableSchema.safeParse(data);
+    if (!parsed.success) {
+      const message = `group table rejected: ${z.prettifyError(parsed.error)}`;
+      throw new ProcessConfigRejectedError({ code: 'process_config_rejected', path: ['groupTables', index], message });
+    }
+    return parsed.data;
+  });
+}
+
+/** Under `requireCalibration`: every configuration that verifies has the table of its `verifier` model and prompt (DC-2). */
+function requireGroupTables(configs: readonly ProcessConfig[], tables: readonly GroupTable[]): void {
+  for (const config of configs) {
+    if (!config.capabilities.includes('verify')) continue;
+    const verifier = config.roles.verifier;
+    if (findGroupTable(tables, verifier) === undefined) {
+      throw new CalibrationMissingError({
+        processId: config.processId,
+        version: config.version,
+        model: verifier.model,
+        promptVersion: promptVersion(verifier.prompt),
+      });
+    }
+  }
+}
+
+/**
  * Builds the engine (design-engine.md, Contract Definitions). Throws with the configuration path when a configuration
- * fails the schema, a role model has no catalog entry or does not resolve, a `processId` + `version` pair repeats, or —
- * only with a connected source — a configured source is not allowed for `source.fetch` (DC-14). Without a connected
- * source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2), `research.analyze`,
- * `research.verify` and `research.synthesize` handlers. Reads neither the environment nor the database.
+ * fails the schema, a role or `assessModels` model has no catalog entry or does not resolve, a `processId` +
+ * `version` pair repeats, a group table fails its schema, `requireCalibration` finds a verifying configuration without
+ * its group table (`calibration_missing`), or — only with a connected source — a configured source is not
+ * allowed for `source.fetch` (DC-14). Without a connected source it writes exactly one `warn` instead (DC-18). Registers the `research.controller` (KD-2), `research.analyze`,
+ * `research.verify` and `research.synthesize` handlers and the `engine.lifecycle` event consumer, which closes an
+ * investigation when its controller task ends. Reads neither the environment nor the database.
  */
 export function createEngine(options: CreateEngineOptions): Engine {
   const catalog = options.modelCatalog ?? DEFAULT_MODEL_CATALOG;
@@ -125,6 +208,11 @@ export function createEngine(options: CreateEngineOptions): Engine {
     throw new ProcessConfigRejectedError(sources.rejection);
   }
   const models = resolveRoleModels(configs, options.resolveModel);
+  const assessModels = resolveAssessModels(options.assessModels ?? [], catalog, options.resolveModel);
+  const groupTables = loadGroupTables(options.groupTables ?? shippedGroupTables);
+  if (options.requireCalibration === true) {
+    requireGroupTables(configs, groupTables);
+  }
   const signalKinds = createSignalRegistry(options.signalKinds ?? []);
   if (sources.warnNoSources) {
     options.logger.warn(NO_SOURCES_WARNING);
@@ -139,6 +227,7 @@ export function createEngine(options: CreateEngineOptions): Engine {
       investigations: options.runtime.investigations,
       scheduler: options.runtime.scheduler,
       sourceRegistry: options.sourceRegistry,
+      evidence: options.runtime.evidence,
       gateway,
       contextBuilder,
       clock,
@@ -160,12 +249,10 @@ export function createEngine(options: CreateEngineOptions): Engine {
       database: options.database,
       investigations: options.runtime.investigations,
       evidence: options.runtime.evidence,
-      scheduler: options.runtime.scheduler,
-      sourceRegistry: options.sourceRegistry,
       gateway,
       contextBuilder,
+      groupTables,
       clock,
-      logger,
     }),
   );
   options.runtime.handlers.register(
@@ -179,12 +266,25 @@ export function createEngine(options: CreateEngineOptions): Engine {
     }),
   );
 
+  options.runtime.eventConsumers.register(createLifecycleConsumer(options.runtime.investigations));
+
   return buildEngine({
     database: options.database,
     runtime: options.runtime,
+    evidence: options.runtime.evidence,
     processes: processSet.set,
     sourceMode: sources.sourceMode,
     models,
     signalKinds,
+    assess: createAssess({
+      models: assessModels,
+      catalog,
+      clock,
+      logger,
+      transcripts: postgresOutsideTaskTranscripts(options.database),
+    }),
+    sourceRegistry: options.sourceRegistry,
+    clock,
+    logger,
   });
 }
