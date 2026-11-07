@@ -365,6 +365,7 @@ flowchart TB
 - `TaskScheduler` проверяет `TaskSpec`, дедуплицирует, регистрирует рёбра с проверкой цикла, резервирует бюджет и подписывает запросившего.
 - `TaskRepository`, `EvidenceStore` и `EventLog` выполняют запросы Drizzle к задачам, evidence и событиям в переданной транзакции.
 - `OutboxRelay` доставляет события с повтором, backoff и парковкой, а `LISTEN` использует как подсказку.
+  > **Изменено фичей `agent-quality`.** Доставки одного события `OutboxRelay` выдаёт в постоянном порядке — по убыванию имени потребителя, только ради повторяемости ([`design-lifecycle.md`](../agent-quality/design-lifecycle.md#c3--components-api), C3 «api — закрытие расследования»).
 - `SchedulerConsumer` каскадом отменяет задачи с `dependency_failed`, будит задачи в `waiting` и отмечает подписчиков.
 
 **api — остановка: отмена, удаление беседы, восстановление**
@@ -1437,3 +1438,4 @@ Node 24.11, `pg` 8.23.1, Postgres 16.15 из `infra/docker-compose.yml`, одн�
 | 1.18 | 2026-11-01 | `TaskContext.withAttemptGuard` (KD-9): запись клиента в свои таблицы в транзакции под блокировкой строки задачи с проверкой попытки, отказ — значение `fenced`; транзакция ограничена `RUNTIME_LEASE_MS`, вложенный вызов `TaskContext` отклоняется, FK таблиц клиента только на своё расследование или задачу; AC-RT-1, инварианты 13 и 14 и Error Handling охватывают её; первый потребитель — движок `deep-research`; добавление к контракту с обратной совместимостью, реализуется в плане части `engine`; UC-E9; прочее поведение не менялось |
 | 1.19 | 2026-11-06 | Отметки о правилах, которые заменила утверждённая фича `agent-quality` (`design-lifecycle.md` KD-1–KD-3): окончательные статусы расследования `completed` и `failed` и операция `InvestigationService.closeInTx`; сроки ожидания в очереди и одной попытки рядом с `deadline_at` и настройки `RUNTIME_QUEUE_WAIT_MS`, `RUNTIME_ATTEMPT_MS`; режим `requireActive` у `withAttemptGuard` с отказом `stopping`. Отмечены Snapshot, KD-9, FR-19, `Investigation`, правило `cancel_requested_at` у `withAttemptGuard`, Runtime Settings, статусы расследования в State Transitions. Утверждённый текст не менялся; статус Approved сохранён |
 | 1.20 | 2026-11-07 | Строка `DB_POOL_MAX` в Runtime Settings: та же настройка задаёт размер пула замков беседы (`design-lifecycle.md` KD-5); прочий текст не менялся |
+| 1.21 | 2026-11-07 | Отметка у `OutboxRelay`: доставки одного события идут в постоянном порядке по имени потребителя (`design-lifecycle.md`, C3 закрытия); прочий текст не менялся |
