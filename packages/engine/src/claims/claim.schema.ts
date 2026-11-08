@@ -1,16 +1,24 @@
 import { z } from 'zod';
 import { type Pointer, PointerSchema } from '../verify/pointer.js';
 
-/** The parts of a claim code checks against source records (design-engine.md, Terms: atom). */
-const ATOM_KINDS = ['traceId', 'service', 'event', 'interval', 'number'] as const;
+/**
+ * The parts of a claim code checks against source records (design-engine.md, Terms: atom; KD-9): three kinds with no
+ * subject vocabulary. Stored revisions may hold former kinds; they are read as any string (`checkAtoms`), never written.
+ */
+const ATOM_KINDS = ['text', 'number', 'time'] as const;
 
 /**
- * One atom as the model states it. The value is text in every kind — an interval as `start/end`, a number as written —
- * so the output schema stays a flat object for the native `json_schema` output; the verifier reads it by its kind.
+ * One atom as the model states it. The value is text in every kind so the output schema stays a flat object for the
+ * native `json_schema` output; `checkAtoms` compares it with the pointed records by its kind.
  */
 const AtomSchema = z.object({
   kind: z.enum(ATOM_KINDS),
-  value: z.string().min(1),
+  value: z
+    .string()
+    .min(1)
+    .describe(
+      'text: a value exactly as a record holds it; number: one count or number as a record holds it; time: an ISO 8601 moment with a zone or an interval start/end',
+    ),
 });
 
 /**

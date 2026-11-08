@@ -12,9 +12,10 @@ import { abandonEarlierAttempts } from '../model/ledger.js';
 import type { ModelGateway } from '../model/model-gateway.js';
 import { promptVersion } from '../model/prompt-version.js';
 import { ClaimAssessmentSchema } from './claim-assessment.js';
+import { type AtomCheck, checkAtoms } from './check-atoms.js';
 import { buildClaimCheck, type ClaimCheck, type ClaimCheckPage } from './claim-check.js';
 import { type ClaimDecision, decideClaim } from './decide-claim.js';
-import { checkPointer, PageSchema, type Pointer } from './pointer.js';
+import { checkPointer, PageSchema, type Pointer, pointedRecords } from './pointer.js';
 
 export interface VerifyDeps {
   readonly database: Database;
@@ -92,8 +93,9 @@ const originOf = (record: EvidenceRecord): PointedPage['origin'] => ({
  * `research.verify` v2 (design-engine.md, Flow 1; «Как утверждение получает статус»): the check of one claim. The task
  * reads the claim's latest revision and the pages of its pointer for the investigation's owner; a pointer that names a
  * page of another investigation or owner, an unknown page, a record outside its page, or no record at all ends
- * `insufficient` with `pointer_invalid`, with no model call and no reservation (DC-6). `buildClaimCheck` builds the
- * packet of the pointed records only; a packet over the role window ends `insufficient` with `needs_narrowing`, again
+ * `insufficient` with `pointer_invalid`, with no model call and no reservation (DC-6). `checkAtoms` compares the atoms
+ * with the pointed records, and `buildClaimCheck` builds the packet of those records only, with the atom check as
+ * evidence; a packet over the role window ends `insufficient` with `needs_narrowing`, again
  * without a call. One `verifier` call answers the closed assessment; an answer the form rules of `decideClaim` refuse is
  * asked once more, and one still off the form ends `insufficient` with `invalid_assessment` (DC-7). `decideClaim`
  * with the investigation's group table gives the status, and one guarded write appends the revision: status, pointer,
@@ -141,13 +143,16 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
     return checked.valid ? { revision, pointer: checked.pointer, pages } : null;
   }
 
-  /** The verifier input: the claim text and, page by page in pointer order, only the records the pointer names. */
-  function claimCheckOf(frame: TaskFrame, claim: CheckedClaim): ClaimCheck {
+  /**
+   * The verifier input: the claim text with the atom check and, page by page in pointer order, only the records the
+   * pointer names.
+   */
+  function claimCheckOf(frame: TaskFrame, claim: CheckedClaim, atomCheck: AtomCheck): ClaimCheck {
     const pages = claim.pointer.map(({ pageId, records }): ClaimCheckPage => {
       const page = claim.pages.get(pageId)!;
       return { ...page.origin, records: records.map((number) => page.items[number]) };
     });
-    return buildClaimCheck({ roleConfig: frame.config.roles.verifier, claimText: claim.revision.text, pages });
+    return buildClaimCheck({ roleConfig: frame.config.roles.verifier, claimText: claim.revision.text, atomCheck, pages });
   }
 
   /** One verifier call: its answer, null when the gateway found it off the schema twice, or the task's result. */
@@ -238,7 +243,13 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
     const claim = await checkClaimPointer(frame, revision);
     if (claim === null) return append(ctx, uncheckedRevision(revision, 'pointer_invalid'), 'pointer_invalid');
 
-    const check = claimCheckOf(frame, claim);
+    // Step 2 of «Как утверждение получает статус»: the atoms against the pointed records, before the call (DC-9).
+    const items = new Map([...claim.pages].map(([pageId, page]) => [pageId, page.items]));
+    const atomCheck = checkAtoms({
+      atoms: StoredAtomsSchema.parse(revision.atoms),
+      records: pointedRecords(claim.pointer, items).map(({ record }) => record),
+    });
+    const check = claimCheckOf(frame, claim, atomCheck);
     const roleConfig = frame.config.roles.verifier;
     const packet = await deps.contextBuilder.fitMessages(
       { roleConfig, instructions: check.instructions, outputSchema: check.outputSchema, signal: ctx.signal },
@@ -252,10 +263,9 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
       return failed(ctx, 'model_unavailable', 'the verifier packet could not be counted');
     }
 
-    const atoms = StoredAtomsSchema.parse(revision.atoms);
     const groupTable = findGroupTable(deps.groupTables, roleConfig);
-    const items = new Map([...claim.pages].map(([pageId, page]) => [pageId, page.items]));
-    const decide = (answer: unknown): ClaimDecision => decideClaim({ assessment: answer, pointer: claim.pointer, atoms, pages: items, groupTable });
+    const decide = (answer: unknown): ClaimDecision =>
+      decideClaim({ assessment: answer, pointer: claim.pointer, atomCheck, pages: items, groupTable });
     const assessed = await assess(ctx, frame, check, (answer) => decide(answer).reason === 'invalid_assessment');
     if (assessed.next === 'result') return assessed.result;
 
@@ -265,7 +275,8 @@ export function createVerifyHandler(deps: VerifyDeps): TaskHandler {
       {
         claimId: revision.claimId,
         text: revision.text,
-        atoms: decision.values?.atoms ?? atoms,
+        // Each atom with its verdict and the numbers of the records it was found in (Data Model).
+        atoms: decision.values.atoms,
         evidenceIds: decision.basis,
         coverage: StoredCoverageSchema.parse(revision.coverage),
         status: decision.status,

@@ -58,13 +58,21 @@ export type {
   StartInvestigationResult,
 } from './runs/start-investigation.js';
 export {
+  type Atom,
+  type AtomCheck,
+  type AtomCheckInput,
+  type AtomVerdict,
+  type CheckedAtom,
+  checkAtoms,
+  type ValueCheck,
+} from './verify/check-atoms.js';
+export {
   type ClaimAssessment,
   ClaimAssessmentSchema,
   type ClaimProfile,
   type ClaimType,
 } from './verify/claim-assessment.js';
 export { buildClaimCheck, type ClaimCheck, type ClaimCheckInput, type ClaimCheckPage } from './verify/claim-check.js';
-export type { Atom } from './verify/claim-verifier.js';
 export {
   type ClaimDecision,
   type DecideClaimInput,

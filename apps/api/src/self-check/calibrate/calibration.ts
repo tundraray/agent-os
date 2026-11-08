@@ -4,8 +4,12 @@ import {
   type AssessRequest,
   type AssessResult,
   type AssessUsage,
+  type Atom,
+  type AtomCheck,
   buildClaimCheck,
+  checkAtoms,
   ClaimAssessmentSchema,
+  type ClaimCheckPage,
   type ClaimProfile,
   decideClaim,
   type GroupTable,
@@ -22,8 +26,9 @@ import type { Clock } from '@agent-os/runtime';
 
 /**
  * Calibration of the `verifier` call (design-engine.md, KD-3, «Как калибровка ставит таблицу групп», Flow 5): each
- * pair goes through the same call and the same rule as in an investigation — `buildClaimCheck`, `Engine.assess` with
- * the `verifier` role, `decideClaim` over a pointer to all the pair's records — and is compared with its key by enums
+ * pair goes through the same call and the same rule as in an investigation — `checkAtoms` over all the pair's records,
+ * `buildClaimCheck`, `Engine.assess` with the `verifier` role, `decideClaim` over a pointer to all those records — and
+ * is compared with its key by enums
  * only (support, type, established or not); no text of the claim, the records or the answer is read. The established
  * pairs' profiles are ranked by the lower bound of the 90 % Wilson interval of their share correct and cut into 3 or 4
  * consecutive groups of about equal established pairs, a profile never split (plan Notes 1, decision 1).
@@ -70,12 +75,17 @@ export interface PairOutcome {
   readonly failure: PairFailure | null;
   readonly supportMatch: boolean;
   readonly typeMatch: boolean;
-  /** The key: records support it, it is not causal and its values match. */
+  /** The key: records support it and it is not causal — the engine's rule, in which the values do not decide. */
   readonly shouldBeEstablished: boolean;
   /** `decideClaim` gave `supported`. */
   readonly established: boolean;
   /** The algorithm's decision matches the key; a failed pair is never right. */
   readonly decisionCorrect: boolean;
+  /**
+   * The old veto «value check `unmatched` — not established» over the same decision matches the key (AC-13.2); a
+   * failed pair is never right. Shown in the report only, never written to the table.
+   */
+  readonly vetoCorrect: boolean;
   /** Set only for an established pair. */
   readonly profile: ClaimProfile | null;
 }
@@ -158,14 +168,30 @@ export async function calibrate(
   return { ok: true, report: { table, pairs, ranked, groups, usage } };
 }
 
+/**
+ * `checkAtoms` over every record of the pages, numbered across the pages in order as `buildClaimCheck` and
+ * `pointerOverAll` number them.
+ */
+export function atomCheckOf(
+  atoms: readonly Atom[],
+  pages: readonly ClaimCheckPage[],
+): AtomCheck {
+  return checkAtoms({
+    atoms,
+    records: pages.flatMap((page) => page.records),
+  });
+}
+
 async function judgePair(
   input: CalibrationInput,
   pair: CalibrationPair,
 ): Promise<{ readonly outcome: PairOutcome; readonly usage: AssessUsage }> {
   const { verifier } = input;
+  const atomCheck = atomCheckOf(pair.claimAtoms, pair.pages);
   const check = buildClaimCheck({
     roleConfig: verifier,
     claimText: pair.claimText,
+    atomCheck,
     pages: pair.pages,
   });
   const called = await input.assess({
@@ -184,15 +210,14 @@ async function judgePair(
   const decision = decideClaim({
     assessment,
     pointer,
-    atoms: pair.claimAtoms,
+    atomCheck,
     pages,
     // Without a table every established claim is in the lowest group; calibration reads only the profile.
     groupTable: undefined,
   });
+  // Step 2 of «Как калибровка ставит таблицу групп»: the status rests on the assessment only, so the key does too.
   const shouldBeEstablished =
-    pair.expectedSupport === 'yes' &&
-    pair.expectedType !== 'causal' &&
-    pair.expectedValuesMatch;
+    pair.expectedSupport === 'yes' && pair.expectedType !== 'causal';
   const failure: PairFailure | null =
     called.outcome === 'failed'
       ? called.code
@@ -203,6 +228,7 @@ async function judgePair(
   const inForm =
     failure === null ? ClaimAssessmentSchema.parse(assessment) : null;
   const established = decision.status === 'supported';
+  const establishedByVeto = established && atomCheck.valueCheck !== 'unmatched';
   return {
     usage: called.usage,
     outcome: {
@@ -214,6 +240,8 @@ async function judgePair(
       shouldBeEstablished,
       established,
       decisionCorrect: failure === null && established === shouldBeEstablished,
+      vetoCorrect:
+        failure === null && establishedByVeto === shouldBeEstablished,
       profile: established ? decision.profile : null,
     },
   };
@@ -415,10 +443,17 @@ export async function writeGroupTable(
 
 const percent = (share: number): string => `${(share * 100).toFixed(1)} %`;
 
+const VALUE_CHECK_LABELS: Readonly<Record<ClaimProfile['valueCheck'], string>> =
+  {
+    matched: 'значения совпали',
+    unmatched: 'значения не совпали',
+    not_applicable: 'без атомов',
+  };
+
 const profileLabel = (profile: ClaimProfile): string =>
   [
     profile.claimType,
-    profile.valueCheck === 'matched' ? 'значения совпали' : 'без атомов',
+    VALUE_CHECK_LABELS[profile.valueCheck],
     profile.independentRecords === 'two_or_more'
       ? 'две и больше записей'
       : 'одна запись',
@@ -432,6 +467,10 @@ export function renderCalibrationReport(
 ): string {
   const { table, usage } = report;
   const failed = report.pairs.filter((pair) => pair.failure !== null);
+  const vetoShare = (pairKind: string): number => {
+    const ofKind = report.pairs.filter((pair) => pair.pairKind === pairKind);
+    return ofKind.filter((pair) => pair.vetoCorrect).length / ofKind.length;
+  };
   return [
     `# Калибровка проверяющего вызова`,
     '',
@@ -443,11 +482,11 @@ export function renderCalibrationReport(
     '',
     '## Совпадения с ключом по видам пар',
     '',
-    '| Вид пары | «Подтверждают ли» | Тип | Решение алгоритма |',
-    '|---|---|---|---|',
+    '| Вид пары | «Подтверждают ли» | Тип | Решение алгоритма | Прежнее вето «значения не совпали — не установлено» |',
+    '|---|---|---|---|---|',
     ...table.pairKinds.map(
       (kind) =>
-        `| ${kind.pairKind} | ${percent(kind.supportMatch)} | ${percent(kind.typeMatch)} | ${percent(kind.decisionMatch)} |`,
+        `| ${kind.pairKind} | ${percent(kind.supportMatch)} | ${percent(kind.typeMatch)} | ${percent(kind.decisionMatch)} | ${percent(vetoShare(kind.pairKind))} |`,
     ),
     '',
     '## Профили по нижней границе 90-процентного интервала',

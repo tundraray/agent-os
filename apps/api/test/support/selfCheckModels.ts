@@ -419,7 +419,7 @@ export function createSelfCheckModels(): SelfCheckModels {
     return {
       claims: claims.map(({ text }) => ({
         text,
-        atoms: [{ kind: 'traceId', value: traced?.traceId }],
+        atoms: [{ kind: 'text', value: traced?.traceId }],
         pointer: [{ pageId: traced?.evidenceId, records: [traced?.number] }],
       })),
     };

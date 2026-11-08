@@ -102,26 +102,26 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
     const claimOfA = {
       text: 'After the release the provider adapter timed out',
       atoms: [
-        { kind: 'event', value: 'provider.timeout' },
-        { kind: 'service', value: 'provider-adapter' },
+        { kind: 'text', value: 'provider.timeout' },
+        { kind: 'text', value: 'provider-adapter' },
       ],
     };
     const claimOfC = {
       text: `Trace ${truth.affectedTraceIds[0]} got its provider reply late`,
       atoms: [
-        { kind: 'traceId', value: truth.affectedTraceIds[0]! },
-        { kind: 'service', value: truth.cause.service },
-        { kind: 'event', value: 'provider.response' },
+        { kind: 'text', value: truth.affectedTraceIds[0]! },
+        { kind: 'text', value: truth.cause.service },
+        { kind: 'text', value: 'provider.response' },
       ],
     };
     /**
-     * The claim pointing, on the packet's first page, at the first record that carries each of its atoms, by typed field
-     * equality (a record of the page carries the trace of C's atom).
+     * The claim pointing, on the packet's first page, at the first record that holds each of its atoms as a field value,
+     * by exact equality (a record of the page carries the trace of C's atom).
      */
     function pointed(call: RecordedModelCall, claim: typeof claimOfA) {
       const [page] = workerPagesOf(call);
-      const fieldsOf = (number: number) => page!.records[number] as Record<string, unknown>;
-      const numbers = claim.atoms.map((atom) => page!.records.findIndex((_, number) => fieldsOf(number)[atom.kind] === atom.value));
+      const valuesOf = (number: number) => Object.values(page!.records[number] as Record<string, unknown>);
+      const numbers = claim.atoms.map((atom) => page!.records.findIndex((_, number) => valuesOf(number).includes(atom.value)));
       const records = [...new Set(numbers)].sort((left, right) => left - right);
       return { ...claim, pointer: [{ pageId: page!.pageId, records }] };
     }
@@ -349,9 +349,12 @@ describe('deep-research / engine - E2E (real fixture, real Postgres, scripted mo
           { claimId: claimIds.A, text: claimOfA.text, confidence: 'low' },
         ]);
         expect(revisions).toHaveLength(2);
+        // Each atom stored with its verdict and the numbers of the pointed records it was found in (which records the
+        // pointer names depends on the slice, so the numbers are not literals here; `check-atoms.spec.ts` owns them).
+        const found = (atom: { kind: string; value: string }) => ({ ...atom, verdict: 'found', records: expect.any(Array) });
         expect(Object.fromEntries(revisions.map((row) => [row.claimId, [row.status, row.atoms]]))).toEqual({
-          [claimIds.A]: ['supported', claimOfA.atoms.map((atom) => ({ ...atom, verdict: 'found' }))],
-          [claimIds.C]: ['supported', claimOfC.atoms.map((atom) => ({ ...atom, verdict: 'found' }))],
+          [claimIds.A]: ['supported', claimOfA.atoms.map(found)],
+          [claimIds.C]: ['supported', claimOfC.atoms.map(found)],
         });
         const own = new Set(tasks.map((task) => task.taskId));
         const provenance = async (evidenceIds: readonly string[]) =>

@@ -26,8 +26,8 @@ export type ClaimType = ClaimAssessment['claimType'];
  */
 export const ClaimProfileSchema = z.strictObject({
   claimType: z.enum(['observation', 'quantitative']),
-  /** `matched` when the claim has atoms and all were found, `not_applicable` when it has none. */
-  valueCheck: z.enum(['matched', 'not_applicable']),
+  /** The result of `checkAtoms`: every atom found, one missing or contradicted, or no atoms; it never sets the status. */
+  valueCheck: z.enum(['matched', 'unmatched', 'not_applicable']),
   /** Records marked `supports`; records with one `traceId` count once, a record without `traceId` on its own. */
   independentRecords: z.enum(['one', 'two_or_more']),
   /** Whether the assessment marked any record `contradicts`. */

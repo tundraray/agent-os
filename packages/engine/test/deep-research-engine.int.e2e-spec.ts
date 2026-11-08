@@ -747,7 +747,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       const draftClaim = (text: string, pages: string[] = []) => ({
         claimId: null,
         text,
-        atoms: [{ kind: 'service', value: 'payments' }],
+        atoms: [{ kind: 'text', value: 'payments' }],
         pointer: pages.map((pageId) => ({ pageId, records: [0] })),
       });
       await harness.rebuildEngine({ connectedSources: [] });
@@ -1075,7 +1075,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       const sibling = 'L1 sibling: what failed in service-1?';
       harness.model.script('controller', analysisOf([overBudget, sibling]), conclude);
       harness.model.script('worker', {
-        output: { claims: [{ text: 'service-1 reset its connections', atoms: [{ kind: 'service', value: 'service-1' }], pointer: [] }] },
+        output: { claims: [{ text: 'service-1 reset its connections', atoms: [{ kind: 'text', value: 'service-1' }], pointer: [] }] },
       });
       // The call of the first worker is counted above three reservations of the worker role (its task's maxTokens):
       // its packet fits the window, the reservation of the call does not fit the task.
@@ -1113,7 +1113,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       // The sibling's claim is an unverified revision with the coverage of its gather task.
       const { claims } = await engineRowsOf(investigationId);
       expect(claims.map((row) => [row.taskId, row.claimIndex, row.text, row.status, row.atoms])).toEqual([
-        [siblingTask!.taskId, 0, 'service-1 reset its connections', 'unverified', [{ kind: 'service', value: 'service-1' }]],
+        [siblingTask!.taskId, 0, 'service-1 reset its connections', 'unverified', [{ kind: 'text', value: 'service-1' }]],
       ]);
       expect(claims[0]!.coverage).toMatchObject({ completeness: 'complete', returned: 1 });
       // The next decision observes both outcomes: the refusal by its code and the sibling's claim.
@@ -1151,7 +1151,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       );
       harness.model.script('worker', {
         output: (call: RecordedModelCall) => ({
-          claims: [{ text: 'the payment trace failed', atoms: [{ kind: 'traceId', value: trace }], pointer: [{ pageId: workerPagesOf(call)[0]!.pageId, records: [0] }] }],
+          claims: [{ text: 'the payment trace failed', atoms: [{ kind: 'text', value: trace }], pointer: [{ pageId: workerPagesOf(call)[0]!.pageId, records: [0] }] }],
         }),
         ...usageOf('worker'),
       });
@@ -1177,12 +1177,12 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 
     it('INT-2 L2: an exhausted investigation budget starts no further call, stops with budget_exhausted and answers with the claims verified before, spending no more than the budget', async () => {
       // Every packet counts 1 000 tokens, so each reservation is 1 000 + margin + maxOutputTokens of its role:
-      // plan 9 800, controller 10 600, worker 12 200, verifier 6 600. The calls charge 120 (plan, controller),
-      // 6 000 (worker) and 4 000 (verifier): 10 360 spent before the third controller call, whose 10 600 no longer fit 20 000.
+      // plan 9 800, controller 4 600, worker 12 200, verifier 6 600. The calls charge 120 (plan, controller),
+      // 6 000 (worker) and 4 000 (verifier): 10 360 spent before the third controller call, whose 4 600 no longer fit 14 000.
       harness.tokenCounter.intercept = () => 1_000;
       const round = scriptAnalysisAndRound({ worker: { inputTokens: 1_000, outputTokens: 5_000 }, verifier: { inputTokens: 1_000, outputTokens: 3_000 } });
       try {
-        const { resourceId, investigationId } = await startDeepResearch('L2: which payment trace failed?', 20_000);
+        const { resourceId, investigationId } = await startDeepResearch('L2: which payment trace failed?', 14_000);
         await releaseRound(investigationId, round);
         const done = await finished(investigationId, resourceId);
 
@@ -1209,12 +1209,12 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
         const llmCalls = await expectLedgerBalanced(investigationId);
         expect(llmCalls.map((row) => [row.role, row.reservedTokens, row.chargedTokens])).toEqual([
           ['plan', 9_800, 120],
-          ['controller', 10_600, 120],
+          ['controller', 4_600, 120],
           ['worker', 12_200, 6_000],
-          ['controller', 10_600, 120],
+          ['controller', 4_600, 120],
           ['verifier', 6_600, 4_000],
         ]);
-        expect(done.usage).toMatchObject({ totalTokens: 10_360, tokenBudget: 20_000 });
+        expect(done.usage).toMatchObject({ totalTokens: 10_360, tokenBudget: 14_000 });
       } finally {
         round.claimsWritten.open();
       }
@@ -1551,7 +1551,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
   //
   // Verification items (table):
   // - V1 verification round through the runtime (UC-6 wiring, AC-08.1, DC-9): two claims pointing at the one record of the worker's page -> the first has all atoms in it -> new revision `supported` with basis and scope;
-  //   the second states a number no pointed record counts -> new revision `insufficient` with the number `missing`, not `refuted`; the earlier `unverified` revisions are byte-identical after the round (row-version snapshot), each check task `succeeded`;
+  //   the second states a number no pointed record counts -> new revision `supported` with the number `missing` (KD-2: the atom check does not set the status), not `refuted`; the earlier `unverified` revisions are byte-identical after the round (row-version snapshot), each check task `succeeded`;
   //   the same run also pins AC-25.3 (UC-12 second half): a collection from the failing connected source fails, `readInvestigation` shows `sourceMode` `sources`, and the answer carries no model-knowledge mark
   //   (since agent-quality engine T2.4 the verification fetches nothing, so the failing collection is a decision of its own)
   // - V2 gateway over the real reader (UC-7 wiring, AC-09.1, AC-09.2, mode `sources`): a draft with a claim citing evidence of another investigation of the same user, a claim citing an id that does not exist and a claim citing this investigation's evidence of a `supported` claim ->
@@ -1595,7 +1595,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       }
     });
 
-    it('INT-3 V1: a verification round appends a check revision per claim from the records its pointer names (supported, and insufficient when an atom is missing from them, never refuted) and leaves the earlier revisions untouched, a failing or unreadable connected source keeps the investigation in the sources mode, and deleting the conversation removes every engine row', async () => {
+    it('INT-3 V1: a verification round appends a check revision per claim from the records its pointer names (supported, also when an atom is missing from them, never refuted) and leaves the earlier revisions untouched, a failing or unreadable connected source keeps the investigation in the sources mode, and deleting the conversation removes every engine row', async () => {
       const trace = 'c'.repeat(32);
       const record = { ts: '2026-10-01T12:05:00.000Z', service: 'payments', level: 'error', event: 'refund', traceId: trace, status: 'error' };
       harness.countingSource.answerWith(() => [record]);
@@ -1631,8 +1631,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           const pointer = [{ pageId: workerPagesOf(call)[0]!.pageId, records: [0] }];
           return {
             claims: [
-              { text: claimTexts[0], atoms: [{ kind: 'traceId', value: trace }, { kind: 'service', value: 'payments' }], pointer },
-              { text: claimTexts[1], atoms: [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }], pointer },
+              { text: claimTexts[0], atoms: [{ kind: 'text', value: trace }, { kind: 'text', value: 'payments' }], pointer },
+              { text: claimTexts[1], atoms: [{ kind: 'text', value: 'payments' }, { kind: 'number', value: '42' }], pointer },
             ],
           };
         },
@@ -1692,31 +1692,36 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           (left, right) => Number(checkTaskIds.has(left.taskId)) - Number(checkTaskIds.has(right.taskId)) || claimIds.indexOf(left.claimId) - claimIds.indexOf(right.claimId),
         );
         expect(claims.map((row) => [row.claimId, row.taskId, row.status, row.atoms, row.evidenceIds])).toEqual([
-          [claimIds[0], earlier[0]!.taskId, 'unverified', [{ kind: 'traceId', value: trace }, { kind: 'service', value: 'payments' }], page],
-          [claimIds[1], earlier[1]!.taskId, 'unverified', [{ kind: 'service', value: 'payments' }, { kind: 'number', value: '42' }], page],
+          [claimIds[0], earlier[0]!.taskId, 'unverified', [{ kind: 'text', value: trace }, { kind: 'text', value: 'payments' }], page],
+          [claimIds[1], earlier[1]!.taskId, 'unverified', [{ kind: 'text', value: 'payments' }, { kind: 'number', value: '42' }], page],
           [
             claimIds[0],
             checks[0]!.taskId,
             'supported',
-            [{ kind: 'traceId', value: trace, verdict: 'found' }, { kind: 'service', value: 'payments', verdict: 'found' }],
+            [{ kind: 'text', value: trace, verdict: 'found', records: [0] }, { kind: 'text', value: 'payments', verdict: 'found', records: [0] }],
             page,
           ],
-          // DC-9: the number is missing from the pointed records, so the claim is insufficient, never refuted.
+          // DC-9, KD-2: the number is missing from the pointed records; the confirmed claim is supported all the same,
+          // never refuted or dropped by the atom check, which only goes into its profile.
           [
             claimIds[1],
             checks[1]!.taskId,
-            'insufficient',
-            [{ kind: 'service', value: 'payments', verdict: 'found' }, { kind: 'number', value: '42', verdict: 'missing' }],
-            [],
+            'supported',
+            [{ kind: 'text', value: 'payments', verdict: 'found', records: [0] }, { kind: 'number', value: '42', verdict: 'missing', records: [] }],
+            page,
           ],
         ]);
-        expect(done.answer!.established).toEqual([{ claimId: claimIds[0], text: claimTexts[0], evidenceIds: page, verified: true, confidence: 'low' }]);
+        // The two check tasks run side by side, so the answer's order of the two is not fixed: compared in claim order.
+        expect([...done.answer!.established!].sort((left, right) => claimIds.indexOf(left.claimId) - claimIds.indexOf(right.claimId))).toEqual([
+          { claimId: claimIds[0], text: claimTexts[0], evidenceIds: page, verified: true, confidence: 'low' },
+          { claimId: claimIds[1], text: claimTexts[1], evidenceIds: page, verified: true, confidence: 'low' },
+        ]);
         // The check revisions keep the scope of the records the claims rest on.
         expect(claims[2]!.coverage).toMatchObject({ completeness: 'complete', returned: 1 });
         expect(claims[3]!.coverage).toMatchObject({ completeness: 'complete', returned: 1 });
         expect(checks.map((check) => (check.outcome as { answerOrDelta: unknown }).answerOrDelta)).toEqual([
           { claimId: claimIds[0], status: 'supported', reason: null },
-          { claimId: claimIds[1], status: 'insufficient', reason: 'values_missing' },
+          { claimId: claimIds[1], status: 'supported', reason: null },
         ]);
         // Invariant 9: the earlier revisions are the same rows, never rewritten.
         const versionsAfter = await rowVersionsOf(investigationId);
@@ -1737,13 +1742,15 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
           ['verifier', 'settled'],
           ['verifier', 'settled'],
         ]);
-        // Each verifier call saw its own claim and only the record its pointer names.
+        // Each verifier call saw its own claim with its atom check and only the record its pointer names.
         expect(
           harness.model
             .callsOf('verifier')
             .map(verifierPacketOf)
             .sort((left, right) => claimTexts.indexOf(left.claimText) - claimTexts.indexOf(right.claimText)),
-        ).toEqual(claimTexts.map((claimText) => ({ claimText, records: [{ number: 0, record }] })));
+        ).toEqual(
+          [claims[2]!, claims[3]!].map((row, index) => ({ claimText: claimTexts[index], atoms: row.atoms, records: [{ number: 0, record }] })),
+        );
         // DC-20: the controller did not wait for the request that created no task, and its next input observes it as a
         // failed gather with `source_unavailable`; the mode stayed `sources` (asserted on the view above).
         const afterUnavailable = harness.model.callsOf('controller')[4]!.user;
@@ -1843,7 +1850,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
     const trace = 'd'.repeat(32);
     const traceRecord = { ts: '2026-10-01T12:05:00.000Z', service: 'payments', level: 'error', event: 'refund', traceId: trace, status: 'error' };
     const searchPayments = { kind: 'requestEvidence', sourceId: 'fixture', toolName: 'search_logs', args: { service: 'payments' }, completeness: 'all' };
-    const traceAtoms = [{ kind: 'traceId', value: trace }];
+    const traceAtoms = [{ kind: 'text', value: trace }];
     /** A pointer naming the first record of each page: the gateway takes a claim's pages from its pointer. */
     const pointAt = (pages: readonly string[]) => pages.map((pageId) => ({ pageId, records: [0] }));
     /**
@@ -2236,8 +2243,8 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
       const workerAnswer = {
         output: {
           claims: [
-            { text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'service', value: 'service-0' }], pointer: [] },
-            { text: 'the lock wait exceeded its timeout', atoms: [{ kind: 'event', value: 'lock wait timeout' }], pointer: [] },
+            { text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'text', value: 'service-0' }], pointer: [] },
+            { text: 'the lock wait exceeded its timeout', atoms: [{ kind: 'text', value: 'lock wait timeout' }], pointer: [] },
           ],
         },
       };
@@ -2356,7 +2363,7 @@ describe('deep-research / engine - integration (in-process runtime + engine + re
 // - ContextBuilder (table + fast-check property): input tokens of the packed prompt <= `windowTokens` for arbitrary evidence sizes (AC-06.1); mandatory evidence is never truncated and yields `needs_narrowing` with the material size (AC-06.2, DC-7);
 //   a worker packet holds only its own sub-question and evidence, not the controller history or other workers' material (AC-05.2 isolation half); `windowTokens` read from the configuration changes the packing (AC-06.3);
 //   optional claims go newest first until the window is full.
-// - Claim verifier (table, UC-6): an atom (traceId, service, event, interval, number) absent from the records -> `insufficient`; a number equal to the aggregate -> `supported`; an interval contradicted by a fetched record -> `refuted`;
+// - Atom check and status (tables, UC-6; `check-atoms.spec.ts`, `decide-claim.spec.ts`): each atom `found`, `missing` or `contradicted` in the pointed records goes into the profile; the status is the verifier's answer (KD-2);
 //   a claim backed only by a worker summary is never `supported` before source records arrive. AC-08.1, AC-08.2, DC-10 (comparison half).
 // - Reference gateway (table, UC-7): claim without a reference, with an unknown reference, with another investigation's reference -> removed with a reason; a new claim -> `needs_verification` or `assumed`/unverified depending on rounds left; `established` holds only
 //   `supported`; outcome `answered` without any `supported` claim is lowered to `inconclusive` (DC-11, mode `sources` only). AC-09.1 (rule), AC-09.3 (rule), DC-11.

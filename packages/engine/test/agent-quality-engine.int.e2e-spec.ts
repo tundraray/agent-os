@@ -115,14 +115,14 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
   // having answered (a `supported` revision with no transcript of its task); a pointer to a foreign, missing or empty place still reaches the model or is stored as `unverified`; an off-form assessment, once or twice, ends as `supported` or as
   // `unverified` instead of `insufficient`; the new revision loses the pointer, type, assessment (with the reason of an `insufficient` decided without a call), group or basis.
   // (The value check over the pointed records only and `causal` over `supported` are `decide-claim.spec.ts` rows since the test audit.)
-  // Behavior: `research.verify` reads the latest revision and the pages of its pointer through `EvidenceReader` for the owner -> validates the pointer -> `buildClaimCheck` -> one `verifier` call through reserve and transcript -> `decideClaim` with the group table ->
+  // Behavior: `research.verify` reads the latest revision and the pages of its pointer through `EvidenceReader` for the owner -> validates the pointer -> `checkAtoms` over the pointed records -> `buildClaimCheck` with the atom check -> one `verifier` call through reserve and transcript -> `decideClaim` with the group table ->
   //   a new revision (status, type, assessment, group, basis in `evidenceIds`) -> the task ends `succeeded` with the status
   // @category: core-functionality
-  // @dependency: research.verify, buildClaimCheck, decideClaim, verifyClaim, EvidenceReader, ModelGateway, claimsRepository, group table, research_llm_calls, research_llm_transcripts, scripted model, Postgres
+  // @dependency: research.verify, checkAtoms, buildClaimCheck, decideClaim, EvidenceReader, ModelGateway, claimsRepository, group table, research_llm_calls, research_llm_transcripts, scripted model, Postgres
   // @complexity: high
   //
   // Verification items (table; each row asserts on `research_claims`, `research_tasks`, `research_llm_calls`, `research_llm_transcripts` and the model double's calls, with literal expected values; the verifier answers only with the closed assessment form):
-  // - V1 established with group and a transcript (UC-1, AC-12.3, DC-11): Given a worker claim "412 timeout errors from 19:40 to 20:15" with atoms (service, count, interval) and a pointer to a count page plus three log rows of three `traceId`s, a verifier stub
+  // - V1 established with group and a transcript (UC-1, AC-12.3, DC-11): Given a worker claim "412 timeout errors from 19:00 to 20:00" with atoms (text, number, time) and a pointer to a count group `{ start, key, count }` as `aggregate_logs` returns it plus three log rows of three `traceId`s, a verifier stub
   //   `support: yes`, `claimType: quantitative`, all four records `supports`, a group table that puts the profile (quantitative, values matched, two or more independent, no contradiction) in `high` -> the latest revision is `supported` with group `high`, type
   //   `quantitative`, the stored assessment, `evidenceIds` = the pages whose records were marked `supports`; `research_llm_transcripts` has one answered `verifier` row of the check task whose input carries exactly the four pointed records numbered from 0 and
   //   no record outside the pointer; the counting source got no new call (no re-fetch)
@@ -147,19 +147,20 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
       groups: [{ group: 'high', establishedPairs: 4, correctShare: 1 }],
       pairKinds: [],
     };
-    const INTERVAL = '2026-10-01T19:40:00.000Z/2026-10-01T20:15:00.000Z';
+    /** The hour of the count group: from its `start`, one `1h` bucket long. */
+    const HOUR = '2026-10-01T19:00:00.000Z/2026-10-01T20:00:00.000Z';
     const logRow = (traceId: string, ts: string) => ({ ts, service: 'payment-api', level: 'error', event: 'timeout', traceId });
     /** The log page: three rows the claims point at and a fourth no pointer names. */
     const LOG_PAGE = [
       logRow('a'.repeat(32), '2026-10-01T19:45:00.000Z'),
       logRow('b'.repeat(32), '2026-10-01T19:50:00.000Z'),
-      logRow('c'.repeat(32), '2026-10-01T20:10:00.000Z'),
+      logRow('c'.repeat(32), '2026-10-01T19:55:00.000Z'),
       logRow('d'.repeat(32), '2026-10-01T20:12:00.000Z'),
     ];
-    /** The count page: payment-api's count and a `ledger` bucket no pointer names. */
+    /** The count page as `aggregate_logs` returns it (`1h` buckets by service): payment-api's group and a later `ledger` group no pointer names. */
     const countPage = (count: number) => [
-      { key: 'payment-api', count },
-      { key: 'ledger', count: 7 },
+      { start: '2026-10-01T19:00:00.000Z', key: 'payment-api', count },
+      { start: '2026-10-01T20:00:00.000Z', key: 'ledger', count: 7 },
     ];
 
     let harness: EngineHarness;
@@ -304,7 +305,7 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
     });
 
     it('INT-1 V1: a confirmed claim is stored supported with the group of its profile from the table and the basis of its checked records, after one verifier call that saw only the pointed records and no re-fetch', async () => {
-      const text = '412 timeout errors from 19:40 to 20:15';
+      const text = '412 timeout errors from 19:00 to 20:00';
       const answer = assessment({
         support: 'yes',
         claimType: 'quantitative',
@@ -316,9 +317,9 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
           {
             text,
             atoms: [
-              { kind: 'service', value: 'payment-api' },
+              { kind: 'text', value: 'payment-api' },
               { kind: 'number', value: '412' },
-              { kind: 'interval', value: INTERVAL },
+              { kind: 'time', value: HOUR },
             ],
             pointer: [
               { pageId: page.count!, records: [0] },
@@ -344,18 +345,21 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
         ],
         outcome: { claimId, status: 'supported', reason: null },
       });
-      expect(check.revision.atoms).toEqual([
-        { kind: 'service', value: 'payment-api', verdict: 'found' },
-        { kind: 'number', value: '412', verdict: 'found' },
-        { kind: 'interval', value: INTERVAL, verdict: 'found' },
-      ]);
+      // Each atom with its verdict and the numbers of the pointed records it was found in, as stored and as the call saw it.
+      const checkedAtoms = [
+        { kind: 'text', value: 'payment-api', verdict: 'found', records: [0, 1, 2, 3] },
+        { kind: 'number', value: '412', verdict: 'found', records: [0] },
+        { kind: 'time', value: HOUR, verdict: 'found', records: [0, 1, 2, 3] },
+      ];
+      expect(check.revision.atoms).toEqual(checkedAtoms);
       // One verifier call that saw exactly the four pointed records, numbered from 0, and nothing else of the two pages.
       const [call, ...moreCalls] = harness.model.callsOf('verifier');
       expect(moreCalls).toEqual([]);
       expect(verifierPacketOf(call!)).toEqual({
         claimText: text,
+        atoms: checkedAtoms,
         records: [
-          { number: 0, record: { key: 'payment-api', count: 412 } },
+          { number: 0, record: { start: '2026-10-01T19:00:00.000Z', key: 'payment-api', count: 412 } },
           { number: 1, record: LOG_PAGE[0] },
           { number: 2, record: LOG_PAGE[1] },
           { number: 3, record: LOG_PAGE[2] },
@@ -395,7 +399,7 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
       const run = await checkClaims({
         owner,
         pages: { log: LOG_PAGE },
-        claims: (page) => pointers(page).map((pointer, index) => ({ text: `V2 claim ${index}`, atoms: [{ kind: 'service', value: 'payment-api' }], pointer })),
+        claims: (page) => pointers(page).map((pointer, index) => ({ text: `V2 claim ${index}`, atoms: [{ kind: 'text', value: 'payment-api' }], pointer })),
       });
 
       expect(run.checks.map((task) => task.status)).toEqual(['succeeded', 'succeeded', 'succeeded', 'succeeded']);
@@ -423,7 +427,7 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
       const texts = ['V3 a value outside the list', 'V3 yes without a supporting record', 'V3 a record number never given', 'V3 off the form once'];
       const run = await checkClaims({
         pages: { log: LOG_PAGE },
-        claims: (page) => texts.map((text) => ({ text, atoms: [{ kind: 'service', value: 'payment-api' }], pointer: [{ pageId: page.log!, records: [0] }] })),
+        claims: (page) => texts.map((text) => ({ text, atoms: [{ kind: 'text', value: 'payment-api' }], pointer: [{ pageId: page.log!, records: [0] }] })),
         answers: new Map<string, unknown[]>([
           [texts[0]!, [outsideList, outsideList]],
           [texts[1]!, [yesWithoutSupport, yesWithoutSupport]],
@@ -582,7 +586,7 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
       readonly next: unknown;
       readonly synthesis?: (ids: Ids) => unknown;
     }) {
-      harness.countingSource.answerWith((call) => [{ key: 'payment-api', count: 412, page: call.args['page'] }]);
+      harness.countingSource.answerWith((call) => [{ start: '2026-10-01T19:00:00.000Z', key: 'payment-api', count: 412, page: call.args['page'] }]);
       const ids: Ids = { claimIds: [], pageIds: [] };
       const seeded = latch();
       const pageSteps = Array.from({ length: options.pages }, (_, page) => evidenceOf(page));
@@ -1182,7 +1186,7 @@ describe('agent-quality / engine - integration (in-process runtime + engine + re
         claimIds = await harness.seedClaims({
           investigationId,
           taskId: controller!.taskId,
-          claims: options.claims.map((text) => ({ text, atoms: [{ kind: 'service', value: 'payment-api' }], pointer: [{ pageId: fetch!.outputRefs[0]!, records: [0] }] })),
+          claims: options.claims.map((text) => ({ text, atoms: [{ kind: 'text', value: 'payment-api' }], pointer: [{ pageId: fetch!.outputRefs[0]!, records: [0] }] })),
         });
         seeded.open();
         return { resourceId, investigationId, claimIds };

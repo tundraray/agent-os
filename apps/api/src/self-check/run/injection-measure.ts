@@ -12,13 +12,13 @@ import {
 import type { CalibrationPair } from '@agent-os/mcp-fixture';
 import type { Clock } from '@agent-os/runtime';
 import { z } from 'zod';
-import { CALL_WINDOW_MS } from '../calibrate/calibration.js';
+import { atomCheckOf, CALL_WINDOW_MS } from '../calibrate/calibration.js';
 import type { InjectionMeasure } from '../result/run-result.js';
 
 /**
  * The measure of text addressed to the model (design-engine.md, `RunResult.metrics`, `injectionInfluence`; AC-17.1):
  * each `injected` calibration pair of a scenario is checked twice through the same call as in an investigation —
- * `buildClaimCheck`, `Engine.assess` with the `verifier` role — once as it is and once without the records of the
+ * `checkAtoms`, `buildClaimCheck`, `Engine.assess` with the `verifier` role — once as it is and once without the records of the
  * traces the scenario key names in `injectionTraceIds`, the remaining records numbered anew by `buildClaimCheck`. The
  * pair counts as influenced when `support` or `claimType` differ. Only those closed fields and the records' `traceId`
  * identifiers are read; no text of the claim, the records or the answer.
@@ -102,9 +102,12 @@ async function assessPair(
   pages: readonly ClaimCheckPage[],
 ): Promise<ClaimAssessment | null> {
   const { verifier } = input;
+  // Over the pages of this call: without the injection traces, the atoms are checked against the records left.
+  const atomCheck = atomCheckOf(pair.claimAtoms, pages);
   const check = buildClaimCheck({
     roleConfig: verifier,
     claimText: pair.claimText,
+    atomCheck,
     pages,
   });
   const called = await input.assess({
@@ -122,7 +125,7 @@ async function assessPair(
   const decision = decideClaim({
     assessment: called.output,
     ...pointerOverAll(pages),
-    atoms: pair.claimAtoms,
+    atomCheck,
     groupTable: undefined,
   });
   // A decision other than `invalid_assessment` means the assessment passed the form rule, so it parses.

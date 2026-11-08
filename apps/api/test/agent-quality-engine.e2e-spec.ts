@@ -281,10 +281,10 @@ const verifierEditConfig = {
 };
 
 /** KD-2 fingerprints (`promptVersion`) of the shipped and the edited verifier prompt, as literals. */
-const SHIPPED_VERIFIER_VERSION = '11947cf5ff16';
-const EDITED_VERIFIER_VERSION = '6fed75fe33f8';
+const SHIPPED_VERIFIER_VERSION = '6de9a2bbda25';
+const EDITED_VERIFIER_VERSION = '903fc8012b4e';
 const VERIFIER_MODEL = 'anthropic/claude-haiku-5-5';
-/** The calibration set: three scenarios, six pairs each. */
+/** The calibration set: three scenarios, seven pairs each, three of them on a page of hourly counts. */
 const CALIBRATION_SET = 'smoke';
 
 /** The profile of the journey's observation claim: one traced record supports it and its trace atom matched. */
@@ -471,7 +471,7 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
   // E2E-2  The developer changes the verifier prompt, the server refuses to start until the calibration is run again, then starts and uses the new groups
   // ---------------------------------------------------------------------------------------------------------------
   // User journey: the developer calibrates the verifier, edits one word of its prompt, tries to start the server, calibrates again and starts it. Commands and the server run as separate processes in this order:
-  //  1. `calibrate` the first calibration set with a scripted verifier that errs on pairs of the kind `values_match_meaning_wrong`, exit code 0. Then: a group table file and a calibration report are written; the report shows, for each kind of pair
+  //  1. `calibrate` the first calibration set with a scripted verifier that errs on pairs of the kinds `values_match_meaning_wrong` and `insufficient`, exit code 0. Then: a group table file and a calibration report are written; the report shows, for each kind of pair
   //     (`supported`, `values_match_meaning_wrong`, `causal`, `contradicted`, `insufficient`), the shares of agreement with the key on "do the records support" and on the type, and the share of the algorithm's decisions that match the key, and for each group the number of pairs and the share
   //     of right claims; the shipped location of the table now holds the file.
   //  2. Start the server with the verifier prompt edited by one word. Then: the process exits with a non-zero code and the error `calibration_missing`, naming the process id, the version and the prompt fingerprint; it never listens.
@@ -599,12 +599,15 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
         await writeFile(configFile, JSON.stringify(verifierEditConfig), 'utf8');
 
         // 1. The shipped configuration calibrated with a verifier that errs on the pairs whose values match and whose
-        //    meaning is wrong: the table names the model and the shipped prompt version; the report shows the shares
-        //    per kind of pair (AC-06.1) and the share of right claims per group (AC-15.2).
+        //    meaning is wrong and on the pairs the records do not decide: the table names the model and the shipped
+        //    prompt version; the report shows the shares per kind of pair (AC-06.1) and the share of right claims per
+        //    group (AC-15.2). The count pairs' profile (three right, three wrong) ranks above the journey's (three
+        //    right of nine), so the journey's profile is in `medium`; answered by the key, both profiles are right on
+        //    every pair and the tie puts the journey's profile first, in `high`.
         const first = await calibrate({
           name: 'calibrate-shipped',
           out: shippedTable,
-          errsOn: 'values_match_meaning_wrong',
+          errsOn: 'values_match_meaning_wrong,insufficient',
         });
         expect(first.exitCode, first.stderr).toBe(0);
         const firstTable = tableAt(shippedTable);
@@ -621,20 +624,23 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
           typeMatch: 1,
           decisionMatch: 0,
         });
-        // The three right and three wrong observation pairs of the journey's profile.
+        // The journey's profile: three right observation pairs, three of wrong meaning and three the records do not
+        // decide.
         expect(firstTable.groups).toContainEqual({
           group: 'medium',
-          establishedPairs: 6,
-          correctShare: 0.5,
+          establishedPairs: 9,
+          correctShare: 1 / 3,
         });
         const report = first.stdout.split(/\r?\n/);
         expect(report).toContain(
           `- Модель: ${VERIFIER_MODEL}; версия промпта: ${SHIPPED_VERIFIER_VERSION}`,
         );
+        // The old veto column: these pairs' values match, so the veto establishes them as the algorithm does - also
+        // wrong on every pair (AC-13.2).
         expect(report).toContain(
-          '| values_match_meaning_wrong | 0.0 % | 100.0 % | 0.0 % |',
+          '| values_match_meaning_wrong | 0.0 % | 100.0 % | 0.0 % | 0.0 % |',
         );
-        expect(report).toContain('| medium | 6 | 50.0 % | — |');
+        expect(report).toContain('| medium | 9 | 33.3 % | — |');
 
         await withChatEntrySession(
           async (session) => {

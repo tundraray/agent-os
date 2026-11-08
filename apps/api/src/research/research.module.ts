@@ -84,7 +84,12 @@ const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
           logger: new NestRuntimeLogger('ResearchRuntime'),
           clock,
         }),
-      inject: [RESEARCH_DATABASE, RUNTIME_SETTINGS, ThreadsService, RUNTIME_CLOCK],
+      inject: [
+        RESEARCH_DATABASE,
+        RUNTIME_SETTINGS,
+        ThreadsService,
+        RUNTIME_CLOCK,
+      ],
     },
     {
       provide: HANDLER_REGISTRY,

@@ -214,7 +214,7 @@ function worker(user: string): unknown {
   return {
     claims: [ENGINE_JOURNEY.observation, ENGINE_JOURNEY.causal].map((text) => ({
       text,
-      atoms: [{ kind: 'traceId', value: traceId }],
+      atoms: [{ kind: 'text', value: traceId }],
       pointer: [{ pageId: evidenceId, records: [number] }],
     })),
   };

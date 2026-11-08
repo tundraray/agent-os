@@ -85,7 +85,7 @@ export interface EngineBuildOptions {
  */
 export interface SeededClaim {
   readonly text: string;
-  readonly atoms: readonly { readonly kind: 'traceId' | 'service' | 'event' | 'interval' | 'number'; readonly value: string }[];
+  readonly atoms: readonly { readonly kind: 'text' | 'number' | 'time'; readonly value: string }[];
   /** Stored as given, its pages in `evidenceIds`: `research.verify` checks it. */
   readonly pointer: readonly { readonly pageId: string; readonly records: readonly number[] }[];
 }

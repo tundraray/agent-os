@@ -2,10 +2,8 @@ import {
   type AssessRequest,
   type AssessResult,
   type ClaimProfile,
-  decideClaim,
   deepResearchProcessV2,
   loadProcessConfig,
-  pointerOverAll,
   promptVersion,
 } from '@agent-os/engine';
 import {
@@ -16,6 +14,7 @@ import {
 import { systemClock } from '@agent-os/runtime';
 import { describe, expect, it } from 'vitest';
 import {
+  atomCheckOf,
   calibrate,
   type CalibrationReport,
   type GroupCount,
@@ -81,9 +80,9 @@ function scripted(
       claimText: 'a claim the scripted verifier never reads',
       // Atoms the first record holds, as `buildCalibrationPairs` writes them: the value check runs on every pair.
       claimAtoms: [
-        { kind: 'traceId', value: traces[0] ?? '' },
-        { kind: 'service', value: 'payment-api' },
-        { kind: 'event', value: 'payment.result' },
+        { kind: 'text', value: traces[0] ?? '' },
+        { kind: 'text', value: 'payment-api' },
+        { kind: 'text', value: 'payment.result' },
       ],
       pages: [
         {
@@ -240,53 +239,6 @@ function reportOf({ outcome }: Run): CalibrationReport {
   return outcome.report;
 }
 
-// DC-1, DC-9: the pairs the fixture builds carry atoms in the engine's format, so a verifier that answers `yes` by the
-// key gets the pair established exactly when its key says the values match. Caught: atoms the engine's value check
-// never finds (a duration as a number, a count without the bucket key), which leave every supported pair
-// `values_missing` and every calibration `calibration_empty`; a pair without atoms, whose value label the check would
-// pass as «not applicable» whatever its key says (the fixture's own label test, folded here by the test audit).
-describe('buildCalibrationPairs against the engine value check', () => {
-  it.each(['smoke', 'first'])(
-    'gives every pair of the %s set the value verdict its key states',
-    (setName) => {
-      const set = loadScenarioSet(setName);
-      if (!set.ok) throw new Error(`set ${setName}: ${set.detail}`);
-      const verdicts = buildCalibrationPairs(set.set).pairs.map((pair) => {
-        const records = pair.pages.reduce(
-          (sum, page) => sum + page.records.length,
-          0,
-        );
-        const decision = decideClaim({
-          assessment: {
-            support: 'yes',
-            claimType: 'observation',
-            records: Array.from({ length: records }, (_, record) => ({
-              record,
-              relation: 'supports',
-            })),
-          },
-          ...pointerOverAll(pair.pages),
-          atoms: pair.claimAtoms,
-          groupTable: undefined,
-        });
-        return [
-          pair.pairId,
-          pair.claimAtoms.length > 0,
-          decision.status === 'supported',
-        ];
-      });
-      expect(verdicts).toEqual(
-        buildCalibrationPairs(set.set).pairs.map((pair) => [
-          pair.pairId,
-          true,
-          pair.expectedValuesMatch,
-        ]),
-      );
-    },
-    120_000,
-  );
-});
-
 describe('calibrate: the three shares per pair kind (AC-06.1, DC-1)', () => {
   it('compares support, type and the decideClaim outcome with the key of each pair', async () => {
     const calibration = await run([
@@ -348,6 +300,154 @@ describe('calibrate: the three shares per pair kind (AC-06.1, DC-1)', () => {
       instructions: VERIFIER.prompt,
       binding: { selfCheckRunId: RUN_ID },
     });
+  });
+});
+
+// AC-13.1, UC-10 (design-engine.md, «Как калибровка ставит таблицу групп», step 2): a pair should be established when
+// its records support it and it is not causal, the engine's own rule, where the atom check only enters the profile.
+// Defect caught: calibration keying «should be established» on the values matching, so a confirmed pair whose atoms
+// are missing counts as a wrong decision and a pair whose values match but meaning is wrong as a right one.
+describe('calibrate: «should be established» by the engine rule, without the values', () => {
+  it('counts a confirmed pair right whatever its values, and a confirmed pair of wrong meaning wrong', async () => {
+    const valuesFound = scripted(
+      {
+        pairKind: 'supported',
+        expectedSupport: 'yes',
+        expectedType: 'observation',
+        expectedValuesMatch: true,
+      },
+      { support: 'yes', claimType: 'observation', relations: ['supports'] },
+    );
+    const valuesMissing = scripted(
+      {
+        pairKind: 'supported',
+        expectedSupport: 'yes',
+        expectedType: 'observation',
+        expectedValuesMatch: false,
+      },
+      { support: 'yes', claimType: 'observation', relations: ['supports'] },
+    );
+    const missingPair: Scripted = {
+      ...valuesMissing,
+      pair: {
+        ...valuesMissing.pair,
+        claimAtoms: [{ kind: 'text', value: 'checkout-api' }],
+      },
+    };
+    const meaningWrong = scripted(SHOULD_NOT_BE_ESTABLISHED, {
+      support: 'yes',
+      claimType: 'observation',
+      relations: ['supports'],
+    });
+
+    const report = reportOf(
+      await run([valuesFound, missingPair, meaningWrong]),
+    );
+
+    expect(
+      report.pairs.map(({ pairKind, shouldBeEstablished, established }) => [
+        pairKind,
+        shouldBeEstablished,
+        established,
+      ]),
+    ).toEqual([
+      ['supported', true, true],
+      ['supported', true, true],
+      ['values_match_meaning_wrong', false, true],
+    ]);
+    expect(report.table.pairKinds).toEqual([
+      {
+        pairKind: 'supported',
+        supportMatch: 1,
+        typeMatch: 1,
+        decisionMatch: 1,
+      },
+      {
+        pairKind: 'values_match_meaning_wrong',
+        supportMatch: 0,
+        typeMatch: 1,
+        decisionMatch: 0,
+      },
+    ]);
+    // The atom check enters the profile only: the missing atom gives `unmatched`.
+    expect(
+      report.pairs.map((outcome) => outcome.profile?.valueCheck ?? null),
+    ).toEqual(['matched', 'unmatched', 'matched']);
+  });
+});
+
+// AC-13.2 (design-engine.md, «Как калибровка ставит таблицу групп», step 3; Contract, command `calibrate`): beside the
+// algorithm's share per pair kind the report shows the share the old veto «value check `unmatched` — not established»
+// would give on the same pairs, and each of the three value check results under its own label. Defects caught: an
+// `unmatched` profile printed as «без атомов»; a veto share counted over other pairs than the kind's own.
+describe('renderCalibrationReport: the old veto share and the value check labels (AC-13.2)', () => {
+  const withAtoms = (item: Scripted, atoms: CalibrationPair['claimAtoms']) => ({
+    ...item,
+    pair: { ...item.pair, claimAtoms: atoms },
+  });
+  const CONFIRMED: Answer = {
+    support: 'yes',
+    claimType: 'observation',
+    relations: ['supports'],
+  };
+  const MISSING_ATOM: CalibrationPair['claimAtoms'] = [
+    { kind: 'text', value: 'checkout-api' },
+  ];
+
+  it('puts the veto share next to the algorithm share per pair kind and labels matched, unmatched and no atoms apart', async () => {
+    const report = reportOf(
+      await run([
+        // Values match, meaning wrong, confirmed: the algorithm and the veto both establish it — both wrong.
+        scripted(SHOULD_NOT_BE_ESTABLISHED, CONFIRMED),
+        // Contradicted, a value missing, confirmed: the algorithm establishes it (wrong), the veto does not (right).
+        withAtoms(
+          scripted(
+            {
+              pairKind: 'contradicted',
+              expectedSupport: 'no',
+              expectedType: 'observation',
+              expectedValuesMatch: false,
+            },
+            CONFIRMED,
+          ),
+          MISSING_ATOM,
+        ),
+        // Supported and confirmed: values match — both right; a value missing — only the algorithm right; no atoms —
+        // both right, `not_applicable` is not vetoed.
+        scripted(SHOULD_BE_ESTABLISHED, CONFIRMED),
+        withAtoms(scripted(SHOULD_BE_ESTABLISHED, CONFIRMED), MISSING_ATOM),
+        withAtoms(scripted(SHOULD_BE_ESTABLISHED, CONFIRMED), []),
+      ]),
+    );
+
+    const lines = renderCalibrationReport(
+      report,
+      '/tables/group-table.json',
+    ).split('\n');
+
+    expect(lines).toContain(
+      '| Вид пары | «Подтверждают ли» | Тип | Решение алгоритма | Прежнее вето «значения не совпали — не установлено» |',
+    );
+    expect(lines).toContain(
+      '| values_match_meaning_wrong | 0.0 % | 100.0 % | 0.0 % | 0.0 % |',
+    );
+    expect(lines).toContain(
+      '| contradicted | 0.0 % | 100.0 % | 0.0 % | 100.0 % |',
+    );
+    expect(lines).toContain(
+      '| supported | 100.0 % | 100.0 % | 100.0 % | 66.7 % |',
+    );
+    const profileRows = lines.filter((line) =>
+      line.startsWith('| observation, '),
+    );
+    expect(
+      ['значения совпали', 'значения не совпали', 'без атомов'].map(
+        (label) =>
+          profileRows.filter((row) =>
+            row.startsWith(`| observation, ${label}, `),
+          ).length,
+      ),
+    ).toEqual([1, 1, 1]);
   });
 });
 
@@ -500,4 +600,27 @@ describe('calibrate: refusals and failed pairs', () => {
     expect(text).toContain(`${unavailable.pair.pairId} — model_unavailable`);
     expect(text).toContain(`${offForm.pair.pairId} — invalid_assessment`);
   });
+});
+
+// design-self-check.md 1.7.2, `CalibrationPair.expectedValuesMatch`: the key says what the engine's atom check gives
+// on the pair's records. Defect caught: a generator whose atoms the engine's check does not find (or finds where the
+// key says it must not), so calibration ranks profiles the engine never gives — the generator's own spec cannot see it.
+describe('calibration pairs against the engine atom check', () => {
+  it.each(['smoke', 'first'])(
+    'gives matched exactly on the pairs of the %s set whose key expects the values to match',
+    (setName) => {
+      const loadedSet = loadScenarioSet(setName);
+      if (!loadedSet.ok) throw new Error(`set ${setName}: ${loadedSet.detail}`);
+      const mismatched = buildCalibrationPairs(loadedSet.set)
+        .pairs.map((pair) => ({
+          pairId: pair.pairId,
+          expected: pair.expectedValuesMatch ? 'matched' : 'unmatched',
+          actual: atomCheckOf(pair.claimAtoms, pair.pages).valueCheck,
+        }))
+        .filter(({ expected, actual }) => expected !== actual);
+
+      expect(mismatched).toEqual([]);
+    },
+    120_000,
+  );
 });

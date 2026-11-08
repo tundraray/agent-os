@@ -154,9 +154,13 @@ export function assessment({ support, claimType, records }: ScriptedAssessment):
   return { support, claimType, records: records.map(({ record, relation }) => ({ record, relation })) };
 }
 
-/** The input of a verifier call as `buildClaimCheck` lays it out: the claim text, then each given record with its number. */
+/**
+ * The input of a verifier call as `buildClaimCheck` lays it out: the claim text and its atoms with the atom check, then
+ * each given record with its number.
+ */
 export interface VerifierPacket {
   readonly claimText: string;
+  readonly atoms: readonly { readonly kind: string; readonly value: string; readonly verdict: string; readonly records: readonly number[] }[];
   readonly records: readonly { readonly number: number; readonly record: unknown }[];
 }
 
@@ -170,7 +174,7 @@ function sectionOf(user: string, tag: string): string | undefined {
 }
 
 /**
- * Reads a verifier packet by its structure only: the claim JSON in `<claim>` and, in `<data>`, the JSON lines of the
+ * Reads a verifier packet by its structure only: the claim JSON in `<claim>` (text and atoms) and, in `<data>`, the JSON lines of the
  * records (each with its `number`; the page lines carry none). A double that tells claims apart compares the text with
  * the exact text the test wrote — it recognises its own script, it does not interpret text.
  */
@@ -182,7 +186,8 @@ export function verifierPacketOf(call: RecordedModelCall): VerifierPacket {
     .split('\n')
     .map((line) => JSON.parse(line) as { number?: number; record?: unknown })
     .flatMap((line) => (line.number === undefined ? [] : [{ number: line.number, record: line.record }]));
-  return { claimText: (JSON.parse(claim) as { text: string }).text, records };
+  const { text, atoms } = JSON.parse(claim) as { text: string; atoms: VerifierPacket['atoms'] };
+  return { claimText: text, atoms, records };
 }
 
 /** The pages of a worker packet: the evidence id of each and its records, numbered from 0 (`role-packets.ts`, KD-1). */

@@ -12,7 +12,9 @@ function setOf(name: string): ScenarioSet {
 
 type PageRecord = CalibrationPair['pages'][number]['records'][number];
 
-function isCountGroup(record: PageRecord): record is Extract<PageRecord, { count: number }> {
+type CountGroup = Extract<PageRecord, { count: number }>;
+
+function isCountGroup(record: PageRecord): record is CountGroup {
   return 'count' in record;
 }
 
@@ -34,7 +36,7 @@ describe('buildCalibrationPairs over the first set', () => {
 
   it.each([
     ['supported', 'yes', ['observation', 'quantitative'], [true]],
-    ['values_match_meaning_wrong', 'no', ['observation'], [true]],
+    ['values_match_meaning_wrong', 'no', ['observation', 'quantitative'], [true]],
     ['contradicted', 'no', ['quantitative'], [false]],
     ['insufficient', 'insufficient', ['observation'], [true]],
   ] as const)('gives %s pairs the expected answers', (kind, support, types, valuesMatch) => {
@@ -76,6 +78,54 @@ describe('buildCalibrationPairs over the first set', () => {
       const countPage = pair.pages.find((page) => page.tool === 'aggregate_logs');
       expect(countPage, pair.pairId).toBeDefined();
       expect(countPage?.records.every((record) => isCountGroup(record))).toBe(true);
+    }
+  });
+
+  // design-self-check.md 1.7.2, «Какие атомы несёт пара»: a pair whose atoms the engine's check cannot read.
+  it('gives every pair at least one atom, each of the kind text, number or time', () => {
+    for (const pair of pairs) {
+      expect(pair.claimAtoms.length, pair.pairId).toBeGreaterThan(0);
+      for (const atom of pair.claimAtoms) {
+        expect(['text', 'number', 'time'], pair.pairId).toContain(atom.kind);
+      }
+    }
+  });
+
+  // UC-9, UC-10: a count pair without its hour, or a meaning-wrong count whose number and hour come from one group.
+  it('puts the three count pairs of a scenario on one page of hourly groups, each with key, count and hour', () => {
+    const hourOf = (group: CountGroup): string =>
+      `${group.start}/${new Date(Date.parse(group.start) + 60 * 60_000).toISOString()}`;
+    for (const scenario of set.scenarios) {
+      const counted = pairs.filter((pair) => pair.scenarioId === scenario.scenarioId && pair.expectedType === 'quantitative');
+      expect(counted.map((pair) => pair.pairKind).sort(), scenario.scenarioId).toEqual([
+        'contradicted',
+        'supported',
+        'values_match_meaning_wrong',
+      ]);
+      const [page] = counted[0]!.pages;
+      const groups = page!.records.filter((record) => isCountGroup(record));
+      expect(groups.length, scenario.scenarioId).toBe(page!.records.length);
+      expect(new Set(groups.map((group) => group.count)).size, scenario.scenarioId).toBeGreaterThanOrEqual(2);
+      const byKind = new Map(counted.map((pair) => [pair.pairKind, pair]));
+      for (const pair of counted) {
+        expect(pair.pages, pair.pairId).toEqual([page]);
+        expect(pair.claimAtoms.map((atom) => atom.kind), pair.pairId).toEqual(['text', 'number', 'time']);
+      }
+      const groupOfHour = (pair: CalibrationPair): CountGroup | undefined =>
+        groups.find((group) => hourOf(group) === pair.claimAtoms[2]!.value);
+      const groupsOfCount = (pair: CalibrationPair): CountGroup[] =>
+        groups.filter((group) => String(group.count) === pair.claimAtoms[1]!.value);
+      for (const pair of counted) {
+        expect(pair.claimAtoms[0]!.value, pair.pairId).toBe(groupOfHour(pair)?.key);
+      }
+      const supported = byKind.get('supported')!;
+      expect(groupsOfCount(supported), supported.pairId).toContain(groupOfHour(supported));
+      const misplaced = byKind.get('values_match_meaning_wrong')!;
+      expect(groupsOfCount(misplaced).length, misplaced.pairId).toBeGreaterThan(0);
+      expect(groupsOfCount(misplaced), misplaced.pairId).not.toContain(groupOfHour(misplaced));
+      const contradicted = byKind.get('contradicted')!;
+      expect(groupOfHour(contradicted), contradicted.pairId).toBeDefined();
+      expect(groupsOfCount(contradicted), contradicted.pairId).toEqual([]);
     }
   });
 

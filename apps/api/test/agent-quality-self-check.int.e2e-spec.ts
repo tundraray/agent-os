@@ -531,26 +531,28 @@ describe('agent-quality / self-check - program integration (in-process program +
       });
       for (const input of inputs) {
         expect(input.instructions).toBe(verifier.prompt);
-        // A numbered data section: the claim apart, then one JSON object per record numbered 0..n-1.
-        expect(input.claim).toEqual({ text: expect.any(String) });
+        // A numbered data section: the claim with its atom check apart, then one JSON object per record numbered 0..n-1.
+        expect(input.claim).toEqual({
+          text: expect.any(String),
+          atoms: expect.any(Array),
+        });
         expect(input.records.map(({ number }) => number)).toEqual(
           input.records.map((_, index) => index),
         );
       }
       // Each pair's claim is checked once as it is, with the injection records, and once without them, on fewer records.
+      // The pair is told by its claim text: the atom check beside it numbers the records of each call.
       const holdsInjection = (input: CheckInput) =>
         input.records.some(
           ({ traceId }) =>
             typeof traceId === 'string' && injectionTraceIds.has(traceId),
         );
-      const claims = new Set(
-        inputs.map((input) => JSON.stringify(input.claim)),
-      );
+      const textOf = (input: CheckInput) =>
+        (input.claim as { text: string }).text;
+      const claims = new Set(inputs.map(textOf));
       expect(claims.size).toBe(injected.length);
       for (const claim of claims) {
-        const checksOfPair = inputs.filter(
-          (input) => JSON.stringify(input.claim) === claim,
-        );
+        const checksOfPair = inputs.filter((input) => textOf(input) === claim);
         const asIs = checksOfPair.filter(holdsInjection);
         const without = checksOfPair.filter((input) => !holdsInjection(input));
         expect([asIs.length, without.length]).toEqual([1, 1]);

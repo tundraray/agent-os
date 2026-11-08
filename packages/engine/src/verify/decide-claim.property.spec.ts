@@ -1,18 +1,20 @@
 import fc from 'fast-check';
-import { type Atom, verifyClaim } from './claim-verifier.js';
+import { type Atom, type AtomCheck, checkAtoms } from './check-atoms.js';
 import { decideClaim } from './decide-claim.js';
 import { type Pointer, checkPointer, pointedRecords } from './pointer.js';
 
-// Invariant 1 (design-engine.md, State Transitions and Invariants; DC-7, DC-9, DC-10): a claim is `supported` only by a
-// well-formed `yes` of a non-causal type whose value check over the pointer's records found every atom. Defect caught:
-// a code path that sets `supported` past one of these conditions, which the table rows of decide-claim.spec.ts do not
-// enumerate. The oracle reads the raw assessment and runs the value check itself; it never reads `decideClaim`'s output
-// beyond the status.
+// Invariant 1 (design-engine.md, State Transitions and Invariants; DC-7, DC-9, DC-10; KD-2): a claim is `supported`
+// exactly when the assessment is a well-formed `yes` of a non-causal type, and the profile's `valueCheck` is the result
+// of `checkAtoms` — the atom check never sets the status. Defect caught: a code path where the status depends on the
+// atom values, or `supported` passes one of the form conditions, in combinations the table rows of decide-claim.spec.ts
+// do not enumerate. The oracle reads the raw assessment; it never reads `decideClaim`'s output beyond the status and
+// the profile's `valueCheck`.
 
 const TRACES = ['a'.repeat(32), 'b'.repeat(32)];
 const SERVICES = ['payments', 'auth'];
 const EVENTS = ['refund', 'login'];
 const TIMES = ['2026-10-01T12:05:00Z', '2026-10-01T12:30:00Z', '2026-10-01T14:00:00Z'];
+const STARTS = ['2026-10-01T12:00:00.000Z', '2026-10-01T13:00:00.000Z'];
 const INTERVALS = [
   '2026-10-01T12:00:00Z/2026-10-01T15:00:00Z',
   '2026-10-01T12:00:00Z/2026-10-01T13:00:00Z',
@@ -24,7 +26,7 @@ const TYPE_VALUES = ['observation', 'quantitative', 'causal'];
 const RELATIONS = ['supports', 'contradicts', 'unrelated'];
 const ESTABLISHED_TYPES = new Set(['observation', 'quantitative']);
 
-/** Log rows with and without `traceId`, and count buckets `{ start, key, count }`, over small domains so values repeat. */
+/** Log rows with and without `ts` and `traceId`, and count groups `{ start, key, count }`, over small domains so values repeat. */
 const logRecord = fc.record(
   {
     ts: fc.constantFrom(...TIMES),
@@ -32,10 +34,10 @@ const logRecord = fc.record(
     event: fc.constantFrom(...EVENTS),
     traceId: fc.constantFrom(...TRACES),
   },
-  { requiredKeys: ['ts', 'service', 'event'] },
+  { requiredKeys: ['service', 'event'] },
 );
 const countBucket = fc.record({
-  start: fc.constant('2026-10-01T12:00:00.000Z'),
+  start: fc.constantFrom(...STARTS),
   key: fc.constantFrom(...SERVICES, 'other'),
   count: fc.integer({ min: 0, max: 5 }),
 });
@@ -55,13 +57,15 @@ const recordSet = fc
     return pointer.map((chosen) => ({ pages, pointer: chosen }));
   });
 
-/** Atoms of the five kinds, with values the records hold and values they do not. */
+/** Atoms of the three kinds and of the former five, with values the records hold and values they do not. */
 const atom: fc.Arbitrary<Atom> = fc.oneof(
+  fc.record({ kind: fc.constant('text'), value: fc.constantFrom(...SERVICES, ...EVENTS, 'billing') }),
+  fc.record({ kind: fc.constant('number'), value: fc.oneof(fc.integer({ min: 0, max: 7 }).map(String), fc.constant('many')) }),
+  fc.record({ kind: fc.constant('time'), value: fc.constantFrom(...TIMES, ...INTERVALS) }),
   fc.record({ kind: fc.constant('traceId'), value: fc.constantFrom(...TRACES, 'c'.repeat(32)) }),
   fc.record({ kind: fc.constant('service'), value: fc.constantFrom(...SERVICES, 'billing') }),
   fc.record({ kind: fc.constant('event'), value: fc.constantFrom(...EVENTS, 'logout') }),
   fc.record({ kind: fc.constant('interval'), value: fc.constantFrom(...INTERVALS) }),
-  fc.record({ kind: fc.constant('number'), value: fc.oneof(fc.integer({ min: 0, max: 15 }).map(String), fc.constant('many')) }),
 );
 
 /** A value from the list (more often) or outside it. */
@@ -134,29 +138,35 @@ function isWellFormedYes(raw: unknown, given: number): boolean {
   return exactlyOnce && items.some((item) => (item as Record<string, unknown>).relation === 'supports');
 }
 
+/** An atom check of each result, to show the status does not move with it. */
+const ANY_CHECK: readonly AtomCheck[] = [
+  { atoms: [{ kind: 'text', value: 'payments', verdict: 'found', records: [0] }], valueCheck: 'matched' },
+  { atoms: [{ kind: 'number', value: '7', verdict: 'missing', records: [] }], valueCheck: 'unmatched' },
+  { atoms: [], valueCheck: 'not_applicable' },
+];
+
 describe('decideClaim: Invariant 1', () => {
-  it('FOR ALL assessments and record sets, supported implies a well-formed yes of a non-causal type with every value found', () => {
-    let supported = 0;
-    let supportedWithAtoms = 0;
+  it('FOR ALL assessments, record sets and atoms, supported iff a well-formed yes of a non-causal type, the profile holding the atom check', () => {
+    const supportedBy = new Map<string, number>();
     fc.assert(
       fc.property(claimCase, ({ pages, pointer, atoms, assessment }) => {
         expect(checkPointer(pointer, new Map([...pages].map(([pageId, records]) => [pageId, records.length]))).valid).toBe(true);
         const records = pointedRecords(pointer, pages);
+        const atomCheck = checkAtoms({ atoms, records: records.map(({ record }) => record) });
 
-        const decision = decideClaim({ assessment, pointer, atoms, pages, groupTable: undefined });
+        const decision = decideClaim({ assessment, pointer, atomCheck, pages, groupTable: undefined });
 
+        expect(decision.status === 'supported').toBe(isWellFormedYes(assessment, records.length));
+        for (const other of ANY_CHECK) {
+          expect(decideClaim({ assessment, pointer, atomCheck: other, pages, groupTable: undefined }).status).toBe(decision.status);
+        }
         if (decision.status !== 'supported') return;
-        supported += 1;
-        expect(isWellFormedYes(assessment, records.length)).toBe(true);
-        if (atoms.length === 0) return;
-        supportedWithAtoms += 1;
-        const values = verifyClaim({ atoms, records: records.map(({ pageId, record }) => ({ evidenceId: pageId, record })) });
-        expect(values.atoms.map((item) => item.verdict)).toEqual(atoms.map(() => 'found'));
+        expect(decision.profile?.valueCheck).toBe(atomCheck.valueCheck);
+        supportedBy.set(atomCheck.valueCheck, (supportedBy.get(atomCheck.valueCheck) ?? 0) + 1);
       }),
       { numRuns: 2000 },
     );
-    // The property is not vacuous: supported decisions occurred, with and without atoms to check.
-    expect(supported).toBeGreaterThan(supportedWithAtoms);
-    expect(supportedWithAtoms).toBeGreaterThan(0);
+    // The property is not vacuous: supported decisions occurred under each result of the atom check.
+    expect([...supportedBy.keys()].sort()).toEqual(['matched', 'not_applicable', 'unmatched']);
   });
 });

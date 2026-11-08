@@ -49,7 +49,7 @@ const known = new Map<string, KnownClaim>([
 const cite = (claimId: string | null, ...pages: string[]): DraftClaim => ({
   claimId,
   text: `draft ${claimId ?? 'new'}`,
-  atoms: [{ kind: 'service', value: 'payments' }],
+  atoms: [{ kind: 'text', value: 'payments' }],
   pointer: pages.map((pageId) => ({ pageId, records: [0] })),
 });
 

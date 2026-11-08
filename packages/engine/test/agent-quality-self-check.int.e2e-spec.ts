@@ -129,7 +129,7 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
     /** A claim about `service` pointing at the one record of `pageId`. */
     const claimOf = (service: string, pageId: string) => ({
       text: `${service} timed out waiting for a lock`,
-      atoms: [{ kind: 'service', value: service }],
+      atoms: [{ kind: 'text', value: service }],
       pointer: [{ pageId, records: [0] }],
     });
     /** The worker's claim about `service`, pointing at the one record of the first page of its packet. */
@@ -498,7 +498,7 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
         { output: { kind: 'concludeInconclusive', rationale: 'scripted conclusion' } },
       );
       harness.model.script('worker', {
-        output: { claims: [{ text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'service', value: 'service-0' }], pointer: [] }] },
+        output: { claims: [{ text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'text', value: 'service-0' }], pointer: [] }] },
       });
       const threadId = await harness.createThread(resourceId);
       const started = await harness.engine.startInvestigation({ resourceId, threadId, query, processId: 'deep-research', launchKey: newLaunchKey() });

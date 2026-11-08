@@ -21,7 +21,10 @@ export interface TaskClaims {
 export interface VerifiedRevision {
   readonly claimId: string;
   readonly text: string;
-  /** Each atom with its verdict `found`, `missing` or `contradicted` when the value check ran; as stored otherwise. */
+  /**
+   * Each atom with its verdict `found`, `missing` or `contradicted` and, as `records`, the numbers of the pointed records
+   * it was found in, when the value check ran; as stored otherwise.
+   */
   readonly atoms: readonly unknown[];
   /** The basis: the pages of the records the status rests on. */
   readonly evidenceIds: readonly string[];
