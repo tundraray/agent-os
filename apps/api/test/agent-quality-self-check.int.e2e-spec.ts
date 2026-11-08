@@ -12,19 +12,19 @@
 // Generated as `it.todo` skeletons; every case is now implemented following its Given/When/Then comments (and the task text where it differs).
 //
 // Environment (Design Doc "Test Strategy"):
-// - Two Postgres databases on the instance of infra/docker-compose.yml: the main one (DATABASE_URL, migrations applied by test/support/migrate.global-setup.ts) and a scratch database whose name ends in `_self_check`, created and dropped by the
-//   test through packages/db/test/support/scratch-db.ts. The program under test is the one assembly function the `run` / `replay` / `show` commands share, called in-process with its ports (database URLs, report directory, clock, `resolveModel`).
+// - One Postgres database per test file as `DATABASE_URL` (design-self-check.md 1.6, KD-3: the program shares the server's database): a migrated scratch database on the instance of infra/docker-compose.yml,
+//   created and dropped by test/support/selfCheckDb.ts. The employees' investigations a test saves live in it next to the program's `system:self-check` ones. The program under test is the one assembly function the `run` / `replay` / `show` commands share, called in-process with its ports (database URL, report directory, clock, `resolveModel`).
 // - The real runtime and real engine with their handlers, the real MCP fixture process on a scenario (`FIXTURE_SCENARIO`, `FIXTURE_CALL_LOG` per test as the independent counter) over the real `SourceRegistry`. Never mocked: the slice, the pages and their `traceId` fields are only provable on a real transport.
 // - Boundaries that are doubled, and only these: (1) `resolveModel`, which returns a scripted role-aware program (it builds the answer from the scenario key, so the right and the wrong answer are known) and a scripted judge that fills the form from the
 //   same key; both record every call, so "every model call went through `resolveModel`" is read from them. (2) The clock of the program (poll interval, 10-minute margin).
 // - Isolation (project convention, no truncate): a unique run directory under a temp dir and a unique `launchKey` per test; the scratch database is per file; the owner is always `system:self-check`; employee-side data uses a unique `resourceId = 'e2e-' + randomUUID()`.
-// - Support to add with the slice (not created here): test/support/selfCheckApp.ts (the shared assembly with the doubles and the clock, a `runDir` helper that reads the result file), test/support/selfCheckDb.ts (read-only snapshots of the research tables of
-//   both databases and a row-version snapshot for "nothing changed" checks), test/support/selfCheckModels.ts (the scripted role program and the scripted judge).
+// - Support: test/support/selfCheckApp.ts (the shared assembly with the doubles and the clock, a `runDir` helper that reads the result file), test/support/selfCheckDb.ts (read-only snapshots of the research tables and a row-version snapshot of the
+//   employees' rows for "nothing changed" checks), test/support/selfCheckModels.ts (the scripted role program and the scripted judge).
 //
 // Budget (whole part, three files): Integration 5 (limit 3; up to 5 under the integration-e2e-testing rule only when each extra test names the defect no other test catches) and E2E 1 of 2.
 //   INT-1 and INT-2 (engine file) and INT-3 (this file) are the core budget. INT-4 and INT-5 are the two extras:
-//   - INT-4's unique defect: a saved employee investigation replayed on the wrong slice or with a lost frozen configuration, and a program that writes to the main database. No other test starts from a saved investigation or crosses the two databases.
-//   - INT-5's unique defect: `run` against the main database (it would migrate and fill production), a stale task of a killed run executing on the next scenario's fixture, and an employee's data copy outliving its original. INT-3 starts from a clean, correctly named database.
+//   - INT-4's unique defect: a saved employee investigation replayed on the wrong slice or with a lost frozen configuration, and a program that writes to an employee's investigation. No other test starts from a saved investigation.
+//   - INT-5's unique defect: a cancel of leftovers that also cancels an employee's unfinished investigation in the shared database, a stale task of a killed run executing on the next scenario's fixture, and an employee's data copy outliving its original.
 //   Pure rules (verdict ladder, form check, first-error stage, signals, metrics, comparison, slice determination, scheduling, timeout) are proven at unit level, see the block at the end; the rows here prove the wiring only, one case per rule.
 //
 // AC -> proving test (the plan reads this to avoid a second test for an AC already proven):
@@ -34,11 +34,11 @@
 // - AC-02.1 (the slice is stored at start and replay sees the same logs), DC-6: INT-4 R1, R3
 // - AC-02.2 (replay with another model in one role): INT-4 R2
 // - DC-5 (an undeterminable slice refuses and starts nothing): unit table for the determination; the "nothing started" half: INT-4 R3
-// - AC-07.1 (course of an investigation without a key), DC-15: INT-4 R4 (the cross-database read and the judge transcript binding); the signal rules are unit
+// - AC-07.1 (course of an investigation without a key), DC-15: INT-4 R4 (the read of an employee's investigation and the judge transcript binding); the signal rules are unit
 // - AC-03.1, AC-03.2, AC-03.3, DC-7, DC-8 (checks half): unit (generator is a pure function); the scenario slice `fx-sc-` is served and read back in INT-3 R1
 // - AC-05.1, AC-05.2, DC-12, DC-13, DC-14: unit (comparison); the files of two real runs compared by the program: E2E-1
 // - DC-16 (first-error stage): unit (the rule); its wiring to the real pages and the per-role count in the result file: INT-3 R2
-// - DC-17 (the guard), DC-18 (stale investigations cancelled), AC-01.3 / AC-01.4 for employee data copies: INT-5
+// - DC-17 (only `system:self-check` is cancelled), DC-18 (stale investigations cancelled), AC-01.3 / AC-01.4 for employee data copies: INT-5
 // - NFR-02 (no log record leaves for a third party; the judge sees question, answer and key only): INT-3 R1
 // - Constraints "Budget" (UC-E8), DC-9 (UC-E5, UC-E5a): unit
 
@@ -59,8 +59,9 @@ import {
 } from '@agent-os/db';
 import { deepResearchProcessV2, loadProcessConfig } from '@agent-os/engine';
 import { generateGroundTruth, loadScenarioSet } from '@agent-os/mcp-fixture';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { SELF_CHECK_OWNER } from '../src/auth/system-owners.js';
 import type { SelfCheckProgram } from '../src/self-check/program.js';
 import { executeReplayCommand } from '../src/self-check/replay/replay-command.js';
 import type {
@@ -83,18 +84,15 @@ import {
   type SelfCheckApp,
 } from './support/selfCheckApp.js';
 import {
+  employeeRowVersions,
   engineRunOf,
   investigationsOf,
-  mainDatabaseUrl,
-  researchRowVersions,
   llmCallsOf,
-  SelfCheckDatabases,
+  ScratchDatabases,
   type TranscriptRow,
   transcriptsOf,
 } from './support/selfCheckDb.js';
 
-/** The owner of every self-check investigation (KD-3). */
-const SELF_CHECK_OWNER = 'system:self-check';
 /** Task statuses after which a task does nothing more (`TaskStatusSchema`). */
 const FINAL_TASK_STATUSES: ReadonlySet<string> = new Set([
   'succeeded',
@@ -114,7 +112,7 @@ const SMOKE_SLICES: Readonly<Record<string, string>> = {
 const SMOKE_JUDGE_CHECKS = 14;
 
 describe('agent-quality / self-check - program integration (in-process program + real runtime + real fixture + real Postgres, scripted models)', () => {
-  const databases = new SelfCheckDatabases();
+  const databases = new ScratchDatabases();
   afterAll(async () => {
     await closeDb();
     await databases.dropAll();
@@ -151,23 +149,17 @@ describe('agent-quality / self-check - program integration (in-process program +
     let url: string;
     let run: { result: RunResult };
     let modelCallsOfRun: { role: string; modelId: string }[];
-    /** Row versions of the main database's `research_*` tables before and after the run (invariant 5). */
-    let mainBefore: Map<string, string>;
-    let mainAfter: Map<string, string>;
 
     const R1_SCENARIO = 'timeout-lowered';
     const R2_SCENARIO = 'ledger-write-errors';
 
     beforeAll(async () => {
       url = await databases.create();
-      app = createSelfCheckApp({ selfCheckDatabaseUrl: url });
+      app = createSelfCheckApp({ databaseUrl: url });
       app.models.useSet('smoke');
       // The program clock (a boundary double): the 5-second status poll of the waiter is shortened; every other timer keeps its delay.
       app.clock.timerDelay = (ms) => (ms === STATUS_POLL_MS ? 50 : ms);
-      const started = await app.start();
-      if (!started.ok)
-        throw new Error(`the program refused to start: ${started.code}`);
-      program = started.program;
+      program = await app.start();
 
       app.models.behave(`smoke/${R2_SCENARIO}`, {
         reads: 'before_change',
@@ -179,12 +171,10 @@ describe('agent-quality / self-check - program integration (in-process program +
       const [wrongCheck] = app.models.judgeChecksOf('smoke');
       app.models.judgeWrongOn(wrongCheck!.checkId);
 
-      mainBefore = await researchRowVersions(mainDatabaseUrl());
       const outcome = await executeRunCommand(
         ['--set', 'smoke', '--runs', '2'],
         program,
       );
-      mainAfter = await researchRowVersions(mainDatabaseUrl());
       if (!outcome.ok)
         throw new Error(`run refused: ${outcome.code} ${outcome.reason}`);
       run = { result: runDir(outcome.runDir).result as RunResult };
@@ -216,9 +206,6 @@ describe('agent-quality / self-check - program integration (in-process program +
         judge: { model: JUDGE_MODEL },
         thresholds: null,
       });
-      // The run wrote only to the self-check database: the main database's rows are unchanged (invariant 5).
-      expect(mainBefore.size).toBeGreaterThan(0);
-      expect(mainAfter).toEqual(mainBefore);
       const item = itemOf(R1_SCENARIO);
       expect(item).toMatchObject({ kind: 'cause', ran: true });
       expect(item.runs).toHaveLength(2);
@@ -575,7 +562,7 @@ describe('agent-quality / self-check - program integration (in-process program +
 
     // ---- helpers of INT-3 -------------------------------------------------------------------------
 
-    /** Investigations of the self-check database owned by `system:self-check` (KD-3). */
+    /** Investigations owned by `system:self-check` (KD-3). */
     async function ownedInvestigationIds(): Promise<string[]> {
       return (await investigationsOf(url, SELF_CHECK_OWNER)).map(
         (row) => row.investigationId,
@@ -653,37 +640,37 @@ describe('agent-quality / self-check - program integration (in-process program +
   });
 
   describe('INT-4', () => {
-    // UC-5, UC-6, UC-E3 (the refusal half), UC-15 (the cross-database half). Table-driven over a saved employee investigation in the MAIN database, produced by the real engine on fixture `v1` through `Engine.startInvestigation`.
+    // UC-5, UC-6, UC-E3 (the refusal half), UC-15. Table-driven over a saved employee investigation in the database the program shares, produced by the real engine on fixture `v1` through `Engine.startInvestigation`.
     //
     // Rows:
-    //  R1 same slice. Given the finished investigation with the slice recorded in its run row at start (`research_engine_runs`). When `replay` runs it. Then: the replay is a new investigation in the self-check database, owner `system:self-check`, remembering the original;
-    //     its run row and its evidence pages hold the same slice as the original; the original's rows, answer and transcripts are unchanged (row-version snapshot of the main database before and after).
+    //  R1 same slice. Given the finished investigation with the slice recorded in its run row at start (`research_engine_runs`). When `replay` runs it. Then: the replay is a new investigation of the owner `system:self-check`, remembering the original;
+    //     its run row and its evidence pages hold the same slice as the original; the original's rows, answer and transcripts are unchanged (row-version snapshot of the employees' rows before and after).
     //  R2 another model in one role. Given the same investigation with the worker on `anthropic/claude-haiku-5-5`. When `replay` runs it with `anthropic/claude-sonnet-5-5` for the worker.
     //     Then: the worker transcripts of the replay name Sonnet; every other role's transcripts name the model of the original's frozen configuration.
     //  R3 refusals start nothing. (a) A legacy investigation: no recorded slice and no evidence pages. (b) A recorded slice that the running fixture does not serve. Then: (a) `replay_slice_unknown`, (b) `replay_slice_mismatch`;
-    //     in both the self-check database has no new investigation and the fixture received no tool call.
+    //     in both there is no new `system:self-check` investigation and the fixture received no tool call.
     //  R4 show. Given a finished employee investigation with three rejected controller decisions and a `step_limit` stop. When `show` opens it. Then: the report marks the signals "rejected decisions" and "stop reason" and lists the model calls in time order
-    //     with their transcripts; the judge call without a key leaves its transcript in the self-check database, bound to the run id of this `show` which remembers the original; the main database gained no row.
+    //     with their transcripts; the judge call without a key leaves its transcript bound to the run id of this `show` which remembers the original, and to no investigation; no employee row changed.
     //
     // AC: "Срез fixture записывается в строку прогона при старте каждого расследования" (AC-02.1); "перед повторным прогоном программа сверяет срез, который отдаёт запущенный fixture, со срезом исходного расследования; при расхождении — отказ" (DC-6);
     //     "повтор с другой моделью в одной роли" (AC-02.2); "Отчёт о ходе расследования показывает четыре сигнала сбоя ... все вызовы модели с их транскриптами" (AC-07.1, DC-15); "программа отказывает с причиной и не запускает ни одного расследования" (DC-5)
-    // Behavior: `replay` / `show` -> read the original by owner from the main database, start or judge in the self-check database -> new investigation or report, original untouched
+    // Behavior: `replay` / `show` -> read the original by owner, start or judge under `system:self-check` -> new investigation or report, original untouched
     // Catches: an investigation started without its slice recorded, so replay is impossible; a replay on other logs than the original saw; a replay whose roles ignore the frozen configuration or whose model swap leaks to other roles; a refusal that has already
-    //          started an investigation; a judge transcript written for an investigation that does not exist in the self-check database (foreign key); any write to the main database (invariant 5).
+    //          started an investigation; a judge transcript bound to the employee's investigation; any write to an employee's rows (invariant 5).
     // @category: integration
-    // @dependency: self-check program (replay, show), engine (startInvestigation snapshot write, readTranscripts, readRunRecord, Engine.assess), mcp-fixture, runtime, two Postgres databases, scripted models
+    // @dependency: self-check program (replay, show), engine (startInvestigation snapshot write, readTranscripts, readRunRecord, Engine.assess), mcp-fixture, runtime, Postgres, scripted models
     // @complexity: high
     //
     // Filled per the task text (plan rule 7), which wins over the comments above where they differ: R1-R4 here. The employee
-    // investigation is made by the harness (`saveEmployeeInvestigation`) with the real engine and runtime over the main database on fixture `v1`;
+    // investigation is made by the harness (`saveEmployeeInvestigation`) with the real engine and runtime over the database on fixture `v1`;
     // the scripted roles follow the script of `smoke/timeout-lowered` (records of the quarter hour before the change, the change stated as
     // established, so all five roles are called). Its frozen configuration is the shipped one with the controller on Haiku, so a replay that
     // lost it would show Sonnet there. R3 also refuses an original of another owner (`investigation_not_found`); the mismatch of (b) is a
-    // fixture asked for `v1` that serves `v2` (`serveInstead`). Every row checks the main database's row versions before and after the command.
-    // R4 shows the same original: the task text limits it to the reading through two databases and the binding of the judge transcript (the signal
+    // fixture asked for `v1` that serves `v2` (`serveInstead`). Every row checks the row versions of the employees' rows before and after the command.
+    // R4 shows the same original: the task text limits it to the reading of the employee's investigation and the binding of the judge transcript (the signal
     // rules, rejected decisions and `step_limit` included, are proven by `signals.spec.ts`, and the scripted roles make no rejected decision): the
-    // report lists the original's journal calls in time order with their transcripts in the main database, and the one judge transcript is in the
-    // self-check database bound to the show run id and to no investigation.
+    // report lists the original's journal calls in time order with their transcripts, and the one judge transcript is
+    // bound to the show run id and to no investigation.
     let app: SelfCheckApp;
     let program: SelfCheckProgram;
     let url: string;
@@ -692,7 +679,7 @@ describe('agent-quality / self-check - program integration (in-process program +
 
     beforeAll(async () => {
       url = await databases.create();
-      app = createSelfCheckApp({ selfCheckDatabaseUrl: url });
+      app = createSelfCheckApp({ databaseUrl: url });
       app.models.useSet('smoke');
       app.scriptDatasetsAs(EMPLOYEE_SCRIPT);
       app.models.behave(EMPLOYEE_SCRIPT, {
@@ -710,22 +697,19 @@ describe('agent-quality / self-check - program integration (in-process program +
         processConfig: FROZEN_CONFIG,
         dataset: 'legacy',
       });
-      const started = await app.start();
-      if (!started.ok)
-        throw new Error(`the program refused to start: ${started.code}`);
-      program = started.program;
+      program = await app.start();
     }, 600_000);
 
     afterAll(async () => {
       await app?.close();
     });
 
-    /** `replay` of the investigation by its owner, with the main database's row versions taken around it. */
+    /** `replay` of the investigation by its owner, with the row versions of the employees' rows taken around it. */
     async function replay(
       investigation: EmployeeInvestigation,
       ...flags: string[]
     ) {
-      const before = await researchRowVersions(mainDatabaseUrl());
+      const before = await employeeRowVersions(url);
       const outcome = await executeReplayCommand(
         [
           '--investigation',
@@ -736,8 +720,8 @@ describe('agent-quality / self-check - program integration (in-process program +
         ],
         program,
       );
-      const after = await researchRowVersions(mainDatabaseUrl());
-      return { outcome, mainBefore: before, mainAfter: after };
+      const after = await employeeRowVersions(url);
+      return { outcome, employeesBefore: before, employeesAfter: after };
     }
 
     /** The one repeat of a replays run of one original, with its run and the result file. */
@@ -752,14 +736,13 @@ describe('agent-quality / self-check - program integration (in-process program +
       return { result, repeat: result.results[0]!.runs[0]! };
     }
 
-    it('INT-4 R1: the replay of an employee investigation is a new self-check investigation that remembers the original and runs on the slice recorded at its start; the main database is unchanged', async () => {
+    it("INT-4 R1: the replay of an employee investigation is a new self-check investigation that remembers the original and runs on the slice recorded at its start; the employee's rows are unchanged", async () => {
       // Given: the slice was recorded in the original's run row at start, and its pages were read at that slice.
-      const mainUrl = mainDatabaseUrl();
       expect(
-        (await engineRunOf(mainUrl, original.investigationId))!.sourceSnapshots,
+        (await engineRunOf(url, original.investigationId))!.sourceSnapshots,
       ).toEqual({ fixture: V1_SLICE });
       const originalPages = await pagesOfInvestigation(
-        mainUrl,
+        url,
         original.investigationId,
       );
       expect(originalPages.length).toBeGreaterThan(0);
@@ -767,7 +750,7 @@ describe('agent-quality / self-check - program integration (in-process program +
         new Set([V1_SLICE]),
       );
 
-      const { outcome, mainBefore, mainAfter } = await replay(
+      const { outcome, employeesBefore, employeesAfter } = await replay(
         original,
         '--runs',
         '1',
@@ -778,9 +761,7 @@ describe('agent-quality / self-check - program integration (in-process program +
         kind: 'replays',
         items: {
           kind: 'investigations',
-          investigations: [
-            { base: 'main', investigationId: original.investigationId },
-          ],
+          investigations: [{ investigationId: original.investigationId }],
         },
         config: { choice: 'frozen' },
       });
@@ -793,7 +774,6 @@ describe('agent-quality / self-check - program integration (in-process program +
       expect(row).toMatchObject({
         threadId: formatThreadId({
           kind: 'copy',
-          base: 'main',
           investigationId: original.investigationId,
         }),
         query: EMPLOYEE_QUESTION,
@@ -810,13 +790,13 @@ describe('agent-quality / self-check - program integration (in-process program +
       expect(new Set(repeatPages.map((page) => page.snapshot))).toEqual(
         new Set([V1_SLICE]),
       );
-      // The original stays in the main database only, untouched (invariant 5).
-      expect(await engineRunOf(url, original.investigationId)).toBeUndefined();
-      expect(mainAfter).toEqual(mainBefore);
+      // The original is untouched (invariant 5).
+      expect(employeesBefore.size).toBeGreaterThan(0);
+      expect(employeesAfter).toEqual(employeesBefore);
     }, 600_000);
 
     it('INT-4 R2: a replay with Sonnet for the worker calls the worker on Sonnet and every other role on the model of the frozen configuration', async () => {
-      const { outcome, mainBefore, mainAfter } = await replay(
+      const { outcome, employeesBefore, employeesAfter } = await replay(
         original,
         '--runs',
         '1',
@@ -854,7 +834,7 @@ describe('agent-quality / self-check - program integration (in-process program +
         synthesis: new Set([SONNET]),
         judge: new Set([JUDGE_MODEL]),
       });
-      expect(mainAfter).toEqual(mainBefore);
+      expect(employeesAfter).toEqual(employeesBefore);
     }, 600_000);
 
     it.each([
@@ -862,13 +842,11 @@ describe('agent-quality / self-check - program integration (in-process program +
         row: 'R3 (a) a legacy investigation: no recorded slice and no evidence page',
         code: 'replay_slice_unknown',
         given: async () => {
-          const mainUrl = mainDatabaseUrl();
           expect(
-            (await engineRunOf(mainUrl, legacy.investigationId))!
-              .sourceSnapshots,
+            (await engineRunOf(url, legacy.investigationId))!.sourceSnapshots,
           ).toEqual({ fixture: null });
           expect(
-            await pagesOfInvestigation(mainUrl, legacy.investigationId),
+            await pagesOfInvestigation(url, legacy.investigationId),
           ).toEqual([]);
           return legacy;
         },
@@ -896,18 +874,18 @@ describe('agent-quality / self-check - program integration (in-process program +
           const callsBefore = app.readCallLog().length;
           const runDirsBefore = runDirsOf(app.reportsDir);
 
-          const { outcome, mainBefore, mainAfter } = await replay(
+          const { outcome, employeesBefore, employeesAfter } = await replay(
             investigation,
             '--runs',
             '1',
           );
 
           expect(outcome).toMatchObject({ ok: false, code });
-          // Nothing started: no investigation in the self-check database, no tool call on the fixture, no run directory.
+          // Nothing started: no investigation of `system:self-check`, no tool call on the fixture, no run directory.
           expect(await ownedInvestigationIds(url)).toEqual(ownedBefore);
           expect(app.readCallLog()).toHaveLength(callsBefore);
           expect(runDirsOf(app.reportsDir)).toEqual(runDirsBefore);
-          expect(mainAfter).toEqual(mainBefore);
+          expect(employeesAfter).toEqual(employeesBefore);
         } finally {
           app.serveInstead('v1', null);
         }
@@ -915,12 +893,11 @@ describe('agent-quality / self-check - program integration (in-process program +
       600_000,
     );
 
-    it('INT-4 R4: show reads a saved employee investigation from the main database and binds the judge transcript in the self-check database', async () => {
-      const mainUrl = mainDatabaseUrl();
+    it("INT-4 R4: show reads a saved employee investigation and binds the judge transcript to the show run, not to the employee's investigation", async () => {
       const ownedBefore = await ownedInvestigationIds(url);
       const runDirsBefore = runDirsOf(app.reportsDir);
       const judgeCallsBefore = app.models.callsOf('judge').length;
-      const mainBefore = await researchRowVersions(mainUrl);
+      const employeesBefore = await employeeRowVersions(url);
 
       const outcome = await executeShowCommand(
         [
@@ -932,18 +909,17 @@ describe('agent-quality / self-check - program integration (in-process program +
         program,
       );
 
-      const mainAfter = await researchRowVersions(mainUrl);
+      const employeesAfter = await employeeRowVersions(url);
       if (!outcome.ok)
         throw new Error(`show refused: ${outcome.code} ${outcome.reason}`);
-      // The show run remembers the main original.
+      // The show run remembers the original.
       expect(parseThreadId(outcome.showRunId)).toMatchObject({
         kind: 'show',
-        base: 'main',
         investigationId: original.investigationId,
       });
-      // The course is read from the main database: every journal call of the original, by time then by id (the time as
-      // the report carries it), each with its transcript there.
-      const ledger = (await llmCallsOf(mainUrl, original.investigationId)).sort(
+      // The course of the original: every journal call, by time then by id (the time as the report carries it), each
+      // with its transcript.
+      const ledger = (await llmCallsOf(url, original.investigationId)).sort(
         (left, right) =>
           left.createdAt.getTime() - right.createdAt.getTime() ||
           left.callId.localeCompare(right.callId),
@@ -955,14 +931,14 @@ describe('agent-quality / self-check - program integration (in-process program +
       expect(
         new Set(
           (
-            await transcriptsOf(mainUrl, {
+            await transcriptsOf(url, {
               investigationId: original.investigationId,
             })
           ).map((transcript) => transcript.callId),
         ),
       ).toEqual(new Set(ledger.map((call) => call.callId)));
-      // The one judge call without a key: its transcript is in the self-check database, bound to this show run and to
-      // no investigation (the original does not exist there).
+      // The one judge call without a key: its transcript is bound to this show run and to no investigation — not to the
+      // employee's, whose rows the program does not write.
       expect(app.models.callsOf('judge')).toHaveLength(judgeCallsBefore + 1);
       const judged = await transcriptsOf(url, {
         selfCheckRunId: outcome.showRunId,
@@ -985,11 +961,10 @@ describe('agent-quality / self-check - program integration (in-process program +
       const judgeInput = judgeInputOf(judged[0]!);
       expect(judgeInput.question).toBe(EMPLOYEE_QUESTION);
       expect(judgeInput.key).toBeUndefined();
-      expect(await engineRunOf(url, original.investigationId)).toBeUndefined();
-      // Show starts no investigation, writes no file and writes nothing to the main database.
+      // Show starts no investigation, writes no file and writes no employee row.
       expect(await ownedInvestigationIds(url)).toEqual(ownedBefore);
       expect(runDirsOf(app.reportsDir)).toEqual(runDirsBefore);
-      expect(mainAfter).toEqual(mainBefore);
+      expect(employeesAfter).toEqual(employeesBefore);
     }, 600_000);
   });
 
@@ -997,59 +972,111 @@ describe('agent-quality / self-check - program integration (in-process program +
     // UC-E7, UC-E9, UC-E10. Table-driven over what the program does before its first investigation and over the lifetime of employee data copies.
     //
     // Rows:
-    //  R1 guard. Given `SELF_CHECK_DATABASE_URL` pointing at a database whose name does not end in `_self_check` (a blank scratch database with that name, and the case of the URL equal to `DATABASE_URL`). When `run` starts.
-    //     Then: `database_not_self_check`; the database has no table (no migration was applied) and no investigation.
-    //  R2 stale investigations. Given a previous program instance that was dropped without closing: its investigations have tasks queued and running in the self-check database. When `run` starts on another set.
+    //  R1 only the program's leftovers (UC-E7). Given an unfinished `system:self-check` investigation left by a dropped run and an employee's investigation `active` with its tasks queued; the runtime workers
+    //     are off (`RUNTIME_WORKERS=off`). When the program cancels the leftovers, as `run` does before its first assembly. Then: the `system:self-check` investigation is cancelled; the employee's stays `active` with its tasks queued.
+    //  R2 stale investigations. Given a previous program instance that was dropped without closing: its investigations have tasks queued and running. When `run` starts on another set.
     //     Then: before the first new investigation every earlier investigation is cancelled; no task of an earlier run is executed (the earlier run's scripted model records no call after the new start, and the fixture call log shows only the new scenario's calls).
-    //  R3 expiring copies. Given a `replay` and a `show` of an employee investigation (a copy and a judge transcript in the self-check database) and a finished scenario run; then the employee's conversation is deleted in the main database. When the program starts again.
-    //     Then: the replay investigation and the `show` judge transcript are gone from the self-check database; the scenario run and its transcripts remain (they are kept without a term).
+    //  R3 expiring copies. Given a `replay` and a `show` of an employee investigation (a copy and a judge transcript of `system:self-check`) and a finished scenario run; then the employee's conversation is deleted. When the program starts again.
+    //     Then: the replay investigation and the `show` judge transcript are gone; the scenario run and its transcripts remain (they are kept without a term).
     //
-    // AC: "Программа самопроверки не стартует, если её база совпадает с основной базой или имя её базы не оканчивается на `_self_check`; ни одно расследование при этом не начинается" (DC-17);
-    //     "Перед первым расследованием команды `run` или `replay` программа отменяет все незаконченные расследования в базе самопроверки" (DC-18);
-    //     "копии данных сотрудников удаляются при старте программы, если их оригинал удалён или старше срока основной базы" (AC-01.3, AC-01.4, DC-4)
-    // Behavior: program start -> guard, then migrations, then cancel of unfinished work, then expiry of copies -> a clean database for the next scenario
-    // Catches: `run` pointed at the main database migrating and filling it with synthetic investigations; a task of a killed run executing on the fixture of the next scenario and corrupting its verdict; an employee's question and answer kept in the self-check
-    //          database after the original is deleted. The order (guard before migration) is observable only on a real database.
+    // AC: "Программа самопроверки отменяет и удаляет только расследования владельца `system:self-check`; расследования сотрудников она не отменяет" (DC-17, UC-E7);
+    //     "Перед первым расследованием команды `run` или `replay` программа отменяет все незаконченные расследования владельца `system:self-check`" (DC-18);
+    //     "копии данных сотрудников удаляются при старте программы, если их оригинал удалён или старше срока хранения транскриптов" (AC-01.3, AC-01.4, DC-4)
+    // Behavior: program start -> migrations, then expiry of copies; `run` -> cancel of the program's unfinished work before the first assembly -> a clean start for the next scenario, employees untouched
+    // Catches: a cancel of leftovers that also cancels an employee's unfinished investigation; a task of a killed run executing on the fixture of the next scenario and corrupting its verdict; an employee's question and answer kept
+    //          after the original is deleted. The owner filter and the cancel are observable only on a real database.
     // @category: edge-case
-    // @dependency: self-check program (start-up), runtime (cancel), both Postgres databases, mcp-fixture
+    // @dependency: self-check program (start-up), runtime (cancel), Postgres, mcp-fixture
     // @complexity: medium
     //
-    // Filled per the task text (plan rule 7), which wins over the comments above where they differ: R1 calls the program's start (`createSelfCheckProgram`,
-    // the first thing `run` does) on a blank database without the suffix (the main database's URL is the same guard rule, unit-proven). In R2 the earlier instance works on the first
+    // Filled per the task text (plan rule 7), which wins over the comments above where they differ: R1 calls the program's cancel of leftovers (what `run` does
+    // before its first assembly) directly, since a `run` with workers would claim the employee's queued task: the launch condition of KD-3 is not met there. In R2 the earlier instance works on the first
     // scenario of the set `first` and is dropped without closing (`selfCheckApp`: its model calls stop answering, then its clock stops — no claim,
     // heartbeat, relay or reaper pass any more, leases run out); the new `run` goes on `smoke`, so the earlier run's tasks, pages and fixture calls are
     // told apart from the new ones by investigation and slice. R2 also checks on the real database that the waiter's `unfinishedTasks` counts a queued
     // task (left open by task-35). In R3 one program makes four kinds of copy: a replay and a show of an employee original that is then deleted, a show of
-    // one whose creation is then moved past the term (31 days back, the default term 30), a show of a kept one, a show of a scenario run (base
-    // `self_check`), next to the scenario run itself; a second program starts on the same database, and the database is compared with before.
+    // one whose creation is then moved past the term (31 days back, the default term 30), a show of a kept one, a show of a scenario run
+    // (`system:self-check`), next to the scenario run itself; a second program starts on the same database, and the database is compared with before.
 
-    // The main database's URL is refused by the same guard (its name has no suffix either): database-guard.spec.ts.
-    it('INT-5 R1 a blank database whose name does not end in _self_check: the start refuses with database_not_self_check before any migration or investigation', async () => {
-      const url = await databases.create({ selfCheckSuffix: false });
-      const tablesBefore = await tablesOf(url);
-      const rowsBefore = await researchRowVersions(url);
-      const app = createSelfCheckApp({ selfCheckDatabaseUrl: url });
-      let started: Awaited<ReturnType<SelfCheckApp['start']>>;
+    it("INT-5 R1 (UC-E7): the cancel of leftovers cancels the unfinished system:self-check investigation and leaves the employee's active investigation and its queued tasks as they are", async () => {
+      const url = await databases.create();
+      // `RUNTIME_WORKERS=off`: no runtime of the test claims a task, so the employee's tasks stay queued.
+      const app = createSelfCheckApp({
+        databaseUrl: url,
+        runtime: { workers: false },
+      });
       try {
-        started = await app.start();
+        app.models.useSet('smoke');
+        app.scriptDatasetsAs(EMPLOYEE_SCRIPT);
+        const employee = await app.saveEmployeeInvestigation({
+          question: EMPLOYEE_QUESTION,
+          processConfig: FROZEN_CONFIG,
+          dataset: 'v1',
+          unfinished: true,
+        });
+        const program = await app.start();
+        // The leftover of a dropped run: an investigation of the program started on an assembly that never ran it.
+        const loaded = loadProcessConfig(deepResearchProcessV2);
+        if (!loaded.ok) throw new Error('the shipped configuration is refused');
+        const assembly = await program.assembleScenario({
+          scenario: 'smoke/timeout-lowered',
+          processConfig: deepResearchProcessV2,
+        });
+        const runId = randomUUID();
+        const leftover = await assembly.engine.startInvestigation({
+          resourceId: SELF_CHECK_OWNER,
+          threadId: formatThreadId({ kind: 'run', runId }),
+          query: app.models.keyOf('smoke/timeout-lowered').question,
+          processId: loaded.config.processId,
+          version: loaded.config.version,
+          launchKey: `${runId}/leftover`,
+        });
+        if (leftover.outcome === 'rejected')
+          throw new Error(`the leftover was refused: ${leftover.code}`);
+        await assembly.close();
+        const statusOf = async (resourceId: string, investigationId: string) =>
+          (await investigationsOf(url, resourceId)).find(
+            (row) => row.investigationId === investigationId,
+          )?.status;
+        expect(await statusOf(SELF_CHECK_OWNER, leftover.investigationId)).toBe(
+          'active',
+        );
+        expect(
+          await statusOf(employee.resourceId, employee.investigationId),
+        ).toBe('active');
+        const employeeTasks = await tasksOf(url, [employee.investigationId]);
+        expect(employeeTasks.length).toBeGreaterThan(0);
+        expect(
+          employeeTasks.every((task) => !FINAL_TASK_STATUSES.has(task.status)),
+        ).toBe(true);
+        const employeesBefore = await employeeRowVersions(url);
+
+        await program.cancelLeftovers();
+
+        expect(await statusOf(SELF_CHECK_OWNER, leftover.investigationId)).toBe(
+          'cancelled',
+        );
+        const leftoverTasks = await tasksOf(url, [leftover.investigationId]);
+        expect(leftoverTasks.length).toBeGreaterThan(0);
+        expect(leftoverTasks.map((task) => task.status)).toEqual(
+          leftoverTasks.map(() => 'cancelled'),
+        );
+        // The employee's investigation and every row of it are as they were: still `active`, its tasks still queued.
+        expect(
+          await statusOf(employee.resourceId, employee.investigationId),
+        ).toBe('active');
+        expect(await employeeRowVersions(url)).toEqual(employeesBefore);
       } finally {
         await app.close();
       }
-      expect(started).toMatchObject({
-        ok: false,
-        code: 'database_not_self_check',
-      });
-      // No migration: the tables are those of before (none in the blank database); no investigation: no row changed.
-      expect(await tablesOf(url)).toEqual(tablesBefore);
-      expect(await researchRowVersions(url)).toEqual(rowsBefore);
-    });
+    }, 600_000);
 
     it('INT-5 R2: a run dropped mid-scenario leaves tasks queued and in work; the next run cancels them and drains them before its first investigation, and none of them runs again', async () => {
       const url = await databases.create();
       // The earlier instance: one slot, so its stuck task holds the slot and the rest stays queued; a short lease, so a
       // lease of the dropped instance runs out within seconds; no grace on the shutdown that releases it at the end.
       const earlier = createSelfCheckApp({
-        selfCheckDatabaseUrl: url,
+        databaseUrl: url,
         runtime: {
           concurrency: 1,
           leaseMs: 2_000,
@@ -1059,18 +1086,16 @@ describe('agent-quality / self-check - program integration (in-process program +
       });
       // The next run: its start-up reaps the dropped lease without waiting the default 5 seconds between passes.
       const next = createSelfCheckApp({
-        selfCheckDatabaseUrl: url,
+        databaseUrl: url,
         runtime: { reaperMs: 100 },
       });
       try {
         // ---- the earlier run on `first`, dropped without closing -------------------------------------------------
         earlier.models.useSet('first');
-        const earlierStart = await earlier.start();
-        if (!earlierStart.ok)
-          throw new Error(`the earlier program refused: ${earlierStart.code}`);
+        const earlierProgram = await earlier.start();
         const loaded = loadProcessConfig(deepResearchProcessV2);
         if (!loaded.ok) throw new Error('the shipped configuration is refused');
-        const assembly = await earlierStart.program.assembleScenario({
+        const assembly = await earlierProgram.assembleScenario({
           scenario: EARLIER_SCENARIO,
           processConfig: deepResearchProcessV2,
         });
@@ -1128,12 +1153,10 @@ describe('agent-quality / self-check - program integration (in-process program +
         next.models.useSet('smoke');
         next.clock.timerDelay = (ms) => (ms === STATUS_POLL_MS ? 50 : ms);
         const nextStartedAt = next.clock.now();
-        const nextStart = await next.start();
-        if (!nextStart.ok)
-          throw new Error(`the next program refused: ${nextStart.code}`);
+        const nextProgram = await next.start();
         const outcome = await executeRunCommand(
           ['--set', 'smoke', '--runs', '1'],
-          nextStart.program,
+          nextProgram,
         );
         if (!outcome.ok)
           throw new Error(`run refused: ${outcome.code} ${outcome.reason}`);
@@ -1226,8 +1249,8 @@ describe('agent-quality / self-check - program integration (in-process program +
 
     it('INT-5 R3: at the next start the copies of an employee original that is deleted or past the term are removed; copies of a kept original, of a self-check original and the scenario run stay', async () => {
       const url = await databases.create();
-      const before = createSelfCheckApp({ selfCheckDatabaseUrl: url });
-      const restarted = createSelfCheckApp({ selfCheckDatabaseUrl: url });
+      const before = createSelfCheckApp({ databaseUrl: url });
+      const restarted = createSelfCheckApp({ databaseUrl: url });
       try {
         // ---- copies made by one program: of a deleted original, of one past the term, of a kept one, of a scenario run
         before.models.useSet('smoke');
@@ -1246,10 +1269,7 @@ describe('agent-quality / self-check - program integration (in-process program +
         const deleted = await employee();
         const aged = await employee();
         const kept = await employee();
-        const started = await before.start();
-        if (!started.ok)
-          throw new Error(`the program refused to start: ${started.code}`);
-        const { program } = started;
+        const program = await before.start();
 
         const run = await executeRunCommand(
           ['--set', 'smoke', '--runs', '1'],
@@ -1281,20 +1301,9 @@ describe('agent-quality / self-check - program integration (in-process program +
         ).results.flatMap((item) =>
           item.runs.map((entry) => entry.investigationId),
         );
-        const show = async (
-          investigationId: string,
-          ownerId: string,
-          base: 'main' | 'self_check' = 'main',
-        ) => {
+        const show = async (investigationId: string, ownerId: string) => {
           const shown = await executeShowCommand(
-            [
-              '--investigation',
-              investigationId,
-              '--owner',
-              ownerId,
-              '--base',
-              base,
-            ],
+            ['--investigation', investigationId, '--owner', ownerId],
             program,
           );
           if (!shown.ok)
@@ -1307,11 +1316,7 @@ describe('agent-quality / self-check - program integration (in-process program +
         );
         const agedShow = await show(aged.investigationId, aged.resourceId);
         const keptShow = await show(kept.investigationId, kept.resourceId);
-        const selfCheckShow = await show(
-          scenarioRunIds[0]!,
-          SELF_CHECK_OWNER,
-          'self_check',
-        );
+        const selfCheckShow = await show(scenarioRunIds[0]!, SELF_CHECK_OWNER);
         await before.close();
 
         // ---- the employee deletes one conversation; another original passes the term (30 days by default) --------
@@ -1334,7 +1339,6 @@ describe('agent-quality / self-check - program integration (in-process program +
           investigationId: repeatId,
           threadId: formatThreadId({
             kind: 'copy',
-            base: 'main',
             investigationId: deleted.investigationId,
           }),
         });
@@ -1355,12 +1359,17 @@ describe('agent-quality / self-check - program integration (in-process program +
             (transcript) => transcript.investigationId === repeatId,
           ).length,
         ).toBeGreaterThan(0);
-        const mainBefore = await researchRowVersions(mainDatabaseUrl());
+        const employeesBefore = await employeeRowVersions(url);
 
         // ---- the program starts again ---------------------------------------------------------------------------
-        const again = await restarted.start();
-        if (!again.ok)
-          throw new Error(`the program refused to start: ${again.code}`);
+        await restarted.start();
+        // The common start runs for every command, `show` included: it starts no runtime worker on the shared database,
+        // whose recovery sweeper would reap employees' tasks too (DC-17, DC-18).
+        expect(
+          restarted.logs.filter(([, message]) =>
+            message.startsWith('Runtime workers started'),
+          ),
+        ).toEqual([]);
 
         // Gone: the repeat of the deleted original with all its rows, the show judge transcripts of the deleted and the
         // aged original. Everything else stays: the scenario run with its transcripts and judge checks, the show of the
@@ -1396,10 +1405,8 @@ describe('agent-quality / self-check - program integration (in-process program +
             ),
           ),
         ).toEqual(new Set([keptShow, selfCheckShow]));
-        // The main database is only read.
-        expect(await researchRowVersions(mainDatabaseUrl())).toEqual(
-          mainBefore,
-        );
+        // The employees' investigations are only read.
+        expect(await employeeRowVersions(url)).toEqual(employeesBefore);
       } finally {
         await restarted.close();
         await before.close();
@@ -1444,7 +1451,7 @@ const FROZEN_CONFIG = withRoleModels(deepResearchProcessV2, {
   controller: HAIKU,
 });
 
-/** Investigations of the self-check database owned by `system:self-check` (KD-3), oldest first. */
+/** Investigations owned by `system:self-check` (KD-3), oldest first. */
 async function ownedInvestigationIds(url: string): Promise<string[]> {
   return (await investigationsOf(url, SELF_CHECK_OWNER)).map(
     (row) => row.investigationId,
@@ -1477,7 +1484,7 @@ function countByStatus(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Read-only reads of the self-check database that `selfCheckDb.ts` does not offer (tasks, decisions, evidence pages)
+// Read-only reads of the database that `selfCheckDb.ts` does not offer (tasks, decisions, evidence pages)
 // ---------------------------------------------------------------------------------------------------------------
 
 const pools = new Map<string, DatabaseConnection>();
@@ -1495,15 +1502,6 @@ async function closeDb(): Promise<void> {
   const opened = [...pools.values()];
   pools.clear();
   await Promise.all(opened.map((database) => database.close()));
-}
-
-/** The tables of the database outside the system schemas, as `schema.table`: none before the first migration. */
-async function tablesOf(url: string): Promise<string[]> {
-  const rows = await db(url).execute<{ name: string }>(
-    sql`SELECT table_schema || '.' || table_name AS name FROM information_schema.tables
-         WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY name`,
-  );
-  return rows.rows.map((row) => row.name);
 }
 
 /** Every task of the investigations, as stored. */

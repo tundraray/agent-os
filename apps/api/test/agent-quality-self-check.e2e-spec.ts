@@ -10,7 +10,7 @@
 // Filled by task 44 (plan T6.1) following the Given/When/Then comments; where a comment and the task text differ, the task text holds (plan rule 7).
 //
 // Environment (Design Doc "Test Strategy"):
-// - Postgres 16 from infra/docker-compose.yml; a scratch database named `..._self_check` per file (packages/db/test/support/scratch-db.ts).
+// - Postgres 16 from infra/docker-compose.yml; a migrated scratch database per file, passed to every command as `DATABASE_URL` (test/support/selfCheckDb.ts, after packages/db/test/support/scratch-db.ts).
 // - The program is the compiled second entry point of apps/api (`dist/self-check/...`, next to `migrate-cli`), started as a child process per command with arguments, a working report directory and exit codes read by the test.
 //   It spawns the real MCP fixture process itself, once per scenario. The only double is the model boundary: a test child entry (modelled on test/support/chatEntryChildMain.ts, `pnpm build:child`) that starts the same program with a scripted
 //   `resolveModel` (role program and judge built from the scenario key). No network, no API key; real Anthropic calls are never part of the suite. The child entry is a knip entry of apps/api (knip.json) when the plan adds it.
@@ -38,7 +38,7 @@ import {
   type RunResult,
 } from '../src/self-check/result/run-result.js';
 import { THRESHOLDS_COPY_FILE_NAME } from '../src/self-check/run/run-command.js';
-import { SELF_CHECK_OWNER } from '../src/self-check/scenario-assembly.js';
+import { SELF_CHECK_OWNER } from '../src/auth/system-owners.js';
 import {
   assertSelfCheckChildBuildFresh,
   SelfCheckCommand,
@@ -48,8 +48,7 @@ import {
 import {
   engineRunOf,
   investigationsOf,
-  mainDatabaseUrl,
-  SelfCheckDatabases,
+  ScratchDatabases,
 } from './support/selfCheckDb.js';
 
 /** The test set: two cause mechanisms and one no-cause scenario, in set order, with their stable slices. */
@@ -101,14 +100,14 @@ const readJson = <T>(path: string): T =>
   JSON.parse(readFileSync(path, 'utf8')) as T;
 
 describe('agent-quality / self-check - E2E (built program as a process, real fixture, real Postgres, scripted models)', () => {
-  const databases = new SelfCheckDatabases();
+  const databases = new ScratchDatabases();
   const commands: SelfCheckCommand[] = [];
-  let selfCheckUrl: string;
+  let databaseUrl: string;
   let workDir: string | undefined;
 
   beforeAll(async () => {
     assertSelfCheckChildBuildFresh();
-    selfCheckUrl = await databases.create();
+    databaseUrl = await databases.create();
     workDir = await mkdtemp(join(tmpdir(), 'self-check-e2e-'));
   });
 
@@ -132,10 +131,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
   function start(
     name: string,
     argv: readonly string[],
-    options: {
-      readonly entry?: 'child' | 'shipped';
-      readonly selfCheckDatabaseUrl?: string;
-    } = {},
+    options: { readonly entry?: 'child' | 'shipped' } = {},
   ): StartedCommand {
     const reportsDir = join(workPath(), name);
     const callLog = join(workPath(), `${name}.calls.jsonl`);
@@ -144,8 +140,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
       reportsDir,
       entry: options.entry,
       env: {
-        SELF_CHECK_DATABASE_URL: options.selfCheckDatabaseUrl ?? selfCheckUrl,
-        DATABASE_URL: mainDatabaseUrl(),
+        DATABASE_URL: databaseUrl,
         FIXTURE_CALL_LOG: callLog,
       },
     });
@@ -181,7 +176,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
   /** Every run of the result is an investigation of the program's owner, on the slice of its scenario. */
   async function expectRunsOnTheirSlices(result: RunResult): Promise<void> {
     const owned = new Set(
-      (await investigationsOf(selfCheckUrl, SELF_CHECK_OWNER)).map(
+      (await investigationsOf(databaseUrl, SELF_CHECK_OWNER)).map(
         (row) => row.investigationId,
       ),
     );
@@ -191,7 +186,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
       expect(item.runs).toHaveLength(RUNS_PER_SCENARIO);
       for (const entry of item.runs) {
         expect(owned).toContain(entry.investigationId);
-        const row = await engineRunOf(selfCheckUrl, entry.investigationId);
+        const row = await engineRunOf(databaseUrl, entry.investigationId);
         expect(row?.sourceSnapshots, scenarioId).toEqual({ fixture: slice });
       }
     }
@@ -232,7 +227,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
     //   for byte. That the copy is written before the first `startInvestigation` call is proven by apps/api/src/self-check/run/run-command.spec.ts.
     // Behavior: developer commands -> built program spawns the fixture per scenario and runs the investigations -> result files -> `compare` reads two files -> verdict
     // Catches: a program entry that does not boot as a process (a missing build output, argument parsing, exit codes - the shipped `dist/self-check/main.js` is started once, for
-    //          its refusal before any connection; every other command runs `runCli` through the child entry with the scripted models); a fixture child that is not spawned per scenario from the built package; a result file that one command writes and the other cannot read;
+    //          its refusal before any model call; every other command runs `runCli` through the child entry with the scripted models); a fixture child that is not spawned per scenario from the built package; a result file that one command writes and the other cannot read;
     //          thresholds that do not travel from the candidate's command into its file and then into the verdict. In-process tests call the assembly directly and see none of these.
     // @category: e2e
     // @dependency: full-system (built apps/api program, mcp-fixture process, Postgres, scripted model entry)
@@ -246,26 +241,24 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
         String(RUNS_PER_SCENARIO),
       ];
 
-      // 0. The shipped entry boots as a process and refuses a database without the `_self_check` suffix before any
-      //    connection (no model is called). Nothing is printed to stdout: a run that got past the refusal would print
-      //    the directory it wrote. (The shipped entry writes only to its own fixed directory, so the test cannot
-      //    check a reports directory here.)
-      const notSelfCheck = new URL(mainDatabaseUrl());
-      notSelfCheck.pathname = '/e2e_not_a_self_check_database';
-      const shipped = start('shipped', runArgs, {
-        entry: 'shipped',
-        selfCheckDatabaseUrl: notSelfCheck.toString(),
-      });
+      // 0. The shipped entry boots as a process on `DATABASE_URL`, starts the program and refuses a set that does not
+      //    exist before any investigation (no model is called). Nothing is printed to stdout: a run that got past the
+      //    refusal would print the directory it wrote. (The shipped entry writes only to its own fixed directory, so
+      //    the test cannot check a reports directory here.)
+      const shipped = start(
+        'shipped',
+        ['run', '--set', 'e2e-no-such-set', '--runs', '1'],
+        { entry: 'shipped' },
+      );
       const shippedRun = await shipped.finished();
-      expect(shippedRun.result.exitCode).toBe(2);
-      expect(
-        shippedRun.result.stderr
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith('refused: ')),
-      ).toEqual([
-        'refused: database_not_self_check — database "e2e_not_a_self_check_database" does not end with _self_check',
-      ]);
+      expect(shippedRun.result.exitCode, shippedRun.result.stderr).toBe(2);
+      const refusals = shippedRun.result.stderr
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('refused: '));
+      expect(refusals).toHaveLength(1);
+      expect(refusals[0]).toMatch(/^refused: set_invalid — /);
       expect(shippedRun.result.printed).toBe('');
+      expect(await investigationsOf(databaseUrl, SELF_CHECK_OWNER)).toEqual([]);
 
       // 1. The baseline: the shipped configuration grounds its cause on records before the change.
       const baselineCommand = start('baseline', runArgs);
@@ -347,7 +340,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
       // One fixture process per scenario, started by the command's own sources.
       expect(baselineRun.fixturePids.size).toBe(SCENARIO_SLICES.length);
       const baselineInvestigations = (
-        await investigationsOf(selfCheckUrl, SELF_CHECK_OWNER)
+        await investigationsOf(databaseUrl, SELF_CHECK_OWNER)
       ).length;
       expect(baselineInvestigations).toBe(
         SCENARIO_SLICES.length * RUNS_PER_SCENARIO,
@@ -365,7 +358,7 @@ describe('agent-quality / self-check - E2E (built program as a process, real fix
       ]);
       // Watched while it runs: once its first investigation is visible, its run directory holds the copy and no result.
       while (
-        (await investigationsOf(selfCheckUrl, SELF_CHECK_OWNER)).length ===
+        (await investigationsOf(databaseUrl, SELF_CHECK_OWNER)).length ===
         baselineInvestigations
       ) {
         if (!candidateCommand.command.running) {

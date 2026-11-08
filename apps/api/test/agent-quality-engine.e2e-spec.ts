@@ -11,7 +11,7 @@
 // State: E2E-1 and E2E-2 are implemented (`pnpm --filter api test:e2e:engine`).
 //
 // Environment:
-// - Postgres 16 from infra/docker-compose.yml; a scratch database per row (CREATE DATABASE, dropped afterwards); migrations applied with the entry of @agent-os/db. E2E-2 also uses the `_self_check` scratch database of packages/db/test/support/scratch-db.ts.
+// - Postgres 16 from infra/docker-compose.yml; a scratch database per row (CREATE DATABASE, dropped afterwards); migrations applied with the entry of @agent-os/db. E2E-2 runs `calibrate` on a migrated scratch database of its own as `DATABASE_URL` (test/support/selfCheckDb.ts).
 // - Doubles are the model boundary only: the scripted chat model (one `deepResearch` call, then plain replies), and the scripted role models behind `resolveModel` (the verifier answers only the closed JSON assessment, synthesis only the closed draft; no
 //   test asserts on keywords of model text). The engine is the REAL one - unlike the chat-entry E2E, whose engine is a double. The real MCP fixture process serves the logs. No network, no API key.
 // - Support: test/support/chatEntryChildMain.ts runs in the mode `E2E_ENGINE_SCRIPTED_ROLES=1` (`withChatEntrySession(..., 'scripted-roles')`): the real engine and fixture source, with only `ENGINE_RESOLVE_MODEL` and
@@ -65,7 +65,7 @@ import {
   SelfCheckCommand,
   type SelfCheckCommandResult,
 } from './support/selfCheckChild.js';
-import { mainDatabaseUrl, SelfCheckDatabases } from './support/selfCheckDb.js';
+import { ScratchDatabases } from './support/selfCheckDb.js';
 
 /** Harness timeout of the journey: a boot, an investigation with five role kinds, four chat turns, two deliveries. */
 const RUN_TIMEOUT_MS = 240_000;
@@ -488,15 +488,15 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
   // @dependency: full-system (built apps/api server and self-check program, mcp-fixture process, Postgres, scripted verifier)
   // @complexity: high
   describe('E2E-2', () => {
-    const databases = new SelfCheckDatabases();
+    const databases = new ScratchDatabases();
     const commands: SelfCheckCommand[] = [];
-    let selfCheckUrl: string | undefined;
+    let databaseUrl: string | undefined;
     let workDir: string | undefined;
 
     beforeAll(async () => {
       assertSelfCheckChildBuildFresh();
       await dropLeftoverDatabases();
-      selfCheckUrl = await databases.create();
+      databaseUrl = await databases.create();
       workDir = await mkdtemp(join(tmpdir(), 'engine-e2e-2-'));
     });
 
@@ -522,7 +522,7 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
       readonly errsOn: string;
       readonly config?: string;
     }): Promise<SelfCheckCommandResult> {
-      if (selfCheckUrl === undefined) {
+      if (databaseUrl === undefined) {
         throw new Error('beforeAll did not finish');
       }
       const command = new SelfCheckCommand({
@@ -536,8 +536,7 @@ describe('agent-quality / engine - E2E (built api process, real engine, real fix
         ],
         reportsDir: join(workPath(), input.name),
         env: {
-          SELF_CHECK_DATABASE_URL: selfCheckUrl,
-          DATABASE_URL: mainDatabaseUrl(),
+          DATABASE_URL: databaseUrl,
           [CALIBRATION_ERRS_ON_VARIABLE]: input.errsOn,
         },
       });

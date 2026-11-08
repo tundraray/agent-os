@@ -465,7 +465,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
     signalKinds: options.signalKinds ?? [TEST_NOTE_KIND],
     assessModels: options.assessModels ?? [],
-    ...(options.groupTables === undefined ? {} : { groupTables: options.groupTables }),
+    // Uncalibrated unless a test passes tables: the shipped tables must not change what a test asserts.
+    groupTables: options.groupTables ?? [],
   };
 
   /**

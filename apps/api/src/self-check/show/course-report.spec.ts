@@ -131,12 +131,11 @@ describe('renderCourseReport', () => {
     },
   ])('$name', ({ signals, marks }) => {
     const report = renderCourseReport({
-      base: 'main',
       record: RECORD,
       transcripts: [],
       retention: { days: 30 },
       signals,
-      showRunId: `self-check:show:main:${RECORD.investigationId}:00000000-0000-4000-8000-000000000003`,
+      showRunId: `self-check:show:${RECORD.investigationId}:00000000-0000-4000-8000-000000000003`,
     });
 
     expect(marksOf(report)).toEqual(marks);

@@ -35,15 +35,15 @@ export type CommandOutcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: string; readonly reason: string };
 
-/** A command that runs on the program assembled over the self-check database (guard and migrations done). */
+/** A command that runs on the program assembled over the database of `DATABASE_URL` (migrations done). */
 type ProgramCommand = (
   args: readonly string[],
   program: SelfCheckProgram,
 ) => Promise<CommandOutcome>;
 
 /**
- * A command that reads and writes files only: no database, no model. It needs neither `SELF_CHECK_DATABASE_URL` nor
- * the guard and the migrations, so it runs without the program.
+ * A command that reads and writes files only: no database, no model. It needs neither `DATABASE_URL` nor the
+ * migrations, so it runs without the program.
  */
 type FileCommand = (
   args: readonly string[],
@@ -113,11 +113,17 @@ function refuse(code: string, reason: string): number {
   return EXIT_REFUSED;
 }
 
+/** The ports from the environment; throws when `DATABASE_URL` is not set — the program has no database of its own. */
 function portsFrom(input: CliInput): SelfCheckPorts {
   const read = (name: string): string | undefined => input.env[name];
+  const databaseUrl = read('DATABASE_URL');
+  if (databaseUrl === undefined || databaseUrl === '') {
+    throw new Error(
+      'DATABASE_URL is not set: the self-check program works on the database of the server',
+    );
+  }
   return {
-    selfCheckDatabaseUrl: read('SELF_CHECK_DATABASE_URL'),
-    mainDatabaseUrl: read('DATABASE_URL'),
+    databaseUrl,
     transcriptRetention: parseTranscriptRetention(read),
     reportsDir: input.reportsDir,
     clock: input.clock,
@@ -134,9 +140,7 @@ async function runCommand(
   args: readonly string[],
   input: CliInput,
 ): Promise<number> {
-  const created = await createSelfCheckProgram(portsFrom(input));
-  if (!created.ok) return refuse(created.code, created.reason);
-  const { program } = created;
+  const program = await createSelfCheckProgram(portsFrom(input));
   try {
     const outcome = await command(args, program);
     return outcome.ok ? EXIT_OK : refuse(outcome.code, outcome.reason);
@@ -169,7 +173,7 @@ function commandRun(
  * The command line of the self-check program (design-self-check.md, KD-3): parses the command and runs it, returning
  * the exit code — 0 on success, otherwise non-zero with the refusal code on the console. An unknown or missing command
  * is refused before the environment is read and before any connection; a command that needs the program gets it only
- * after the database guard and the migrations (`createSelfCheckProgram`), and a command on files only (`compare`)
+ * after the migrations (`createSelfCheckProgram`), and a command on files only (`compare`)
  * opens no connection at all. A thrown error is printed and gives 1.
  */
 export async function runCli(input: CliInput): Promise<number> {

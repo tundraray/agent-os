@@ -1,3 +1,4 @@
+import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 import {
   copyOrigin,
   formatThreadId,
@@ -16,21 +17,12 @@ describe('thread ids', () => {
       { kind: 'run', runId: 'run-20261107-01' },
     ],
     [
-      `self-check:copy:main:${INVESTIGATION}`,
-      { kind: 'copy', base: 'main', investigationId: INVESTIGATION },
+      `self-check:copy:${INVESTIGATION}`,
+      { kind: 'copy', investigationId: INVESTIGATION },
     ],
     [
-      `self-check:copy:self_check:${INVESTIGATION}`,
-      { kind: 'copy', base: 'self_check', investigationId: INVESTIGATION },
-    ],
-    [
-      `self-check:show:main:${INVESTIGATION}:${SHOW}`,
-      {
-        kind: 'show',
-        base: 'main',
-        investigationId: INVESTIGATION,
-        showId: SHOW,
-      },
+      `self-check:show:${INVESTIGATION}:${SHOW}`,
+      { kind: 'show', investigationId: INVESTIGATION, showId: SHOW },
     ],
   ])('writes %s and parses it back', (text, id) => {
     expect(formatThreadId(id)).toBe(text);
@@ -40,77 +32,72 @@ describe('thread ids', () => {
   it.each([
     ['an employee conversation id', '0b8f4c1e-2d3a-4b5c-8d7e-6f9a0b1c2d3e'],
     ['another prefix', 'selfcheck:run:r1'],
-    ['an unknown kind', 'self-check:replay:main:x'],
-    ['an unknown base', `self-check:copy:staging:${INVESTIGATION}`],
+    ['an unknown kind', 'self-check:replay:x'],
     ['an extra part in a run id', 'self-check:run:r1:extra'],
     [
-      'an extra part in a copy id',
-      `self-check:copy:main:${INVESTIGATION}:extra`,
+      'a copy id with a database segment, as before design 1.6',
+      `self-check:copy:main:${INVESTIGATION}`,
     ],
     [
       'an extra part in a show id',
-      `self-check:show:main:${INVESTIGATION}:${SHOW}:extra`,
+      `self-check:show:${INVESTIGATION}:${SHOW}:extra`,
     ],
-    ['a missing part in a show id', `self-check:show:main:${INVESTIGATION}`],
-    ['an empty part', 'self-check:copy:main:'],
+    ['a missing part in a show id', `self-check:show:${INVESTIGATION}`],
+    ['an empty part', 'self-check:copy:'],
   ])('rejects %s', (_, text) => {
     expect(parseThreadId(text)).toBeNull();
   });
 
   it.each<[string, SelfCheckThreadId]>([
     ['an empty id', { kind: 'run', runId: '' }],
-    [
-      'an id with the separator',
-      { kind: 'copy', base: 'main', investigationId: 'a:b' },
-    ],
+    ['an id with the separator', { kind: 'copy', investigationId: 'a:b' }],
   ])('refuses to write %s, which would not parse back', (_, id) => {
     expect(() => formatThreadId(id)).toThrow();
   });
 });
 
-// DC-4: a copy must not outlive the employee's original, so a copy of a copy from the main database points at
-// that original; everything else points at the investigation it repeats.
+// DC-4: a copy must not outlive the employee's original, so a repeat of a repeat points at that original; everything
+// else points at the investigation it repeats. Only the program's own investigation is a repeat: an employee's
+// conversation id shaped like a copy id must not point the copy at another investigation.
 describe('copyOrigin', () => {
-  it.each<
-    [string, Parameters<typeof copyOrigin>[0], ReturnType<typeof copyOrigin>]
-  >([
+  it.each<[string, Parameters<typeof copyOrigin>[0], string]>([
     [
-      'a copy from the main database inherits its original',
+      'a repeat inherits its original',
       {
-        base: 'self_check',
         investigationId: 'copy-1',
-        threadId: 'self-check:copy:main:X',
+        ownerId: SELF_CHECK_OWNER,
+        threadId: 'self-check:copy:X',
       },
-      { base: 'main', investigationId: 'X' },
+      'X',
     ],
     [
       'a scenario run is referenced itself',
       {
-        base: 'self_check',
         investigationId: 'scenario-1',
+        ownerId: SELF_CHECK_OWNER,
         threadId: 'self-check:run:R',
       },
-      { base: 'self_check', investigationId: 'scenario-1' },
+      'scenario-1',
     ],
     [
-      'a repeat of a scenario run is referenced itself',
+      'an employee investigation is referenced itself',
       {
-        base: 'self_check',
-        investigationId: 'copy-2',
-        threadId: 'self-check:copy:self_check:scenario-1',
-      },
-      { base: 'self_check', investigationId: 'copy-2' },
-    ],
-    [
-      'an employee investigation in the main database is referenced itself',
-      {
-        base: 'main',
         investigationId: 'X',
+        ownerId: 'employee-1',
         threadId: '0b8f4c1e-2d3a-4b5c-8d7e-6f9a0b1c2d3e',
       },
-      { base: 'main', investigationId: 'X' },
+      'X',
+    ],
+    [
+      "an employee investigation with a copy-shaped id is referenced itself, not the id's investigation",
+      {
+        investigationId: 'own-1',
+        ownerId: 'employee-1',
+        threadId: 'self-check:copy:someone-elses',
+      },
+      'own-1',
     ],
   ])('%s', (_, source, origin) => {
-    expect(copyOrigin(source)).toEqual(origin);
+    expect(copyOrigin(source)).toBe(origin);
   });
 });

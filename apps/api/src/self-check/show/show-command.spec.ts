@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ScenarioRequest, SelfCheckProgram } from '../program.js';
 import type { ScenarioAssembly } from '../scenario-assembly.js';
 import { loadSelfCheckSettings } from '../settings.js';
-import { executeShowCommand, type ShowProgram } from './show-command.js';
+import { executeShowCommand } from './show-command.js';
 
 // FR-07, DC-15, DC-18 (the `show` half): `show` asks for an assembly without workers — it reads a stored investigation
 // and calls `Engine.assess` once, and must never claim a task left queued by a dropped `run`. Defect caught: the show
@@ -90,23 +90,16 @@ describe('executeShowCommand: the judge assembly runs no workers', () => {
       clock: systemClock,
       logger: { debug() {}, log() {}, warn() {}, error() {} },
       // The readers are doubled above: the database handle is never touched.
-      selfCheckDatabase: () => ({}),
+      database: () => ({}),
       assembleScenario: (request: ScenarioRequest) => {
         requests.push(request);
         steps.push('assembleScenario');
         return Promise.resolve(scripted);
       },
-    } as unknown as SelfCheckProgram as ShowProgram;
+    } as unknown as SelfCheckProgram;
 
     const outcome = await executeShowCommand(
-      [
-        '--investigation',
-        RECORD.investigationId,
-        '--owner',
-        RECORD.ownerId,
-        '--base',
-        'self_check',
-      ],
+      ['--investigation', RECORD.investigationId, '--owner', RECORD.ownerId],
       program,
     );
 

@@ -13,21 +13,19 @@ import {
   type SelfCheckLogger,
 } from './scenario-assembly.js';
 import { loadSelfCheckSettings, type SelfCheckSettings } from './settings.js';
-import {
-  cancelLeftoverInvestigations,
-  openMainDatabase,
-  startUp,
-} from './startup.js';
+import { cancelLeftoverInvestigations, startUp } from './startup.js';
 
 /**
  * The ports every command of the program runs on. `main.ts` fills them from the environment; tests pass them
  * explicitly — the runtime settings above all, since the e2e config turns the workers off by default.
  */
 export interface SelfCheckPorts {
-  /** `SELF_CHECK_DATABASE_URL`. */
-  readonly selfCheckDatabaseUrl: string | undefined;
-  /** `DATABASE_URL`: compared by the guard, and read — only read — by the commands that reach the main database. */
-  readonly mainDatabaseUrl: string | undefined;
+  /**
+   * `DATABASE_URL`: the database the program shares with the server (design-self-check.md, KD-3). It is run on a
+   * developer's database where the server's runtime workers are off and no employee investigation is unfinished; the
+   * program does not check that.
+   */
+  readonly databaseUrl: string;
   /** Where run directories are written. */
   readonly reportsDir: string;
   readonly clock: Clock;
@@ -35,8 +33,8 @@ export interface SelfCheckPorts {
   readonly tokenCounter: TokenCounter;
   readonly logger: SelfCheckLogger;
   /**
-   * The retention term of the main database, parsed from `TRANSCRIPT_RETENTION_DAYS`; absent is the variable unset
-   * (30 days).
+   * The retention term of the employees' transcripts, parsed from `TRANSCRIPT_RETENTION_DAYS`; absent is the variable
+   * unset (30 days).
    */
   readonly transcriptRetention?: { readonly days: number };
   /** Runtime Settings; `workers` decides whether this process executes the investigations' tasks. */
@@ -64,62 +62,44 @@ export interface SelfCheckProgram {
   readonly reportsDir: string;
   readonly clock: Clock;
   readonly logger: SelfCheckLogger;
-  /** Runtime, sources and engine for one scenario over the self-check database; the caller closes it. */
+  /** Runtime, sources and engine for one scenario over the database; the caller closes it. */
   assembleScenario(request: ScenarioRequest): Promise<ScenarioAssembly>;
   /**
-   * Cancels every unfinished investigation of the self-check database and waits until none of their tasks can run
-   * (DC-18). `run` and `replay` call it after their refusals that need no assembly and before their first assembly;
-   * `show` never does.
+   * Cancels every unfinished investigation of `system:self-check` and waits until none of their tasks can run
+   * (DC-18); an employee's investigation is not touched. `run` and `replay` call it after their refusals that need no
+   * assembly and before their first assembly; `show` never does.
    */
   cancelLeftovers(): Promise<void>;
   /**
-   * The main database, opened on first use with every transaction read-only on the server side
-   * (`default_transaction_read_only`): the program never writes there (invariant 5). Throws when `DATABASE_URL` is
-   * not set.
+   * The database, opened on first use, for reads that need no scenario assembly: `replay` and `show` read an original
+   * by its owner before any fixture is started.
    */
-  mainDatabase(): Database;
+  database(): Database;
   /**
-   * The self-check database, opened on first use, for reads that need no scenario assembly (`replay` reads an
-   * original of the base `self_check` before any fixture is started).
+   * The retention term of the employees' transcripts: `show` of an employee's investigation reads within it, and a
+   * copy of an employee's original older than it is removed at the start.
    */
-  selfCheckDatabase(): Database;
-  /**
-   * The retention term of the main database: `show` over the main database reads within it, and a copy of a main
-   * original older than it is removed at the start.
-   */
-  mainTranscriptRetention(): { readonly days: number };
-  /** Closes the database connections it opened; scenario assemblies are closed by their callers. */
+  transcriptRetention(): { readonly days: number };
+  /** Closes the database connection it opened; scenario assemblies are closed by their callers. */
   close(): Promise<void>;
 }
 
-export type CreateSelfCheckProgramResult =
-  | { readonly ok: true; readonly program: SelfCheckProgram }
-  | {
-      readonly ok: false;
-      readonly code: 'database_not_self_check';
-      readonly reason: string;
-    };
-
 /**
  * The common assembly of the program from its ports (design-self-check.md, KD-3): the settings file is checked by
- * its schema, then the start runs — guard, migrations, expired copies — and only then is anything assembled. A refused
- * database is returned as a result, before any connection that writes.
+ * its schema, then the start runs — migrations, expired copies — and only then is anything assembled.
  */
 export async function createSelfCheckProgram(
   ports: SelfCheckPorts,
-): Promise<CreateSelfCheckProgramResult> {
+): Promise<SelfCheckProgram> {
   const settings = loadSelfCheckSettings();
   const transcriptRetention =
     ports.transcriptRetention ?? parseTranscriptRetention(() => undefined);
   const startupInput = { ...ports, transcriptRetention };
-  const started = await startUp(startupInput);
-  if (!started.ok) return started;
-  const { databaseUrl } = started;
-  const { clock, logger } = ports;
-  let main: DatabaseConnection | null = null;
-  let selfCheck: DatabaseConnection | null = null;
+  await startUp(startupInput);
+  const { clock, logger, databaseUrl } = ports;
+  let database: DatabaseConnection | null = null;
 
-  const program: SelfCheckProgram = {
+  return {
     settings,
     reportsDir: ports.reportsDir,
     clock,
@@ -140,28 +120,19 @@ export async function createSelfCheckProgram(
         tokenCounter: ports.tokenCounter,
         logger,
       }),
-    cancelLeftovers: () =>
-      cancelLeftoverInvestigations(databaseUrl, startupInput),
-    mainDatabase() {
-      main ??= openMainDatabase(ports.mainDatabaseUrl, ports.runtime.dbPoolMax);
-      return main.db;
-    },
-    selfCheckDatabase() {
-      selfCheck ??= createDatabase({
+    cancelLeftovers: () => cancelLeftoverInvestigations(startupInput),
+    database() {
+      database ??= createDatabase({
         connectionString: databaseUrl,
         poolMax: ports.runtime.dbPoolMax,
       });
-      return selfCheck.db;
+      return database.db;
     },
-    mainTranscriptRetention: () => transcriptRetention,
+    transcriptRetention: () => transcriptRetention,
     async close() {
-      const opened = [main, selfCheck].filter(
-        (connection): connection is DatabaseConnection => connection !== null,
-      );
-      main = null;
-      selfCheck = null;
-      await Promise.all(opened.map((connection) => connection.close()));
+      const opened = database;
+      database = null;
+      await opened?.close();
     },
   };
-  return { ok: true, program };
 }

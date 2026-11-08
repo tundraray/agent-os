@@ -5,7 +5,6 @@ import type {
 } from '@agent-os/engine';
 import { SIGNAL_LABELS } from '../result/report.js';
 import { DISCARDED_STATUSES, type FailureSignals } from '../signals.js';
-import type { DatabaseBase } from '../thread-ids.js';
 
 /**
  * The report of the `show` command (design-self-check.md, Flow 4, Contract `show`, DC-15): the four failure signals,
@@ -15,13 +14,12 @@ import type { DatabaseBase } from '../thread-ids.js';
  */
 
 export interface CourseReportInput {
-  readonly base: DatabaseBase;
   readonly record: RunRecord;
   /** The investigation's transcripts in call order, those past the retention term left out. */
   readonly transcripts: readonly Transcript[];
   readonly retention: TranscriptRetention;
   readonly signals: FailureSignals;
-  /** `self-check:show:<base>:<investigationId>:<uuid>`: the judge transcript of this report is bound to it. */
+  /** `self-check:show:<investigationId>:<uuid>`: the judge transcript of this report is bound to it. */
   readonly showRunId: string;
 }
 
@@ -31,7 +29,7 @@ const MARK = (fired: boolean): string => (fired ? 'сработал' : 'не с�
 export function renderCourseReport(input: CourseReportInput): string {
   const { record } = input;
   return [
-    `# Ход расследования ${input.base}:${record.investigationId}`,
+    `# Ход расследования ${record.investigationId}`,
     '',
     `- Владелец: ${record.ownerId}`,
     `- Статус: ${record.status}`,

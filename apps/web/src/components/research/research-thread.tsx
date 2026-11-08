@@ -16,25 +16,31 @@ import { createStore } from 'zustand/vanilla';
 import { createThreadResearch, useThreadResearch, type ThreadResearch } from '@/lib/threads/thread-research-store';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { researchAnnouncement, type ResearchAnnouncementEvent } from './research-announcements';
-import { ResearchCard, type ResearchCardAction, type ResearchCardDecisionError } from './research-card';
+import {
+  ResearchCard,
+  STILL_LAUNCHING_COPY,
+  type ResearchCardAction,
+  type ResearchCardDecisionError,
+} from './research-card';
 import { ResearchModeToggle } from './research-mode-toggle';
 
 /** The agent tool whose calls draw a launch card (design-chat-entry.md, KD-1). */
 const DEEP_RESEARCH_TOOL = 'deepResearch';
 
+/** The decisions that go as a hidden chat turn; a stop goes to the stop operation, past the conversation (KD-1). */
+type TurnDecisionAction = Exclude<ResearchCardAction, 'stop'>;
+
 /** The text of the hidden decision message: the label of the pressed button (KD-2). */
 const DECISION_TEXT = {
   confirm: 'Запустить',
   decline: 'Не нужно',
-  stop: 'Остановить',
-} as const satisfies Record<ResearchCardAction, string>;
+} as const satisfies Record<TurnDecisionAction, string>;
 
-/** The card's error line when a decision turn failed, was interrupted, or left no result (MC-15, MC-29, MC-16). */
+/** The card's error line when a decision turn failed, was interrupted, or left no result (MC-15, MC-29). */
 const DECISION_FAILURE = {
   confirm: 'launch_failed',
   decline: 'decline_failed',
-  stop: 'stop_failed',
-} as const satisfies Record<ResearchCardAction, ResearchCardDecisionError>;
+} as const satisfies Record<TurnDecisionAction, ResearchCardDecisionError>;
 
 type CardDecision = { pending: ResearchCardAction | null; error: ResearchCardDecisionError | null };
 
@@ -94,7 +100,7 @@ function toolLaunchesOf(messages: readonly FeedMessage[]): ToolLaunch[] {
 }
 
 /** The error line a finished decision turn leaves on its card; `null` — the decision reached the server's state. */
-function decisionErrorOf(action: ResearchCardAction, outcome: DeepResearchToolResult | undefined): ResearchCardDecisionError | null {
+function decisionErrorOf(action: TurnDecisionAction, outcome: DeepResearchToolResult | undefined): ResearchCardDecisionError | null {
   if (outcome === undefined || outcome.launch === null) return DECISION_FAILURE[action];
   return outcome.decisionError ?? null;
 }
@@ -173,7 +179,7 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
   const announcementId = useRef(0);
   /** Events this tab announced from a turn's result before the store read them, so the read does not repeat them. */
   const echoes = useRef(new Map<string, ResearchAnnouncementEvent>());
-  const activeDecision = useRef<{ launchKey: string; action: ResearchCardAction } | null>(null);
+  const activeDecision = useRef<{ launchKey: string; action: TurnDecisionAction } | null>(null);
   const turns = useRef<TurnTracker>({ threadId, seen: new Set(), baseline: threadId !== null, pending: false });
 
   const say = (texts: string[]): void => {
@@ -181,6 +187,39 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
     announcementId.current += 1;
     tab.setState({ announcement: { id: announcementId.current, texts } });
   };
+
+  const setDecision = (launchKey: string, decision: CardDecision): void => {
+    tab.setState({ decisions: withEntry(tab.getState().decisions, launchKey, decision) });
+  };
+
+  /**
+   * KD-1, KD-8: a confirmed stop goes to the stop operation without a chat turn, so a streaming reply does not hold it.
+   * A state change the answer brings is announced by the store's `announcements`; MC-4 — here, as the store knows no such
+   * event.
+   */
+  const stop = async (launchKey: string): Promise<void> => {
+    const pending: CardDecision = { pending: 'stop', error: null };
+    setDecision(launchKey, pending);
+    const result = await research.stop(launchKey);
+    // A thread switch forgot this decision, or a later press replaced it: the answer settles only its own.
+    if (tab.getState().decisions.get(launchKey) !== pending) return;
+    if (result.outcome === 'refused') {
+      setDecision(launchKey, { pending: null, error: 'stop_failed' });
+      return;
+    }
+    const stillLaunching = result.outcome === 'applied' && result.launch.state === 'running';
+    setDecision(launchKey, { pending: null, error: stillLaunching ? 'still_launching' : null });
+    if (stillLaunching) say([STILL_LAUNCHING_COPY]);
+  };
+
+  // A card's pending decision and its line belong to the thread they were made in: leaving it forgets them, so the
+  // thread shows its own read on return. A new chat that got its id is the same conversation and keeps them.
+  const decisionsThread = useRef(threadId);
+  useEffect(() => {
+    const previous = decisionsThread.current;
+    decisionsThread.current = threadId;
+    if (previous !== null && previous !== threadId) tab.setState({ decisions: new Map() });
+  }, [tab, threadId]);
 
   useEffect(() => {
     const texts: string[] = [];
@@ -239,7 +278,7 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
     }
     if (decision !== null) {
       const error = decisionErrorOf(decision.action, turn.at(-1)?.result);
-      tab.setState({ decisions: withEntry(tab.getState().decisions, decision.launchKey, { pending: null, error }) });
+      setDecision(decision.launchKey, { pending: null, error });
     }
     research.refresh();
     // `launches` is read for the announcement only: a read alone never ends a turn.
@@ -265,17 +304,23 @@ export function ThreadResearchProvider({ threadId, children }: { threadId: strin
         ),
       decisionOf: (launchKey) => decisions.get(launchKey),
       decide: (launchKey, action) => {
+        if (action === 'stop') {
+          void stop(launchKey);
+          return;
+        }
         // UXRD KD-8: the tab runs one reply stream; a press during it is not queued.
         if (isRunning) return;
         const decision: ResearchDecision = { action, launchKey };
         activeDecision.current = { launchKey, action };
-        tab.setState({ decisions: withEntry(tab.getState().decisions, launchKey, { pending: action, error: null }) });
+        setDecision(launchKey, { pending: action, error: null });
         const metadata = { custom: {}, [RESEARCH_METADATA_KEYS.researchDecision]: decision };
         aui.thread().append({ role: 'user', content: [{ type: 'text', text: DECISION_TEXT[action] }], metadata });
       },
       takeAnswerArrival: (messageId) => arrivals.current.delete(messageId),
     };
-  }, [aui, decisions, feedIds, isRunning, launches, readBase, tab, toolLaunches, turnViews]);
+    // `stop`, `setDecision` and `say` only write the tab store and call `research`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aui, decisions, feedIds, isRunning, launches, readBase, research, tab, toolLaunches, turnViews]);
 
   return (
     <ThreadResearchContext.Provider value={value}>

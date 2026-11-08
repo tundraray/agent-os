@@ -31,6 +31,7 @@ import {
   RESEARCH_RUNTIME,
   RUNTIME_CLOCK,
 } from '../research/research.tokens.js';
+import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 import {
   SOURCE_ADAPTERS,
   SOURCE_REGISTRY,
@@ -242,8 +243,9 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
     this.transcriptPurge = startTranscriptPurge({
       clock: this.clock,
       retention: this.transcriptRetention,
+      // The self-check program shares this database: its investigations keep their transcripts (AC-01.5).
       purge: (retention) =>
-        purgeExpiredTranscripts(this.database.db, retention),
+        purgeExpiredTranscripts(this.database.db, retention, SELF_CHECK_OWNER),
     });
   }
 

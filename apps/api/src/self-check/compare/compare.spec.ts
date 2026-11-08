@@ -409,14 +409,14 @@ describe('compareRunFiles: refusals (DC-12, UC-E6, UC-E8, invariant 7)', () => {
         kind: 'replays',
         items: {
           kind: 'investigations',
-          investigations: [{ base: 'main', investigationId: 'i-1' }],
+          investigations: [{ investigationId: 'i-1' }],
         },
       }),
       candidate: runResult('cand', [], {
         kind: 'replays',
         items: {
           kind: 'investigations',
-          investigations: [{ base: 'main', investigationId: 'i-2' }],
+          investigations: [{ investigationId: 'i-2' }],
         },
       }),
       code: 'runs_not_comparable',

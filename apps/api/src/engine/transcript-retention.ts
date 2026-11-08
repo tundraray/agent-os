@@ -8,8 +8,9 @@ const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * Parses `TRANSCRIPT_RETENTION_DAYS` from `read` (design-self-check.md, Runtime settings): unset or empty gives 30
- * days; anything but a whole number of days not less than 1 throws naming the variable, which stops the start. The
- * server reads it for the purge and the self-check program for `show` over the main database.
+ * days; anything but a whole number of days not less than 1 throws naming the variable, which stops the start. It is
+ * the term of the employees' transcripts: the server reads it for the purge, and the self-check program for `show` of an
+ * employee's investigation and for the removal of expired copies.
  */
 export function parseTranscriptRetention(
   read: (name: string) => string | undefined,
@@ -32,7 +33,10 @@ export interface TranscriptPurgeOptions {
   readonly clock: Clock;
   /** The term from `parseTranscriptRetention`. */
   readonly retention: TranscriptRetention;
-  /** `purgeExpiredTranscripts` over the main database; resolves to the number of transcripts deleted. */
+  /**
+   * `purgeExpiredTranscripts` over the server's database, keeping the investigations of `system:self-check`; resolves
+   * to the number of transcripts deleted.
+   */
   readonly purge: (retention: TranscriptRetention) => Promise<number>;
 }
 

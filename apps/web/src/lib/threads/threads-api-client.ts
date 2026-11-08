@@ -1,10 +1,12 @@
 import type { ZodType } from "zod";
 import {
+  ResearchStopResponseSchema,
   ThreadListResponseSchema,
   ThreadMessagesResponseSchema,
   ThreadResearchResponseSchema,
   ThreadSummarySchema,
   type RenameThreadRequest,
+  type ResearchLaunchView,
   type ThreadListResponse,
   type ThreadResearchResponse,
   type ThreadSummary,
@@ -19,6 +21,7 @@ type RequestInput = {
   body?: unknown;
   /** 400 on a `:threadId` route means the id is outside ThreadIdSchema: no such thread for the user. */
   treatBadRequestAsNotFound?: boolean;
+  signal?: AbortSignal;
 };
 
 async function send({
@@ -26,6 +29,7 @@ async function send({
   method = "GET",
   body,
   treatBadRequestAsNotFound = false,
+  signal,
 }: RequestInput): Promise<Response> {
   let response: Response;
   try {
@@ -34,6 +38,7 @@ async function send({
       credentials: "include",
       headers: body === undefined ? undefined : { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch {
     throw new ThreadsApiError("network");
@@ -55,6 +60,34 @@ async function parse<T>(response: Response, schema: ZodType<T>): Promise<T> {
   const result = schema.safeParse(data);
   if (!result.success) throw new ThreadsApiError("invalid_response", response.status);
   return result.data;
+}
+
+/**
+ * Sends and parses within `timeoutMs`, the body read included: a body that stalls after the headers would otherwise
+ * outlive the limit. Past the limit the request is aborted and the caller sees a lost connection (`network`).
+ */
+async function sendAndParseWithin<T>(
+  input: Omit<RequestInput, "signal">,
+  schema: ZodType<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Rejected before the abort, so the abort's own failure of the fetch or the body read cannot win the race.
+      reject(new ThreadsApiError("network"));
+      controller.abort();
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      send({ ...input, signal: controller.signal }).then((response) => parse(response, schema)),
+      expired,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const threadRoute = (threadId: string): string => `/api/threads/${encodeURIComponent(threadId)}`;
@@ -113,6 +146,34 @@ export async function deleteThread(threadId: string): Promise<void> {
   await send({ path: threadRoute(threadId), method: "DELETE" });
 }
 
+/**
+ * The stop route gives no response deadline of its own (design-lifecycle.md, ResearchStopResponse), so the client
+ * bounds the wait: without it a hung network would keep the card in «Остановка» for minutes (design-web.md, KD-4).
+ * A fixed value of the client, not a setting.
+ */
+const STOP_RESEARCH_TIMEOUT_MS = 20_000;
+
+/**
+ * `POST /api/threads/:threadId/research/:launchKey/stop` (design-web.md, Contract `threadsApiClient.stopResearch`).
+ * Every failure is a ThreadsApiError; the error code in the body is never read.
+ */
+export async function stopResearch(
+  threadId: string,
+  launchKey: string,
+  timeoutMs: number = STOP_RESEARCH_TIMEOUT_MS,
+): Promise<ResearchLaunchView> {
+  const { launch } = await sendAndParseWithin(
+    {
+      path: `${threadRoute(threadId)}/research/${encodeURIComponent(launchKey)}/stop`,
+      method: "POST",
+      treatBadRequestAsNotFound: true,
+    },
+    ResearchStopResponseSchema,
+    timeoutMs,
+  );
+  return launch;
+}
+
 export type ThreadsApiClient = {
   listThreads: typeof listThreads;
   getThread: typeof getThread;
@@ -121,6 +182,7 @@ export type ThreadsApiClient = {
   createThread: typeof createThread;
   renameThread: typeof renameThread;
   deleteThread: typeof deleteThread;
+  stopResearch: typeof stopResearch;
 };
 
 export const threadsApiClient: ThreadsApiClient = {
@@ -131,4 +193,5 @@ export const threadsApiClient: ThreadsApiClient = {
   createThread,
   renameThread,
   deleteThread,
+  stopResearch,
 };

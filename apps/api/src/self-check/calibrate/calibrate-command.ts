@@ -26,8 +26,8 @@ import {
  * The `calibrate` command of the self-check program (design-engine.md, Contract «Программа самопроверки — команда
  * `calibrate`», Flow 5): the calibration pairs of a scenario set judged by the `verifier` call of a configuration,
  * and the group table written to `--out`. Every refusal — `set_invalid`, `process_config_rejected`,
- * `calibration_prompt_has_fields` — comes before the first call (`database_not_self_check` comes from the program's
- * start); `calibration_empty` comes after the calls and writes no table. The engine is assembled without the runtime
+ * `calibration_prompt_has_fields` — comes before the first call; `calibration_empty` comes after the calls and writes
+ * no table. The engine is assembled without the runtime
  * workers, as for `show`: calibration needs only `Engine.assess`, claims no queued task and cancels no investigation.
  */
 

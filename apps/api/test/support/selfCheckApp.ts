@@ -45,7 +45,6 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import {
   createSelfCheckProgram,
-  type CreateSelfCheckProgramResult,
   type SelfCheckPorts,
   type SelfCheckProgram,
 } from '../../src/self-check/program.js';
@@ -54,7 +53,6 @@ import { RESULT_FILE_NAME } from '../../src/self-check/result/run-result.js';
 import type { ScenarioAssembly } from '../../src/self-check/scenario-assembly.js';
 import type { SelfCheckLogger } from '../../src/self-check/scenario-assembly.js';
 import { SOURCES_ALLOWLIST } from '../../src/sources/sources.config.js';
-import { mainDatabaseUrl } from './selfCheckDb.js';
 import {
   createSelfCheckModels,
   type SelfCheckModels,
@@ -63,9 +61,10 @@ import {
 /**
  * The common assembly of the self-check integration file (design-self-check.md, Test Strategy): the program's ports
  * with the doubles — the scripted models behind `resolveModel` and the token counter, the program clock — and
- * everything else real: `createSelfCheckProgram` over the file's `_self_check` database, the runtime with its workers,
- * the fixture process on the scenario, Postgres. Each test builds its own app, so it gets its own report directory and
- * fixture call log under a temp dir; the database is the file's (`selfCheckDb.ts`).
+ * everything else real: `createSelfCheckProgram` over the file's scratch database as `DATABASE_URL`, the runtime with
+ * its workers, the fixture process on the scenario, Postgres. The employees' investigations a test saves go to the
+ * same database, as they live in the server's database the program shares (KD-3). Each test builds its own app, so it
+ * gets its own report directory and fixture call log under a temp dir; the database is the file's (`selfCheckDb.ts`).
  *
  * The program the app starts is the real one with one observation added: `assembleScenario` tells the models double
  * which scenario it assembles before delegating, so the scripted roles answer from that scenario's key (the program
@@ -154,7 +153,7 @@ function holdingResolveModel(
   };
 }
 
-/** An employee's investigation saved in the main database by {@link SelfCheckApp.saveEmployeeInvestigation}. */
+/** An employee's investigation saved in the database by {@link SelfCheckApp.saveEmployeeInvestigation}. */
 export interface EmployeeInvestigation {
   readonly investigationId: string;
   /** The employee: `e2e-<uuid>`, unique per investigation. */
@@ -172,6 +171,11 @@ export interface EmployeeInvestigationRequest {
    * it empty) and the investigation is cancelled before any task runs, so it has no evidence page either.
    */
   readonly dataset: DatasetVersion | 'legacy';
+  /**
+   * Leaves the investigation unfinished: started with the runtime workers off (`RUNTIME_WORKERS=off`), its first tasks
+   * queued and never claimed, the investigation `active` (UC-E7). Only with a dataset version.
+   */
+  readonly unfinished?: boolean;
 }
 
 /** One recorded log call of the program: identifiers only (plan rule 12), so a test may read them all. */
@@ -192,10 +196,8 @@ export interface FixtureCallLogLine {
 }
 
 export interface SelfCheckAppOptions {
-  /** `SELF_CHECK_DATABASE_URL`: the file's database from `SelfCheckDatabases.create`, or one the guard must refuse. */
-  readonly selfCheckDatabaseUrl: string | undefined;
-  /** `DATABASE_URL`; the main database of the suite by default. */
-  readonly mainDatabaseUrl?: string;
+  /** `DATABASE_URL`: the file's database from `ScratchDatabases.create`. */
+  readonly databaseUrl: string;
   /** Runtime Settings over the test defaults: workers on, 2 slots, 50 ms poll, pool of 4. */
   readonly runtime?: Partial<RuntimeConfig>;
   /** The models double; a new one by default. A test that restarts the program passes the same one. */
@@ -214,11 +216,11 @@ export interface SelfCheckApp {
   /** The fixture call log in file order — the independent counter of `tools/call`; empty before the first call. */
   readCallLog(): FixtureCallLogLine[];
   /**
-   * The program's start (guard, migrations, leftovers) over the ports: a refusal as the program returns it, or the
-   * program with `assembleScenario` observed by the models double. A started program is closed by {@link close}, and
-   * so is every scenario assembly its caller has not closed.
+   * The program's start (migrations, expired copies) over the ports: the program with `assembleScenario` observed by
+   * the models double. A started program is closed by {@link close}, and so is every scenario assembly its caller has
+   * not closed.
    */
-  start(): Promise<CreateSelfCheckProgramResult>;
+  start(): Promise<SelfCheckProgram>;
   /**
    * The scenario (`<set>/<scenario>`) whose script the scripted roles follow on a dataset version (`v1`, `v2`): an
    * employee's investigation has no key of its own, so its roles read and state what that scenario's behaviour says.
@@ -230,23 +232,23 @@ export interface SelfCheckApp {
    */
   serveInstead(requested: string, served: string | null): void;
   /**
-   * An employee's investigation in the main database, made by the real engine and runtime on the real fixture with the
+   * An employee's investigation in the database, made by the real engine and runtime on the real fixture with the
    * scripted models: started for a new `e2e-` owner through `Engine.startInvestigation`, waited for until it is no
-   * longer running and has no task left, then its assembly closed. Setup only: this and the two changes below are the
-   * only writes of the file to the main database, each to the test's own investigation, and a test takes its snapshot
-   * of the main database after them.
+   * longer running and has no task left (or, `unfinished`, left `active` with its tasks queued), then its assembly
+   * closed. Setup only: this and the two changes below are the only writes of the file to employees' rows, each to the
+   * test's own investigation, and a test takes its snapshot of those rows after them.
    */
   saveEmployeeInvestigation(
     request: EmployeeInvestigationRequest,
   ): Promise<EmployeeInvestigation>;
   /**
-   * The employee deletes the conversation of a saved investigation: its investigations go from the main database with
-   * every research row by the cascade, as the server's thread purge removes them (UC-E10, the original is gone).
+   * The employee deletes the conversation of a saved investigation: its investigations go from the database with every
+   * research row by the cascade, as the server's thread purge removes them (UC-E10, the original is gone).
    */
   deleteEmployeeConversation(
     investigation: EmployeeInvestigation,
   ): Promise<void>;
-  /** Moves the creation of a saved investigation `days` back on the main database's clock (an original past the term). */
+  /** Moves the creation of a saved investigation `days` back on the database clock (an original past the term). */
   ageEmployeeInvestigation(
     investigation: EmployeeInvestigation,
     days: number,
@@ -285,8 +287,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
     ...options.runtime,
   };
   const ports: SelfCheckPorts = {
-    selfCheckDatabaseUrl: options.selfCheckDatabaseUrl,
-    mainDatabaseUrl: options.mainDatabaseUrl ?? mainDatabaseUrl(),
+    databaseUrl: options.databaseUrl,
     reportsDir,
     clock,
     resolveModel: holdingResolveModel(models.resolveModel, () => holding),
@@ -341,9 +342,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
         .map((line) => JSON.parse(line) as FixtureCallLogLine);
     },
     async start() {
-      const created = await createSelfCheckProgram(ports);
-      if (!created.ok) return created;
-      const { program } = created;
+      const program = await createSelfCheckProgram(ports);
       const observed: SelfCheckProgram = {
         ...program,
         assembleScenario: async (request) => {
@@ -355,7 +354,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
         },
       };
       started.push(observed);
-      return { ok: true, program: observed };
+      return observed;
     },
     scriptDatasetsAs(scenario) {
       datasetScript = scenario;
@@ -371,7 +370,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
       return saveEmployeeInvestigation({ ports, runtime }, request);
     },
     deleteEmployeeConversation({ threadId, resourceId }) {
-      return inMainDatabase(ports, async (db) => {
+      return inDatabase(ports, async (db) => {
         await db
           .delete(researchInvestigations)
           .where(
@@ -383,7 +382,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
       });
     },
     ageEmployeeInvestigation({ investigationId, resourceId }, days) {
-      return inMainDatabase(ports, async (db) => {
+      return inDatabase(ports, async (db) => {
         await db
           .update(researchInvestigations)
           .set({ createdAt: sql`now() - make_interval(days => ${days})` })
@@ -423,7 +422,7 @@ const isDatasetVersion = (value: string): value is DatasetVersion =>
   DATASET_VERSIONS.some((version) => version === value);
 
 // ---------------------------------------------------------------------------------------------
-// Employee investigations in the main database
+// Employee investigations in the database
 // ---------------------------------------------------------------------------------------------
 
 /** The server's ownership as far as the engine sees it: the employee owns the conversation it names. */
@@ -444,8 +443,9 @@ interface EmployeeAssembly {
 }
 
 /**
- * The assembly the server makes for an employee's investigation, over the main database: runtime, fixture source and
- * engine with the investigation's configuration. A legacy investigation gets no workers, so none of its tasks runs.
+ * The assembly the server makes for an employee's investigation, over the database: runtime, fixture source and engine
+ * with the investigation's configuration. A legacy or unfinished investigation gets no workers, so none of its tasks
+ * runs.
  */
 async function saveEmployeeInvestigation(
   context: { readonly ports: SelfCheckPorts; readonly runtime: RuntimeConfig },
@@ -453,16 +453,17 @@ async function saveEmployeeInvestigation(
 ): Promise<EmployeeInvestigation> {
   const { ports } = context;
   const legacy = request.dataset === 'legacy';
-  if (ports.mainDatabaseUrl === undefined) {
-    throw new Error('selfCheckApp: no main database to save into');
+  const unfinished = request.unfinished === true;
+  if (legacy && unfinished) {
+    throw new Error('selfCheckApp: a legacy investigation is never unfinished');
   }
   const database = createDatabase({
-    connectionString: ports.mainDatabaseUrl,
+    connectionString: ports.databaseUrl,
     poolMax: context.runtime.dbPoolMax,
   });
   const runtime = createRuntime({
     database,
-    config: { ...context.runtime, workers: !legacy },
+    config: { ...context.runtime, workers: !legacy && !unfinished },
     threads: employeeThreads,
     logger: ports.logger,
     clock: ports.clock,
@@ -531,6 +532,7 @@ async function saveEmployeeInvestigation(
       );
     }
     const saved = { ...owned, investigationId: start.investigationId };
+    if (unfinished) return saved;
     if (legacy) {
       await investigations.cancel(saved.investigationId, saved.resourceId);
     }
@@ -546,16 +548,13 @@ async function saveEmployeeInvestigation(
   }
 }
 
-/** Runs `change` over a connection of its own to the main database, closed after it. */
-async function inMainDatabase(
+/** Runs `change` over a connection of its own to the database, closed after it. */
+async function inDatabase(
   ports: SelfCheckPorts,
   change: (db: DatabaseConnection['db']) => Promise<void>,
 ): Promise<void> {
-  if (ports.mainDatabaseUrl === undefined) {
-    throw new Error('selfCheckApp: no main database to change');
-  }
   const database = createDatabase({
-    connectionString: ports.mainDatabaseUrl,
+    connectionString: ports.databaseUrl,
     poolMax: 1,
   });
   try {

@@ -68,7 +68,7 @@ export function judgeIdentity(
 export interface KeyedRunJudgeInput {
   readonly key: ScenarioKey;
   readonly answer: JudgedAnswer;
-  /** The run's investigation, in the self-check database; the judge transcript is bound to it. */
+  /** The run's investigation, of `system:self-check`; the judge transcript is bound to it. */
   readonly investigationId: string;
   readonly notAfter: Date;
 }
@@ -98,8 +98,8 @@ export interface UnkeyedRunJudgeInput {
   readonly question: string;
   readonly answer: JudgedAnswer;
   /**
-   * What the judge transcript is bound to, chosen by the caller: a repeat's own investigation, or — for a source
-   * investigation the self-check database does not hold — an id that remembers that source.
+   * What the judge transcript is bound to, chosen by the caller: a repeat's own investigation, or — for an employee's
+   * investigation, which must not get a self-check transcript — an id that remembers that source.
    */
   readonly binding: AssessBinding;
   readonly notAfter: Date;

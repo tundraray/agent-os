@@ -227,7 +227,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
   //   with `sourceMode` `model_knowledge` in the history's view the proposal card shows MC-31 before «Запустить» (AC-27.1) and keeps it through «Запуск», «Идёт» and after the one GET /research that follows the turn; the declined card «Не запущен» keeps it too
   //   (the mode is read from the view each time, not from the first state); the restored card message of A is a multi-step turn (reasoning, the call, text) drawn as one message (`joinStrategy: 'none'`)
   // - R3 settled, failed and busy cards (UC-3, UC-E1, DC-1, AC-19.7): the tool result for a launch already running -> the card shows that state, no error line (MC-15, MC-16, MC-29 absent); a decision turn answered with an HTTP 500
-  //   before the first chunk -> no error stub and no TH-08 block in the feed, the card shows the line of its action (MC-15 / MC-29 / MC-16), buttons enabled again, and one GET /research afterwards moves the card to the applied state if the server reports it;
+  //   before the first chunk -> no error stub and no TH-08 block in the feed, the card shows the line of its action (MC-15 / MC-29; a stop is not a decision turn - its refusal MC-16 is agent-quality INT-3 R1), buttons enabled again, and one GET /research afterwards moves the card to the applied state if the server reports it;
   //   a turn aborted from the composer behaves the same; an errored last reply loses its TH-08 block when the decision turn is sent; while a reply streams every decision button is disabled with the description MC-30 and no request is queued
   describe('INT-4', () => {
     it('INT-4 R1: the research mode is sent once in the message metadata, resets after the send, the launch label survives a reload, and a launch without sources shows its warning from the first display with the no-source announcement', async () => {
@@ -473,26 +473,18 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
       expect(traffic.chatBodies).toHaveLength(1);
     });
 
-    it.each<{ action: string; button: string; start: 'proposed' | 'running'; line: string; applied: string }>([
-      { action: 'confirm', button: 'Запустить', start: 'proposed', line: MC_15, applied: 'Ресерч идёт' },
-      { action: 'decline', button: 'Не нужно', start: 'proposed', line: MC_29, applied: 'Ресерч не запущен' },
-      { action: 'stop', button: 'Остановить', start: 'running', line: MC_16, applied: 'Ресерч остановлен' },
+    it.each<{ action: string; button: string; line: string; applied: string }>([
+      { action: 'confirm', button: 'Запустить', line: MC_15, applied: 'Ресерч идёт' },
+      { action: 'decline', button: 'Не нужно', line: MC_29, applied: 'Ресерч не запущен' },
     ])(
       'INT-4 R3 (failed $action): a decision turn that fails before streaming or is aborted shows the card error and no stub or error block in the feed, and the read after it moves the card to the applied state',
-      async ({ button, start, line, applied }) => {
+      async ({ button, line, applied }) => {
         // Arrange: one card; the first decision turn answers 500 before any chunk, the second is aborted mid-stream
-        const before = researchLaunchView({
-          launchKey: 'call-a',
-          mode: start === 'proposed' ? 'proposal' : 'explicit',
-          state: start,
-          goal: GOAL_A,
-        });
+        const before = researchLaunchView({ launchKey: 'call-a', mode: 'proposal', state: 'proposed', goal: GOAL_A });
         const appliedView: ResearchLaunchView =
           applied === 'Ресерч идёт'
             ? { ...before, state: 'running' }
-            : applied === 'Ресерч не запущен'
-              ? { ...before, state: 'not_launched', notLaunchedReason: 'declined' }
-              : { ...before, state: 'stopped' };
+            : { ...before, state: 'not_launched', notLaunchedReason: 'declined' };
         const abortedGate = deferred();
         let server_: ResearchLaunchView[] = [before];
         const traffic = serveThread({
@@ -508,13 +500,7 @@ describe('Shell: the research mode and the decisions on a research card (FR-19, 
         await screen.findByRole('group', { name: `Ресерч: ${GOAL_A}` });
         await waitFor(() => expect(traffic.researchReads).toBe(1));
         const feedBefore = feedRoots(view.container).map((root) => root.id);
-        const press = async () => {
-          await user.click(within(card(GOAL_A)).getByRole('button', { name: button }));
-          // «Остановить» asks first (MC-9); its confirming button carries the same name.
-          if (button === 'Остановить') {
-            await user.click(within(card(GOAL_A)).getAllByRole('button', { name: 'Остановить' })[0]);
-          }
-        };
+        const press = () => user.click(within(card(GOAL_A)).getByRole('button', { name: button }));
 
         // Act 1: the turn fails before its first chunk
         await press();

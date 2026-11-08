@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+  applyMigrations,
   createDatabase,
   type DatabaseConnection,
   researchEngineRuns,
@@ -10,21 +11,22 @@ import {
 } from '@agent-os/db';
 import { asc, eq } from 'drizzle-orm';
 import pg from 'pg';
+import { SELF_CHECK_OWNER } from '../../src/auth/system-owners.js';
 
 /**
- * Databases of the self-check integration file (design-self-check.md, Test Strategy): a scratch database per file whose
- * name ends in `_self_check`, created and dropped here, and read-only snapshots of the `research_*` tables of both
- * databases. The creation repeats the pattern of `packages/db/test/support/scratch-db.ts`, which `apps/api` may not
- * import (plan rule 11) and whose names lack the suffix the program's guard requires. Apart from `CREATE DATABASE` and
- * `DROP DATABASE`, nothing here writes: the program migrates its database itself, and every read is a `SELECT`.
+ * Databases of the self-check test files (design-self-check.md, Test Strategy): a migrated scratch database per file —
+ * the `DATABASE_URL` the program under test shares with the employees' investigations the test saves there, as it
+ * shares the server's database (KD-3) — created and dropped here, and read-only snapshots of its `research_*` tables.
+ * A scratch database keeps the program's cancel of `system:self-check` leftovers and the runtime workers of a test away
+ * from the suite's database, which other files use. The creation repeats the pattern of
+ * `packages/db/test/support/scratch-db.ts`, which `apps/api` may not import (plan rule 11). Apart from
+ * `CREATE DATABASE`, the migrations and `DROP DATABASE`, nothing here writes: every read is a `SELECT`.
  */
 
 const ENV_FILE = fileURLToPath(new URL('../../.env', import.meta.url));
-/** The suffix the program's guard requires of its database name (DC-17). */
-const SELF_CHECK_SUFFIX = '_self_check';
 
-/** `DATABASE_URL` as the app sees it: the process environment first, otherwise `apps/api/.env`. */
-export function mainDatabaseUrl(): string {
+/** `DATABASE_URL` of the suite: the process environment first, otherwise `apps/api/.env`. Scratch databases live on its server. */
+function suiteDatabaseUrl(): string {
   if (!process.env.DATABASE_URL) process.loadEnvFile(ENV_FILE);
   const url = process.env.DATABASE_URL;
   if (!url)
@@ -47,37 +49,38 @@ async function withConnection<T>(
 }
 
 function urlOfDatabase(name: string): string {
-  const url = new URL(mainDatabaseUrl());
+  const url = new URL(suiteDatabaseUrl());
   url.pathname = `/${name}`;
   return url.toString();
 }
 
 /**
- * Empty databases on the server of `DATABASE_URL`, one set per test file: the program under test migrates the one it
- * is given, never the main one; {@link dropAll} removes them in `afterAll`.
+ * Scratch databases on the server of the suite's `DATABASE_URL`, one set per test file; {@link dropAll} removes them in
+ * `afterAll`.
  */
-export class SelfCheckDatabases {
+export class ScratchDatabases {
   private readonly names: string[] = [];
 
   /**
-   * A new empty database; returns its URL. Its name ends in `_self_check` unless `selfCheckSuffix` is false — a
-   * database the guard must refuse (INT-5 R1).
+   * A new database with the migrations applied, as the server's database is; returns its URL. Employees'
+   * investigations can be saved in it before the program starts, and the program's own start finds nothing to migrate.
    */
-  async create(options: { selfCheckSuffix?: boolean } = {}): Promise<string> {
-    const suffix = options.selfCheckSuffix === false ? '' : SELF_CHECK_SUFFIX;
-    const name = `e2e_${randomBytes(6).toString('hex')}${suffix}`;
-    await withConnection(mainDatabaseUrl(), (client) =>
+  async create(): Promise<string> {
+    const name = `e2e_${randomBytes(6).toString('hex')}`;
+    await withConnection(suiteDatabaseUrl(), (client) =>
       client.query(`CREATE DATABASE "${name}"`),
     );
     this.names.push(name);
-    return urlOfDatabase(name);
+    const url = urlOfDatabase(name);
+    await applyMigrations(url);
+    return url;
   }
 
   /** Drops every database this instance created; closes the snapshot pools first. */
   async dropAll(): Promise<void> {
     await closeSelfCheckDb();
     const names = this.names.splice(0);
-    await withConnection(mainDatabaseUrl(), async (client) => {
+    await withConnection(suiteDatabaseUrl(), async (client) => {
       for (const name of names) {
         // FORCE: a connection of a failed test may still be closing.
         await client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
@@ -175,29 +178,34 @@ export function transcriptsOf(
     );
 }
 
-/** The `research_*` tables of the `app` schema, by name: an unmigrated database has none. */
-async function researchTables(url: string): Promise<string[]> {
+/** The `research_*` tables of the `app` schema with an `investigation_id` column, by name. */
+async function investigationTables(url: string): Promise<string[]> {
   const result = await connection(url).pool.query<{ name: string }>(
-    `SELECT table_name AS name FROM information_schema.tables
-      WHERE table_schema = 'app' AND table_name LIKE 'research\\_%'
+    `SELECT table_name AS name FROM information_schema.columns
+      WHERE table_schema = 'app' AND table_name LIKE 'research\\_%' AND column_name = 'investigation_id'
       ORDER BY table_name`,
   );
   return result.rows.map((row) => row.name);
 }
 
 /**
- * The version of every row of every `research_*` table: `<table> <ctid>` → `xmin`. An insert, an update or a delete
- * anywhere changes the map, so two equal snapshots mean nothing in those tables was written in between ("nothing
- * changed" checks of the main database, invariant 5).
+ * The version of every row bound to an employee's investigation — an investigation of any owner but `system:self-check`
+ * — in every `research_*` table that names its investigation: `<table> <ctid>` → `xmin`. An insert, an update or a
+ * delete of such a row changes the map, so two equal snapshots mean the program wrote nothing of the employees'
+ * (invariant 5); the program's own rows in the same database are left out.
  */
-export async function researchRowVersions(
+export async function employeeRowVersions(
   url: string,
 ): Promise<Map<string, string>> {
   const versions = new Map<string, string>();
   const { pool } = connection(url);
-  for (const table of await researchTables(url)) {
+  for (const table of await investigationTables(url)) {
     const result = await pool.query<{ row: string; version: string }>(
-      `SELECT ctid::text AS row, xmin::text AS version FROM app."${table}"`,
+      `SELECT ctid::text AS row, xmin::text AS version FROM app."${table}"
+        WHERE investigation_id IN (
+          SELECT investigation_id FROM app.research_investigations WHERE resource_id <> $1
+        )`,
+      [SELF_CHECK_OWNER],
     );
     for (const { row, version } of result.rows) {
       versions.set(`${table} ${row}`, version);

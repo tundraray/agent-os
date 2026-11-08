@@ -7,10 +7,8 @@ import {
 } from '@agent-os/engine';
 import type { Clock, StoredEvidence } from '@agent-os/runtime';
 import { and, count, inArray } from 'drizzle-orm';
-import {
-  type ScenarioAssembly,
-  SELF_CHECK_OWNER,
-} from '../scenario-assembly.js';
+import { SELF_CHECK_OWNER } from '../../auth/system-owners.js';
+import type { ScenarioAssembly } from '../scenario-assembly.js';
 
 /** How often the program asks the engine for the status of a scenario's runs (design-self-check.md, C3 self-check). */
 export const STATUS_POLL_MS = 5_000;

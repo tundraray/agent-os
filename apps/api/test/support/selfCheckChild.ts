@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
  * Process harness of the self-check E2E-1 (design-self-check.md, Test Strategy): every command of the program runs as
  * its own child process from the compiled test entry `selfCheckChildMain.ts` (`pnpm --filter api build:child` →
  * `dist/test-child/`), over the packages' built `dist`; a build older than its sources is refused before anything is
- * spawned. The harness gives each command its arguments, the self-check and main database URLs, the Runtime and
+ * spawned. The harness gives each command its arguments, the database URL (`DATABASE_URL`), the Runtime and
  * Sources Settings and its own reports directory, and reads back only what the developer sees: the exit code, the
  * printed directory, and the files on disk.
  */
@@ -124,7 +124,7 @@ export interface SelfCheckCommandInput {
   readonly argv: readonly string[];
   /** Where the command writes its run or comparison directory. */
   readonly reportsDir: string;
-  /** `SELF_CHECK_DATABASE_URL`, `DATABASE_URL`, `FIXTURE_CALL_LOG` and any other variable of the command. */
+  /** `DATABASE_URL`, `FIXTURE_CALL_LOG` and any other variable of the command. */
   readonly env: Readonly<Record<string, string>>;
   /**
    * `child` (default): the test entry with the scripted models. `shipped`: `dist/self-check/main.js` itself, which

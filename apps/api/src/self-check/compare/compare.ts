@@ -199,17 +199,20 @@ function incompleteRun(
   return null;
 }
 
-/** One scenario or source investigation of a run, by the key both runs share. */
+/**
+ * One scenario or source investigation of a run, by the key both runs share. A source investigation is told by its id
+ * alone: a result file written before design 1.6 also names the database it came from, which the key leaves out.
+ */
 const itemKey = ({ item }: ItemResult): string =>
   'scenarioId' in item
     ? `scenario:${item.scenarioId}`
-    : `investigation:${item.base}:${item.investigationId}`;
+    : `investigation:${item.investigationId}`;
 
 const runItemsKey = (items: RunItems): string =>
   items.kind === 'set'
     ? `set ${items.setName} (fingerprint ${items.setFingerprint})`
     : `investigations ${items.investigations
-        .map(({ base, investigationId }) => `${base}:${investigationId}`)
+        .map(({ investigationId }) => investigationId)
         .join(', ')}`;
 
 const sortedItemKeys = (run: RunResult): string[] =>
@@ -550,12 +553,8 @@ const RunFileSchema = z.looseObject({
     }),
     z.looseObject({
       kind: z.literal('investigations'),
-      investigations: z.array(
-        z.looseObject({
-          base: z.enum(['main', 'self_check']),
-          investigationId: z.string(),
-        }),
-      ),
+      // A result file written before design 1.6 also carries `base` (`main` or `self_check`): kept as read, unused.
+      investigations: z.array(z.looseObject({ investigationId: z.string() })),
     }),
   ]),
   thresholds: z.unknown(),
@@ -564,10 +563,7 @@ const RunFileSchema = z.looseObject({
     z.looseObject({
       item: z.union([
         z.looseObject({ scenarioId: z.string() }),
-        z.looseObject({
-          base: z.enum(['main', 'self_check']),
-          investigationId: z.string(),
-        }),
+        z.looseObject({ investigationId: z.string() }),
       ]),
       kind: z.enum(['cause', 'no_cause']).nullable(),
       ran: z.boolean(),

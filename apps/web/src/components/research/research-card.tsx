@@ -9,6 +9,7 @@ import {
   CircleStopIcon,
   CircleXIcon,
   HandIcon,
+  InfoIcon,
   LoaderCircleIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
@@ -18,15 +19,18 @@ import { Button } from '@/components/ui/button';
 
 export type ResearchCardAction = ResearchDecision['action'];
 
-/** A decision turn that failed or was interrupted (MC-15, MC-29, MC-16). */
-export type ResearchCardDecisionError = 'launch_failed' | 'decline_failed' | 'stop_failed';
+/**
+ * The line under the card's state after a decision: a failed or interrupted decision (MC-15, MC-29, MC-16), or a stop that
+ * found the research still starting (`still_launching`, MC-4).
+ */
+export type ResearchCardDecisionError = 'launch_failed' | 'decline_failed' | 'stop_failed' | 'still_launching';
 
 export type ResearchCardProps = {
   launch: ResearchLaunchView;
   /** The decision whose turn is in flight: «Запуск», «Отклонение» or «Остановка» until the turn returns. */
   pendingDecision?: ResearchCardAction | null;
   decisionError?: ResearchCardDecisionError | null;
-  /** A reply streams in this tab: decision buttons do nothing and say why (UXRD KD-8, MC-30). */
+  /** A reply streams in this tab: «Запустить» and «Не нужно» do nothing and say why (UXRD KD-8, MC-30); stopping still works. */
   replyStreaming: boolean;
   onDecision: (action: ResearchCardAction) => void;
   /** «К ответу»; without it the link only follows its `#` anchor. */
@@ -39,7 +43,7 @@ export type ResearchCardProps = {
  */
 type CardView =
   | { kind: 'proposal'; pending: 'confirm' | 'decline' | null; error: 'launch_failed' | 'decline_failed' | null }
-  | { kind: 'running'; error: 'stop_failed' | null }
+  | { kind: 'running'; error: 'stop_failed' | 'still_launching' | null }
   | { kind: 'stopping' }
   | { kind: 'completed'; answerMessageId: string | null }
   | { kind: 'failed' }
@@ -60,7 +64,7 @@ function cardView(
       };
     case 'running':
       if (pending === 'stop') return { kind: 'stopping' };
-      return { kind: 'running', error: error === 'stop_failed' ? error : null };
+      return { kind: 'running', error: error === 'stop_failed' || error === 'still_launching' ? error : null };
     case 'completed':
       return { kind: 'completed', answerMessageId: launch.answerPending ? null : launch.answerMessageId };
     case 'failed':
@@ -76,7 +80,10 @@ const ERROR_COPY = {
   launch_failed: 'Не удалось запустить ресерч. Попробуйте ещё раз.',
   decline_failed: 'Не удалось отклонить предложение. Попробуйте ещё раз.',
   stop_failed: 'Не удалось остановить ресерч. Попробуйте ещё раз.',
-} as const satisfies Record<ResearchCardDecisionError, string>;
+} as const satisfies Record<Exclude<ResearchCardDecisionError, 'still_launching'>, string>;
+
+/** MC-4: the card's line and the screen's polite announcement say it in the same words (KD-8). */
+export const STILL_LAUNCHING_COPY = 'Ресерч ещё запускается. Остановите его через несколько секунд.';
 
 const NOT_LAUNCHED_REASON_COPY = {
   declined: 'Вы отказались.',
@@ -111,7 +118,14 @@ export function ResearchCard({
   onDecision,
   onShowAnswer,
 }: ResearchCardProps) {
-  const view = cardView(launch, pendingDecision, decisionError);
+  // MC-4 leaves when the row's «Остановить» is pressed and returns only with a new `decisionError` (UXRD KD-6).
+  const [noteFor, setNoteFor] = useState(decisionError);
+  const [noteDismissed, setNoteDismissed] = useState(false);
+  if (noteFor !== decisionError) {
+    setNoteFor(decisionError);
+    setNoteDismissed(false);
+  }
+  const view = cardView(launch, pendingDecision, decisionError === 'still_launching' && noteDismissed ? null : decisionError);
   const cardRef = useRef<HTMLDivElement>(null);
   const [confirmingStop, setConfirmingStop] = useState(false);
   const [focusTarget, setFocusTarget] = useState<'continue' | 'stop' | null>(null);
@@ -127,8 +141,9 @@ export function ResearchCard({
     if (focusTarget === 'stop') stopRef.current?.focus();
   }, [focusTarget, showConfirmation]);
 
+  /** «Запустить» and «Не нужно» go as a chat turn, and the tab carries one reply stream at a time; a stop does not. */
   const decide = (action: ResearchCardAction) => {
-    if (replyStreaming) return;
+    if (replyStreaming && action !== 'stop') return;
     setConfirmingStop(false);
     setFocusTarget(null);
     cardRef.current?.focus();
@@ -136,7 +151,7 @@ export function ResearchCard({
   };
 
   const openConfirmation = () => {
-    if (replyStreaming) return;
+    setNoteDismissed(true);
     setConfirmingStop(true);
     setFocusTarget('continue');
   };
@@ -152,9 +167,8 @@ export function ResearchCard({
     closeConfirmation();
   };
 
-  /** A decision button that stays in the Tab order while a reply streams, with MC-30 as its description. */
-  const decisionButtonProps = {
-    disabled: replyStreaming,
+  /** «Запустить» or «Не нужно»: stays in the Tab order while a reply streams, with MC-30 as its description. */
+  const proposalButtonProps = {
     focusableWhenDisabled: true,
     'aria-describedby': replyStreaming ? unavailableId : undefined,
   };
@@ -195,7 +209,14 @@ export function ResearchCard({
         </p>
       )}
 
-      {(view.kind === 'proposal' || view.kind === 'running') && view.error !== null && (
+      {view.kind === 'running' && view.error === 'still_launching' && (
+        <p className="text-foreground flex items-start gap-1.5">
+          <InfoIcon aria-hidden className="text-info mt-0.75 size-3.5 shrink-0" />
+          {STILL_LAUNCHING_COPY}
+        </p>
+      )}
+
+      {(view.kind === 'proposal' || view.kind === 'running') && view.error !== null && view.error !== 'still_launching' && (
         <p role="alert" className="text-foreground flex items-start gap-1.5">
           <CircleXIcon aria-hidden className="text-destructive mt-0.75 size-3.5 shrink-0" />
           {ERROR_COPY[view.error]}
@@ -204,10 +225,10 @@ export function ResearchCard({
 
       {view.kind === 'proposal' && (
         <ActionRow>
-          <Button size="sm" className="pointer-coarse:h-11" onClick={() => decide('confirm')} {...decisionButtonProps} disabled={replyStreaming || view.pending !== null}>
+          <Button size="sm" className="pointer-coarse:h-11" onClick={() => decide('confirm')} {...proposalButtonProps} disabled={replyStreaming || view.pending !== null}>
             {view.pending === 'confirm' ? <PendingLabel text="Запускаем…" /> : 'Запустить'}
           </Button>
-          <Button size="sm" variant="outline" className="pointer-coarse:h-11" onClick={() => decide('decline')} {...decisionButtonProps} disabled={replyStreaming || view.pending !== null}>
+          <Button size="sm" variant="outline" className="pointer-coarse:h-11" onClick={() => decide('decline')} {...proposalButtonProps} disabled={replyStreaming || view.pending !== null}>
             {view.pending === 'decline' ? <PendingLabel text="Отклоняем…" /> : 'Не нужно'}
           </Button>
         </ActionRow>
@@ -215,7 +236,7 @@ export function ResearchCard({
 
       {view.kind === 'running' && !showConfirmation && (
         <ActionRow>
-          <Button ref={stopRef} size="sm" variant="outline" className="pointer-coarse:h-11" onClick={openConfirmation} {...decisionButtonProps}>
+          <Button ref={stopRef} size="sm" variant="outline" className="pointer-coarse:h-11" onClick={openConfirmation}>
             Остановить
           </Button>
         </ActionRow>
@@ -225,7 +246,7 @@ export function ResearchCard({
         <div className="flex flex-col gap-2" onKeyDown={onConfirmationKeyDown}>
           <p className="text-foreground">Остановить ресерч? Ответа не будет, потраченный бюджет не вернётся.</p>
           <ActionRow>
-            <Button size="sm" variant="destructive" className="pointer-coarse:h-11" onClick={() => decide('stop')} {...decisionButtonProps}>
+            <Button size="sm" variant="destructive" className="pointer-coarse:h-11" onClick={() => decide('stop')}>
               Остановить
             </Button>
             <Button ref={continueRef} size="sm" variant="outline" className="pointer-coarse:h-11" onClick={closeConfirmation}>

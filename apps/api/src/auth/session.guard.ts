@@ -6,12 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AuthedRequest } from './auth.types.js';
-
-/**
- * Owners of this prefix are the system's own, such as `system:self-check` of the self-check program
- * (design-self-check.md, KD-3): no sign-in issues them, so no header may claim one.
- */
-const RESERVED_USER_PREFIX = 'system:';
+import { RESERVED_USER_PREFIX } from './system-owners.js';
 
 /**
  * Placeholder guard. Real session/JWT validation via corporate OIDC is the next step

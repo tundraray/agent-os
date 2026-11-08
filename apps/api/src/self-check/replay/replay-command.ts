@@ -47,16 +47,10 @@ import {
   type WaitedRun,
   waitForScenarioRuns,
 } from '../run/run-waiter.js';
-import {
-  type ScenarioAssembly,
-  SELF_CHECK_OWNER,
-} from '../scenario-assembly.js';
+import { SELF_CHECK_OWNER } from '../../auth/system-owners.js';
+import type { ScenarioAssembly } from '../scenario-assembly.js';
 import { type FailureSignals, failureSignals } from '../signals.js';
-import {
-  copyOrigin,
-  type DatabaseBase,
-  formatThreadId,
-} from '../thread-ids.js';
+import { copyOrigin, formatThreadId } from '../thread-ids.js';
 import { scenarioVerdict, type Verdict } from '../verdict/verdict.js';
 import { type ReplayConfigChoice, replayConfig } from './replay-config.js';
 import {
@@ -67,38 +61,24 @@ import {
 
 /**
  * The `replay` command of the self-check program (design-self-check.md, KD-7, Flow 2, Contract `replay`): repeats of
- * saved investigations, each a new investigation of `system:self-check` in the self-check database with the original's
- * question, on the slice the original saw, with the frozen configuration (or the shipped one by choice). Every refusal
+ * saved investigations, each a new investigation of `system:self-check` with the original's question, on the slice the original saw, with the frozen configuration (or the shipped one by choice). Every refusal
  * — `invalid_arguments`, `thresholds_invalid`, `investigation_not_found`, `replay_slice_unknown`,
  * `process_config_rejected` (schema and catalog), `replay_slice_mismatch` — is given for all originals before the
  * first investigation is started and before the run directory exists. The leftovers of an earlier run are cancelled
  * after the refusals that need no assembly and before the first assembly (DC-18): an assembly's dispatcher would claim
- * a leftover task at once, so the catalog check and the slice check follow the cancel. The source database is only read.
+ * a leftover task at once, so the catalog check and the slice check follow the cancel. The original is only read.
  */
 
 /** Repeats per source investigation when the command does not say; the same default as `run`. */
 const DEFAULT_RUNS_PER_INVESTIGATION = 3;
 
-const DEFAULT_BASE: DatabaseBase = 'main';
 const DEFAULT_CHOICE: ReplayConfigChoice = 'frozen';
-const BASES: readonly DatabaseBase[] = ['main', 'self_check'];
 const CHOICES: readonly ReplayConfigChoice[] = ['frozen', 'shipped'];
-
-/**
- * The self-check database for reads that need no scenario assembly: an original of the base `self_check` is read
- * from it before any fixture is started. The program provides it (wired with the command, task-40).
- */
-export interface SelfCheckDatabaseReader {
-  selfCheckDatabase(): Database;
-}
-
-export type ReplayProgram = SelfCheckProgram & SelfCheckDatabaseReader;
 
 export interface ReplayOptions {
   readonly investigationIds: readonly string[];
-  /** The owner of the originals in the source database. */
+  /** The owner of the originals: an employee, or `system:self-check` for a scenario run. */
   readonly ownerId: string;
-  readonly base: DatabaseBase;
   readonly runsPerInvestigation: number;
   readonly choice: ReplayConfigChoice;
   /** Another catalog model for one role of the chosen configuration; null keeps its models. */
@@ -130,13 +110,13 @@ const refusal = (
 ): ReplayRefusal => ({ ok: false, code, reason });
 
 /**
- * `replay --investigation <id> [--investigation <id> ...] --owner <ownerId> [--base main|self_check] [--runs <n>]
- * [--config frozen|shipped] [--role-model <role>=<model>] [--thresholds <file>]`. On success the run directory is
- * printed to stdout by the command line.
+ * `replay --investigation <id> [--investigation <id> ...] --owner <ownerId> [--runs <n>] [--config frozen|shipped]
+ * [--role-model <role>=<model>] [--thresholds <file>]`. On success the run directory is printed to stdout by the
+ * command line.
  */
 export async function executeReplayCommand(
   args: readonly string[],
-  program: ReplayProgram,
+  program: SelfCheckProgram,
 ): Promise<ReplayOutcome> {
   const parsed = parseReplayArgs(args);
   return parsed.ok ? replayInvestigations(program, parsed.options) : parsed;
@@ -159,7 +139,6 @@ function parseReplayArgs(
       options: {
         investigation: { type: 'string', multiple: true },
         owner: { type: 'string' },
-        base: { type: 'string' },
         runs: { type: 'string' },
         config: { type: 'string' },
         'role-model': { type: 'string' },
@@ -178,7 +157,6 @@ function parseReplayArgs(
   };
   const investigationIds = values.investigation ?? [];
   const owner = single('owner');
-  const base = single('base') ?? DEFAULT_BASE;
   const runs = single('runs');
   const choice = single('config') ?? DEFAULT_CHOICE;
   const thresholds = single('thresholds');
@@ -186,7 +164,6 @@ function parseReplayArgs(
   const usage = usageError({
     investigationIds,
     owner,
-    base,
     runs,
     choice,
     roleModel,
@@ -197,7 +174,6 @@ function parseReplayArgs(
     options: {
       investigationIds,
       ownerId: owner ?? '',
-      base: BASES.find((known) => known === base) ?? DEFAULT_BASE,
       runsPerInvestigation:
         runs === undefined ? DEFAULT_RUNS_PER_INVESTIGATION : Number(runs),
       choice: CHOICES.find((known) => known === choice) ?? DEFAULT_CHOICE,
@@ -211,7 +187,6 @@ function parseReplayArgs(
 function usageError(given: {
   readonly investigationIds: readonly string[];
   readonly owner: string | undefined;
-  readonly base: string;
   readonly runs: string | undefined;
   readonly choice: string;
   readonly roleModel: ReplayOptions['roleModel'] | 'invalid';
@@ -224,9 +199,6 @@ function usageError(given: {
   }
   if (given.owner === undefined || given.owner === '') {
     return 'no owner given (--owner <ownerId>)';
-  }
-  if (!BASES.some((known) => known === given.base)) {
-    return `--base must be one of ${BASES.join(', ')}, got "${given.base}"`;
   }
   if (given.runs !== undefined && !POSITIVE_INTEGER.test(given.runs)) {
     return `--runs must be a positive integer, got "${given.runs}"`;
@@ -242,8 +214,9 @@ function usageError(given: {
 
 /** A source investigation accepted for replay: everything its repeats need, decided before any start. */
 interface ReplayItem {
-  readonly base: DatabaseBase;
   readonly investigationId: string;
+  /** The owner of the original: an employee's original gets no self-check transcript of its own. */
+  readonly ownerId: string;
   readonly record: RunRecord;
   readonly slice: FixtureSlice;
   /** What the fixture is started on: `v1`, `v2` or `<set>/<scenario>`. */
@@ -251,13 +224,13 @@ interface ReplayItem {
   readonly processConfig: ProcessConfig;
   /** The scenario key of an original run on a scenario slice; null for an investigation without a key. */
   readonly key: ScenarioKey | null;
-  /** `self-check:copy:<base>:<investigationId>` of the original, inherited by a copy of a copy. */
+  /** `self-check:copy:<investigationId>` of the original, inherited by a repeat of a repeat. */
   readonly threadId: string;
 }
 
 /** The command over parsed options: all refusals first, then the run directory, the repeats, the files. */
 async function replayInvestigations(
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   options: ReplayOptions,
 ): Promise<ReplayOutcome> {
   const thresholdsText = await readThresholdsFile(
@@ -289,7 +262,6 @@ async function replayInvestigations(
   }
   program.logger.log('self-check replay started', {
     runId,
-    base: options.base,
     investigations: items.length,
     choice: options.choice,
     runsPerInvestigation: options.runsPerInvestigation,
@@ -313,8 +285,7 @@ async function replayInvestigations(
     ),
     items: {
       kind: 'investigations',
-      investigations: items.map(({ base, investigationId }) => ({
-        base,
+      investigations: items.map(({ investigationId }) => ({
         investigationId,
       })),
     },
@@ -342,16 +313,15 @@ async function replayInvestigations(
 }
 
 /**
- * Every original read by its owner from the source database, its slice resolved and its configuration chosen; the
- * first refusal ends the command. The known slices are built once.
+ * Every original read by its owner, its slice resolved and its configuration chosen; the first refusal ends the
+ * command. The known slices are built once.
  */
 async function readItems(
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   options: ReplayOptions,
 ): Promise<ReplayItem[] | ReplayRefusal> {
-  const { base, ownerId } = options;
-  const db =
-    base === 'main' ? program.mainDatabase() : program.selfCheckDatabase();
+  const { ownerId } = options;
+  const db = program.database();
   const known = knownFixtureSlices();
   const items: ReplayItem[] = [];
   for (const investigationId of options.investigationIds) {
@@ -359,14 +329,14 @@ async function readItems(
     if (read === null) {
       return refusal(
         'investigation_not_found',
-        `investigation ${base}:${investigationId} of ${ownerId} not found`,
+        `investigation ${investigationId} of ${ownerId} not found`,
       );
     }
     const resolved = resolveReplaySlice(read.record, known);
     if (!resolved.ok) {
       return refusal(
         'replay_slice_unknown',
-        `the slice of ${base}:${investigationId} cannot be determined: ${resolved.reason}`,
+        `the slice of ${investigationId} cannot be determined: ${resolved.reason}`,
       );
     }
     const config = replayConfig({
@@ -382,8 +352,8 @@ async function readItems(
     }
     const { slice } = resolved;
     items.push({
-      base,
       investigationId,
+      ownerId,
       record: read.record,
       slice,
       served:
@@ -394,7 +364,11 @@ async function readItems(
       key: keyOf(slice),
       threadId: formatThreadId({
         kind: 'copy',
-        ...copyOrigin({ base, investigationId, threadId: read.threadId }),
+        investigationId: copyOrigin({
+          investigationId,
+          ownerId,
+          threadId: read.threadId,
+        }),
       }),
     });
   }
@@ -437,7 +411,7 @@ function keyOf(slice: FixtureSlice): ScenarioKey | null {
 
 /** The assembly on the item's slice, or `process_config_rejected` with the path `createEngine` names (catalog check). */
 async function assembleOnSlice(
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   item: ReplayItem,
 ): Promise<ScenarioAssembly | ReplayRefusal> {
   try {
@@ -462,7 +436,7 @@ async function assembleOnSlice(
  * the item's slice serves exactly the original's slice. The assembly is closed again; nothing was started on it.
  */
 async function checkSlice(
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   item: ReplayItem,
 ): Promise<ReplayRefusal | null> {
   const assembly = await assembleOnSlice(program, item);
@@ -473,7 +447,7 @@ async function checkSlice(
       ? null
       : refusal(
           'replay_slice_mismatch',
-          `the fixture started on ${item.served} serves ${served}; ${item.base}:${item.investigationId} saw ${item.slice.snapshot}`,
+          `the fixture started on ${item.served} serves ${served}; ${item.investigationId} saw ${item.slice.snapshot}`,
         );
   } finally {
     await assembly.close();
@@ -481,7 +455,7 @@ async function checkSlice(
 }
 
 interface ReplayContext {
-  readonly program: ReplayProgram;
+  readonly program: SelfCheckProgram;
   readonly options: ReplayOptions;
   readonly runId: string;
 }
@@ -545,7 +519,7 @@ async function replayItem(
     }
     return {
       item: {
-        item: { base: item.base, investigationId: item.investigationId },
+        item: { investigationId: item.investigationId },
         kind: item.key?.kind ?? null,
         ran: true,
         runs,
@@ -576,11 +550,11 @@ async function startRepeats(
       query: item.record.query,
       processId: item.processConfig.processId,
       version: item.processConfig.version,
-      launchKey: `${runId}/${item.base}/${item.investigationId}/${index}`,
+      launchKey: `${runId}/${item.investigationId}/${index}`,
     });
     if (start.outcome === 'rejected') {
       throw new Error(
-        `repeat ${index} of ${item.base}:${item.investigationId} was refused: ${start.code}`,
+        `repeat ${index} of ${item.investigationId} was refused: ${start.code}`,
       );
     }
     started.push({ investigationId: start.investigationId, startedAt });
@@ -597,7 +571,7 @@ const NO_ANSWER: Verdict = scenarioVerdict({ answer: null });
  */
 async function unkeyedRun(
   deps: JudgeDeps,
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   run: WaitedRun,
   now: Date,
 ): Promise<RunEntry> {
@@ -621,13 +595,13 @@ async function unkeyedRun(
 }
 
 /**
- * The original's own signals, to stand next to its repeats'. An original of the self-check database binds its judge
- * transcript to itself; an original of the main database is not visible here, so the transcript is bound to its first
- * repeat — a copy that remembers the original and goes with it (DC-4).
+ * The original's own signals, to stand next to its repeats'. An original of `system:self-check` binds its judge
+ * transcript to itself; an employee's original gets no transcript of the program, so the transcript is bound to its
+ * first repeat — a copy that remembers the original and goes with it (DC-4).
  */
 async function originalSignals(
   deps: JudgeDeps,
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   item: ReplayItem,
   waited: readonly WaitedRun[],
 ): Promise<FailureSignals> {
@@ -638,7 +612,7 @@ async function originalSignals(
   return signalsOf(deps, program, item.record, {
     binding: {
       investigationId:
-        item.base === 'self_check'
+        item.ownerId === SELF_CHECK_OWNER
           ? item.investigationId
           : firstRepeat.investigationId,
     },
@@ -649,7 +623,7 @@ async function originalSignals(
 /** The four failure signals of a record; the judge without a key is called only when it has an answer. */
 async function signalsOf(
   deps: JudgeDeps,
-  program: ReplayProgram,
+  program: SelfCheckProgram,
   record: RunRecord,
   call: { readonly binding: AssessBinding; readonly notAfter: Date },
 ): Promise<FailureSignals> {

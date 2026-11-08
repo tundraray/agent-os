@@ -1,0 +1,77 @@
+{
+  "model": "anthropic/claude-haiku-5-5",
+  "promptVersion": "11947cf5ff16",
+  "scenarioSet": "first",
+  "pairsFingerprint": "1e6d9ce6ecc3",
+  "calibratedAt": "2026-11-07T23:29:41.031Z",
+  "groupCount": 3,
+  "profiles": [
+    {
+      "profile": {
+        "claimType": "observation",
+        "valueCheck": "matched",
+        "independentRecords": "one",
+        "contradictions": false
+      },
+      "group": "high"
+    },
+    {
+      "profile": {
+        "claimType": "quantitative",
+        "valueCheck": "matched",
+        "independentRecords": "one",
+        "contradictions": false
+      },
+      "group": "medium"
+    }
+  ],
+  "groups": [
+    {
+      "group": "high",
+      "establishedPairs": 24,
+      "correctShare": 1
+    },
+    {
+      "group": "medium",
+      "establishedPairs": 24,
+      "correctShare": 1
+    },
+    {
+      "group": "low",
+      "establishedPairs": 0,
+      "correctShare": 0
+    }
+  ],
+  "pairKinds": [
+    {
+      "pairKind": "supported",
+      "supportMatch": 1,
+      "typeMatch": 1,
+      "decisionMatch": 1
+    },
+    {
+      "pairKind": "values_match_meaning_wrong",
+      "supportMatch": 1,
+      "typeMatch": 1,
+      "decisionMatch": 1
+    },
+    {
+      "pairKind": "causal",
+      "supportMatch": 0.75,
+      "typeMatch": 1,
+      "decisionMatch": 1
+    },
+    {
+      "pairKind": "contradicted",
+      "supportMatch": 1,
+      "typeMatch": 0,
+      "decisionMatch": 1
+    },
+    {
+      "pairKind": "insufficient",
+      "supportMatch": 0.7083333333333334,
+      "typeMatch": 1,
+      "decisionMatch": 1
+    }
+  ]
+}

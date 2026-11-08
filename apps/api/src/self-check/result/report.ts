@@ -93,7 +93,7 @@ function itemsLine(items: RunItems): string {
   return items.kind === 'set'
     ? `набор \`${items.setName}\` (отпечаток \`${items.setFingerprint}\`)`
     : `исходные расследования: ${items.investigations
-        .map(({ base, investigationId }) => `\`${base}:${investigationId}\``)
+        .map(({ investigationId }) => `\`${investigationId}\``)
         .join(', ')}`;
 }
 
@@ -183,7 +183,7 @@ function itemSection(item: ItemResult): string[] {
   const name =
     'scenarioId' in item.item
       ? `Сценарий \`${item.item.scenarioId}\``
-      : `Расследование \`${item.item.base}:${item.item.investigationId}\``;
+      : `Расследование \`${item.item.investigationId}\``;
   const kind = item.kind === null ? '' : ` (\`${item.kind}\`)`;
   if (!item.ran) {
     return [`### ${name}${kind}`, '', 'Не прогнан.', ''];

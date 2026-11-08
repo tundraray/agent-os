@@ -25,9 +25,9 @@
 // - AC-01.1 (a transcript per attempt, retries included), DC-1: INT-1 T1
 // - AC-01.6 (prompt version stable per role and configuration, changes with any template edit), DC-2: INT-1 T2 (wiring); the fingerprint rule is unit
 // - AC-01.2 (reads filter by owner), NFR-01: INT-2 T1
-// - AC-01.3 (a transcript does not outlive its investigation): INT-2 T2 (and INT-5 R3 for copies in the self-check database)
+// - AC-01.3 (a transcript does not outlive its investigation): INT-2 T2 (and INT-5 R3 of the api file for the copies of the self-check program)
 // - AC-01.4 (30 days by default, not read after the term, purged within the hour), DC-4: INT-2 T3 (read filter and purge); the 30-day default and the hourly timer are unit
-// - AC-01.5 (scenario runs kept without a term): INT-2 T4
+// - AC-01.5 (scenario runs kept without a term; the purge keeps the `system:self-check` owner in the shared database): INT-2 T4
 // - DC-3 (a judge call leaves a transcript with role `judge`): INT-3 R1 in the api file (it runs through the real `Engine.assess`)
 
 import { createHash } from 'node:crypto';
@@ -41,7 +41,7 @@ import {
   type TokenCountRequest,
   type TranscriptRetention,
 } from '@agent-os/engine';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { closeEngineDb, engineRowsOf, llmTranscriptsOf, tasksOf } from './support/engineDb.js';
@@ -430,15 +430,16 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
     //     Then: no row of `research_llm_transcripts` remains for that investigation, the judge-bound one included.
     //  T3 retention. Given no `TRANSCRIPT_RETENTION_DAYS` set (the default term passed by the caller), a transcript written at T. When it is read at T+29 days, at T+31 days before any purge, and then `purgeExpiredTranscripts` runs.
     //     Then: present, then not returned by the read although the row still exists, then the purge returns 1 and removes only that row; the `research_llm_calls` row and every transcript younger than the term stay.
-    //  T4 no term. Given a scenario-run investigation whose transcripts are 400 days old. When they are read and the purge runs with "no term".
-    //     Then: all transcripts are returned and the purge returns 0.
+    //  T4 kept owner (UC-4). Given a scenario run of the owner `system:self-check`, an employee's investigation and a judge call bound to a self-check run id only, all their transcripts 400 days old.
+    //     When the purge runs with the default term and `system:self-check` as the owner it keeps, then the scenario run is read "without a term".
+    //     Then: the purge removes exactly the employee's transcripts; the scenario run's transcripts and the one outside any investigation stay, and the run is read in full.
     //
     // AC: "Чтение транскриптов и хода расследования фильтрует по владельцу" (AC-01.2, NFR-01); "Транскрипт удаляется вместе с расследованием" (AC-01.3);
     //     "Транскрипт старше срока хранения не отдаётся чтением сразу после конца срока, ещё до очистки; очистка удаляет его не позже чем через час" (AC-01.4, DC-4);
     //     "Транскрипты прогонов на придуманных сценариях хранятся бессрочно" (AC-01.5)
     // Behavior: reader / purge / delete -> filtered by owner, by foreign key and by age in SQL -> what a developer or another user can still see
     // Catches: another user reading transcripts that hold log content (NFR-01); transcripts orphaned after the conversation is deleted (log content outliving the investigation); an expired transcript still returned before the purge runs;
-    //          a purge that removes the journal row or a young transcript; a "no term" mode that deletes. Only the real database shows the filter, the cascade and the purge scope.
+    //          a purge that removes the journal row or a young transcript; a purge that removes the self-check program's transcripts in the shared database (AC-01.5). Only the real database shows the filter, the cascade and the purge scope.
     // @category: core-functionality
     // @dependency: readTranscripts, readRunRecord, purgeExpiredTranscripts, runtime deletion, Postgres
     // @complexity: medium
@@ -455,6 +456,8 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
     const NOT_FOUND = { outcome: 'rejected', code: 'investigation_not_found' } as const;
     /** Every model call of one run on the script of `finishedRun`, in call order. */
     const RUN_ROLES = ['plan', 'controller', 'worker', 'controller'];
+    /** The owner of the self-check program's investigations, which the server's purge keeps (design-self-check.md, KD-3). */
+    const SELF_CHECK_OWNER = 'system:self-check';
     let harness: EngineHarness;
 
     beforeAll(async () => {
@@ -479,8 +482,8 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
       }
     });
 
-    /** A finished investigation of a new user: the plan, one analysis task, an inconclusive conclusion. */
-    async function finishedRun(query: string) {
+    /** A finished investigation of `resourceId` (a new user by default): the plan, one analysis task, an inconclusive conclusion. */
+    async function finishedRun(query: string, resourceId: string = newUser()) {
       harness.model.script(
         'controller',
         {
@@ -497,7 +500,6 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
       harness.model.script('worker', {
         output: { claims: [{ text: 'service-0 timed out waiting for a lock', atoms: [{ kind: 'service', value: 'service-0' }], pointer: [] }] },
       });
-      const resourceId = newUser();
       const threadId = await harness.createThread(resourceId);
       const started = await harness.engine.startInvestigation({ resourceId, threadId, query, processId: 'deep-research', launchKey: newLaunchKey() });
       if (started.outcome === 'rejected') throw new Error(`start refused: ${started.code}`);
@@ -587,7 +589,7 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
 
     it('INT-2 T3: under the default term a transcript is read at 29 days, is no longer read at 31 days although its row is still there, and the purge then removes only that row, leaving its journal row and the younger transcripts', async () => {
       // Clears what earlier runs may have left past the term: the purge below counts over the whole database.
-      await purgeExpiredTranscripts(harness.db, DEFAULT_TERM);
+      await purgeExpiredTranscripts(harness.db, DEFAULT_TERM, SELF_CHECK_OWNER);
       const { resourceId, investigationId } = await finishedRun('INT-2 T3: why do the lock waits time out?');
       const stored = await storedCalls(investigationId);
       const writtenAtT = stored[0]![1]!;
@@ -600,27 +602,60 @@ describe('agent-quality / self-check - engine integration (in-process runtime + 
       expect(await readCalls(investigationId, resourceId)).toEqual(younger);
       expect(await storedCalls(investigationId)).toEqual(stored);
 
-      expect(await purgeExpiredTranscripts(harness.db, DEFAULT_TERM)).toBe(1);
+      expect(await purgeExpiredTranscripts(harness.db, DEFAULT_TERM, SELF_CHECK_OWNER)).toBe(1);
       expect(await storedCalls(investigationId)).toEqual(younger);
       // The journal keeps every call with its spend, the purged one's included.
       const { llmCalls } = await engineRowsOf(investigationId);
       expect(llmCalls.map((row) => [row.role, row.callId])).toEqual(stored);
     }, 60_000);
 
-    it('INT-2 T4: without a term the 400-day-old transcripts of a scenario run are all read and the purge deletes none', async () => {
-      const { resourceId, threadId, investigationId } = await finishedRun('INT-2 T4: why do the lock waits time out?');
+    it('INT-2 T4: the purge with the default term keeps the 400-day-old transcripts of a system:self-check scenario run and of a call outside any investigation, removes the employee ones, and the run is read in full without a term', async () => {
+      const scenarioRun = await finishedRun('INT-2 T4: why do the lock waits time out? (scenario run)', SELF_CHECK_OWNER);
+      const employee = await finishedRun('INT-2 T4: why do the lock waits time out? (employee)');
+      const selfCheckRunId = `self-check:run:${newLaunchKey()}`;
       try {
-        const stored = await storedCalls(investigationId);
-        await harness.ageTranscripts(investigationId, 400);
-        // Past any term: the default term reads none of them.
-        expect(await readCalls(investigationId, resourceId)).toEqual([]);
+        // A judge call of the self-check program bound to its run id only: no investigation.
+        harness.model.script('verifier', { output: { records: [] } });
+        const judged = await harness.engine.assess({
+          role: 'judge',
+          model: HAIKU,
+          effort: 'low',
+          maxOutputTokens: 500,
+          instructions: 'You judge the answer of an investigation.',
+          messages: [{ role: 'user', content: 'INT-2 T4: the answer to judge' }],
+          outputSchema: z.object({ records: z.array(z.unknown()) }),
+          binding: { selfCheckRunId },
+          notAfter: new Date(Date.now() + 60_000),
+        });
+        expect(judged.outcome).toBe('answered');
+        const scenarioStored = await storedCalls(scenarioRun.investigationId);
+        await harness.ageTranscripts(scenarioRun.investigationId, 400);
+        await harness.ageTranscripts(employee.investigationId, 400);
+        await harness.db
+          .update(researchLlmTranscripts)
+          .set({ createdAt: sql`${researchLlmTranscripts.createdAt} - make_interval(days => 400)` })
+          .where(eq(researchLlmTranscripts.selfCheckRunId, selfCheckRunId));
+        const employeeStored = await storedCalls(employee.investigationId);
 
-        expect(await readCalls(investigationId, resourceId, 'no_term')).toEqual(stored);
-        expect(await purgeExpiredTranscripts(harness.db, 'no_term')).toBe(0);
-        expect(await storedCalls(investigationId)).toEqual(stored);
+        // The server's purge: the default term, the self-check owner kept.
+        expect(await purgeExpiredTranscripts(harness.db, DEFAULT_TERM, SELF_CHECK_OWNER)).toBe(employeeStored.length);
+        expect(await storedCalls(employee.investigationId)).toEqual([]);
+        expect(await storedCalls(scenarioRun.investigationId)).toEqual(scenarioStored);
+        expect(
+          (await harness.db.select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.selfCheckRunId, selfCheckRunId))).map(
+            (row) => row.role,
+          ),
+        ).toEqual(['judge']);
+        // The program reads its run without a term; the default term reads none of it.
+        expect(await readCalls(scenarioRun.investigationId, SELF_CHECK_OWNER, 'no_term')).toEqual(scenarioStored);
+        expect(await readCalls(scenarioRun.investigationId, SELF_CHECK_OWNER)).toEqual([]);
+        // Without a term the purge deletes nothing.
+        expect(await purgeExpiredTranscripts(harness.db, 'no_term', SELF_CHECK_OWNER)).toBe(0);
       } finally {
-        // The aged rows would count in the purge of a later run.
-        await harness.purgeThread(resourceId, threadId);
+        // The aged rows of the kept owner would stay in the shared test database.
+        await harness.purgeThread(scenarioRun.resourceId, scenarioRun.threadId);
+        await harness.purgeThread(employee.resourceId, employee.threadId);
+        await harness.db.delete(researchLlmTranscripts).where(eq(researchLlmTranscripts.selfCheckRunId, selfCheckRunId));
       }
     }, 60_000);
   });

@@ -28,9 +28,7 @@ import {
   type SourcesLogger,
 } from '@agent-os/sources';
 import { SOURCES_ALLOWLIST } from '../sources/sources.config.js';
-
-/** The owner of every investigation of the self-check program; no sign-in issues it (design-self-check.md, KD-3). */
-export const SELF_CHECK_OWNER = 'system:self-check';
+import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 
 /**
  * Logger of the program, shared by its runtime, sources and engine. Fields carry identifiers, roles, models, tokens
@@ -44,7 +42,7 @@ export interface SelfCheckLogger {
 }
 
 export interface ScenarioAssemblyInput {
-  /** The self-check database, already accepted by the guard and migrated. */
+  /** `DATABASE_URL`, already migrated by the program's start. */
   readonly databaseUrl: string;
   /**
    * What the fixture process serves: `<set>/<scenario>` (`FIXTURE_SCENARIO`), or a pinned dataset version `v1` / `v2`
@@ -71,7 +69,7 @@ export interface ScenarioAssemblyInput {
   readonly logger: SelfCheckLogger;
 }
 
-/** One scenario's runtime, sources and engine over their own pool of the self-check database. */
+/** One scenario's runtime, sources and engine over their own pool of the database. */
 export interface ScenarioAssembly {
   readonly database: DatabaseConnection;
   readonly runtime: Runtime;
@@ -138,7 +136,7 @@ function sourcesLogger(logger: SelfCheckLogger): SourcesLogger {
  * Assembly for one scenario (design-self-check.md, C3 self-check, «сборка на сценарий»): the same assembly functions
  * as the server — `createRuntime`, `createSources` with the fixture adapter on `FIXTURE_SCENARIO`, `createEngine` with
  * the run's configuration and `assessModels` = [judge model, `verifier` model of that configuration] — over the
- * self-check database only. The engine is built without the mandatory-calibration flag. Handlers are registered
+ * database of `DATABASE_URL`, its investigations owned by `system:self-check`. The engine is built without the mandatory-calibration flag. Handlers are registered
  * before the workers start; with the workers off `runtime.start` is not called at all, and `Engine.assess` — model
  * gateway, ledger, transcripts — works without it.
  *

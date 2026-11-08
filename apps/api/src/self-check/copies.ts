@@ -4,28 +4,24 @@ import {
   researchLlmTranscripts,
 } from '@agent-os/db';
 import type { InvestigationService, ThreadRef } from '@agent-os/runtime';
-import { and, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 import type { SelfCheckLogger } from './scenario-assembly.js';
 import { parseThreadId } from './thread-ids.js';
 
-/** What the removal of expired copies works with; the main database is only read. */
+/** What the removal of expired copies works with. */
 export interface ExpiredCopiesInput {
-  /** The self-check database: the copies are found and the `show` judge transcripts are deleted here. */
-  readonly selfCheckDb: Database;
+  /** The database of `DATABASE_URL`: the copies, their originals and the `show` judge transcripts are all here. */
+  readonly db: Database;
   /** Deletes the repeats of an original: every investigation of the conversation, with all its rows. */
   readonly investigations: Pick<InvestigationService, 'purgeThread'>;
-  /**
-   * The main database, read-only; called only when a copy of a main original exists, so a self-check database
-   * without such copies never connects to it.
-   */
-  readonly mainDb: () => Database;
-  /** The retention term of the main database (`TRANSCRIPT_RETENTION_DAYS`). */
+  /** The retention term of the employees' transcripts (`TRANSCRIPT_RETENTION_DAYS`). */
   readonly retention: { readonly days: number };
   readonly logger: SelfCheckLogger;
 }
 
-/** A repeat conversation and the `show` runs of the self-check database, each with the main original it refers to. */
-interface MainCopies {
+/** The repeat conversations and the `show` runs, each with the original it refers to. */
+interface Copies {
   readonly repeats: readonly (ThreadRef & { readonly originId: string })[];
   readonly shows: readonly {
     readonly selfCheckRunId: string;
@@ -35,23 +31,23 @@ interface MainCopies {
 
 /**
  * Removes the employee-data copies whose original is gone (design-self-check.md, Data Model, «Где копия помнит
- * оригинал»; DC-4, invariant 3): a copy refers to a main original through an id the program wrote itself, and it is
- * removed when that original is deleted from the main database or was created before the main retention term — the
- * investigations of a repeat through `InvestigationService.purgeThread` (all investigations of its conversation), the
- * judge transcripts of a `show` by their `selfCheckRunId`. Copies of a self-check original and scenario runs are kept
- * without a term: their ids do not name a main original.
+ * оригинал»; DC-4, invariant 3): a copy refers to its original through an id the program wrote itself, and it is
+ * removed when that original no longer exists, or is an investigation of an owner other than `system:self-check`
+ * created before the retention term — the investigations of a repeat through `InvestigationService.purgeThread` (all
+ * investigations of its conversation), the judge transcripts of a `show` by their `selfCheckRunId`. Copies of a
+ * `system:self-check` original — a scenario run — and the scenario runs themselves are kept without a term.
  */
 export async function removeExpiredCopies(
   input: ExpiredCopiesInput,
 ): Promise<void> {
-  const copies = await findMainCopies(input.selfCheckDb);
+  const copies = await findCopies(input.db);
   const originIds = new Set([
     ...copies.repeats.map(({ originId }) => originId),
     ...copies.shows.map(({ originId }) => originId),
   ]);
   if (originIds.size === 0) return;
   const kept = await retainedOriginals(
-    input.mainDb(),
+    input.db,
     [...originIds],
     input.retention,
   );
@@ -65,7 +61,7 @@ export async function removeExpiredCopies(
     .filter(({ originId }) => !kept.has(originId))
     .map(({ selfCheckRunId }) => selfCheckRunId);
   if (expiredShows.length > 0) {
-    await input.selfCheckDb
+    await input.db
       .delete(researchLlmTranscripts)
       .where(inArray(researchLlmTranscripts.selfCheckRunId, expiredShows));
   }
@@ -75,17 +71,18 @@ export async function removeExpiredCopies(
   });
 }
 
-/** The copies of main originals, read from the ids by the program's own schema (`parseThreadId`). */
-async function findMainCopies(db: Database): Promise<MainCopies> {
+/** The repeats of `system:self-check` and the `show` runs, read from the ids by the program's own schema (`parseThreadId`). */
+async function findCopies(db: Database): Promise<Copies> {
   const conversations = await db
     .selectDistinct({
       threadId: researchInvestigations.threadId,
       resourceId: researchInvestigations.resourceId,
     })
-    .from(researchInvestigations);
+    .from(researchInvestigations)
+    .where(eq(researchInvestigations.resourceId, SELF_CHECK_OWNER));
   const repeats = conversations.flatMap((conversation) => {
     const id = parseThreadId(conversation.threadId);
-    return id?.kind === 'copy' && id.base === 'main'
+    return id?.kind === 'copy'
       ? [{ ...conversation, originId: id.investigationId }]
       : [];
   });
@@ -95,7 +92,7 @@ async function findMainCopies(db: Database): Promise<MainCopies> {
     .where(isNotNull(researchLlmTranscripts.selfCheckRunId));
   const shows = runs.flatMap(({ selfCheckRunId }) => {
     const id = selfCheckRunId === null ? null : parseThreadId(selfCheckRunId);
-    return selfCheckRunId !== null && id?.kind === 'show' && id.base === 'main'
+    return selfCheckRunId !== null && id?.kind === 'show'
       ? [{ selfCheckRunId, originId: id.investigationId }]
       : [];
   });
@@ -103,23 +100,26 @@ async function findMainCopies(db: Database): Promise<MainCopies> {
 }
 
 /**
- * The originals that still exist in the main database and were created within its retention term, measured on the
- * main database's clock as its transcript reads measure it.
+ * The originals that still exist and are either investigations of `system:self-check` (kept without a term) or were
+ * created within the retention term, measured on the database clock as the transcript reads measure it.
  */
 async function retainedOriginals(
-  mainDb: Database,
+  db: Database,
   investigationIds: readonly string[],
   retention: { readonly days: number },
 ): Promise<ReadonlySet<string>> {
-  const rows = await mainDb
+  const rows = await db
     .select({ investigationId: researchInvestigations.investigationId })
     .from(researchInvestigations)
     .where(
       and(
         inArray(researchInvestigations.investigationId, [...investigationIds]),
-        gte(
-          researchInvestigations.createdAt,
-          sql`now() - make_interval(days => ${retention.days})`,
+        or(
+          eq(researchInvestigations.resourceId, SELF_CHECK_OWNER),
+          gte(
+            researchInvestigations.createdAt,
+            sql`now() - make_interval(days => ${retention.days})`,
+          ),
         ),
       ),
     );

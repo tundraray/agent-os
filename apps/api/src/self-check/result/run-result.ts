@@ -20,7 +20,6 @@ import {
   runMetrics,
 } from '../metrics.js';
 import type { FailureSignals } from '../signals.js';
-import type { DatabaseBase } from '../thread-ids.js';
 import type { Thresholds } from '../thresholds.js';
 import type { FirstError } from '../verdict/first-error.js';
 import type { Verdict } from '../verdict/verdict.js';
@@ -53,10 +52,7 @@ export type RunItems =
     }
   | {
       readonly kind: 'investigations';
-      readonly investigations: readonly {
-        readonly base: DatabaseBase;
-        readonly investigationId: string;
-      }[];
+      readonly investigations: readonly { readonly investigationId: string }[];
     };
 
 /** The configuration of the run: its fingerprint, each role's model and prompt version, and for replays which one. */
@@ -99,8 +95,7 @@ export interface RunEntry {
 /** A scenario or a source investigation with its runs; one left «не прогнан» has `ran: false` and no runs. */
 export interface ItemResult {
   readonly item:
-    | { readonly scenarioId: string }
-    | { readonly base: DatabaseBase; readonly investigationId: string };
+    { readonly scenarioId: string } | { readonly investigationId: string };
   /** The kind from the scenario key; null for a source investigation without a key. */
   readonly kind: ScenarioKey['kind'] | null;
   readonly ran: boolean;

@@ -42,10 +42,8 @@ import {
   type RunResult,
   writeRunResult,
 } from '../result/run-result.js';
-import {
-  type ScenarioAssembly,
-  SELF_CHECK_OWNER,
-} from '../scenario-assembly.js';
+import { SELF_CHECK_OWNER } from '../../auth/system-owners.js';
+import type { ScenarioAssembly } from '../scenario-assembly.js';
 import { formatThreadId } from '../thread-ids.js';
 import { parseThresholds, type Thresholds } from '../thresholds.js';
 import { findFirstError, type FirstError } from '../verdict/first-error.js';
@@ -61,8 +59,7 @@ import {
 /**
  * The `run` command of the self-check program (design-self-check.md, Contract `run`, Flow 1): a scenario set run on a
  * configuration, judged, and left as a run directory with the result file and the report. Every refusal —
- * `set_invalid`, `thresholds_invalid`, `process_config_rejected` (`database_not_self_check` comes from the program's
- * start) — is given before the first investigation and before the run directory exists. The leftovers of an earlier
+ * `set_invalid`, `thresholds_invalid`, `process_config_rejected` — is given before the first investigation and before the run directory exists. The leftovers of an earlier
  * run are cancelled after the refusals that need no assembly and before the first assembly (DC-18): an assembly's
  * dispatcher would claim a leftover task at once, so the catalog check of the first assembly follows the cancel. Then
  * the run directory gets the copy of the thresholds file, still before the first investigation (invariant 7, plan
