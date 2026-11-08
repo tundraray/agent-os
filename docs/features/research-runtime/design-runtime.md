@@ -913,6 +913,8 @@ sequenceDiagram
 | `deadlineAt` | datetime | абсолютный дедлайн |
 | `reserveToolCall`, `putEvidence`, `saveCheckpoint`, `registerWait`, `withAttemptGuard` | функции | fenced API, см. таблицу операций |
 
+> **Изменено фичей `agent-runtime`** ([design-agent-core.md](../agent-runtime/design-agent-core.md#изменения-контракта-runtime), Contract Definitions). Элемент `upstream` получает поле `failure` — `FailureReason` задачи или null: так ожидающий узнаёт, почему кончилась задача, которую runtime завершил сам.
+
 `ToolCallGrant`: `granted` (bool), `callIndex` (int, при выдаче), `reason` (`tool_calls_exhausted`, `retries_exhausted`, `not_current_attempt`, `cancel_requested`) при отказе.
 
 Правило резерва — одно условие в охраняемом UPDATE: задача `running` со своим `attempt` и без `cancel_requested_at`, `tool_calls_used + attempt_tool_calls < max_tool_calls`, а при `retry: true` ещё и `retries_used + attempt_retries < max_retries`. Выдача увеличивает `attempt_tool_calls` на 1, при `retry: true` — и `attempt_retries`.
@@ -944,6 +946,8 @@ sequenceDiagram
 | `proposedTasks` | `TaskSpec[]` | проходят приём в транзакции итога | предложенные задачи |
 | `failure` | `FailureReason` | при `failed` | причина |
 | `waitFor` | uuid[] | при `wait`, рёбра уже зарегистрированы | условие пробуждения |
+
+> **Изменено фичей `agent-runtime`** ([design-agent-core.md](../agent-runtime/design-agent-core.md#key-decisions), KD-6). `kind` получает значение `yield`: Dispatcher переводит его в исход `released` — задача возвращается в `queued` без увеличения `recovery_count`, счётчики попытки переносятся, как при штатном возвращении, итог не пишется.
 
 #### Coverage
 
@@ -1027,6 +1031,8 @@ sequenceDiagram
 - При `created` задача, рёбра, подписчик, резерв бюджета и `TaskQueued` записаны вместе; при `subscribed` записан только подписчик.
 - Отказ возвращается значением `rejected`, а ошибка базы — исключением без частичных записей.
 - Дедупликацию и ацикличность держат инварианты из State Transitions and Invariants, а резервы — CHECK из Data Model.
+
+> **Изменено фичей `agent-runtime`** ([design-agent-core.md](../agent-runtime/design-agent-core.md#изменения-контракта-runtime), Contract Definitions). Функция ключа дедупликации `computeDedupKey` становится экспортом `@agent-os/runtime`: клиент считает ею ключ своей спецификации и находит задачу с этим ключом в любом статусе по `dedupKey` из `InvestigationService.listForThread`. Правило дедупликации не меняется.
 
 #### Dispatcher: итог попытки
 
@@ -1439,3 +1445,4 @@ Node 24.11, `pg` 8.23.1, Postgres 16.15 из `infra/docker-compose.yml`, одн�
 | 1.19 | 2026-11-06 | Отметки о правилах, которые заменила утверждённая фича `agent-quality` (`design-lifecycle.md` KD-1–KD-3): окончательные статусы расследования `completed` и `failed` и операция `InvestigationService.closeInTx`; сроки ожидания в очереди и одной попытки рядом с `deadline_at` и настройки `RUNTIME_QUEUE_WAIT_MS`, `RUNTIME_ATTEMPT_MS`; режим `requireActive` у `withAttemptGuard` с отказом `stopping`. Отмечены Snapshot, KD-9, FR-19, `Investigation`, правило `cancel_requested_at` у `withAttemptGuard`, Runtime Settings, статусы расследования в State Transitions. Утверждённый текст не менялся; статус Approved сохранён |
 | 1.20 | 2026-11-07 | Строка `DB_POOL_MAX` в Runtime Settings: та же настройка задаёт размер пула замков беседы (`design-lifecycle.md` KD-5); прочий текст не менялся |
 | 1.21 | 2026-11-07 | Отметка у `OutboxRelay`: доставки одного события идут в постоянном порядке по имени потребителя (`design-lifecycle.md`, C3 закрытия); прочий текст не менялся |
+| 1.22 | 2026-11-08 | Отметки об изменениях фичи `agent-runtime` (`design-agent-core.md`): вид итога `yield` → исход `released`, поле `failure` у `upstream`, экспорт `computeDedupKey`; прочий текст не менялся |
