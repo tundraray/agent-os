@@ -1,7 +1,8 @@
 import { type InvestigationStatus, InvestigationStatusSchema } from '@agent-os/contracts';
 import type { z } from 'zod';
 import { type InvestigationAnswer, InvestigationAnswerSchema } from '../answer/code-answer.js';
-import { type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
+import { AgentProcessConfigSchema, hasAgentsKey } from '../config/agent-config.schema.js';
+import { type AnyProcessConfig, type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { ModelRole } from '../model/ledger.js';
 import type { EngineRunStatus } from '../runs/engine-runs.repository.js';
@@ -108,7 +109,7 @@ export function toInvestigationView(
   };
 }
 
-const ROLE_ORDER: readonly ModelRole[] = ['plan', 'controller', 'worker', 'verifier', 'synthesis'];
+const ROLE_ORDER: readonly ModelRole[] = ['plan', 'controller', 'worker', 'verifier', 'synthesis', 'agent'];
 
 function usageView(run: EngineRunStatus['run'], rows: readonly RoleModelUsageRow[]): InvestigationUsage {
   const byRoleAndModel = rows
@@ -132,8 +133,17 @@ function recordedRole(value: string): ModelRole {
 }
 
 /**
- * The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15). An
- * answer written before agent-quality reads with the same schema: no summary items, no group, no causal flag (UC-E5).
+ * The frozen configuration of an investigation, of either form (DC-29, ADR-0009, KD-7): one with the `agents` key
+ * through the agents schema, any other through `ProcessConfigSchema` — the same choice the load makes.
+ */
+export function frozenProcessConfig(data: unknown): AnyProcessConfig {
+  return hasAgentsKey(data) ? AgentProcessConfigSchema.parse(data) : ProcessConfigSchema.parse(data);
+}
+
+/**
+ * The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15), of
+ * either form (DC-29). An answer written before agent-quality reads with the same schema: no summary items, no group, no
+ * causal flag (UC-E5).
  */
 function answerView(answer: InvestigationAnswer, processConfig: unknown): InvestigationAnswerView {
   const sections: Partial<Pick<InvestigationAnswer, AnswerSection | 'summaryItems'>> = {};
@@ -141,7 +151,7 @@ function answerView(answer: InvestigationAnswer, processConfig: unknown): Invest
     sections[section] = answer[section];
     if (section === 'summary') sections.summaryItems = answer.summaryItems;
   };
-  ProcessConfigSchema.parse(processConfig).answer.sections.forEach(copy);
+  frozenProcessConfig(processConfig).answer.sections.forEach(copy);
   return { answerId: answer.answerId, outcome: answer.outcome, stopReason: answer.stopReason, ...sections };
 }
 

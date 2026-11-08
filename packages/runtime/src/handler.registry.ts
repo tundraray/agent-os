@@ -2,6 +2,7 @@ import type {
   EvidenceInput,
   EvidenceRef,
   ExpectedOutput,
+  FailureReason,
   HandlerResultSchema,
   InputRef,
   ProposeResult,
@@ -21,6 +22,8 @@ export interface UpstreamTask {
   status: TaskStatus;
   /** `evidenceId`s; empty until `succeeded`. */
   outputRefs: string[];
+  /** Why the task ended, for `failed` and `cancelled`; otherwise `null`. */
+  failure: FailureReason | null;
 }
 
 /** Result of `TaskContext.registerWait`: the edges are recorded, or refused without a write. */

@@ -238,6 +238,9 @@ function outcomeOfResult(value: unknown): AttemptOutcome {
     case 'wait':
       // The schema requires a non-empty `waitFor` for kind `wait`.
       return { kind: 'wait', waitFor: [...new Set(result.waitFor)] };
+    case 'yield':
+      // Written as a graceful release: back to `queued`, attempt counters settled, no outcome.
+      return { kind: 'released' };
   }
 }
 

@@ -99,6 +99,60 @@ describe('AnthropicTokenCounter', () => {
     });
   });
 
+  // DC-30, plan Notes 1.10: the counted input of an agent turn is the whole input of the turn — its tool schemas go as
+  // `tools`, its calls and results as `tool_use` and `tool_result` blocks; consecutive user messages go as one, as the
+  // turn sends them. The body of a role packet stays as it was (the row above).
+  // Defects caught: a turn counted without its tool schemas or tool blocks, which understates the input.
+  it('counts an agent turn with its tools as tools and its calls and results as tool_use and tool_result blocks', async () => {
+    reply = json(200, { input_tokens: 4321 });
+    const counter = new AnthropicTokenCounter({ apiKey: 'test-key', baseUrl: origin });
+    const schema = { type: 'object', properties: { after: { type: 'integer' } }, additionalProperties: false };
+
+    const result = await counter.countTurnInputTokens(
+      {
+        model: 'anthropic/claude-haiku-5-5',
+        system: 'You look for the cause.',
+        messages: [
+          { role: 'user', content: 'Find why the job fails.' },
+          { role: 'assistant', content: 'reading notes', toolCalls: [{ toolCallId: 'tc-1', toolName: 'memory_read', args: { after: 0 } }] },
+          { role: 'tool', results: [{ toolCallId: 'tc-1', toolName: 'memory_read', output: { notes: [] } }] },
+          { role: 'user', content: 'last turn: return the result' },
+        ],
+        tools: [{ name: 'memory_read', description: 'Reads notes', inputSchema: schema }],
+        toolChoice: { toolName: 'finish' },
+        effort: 'low',
+      },
+      new AbortController().signal,
+    );
+
+    expect(result).toEqual({ outcome: 'counted', inputTokens: 4321 });
+    expect(seen[0]?.url).toBe('/v1/messages/count_tokens');
+    expect(seen[0]?.body).toEqual({
+      model: 'claude-haiku-5-5',
+      system: 'You look for the cause.',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'Find why the job fails.' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'reading notes' },
+            { type: 'tool_use', id: 'tc-1', name: 'memory_read', input: { after: 0 } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tc-1', content: '{"notes":[]}' },
+            { type: 'text', text: 'last turn: return the result' },
+          ],
+        },
+      ],
+      tools: [{ name: 'memory_read', description: 'Reads notes', input_schema: schema }],
+      tool_choice: { type: 'tool', name: 'finish' },
+      output_config: { effort: 'low' },
+    });
+  });
+
   // The refusal carries the provider's error class for the log, never its message (T7.3: a 400 on the output schema
   // was invisible). Defect caught: the class is lost, or the message, which may quote the request, is passed on.
   it.each<[string, Reply, { outcome: 'failed'; statusCode: number | null; errorClass: string }]>([

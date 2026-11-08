@@ -389,13 +389,14 @@ const CLAIM_STATUSES = [
   'insufficient',
   'causal',
 ] as const;
-/** Roles of `ProcessConfig.roles`. */
+/** Roles of `ProcessConfig.roles`, plus `agent` for the turns of an agent (design-agent-core.md, KD-2). */
 const MODEL_ROLES = [
   'plan',
   'controller',
   'worker',
   'verifier',
   'synthesis',
+  'agent',
 ] as const;
 /** Ledger row status: `reserved` → `settled`, `failed` or `abandoned` (KD-4, DC-9). */
 const LLM_CALL_STATUSES = [
@@ -445,6 +446,12 @@ export const researchEngineRuns = app.table(
      * null for investigations started before it was recorded (no backfill).
      */
     sourceSnapshots: jsonb('source_snapshots'),
+    /**
+     * Active definition memory records of each agent definition at start: id, scope and text
+     * (design-agent-core.md, Data Model, DC-24); null for investigations started before it was
+     * recorded (no backfill).
+     */
+    definitionMemorySnapshot: jsonb('definition_memory_snapshot'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -716,6 +723,8 @@ export const researchLlmTranscripts = app.table(
     /** Self-check run that made a call outside an investigation; its format belongs to the program. */
     selfCheckRunId: text('self_check_run_id'),
     role: text('role').notNull(),
+    /** Agent of an `Engine.assessAgent` turn, which has no run row; null for every other call. */
+    agentName: text('agent_name'),
     model: text('model').notNull(),
     /** First 12 hex digits of the SHA-256 of the prompt template (KD-2). */
     promptVersion: text('prompt_version').notNull(),
@@ -902,5 +911,281 @@ export const chatThreadRuns = app.table(
     check('chat_thread_runs_thread_id_check', sql`${t.threadId} <> ''`),
     index('chat_thread_runs_thread_idx').on(t.threadId),
     index('chat_thread_runs_lease_idx').on(t.leaseExpiresAt),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Agent tables (agent-runtime/design-agent-core.md, Data Model, KD-2). Runs, session messages,
+// tool calls and investigation memory are removed with their investigation (AC-03.4); the tool
+// call audit and the definition memory reference no investigation and outlive it.
+// ---------------------------------------------------------------------------------------------
+
+/** States of a tool call (design-agent-core.md, «Как исполняется вызов инструмента»). */
+const TOOL_CALL_STATES = [
+  'requested',
+  'starting',
+  'waiting',
+  'done',
+  'rejected',
+] as const;
+const WAITING: (typeof TOOL_CALL_STATES)[number] = 'waiting';
+const REJECTED: (typeof TOOL_CALL_STATES)[number] = 'rejected';
+/** Kinds of an investigation memory note (Contract, `memory_write`). */
+const MEMORY_NOTE_KINDS = ['finding', 'tried', 'dead_end', 'note'] as const;
+/** Scopes of a definition memory record: the whole deployment or one user. */
+const DEFINITION_MEMORY_SCOPES = ['deployment', 'user'] as const;
+const USER_SCOPE: (typeof DEFINITION_MEMORY_SCOPES)[number] = 'user';
+/** Size limit of a prologue input (Data Model: up to 64 KiB). */
+const PROLOGUE_INPUT_MAX_BYTES = 64 * 1024;
+/** Text limit of a memory note and of a definition memory record (Contract: up to 2000 characters). */
+const MEMORY_TEXT_MAX_CHARS = 2000;
+
+export const researchAgentRuns = app.table(
+  'research_agent_runs',
+  {
+    /** Task `agent.run` or `agent.root` of the run; the run's status is the status of this task. */
+    taskId: uuid('task_id').primaryKey(),
+    investigationId: investigationRef(),
+    agentName: text('agent_name').notNull(),
+    /** Run and tool call number of the parent that called this run; both null for the root. */
+    parentTaskId: uuid('parent_task_id'),
+    parentCallIndex: integer('parent_call_index'),
+    /** The root has depth 0. */
+    depth: integer('depth').notNull(),
+    /** Task text of the run; null for a form with a prologue, whose session has no task. */
+    assignment: text('assignment'),
+    /** Token share of the run: the `maxTokens` of its task. */
+    shareTokens: integer('share_tokens').notNull(),
+    notAfter: timestamp('not_after', { withTimezone: true }).notNull(),
+    sources: text('sources').array().notNull().default(sql`'{}'::text[]`),
+    /** Prologue input of a form with a prologue (up to 64 KiB). */
+    prologueInput: jsonb('prologue_input'),
+    /** Result of a run that ended by itself, or the reason it ended without one. */
+    result: jsonb('result'),
+    failure: jsonb('failure'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'research_agent_runs_task_fk',
+      columns: [t.investigationId, t.taskId],
+      foreignColumns: [researchTasks.investigationId, researchTasks.taskId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'research_agent_runs_parent_fk',
+      columns: [t.parentTaskId],
+      foreignColumns: [t.taskId],
+    }).onDelete('cascade'),
+    check(
+      'research_agent_runs_parent_check',
+      sql`(${t.parentTaskId} is null) = (${t.parentCallIndex} is null) and (${t.parentTaskId} is null) = (${t.depth} = 0)`,
+    ),
+    check(
+      'research_agent_runs_numbers_check',
+      sql`${t.depth} >= 0 and ${t.shareTokens} >= 0 and (${t.parentCallIndex} is null or ${t.parentCallIndex} >= 0)`,
+    ),
+    check('research_agent_runs_agent_name_check', sql`${t.agentName} <> ''`),
+    check(
+      'research_agent_runs_prologue_input_size_check',
+      sql`${t.prologueInput} is null or octet_length(${t.prologueInput}::text) <= ${sql.raw(String(PROLOGUE_INPUT_MAX_BYTES))}`,
+    ),
+    check(
+      'research_agent_runs_ending_check',
+      sql`${t.result} is null or ${t.failure} is null`,
+    ),
+    index('research_agent_runs_investigation_idx').on(t.investigationId),
+    index('research_agent_runs_parent_idx')
+      .on(t.parentTaskId)
+      .where(sql`${t.parentTaskId} is not null`),
+  ],
+);
+
+export const researchAgentMessages = app.table(
+  'research_agent_messages',
+  {
+    runTaskId: uuid('run_task_id')
+      .notNull()
+      .references(() => researchAgentRuns.taskId, { onDelete: 'cascade' }),
+    investigationId: investigationRef(),
+    /** Number of the message within its run; a message is never changed once written. */
+    seq: integer('seq').notNull(),
+    kind: text('kind').notNull(),
+    content: jsonb('content').notNull(),
+    /** Ledger row of a model answer; null for every other message. */
+    llmCallId: uuid('llm_call_id').references(() => researchLlmCalls.callId, {
+      onDelete: 'cascade',
+    }),
+    /** Tool call whose result the message carries; null for every other message. */
+    toolCallId: uuid('tool_call_id').references(
+      (): AnyPgColumn => researchAgentToolCalls.id,
+      { onDelete: 'cascade' },
+    ),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.runTaskId, t.seq] }),
+    check('research_agent_messages_seq_check', sql`${t.seq} >= 0`),
+    check('research_agent_messages_kind_check', sql`${t.kind} <> ''`),
+    index('research_agent_messages_investigation_idx').on(t.investigationId),
+  ],
+);
+
+export const agentToolAudit = app.table(
+  'agent_tool_audit',
+  {
+    id: uuid('id').primaryKey(),
+    /** Owner of the investigation the call was made in. */
+    resourceId: text('resource_id').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    toolName: text('tool_name').notNull(),
+    /** Source the tool called; null for a tool without one. */
+    sourceId: text('source_id'),
+    outcome: text('outcome').notNull(),
+  },
+  (t) => [
+    check(
+      'agent_tool_audit_values_check',
+      sql`${t.resourceId} <> '' and ${t.toolName} <> '' and ${t.outcome} <> ''`,
+    ),
+    index('agent_tool_audit_resource_recorded_idx').on(
+      t.resourceId,
+      t.recordedAt,
+    ),
+  ],
+);
+
+export const researchAgentToolCalls = app.table(
+  'research_agent_tool_calls',
+  {
+    id: uuid('id').primaryKey(),
+    investigationId: investigationRef(),
+    runTaskId: uuid('run_task_id')
+      .notNull()
+      .references(() => researchAgentRuns.taskId, { onDelete: 'cascade' }),
+    turn: integer('turn').notNull(),
+    /** Number of the call within its run. */
+    callIndex: integer('call_index').notNull(),
+    toolName: text('tool_name').notNull(),
+    arguments: jsonb('arguments').notNull(),
+    state: text('state').notNull(),
+    outcome: jsonb('outcome'),
+    /** Code of a rejection or of a remark of the engine. */
+    reason: text('reason'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /** Audit row written with the call's outcome; the audit outlives the call. */
+    auditId: uuid('audit_id').references(() => agentToolAudit.id, {
+      onDelete: 'set null',
+    }),
+    /** `call_agent` only: the child task, its token share and the recounted spending of its subtree. */
+    childTaskId: uuid('child_task_id'),
+    shareTokens: integer('share_tokens'),
+    spentTokens: integer('spent_tokens'),
+    /** Task specification recorded in `starting`; a retry proposes it again (KD-3). */
+    taskSpec: jsonb('task_spec'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('research_agent_tool_calls_run_call_key').on(
+      t.runTaskId,
+      t.callIndex,
+    ),
+    check(
+      'research_agent_tool_calls_state_check',
+      isOneOf(t.state, TOOL_CALL_STATES),
+    ),
+    check(
+      'research_agent_tool_calls_numbers_check',
+      sql`${t.turn} >= 0 and ${t.callIndex} >= 0 and (${t.shareTokens} is null or ${t.shareTokens} >= 0) and (${t.spentTokens} is null or ${t.spentTokens} >= 0)`,
+    ),
+    check(
+      'research_agent_tool_calls_tool_name_check',
+      sql`${t.toolName} <> ''`,
+    ),
+    check(
+      'research_agent_tool_calls_waiting_check',
+      sql`${t.state} <> ${literal(WAITING)} or ${t.childTaskId} is not null`,
+    ),
+    check(
+      'research_agent_tool_calls_rejected_check',
+      sql`${t.state} <> ${literal(REJECTED)} or ${t.reason} is not null`,
+    ),
+    index('research_agent_tool_calls_investigation_idx').on(t.investigationId),
+    index('research_agent_tool_calls_child_task_idx')
+      .on(t.childTaskId)
+      .where(sql`${t.childTaskId} is not null`),
+  ],
+);
+
+export const researchAgentMemory = app.table(
+  'research_agent_memory',
+  {
+    /** Order of writing, from a database sequence: concurrent writes get distinct numbers. */
+    seq: bigint('seq', { mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    investigationId: investigationRef(),
+    kind: text('kind').notNull(),
+    text: text('text').notNull(),
+    /** References to records and claims of the same investigation. */
+    refs: jsonb('refs').notNull().default(sql`'[]'::jsonb`),
+    /** Run and agent that wrote the note. */
+    runTaskId: uuid('run_task_id')
+      .notNull()
+      .references(() => researchAgentRuns.taskId, { onDelete: 'cascade' }),
+    agentName: text('agent_name').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check(
+      'research_agent_memory_kind_check',
+      isOneOf(t.kind, MEMORY_NOTE_KINDS),
+    ),
+    check(
+      'research_agent_memory_text_check',
+      sql`char_length(${t.text}) <= ${sql.raw(String(MEMORY_TEXT_MAX_CHARS))}`,
+    ),
+    index('research_agent_memory_investigation_seq_idx').on(
+      t.investigationId,
+      t.seq,
+    ),
+  ],
+);
+
+export const agentDefinitionMemory = app.table(
+  'agent_definition_memory',
+  {
+    id: uuid('id').primaryKey(),
+    processId: text('process_id').notNull(),
+    agentName: text('agent_name').notNull(),
+    scope: text('scope').notNull(),
+    /** User of a `user` scope record; null for `deployment`. */
+    userId: text('user_id'),
+    text: text('text').notNull(),
+    writtenBy: text('written_by').notNull(),
+    writtenAt: timestamp('written_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Soft removal: a removed record stays in the snapshots taken before it. */
+    removedAt: timestamp('removed_at', { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      'agent_definition_memory_scope_check',
+      isOneOf(t.scope, DEFINITION_MEMORY_SCOPES),
+    ),
+    check(
+      'agent_definition_memory_user_check',
+      sql`(${t.scope} = ${literal(USER_SCOPE)}) = (${t.userId} is not null)`,
+    ),
+    check(
+      'agent_definition_memory_values_check',
+      sql`${t.processId} <> '' and ${t.agentName} <> '' and ${t.writtenBy} <> '' and (${t.userId} is null or ${t.userId} <> '') and char_length(${t.text}) <= ${sql.raw(String(MEMORY_TEXT_MAX_CHARS))}`,
+    ),
+    index('agent_definition_memory_active_idx')
+      .on(t.processId, t.agentName, t.scope, t.userId)
+      .where(sql`${t.removedAt} is null`),
   ],
 );

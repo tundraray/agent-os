@@ -1,6 +1,13 @@
 import { type Database, researchInvestigations, researchLlmCalls, researchLlmTranscripts } from '@agent-os/db';
 import { and, asc, eq, gte, isNull, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { type AgentRunRow, agentRunsRepository } from '../agents/agent-runs.repository.js';
+import { SHIPPED_RESULT_FORMS } from '../agents/result-forms.js';
+import { readRunFrame, type RunFrame, sessionViewOf, toRunSession } from '../agents/run-session.js';
+import { OPENING_SEQ, type WindowStage } from '../agents/session-window.js';
+import { sessionRepository } from '../agents/session.repository.js';
+import { toolCallsRepository } from '../agents/tool-calls.repository.js';
+import { agentToolsOf, BASE_TOOLS, createToolRegistry } from '../agents/tool-registry.js';
 import type { TranscriptUsage } from './transcript-writes.js';
 
 /**
@@ -26,11 +33,20 @@ export interface Transcript {
   readonly attempt: number | null;
   /** The self-check run that made a call outside a task; null for the calls of the roles. */
   readonly selfCheckRunId: string | null;
-  /** A process role or `judge`, as stored. */
+  /** A process role, `agent` or `judge`, as stored. */
   readonly role: string;
+  /**
+   * The agent of a turn (role `agent`): from the run row of a turn in an investigation, from the transcript itself for a
+   * turn of `Engine.assessAgent`; null for every other call.
+   */
+  readonly agentName: string | null;
   readonly model: string;
   readonly promptVersion: string;
-  /** The instructions and the messages as sent to the provider, with their provider options. */
+  /**
+   * The instructions and the messages as sent to the provider, with their provider options. A turn of an agent run
+   * stores a reference to its session view instead; the read rebuilds the view from the session (design-agent-core.md,
+   * KD-2).
+   */
   readonly input: unknown;
   /** The response object and the finish reason; null until the call is closed, and for a provider error. */
   readonly response: unknown;
@@ -92,17 +108,81 @@ export async function readTranscripts(db: Database, input: ReadTranscriptsInput)
     // No task of the investigation has such an id.
     return { outcome: 'found', transcripts: [] };
   }
-  return {
-    outcome: 'found',
-    transcripts: await selectTranscripts(
-      db,
-      and(
-        eq(researchLlmTranscripts.investigationId, investigationId),
-        taskId === undefined ? undefined : eq(researchLlmTranscripts.taskId, taskId),
-        notExpired,
-      ),
+  const selected = await selectTranscripts(
+    db,
+    and(
+      eq(researchLlmTranscripts.investigationId, investigationId),
+      taskId === undefined ? undefined : eq(researchLlmTranscripts.taskId, taskId),
+      notExpired,
     ),
-  };
+  );
+  const transcripts = await withAgentTurns(db, investigationId, selected);
+  return transcripts === null ? NOT_FOUND : { outcome: 'found', transcripts };
+}
+
+/** The reference of an agent turn's transcript to its session view (`AgentTranscriptInput`). */
+const ViewReferenceSchema = z.object({
+  instructions: z.string(),
+  view: z.object({ throughSeq: z.number().int(), stage: z.number().int().min(0).max(4) }),
+});
+
+/** A window the view of stages 0–3 always fits: the rebuilt view stays at its recorded stage. */
+const UNBOUNDED_WINDOW = Number.MAX_SAFE_INTEGER;
+const TOOL_REGISTRY = createToolRegistry(BASE_TOOLS);
+
+/**
+ * The turns of agent runs with their agent and their input rebuilt from the session (KD-2): the session up to the last
+ * message the view covered, at the stage it recorded — stage 4 by the definition's window, with the engine's shipped
+ * result forms. A turn whose run (and with it its session) is gone reads as a deleted investigation: null.
+ */
+async function withAgentTurns(
+  db: Database,
+  investigationId: string,
+  transcripts: readonly Transcript[],
+): Promise<Transcript[] | null> {
+  const runs = new Map<string, AgentRunRow | undefined>();
+  let frame: RunFrame | undefined;
+  const read: Transcript[] = [];
+  for (const transcript of transcripts) {
+    const reference = ViewReferenceSchema.safeParse(transcript.input);
+    if (transcript.role !== 'agent' || transcript.taskId === null || !reference.success) {
+      read.push(transcript);
+      continue;
+    }
+    if (!runs.has(transcript.taskId)) runs.set(transcript.taskId, await agentRunsRepository.read(db, transcript.taskId));
+    const run = runs.get(transcript.taskId);
+    if (run === undefined) return null;
+    frame ??= await readRunFrame(db, investigationId);
+    const messages = await rebuiltMessages(db, { frame, run, ...reference.data.view });
+    read.push({ ...transcript, agentName: run.agentName, input: { instructions: reference.data.instructions, messages } });
+  }
+  return read;
+}
+
+async function rebuiltMessages(
+  db: Database,
+  turn: { readonly frame: RunFrame; readonly run: AgentRunRow; readonly throughSeq: number; readonly stage: number },
+) {
+  const { frame, run } = turn;
+  const definition = frame.config.agents[run.agentName];
+  if (definition === undefined) throw new Error(`agent ${run.agentName} is not a definition of the frozen configuration`);
+  const [rows, calls] = await Promise.all([
+    // The opening is part of every view, also of a first turn recorded before the opening's number was kept (-1).
+    sessionRepository.read(db, run.taskId).then((all) => all.filter((row) => row.seq <= Math.max(turn.throughSeq, OPENING_SEQ))),
+    toolCallsRepository.ofRun(db, run.taskId),
+  ]);
+  const form = SHIPPED_RESULT_FORMS.find((shipped) => shipped.name === definition.result);
+  const tools = agentToolsOf(definition.tools, { registry: TOOL_REGISTRY, resultSchema: form?.resultSchema ?? z.unknown() });
+  const stage = turn.stage as WindowStage;
+  return sessionViewOf({
+    frame,
+    agentName: run.agentName,
+    definition,
+    tools,
+    session: toRunSession(rows, calls),
+    heldStage: stage,
+    ...(stage < 4 ? { windowTokens: UNBOUNDED_WINDOW } : {}),
+  }).messages;
 }
 
 /** A transcript within the term, on the database clock; no condition without a term. */
@@ -143,6 +223,7 @@ function toTranscript(row: typeof researchLlmTranscripts.$inferSelect, ledgerSta
     attempt: row.attempt,
     selfCheckRunId: row.selfCheckRunId,
     role: row.role,
+    agentName: row.agentName,
     model: row.model,
     promptVersion: row.promptVersion,
     input: row.input,

@@ -366,6 +366,8 @@ describe('research-runtime / runtime - wiring of ResearchModule (in-process Nest
           }),
         ],
         runtime: { concurrency: 1, leaseMs: 60_000, heartbeatMs: 60_000 },
+        // The engine refuses a margin below the lease plus a turn (DC-27): 60 s + 60 s needs more than the default 90 s.
+        engine: { AGENT_DEADLINE_MARGIN_MS: '120000' },
       });
       let remoteId: string;
       try {

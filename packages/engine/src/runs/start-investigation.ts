@@ -1,11 +1,15 @@
+import type { TaskSpec } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { InvestigationService, TaskScheduler } from '@agent-os/runtime';
-import { ProcessConfigSchema, type ProcessConfig } from '../config/process-config.schema.js';
+import { type DefinitionMemorySnapshot, takeDefinitionMemorySnapshot } from '../agents/definition-memory.js';
+import type { ResultFormRegistry } from '../agents/result-forms.js';
+import { AgentProcessConfigSchema, hasAgentsKey, isAgentsForm } from '../config/agent-config.schema.js';
+import { type AnyProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
 import type { ProcessSet } from '../config/process-set.js';
 import type { SourceMode } from '../config/source-check.js';
 import { type EngineRunRow, engineRunsRepository as runs } from './engine-runs.repository.js';
 import { readSourceSnapshots, type SourceSnapshotDeps, type SourceSnapshots } from './source-snapshots.js';
-import { controllerTaskSpec, ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget } from './start-rules.js';
+import { controllerTaskSpec, ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget, rootTaskSpec } from './start-rules.js';
 
 /**
  * Runtime services the engine uses, narrowed to the methods it calls (an E2E child may wrap `propose`); `closeInTx`
@@ -42,6 +46,11 @@ export interface StartDeps extends EngineRuntimePorts, SourceSnapshotDeps {
   readonly database: Database;
   readonly processes: ProcessSet;
   readonly sourceMode: SourceMode;
+  /**
+   * The engine's result forms: an agents-form start takes the definition memory snapshot by them (DC-24). An assembly
+   * without them refuses an agents-form start as a defect.
+   */
+  readonly forms?: ResultFormRegistry;
 }
 
 /** A start whose admitted state contradicts itself: a defect, never a refusal the caller could act on. */
@@ -51,10 +60,12 @@ class StartInvestigationError extends Error {
 
 interface Launch {
   readonly input: StartInvestigationInput;
-  readonly config: ProcessConfig;
+  readonly config: AnyProcessConfig;
   readonly tokenBudget: number;
   /** Read once per call, before the first write; a repeated start of a recorded launch reads none. */
   readonly sourceSnapshots: SourceSnapshots;
+  /** The definition memory snapshot of an agents-form start, taken with the source slices (DC-24). */
+  readonly definitionMemorySnapshot?: DefinitionMemorySnapshot;
 }
 
 /**
@@ -64,16 +75,35 @@ interface Launch {
  * 2 seconds or failed is recorded empty and the start goes on; the row of a recorded launch is never rewritten.
  */
 export function startInvestigation(deps: StartDeps) {
-  /** Proposes the run's controller task (again) and records its id; `subscribed` when it already exists. */
+  /**
+   * The main task of the recorded run: the controller of the roles form, or the root run `agent.root` of the agents
+   * form with the investigation's question (design-agent-core.md, «Операции движка»). Both depend only on the recorded
+   * run.
+   */
+  async function mainTaskSpec(run: EngineRunRow): Promise<TaskSpec> {
+    if (!hasAgentsKey(run.processConfig)) {
+      const config = ProcessConfigSchema.parse(run.processConfig);
+      return controllerTaskSpec({ investigationId: run.investigationId, config, tokenBudget: run.tokenBudget });
+    }
+    return rootTaskSpec({
+      investigationId: run.investigationId,
+      config: AgentProcessConfigSchema.parse(run.processConfig),
+      tokenBudget: run.tokenBudget,
+      query: await runs.readQuery(deps.database, run.investigationId),
+      sourceMode: run.sourceMode as SourceMode,
+      createdAt: run.createdAt,
+    });
+  }
+
+  /**
+   * Proposes the run's main task (again) and records its id as `controller_task_id`; `subscribed` when it already
+   * exists.
+   */
   async function proposeController(
     run: EngineRunRow,
     outcome: 'created' | 'existing',
   ): Promise<StartInvestigationResult> {
-    const config = ProcessConfigSchema.parse(run.processConfig);
-    const proposed = await deps.scheduler.propose(
-      controllerTaskSpec({ investigationId: run.investigationId, config, tokenBudget: run.tokenBudget }),
-      ENGINE_REQUESTER_KEY,
-    );
+    const proposed = await deps.scheduler.propose(await mainTaskSpec(run), ENGINE_REQUESTER_KEY);
     if (proposed.outcome === 'rejected') {
       // A closed or stopped investigation takes no task any more (design-lifecycle.md, KD-1); its recorded controller
       // task is still the launch's, so a repeated start returns it as before the closure.
@@ -127,6 +157,7 @@ export function startInvestigation(deps: StartDeps) {
       sourceMode: deps.sourceMode,
       tokenBudget: request.tokenBudget,
       sourceSnapshots: request.sourceSnapshots,
+      ...(request.definitionMemorySnapshot === undefined ? {} : { definitionMemorySnapshot: request.definitionMemorySnapshot }),
     });
     if (inserted !== undefined) {
       return proposeController(inserted, 'created');
@@ -147,12 +178,28 @@ export function startInvestigation(deps: StartDeps) {
     );
   }
 
+  /**
+   * The definition memory snapshot of an agents-form start (DC-24): the active records of each definition at this
+   * moment, without the `user` scope of a definition whose form forbids it; none for the roles form.
+   */
+  async function definitionMemorySnapshot(
+    config: AnyProcessConfig,
+    resourceId: string,
+  ): Promise<DefinitionMemorySnapshot | undefined> {
+    if (!isAgentsForm(config)) return undefined;
+    if (deps.forms === undefined) {
+      throw new StartInvestigationError(`${config.processId} version ${config.version} needs the engine's result forms`);
+    }
+    return takeDefinitionMemorySnapshot(deps.database, { config, forms: deps.forms, resourceId });
+  }
+
   return async (input: StartInvestigationInput): Promise<StartInvestigationResult> => {
     const resolution = deps.processes.resolve(input.processId, input.version);
     if (!resolution.ok) {
       return { outcome: 'rejected', code: 'process_unknown' };
     }
-    const budget = resolveTokenBudget(input.tokenBudget, resolution.config.limits.investigationTokens);
+    const config = resolution.config;
+    const budget = resolveTokenBudget(input.tokenBudget, config.limits.investigationTokens);
     if (!budget.ok) {
       return { outcome: 'rejected', code: 'budget_out_of_range' };
     }
@@ -161,7 +208,17 @@ export function startInvestigation(deps: StartDeps) {
     if (recorded !== undefined) {
       return proposeController(recorded, 'existing');
     }
-    const sourceSnapshots = await readSourceSnapshots(deps, resolution.config);
-    return launch({ input, config: resolution.config, tokenBudget: budget.tokenBudget, sourceSnapshots }, 1);
+    const sourceSnapshots = await readSourceSnapshots(deps, config);
+    const snapshot = await definitionMemorySnapshot(config, input.resourceId);
+    return launch(
+      {
+        input,
+        config,
+        tokenBudget: budget.tokenBudget,
+        sourceSnapshots,
+        ...(snapshot === undefined ? {} : { definitionMemorySnapshot: snapshot }),
+      },
+      1,
+    );
   };
 }

@@ -1,10 +1,15 @@
 import { type Database, researchEngineRuns, researchInvestigations, researchTasks } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import type { ProcessConfig } from '../config/process-config.schema.js';
+import { AGENT_ROOT_WORKFLOW } from '../agents/agent-task-spec.js';
+import type { DefinitionMemorySnapshot } from '../agents/definition-memory.js';
+import type { AnyProcessConfig } from '../config/process-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { SourceSnapshots } from './source-snapshots.js';
 import { CONTROLLER_WORKFLOW } from './start-rules.js';
+
+/** The tasks whose end closes an investigation: the controller of the roles form and the root run of the agents form. */
+const MAIN_WORKFLOWS = [CONTROLLER_WORKFLOW, AGENT_ROOT_WORKFLOW];
 
 export type EngineRunRow = typeof researchEngineRuns.$inferSelect;
 
@@ -13,11 +18,13 @@ export interface NewEngineRun {
   readonly investigationId: string;
   readonly resourceId: string;
   readonly launchKey: string;
-  readonly config: ProcessConfig;
+  readonly config: AnyProcessConfig;
   readonly sourceMode: SourceMode;
   readonly tokenBudget: number;
   /** The slice of each configured source read at start; written once, with the row (KD-7). */
   readonly sourceSnapshots: SourceSnapshots;
+  /** The definition memory snapshot of an agents-form start (DC-24); absent for the roles form. */
+  readonly definitionMemorySnapshot?: DefinitionMemorySnapshot;
 }
 
 /** An engine row with the investigation's status, which the view's status is derived from. */
@@ -68,6 +75,7 @@ export const engineRunsRepository = {
         sourceMode: run.sourceMode,
         tokenBudget: run.tokenBudget,
         sourceSnapshots: run.sourceSnapshots,
+        definitionMemorySnapshot: run.definitionMemorySnapshot ?? null,
       })
       .onConflictDoNothing()
       .returning();
@@ -82,10 +90,11 @@ export const engineRunsRepository = {
   },
 
   /**
-   * Whether `taskId` is the controller task of an engine investigation, read in the caller's transaction (the delivery
-   * transaction of `engine.lifecycle`): a `research.controller` task of that investigation, which has an engine row.
-   * Decided by the task row, not by `controller_task_id`: a controller that ends before the start records its id still
-   * closes the investigation. The runtime's `research_tasks` is only read, by its key.
+   * Whether `taskId` is the main task of an engine investigation, read in the caller's transaction (the delivery
+   * transaction of `engine.lifecycle`): a `research.controller` task or an `agent.root` task of that investigation, which
+   * has an engine row (design-agent-core.md, KD-1). Decided by the task row, not by `controller_task_id`: a controller
+   * or a root that ends before the start records its id still closes the investigation. The runtime's `research_tasks`
+   * is only read, by its key.
    */
   async isControllerTask(tx: RuntimeTx, investigationId: string, taskId: string): Promise<boolean> {
     const [row] = await tx
@@ -96,10 +105,20 @@ export const engineRunsRepository = {
         and(
           eq(researchTasks.taskId, taskId),
           eq(researchTasks.investigationId, investigationId),
-          eq(researchTasks.workflowType, CONTROLLER_WORKFLOW),
+          inArray(researchTasks.workflowType, MAIN_WORKFLOWS),
         ),
       );
     return row !== undefined;
+  },
+
+  /** The question of the investigation, as its start recorded it. */
+  async readQuery(db: Database, investigationId: string): Promise<string> {
+    const [row] = await db
+      .select({ query: researchInvestigations.query })
+      .from(researchInvestigations)
+      .where(eq(researchInvestigations.investigationId, investigationId));
+    if (row === undefined) throw new Error(`investigation ${investigationId} is missing`);
+    return row.query;
   },
 
   /** The owner's engine row with its investigation's status; `undefined` for another owner. */

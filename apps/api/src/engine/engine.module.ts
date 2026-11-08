@@ -11,6 +11,7 @@ import {
   AnthropicTokenCounter,
   type AssessRequest,
   type AssessResult,
+  CONFIGURATION_ACCESS_POLICY,
   createEngine,
   deepResearchProcessV2,
   type Engine,
@@ -22,10 +23,13 @@ import {
   type TokenCounter,
   type TranscriptRetention,
 } from '@agent-os/engine';
-import type { Clock, Runtime } from '@agent-os/runtime';
+import type { Clock, Runtime, RuntimeConfig } from '@agent-os/runtime';
 import type { SourceAdapter, SourceRegistry } from '@agent-os/sources';
 import { withFields } from '../common/log-fields.js';
-import { ResearchModule } from '../research/research.module.js';
+import {
+  ResearchModule,
+  RUNTIME_SETTINGS,
+} from '../research/research.module.js';
 import {
   RESEARCH_DATABASE,
   RESEARCH_RUNTIME,
@@ -37,7 +41,12 @@ import {
   SOURCE_REGISTRY,
   SourcesModule,
 } from '../sources/sources.module.js';
-import { type EngineSettings, parseEngineSettings } from './engine-settings.js';
+import {
+  assertDeadlineMargin,
+  type EngineSettings,
+  type EngineStartSettings,
+  parseEngineSettings,
+} from './engine-settings.js';
 import {
   ENGINE_GROUP_TABLES,
   ENGINE_PROCESSES,
@@ -54,7 +63,7 @@ import {
 
 /** Workflow types `createEngine` registers, for the start log line. */
 const ENGINE_HANDLERS =
-  'research.controller, research.analyze, research.verify, research.synthesize';
+  'research.controller, research.analyze, research.verify, research.synthesize, agent.root, agent.run';
 
 /** Engine settings parsed from the environment; internal to this module. */
 const ENGINE_SETTINGS = Symbol('ENGINE_SETTINGS');
@@ -126,6 +135,36 @@ class BoundEngine implements Engine {
     return this.engine().assess(request);
   }
 
+  writeDefinitionMemory(
+    input: Parameters<Engine['writeDefinitionMemory']>[0],
+  ): ReturnType<Engine['writeDefinitionMemory']> {
+    return this.engine().writeDefinitionMemory(input);
+  }
+
+  removeDefinitionMemory(
+    input: Parameters<Engine['removeDefinitionMemory']>[0],
+  ): ReturnType<Engine['removeDefinitionMemory']> {
+    return this.engine().removeDefinitionMemory(input);
+  }
+
+  listDefinitionMemory(
+    input: Parameters<Engine['listDefinitionMemory']>[0],
+  ): ReturnType<Engine['listDefinitionMemory']> {
+    return this.engine().listDefinitionMemory(input);
+  }
+
+  readAgentTree(
+    input: Parameters<Engine['readAgentTree']>[0],
+  ): ReturnType<Engine['readAgentTree']> {
+    return this.engine().readAgentTree(input);
+  }
+
+  assessAgent(
+    request: Parameters<Engine['assessAgent']>[0],
+  ): ReturnType<Engine['assessAgent']> {
+    return this.engine().assessAgent(request);
+  }
+
   private engine(): Engine {
     if (this.current === null) {
       throw new Error(
@@ -146,7 +185,10 @@ class BoundEngine implements Engine {
  * Phase: `onModuleInit`, after `SourcesModule` (imported here, so Nest initialises it first) registered `source.fetch`
  * and bound the registry, and before `ResearchModule` starts the workers in `onApplicationBootstrap` — the four engine
  * handlers are registered before the first claim. A refused configuration or a missing group table stops the start
- * here (DC-14, DC-2): `app.init()` inside `listen` throws, so the port is never bound.
+ * here (DC-14, DC-2): `app.init()` inside `listen` throws, so the port is never bound. So does an
+ * `AGENT_DEADLINE_MARGIN_MS` less than `RUNTIME_LEASE_MS` plus `AGENT_TURN_MS` (design-agent-core.md, Runtime
+ * Settings, DC-27), checked before `createEngine`; the agent settings, the runtime's `leaseMs` and the rights port
+ * that allows what the process configuration allows go to `createEngine`.
  *
  * `connectedSources` are the `sourceId` of the adapters `SourcesModule` built — neither the allowlist nor the
  * registry: without `@agent-os/mcp-fixture` the list is empty, the engine runs on model knowledge and writes one
@@ -161,7 +203,7 @@ class BoundEngine implements Engine {
   providers: [
     {
       provide: ENGINE_SETTINGS,
-      useFactory: (config: ConfigService): EngineSettings =>
+      useFactory: (config: ConfigService): EngineStartSettings =>
         parseEngineSettings((name) => config.get<string>(name)),
       inject: [ConfigService],
     },
@@ -209,9 +251,15 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
     @Inject(ENGINE_PROCESSES) private readonly processes: readonly unknown[],
     @Inject(ENGINE_GROUP_TABLES)
     private readonly groupTables: readonly unknown[],
+    @Inject(ENGINE_SETTINGS) private readonly settings: EngineStartSettings,
+    @Inject(RUNTIME_SETTINGS) private readonly runtimeSettings: RuntimeConfig,
   ) {}
 
   onModuleInit(): void {
+    const { agent } = this.settings;
+    const { leaseMs } = this.runtimeSettings;
+    // DC-27: a margin below the lease plus a turn stops the start before the engine exists.
+    assertDeadlineMargin(agent, leaseMs);
     const { handlers, eventConsumers, scheduler, investigations, evidence } =
       this.runtime;
     const logger = new NestEngineLogger();
@@ -234,6 +282,15 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
       resolveModel: this.resolveModel,
       tokenCounter: this.tokenCounter,
       clock: this.clock,
+      turnMs: agent.turnMs,
+      deadlineMarginMs: agent.deadlineMarginMs,
+      attemptSliceMs: agent.attemptSliceMs,
+      busyWaitMs: agent.busyWaitMs,
+      leaseMs,
+      memoryAdminRole: agent.memoryAdminRole,
+      // The rights port of agent tool calls (design-agent-core.md, «Порт прав»): the configuration's, until
+      // `access-control` brings an employee's rights to single sources.
+      toolAccessPolicy: CONFIGURATION_ACCESS_POLICY,
       logger,
     });
     this.engine.bind(engine);

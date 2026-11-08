@@ -191,6 +191,7 @@ async function run(scenario: Scenario): Promise<Observed> {
       countCalls += 1;
       return Promise.resolve(counts.shift() ?? { outcome: 'counted', inputTokens: COUNTED });
     },
+    countTurnInputTokens: () => Promise.reject(new Error('a role call counts no agent turn')),
   };
   // Retry delays fire at once and are recorded; the `notAfter` timer, an hour away, fires only
   // when a step reaches it.

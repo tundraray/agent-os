@@ -75,6 +75,8 @@ describe('assembleScenario with the workers off (show)', () => {
       tokenCounter: {
         countInputTokens: () =>
           Promise.resolve({ outcome: 'counted', inputTokens: 0 }),
+        countTurnInputTokens: () =>
+          Promise.reject(new Error('the self-check runs no agent turn')),
       },
       logger,
     });

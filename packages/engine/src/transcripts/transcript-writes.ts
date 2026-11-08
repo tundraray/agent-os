@@ -4,7 +4,7 @@ import type { RuntimeTx, TaskContext } from '@agent-os/runtime';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { CallUsage } from '../model/cost.js';
 import type { ModelRole } from '../model/ledger.js';
-import type { ProviderMessage } from '../model/role-agent.js';
+import type { AgentTurnMessage, ProviderMessage } from '../model/role-agent.js';
 
 /** The input of a call as it goes to the provider: the instructions and the messages with their provider options. */
 export interface TranscriptInput {
@@ -12,11 +12,35 @@ export interface TranscriptInput {
   readonly messages: readonly ProviderMessage[];
 }
 
+/**
+ * The input of an agent turn (design-agent-core.md, KD-2): the instructions and a reference to the session view — the
+ * last session message it covers, the results and turns it replaced with stubs and the window stage — instead of a copy
+ * of the session.
+ */
+export interface AgentTranscriptInput {
+  readonly instructions: string;
+  readonly view: {
+    readonly throughSeq: number;
+    readonly stubbedCalls: readonly string[];
+    readonly collapsedTurns: readonly number[];
+    readonly stage: number;
+  };
+}
+
+/**
+ * The whole input of an agent turn outside an investigation (`Engine.assessAgent`, DC-25): it has no session to refer
+ * to, so the view's messages are stored as they were sent.
+ */
+export interface AgentTurnTranscriptInput {
+  readonly instructions: string;
+  readonly messages: readonly AgentTurnMessage[];
+}
+
 /** What the reservation of a call writes next to its ledger row (design-self-check.md, KD-1, KD-2). */
 export interface TranscriptOpening {
   /** First 12 hex digits of the SHA-256 of the role's prompt template (`promptVersion`). */
   readonly promptVersion: string;
-  readonly input: TranscriptInput;
+  readonly input: TranscriptInput | AgentTranscriptInput | AgentTurnTranscriptInput;
 }
 
 /** The answer as the model client returned it, before the role schema checked it. */
@@ -112,6 +136,8 @@ export interface OutsideTaskOpening {
   readonly role: TranscriptRole;
   readonly model: string;
   readonly binding: TranscriptBinding;
+  /** The agent of an `Engine.assessAgent` turn, which has no run row (design-agent-core.md, Data Model). */
+  readonly agentName?: string;
   readonly opening: TranscriptOpening;
 }
 
@@ -146,6 +172,7 @@ export function postgresOutsideTaskTranscripts(database: Database): OutsideTaskT
         investigationId: call.binding.investigationId ?? null,
         selfCheckRunId: call.binding.selfCheckRunId ?? null,
         role: call.role,
+        agentName: call.agentName ?? null,
         model: call.model,
         promptVersion: call.opening.promptVersion,
         input: call.opening.input,

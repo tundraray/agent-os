@@ -1,8 +1,10 @@
 import type { Database } from '@agent-os/db';
 import { systemClock } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
+import { z } from 'zod';
+import { TEXT_FORM } from './agents/result-forms.js';
 import { DEFAULT_MODEL_CATALOG, type ModelCatalog } from './config/model-catalog.js';
-import { createEngine, type CreateEngineOptions } from './create-engine.js';
+import { composeEngine, createEngine, type CreateEngineOptions } from './create-engine.js';
 import { promptVersion } from './model/prompt-version.js';
 import type { EngineLogger, ResolveModel, RoleModel } from './ports.js';
 import { deepResearchProcessV2 } from './processes/shipped-processes.js';
@@ -117,7 +119,10 @@ function options(overrides: {
     connectedSources: overrides.connectedSources,
     processes: [deepResearchProcessV2, secondVersion],
     resolveModel: overrides.resolveModel ?? modelDouble,
-    tokenCounter: { countInputTokens: notCalled('countInputTokens') },
+    tokenCounter: {
+      countInputTokens: notCalled('countInputTokens'),
+      countTurnInputTokens: notCalled('countTurnInputTokens'),
+    },
     clock: systemClock,
     modelCatalog: catalog,
     ...(overrides.groupTables === undefined ? {} : { groupTables: overrides.groupTables }),
@@ -239,5 +244,83 @@ describe('createEngine: the server start requires the group table of each verifi
       `no group table for process ${outcome.processId} version ${outcome.version}: verifier model ${outcome.model}, ` +
         `prompt version ${FINGERPRINT}; build one with the calibrate command`,
     );
+  });
+});
+
+// KD-7, KD-8, ADR-0009, ADR-0010: the agents form loads next to the roles form through the same creation, its definition
+// models resolve at creation, and a result form reaches the registry only through the internal assembly
+// `composeEngine` — `createEngine` has the shipped `text` form alone.
+// Defects caught: an agents-form configuration refused by the roles schema; a definition model resolved lazily; a form
+// the public assembly lets in from outside the engine; an agents-form source left out of the DC-14 allowlist check.
+describe('composeEngine: the result-form registry is assembled inside the engine', () => {
+  const PROBE_FORM = { name: 'probe_record', version: 1, resultSchema: z.strictObject({ note: z.string() }) };
+  const agentsConfig = {
+    processId: 'agent-probe',
+    version: 1,
+    goal: 'Probe the agents form',
+    sources: [],
+    agents: {
+      lead: {
+        model: OTHER_MODEL,
+        effort: 'low',
+        prompt: 'Answer {{query}}.',
+        tools: [],
+        result: 'probe_record',
+        limits: {
+          maxTurns: 4,
+          maxCallsPerTurn: 2,
+          maxChildren: 0,
+          runTokens: 300_000,
+          deadlineMs: 600_000,
+          windowTokens: 200_000,
+          marginTokens: 1_000,
+          maxOutputTokens: 2_000,
+        },
+      },
+    },
+    rootAgent: 'lead',
+    agentLimits: { maxDepth: 1 },
+    limits: { investigationTokens: { default: 300_000, max: 600_000 }, maxTasks: 5, maxToolCalls: 5 },
+    answer: { sections: ['summary'] },
+  };
+  const withAgents = (resolveModel?: ResolveModel) => {
+    const { registry } = registryDouble(true);
+    const base = options({ connectedSources: CONNECTED, registry, logger: recordingLogger().logger, resolveModel });
+    return { ...base, processes: [deepResearchProcessV2, agentsConfig] };
+  };
+
+  it('creates the engine with an agents-form configuration whose form the internal assembly registers', () => {
+    expect(composeEngine(withAgents(), { resultForms: [TEXT_FORM, PROBE_FORM] }).sourceMode).toBe('sources');
+  });
+
+  it.each<[string, () => unknown, readonly (string | number)[]]>([
+    ['createEngine, which has only the shipped text form', () => createEngine(withAgents()), [1, 'agents', 'lead', 'result']],
+    [
+      'resolveModel throwing on the definition model',
+      () =>
+        composeEngine(
+          withAgents((modelId) => {
+            if (modelId === OTHER_MODEL) throw new Error(`no client for ${modelId}`);
+            return modelDouble(modelId);
+          }),
+          { resultForms: [TEXT_FORM, PROBE_FORM] },
+        ),
+      [1, 'agents', 'lead', 'model'],
+    ],
+    [
+      'a configured source outside the source.fetch allowlist with a connected source (DC-14)',
+      () =>
+        composeEngine(
+          {
+            ...withAgents(),
+            processes: [{ ...agentsConfig, sources: [{ sourceId: 'fixture', toolName: 'search_logs' }] }],
+            sourceRegistry: registryDouble(false).registry,
+          },
+          { resultForms: [TEXT_FORM, PROBE_FORM] },
+        ),
+      [0, 'sources', 0],
+    ],
+  ])('refuses the agents-form configuration through %s', (_case, create, path) => {
+    expect(caught(create)).toMatchObject({ code: 'process_config_rejected', path });
   });
 });

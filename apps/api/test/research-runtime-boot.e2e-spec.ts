@@ -187,10 +187,12 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
       url: string,
       port: number,
       entry: string = API_ENTRY,
+      env: Record<string, string> = {},
     ): Started {
       return startProcess(process.execPath, [entry], {
         DATABASE_URL: url,
         PORT: String(port),
+        ...env,
       });
     }
 
@@ -289,6 +291,39 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
           expect(run.exitCode, run.output).not.toBeNull();
           expect(namedMigrations(run.output)).toEqual([...pending].sort());
           // The check ran before `listen`: a listen on the held port would have failed first.
+          expect(run.output).not.toContain('EADDRINUSE');
+        } finally {
+          await new Promise((resolve) => held.close(resolve));
+        }
+      },
+      ROW_TIMEOUT_MS,
+    );
+
+    // agent-runtime / agent-core — design-agent-core.md, Runtime Settings, DC-27: «Сборка `apps/api` при старте сверяет
+    // запас с суммой `leaseMs` runtime и `AGENT_TURN_MS` и не стартует, если он меньше».
+    // Catches: the server starts with a margin that leaves no room for the last turn's tool calls, or the message does
+    // not name the three settings. The database is migrated, so the migration check passes and the engine's check refuses.
+    it(
+      'a deadline margin below the lease plus a turn: the api exits non-zero before binding its port, naming the three settings',
+      async () => {
+        const url = await createScratchDatabase();
+        await applyMigrations(url);
+        const held = await holdPort();
+        try {
+          const run = await untilExit(
+            startApi(url, held.port, API_ENTRY, {
+              RUNTIME_LEASE_MS: '30000',
+              AGENT_TURN_MS: '60000',
+              AGENT_DEADLINE_MARGIN_MS: '89999',
+            }),
+            'the api to refuse the start',
+          );
+
+          expect(run.exitCode, run.output).not.toBe(0);
+          expect(run.exitCode, run.output).not.toBeNull();
+          expect(run.output).toContain(
+            'AGENT_DEADLINE_MARGIN_MS (89999) must not be less than RUNTIME_LEASE_MS (30000) + AGENT_TURN_MS (60000)',
+          );
           expect(run.output).not.toContain('EADDRINUSE');
         } finally {
           await new Promise((resolve) => held.close(resolve));

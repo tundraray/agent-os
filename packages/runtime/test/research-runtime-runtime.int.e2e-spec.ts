@@ -719,22 +719,39 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       expect([runs.has('b7-D'), runs.has('b7-E')]).toEqual([false, false]);
     }, 30_000);
 
-    it('INT-1 B8: a wait on tasks that have all finished returns the task to queued at once, and its next attempt sees them upstream', async () => {
+    it('INT-1 B8: a wait on tasks that have all finished returns the task to queued at once, and its next attempt sees them upstream with the failure of a failed one', async () => {
       const investigationId = await newInvestigation('B8', {
         maxTasks: 5,
         maxToolCalls: 10,
       });
       const target = await create(spec(investigationId, 'b8-T'));
       await settledAs(target, 'succeeded');
+      scripts.set('b8-F', () =>
+        Promise.resolve({
+          ...completed(),
+          kind: 'failed',
+          failure: {
+            class: 'tool_error',
+            code: 'fixture_error',
+            message: 'The fixture failed',
+            cause: null,
+            attempt: 1,
+            toolCalls: 0,
+            retries: 0,
+          },
+        }),
+      );
+      const failedTarget = await create(spec(investigationId, 'b8-F'));
+      await settledAs(failedTarget, 'failed');
       const upstream: (readonly UpstreamTask[])[] = [];
       scripts.set('b8-W', async (ctx) => {
         upstream.push(ctx.upstream);
         if (ctx.attempt > 1) return completed();
-        const registered = await ctx.registerWait([target]);
+        const registered = await ctx.registerWait([target, failedTarget]);
         if (registered.outcome !== 'ok') {
           throw new Error(`wait refused: ${JSON.stringify(registered)}`);
         }
-        return waitResult([target]);
+        return waitResult([target, failedTarget]);
       });
 
       const w = await create(spec(investigationId, 'b8-W'));
@@ -746,17 +763,39 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         { type: 'TaskStarted', reason: null },
         { type: 'TaskSucceeded', reason: null },
       ]);
-      expect(upstream).toEqual([
-        [],
-        [
-          {
-            taskId: target,
-            kind: 'waits_for',
-            status: 'succeeded',
-            outputRefs: [],
-          },
-        ],
-      ]);
+      // Catches: the failure of an awaited task does not reach the waiting one, or a
+      // succeeded task carries one.
+      expect(upstream).toHaveLength(2);
+      expect(upstream[0]).toEqual([]);
+      expect(
+        new Map(upstream[1].map((task) => [task.taskId, task])),
+      ).toEqual(
+        new Map<string, UpstreamTask>([
+          [
+            target,
+            {
+              taskId: target,
+              kind: 'waits_for',
+              status: 'succeeded',
+              outputRefs: [],
+              failure: null,
+            },
+          ],
+          [
+            failedTarget,
+            {
+              taskId: failedTarget,
+              kind: 'waits_for',
+              status: 'failed',
+              outputRefs: [],
+              failure: expect.objectContaining({
+                class: 'tool_error',
+                code: 'fixture_error',
+              }),
+            },
+          ],
+        ]),
+      );
       expect((await tasksOf(investigationId)).get(w)?.attempt).toBe(2);
     }, 30_000);
   });
@@ -962,6 +1001,7 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
           kind: 'depends_on',
           status: 'succeeded',
           outputRefs: [bigId],
+          failure: null,
         },
       ]);
 
@@ -1745,16 +1785,35 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
       expect(await snapshot(investigationId)).toEqual(before);
     }, 30_000);
 
-    it('INT-3 R7 graceful shutdown: runtime.stop() then the pool close() with running tasks returns one to queued without a recovery and ends the one whose cancel commits while closing as cancelled, with no worker error', async () => {
+    it('INT-3 R7 graceful shutdown: runtime.stop() then the pool close() with running tasks returns one to queued without a recovery and ends the one whose cancel commits while closing as cancelled, with no worker error; a yield result returns its task to queued the same way', async () => {
       const shutdownType = uniqueWorkflowType('int3-shutdown');
       const closingOwner = newUser();
-      const started = { plain: gate(), cancelling: gate() };
-      const abortedBy = { plain: gate(), cancelling: gate() };
+      const started = { plain: gate(), cancelling: gate(), yielding: gate() };
+      const abortedBy = { plain: gate(), cancelling: gate(), yielding: gate() };
       const cancelCommitted = gate();
+      const yieldCheckpoint = { step: 'before-yield' };
+      let yieldingSecondAttempt: { attempt: number; checkpoint: unknown } | null =
+        null;
       const closing = await createRuntimeHarness({
         handlers: [
           testHandler(shutdownType, async (ctx) => {
-            const role = ctx.input.key === 'plain' ? 'plain' : 'cancelling';
+            // Yield (KD-6, UC-E8): the first attempt spends a tool call, saves a checkpoint and
+            // gives its slot back; the next attempt must get the task with the same checkpoint.
+            if (ctx.input.key === 'yielding' && ctx.attempt === 1) {
+              await ctx.reserveToolCall('int3.yield', false);
+              await ctx.saveCheckpoint(yieldCheckpoint);
+              return { ...completed(), kind: 'yield' };
+            }
+            if (ctx.input.key === 'yielding') {
+              yieldingSecondAttempt = {
+                attempt: ctx.attempt,
+                checkpoint: ctx.checkpoint,
+              };
+            }
+            const role =
+              ctx.input.key === 'plain' || ctx.input.key === 'yielding'
+                ? ctx.input.key
+                : 'cancelling';
             started[role].release();
             await whenAborted(ctx.signal);
             abortedBy[role].release();
@@ -1762,7 +1821,7 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
             return completed();
           }),
         ],
-        runtime: { concurrency: 2, shutdownGraceMs: LATCH_MS },
+        runtime: { concurrency: 3, shutdownGraceMs: LATCH_MS },
       });
       let closed: Promise<void> | undefined;
       // The closing runtime's own logger: the suite's runtime logs elsewhere.
@@ -1789,11 +1848,24 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
           }),
           closing,
         );
+        // maxRetries 0: a yield counted as a failure would end the task failed.
+        const yieldingId = await create(
+          spec(plainInvestigation, 'yielding', {
+            workflowType: shutdownType,
+            maxRetries: 0,
+          }),
+          closing,
+        );
         await within(started.plain.promise, LATCH_MS, 'the plain attempt');
         await within(
           started.cancelling.promise,
           LATCH_MS,
           'the cancelling attempt',
+        );
+        await within(
+          started.yielding.promise,
+          LATCH_MS,
+          'the attempt after the yield',
         );
         closing.logs.error.length = 0;
 
@@ -1806,11 +1878,40 @@ describe('research-runtime / runtime - integration (in-process runtime + real Po
         cancelCommitted.release();
         await closed;
 
-        expect(await taskState(plainId)).toMatchObject({
-          status: 'queued',
-          attempt: 1,
-          recoveryCount: 0,
+        // One rule, one table: a slot given back (shutdown or yield) spends no recovery and no
+        // retry, settles the attempt's tool calls and writes no outcome.
+        expect({
+          plain: await taskState(plainId),
+          yielding: await taskState(yieldingId),
+        }).toMatchObject({
+          plain: { status: 'queued', attempt: 1, recoveryCount: 0 },
+          yielding: {
+            status: 'queued',
+            attempt: 2,
+            recoveryCount: 0,
+            failureClass: null,
+            answer: null,
+          },
         });
+        expect(yieldingSecondAttempt).toEqual({
+          attempt: 2,
+          checkpoint: { step: 'before-yield' },
+        });
+        expect(
+          await query(
+            `SELECT tool_calls_used AS "toolCallsUsed", attempt_tool_calls AS "attemptToolCalls",
+                    retries_used AS "retriesUsed", outcome
+               FROM app.research_tasks WHERE task_id = $1`,
+            [yieldingId],
+          ),
+        ).toEqual([
+          {
+            toolCallsUsed: 1,
+            attemptToolCalls: 0,
+            retriesUsed: 0,
+            outcome: null,
+          },
+        ]);
         expect(await taskState(cancellingId)).toMatchObject({
           status: 'cancelled',
           failureClass: 'cancelled',

@@ -1,6 +1,7 @@
 import {
   EvidenceInputSchema,
   ExpectedOutputSchema,
+  FailureReasonSchema,
   InputRefSchema,
   InvestigationStatusSchema,
   RuntimeEventTypeSchema,
@@ -48,7 +49,7 @@ import type {
 import type { TaskScheduler } from './task-scheduler.js';
 import type { TaskRepository } from './task.repository.js';
 
-const { running, succeeded } = TaskStatusSchema.enum;
+const { cancelled, failed, running, succeeded } = TaskStatusSchema.enum;
 const { active } = InvestigationStatusSchema.enum;
 const { ToolCallReserved, EvidenceStored } = RuntimeEventTypeSchema.enum;
 
@@ -126,6 +127,7 @@ export async function loadUpstream(
       kind: researchTaskDependencies.kind,
       status: researchTasks.status,
       outputRefs: researchTasks.outputRefs,
+      failureReason: researchTasks.failureReason,
     })
     .from(researchTaskDependencies)
     .innerJoin(
@@ -144,6 +146,10 @@ export async function loadUpstream(
       kind: TaskEdgeKindSchema.parse(row.kind),
       status,
       outputRefs: status === succeeded ? row.outputRefs : [],
+      failure:
+        status === failed || status === cancelled
+          ? FailureReasonSchema.parse(row.failureReason)
+          : null,
     };
   });
 }

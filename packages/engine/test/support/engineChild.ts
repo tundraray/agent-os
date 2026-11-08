@@ -14,7 +14,7 @@ import type {
   EngineChildScenarioEnv,
   StopMessage,
 } from './engineChildMain.js';
-import { cancelLeftovers, engineRowsOf, engineRunsOf, tasksOf } from './engineDb.js';
+import { agentRowsOf, cancelLeftovers, engineRowsOf, engineRunsOf, tasksOf } from './engineDb.js';
 import { fixtureFiles } from './fixtureHarness.js';
 import { newLaunchKey, newUser } from './new-user.js';
 
@@ -55,6 +55,8 @@ const CHILD_BUILDS: readonly ChildBuild[] = [
   packageBuild('db', 'db'),
   packageBuild('mcp-fixture', 'mcp-fixture', 'dist/server.js'),
   { output: CHILD_ENTRY, sources: join(PACKAGE_ROOT, 'test/support'), command: 'pnpm --filter @agent-os/engine build:child' },
+  // The agent-probe child compiles `composeEngine` and the probe forms from this package's sources (ADR-0010).
+  { output: CHILD_ENTRY, sources: join(PACKAGE_ROOT, 'src'), command: 'pnpm --filter @agent-os/engine build:child' },
 ];
 
 /** Runtime Settings of the children: short lease and reaper, fast polling — as the runtime's kill matrix. */
@@ -81,7 +83,15 @@ const POLL_MS = 100;
 const OUTPUT_TAIL_LINES = 60;
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 /** Workflow types whose tasks a child claims: the engine's handlers and `source.fetch`. */
-const CHILD_WORKFLOWS = ['research.controller', 'research.analyze', 'research.verify', 'research.synthesize', 'source.fetch'];
+const CHILD_WORKFLOWS = [
+  'research.controller',
+  'research.analyze',
+  'research.verify',
+  'research.synthesize',
+  'source.fetch',
+  'agent.root',
+  'agent.run',
+];
 /** Event consumers a child registers: the runtime's scheduler and the engine's closure (design-lifecycle.md, KD-1). */
 const CHILD_CONSUMERS = ['runtime.scheduler', 'engine.lifecycle'];
 
@@ -317,6 +327,8 @@ export interface RunRows {
   readonly engineRuns: number;
   readonly tasks: TaskRows;
   readonly rows: Rows;
+  /** The rows of the investigation's agent tree (empty for a v2 investigation). */
+  readonly agentRows: Awaited<ReturnType<typeof agentRowsOf>>;
   readonly closure: Closure;
 }
 
@@ -330,6 +342,7 @@ async function rowsOf(pool: Pool, resourceId: string): Promise<RunRows | undefin
     engineRuns: runs.length,
     tasks: await tasksOf(run.investigationId),
     rows: await engineRowsOf(run.investigationId),
+    agentRows: await agentRowsOf(run.investigationId),
     closure: await closureOf(pool, run.investigationId),
   };
 }
@@ -382,6 +395,8 @@ export interface ScenarioOptions {
   readonly runtimeCrashAt?: string;
   /** Runtime Settings of the restarted child over the children's defaults. */
   readonly restartSettings?: Readonly<Record<string, string>>;
+  /** The probe process of agent-core E2E-1 (`agent-probe`) and its program's variant; the v2 process without it. */
+  readonly agents?: { readonly processId: string; readonly program?: EngineChildScenario['agentProgram'] };
 }
 
 export interface ScenarioRun {
@@ -402,7 +417,15 @@ export interface ScenarioRun {
  */
 function answered(rows: RunRows | undefined): RunRows | undefined {
   if (rows?.rows.run?.answer == null) return undefined;
-  if (rows.closure.status === 'active' || rows.closure.pendingDeliveries > 0) return undefined;
+  return closed(rows);
+}
+
+/**
+ * The investigation is no longer `active`, every task of it ended and every event of it reached the child's consumers:
+ * the end of an agents-form investigation, which writes no v2 answer.
+ */
+function closed(rows: RunRows | undefined): RunRows | undefined {
+  if (rows === undefined || rows.closure.status === 'active' || rows.closure.pendingDeliveries > 0) return undefined;
   return rows.tasks.every((task) => TERMINAL.includes(task.status)) ? rows : undefined;
 }
 
@@ -421,7 +444,11 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
     threadId: `thread-${randomUUID()}`,
     launchKey: newLaunchKey(),
     query: 'Why did the payments fail after the release?',
+    ...(options.agents === undefined
+      ? {}
+      : { processId: options.agents.processId, ...(options.agents.program === undefined ? {} : { agentProgram: options.agents.program }) }),
   };
+  const ended = options.agents === undefined ? answered : closed;
   const children: EngineChild[] = [];
   const crashAt = options.crashAt ?? options.runtimeCrashAt;
   const start = (crash: Pick<ScenarioOptions, 'crashAt' | 'runtimeCrashAt'>, settings: Readonly<Record<string, string>> = {}): EngineChild => {
@@ -459,7 +486,7 @@ export async function runScenario(options: ScenarioOptions = {}): Promise<Scenar
     const startedAt = Date.now();
     let end: RunRows | undefined;
     for (;;) {
-      end = answered(await rowsOf(reader.pool, scenario.resourceId));
+      end = ended(await rowsOf(reader.pool, scenario.resourceId));
       if (end !== undefined) break;
       if (!last.running) throw last.failure('exited before the investigation was answered');
       if (Date.now() - startedAt > RECOVERY_MS) throw last.failure(`did not answer within ${RECOVERY_MS} ms`);

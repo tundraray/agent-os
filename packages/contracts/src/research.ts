@@ -13,6 +13,8 @@ export const EVIDENCE_ARGS_MAX_BYTES = 16 * 1024;
 export const EVIDENCE_CONTENT_MAX_BYTES = 16 * 1024 * 1024;
 /** Max length of an opaque `Coverage.continuation` (4 KiB). */
 export const COVERAGE_CONTINUATION_MAX_LENGTH = 4 * 1024;
+/** Max length of an investigation's question, `InvestigationSpec.query` (10 000 characters). */
+export const INVESTIGATION_QUERY_MAX_CHARS = 10_000;
 /** Prefix of the current `dedup_key` rule; a rule change bumps the version. */
 export const DEDUP_KEY_PREFIX = "v1:";
 
@@ -185,7 +187,7 @@ export const ResourceIdSchema = z.string().min(1).max(255);
 export const InvestigationSpecSchema = z.object({
   resourceId: ResourceIdSchema,
   threadId: ThreadIdSchema,
-  query: z.string().min(1).max(10_000),
+  query: z.string().min(1).max(INVESTIGATION_QUERY_MAX_CHARS),
   budget: z.object({
     maxTasks: z.number().int().min(1).max(1_000),
     maxToolCalls: z.number().int().min(1).max(10_000),
@@ -352,11 +354,12 @@ const ShortTextListSchema = z.array(z.string().max(500));
 
 /**
  * Schema of `TaskHandler.run`'s result; the type `HandlerResult` belongs to the handler port in
- * `@agent-os/runtime`. `failed` carries `failure`; `wait` carries `waitFor`.
+ * `@agent-os/runtime`. `failed` carries `failure`; `wait` carries `waitFor`; `yield` gives the
+ * slot back: the task returns to `queued` without spending a retry or a recovery.
  */
 export const HandlerResultSchema = z
   .object({
-    kind: z.enum(["completed", "failed", "wait"]),
+    kind: z.enum(["completed", "failed", "wait", "yield"]),
     answerOrDelta: boundedJson(TASK_OUTCOME_MAX_BYTES).nullable(),
     evidenceRefs: z.array(z.uuid()),
     coverage: CoverageSchema.nullable(),

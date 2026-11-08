@@ -192,8 +192,15 @@ export function runConfig(
   config: Pick<RunRecord['config'], 'processConfig' | 'fingerprint'>,
   choice: RunConfig['choice'],
 ): RunConfig {
+  const { processConfig } = config;
+  if ('agents' in processConfig) {
+    // DC-29: the result file names the roles of the roles form; an agents-form configuration is a defect, not a fallback.
+    throw new Error(
+      `the result file names the roles form only: ${processConfig.processId} is of the agents form`,
+    );
+  }
   const roleOf = (role: ProcessRole) => {
-    const { model, prompt } = config.processConfig.roles[role];
+    const { model, prompt } = processConfig.roles[role];
     return { model, promptVersion: promptVersion(prompt) };
   };
   return {

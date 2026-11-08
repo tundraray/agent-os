@@ -417,7 +417,7 @@ describe('research-runtime / mcp-source - E2E (real Postgres, real fixture)', ()
         // AC-04.1: the dependent starts after its dependency succeeded and gets its evidence.
         expect(fetched.outputRefs).toHaveLength(1);
         expect(upstreamAtStart).toEqual([
-          { taskId: fetchId, kind: 'depends_on', status: 'succeeded', outputRefs: fetched.outputRefs },
+          { taskId: fetchId, kind: 'depends_on', status: 'succeeded', outputRefs: fetched.outputRefs, failure: null },
         ]);
         expect(callsOf(run, DEPENDENT)).toHaveLength(1);
       } finally {

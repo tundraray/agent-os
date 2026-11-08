@@ -343,6 +343,36 @@ export function createChildEngine(deps: {
           'engine double: assess is not part of the chat-entry boundary',
         ),
       ),
+    writeDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: writeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    removeDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: removeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    listDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: listDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    readAgentTree: () =>
+      Promise.reject(
+        new Error(
+          'engine double: readAgentTree is not part of the chat-entry boundary',
+        ),
+      ),
+    assessAgent: () =>
+      Promise.reject(
+        new Error(
+          'engine double: assessAgent is not part of the chat-entry boundary',
+        ),
+      ),
     release: (investigationId) => releaseOf(investigationId).release(),
     bind: () => undefined,
   };

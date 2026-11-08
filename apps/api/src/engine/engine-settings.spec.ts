@@ -35,3 +35,70 @@ describe('parseEngineSettings - RESEARCH_ANTHROPIC_BASE_URL', () => {
     },
   );
 });
+
+// Risk: an agent setting starts with a default other than the design's, or an invalid value starts the engine with
+// NaN timings instead of stopping the start naming the variable (design-agent-core.md, Runtime Settings).
+describe('parseEngineSettings - agent settings', () => {
+  it.each<[string, Record<string, string>, Record<string, number | string>]>([
+    [
+      'all unset',
+      {},
+      {
+        attemptSliceMs: 300000,
+        busyWaitMs: 30000,
+        turnMs: 60000,
+        deadlineMarginMs: 90000,
+        memoryAdminRole: 'agent-memory-admin',
+      },
+    ],
+    [
+      'all set',
+      {
+        AGENT_ATTEMPT_SLICE_MS: '1000',
+        AGENT_BUSY_WAIT_MS: '2000',
+        AGENT_TURN_MS: '3000',
+        AGENT_DEADLINE_MARGIN_MS: '4000',
+        AGENT_MEMORY_ADMIN_ROLE: 'ops',
+      },
+      {
+        attemptSliceMs: 1000,
+        busyWaitMs: 2000,
+        turnMs: 3000,
+        deadlineMarginMs: 4000,
+        memoryAdminRole: 'ops',
+      },
+    ],
+    [
+      'all empty',
+      {
+        AGENT_ATTEMPT_SLICE_MS: '',
+        AGENT_BUSY_WAIT_MS: '',
+        AGENT_TURN_MS: '',
+        AGENT_DEADLINE_MARGIN_MS: '',
+        AGENT_MEMORY_ADMIN_ROLE: '',
+      },
+      {
+        attemptSliceMs: 300000,
+        busyWaitMs: 30000,
+        turnMs: 60000,
+        deadlineMarginMs: 90000,
+        memoryAdminRole: 'agent-memory-admin',
+      },
+    ],
+  ])('takes the agent settings when %s', (_, env, expected) => {
+    expect(parseEngineSettings((name) => env[name]).agent).toEqual(expected);
+  });
+
+  it.each([
+    ['AGENT_ATTEMPT_SLICE_MS', '0'],
+    ['AGENT_BUSY_WAIT_MS', 'abc'],
+    ['AGENT_TURN_MS', '1.5'],
+    ['AGENT_DEADLINE_MARGIN_MS', '-90000'],
+  ])('stops the start naming %s for "%s"', (variable, value) => {
+    const env: Record<string, string> = { [variable]: value };
+
+    expect(() => parseEngineSettings((name) => env[name])).toThrow(
+      new RegExp(`^${variable} `),
+    );
+  });
+});

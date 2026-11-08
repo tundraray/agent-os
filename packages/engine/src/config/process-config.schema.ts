@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AgentProcessConfig } from './agent-config.schema.js';
 import { CAPABILITIES } from './capabilities.js';
 import type { ModelCatalog } from './model-catalog.js';
 import { findPromptTemplateFault } from './prompt-template.js';
@@ -89,6 +90,9 @@ export const ProcessConfigSchema = z.strictObject({
 });
 
 export type ProcessConfig = z.infer<typeof ProcessConfigSchema>;
+
+/** A configuration of either form (KD-7): the roles form above or the agents form, told apart by the `agents` key. */
+export type AnyProcessConfig = ProcessConfig | AgentProcessConfig;
 
 /** Every role model must have a catalog entry, or its calls could not be priced (createEngine contract). */
 export function checkRoleModels(config: ProcessConfig, catalog: ModelCatalog): ProcessConfigRejection | null {

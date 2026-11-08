@@ -6,7 +6,10 @@ export interface ReserveCounters {
   readonly tokensSpent: number;
   /** Tokens held by the investigation's open reservations — of other calls: this one is not reserved yet. */
   readonly tokensReserved: number;
-  /** Tokens the task holds across its attempts: open reservations whole, closed rows as charged. */
+  /**
+   * Tokens the task holds across its attempts: open reservations whole, closed rows as charged. An agent run also holds
+   * its children's shares (design-agent-core.md, KD-4): what it occupies, by `runOccupiedTokens`.
+   */
   readonly taskTokensHeld: number;
   /** The task's ceiling, `TaskBudget.maxTokens`. */
   readonly taskMaxTokens: number;

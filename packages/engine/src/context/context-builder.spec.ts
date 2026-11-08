@@ -31,6 +31,7 @@ const charCounter = (): TokenCounter => ({
       request.messages.reduce((sum, message) => sum + message.content.length, 0);
     return Promise.resolve({ outcome: 'counted', inputTokens });
   },
+  countTurnInputTokens: () => Promise.reject(new Error('a role packet counts no agent turn')),
 });
 
 const silentLogger: EngineLogger = { log: () => undefined, warn: () => undefined, error: () => undefined };
@@ -215,6 +216,7 @@ describe('ContextBuilder', () => {
   it('a failed count is returned, not taken as a fitting packet, and logged with its status and class only', async () => {
     const failing: TokenCounter = {
       countInputTokens: () => Promise.resolve({ outcome: 'failed', statusCode: 400, errorClass: 'invalid_request_error' }),
+      countTurnInputTokens: () => Promise.reject(new Error('a role packet counts no agent turn')),
     };
     const warnings: unknown[][] = [];
     const logger = { ...silentLogger, warn: (...line: unknown[]) => void warnings.push(line) };

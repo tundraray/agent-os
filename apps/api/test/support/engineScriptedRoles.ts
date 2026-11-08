@@ -337,6 +337,8 @@ export function createEngineScriptedRoles(): EngineScriptedRoles {
               0,
             ),
         }),
+      countTurnInputTokens: () =>
+        Promise.reject(new Error('v2 runs no agent turn')),
     },
     release: () => release(),
   };

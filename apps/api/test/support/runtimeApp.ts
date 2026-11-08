@@ -34,6 +34,11 @@ export interface RuntimeAppOptions {
   handlers: readonly TaskHandler[];
   /** Runtime Settings over the test defaults (workers on, 2 slots, 50 ms poll, pool of 4). */
   runtime?: Partial<RuntimeConfig>;
+  /**
+   * Engine variables (`AGENT_*`) set like the runtime settings, e.g. an `AGENT_DEADLINE_MARGIN_MS` that covers a long
+   * `leaseMs` — `EngineModule` refuses a margin below the lease plus `AGENT_TURN_MS` (DC-27).
+   */
+  engine?: Readonly<Record<string, string>>;
   /** Providers replaced by a value, e.g. the engine's model and token counter doubles. */
   overrides?: readonly ProviderOverride[];
 }
@@ -120,15 +125,16 @@ function overrideEnv(
 export async function createRuntimeApp(
   options: RuntimeAppOptions,
 ): Promise<RuntimeApp> {
-  const restoreEnv = overrideEnv(
-    settingVariables({
+  const restoreEnv = overrideEnv({
+    ...settingVariables({
       workers: true,
       concurrency: 2,
       pollMs: 50,
       dbPoolMax: 4,
       ...options.runtime,
     }),
-  );
+    ...options.engine,
+  });
   let moduleRef: TestingModule;
   try {
     let builder = Test.createTestingModule({ imports: [AppModule] })

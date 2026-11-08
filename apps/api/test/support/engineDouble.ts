@@ -480,6 +480,46 @@ export function createEngineDouble(
       );
     },
 
+    writeDefinitionMemory() {
+      return Promise.reject(
+        new Error(
+          'engine double: writeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
+    removeDefinitionMemory() {
+      return Promise.reject(
+        new Error(
+          'engine double: removeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
+    listDefinitionMemory() {
+      return Promise.reject(
+        new Error(
+          'engine double: listDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
+    readAgentTree() {
+      return Promise.reject(
+        new Error(
+          'engine double: readAgentTree is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
+    assessAgent() {
+      return Promise.reject(
+        new Error(
+          'engine double: assessAgent is not part of the chat-entry boundary',
+        ),
+      );
+    },
+
     setSourceMode(mode) {
       sourceMode = mode;
     },

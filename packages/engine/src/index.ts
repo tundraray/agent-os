@@ -1,4 +1,32 @@
 // The package entry `.`; the engine components are exported here as they land.
+export type {
+  AgentTree,
+  AgentTreeCall,
+  AgentTreeRun,
+  AgentTreeTurn,
+  ReadAgentTreeResult,
+} from './agents/agent-tree.js';
+export type {
+  AssessAgentRequest,
+  AssessAgentResult,
+  CalibratingMark,
+} from './agents/assess-agent.js';
+export type {
+  DefinitionMemoryRecord,
+  DefinitionMemoryScope,
+  ListDefinitionMemoryInput,
+  MemoryActor,
+  RemoveDefinitionMemoryInput,
+  RemoveDefinitionMemoryResult,
+  WriteDefinitionMemoryInput,
+  WriteDefinitionMemoryResult,
+} from './agents/definition-memory.js';
+export {
+  CONFIGURATION_ACCESS_POLICY,
+  type ToolAccessDecision,
+  type ToolAccessPolicy,
+  type ToolAccessRequest,
+} from './agents/tool-access-policy.js';
 export type { ReadAnswerMessageResult } from './answer/answer-message.js';
 export {
   type AnswerMessage,

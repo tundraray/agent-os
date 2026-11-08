@@ -1,5 +1,6 @@
-import type { Clock, TaskContext } from '@agent-os/runtime';
+import type { Clock, RuntimeTx, TaskContext } from '@agent-os/runtime';
 import { z } from 'zod';
+import type { AgentDefinition } from '../config/agent-config.schema.js';
 import type { ModelCatalog } from '../config/model-catalog.js';
 import type { ProcessConfig } from '../config/process-config.schema.js';
 import {
@@ -9,6 +10,7 @@ import {
 } from '../engine-errors.js';
 import type { EngineLogger, RoleModel } from '../ports.js';
 import type {
+  AgentTranscriptInput,
   TranscriptClosing,
   TranscriptOpening,
   TranscriptResponse,
@@ -31,6 +33,14 @@ import {
   type ResolvedCall,
 } from './retry-policy.js';
 import {
+  type AgentToolCall,
+  type AgentToolChoice,
+  type AgentToolDefinition,
+  type AgentTurnCall,
+  type AgentTurnGeneration,
+  type AgentTurnMessage,
+  type AgentTurnModelClient,
+  mastraAgentTurnClient,
   mastraRoleModelClient,
   providerMessages,
   type ReportedUsage,
@@ -39,6 +49,7 @@ import {
   type RoleModelClient,
 } from './role-agent.js';
 import type {
+  AgentTurnCountRequest,
   RoleMessage,
   TokenCounter,
   TokenCountRequest,
@@ -85,6 +96,64 @@ export type ModelCallResult<T> =
   | { readonly outcome: EngineWarningCode }
   | { readonly outcome: 'fenced' };
 
+/** One turn of an agent run (design-agent-core.md, KD-1): one request with the definition tools, none of them run. */
+export interface AgentTurnRequest {
+  readonly ctx: TaskContext;
+  readonly agentName: string;
+  readonly definition: Pick<AgentDefinition, 'model' | 'effort'> &
+    Pick<AgentDefinition['limits'], 'maxOutputTokens' | 'marginTokens'>;
+  /** Fingerprint of the definition's prompt template. */
+  readonly promptVersion: string;
+  /** The system block of the session view. */
+  readonly instructions: string;
+  readonly messages: readonly AgentTurnMessage[];
+  readonly tools: readonly AgentToolDefinition[];
+  readonly toolChoice: AgentToolChoice;
+  /**
+   * `windowTokens − marginTokens` of the definition (DC-30): the gateway counts the turn's input before the reserve, and
+   * a counted input over it gets no reserve, no ledger row and no model call.
+   */
+  readonly inputLimitTokens: number;
+  /** What the turn's transcript records as its input: the instructions and the reference to the view. */
+  readonly transcriptInput: AgentTranscriptInput;
+  /** No turn starts at or after it, and a running request is interrupted at it. */
+  readonly notAfter: Date;
+  /** How long the reserve waits for other calls' reserves before the turn gives the slot up (`AGENT_BUSY_WAIT_MS`). */
+  readonly busyWaitMs: number;
+  /**
+   * Writes the answer into the session. `ModelGateway` calls it in the guarded transaction that closes the turn's
+   * ledger row, so the answer and its row are written together or not at all.
+   */
+  readonly writeAnswer: (tx: RuntimeTx, answer: AgentTurnAnswer) => Promise<void>;
+}
+
+/** The answer of a turn: its ledger row, text and the tool calls the engine is to run. */
+export interface AgentTurnAnswer {
+  readonly callId: string;
+  readonly text: string;
+  readonly toolCalls: readonly AgentToolCall[];
+}
+
+/** The ceiling refusal of an agent run is `run_tokens_exhausted` (design-agent-core.md, Error Handling). */
+type AgentTurnFailureCode = 'run_tokens_exhausted' | 'investigation_tokens_exhausted' | 'model_unavailable';
+
+/**
+ * Outcome of an agent turn. `no_answer` with `busy_wait_exhausted` — other calls' reserves kept the turn out longer
+ * than `busyWaitMs`: no ledger row and no model call, the run yields its slot (KD-6). `no_answer` with
+ * `window_exceeded` — the counted input is over `inputLimitTokens`: no reserve, no ledger row and no model call, and the
+ * handler builds the view at the next stage of the window rule (DC-30).
+ */
+export type AgentTurnResult =
+  | { readonly outcome: 'answered'; readonly answer: AgentTurnAnswer }
+  | { readonly outcome: 'no_answer'; readonly reason: 'cancelled' | 'deadline' | 'busy_wait_exhausted' }
+  | { readonly outcome: 'no_answer'; readonly reason: 'window_exceeded'; readonly countedInputTokens: number }
+  | {
+      readonly outcome: 'failed';
+      readonly code: AgentTurnFailureCode;
+      readonly failureClass: (typeof ENGINE_FAILURE_CLASSES)[AgentTurnFailureCode];
+    }
+  | { readonly outcome: 'fenced' };
+
 export interface ModelGatewayDeps {
   /** Role model instances by catalog id, resolved by `createEngine` through `resolveModel`. */
   readonly models: ReadonlyMap<string, RoleModel>;
@@ -95,11 +164,13 @@ export interface ModelGatewayDeps {
   /** Boundary doubles in unit tests; by default the Postgres ledger and the Mastra role agent. */
   readonly ledger?: CallLedger;
   readonly client?: RoleModelClient;
+  readonly turnClient?: AgentTurnModelClient;
 }
 
 /** The single path to the model (design-engine.md, C3). */
 export interface ModelGateway {
   call<T>(request: ModelCallRequest<T>): Promise<ModelCallResult<T>>;
+  turn(request: AgentTurnRequest): Promise<AgentTurnResult>;
 }
 
 /** Wait between two reserves of a call that other calls' open reserves keep out (design-engine.md, Runtime settings). */
@@ -110,6 +181,9 @@ type ReserveAfterWait =
   | Exclude<ReservationOutcome, { readonly outcome: 'busy' }>
   | { readonly outcome: 'stopped'; readonly reason: 'cancelled' | 'deadline' };
 
+/** A reserve wait with a limit may also end because the limit passed. */
+type ReserveWithinLimit = ReserveAfterWait | { readonly outcome: 'busy_wait_exhausted' };
+
 type CallStep<T> =
   | { readonly next: 'done'; readonly result: ModelCallResult<T> }
   | { readonly next: 'provider_retry' }
@@ -118,6 +192,7 @@ type CallStep<T> =
 export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
   const ledger = deps.ledger ?? postgresCallLedger;
   const client = deps.client ?? mastraRoleModelClient;
+  const turnClient = deps.turnClient ?? mastraAgentTurnClient;
 
   const failed = <T>(
     code: Exclude<EngineFailureCode, 'deadline'>,
@@ -152,7 +227,7 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     });
 
   const logFailure = (
-    request: Pick<ModelCallRequest<unknown>, 'role' | 'roleConfig'>,
+    request: Pick<ModelCallRequest<unknown>, 'role'> & { readonly roleConfig: Pick<RoleConfig, 'model'> },
     attempt: number,
     outcome: string,
     statusCode: number | null,
@@ -168,12 +243,21 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     });
   };
 
+  /** The role-call view of a turn, for the log lines and the reservation close the two paths share. */
+  const turnAsCall = (request: AgentTurnRequest) => ({
+    ctx: request.ctx,
+    role: 'agent' as const,
+    roleConfig: { model: request.definition.model },
+  });
+
   /**
    * Closes the call's reservation. A reservation a DC-9 close point already charged in full as `abandoned` (the answer
    * was written while this call ran) stays as it is: the call goes on, and one warning without the prompt says so.
    */
   const closeReservation = async (
-    request: Pick<ModelCallRequest<unknown>, 'ctx' | 'role' | 'roleConfig'>,
+    request: Pick<ModelCallRequest<unknown>, 'ctx' | 'role'> & {
+      readonly roleConfig: Pick<RoleConfig, 'model'>;
+    },
     attempt: number,
     closing: ReservationClosing,
   ): Promise<'closed' | 'fenced'> => {
@@ -195,17 +279,31 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
    * counted again (DC-5). The wait writes nothing and ends with any other answer of the ledger (`stopping` among them),
    * a cancel or `notAfter`.
    */
-  const reserveWhenFree = async (
+  const reserveWithin = async (
     request: Pick<ModelCallRequest<unknown>, 'ctx' | 'notAfter'>,
     reservation: ReservationRequest,
-  ): Promise<ReserveAfterWait> => {
-    for (;;) {
+    limitMs: number,
+  ): Promise<ReserveWithinLimit> => {
+    for (let waitedMs = 0; ; waitedMs += RESERVE_WAIT_MS) {
       const reserved = await ledger.reserve(request.ctx, reservation);
       if (reserved.outcome !== 'busy') return reserved;
+      if (waitedMs >= limitMs) return { outcome: 'busy_wait_exhausted' };
       await delay(RESERVE_WAIT_MS, request.ctx.signal);
       const stop = stopReason(request.ctx, request.notAfter);
       if (stop !== null) return { outcome: 'stopped', reason: stop };
     }
+  };
+
+  /** A role call waits without a limit (design-engine.md, KD-5); only an agent turn passes one (KD-6). */
+  const reserveWhenFree = async (
+    request: Pick<ModelCallRequest<unknown>, 'ctx' | 'notAfter'>,
+    reservation: ReservationRequest,
+  ): Promise<ReserveAfterWait> => {
+    const reserved = await reserveWithin(request, reservation, Number.POSITIVE_INFINITY);
+    if (reserved.outcome === 'busy_wait_exhausted') {
+      throw new Error('a reserve wait without a limit ended by its limit');
+    }
+    return reserved;
   };
 
   /** One counted, reserved and closed call; `next` says whether the loop retries. */
@@ -374,7 +472,181 @@ export function createModelGateway(deps: ModelGatewayDeps): ModelGateway {
     }
   };
 
+  type TurnGenerated =
+    | { readonly kind: 'answer'; readonly generation: AgentTurnGeneration }
+    | { readonly kind: 'stopped'; readonly reason: 'cancelled' | 'deadline' }
+    | { readonly kind: 'provider_error'; readonly retryable: boolean };
+
+  /** The turn request under a signal that a cancel or `notAfter` aborts; a late answer is dropped. */
+  const generateTurn = async (request: AgentTurnRequest, attempt: number): Promise<TurnGenerated> => {
+    const { ctx } = request;
+    const model = deps.models.get(request.definition.model);
+    if (model === undefined) {
+      throw new Error(`model ${request.definition.model} was not resolved`);
+    }
+    const deadline = new AbortController();
+    const cancelDeadline = deps.clock.setTimer(
+      Math.max(0, request.notAfter.getTime() - deps.clock.now().getTime()),
+      () => deadline.abort(),
+    );
+    const call: AgentTurnCall = {
+      agentName: request.agentName,
+      model,
+      instructions: request.instructions,
+      messages: request.messages,
+      tools: request.tools,
+      toolChoice: request.toolChoice,
+      effort: request.definition.effort,
+      maxOutputTokens: request.definition.maxOutputTokens,
+    };
+    try {
+      const generation = await turnClient.generateTurn(call, AbortSignal.any([ctx.signal, deadline.signal]));
+      const stop = stopAfterCall(ctx, deadline.signal);
+      return stop === null ? { kind: 'answer', generation } : { kind: 'stopped', reason: stop };
+    } catch (error) {
+      const stop = stopAfterCall(ctx, deadline.signal);
+      if (stop !== null) return { kind: 'stopped', reason: stop };
+      const providerError = classifyRejection(error);
+      if (providerError === null) throw error;
+      logFailure(turnAsCall(request), attempt, 'provider_error', providerError.statusCode);
+      return { kind: 'provider_error', retryable: providerError.retryable };
+    } finally {
+      cancelDeadline();
+    }
+  };
+
+  type TurnStep = { readonly next: 'done'; readonly result: AgentTurnResult } | { readonly next: 'provider_retry' };
+
+  const turnFailed = (code: AgentTurnFailureCode): AgentTurnResult => ({
+    outcome: 'failed',
+    code,
+    failureClass: ENGINE_FAILURE_CLASSES[code],
+  });
+
+  /**
+   * One counted, reserved and closed turn request; the answer is written by the close (design-agent-core.md, KD-1). The
+   * counted input decides (DC-30): over the limit, the turn ends before any reserve.
+   */
+  const turnOnce = async (
+    request: AgentTurnRequest,
+    countRequest: AgentTurnCountRequest,
+    attempt: number,
+  ): Promise<TurnStep> => {
+    const { definition } = request;
+    const counted = await deps.tokenCounter.countTurnInputTokens(countRequest, request.ctx.signal);
+    const stopAfterCount = stopReason(request.ctx, request.notAfter);
+    if (stopAfterCount !== null) {
+      return { next: 'done', result: { outcome: 'no_answer', reason: stopAfterCount } };
+    }
+    if (counted.outcome === 'failed') {
+      logFailure(turnAsCall(request), attempt, 'token_count_failed', counted.statusCode, counted.errorClass);
+      return { next: 'provider_retry' };
+    }
+    if (counted.inputTokens > request.inputLimitTokens) {
+      const exceeded = { outcome: 'no_answer', reason: 'window_exceeded', countedInputTokens: counted.inputTokens } as const;
+      return { next: 'done', result: exceeded };
+    }
+    const reservedTokens = counted.inputTokens + definition.marginTokens + definition.maxOutputTokens;
+    const reservation = await reserveWithin(
+      request,
+      {
+        role: 'agent',
+        model: definition.model,
+        countedInputTokens: counted.inputTokens,
+        reservedTokens,
+        transcript: { promptVersion: request.promptVersion, input: request.transcriptInput },
+      },
+      request.busyWaitMs,
+    );
+    switch (reservation.outcome) {
+      case 'busy_wait_exhausted':
+        return { next: 'done', result: { outcome: 'no_answer', reason: 'busy_wait_exhausted' } };
+      case 'stopped':
+        return { next: 'done', result: { outcome: 'no_answer', reason: reservation.reason } };
+      case 'fenced':
+        return { next: 'done', result: reservation };
+      case 'stopping':
+        return { next: 'done', result: { outcome: 'no_answer', reason: 'cancelled' } };
+      case 'refused':
+        // The task's ceiling of an agent run is its share (KD-4).
+        return {
+          next: 'done',
+          result: turnFailed(reservation.code === 'task_tokens_exhausted' ? 'run_tokens_exhausted' : reservation.code),
+        };
+      case 'reserved':
+        break;
+    }
+
+    const resolved = await generateTurn(request, attempt);
+    if (resolved.kind === 'stopped') {
+      return { next: 'done', result: { outcome: 'no_answer', reason: resolved.reason } };
+    }
+    if (resolved.kind === 'provider_error') {
+      const closed = await closeReservation(turnAsCall(request), attempt, {
+        callId: reservation.callId,
+        status: 'failed',
+        usage: null,
+        chargedTokens: 0,
+        costUsd: 0,
+        transcript: { outcome: 'provider_error', response: null },
+      });
+      if (closed === 'fenced') return { next: 'done', result: { outcome: 'fenced' } };
+      return resolved.retryable ? { next: 'provider_retry' } : { next: 'done', result: turnFailed('model_unavailable') };
+    }
+
+    const { generation } = resolved;
+    const answer: AgentTurnAnswer = {
+      callId: reservation.callId,
+      text: generation.text,
+      toolCalls: generation.toolCalls,
+    };
+    const closing = settledClosing(definition.model, reservation.callId, {
+      reported: generation.usage,
+      reservedTokens,
+      transcript: {
+        outcome: 'answered',
+        response: {
+          object: { toolCalls: generation.toolCalls },
+          finishReason: generation.finishReason ?? null,
+          ...(generation.text === '' ? {} : { text: generation.text }),
+        },
+      },
+    });
+    const closed = await closeReservation(turnAsCall(request), attempt, {
+      ...closing,
+      writeAnswer: (tx) => request.writeAnswer(tx, answer),
+    });
+    if (closed === 'fenced') return { next: 'done', result: { outcome: 'fenced' } };
+    return { next: 'done', result: { outcome: 'answered', answer } };
+  };
+
   return {
+    async turn(request) {
+      const countRequest: AgentTurnCountRequest = {
+        model: request.definition.model,
+        system: request.instructions,
+        messages: request.messages,
+        tools: request.tools.map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema: z.toJSONSchema(inputSchema),
+        })),
+        toolChoice: request.toolChoice,
+        effort: request.definition.effort,
+      };
+      let providerRetries = 0;
+      for (let attempt = 1; ; attempt += 1) {
+        const stop = stopReason(request.ctx, request.notAfter);
+        if (stop !== null) return { outcome: 'no_answer', reason: stop };
+
+        const step = await turnOnce(request, countRequest, attempt);
+        if (step.next === 'done') return step.result;
+        if (providerRetries === PROVIDER_RETRIES) return turnFailed('model_unavailable');
+        providerRetries += 1;
+        await delay(providerRetryDelayMs(providerRetries), request.ctx.signal);
+      }
+    },
+
     async call<T>(request: ModelCallRequest<T>): Promise<ModelCallResult<T>> {
       const countRequest: TokenCountRequest = {
         model: request.roleConfig.model,

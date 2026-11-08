@@ -1,0 +1,2 @@
+ALTER TABLE "app"."agent_definition_memory" DROP CONSTRAINT "agent_definition_memory_values_check";--> statement-breakpoint
+ALTER TABLE "app"."agent_definition_memory" ADD CONSTRAINT "agent_definition_memory_values_check" CHECK ("app"."agent_definition_memory"."process_id" <> '' and "app"."agent_definition_memory"."agent_name" <> '' and "app"."agent_definition_memory"."written_by" <> '' and ("app"."agent_definition_memory"."user_id" is null or "app"."agent_definition_memory"."user_id" <> '') and char_length("app"."agent_definition_memory"."text") <= 2000);

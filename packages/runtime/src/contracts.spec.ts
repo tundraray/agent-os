@@ -118,6 +118,8 @@ describe('HandlerResultSchema — cross-field rules', () => {
     ['wait with waitFor', { kind: 'wait', waitFor: [TASK_ID] }, true],
     ['wait without waitFor', { kind: 'wait' }, false],
     ['wait with empty waitFor', { kind: 'wait', waitFor: [] }, false],
+    // Catches: `yield` rejected as invalid_handler_result by the dispatcher (KD-6).
+    ['yield without failure and waitFor', { kind: 'yield' }, true],
   ])('%s → valid: %s', (_name, patch, valid) => {
     expect(HandlerResultSchema.safeParse({ ...result, ...patch }).success).toBe(
       valid,

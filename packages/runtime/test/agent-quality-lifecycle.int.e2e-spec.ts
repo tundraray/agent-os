@@ -410,7 +410,16 @@ describe('agent-quality / lifecycle - runtime integration (in-process runtime + 
         );
         expect(woken?.causationId).toBe(idleEvents[1].eventId);
         expect(upstreamSeen.get(parent)).toEqual([
-          { taskId: idle, kind: 'waits_for', status: 'failed', outputRefs: [] },
+          {
+            taskId: idle,
+            kind: 'waits_for',
+            status: 'failed',
+            outputRefs: [],
+            failure: expect.objectContaining({
+              class: 'deadline',
+              code: 'queue_wait_exceeded',
+            }),
+          },
         ]);
       }, 30_000);
 

@@ -339,9 +339,16 @@ async function readItems(
         `the slice of ${investigationId} cannot be determined: ${resolved.reason}`,
       );
     }
+    const frozen = read.record.config.processConfig;
+    if ('agents' in frozen) {
+      // DC-29: replay works with the roles form; an agents-form investigation is a defect of the input, not a fallback.
+      throw new Error(
+        `replay reads the roles form only: investigation ${investigationId} runs on the agents form`,
+      );
+    }
     const config = replayConfig({
       choice: options.choice,
-      frozen: read.record.config.processConfig,
+      frozen,
       roleModel: options.roleModel,
     });
     if (!config.ok) {

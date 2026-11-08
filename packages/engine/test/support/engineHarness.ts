@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Investigation } from '@agent-os/contracts';
+import type { Investigation, ProposeResult, TaskSpec } from '@agent-os/contracts';
 import {
   createDatabase,
   type Database,
@@ -32,6 +32,7 @@ import {
   systemClock,
   type TaskContext,
   type TaskHandler,
+  type TaskScheduler,
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import {
@@ -45,12 +46,19 @@ import {
 } from '@agent-os/sources';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+// The internal assembly and the result forms are internal to the package: the harness registers its probe forms through
+// `composeEngine` from the sources (ADR-0010), as the design says; `createEngine` takes no forms.
+import { type ResultForm, SHIPPED_RESULT_FORMS } from '../../src/agents/result-forms.js';
+import type { ToolAccessPolicy } from '../../src/agents/tool-access-policy.js';
 // The repository is internal to the package; the harness writes seeded claims through it, as the handlers do.
 import { claimsRepository } from '../../src/claims/claims.repository.js';
+import { composeEngine, type CreateEngineOptions } from '../../src/create-engine.js';
+import type { AgentTurnCountRequest } from '../../src/model/token-counter.js';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
 import { cancelLeftovers } from './engineDb.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedModelOptions } from './scriptedModel.js';
+import { turnInputCharacters } from './turnCount.js';
 
 /**
  * Test assembly of the engine (design-engine.md, Test Strategy): the real `createRuntime`, `createSources` and
@@ -112,6 +120,20 @@ export interface HarnessSource {
   adapter(logger: SourcesLogger): SourceAdapter;
 }
 
+/** The agent settings of `createEngine` (design-agent-core.md, Runtime Settings); the engine's defaults without them. */
+export interface AgentHarnessSettings {
+  /** `AGENT_TURN_MS`. */
+  readonly turnMs?: number;
+  /** `AGENT_DEADLINE_MARGIN_MS`. */
+  readonly deadlineMarginMs?: number;
+  /** `AGENT_ATTEMPT_SLICE_MS`. */
+  readonly attemptSliceMs?: number;
+  /** `AGENT_BUSY_WAIT_MS`. */
+  readonly busyWaitMs?: number;
+  /** `RUNTIME_LEASE_MS` as the engine gets it: a child's `notAfter` is its parent's minus this (DC-27). */
+  readonly leaseMs?: number;
+}
+
 export interface EngineHarnessOptions extends EngineBuildOptions {
   /** Runtime Settings over the test defaults (workers on, 2 slots, 50 ms poll, pool of 4); `workers: false` builds without workers. */
   runtime?: Partial<RuntimeConfig>;
@@ -121,6 +143,15 @@ export interface EngineHarnessOptions extends EngineBuildOptions {
   source?: HarnessSource;
   /** Options of the model double, such as the program that answers a call no scripted step is left for. */
   model?: ScriptedModelOptions;
+  /**
+   * Result forms beside the shipped ones: with them the engine is built through the internal `composeEngine` from the
+   * package's sources (ADR-0010); without them through the public `createEngine` of the built package, as before.
+   */
+  resultForms?: readonly ResultForm[];
+  /** The rights port of agent tool calls; what the configuration allows is allowed by default. */
+  toolAccessPolicy?: ToolAccessPolicy;
+  /** The agent settings of `createEngine`. */
+  agent?: AgentHarnessSettings;
 }
 
 /** One recorded log call. */
@@ -157,6 +188,18 @@ export interface OffsetTokenCounter extends TokenCounter {
    * `undefined` the request is counted as usual. A test that sets it sets it back to `undefined` before it ends.
    */
   intercept: ((request: TokenCountRequest) => Promise<number | undefined> | number | undefined) | undefined;
+  /**
+   * Every agent-turn request counted (DC-30), in order, over the harness's whole life: the harness never clears it, so a
+   * test that reads it empties it first. An agent turn counts one token per character of its system block, its messages
+   * and its tool schemas, plus `offset`.
+   */
+  readonly turnRequests: AgentTurnCountRequest[];
+  /**
+   * The {@link intercept} of an agent turn's count: it may hold the count and may answer a count of its own (UC-E15 answers
+   * by the order of the requests inside a turn); with `undefined` the request is counted as usual. A test that sets it
+   * sets it back to `undefined` before it ends.
+   */
+  interceptTurn: ((request: AgentTurnCountRequest) => Promise<number | undefined> | number | undefined) | undefined;
 }
 
 /** A timer of the engine clock the test fires itself (see {@link ShiftedClock.holdTimers}). */
@@ -202,6 +245,15 @@ export interface HandlerPoint {
   readonly checkpoint?: unknown;
 }
 
+/**
+ * Holds the engine after a proposal of the `TaskScheduler` it was built with returned and before the engine goes on —
+ * the gap between `propose` and the guarded write that records a child's task id (agent-core INT-4 B3).
+ */
+export interface SchedulerHold {
+  /** Awaited after each proposal; a test that sets it sets it back to `undefined` before it ends. */
+  afterPropose: ((spec: TaskSpec, result: ProposeResult) => Promise<void> | void) | undefined;
+}
+
 /** Holds the engine's handlers at their points (a zombie attempt kept alive, INT-4). */
 export interface HandlerHold {
   /**
@@ -232,6 +284,7 @@ export interface EngineHarness {
    */
   readonly endedRuns: { readonly taskId: string; readonly attempt: number }[];
   readonly handlerHold: HandlerHold;
+  readonly schedulerHold: SchedulerHold;
   /**
    * The lease of the task's running `attempt` runs out now on the harness clock, as if its worker had stopped beating:
    * the recovery sweeper requeues the task and the next attempt takes it (runtime INT-3). Throws when that attempt
@@ -352,6 +405,16 @@ function offsetTokenCounter(): OffsetTokenCounter {
         request.system.length + request.messages.reduce((sum, message) => sum + message.content.length, 0);
       return { outcome: 'counted', inputTokens: characters + counter.offset };
     },
+    turnRequests: [],
+    interceptTurn: undefined,
+    async countTurnInputTokens(request): Promise<TokenCountResult> {
+      counter.turnRequests.push(request);
+      const intercepted = await counter.interceptTurn?.(request);
+      if (intercepted !== undefined) {
+        return { outcome: 'counted', inputTokens: intercepted };
+      }
+      return { outcome: 'counted', inputTokens: turnInputCharacters(request) + counter.offset };
+    },
   };
   return counter;
 }
@@ -437,6 +500,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const endedRuns: { taskId: string; attempt: number }[] = [];
   const evidenceReads: string[] = [];
   const handlerHold: HandlerHold = { at: undefined };
+  const schedulerHold: SchedulerHold = { afterPropose: undefined };
   /** The engine's handlers as registered, held at their points by `handlerHold`, with every end of `run` recorded in `endedRuns`. */
   const observed = (handler: TaskHandler): TaskHandler => ({
     ...handler,
@@ -491,10 +555,17 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       clock,
       logger: sourcesLogger(logs.sources),
     });
-    const engine = createEngine({
+    const scheduler: Pick<TaskScheduler, 'propose'> = {
+      propose: async (spec, requesterKey) => {
+        const result = await runtime.scheduler.propose(spec, requesterKey);
+        await schedulerHold.afterPropose?.(spec, result);
+        return result;
+      },
+    };
+    const engineOptions: CreateEngineOptions = {
       database: database.db,
       runtime: {
-        scheduler: runtime.scheduler,
+        scheduler,
         investigations: runtime.investigations,
         evidence: {
           get: (evidenceId, resourceId) => {
@@ -515,7 +586,13 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       tokenCounter,
       clock: engineClock,
       logger: recordingLogger(logs.engine),
-    });
+      ...options.agent,
+      ...(options.toolAccessPolicy === undefined ? {} : { toolAccessPolicy: options.toolAccessPolicy }),
+    };
+    const engine =
+      options.resultForms === undefined
+        ? createEngine(engineOptions)
+        : composeEngine(engineOptions, { resultForms: [...SHIPPED_RESULT_FORMS, ...options.resultForms] });
     if (fence) {
       await cancelLeftovers(database.db, runtime.investigations);
     }
@@ -534,6 +611,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     readAnswerMessage: (input) => engine.readAnswerMessage(input),
     recordSignal: (input) => engine.recordSignal(input),
     assess: (request) => engine.assess(request),
+    writeDefinitionMemory: (input) => engine.writeDefinitionMemory(input),
+    removeDefinitionMemory: (input) => engine.removeDefinitionMemory(input),
+    listDefinitionMemory: (input) => engine.listDefinitionMemory(input),
+    readAgentTree: (input) => engine.readAgentTree(input),
+    assessAgent: (request) => engine.assessAgent(request),
     startInvestigation: async (input) => {
       const result = await engine.startInvestigation(input);
       if (result.outcome !== 'rejected') {
@@ -566,6 +648,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     logs,
     endedRuns,
     handlerHold,
+    schedulerHold,
     expireLease: async (taskId, attempt) => {
       const expired = await database.db
         .update(researchTasks)

@@ -4,9 +4,14 @@ import { type Database, researchClaims, researchEvidence, researchLlmCalls, rese
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { VERIFY_WORKFLOW } from '../capabilities/verify.js';
-import { type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
+import type { AnyProcessConfig } from '../config/process-config.schema.js';
 import { controllerRepository, type DecisionRow } from '../controller/decisions.repository.js';
-import { type InvestigationView, type InvestigationViewStatus, toInvestigationView } from '../view/investigation-view.js';
+import {
+  frozenProcessConfig,
+  type InvestigationView,
+  type InvestigationViewStatus,
+  toInvestigationView,
+} from '../view/investigation-view.js';
 import { usageRepository } from '../view/usage.repository.js';
 import { engineRunsRepository } from './engine-runs.repository.js';
 import type { SourceSnapshots } from './source-snapshots.js';
@@ -39,8 +44,11 @@ export interface RunRecord {
 }
 
 interface RunRecordConfig {
-  /** The frozen `ProcessConfig` of the investigation (DC-15). */
-  readonly processConfig: ProcessConfig;
+  /**
+   * The frozen configuration of the investigation (DC-15), of either form (DC-29): a consumer that reads the fields of
+   * the roles form narrows it by the `agents` key.
+   */
+  readonly processConfig: AnyProcessConfig;
   /** The first 12 hexadecimal characters of SHA-256 of the configuration with its keys sorted at every depth. */
   readonly fingerprint: string;
 }
@@ -148,7 +156,7 @@ export async function readRunRecord(
     return NOT_FOUND;
   }
   const view = toInvestigationView(runStatus, usageRows);
-  const processConfig = ProcessConfigSchema.parse(runStatus.run.processConfig);
+  const processConfig = frozenProcessConfig(runStatus.run.processConfig);
   return {
     outcome: 'found',
     record: {
@@ -172,7 +180,7 @@ export async function readRunRecord(
  * The fingerprint a run record names its configuration by. Stable over the key order a `jsonb` column returns: the same
  * configuration always gives the same fingerprint, so a caller without a record can name a loaded configuration the same way.
  */
-export function configFingerprint(config: ProcessConfig): string {
+export function configFingerprint(config: AnyProcessConfig): string {
   return createHash('sha256')
     .update(JSON.stringify(sortedKeys(config)), 'utf8')
     .digest('hex')

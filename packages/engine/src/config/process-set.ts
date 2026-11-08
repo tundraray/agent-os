@@ -1,7 +1,7 @@
-import type { ProcessConfig, ProcessConfigRejection } from './process-config.schema.js';
+import type { AnyProcessConfig, ProcessConfigRejection } from './process-config.schema.js';
 
 export type ProcessResolution =
-  | { readonly ok: true; readonly config: ProcessConfig }
+  | { readonly ok: true; readonly config: AnyProcessConfig }
   | { readonly ok: false; readonly code: 'process_unknown' };
 
 export interface ProcessSet {
@@ -16,13 +16,13 @@ export type CreateProcessSetResult =
 const UNKNOWN: ProcessResolution = { ok: false, code: 'process_unknown' };
 
 /**
- * The loaded processes keyed by the pair `processId` + `version`: versions of one process load side by side, and only a
- * repeated pair is refused, at the index of the repeated configuration.
+ * The loaded processes of either form keyed by the pair `processId` + `version`: versions of one process load side by
+ * side, and only a repeated pair is refused, at the index of the repeated configuration.
  */
-export function createProcessSet(configs: readonly ProcessConfig[]): CreateProcessSetResult {
-  const versionsById = new Map<string, Map<number, ProcessConfig>>();
+export function createProcessSet(configs: readonly AnyProcessConfig[]): CreateProcessSetResult {
+  const versionsById = new Map<string, Map<number, AnyProcessConfig>>();
   for (const [index, config] of configs.entries()) {
-    const versions = versionsById.get(config.processId) ?? new Map<number, ProcessConfig>();
+    const versions = versionsById.get(config.processId) ?? new Map<number, AnyProcessConfig>();
     if (versions.has(config.version)) {
       return {
         ok: false,

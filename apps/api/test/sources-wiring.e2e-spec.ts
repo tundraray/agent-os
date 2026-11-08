@@ -64,6 +64,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
     'register research.analyze@1',
     'register research.verify@2',
     'register research.synthesize@1',
+    'register agent.root@1',
+    'register agent.run@1',
   ];
 
   const tempDirs: string[] = [];
@@ -301,6 +303,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
     const fixedCounter: TokenCounter = {
       countInputTokens: () =>
         Promise.resolve({ outcome: 'counted', inputTokens: 100 }),
+      countTurnInputTokens: () =>
+        Promise.reject(new Error('v2 runs no agent turn')),
     };
 
     const runtime = await createRuntimeApp({

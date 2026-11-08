@@ -24,6 +24,7 @@ const cancelled: EngineRunStatus = {
     answerId: null,
     answer: null,
     sourceSnapshots: null,
+    definitionMemorySnapshot: null,
     createdAt: new Date('2026-11-01T00:00:00.000Z'),
   },
 };
@@ -118,5 +119,74 @@ describe('toInvestigationView answer', () => {
       unknown: [],
       removed: [],
     });
+  });
+});
+
+// DC-29 (FR-09, UC-1 — the unit half): the frozen copy of an agents-form investigation is read with the schema of
+// either form, chosen by the `agents` key, as the load chooses it; the answer is laid out in that copy's
+// `answer.sections`, and the ledger's agent turns read as one row of the role `agent`.
+// Defect caught: the view parsed with `ProcessConfigSchema` only, so reading an agents-form investigation throws.
+describe('вид расследования формы агентов', () => {
+  const AGENTS_CONFIG = {
+    processId: 'agent-probe',
+    version: 1,
+    goal: 'Find the cause of the failures',
+    sources: [],
+    agents: {
+      lead: {
+        model: HAIKU,
+        effort: 'low',
+        prompt: 'Investigate {{query}}.',
+        tools: [],
+        calls: [],
+        result: 'text',
+        limits: {
+          maxTurns: 4,
+          maxCallsPerTurn: 2,
+          maxChildren: 0,
+          runTokens: 120_000,
+          deadlineMs: 600_000,
+          windowTokens: 100_000,
+          marginTokens: 1_000,
+          maxOutputTokens: 2_000,
+        },
+      },
+    },
+    rootAgent: 'lead',
+    agentLimits: { maxDepth: 1 },
+    limits: { investigationTokens: { default: 300_000, max: 300_000 }, maxTasks: 10, maxToolCalls: 10 },
+    answer: { sections: ['summary', 'unknown'] },
+  };
+
+  it('reads the frozen agents-form copy: the answer by its sections, the agent turns as the role agent', () => {
+    const answered = {
+      answerId: '00000000-0000-4000-8000-0000000000a2',
+      outcome: 'answered',
+      stopReason: null,
+      summary: 'the job fails on a full disk',
+      summaryItems: [],
+      established: [],
+      assumed: [],
+      unknown: [],
+      removed: [],
+    };
+
+    const view = toInvestigationView(
+      {
+        investigationStatus: 'completed',
+        run: { ...cancelled.run, processId: 'agent-probe', processConfig: AGENTS_CONFIG, answerId: answered.answerId, answer: answered },
+      },
+      [ledgerRow('agent', HAIKU, '0.00009000')],
+    );
+
+    expect(view.answer).toEqual({
+      answerId: answered.answerId,
+      outcome: 'answered',
+      stopReason: null,
+      summary: 'the job fails on a full disk',
+      summaryItems: [],
+      unknown: [],
+    });
+    expect(view.usage.byRoleAndModel.map((row) => [row.role, row.model, row.calls])).toEqual([['agent', HAIKU, 1]]);
   });
 });

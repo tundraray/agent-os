@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ResolveModel, RoleModel } from '@agent-os/engine';
 import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
@@ -7,6 +8,10 @@ import { MockLanguageModelV4 } from 'ai/test';
  * the test `resolveModel` returns. It implements `doGenerate` — the role agent's call is one non-streaming request with
  * the native `json_schema` output (KD-7) — and answers from a script per role, recording every call. Step 1 of task-09
  * showed the real `Agent` over it behaves as over the provider: one `doGenerate` per `generate`, also when it throws.
+ *
+ * An agent turn (design-agent-core.md, Test Strategy) has no output schema: the double tells it by the marker
+ * {@link agentMarker} in the call's system prompt, keeps a script per agent name and answers with tool calls or a text.
+ * The roles of v2 are still told apart by their output schema, which an agent turn never has.
  */
 
 type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
@@ -26,6 +31,19 @@ const ROLE_MARKERS: Readonly<Record<ScriptedRole, string>> = {
   worker: 'claims',
   verifier: 'records',
 };
+
+/**
+ * The marker an agent definition's prompt carries (test-configs.ts): the double finds the agent of a turn by it, as it
+ * finds a role by its output schema. It recognises its own script; it reads no text of the investigation.
+ */
+export const agentMarker = (agentName: string): string => `[probe-agent:${agentName}]`;
+const AGENT_MARKER = /\[probe-agent:([A-Za-z0-9_-]+)\]/;
+
+/** One tool call of a scripted agent answer: the tool name and its arguments (an object, or a test's own text). */
+export interface ScriptedToolCall {
+  readonly tool: string;
+  readonly args: unknown;
+}
 
 /** Token usage the double reports for a call; `inputTokens` is the whole input, the cached parts included. */
 export interface ScriptedUsage {
@@ -48,6 +66,21 @@ export type ScriptedStep =
       readonly usage?: ScriptedUsage | ((call: RecordedModelCall) => ScriptedUsage);
       readonly holdUntil?: Promise<void>;
     }
+  /**
+   * An agent answer with tool calls (`tool-call` content parts, finish reason `tool-calls`), each with a fresh call id. A
+   * function is called with the call when it answers, for arguments the test learns while the investigation runs.
+   */
+  | {
+      readonly toolCalls: readonly ScriptedToolCall[] | ((call: RecordedModelCall) => readonly ScriptedToolCall[]);
+      readonly usage?: ScriptedUsage | ((call: RecordedModelCall) => ScriptedUsage);
+      readonly holdUntil?: Promise<void>;
+    }
+  /** An agent answer with a text and no tool call (DC-2). */
+  | {
+      readonly text: string;
+      readonly usage?: ScriptedUsage | ((call: RecordedModelCall) => ScriptedUsage);
+      readonly holdUntil?: Promise<void>;
+    }
   /** A provider error, thrown as `AI_APICallError`; without `statusCode` a network error. */
   | { readonly providerError: { readonly statusCode?: number } }
   /** A refusal: `finishReason` `content-filter`, no output. */
@@ -60,8 +93,20 @@ export type ScriptedStep =
 
 /** One call the double received. */
 export interface RecordedModelCall {
-  readonly role: ScriptedRole | 'unknown';
+  readonly role: ScriptedRole | 'agent' | 'unknown';
+  /** The agent of a turn, by the marker of its system prompt; null for a role call. */
+  readonly agent: string | null;
   readonly modelId: string;
+  /** The names of the tools the call offered, in order; empty for a role call. */
+  readonly tools: readonly string[];
+  /** The `toolChoice` of the call as the provider gets it; undefined for a role call. */
+  readonly toolChoice: unknown;
+  /** The whole prompt as sent: the system block and the messages with their content parts and provider options. */
+  readonly prompt: GenerateOptions['prompt'];
+  /** The `tool` messages of the prompt: the step of an agent's program after a restart (E2E-1). */
+  readonly toolResults: number;
+  /** The call's abort signal: fired when a cancel or `notAfter` ended the call. */
+  readonly abortSignal: AbortSignal | undefined;
   /** The `system` text — the rendered role prompt. */
   readonly system: string;
   /** The user text of the packet. */
@@ -85,10 +130,16 @@ export interface ScriptedModel {
   script(role: ScriptedRole, ...steps: ScriptedStep[]): void;
   /** Calls of one role. */
   callsOf(role: ScriptedRole): RecordedModelCall[];
-  /** Empties the calls and every role's script: each test starts from a clean double. */
+  /** Appends steps to the agent's script; an agent without a step left goes to the `fallback`, then fails loudly. */
+  scriptAgent(agentName: string, ...steps: ScriptedStep[]): void;
+  /** Turns of one agent, in arrival order. */
+  callsOfAgent(agentName: string): RecordedModelCall[];
+  /** Empties the calls and every role's and agent's script: each test starts from a clean double. */
   reset(): void;
   /** Steps of each role's script not consumed yet: a test that left steps scripted more than happened. */
   pending(): Record<ScriptedRole, number>;
+  /** Steps of each agent's script not consumed yet, by agent name (only agents that were scripted). */
+  pendingAgents(): Record<string, number>;
 }
 
 const DEFAULT_USAGE: ScriptedUsage = { inputTokens: 100, outputTokens: 20 };
@@ -110,6 +161,22 @@ function roleOf(options: GenerateOptions): ScriptedRole | 'unknown' {
   const properties = (schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
   const role = (Object.keys(ROLE_MARKERS) as ScriptedRole[]).find((candidate) => ROLE_MARKERS[candidate] in properties);
   return role ?? 'unknown';
+}
+
+/** The agent of a call without a role schema, by the marker of its system prompt; null for any other call. */
+function agentOf(options: GenerateOptions): string | null {
+  const match = AGENT_MARKER.exec(textOf(options, 'system'));
+  return match?.[1] ?? null;
+}
+
+/** The answer content of scripted tool calls: `tool-call` parts with fresh ids and the arguments as JSON text. */
+function toolCallParts(toolCalls: readonly ScriptedToolCall[]): GenerateResult['content'] {
+  return toolCalls.map(({ tool, args }) => ({
+    type: 'tool-call' as const,
+    toolCallId: `call_${randomUUID()}`,
+    toolName: tool,
+    input: typeof args === 'string' ? args : JSON.stringify(args),
+  }));
 }
 
 function textsOf(options: GenerateOptions, role: 'system' | 'user'): string[] {
@@ -235,12 +302,30 @@ export interface ScriptedModelOptions {
 export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): ScriptedModel {
   const calls: RecordedModelCall[] = [];
   const scripts: Record<ScriptedRole, ScriptedStep[]> = { plan: [], controller: [], worker: [], verifier: [], synthesis: [] };
+  const agentScripts = new Map<string, ScriptedStep[]>();
+
+  /** The next step of the call: its role's or agent's script, then the `fallback` program, then the default plan. */
+  function nextStep(call: RecordedModelCall): ScriptedStep | undefined {
+    if (call.role === 'agent') {
+      return agentScripts.get(call.agent ?? '')?.shift() ?? modelOptions.fallback?.(call);
+    }
+    if (call.role === 'unknown') return undefined;
+    return scripts[call.role].shift() ?? modelOptions.fallback?.(call) ?? (call.role === 'plan' ? { output: DEFAULT_PLAN } : undefined);
+  }
 
   async function answer(modelId: string, options: GenerateOptions): Promise<GenerateResult> {
-    const role = roleOf(options);
+    const schemaRole = roleOf(options);
+    const agent = schemaRole === 'unknown' ? agentOf(options) : null;
+    const role = agent === null ? schemaRole : 'agent';
     const call: RecordedModelCall = {
       role,
+      agent,
       modelId,
+      tools: (options.tools ?? []).map((tool) => tool.name),
+      toolChoice: options.toolChoice,
+      prompt: options.prompt,
+      toolResults: options.prompt.filter((message) => message.role === 'tool').length,
+      abortSignal: options.abortSignal,
       system: textOf(options, 'system'),
       user: textOf(options, 'user'),
       inputChars: textsOf(options, 'system').concat(textsOf(options, 'user')).reduce((sum, text) => sum + text.length, 0),
@@ -251,9 +336,9 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
     if (role === 'unknown') {
       throw new Error(`scripted model ${modelId}: a call of an unscripted role`);
     }
-    const step = scripts[role].shift() ?? modelOptions.fallback?.(call) ?? (role === 'plan' ? { output: DEFAULT_PLAN } : undefined);
+    const step = nextStep(call);
     if (step === undefined) {
-      throw new Error(`scripted model ${modelId}: no ${role} step left`);
+      throw new Error(`scripted model ${modelId}: no ${agent ?? role} step left`);
     }
     if ('providerError' in step) {
       throw new APICallError({
@@ -272,10 +357,21 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
       return { content: [], finishReason: { unified: 'content-filter', raw: 'refusal' }, usage: usageOf(DEFAULT_USAGE), warnings: [] };
     }
     await step.holdUntil;
+    const usage = usageOf(typeof step.usage === 'function' ? step.usage(call) : (step.usage ?? DEFAULT_USAGE));
+    if ('toolCalls' in step) {
+      const toolCalls = typeof step.toolCalls === 'function' ? step.toolCalls(call) : step.toolCalls;
+      return { content: toolCallParts(toolCalls), finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage, warnings: [] };
+    }
+    if ('text' in step) {
+      return { content: [{ type: 'text', text: step.text }], finishReason: { unified: 'stop', raw: 'end_turn' }, usage, warnings: [] };
+    }
+    if (role === 'agent') {
+      throw new Error(`scripted model ${modelId}: agent ${agent} got a structured-output step`);
+    }
     return {
       content: [{ type: 'text', text: JSON.stringify(asSent(role, typeof step.output === 'function' ? step.output(call) : step.output)) }],
       finishReason: { unified: 'stop', raw: 'end_turn' },
-      usage: usageOf(typeof step.usage === 'function' ? step.usage(call) : (step.usage ?? DEFAULT_USAGE)),
+      usage,
       warnings: [],
     };
   }
@@ -294,6 +390,12 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
       scripts[role].push(...steps);
     },
     callsOf: (role) => calls.filter((call) => call.role === role),
+    scriptAgent: (agentName, ...steps) => {
+      const script = agentScripts.get(agentName) ?? [];
+      script.push(...steps);
+      agentScripts.set(agentName, script);
+    },
+    callsOfAgent: (agentName) => calls.filter((call) => call.agent === agentName),
     reset: () => {
       calls.length = 0;
       scripts.plan.length = 0;
@@ -301,7 +403,10 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
       scripts.worker.length = 0;
       scripts.verifier.length = 0;
       scripts.synthesis.length = 0;
+      agentScripts.clear();
     },
+    pendingAgents: () =>
+      Object.fromEntries([...agentScripts].map(([agentName, script]) => [agentName, script.length])),
     pending: () => ({
       plan: scripts.plan.length,
       controller: scripts.controller.length,

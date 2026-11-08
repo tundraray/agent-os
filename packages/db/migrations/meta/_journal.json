@@ -50,6 +50,20 @@
       "when": 1794066273054,
       "tag": "0006_red_felicia_hardy",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794148899528,
+      "tag": "0007_tense_marvel_zombies",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794163637180,
+      "tag": "0008_white_gamora",
+      "breakpoints": true
     }
   ]
 }

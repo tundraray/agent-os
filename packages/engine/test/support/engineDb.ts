@@ -1,7 +1,12 @@
 import {
+  agentToolAudit,
   createDatabase,
   type Database,
   type DatabaseConnection,
+  researchAgentMemory,
+  researchAgentMessages,
+  researchAgentRuns,
+  researchAgentToolCalls,
   researchClaims,
   researchDecisions,
   researchEngineRuns,
@@ -13,7 +18,7 @@ import {
   researchTasks,
 } from '@agent-os/db';
 import type { InvestigationService } from '@agent-os/runtime';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { assertTestDatabase, databaseUrl } from './database-url.js';
 
 /**
@@ -90,6 +95,68 @@ export function llmTranscriptsOf(investigationId: string) {
     .from(researchLlmTranscripts)
     .where(eq(researchLlmTranscripts.investigationId, investigationId))
     .orderBy(asc(researchLlmTranscripts.createdAt), asc(researchLlmTranscripts.callId));
+}
+
+/**
+ * The rows of the investigation's agent tree, table by table (design-agent-core.md, Data Model): runs, session messages,
+ * tool calls, the audit rows those calls reference (an audit row no call references: {@link auditOf}) and the investigation's
+ * memory notes. Runs and calls in creation order, messages by run and number, notes by number.
+ */
+export async function agentRowsOf(investigationId: string) {
+  const toolCalls = await db()
+    .select()
+    .from(researchAgentToolCalls)
+    .where(eq(researchAgentToolCalls.investigationId, investigationId))
+    .orderBy(asc(researchAgentToolCalls.createdAt), asc(researchAgentToolCalls.callIndex));
+  const auditIds = toolCalls.flatMap((call) => (call.auditId === null ? [] : [call.auditId]));
+  return {
+    runs: await db()
+      .select()
+      .from(researchAgentRuns)
+      .where(eq(researchAgentRuns.investigationId, investigationId))
+      .orderBy(asc(researchAgentRuns.createdAt), asc(researchAgentRuns.taskId)),
+    messages: await db()
+      .select()
+      .from(researchAgentMessages)
+      .where(eq(researchAgentMessages.investigationId, investigationId))
+      .orderBy(asc(researchAgentMessages.runTaskId), asc(researchAgentMessages.seq)),
+    toolCalls,
+    audit:
+      auditIds.length === 0
+        ? []
+        : await db().select().from(agentToolAudit).where(inArray(agentToolAudit.id, auditIds)).orderBy(asc(agentToolAudit.recordedAt)),
+    memory: await db()
+      .select()
+      .from(researchAgentMemory)
+      .where(eq(researchAgentMemory.investigationId, investigationId))
+      .orderBy(asc(researchAgentMemory.seq)),
+  };
+}
+
+/**
+ * Every audit row of an owner, oldest first. The audit table holds no investigation or run (AC-10.2), so a test that
+ * counts audit rows per call reads them by its own unique user: an audit row no call references shows only here.
+ */
+export function auditOf(resourceId: string) {
+  return db().select().from(agentToolAudit).where(eq(agentToolAudit.resourceId, resourceId)).orderBy(asc(agentToolAudit.recordedAt));
+}
+
+/** The session messages of one run, by number. */
+export function sessionOf(runTaskId: string) {
+  return db()
+    .select()
+    .from(researchAgentMessages)
+    .where(eq(researchAgentMessages.runTaskId, runTaskId))
+    .orderBy(asc(researchAgentMessages.seq));
+}
+
+/** The ledger rows of the investigation's agent turns (role `agent`), oldest first. */
+export function llmCallsOf(investigationId: string) {
+  return db()
+    .select()
+    .from(researchLlmCalls)
+    .where(and(eq(researchLlmCalls.investigationId, investigationId), eq(researchLlmCalls.role, 'agent')))
+    .orderBy(asc(researchLlmCalls.createdAt), asc(researchLlmCalls.callId));
 }
 
 /** Tasks of the investigation as the runtime stored them, oldest first. */

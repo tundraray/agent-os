@@ -678,6 +678,8 @@ export function createSelfCheckModels(): SelfCheckModels {
               0,
             ),
         }),
+      countTurnInputTokens: () =>
+        Promise.reject(new Error('v2 runs no agent turn')),
     },
     callsOf: (role) => calls.filter((call) => call.role === role),
     useSet: (setName) => {

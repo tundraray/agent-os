@@ -11,12 +11,12 @@ export type SourceCheckResult =
   | { readonly ok: false; readonly rejection: ProcessConfigRejection };
 
 /**
- * With a connected source, every configured pair must resolve through the `source.fetch` allowlist (DC-14); the path
- * is `[configIndex, 'sources', sourceIndex]`. Without one there is nothing to check against: the engine runs on model
+ * With a connected source, every configured pair of a configuration of either form must resolve through the
+ * `source.fetch` allowlist (DC-14); the path is `[configIndex, 'sources', sourceIndex]`. Without one there is nothing to check against: the engine runs on model
  * knowledge and its creation writes one warning (DC-18).
  */
 export function checkProcessSources(input: {
-  readonly configs: readonly ProcessConfig[];
+  readonly configs: readonly Pick<ProcessConfig, 'processId' | 'version' | 'sources'>[];
   readonly registry: Pick<SourceRegistry, 'resolveTool'>;
   readonly connectedSources: readonly string[];
 }): SourceCheckResult {
