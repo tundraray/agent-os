@@ -2,10 +2,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { ResearchAnswerConfidenceSchema } from '@agent-os/contracts';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { z } from 'zod';
-import type { CollectStep, ForcedEndCode, ForcedEndDecision, ForcedEndFunction, FormRunContext } from '../../agents/result-forms.js';
+import type {
+  CollectStep,
+  FormDataReader,
+  ForcedEndCode,
+  ForcedEndDecision,
+  ForcedEndFunction,
+  FormRunContext,
+} from '../../agents/result-forms.js';
 import { answerRepository as answers } from '../../answer/answer.repository.js';
 import { buildCodeAnswer, type InvestigationAnswer } from '../../answer/code-answer.js';
 import { type AnswerMessage, type AnswerPage, buildResearchAnswer } from '../../answer/research-answer.builder.js';
+import { attemptsExhaustedIn } from '../plan-attempts.js';
 import { type RootEnding, stopReasonOf } from './stop-reason.js';
 
 /**
@@ -42,6 +50,8 @@ export const CodeAnswerCollectedSchema = z.object({
   goal: z.string(),
   engineRun: z.object({ launchKey: z.string(), sourceMode: z.enum(['sources', 'model_knowledge']) }),
   budgetExhausted: z.boolean(),
+  /** No accepted plan revision, and the plan attempts are exhausted: gate 1 and the first rule of precedence read it. */
+  planSourcesRejected: z.boolean(),
   claims: z.array(CodeAnswerClaimSchema),
   pages: z.array(RecordPageSchema),
 });
@@ -68,20 +78,29 @@ export function derivedIdsOf(seed: string): () => string {
   };
 }
 
+const ToolCallRowsSchema = z.array(z.object({ toolName: z.string(), state: z.string(), reason: z.string().nullable() }));
+
+/** No accepted plan revision, and the plan attempts are exhausted by the one definition of `plan-attempts.ts`. */
+async function planSourcesRejectedOf(reader: FormDataReader): Promise<boolean> {
+  if ((await reader.plan()) !== null) return false;
+  return attemptsExhaustedIn(ToolCallRowsSchema.parse(await reader.toolCalls()));
+}
+
 /** What the answer is built from. The id is taken here so that deciding stays pure. */
 export const collectCodeAnswer: CollectStep = async (context, reader) => ({
   answerId: randomUUID(),
   goal: context.assignment,
   engineRun: await reader.engineRun(),
   budgetExhausted: await reader.budgetExhausted(),
+  planSourcesRejected: await planSourcesRejectedOf(reader),
   claims: await reader.claims(),
   pages: await reader.recordPages(),
 });
 
 /** `partial` with a `supported` claim and `inconclusive` otherwise, no summary; a closure with no reason is not a stop. */
 export function decideCodeAnswer(collected: unknown, ending: RootEnding): CodeAnswer {
-  const { answerId, goal, engineRun, budgetExhausted, claims, pages } = CodeAnswerCollectedSchema.parse(collected);
-  const stopReason = stopReasonOf(ending, budgetExhausted);
+  const { answerId, goal, engineRun, budgetExhausted, planSourcesRejected, claims, pages } = CodeAnswerCollectedSchema.parse(collected);
+  const stopReason = stopReasonOf(ending, { budgetExhausted, planSourcesRejected });
   const result = buildCodeAnswer(answerId, claims, stopReason === null ? { concluded: true } : { stopReason });
   const message = buildResearchAnswer({
     answer: result,

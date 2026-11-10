@@ -34,13 +34,13 @@ const RESULT_CONTRACT_VIOLATION: TransportFailure = {
   cause: 'K-11',
 };
 
-interface FixtureTool {
+export interface FixtureTool {
   readonly descriptor: SourceToolDescriptor;
   /** The normalized page, or null when the structured result breaks the tool's contract. */
   toPage(structuredContent: unknown): NormalizedPage | null;
 }
 
-function fixtureTool<Result>(definition: {
+export function fixtureTool<Result>(definition: {
   name: string;
   paginated: boolean;
   argsSchema: SourceToolDescriptor['argsSchema'];
@@ -114,8 +114,16 @@ export interface FixtureSourceAdapterOptions {
   readonly logger: McpSourceClientLogger;
 }
 
-function fixtureEnv(fixture: FixtureSettings): Record<string, string> {
+/** What a fixture process serves (`FIXTURE_SOURCE` of `@agent-os/mcp-fixture`). */
+export type FixtureProcessSource = 'logs' | 'backoffice';
+
+/**
+ * Environment of a fixture process: what it serves, and the same scenario or dataset, rules file and call log for
+ * every source, so two processes of one assembly build their data from one set and report one slice.
+ */
+function fixtureProcessEnv(fixture: FixtureSettings, source: FixtureProcessSource): Record<string, string> {
   return {
+    FIXTURE_SOURCE: source,
     FIXTURE_DATASET: fixture.dataset,
     ...(fixture.scenario === null ? {} : { FIXTURE_SCENARIO: fixture.scenario }),
     ...(fixture.faultsPath === null ? {} : { FIXTURE_FAULTS: fixture.faultsPath }),
@@ -130,21 +138,24 @@ function toolErrorText(result: CallToolResult): string {
 }
 
 /**
- * The fixture MCP source: a project-declared descriptor of three read-only tools over one long-lived process,
- * started on the first call (never by construction), and normalization of each answer into `Coverage` units.
+ * One long-lived fixture process serving `source` through the MCP client — started on the first call, never by
+ * construction — and the normalization of each answer into `Coverage` units by the tool's contract. Each fixture
+ * adapter owns one; the text the server reports about its tools is never read.
  */
-export class FixtureSourceAdapter implements SourceAdapter {
-  readonly descriptor: SourceDescriptor;
+export class FixtureProcess {
   private readonly tools: ReadonlyMap<string, FixtureTool>;
   private readonly client: McpSourceClient;
   private readonly snapshotTimeoutMs: number;
 
-  constructor(options: FixtureSourceAdapterOptions) {
-    this.tools = new Map(FIXTURE_TOOLS.map((tool) => [tool.descriptor.name, tool]));
-    this.descriptor = { sourceId: FIXTURE_SOURCE_ID, tools: FIXTURE_TOOLS.map((tool) => tool.descriptor) };
+  constructor(
+    private readonly source: FixtureProcessSource,
+    tools: readonly FixtureTool[],
+    options: FixtureSourceAdapterOptions,
+  ) {
+    this.tools = new Map(tools.map((tool) => [tool.descriptor.name, tool]));
     this.client = new McpSourceClient({
       serverPath: options.serverPath,
-      fixtureEnv: fixtureEnv(options.settings.fixture),
+      fixtureEnv: fixtureProcessEnv(options.settings.fixture, source),
       logger: options.logger,
     });
     this.snapshotTimeoutMs = options.settings.callTimeoutMs;
@@ -153,8 +164,8 @@ export class FixtureSourceAdapter implements SourceAdapter {
   async call(call: SourceCall): Promise<CallOutcome> {
     const tool = this.tools.get(call.toolName);
     if (tool === undefined) {
-      // The executor resolves the tool against this descriptor first, so this is a defect.
-      throw new Error(`fixture source has no tool ${call.toolName}`);
+      // The executor resolves the tool against the adapter's descriptor first, so this is a defect.
+      throw new Error(`fixture source ${this.source} has no tool ${call.toolName}`);
     }
     const args = call.cursor === null ? call.args : { ...call.args, cursor: call.cursor };
     const response = await this.client.callTool(
@@ -186,5 +197,30 @@ export class FixtureSourceAdapter implements SourceAdapter {
 
   close(): Promise<void> {
     return this.client.close();
+  }
+}
+
+/** The fixture MCP source of payment logs: a project-declared descriptor of three read-only tools. */
+export class FixtureSourceAdapter implements SourceAdapter {
+  readonly descriptor: SourceDescriptor = {
+    sourceId: FIXTURE_SOURCE_ID,
+    tools: FIXTURE_TOOLS.map((tool) => tool.descriptor),
+  };
+  private readonly process: FixtureProcess;
+
+  constructor(options: FixtureSourceAdapterOptions) {
+    this.process = new FixtureProcess('logs', FIXTURE_TOOLS, options);
+  }
+
+  call(call: SourceCall): Promise<CallOutcome> {
+    return this.process.call(call);
+  }
+
+  currentSnapshot(signal: AbortSignal): Promise<string> {
+    return this.process.currentSnapshot(signal);
+  }
+
+  close(): Promise<void> {
+    return this.process.close();
   }
 }

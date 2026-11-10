@@ -1,5 +1,7 @@
-import type { LogRecord, LogService } from '../dataset.js';
-import { MECHANISMS } from './mechanisms.js';
+import { backOfficeOf, type PaymentMethod } from '../backoffice.js';
+import type { LogDataset, LogRecord, LogService } from '../dataset.js';
+import { BASE_SEGMENT } from '../versions.js';
+import { MECHANISMS, type ScenarioSourceId } from './mechanisms.js';
 import { createScenarioDataset, plantedRecords, type Scenario } from './scenario-dataset.js';
 import type { MechanismName } from './scenario-params.js';
 
@@ -45,6 +47,8 @@ export interface ScenarioKey {
   /** The question the program asks the investigation, in Russian. */
   question: string;
   kind: 'cause' | 'no_cause';
+  /** Sources without which the cause cannot be found, in code-point order; `["fixture"]` when the logs suffice. */
+  sources: ScenarioSourceId[];
   /** `null` for `no_cause`. */
   cause: ScenarioCause | null;
   /** Traces whose records prove the cause, in time order; empty for `no_cause`. */
@@ -64,6 +68,8 @@ interface Observations {
   timeoutsMs: { before: number[]; after: number[] };
   /** Provider latency of every `provider.response`, by request time. */
   latenciesMs: { before: number[]; after: number[] };
+  /** `provider.response` records with status `error` (declined authorizations), by request time. */
+  providerDeclines: { before: number; after: number };
   /** `ledger.write` spans of payment traces, by record time. */
   paymentLedgerWrites: { before: { total: number; failed: number }; after: { total: number; failed: number } };
 }
@@ -75,6 +81,8 @@ interface PhraseContext {
   since: string;
   /** «15 сентября». */
   day: string;
+  /** Method the back office shows for every cause order; `null` when the cause needs only the logs. */
+  causePaymentMethod: PaymentMethod | null;
 }
 
 const DAY_FORMAT = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' });
@@ -96,10 +104,12 @@ export function scenarioKey(scenario: Scenario): ScenarioKey {
   if (missing.length > 0) {
     throw new Error(`scenario ${scenario.setName}/${scenario.scenarioId}: planted traces ${missing.join(', ')} are not in the records`);
   }
+  const needsBackOffice = mechanism.sources.includes('backoffice');
   const context: PhraseContext = {
     observations,
     since: `с ${params.changeAt.slice(11, 16)} UTC`,
     day: DAY_FORMAT.format(changeMs),
+    causePaymentMethod: needsBackOffice ? causePaymentMethodOf(scenario, dataset, observations.causeTraceIds) : null,
   };
 
   return {
@@ -108,6 +118,7 @@ export function scenarioKey(scenario: Scenario): ScenarioKey {
     snapshot: dataset.snapshot,
     question: `Почему ${context.day} выросли ошибки оплаты?`,
     kind: mechanism.kind,
+    sources: [...mechanism.sources],
     cause: causeOf(scenario, context),
     causeTraceIds: observations.causeTraceIds,
     distractors: planted
@@ -131,6 +142,32 @@ function causeOf(scenario: Scenario, context: PhraseContext): ScenarioCause | nu
     throw new Error(`scenario ${scenario.setName}/${scenario.scenarioId}: mechanism ${name} left no evidence in the records`);
   }
   return { mechanism: name, service: mechanism.service, changeAt, ...CAUSE_PHRASES[name](context) };
+}
+
+/**
+ * The payment method the back office shows for every order of the cause traces. Throws when a cause trace has no
+ * failed order there or the orders do not share one method: then the scenario does not need the back office.
+ */
+function causePaymentMethodOf(scenario: Scenario, dataset: LogDataset, causeTraceIds: readonly string[]): PaymentMethod {
+  const pending = new Set(causeTraceIds);
+  const methods = new Set<PaymentMethod>();
+  const backOffice = backOfficeOf(dataset);
+  for (const listed of backOffice.ordersIn(BASE_SEGMENT.start, BASE_SEGMENT.end)) {
+    const order = listed.status === 'failed' ? backOffice.order(listed.orderId) : undefined;
+    for (const payment of order?.payments ?? []) {
+      if (pending.delete(payment.traceId)) {
+        methods.add(listed.paymentMethod);
+      }
+    }
+  }
+  const label = `scenario ${scenario.setName}/${scenario.scenarioId}`;
+  if (pending.size > 0) {
+    throw new Error(`${label}: cause traces ${[...pending].slice(0, 3).join(', ')} have no failed order in the back office`);
+  }
+  if (methods.size !== 1) {
+    throw new Error(`${label}: cause orders do not share one payment method (${[...methods].join(', ')})`);
+  }
+  return [...methods][0];
 }
 
 const CAUSE_PHRASES: Readonly<Record<Exclude<MechanismName, 'no_cause'>, (context: PhraseContext) => CausePhrases>> = {
@@ -158,6 +195,16 @@ const CAUSE_PHRASES: Readonly<Record<Exclude<MechanismName, 'no_cause'>, (contex
       linkPhrase: `оплата, чья запись в ledger не удалась, завершается ошибкой, поэтому ${day} выросли ошибки оплаты`,
     };
   },
+  payment_method_declined: ({ observations, since, day, causePaymentMethod }) => {
+    if (causePaymentMethod === null) {
+      throw new Error('scenario key: payment_method_declined needs the payment method from the back office');
+    }
+    const { before, after } = observations.providerDeclines;
+    return {
+      changePhrase: `${since} провайдер отклоняет авторизацию платежей способом оплаты ${causePaymentMethod}: ${after} отказов авторизации после изменения, ${before} — до него`,
+      linkPhrase: `заказы со способом оплаты ${causePaymentMethod} не проходят авторизацию у провайдера, поэтому ${day} выросли ошибки оплаты`,
+    };
+  },
 };
 
 interface ObserveOptions {
@@ -180,6 +227,7 @@ function observe(recordCount: number, recordAt: (index: number) => LogRecord, op
     presentTraceIds: new Set(),
     timeoutsMs: { before: [], after: [] },
     latenciesMs: { before: [], after: [] },
+    providerDeclines: { before: 0, after: 0 },
     paymentLedgerWrites: { before: { total: 0, failed: 0 }, after: { total: 0, failed: 0 } },
   };
   const causeTraces = new Set<string>();
@@ -205,6 +253,9 @@ function observe(recordCount: number, recordAt: (index: number) => LogRecord, op
     }
     if (record.event === 'provider.response') {
       observations.latenciesMs[requestSide].push(record.durationMs);
+      if (record.status === 'error') {
+        observations.providerDeclines[requestSide] += 1;
+      }
     }
     if (record.event === 'ledger.write') {
       const failed = record.status === 'error';

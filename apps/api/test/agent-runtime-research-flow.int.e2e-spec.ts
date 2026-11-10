@@ -112,6 +112,19 @@ const THRESHOLDS = {
   },
 };
 const PASSED = { verdict: 'passed', reason: 'passed' };
+
+/** The slice of each catalog source of the run row by `sourceId` (design-catalog-planning.md, KD-1). */
+function catalogSlices(
+  row: { readonly sourceCatalog: unknown } | undefined,
+): Record<string, string | null> {
+  const catalog = row!.sourceCatalog as readonly {
+    readonly sourceId: string;
+    readonly snapshot: string | null;
+  }[];
+  return Object.fromEntries(
+    catalog.map(({ sourceId, snapshot }) => [sourceId, snapshot]),
+  );
+}
 const NOT_GROUNDED = { verdict: 'failed', reason: 'cause_not_grounded' };
 
 /** The six definitions of the shipped v3 with these models changed: what an employee's investigation freezes. */
@@ -587,7 +600,7 @@ describe('agent-runtime / research-flow - integration (self-check program in-pro
     /** The run row and every evidence page of the investigation hold the one slice its scenario serves. */
     async function expectOnOneSlice(investigationId: string): Promise<void> {
       const row = await engineRunOf(url, investigationId);
-      const { fixture } = row!.sourceSnapshots as { fixture: string };
+      const { fixture } = catalogSlices(row);
       expect(fixture).toMatch(/^fx-sc-/);
       const pages = await pagesOfInvestigation(url, investigationId);
       expect(pages.length).toBeGreaterThan(0);
@@ -746,11 +759,11 @@ describe('agent-runtime / research-flow - integration (self-check program in-pro
 
       // The same slice on the run row and every page; the original's rows do not change.
       expect(
-        (await engineRunOf(url, original.investigationId))!.sourceSnapshots,
-      ).toEqual({ fixture: V1_SLICE });
+        catalogSlices(await engineRunOf(url, original.investigationId)),
+      ).toEqual({ backoffice: V1_SLICE, fixture: V1_SLICE });
       expect(
-        (await engineRunOf(url, repeat!.investigationId))!.sourceSnapshots,
-      ).toEqual({ fixture: V1_SLICE });
+        catalogSlices(await engineRunOf(url, repeat!.investigationId)),
+      ).toEqual({ backoffice: V1_SLICE, fixture: V1_SLICE });
       const pages = await pagesOfInvestigation(url, repeat!.investigationId);
       expect(pages.length).toBeGreaterThan(0);
       expect(new Set(pages.map((page) => page.snapshot))).toEqual(
@@ -766,8 +779,8 @@ describe('agent-runtime / research-flow - integration (self-check program in-pro
         code: 'replay_slice_unknown',
         given: async () => {
           expect(
-            (await engineRunOf(url, legacy.investigationId))!.sourceSnapshots,
-          ).toEqual({ fixture: null });
+            catalogSlices(await engineRunOf(url, legacy.investigationId)),
+          ).toEqual({ backoffice: null, fixture: null });
           expect(
             await pagesOfInvestigation(url, legacy.investigationId),
           ).toEqual([]);
@@ -1004,8 +1017,9 @@ describe('agent-runtime / research-flow - integration (self-check program in-pro
         ).toBe(leftover.length);
         const earlierModelCalls = earlier.models.calls.length;
         const earlierFixtureCalls = earlier.readCallLog().length;
-        const earlierSlice = (await engineRunOf(url, earlierIds[0]!))!
-          .sourceSnapshots as { fixture: string };
+        const earlierSlice = catalogSlices(
+          await engineRunOf(url, earlierIds[0]!),
+        );
 
         next.models.useSet('smoke');
         fast(next);

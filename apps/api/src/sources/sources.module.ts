@@ -8,11 +8,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Clock, HandlerRegistry } from '@agent-os/runtime';
 import {
+  BackofficeSourceAdapter,
   createSourceRegistry,
   createSources,
   FixtureSourceAdapter,
   parseSourcesSettings,
   type SourceAdapter,
+  type SourceDeclaration,
   type SourceRegistry,
   type Sources,
   type SourcesLogger,
@@ -26,7 +28,7 @@ import {
   RUNTIME_CLOCK,
 } from '../research/research.tokens.js';
 import {
-  SOURCES_ALLOWLIST,
+  SOURCES_DECLARATION,
   sourcesSettingsVariables,
 } from './sources.config.js';
 
@@ -34,6 +36,8 @@ import {
 export const SOURCE_REGISTRY = Symbol('SOURCE_REGISTRY');
 /** Adapters of the connected sources, built at compile time; no source is started by building them. */
 export const SOURCE_ADAPTERS = Symbol('SOURCE_ADAPTERS');
+/** The declared sources with their descriptions (`SOURCES_DECLARATION`); a provider so a test can replace it. */
+export const SOURCE_DECLARATION = Symbol('SOURCE_DECLARATION');
 /** Sources Settings parsed from the environment; internal to this module. */
 const SOURCES_SETTINGS = Symbol('SOURCES_SETTINGS');
 
@@ -71,7 +75,7 @@ class NestSourcesLogger implements SourcesLogger {
 class BoundSourceRegistry implements SourceRegistry {
   private current: SourceRegistry = createSourceRegistry({
     adapters: [],
-    allowlist: {},
+    declaration: [],
   });
 
   bind(registry: SourceRegistry): void {
@@ -80,6 +84,10 @@ class BoundSourceRegistry implements SourceRegistry {
 
   resolveTool(request: SourceToolRequest) {
     return this.current.resolveTool(request);
+  }
+
+  describeSource(sourceId: string): string {
+    return this.current.describeSource(sourceId);
   }
 
   currentSnapshot(sourceId: string, signal: AbortSignal): Promise<string> {
@@ -116,6 +124,7 @@ function isFixtureNotInstalled(error: unknown): boolean {
   );
 }
 
+/** The logs and back-office adapters over one fixture package (KD-7): both or, without the package, none. */
 async function fixtureAdapters(
   settings: SourcesSettings,
 ): Promise<SourceAdapter[]> {
@@ -128,14 +137,18 @@ async function fixtureAdapters(
     );
     return [];
   }
-  return [new FixtureSourceAdapter({ serverPath, settings, logger })];
+  const options = { serverPath, settings, logger };
+  return [
+    new FixtureSourceAdapter(options),
+    new BackofficeSourceAdapter(options),
+  ];
 }
 
 /**
  * Assembly point of the sources package in `apps/api` (ADR-0004, design-mcp-source.md): reads the environment,
  * resolves the fixture process entry and binds `createSources` to the Nest phases around the runtime's.
  *
- * Phases: `onModuleInit` — `createSources` registers `source.fetch` (a refused allowlist stops the start here),
+ * Phases: `onModuleInit` — `createSources` registers `source.fetch` (a refused declaration stops the start here),
  * before `ResearchModule` starts the workers in `onApplicationBootstrap`; `onApplicationShutdown` — the adapters
  * close, after `ResearchModule` stopped the workers in `beforeApplicationShutdown` (UC-9). Without the fixture
  * `createSources` is not called: `source.fetch` stays unregistered and the registry stays empty.
@@ -152,6 +165,10 @@ async function fixtureAdapters(
       inject: [ConfigService],
     },
     {
+      provide: SOURCE_DECLARATION,
+      useValue: SOURCES_DECLARATION,
+    },
+    {
       provide: SOURCE_ADAPTERS,
       useFactory: fixtureAdapters,
       inject: [SOURCES_SETTINGS],
@@ -161,7 +178,7 @@ async function fixtureAdapters(
       useFactory: () => new BoundSourceRegistry(),
     },
   ],
-  exports: [SOURCE_REGISTRY, SOURCE_ADAPTERS],
+  exports: [SOURCE_REGISTRY, SOURCE_ADAPTERS, SOURCE_DECLARATION],
 })
 export class SourcesModule implements OnModuleInit, OnApplicationShutdown {
   private sources: Sources | null = null;
@@ -171,6 +188,8 @@ export class SourcesModule implements OnModuleInit, OnApplicationShutdown {
     @Inject(RUNTIME_CLOCK) private readonly clock: Clock,
     @Inject(SOURCES_SETTINGS) private readonly settings: SourcesSettings,
     @Inject(SOURCE_ADAPTERS) private readonly adapters: SourceAdapter[],
+    @Inject(SOURCE_DECLARATION)
+    private readonly declaration: SourceDeclaration,
     @Inject(SOURCE_REGISTRY) private readonly registry: BoundSourceRegistry,
   ) {}
 
@@ -179,7 +198,7 @@ export class SourcesModule implements OnModuleInit, OnApplicationShutdown {
     this.sources = createSources({
       handlers: this.handlers,
       adapters: this.adapters,
-      allowlist: SOURCES_ALLOWLIST,
+      declaration: this.declaration,
       settings: this.settings,
       clock: this.clock,
       logger: new NestSourcesLogger(),

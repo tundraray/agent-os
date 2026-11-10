@@ -17,6 +17,7 @@ import type {
 } from '../compare/compare.js';
 import {
   type ItemResult,
+  planNamedKeySourcesShare,
   type RunConfig,
   type RunEntry,
   type RunItems,
@@ -110,9 +111,19 @@ function header(result: RunResult): string[] {
     `- Версия процесса: ${result.processVersion}`,
     `- Судья: \`${judge.model}\`, версия промпта \`${judge.promptVersion}\``,
     `- Согласие судьи: ${result.judgeAgreement === null ? NONE : `${result.judgeAgreement.correct} из ${result.judgeAgreement.total}`}`,
+    ...planSourcesLine(result),
     '',
     ...configTable(config),
     '',
+  ];
+}
+
+/** FR-10: the share of keyed runs whose first accepted plan named every source of the key; absent without a mark. */
+function planSourcesLine(result: RunResult): string[] {
+  const share = planNamedKeySourcesShare(result.results);
+  if (share === null) return [];
+  return [
+    `- Первый план назвал источники ключа: ${share.named} из ${share.total} (${formatValue(share.named / share.total)})`,
   ];
 }
 

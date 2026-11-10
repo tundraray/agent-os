@@ -48,7 +48,11 @@ function probeAdapter(sourceId: string, argsSchema: SourceSchema): SourceAdapter
 export function probeSources(options: { readonly betaArgs?: SourceSchema } = {}): HarnessSource {
   return {
     settings: parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' }),
-    allowlist: { 'source.fetch': [...PROBE_SOURCE_PAIRS] },
+    declaration: PROBE_SOURCE_IDS.map((sourceId) => ({
+      sourceId,
+      description: `Probe source ${sourceId} of the {{sources}} cases.`,
+      tools: [{ name: PROBE_SOURCE_TOOL, description: 'Searches the probe source; never called.' }],
+    })),
     adapter: () => probeAdapter('alpha', PROBE_ARGS),
     extraAdapters: () => [probeAdapter('beta', options.betaArgs ?? PROBE_ARGS)],
   };

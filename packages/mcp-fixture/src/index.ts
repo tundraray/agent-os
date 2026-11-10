@@ -31,3 +31,4 @@ export {
   type ScenarioSetRejection,
 } from './scenarios/scenario-sets.js';
 export type { LogDataset, LogRecord } from './dataset.js';
+export type { FixtureSource } from './fixture-server.js';

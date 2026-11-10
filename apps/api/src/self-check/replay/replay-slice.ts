@@ -46,7 +46,10 @@ export type ReplaySliceResult =
 
 /** The parts of the original's `RunRecord` the slice is read from. */
 export interface ReplaySliceSource {
-  readonly sourceSnapshots: RunRecord['sourceSnapshots'];
+  readonly catalog: readonly Pick<
+    RunRecord['catalog'][number],
+    'sourceId' | 'snapshot'
+  >[];
   readonly evidence: readonly {
     readonly provenance: Pick<
       RunRecord['evidence'][number]['provenance'],
@@ -91,28 +94,27 @@ export function knownFixtureSlices(
 }
 
 /**
- * The slice a replay starts the fixture on (KD-7, DC-5): the slices recorded in the run row at start; when none was
- * recorded or read, the slices of the evidence pages' provenance. Exactly one slice, of the fixture source, known to
+ * The slice a replay starts the fixture on (KD-7, DC-5): the slices of the catalog recorded in the run row at start
+ * (design-catalog-planning.md, KD-1); when none was recorded or read, the slices of the evidence pages' provenance. Exactly one slice, of the fixture source, known to
  * the program — anything else is `replay_slice_unknown`, and nothing may be started.
  */
 export function resolveReplaySlice(
   source: ReplaySliceSource,
   known: KnownFixtureSlices,
 ): ReplaySliceResult {
-  const fromRow = Object.entries(source.sourceSnapshots ?? {}).flatMap(
-    ([sourceId, snapshot]) =>
-      snapshot === null ? [] : [{ sourceId, snapshot }],
+  const fromRow = source.catalog.flatMap(({ sourceId, snapshot }) =>
+    snapshot === null ? [] : [{ sourceId, snapshot }],
   );
   const from: SliceOrigin = fromRow.length > 0 ? 'run_row' : 'evidence';
-  const candidates = distinctSlices(
+  const sourcesBySlice = slicesWithSources(
     fromRow.length > 0
       ? fromRow
       : source.evidence.map((page) => page.provenance),
   );
-  if (candidates.length === 0) return unknown('no_slice');
-  if (candidates.length > 1) return unknown('several_slices');
-  const [{ sourceId, snapshot }] = candidates;
-  if (sourceId !== FIXTURE_SOURCE_ID) return unknown('not_fixture');
+  if (sourcesBySlice.size === 0) return unknown('no_slice');
+  if (sourcesBySlice.size > 1) return unknown('several_slices');
+  const [[snapshot, sourceIds]] = sourcesBySlice;
+  if (!sourceIds.has(FIXTURE_SOURCE_ID)) return unknown('not_fixture');
   const slice = known.get(snapshot);
   if (slice === undefined) return unknown('not_known');
   return { ok: true, slice: { ...slice, from } };
@@ -123,15 +125,21 @@ interface SourceSlice {
   readonly snapshot: string;
 }
 
-function distinctSlices(slices: readonly SourceSlice[]): SourceSlice[] {
-  const byKey = new Map<string, SourceSlice>();
-  for (const slice of slices) {
-    byKey.set(JSON.stringify([slice.sourceId, slice.snapshot]), {
-      sourceId: slice.sourceId,
-      snapshot: slice.snapshot,
-    });
+/**
+ * The distinct slices with the sources that reported each. Two processes of one scenario — the fixture and the back
+ * office (design-catalog-planning.md, «Самопроверка с двумя источниками») — report the same slice, so they are one
+ * slice, not several (design-self-check.md, DC-5: «у записей разные срезы»).
+ */
+function slicesWithSources(
+  slices: readonly SourceSlice[],
+): Map<string, Set<string>> {
+  const bySnapshot = new Map<string, Set<string>>();
+  for (const { sourceId, snapshot } of slices) {
+    const sourceIds = bySnapshot.get(snapshot) ?? new Set<string>();
+    sourceIds.add(sourceId);
+    bySnapshot.set(snapshot, sourceIds);
   }
-  return [...byKey.values()];
+  return bySnapshot;
 }
 
 function unknown(reason: SliceUnknownReason): ReplaySliceResult {

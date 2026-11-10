@@ -210,7 +210,8 @@ function closeByDraft(input: Collected, runId: string): ClosureDecision {
 function evaluateClose({ result, collected }: ClosureInput): ClosureDecision {
   const input = CollectedSchema.parse(collected);
   const close = ResearchCloseResultSchema.parse(result);
-  if (input.plan === null) return refuse('plan_missing');
+  // Gate 1: with no plan only «не выяснено» closes, and only once the plan attempts are exhausted (KD-4 of catalog-planning).
+  if (input.plan === null && !(close.inconclusive === true && input.codeAnswer.planSourcesRejected)) return refuse('plan_missing');
   const unchecked = uncheckedClaims(input);
   if (unchecked.length > 0) return refuse('unverified_claims', unchecked);
   return close.answer === undefined ? answered(decideCodeAnswer(input.codeAnswer, 'inconclusive')) : closeByDraft(input, close.answer);

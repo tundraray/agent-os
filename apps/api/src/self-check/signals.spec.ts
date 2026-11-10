@@ -282,6 +282,7 @@ const treeOf = (...runs: AgentTreeRun[]): AgentTree => ({
   investigationId: '00000000-0000-4000-8000-000000000001',
   runs,
   definitionMemorySnapshot: {},
+  catalog: [],
   budgetExhausted: false,
 });
 

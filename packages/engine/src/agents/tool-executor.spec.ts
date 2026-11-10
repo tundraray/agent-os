@@ -136,6 +136,8 @@ interface Harness {
   readonly states: Map<string, ToolCallState>;
   readonly proposed: TaskSpec[];
   readonly accessRequests: ToolAccessRequest[];
+  /** The sources asked about in `sourceRevoked`, in order. */
+  readonly revokedReads: string[];
   /** Calls of each immediate tool, by name. */
   readonly ran: string[];
   execute(calls: readonly ToolCallRow[], runOverrides?: Partial<AgentRunContext>): Promise<TurnExecution>;
@@ -146,11 +148,14 @@ function harness(options: {
   readonly childrenStarted?: number;
   readonly propose?: ProposeResult;
   readonly deny?: boolean;
+  /** The sources the investigation already has an `access_denied` call on. */
+  readonly revokedSources?: readonly string[];
 } = {}): Harness {
   const steps = new Map<string, CallStep[]>();
   const states = new Map<string, ToolCallState>();
   const proposed: TaskSpec[] = [];
   const accessRequests: ToolAccessRequest[] = [];
+  const revokedReads: string[] = [];
   const ran: string[] = [];
   const rows = new Map<string, ToolCallRow>();
   const spyTool = (name: string): ImmediateTool => ({
@@ -189,6 +194,10 @@ function harness(options: {
         rows.set(row.id, moved);
         return { outcome: 'written', call: moved };
       },
+      async sourceRevoked(_ctx, sourceId) {
+        revokedReads.push(sourceId);
+        return { outcome: 'read', revoked: options.revokedSources?.includes(sourceId) === true };
+      },
     },
     tree: {
       occupiedTokens: async () => options.occupiedTokens ?? 0,
@@ -209,6 +218,7 @@ function harness(options: {
     states,
     proposed,
     accessRequests,
+    revokedReads,
     ran,
     execute(calls, runOverrides) {
       for (const row of calls) rows.set(row.id, row);
@@ -318,5 +328,75 @@ describe('вызов отклоняется кодом и ничего не ис
         },
       }),
     ]);
+  });
+});
+
+// DC-8 (the source), DC-9, invariants 3–4, Flow 2 (design-catalog-planning.md, «Отказы исполнителя вызовов»): before the
+// rights port, a source outside the run's sources is refused `source_not_in_catalog`, then a source the port already
+// refused in the investigation is refused `source_revoked`; both without a source in the audit and without `detail`.
+// Defects caught: the port asked after a catalog or revocation refusal; the checks in the wrong order; a refusal that
+// names the source or tells more than the model named; a denial on one source revoking another.
+describe('checks the catalog, then a prior denial, then the port', () => {
+  it.each<[
+    string,
+    Parameters<typeof harness>[0],
+    ToolCallRow,
+    Partial<AgentRunContext>,
+    {
+      readonly ending: CallStep;
+      readonly revokedReads: readonly string[];
+      readonly accessRequests: readonly ToolAccessRequest[];
+      readonly ran: readonly string[];
+    },
+  ]>([
+    [
+      'a source outside the run, though also denied before: source_not_in_catalog, nothing else asked',
+      { revokedSources: ['alpha'] },
+      call(0, 'probe_source', { q: 'x' }),
+      { sources: ['beta'] },
+      { ending: { to: 'rejected', outcome: 'rejected', reason: 'source_not_in_catalog' }, revokedReads: [], accessRequests: [], ran: [] },
+    ],
+    [
+      'a source the port refused before in the investigation: source_revoked, the port not asked',
+      { revokedSources: ['alpha'] },
+      call(0, 'probe_source', { q: 'x' }),
+      {},
+      { ending: { to: 'rejected', outcome: 'rejected', reason: 'source_revoked' }, revokedReads: ['alpha'], accessRequests: [], ran: [] },
+    ],
+    [
+      'a denial before on another source: the port is asked and the tool runs',
+      { revokedSources: ['beta'] },
+      call(0, 'probe_source', { q: 'x' }),
+      {},
+      {
+        ending: { to: 'done', outcome: 'success', result: { ok: true }, sourceId: 'alpha' },
+        revokedReads: ['alpha'],
+        accessRequests: [{ resourceId: 'owner-1', toolName: 'probe_source', sourceId: 'alpha' }],
+        ran: ['probe_source'],
+      },
+    ],
+    [
+      'a tool without a source: the port is asked as before, no source check',
+      { revokedSources: ['alpha'] },
+      call(0, 'memory_read', {}),
+      { sources: [] },
+      {
+        ending: { to: 'done', outcome: 'success', result: { ok: true } },
+        revokedReads: [],
+        accessRequests: [{ resourceId: 'owner-1', toolName: 'memory_read', sourceId: null }],
+        ran: ['memory_read'],
+      },
+    ],
+  ])('%s', async (_case, options, requested, runOverrides, expected) => {
+    const h = harness(options);
+
+    const executed = await h.execute([requested], runOverrides);
+
+    expect(executed).toEqual({ outcome: 'executed', finish: null, waitFor: [] });
+    // The whole ending is compared: a refusal carries neither `sourceId` (the audit row names no source) nor `detail`.
+    expect(h.steps.get(requested.id)).toEqual([expected.ending]);
+    expect(h.revokedReads).toEqual(expected.revokedReads);
+    expect(h.accessRequests).toEqual(expected.accessRequests);
+    expect(h.ran).toEqual(expected.ran);
   });
 });

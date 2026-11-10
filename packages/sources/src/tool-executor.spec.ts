@@ -47,14 +47,20 @@ function stubAdapter(): SourceAdapter & { readonly calls: SourceCall[] } {
   };
 }
 
-// AC-16.1 / UC-7: a non-MCP adapter plugs in through its descriptor, snapshot and allowlist row alone.
+// AC-16.1 / UC-7: a non-MCP adapter plugs in through its descriptor, snapshot and declaration row alone.
 // Defect caught: ToolExecutor bound to the MCP client or FixtureSourceAdapter instead of the SourceAdapter port.
 describe('ToolExecutor with a second, non-MCP source adapter', () => {
-  it('should complete a source.fetch with the same provenance format when the stub adapter is allowlisted', async () => {
+  it('should complete a source.fetch with the same provenance format when the stub adapter is declared', async () => {
     const adapter = stubAdapter();
     const registry = createSourceRegistry({
       adapters: [adapter],
-      allowlist: { 'source.fetch': [{ sourceId: STUB_SOURCE_ID, toolName: STUB_TOOL }] },
+      declaration: [
+        {
+          sourceId: STUB_SOURCE_ID,
+          description: 'A non-MCP stub source of book records.',
+          tools: [{ name: STUB_TOOL, description: 'Lists the stub records of one category.' }],
+        },
+      ],
     });
     const pinned = await registry.currentSnapshot(STUB_SOURCE_ID, new AbortController().signal);
     const ctx = new InMemoryTaskContext({

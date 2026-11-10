@@ -5,7 +5,7 @@ import { AGENT_ROOT_WORKFLOW } from '../agents/agent-task-spec.js';
 import type { DefinitionMemorySnapshot } from '../agents/definition-memory.js';
 import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
-import type { SourceSnapshots } from './source-snapshots.js';
+import type { SourceCatalog } from './source-catalog.js';
 
 export type EngineRunRow = typeof researchEngineRuns.$inferSelect;
 
@@ -17,8 +17,8 @@ export interface NewEngineRun {
   readonly config: AgentProcessConfig;
   readonly sourceMode: SourceMode;
   readonly tokenBudget: number;
-  /** The slice of each configured source read at start; written once, with the row (KD-7). */
-  readonly sourceSnapshots: SourceSnapshots;
+  /** The investigation's catalog with the slices read at start; written once, with the row (KD-1). */
+  readonly sourceCatalog: SourceCatalog;
   /** The definition memory snapshot of the start (DC-24). */
   readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
 }
@@ -80,7 +80,7 @@ export const engineRunsRepository = {
         processConfig: run.config,
         sourceMode: run.sourceMode,
         tokenBudget: run.tokenBudget,
-        sourceSnapshots: run.sourceSnapshots,
+        sourceCatalog: run.sourceCatalog,
         definitionMemorySnapshot: run.definitionMemorySnapshot,
       })
       .onConflictDoNothing()

@@ -37,6 +37,7 @@ const STOP_REASON = {
   model_unavailable: 'Остановлен: модель недоступна',
   deadline: 'Остановлен: истёк срок расследования',
   context_overflow: 'Остановлен: материала больше, чем агент может учесть',
+  plan_sources_rejected: 'Остановлен: план не прошёл проверку источников',
 } as const satisfies Record<NonNullable<ResearchAnswerMetadata['stopReason']>, string>;
 
 /** Group words of a claim (agent-quality UXRD, MC-1; design-web.md, KD-6): words only, no score. */

@@ -9,6 +9,7 @@ export const STOP_REASONS = [
   'model_unavailable',
   'deadline',
   'context_overflow',
+  'plan_sources_rejected',
 ] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 

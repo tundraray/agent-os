@@ -83,6 +83,7 @@ const ResearchStopReasonSchema = z.enum([
   "model_unavailable",
   "deadline",
   "context_overflow",
+  "plan_sources_rejected",
 ]);
 
 const CLAIM_GROUPS = ["established", "assumed", "unknown"] as const;

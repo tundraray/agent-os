@@ -58,6 +58,7 @@ const MC_25_STOP_REASON: Record<NonNullable<AnswerToBuild['stopReason']>, string
   model_unavailable: 'Остановлен: модель недоступна',
   deadline: 'Остановлен: истёк срок расследования',
   context_overflow: 'Остановлен: материала больше, чем агент может учесть',
+  plan_sources_rejected: 'Остановлен: план не прошёл проверку источников',
 };
 const MC_26_GROUP: Record<Group, string> = {
   established: 'Установлено',

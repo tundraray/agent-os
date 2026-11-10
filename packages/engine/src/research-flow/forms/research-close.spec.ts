@@ -171,6 +171,29 @@ describe('закрытие расследования формой research_clos
       expect(await close(result, scenario)).toEqual(expected);
     });
 
+    // AC-06.2 (the rule), Flow 3 (design-catalog-planning.md, «Закрытие корня и причина остановки»). Defects caught: an
+    // investigation whose plan attempts are exhausted cannot close; `answer`, or «не выяснено» before the attempts are
+    // exhausted, closes without a plan.
+    describe('gate 1 without a plan', () => {
+      const planWrite = (reason: string) => ({ run: 'task-planner', callIndex: 0, toolName: 'plan_write', arguments: {}, state: 'rejected', outcome: null, reason });
+      const THREE_REFUSED = [planWrite('plan_sources_invalid'), planWrite('plan_sources_invalid'), planWrite('plan_sources_invalid')];
+      const TWO_REFUSED = [planWrite('plan_sources_invalid'), planWrite('plan_sources_invalid'), planWrite('plan_attempts_exhausted')];
+
+      it('inconclusive with the attempts exhausted is accepted with the reason plan_sources_rejected', async () => {
+        expect(await close(INCONCLUSIVE, { plan: null, claims: [], toolCalls: THREE_REFUSED })).toMatchObject({
+          kind: 'accept',
+          result: { outcome: 'inconclusive', stopReason: 'plan_sources_rejected', established: [] },
+        });
+      });
+
+      it.each<[string, unknown, readonly unknown[]]>([
+        ['inconclusive before the attempts are exhausted', INCONCLUSIVE, TWO_REFUSED],
+        ['answer with the attempts exhausted', ANSWER, THREE_REFUSED],
+      ])('%s is refused plan_missing', async (_case, result, toolCalls) => {
+        expect(await close(result, { plan: null, claims: [], runs: [answerRun(DRAFT_OF_CHECKED)], toolCalls })).toEqual(refused('plan_missing'));
+      });
+    });
+
     it.each<[string, string, string | null]>([
       ['успех', 'done', null],
       ['child_failed', 'done', 'child_failed'],

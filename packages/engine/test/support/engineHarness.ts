@@ -37,7 +37,7 @@ import {
   createSources,
   parseSourcesSettings,
   type SourceAdapter,
-  type SourceAllowlist,
+  type SourceDeclaration,
   type Sources,
   type SourcesLogger,
   type SourcesSettings,
@@ -52,18 +52,21 @@ import type { ToolRegistryEntry } from '../../src/agents/tool-registry.js';
 import { claimsRepository } from '../../src/claims/claims.repository.js';
 import { composeEngine, type CreateEngineOptions } from '../../src/create-engine.js';
 import type { AgentTurnCountRequest } from '../../src/model/token-counter.js';
-import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
+import { COUNTING_SOURCE_IDS, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
 import { cancelLeftovers, cancelNotingLeftBehind, trackInvestigationOwner } from './engineDb.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedModelOptions } from './scriptedModel.js';
 import { agentPromptsOf, type ResearchFlowOverrides, researchFlowGroupTable, researchFlowV3Config } from './test-configs.js';
 import { turnInputCharacters } from './turnCount.js';
 
+/** The harness's rights port unless a test passes its own: every owner may call every tool and read every source. */
+const ALLOW_ALL_ACCESS: ToolAccessPolicy = { decide: () => 'allowed' };
+
 /**
  * Test assembly of the engine (design-engine.md, Test Strategy): the real `createRuntime`, `createSources` and
  * `createEngine` over the test database, without `apps/api`. Doubles stand only at the boundaries: the model port
- * `resolveModel` (the scripted model double), the `TokenCounter`, the in-memory counting source, the thread-ownership
- * port, the clock and the loggers. The engine package is imported by name, as the runtime and sources harnesses import theirs.
+ * `resolveModel` (the scripted model double), the `TokenCounter`, the two in-memory counting sources, the rights port,
+ * the thread-ownership port, the clock and the loggers. The engine package is imported by name, as the runtime and sources harnesses import theirs.
  */
 
 /** Budget of the shipped deep-research configuration: what a start asks `InvestigationService.create` for. */
@@ -73,7 +76,7 @@ const DEFAULT_BUDGET = { maxTasks: 300, maxToolCalls: 3_000 };
 export interface EngineBuildOptions {
   /** Process configurations as data; the shipped deep-research configuration by default. */
   processes?: readonly unknown[];
-  /** The counting source's id by default (mode `sources`); `[]` for the no-source mode. */
+  /** Both counting sources' ids by default (`fixture` and `backoffice`, mode `sources`); `[]` for the no-source mode. */
   connectedSources?: readonly string[];
   /** The catalog models `Engine.assess` may call (`createEngine`'s `assessModels`); none by default. */
   assessModels?: readonly string[];
@@ -109,7 +112,8 @@ export interface SeededRevision {
 /** A source the assemblies connect instead of the counting source (E2E-1: the real fixture process). */
 export interface HarnessSource {
   readonly settings: SourcesSettings;
-  readonly allowlist: SourceAllowlist;
+  /** Every source of `adapter` and `extraAdapters`, with descriptions. */
+  readonly declaration: SourceDeclaration;
   /** A new adapter per assembly: stopping an assembly closes its adapter with its sources. */
   adapter(logger: SourcesLogger): SourceAdapter;
   /** Further adapters of the same assembly, for a process with several sources (UC-16). */
@@ -135,7 +139,7 @@ export interface EngineHarnessOptions extends EngineBuildOptions {
   runtime?: Partial<RuntimeConfig>;
   /** The clock of the runtime and the sources; the system clock by default. */
   clock?: Clock;
-  /** The source of every assembly; the counting source by default (with it, `countingSource` gets no call). */
+  /** The sources of every assembly; both counting sources by default (with one given, `countingSource` gets no call). */
   source?: HarnessSource;
   /** Options of the model double, such as the program that answers a call no scripted step is left for. */
   model?: ScriptedModelOptions;
@@ -146,7 +150,10 @@ export interface EngineHarnessOptions extends EngineBuildOptions {
   resultForms?: readonly ResultForm[];
   /** Tool entries beside the engine's; like `resultForms`, they build the engine through `composeEngine`. */
   agentTools?: readonly ToolRegistryEntry[];
-  /** The rights port of agent tool calls; what the configuration allows is allowed by default. */
+  /**
+   * The rights port of the catalog at start and of agent tool calls: a test's table of rights (accessDouble.ts) or any
+   * policy; every request is allowed by default ({@link ALLOW_ALL_ACCESS}).
+   */
   toolAccessPolicy?: ToolAccessPolicy;
   /** The agent settings of `createEngine`. */
   agent?: AgentHarnessSettings;
@@ -466,8 +473,9 @@ export interface ResearchFlowHarnessOptions extends EngineHarnessOptions {
 }
 
 /**
- * The assembly of the research-flow scenarios (design-research-flow.md, Test Strategy): the shipped v3, its test group
- * table by the loaded `verifier`, and the counting source.
+ * The assembly of the research-flow and catalog-planning scenarios (design-research-flow.md, design-catalog-planning.md,
+ * Test Strategy): the shipped v3 on the two-source ceiling, its test group table by the loaded `verifier`, and both
+ * counting sources connected.
  */
 export function createResearchFlowHarness({ overrides, noSources, ...options }: ResearchFlowHarnessOptions = {}): Promise<EngineHarness> {
   const config = researchFlowV3Config(overrides);
@@ -521,7 +529,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const sourcesSettings = options.source?.settings ?? parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' });
   let build: EngineBuildOptions = {
     processes: options.processes ?? [deepResearchProcessV3],
-    connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
+    connectedSources: options.connectedSources ?? COUNTING_SOURCE_IDS,
     assessModels: options.assessModels ?? [],
     // Uncalibrated unless a test passes tables: the shipped tables must not change what a test asserts.
     groupTables: options.groupTables ?? [],
@@ -543,11 +551,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     });
     const sources = createSources({
       handlers: runtime.handlers,
-      adapters: [
-        options.source?.adapter(sourcesLogger(logs.sources)) ?? countingSource.adapter,
-        ...(options.source?.extraAdapters?.(sourcesLogger(logs.sources)) ?? []),
-      ],
-      allowlist: options.source?.allowlist ?? countingSource.allowlist,
+      adapters:
+        options.source === undefined
+          ? countingSource.adapters
+          : [options.source.adapter(sourcesLogger(logs.sources)), ...(options.source.extraAdapters?.(sourcesLogger(logs.sources)) ?? [])],
+      declaration: options.source?.declaration ?? countingSource.declaration,
       settings: sourcesSettings,
       clock,
       logger: sourcesLogger(logs.sources),
@@ -577,7 +585,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       clock: engineClock,
       logger: recordingLogger(logs.engine),
       ...options.agent,
-      ...(options.toolAccessPolicy === undefined ? {} : { toolAccessPolicy: options.toolAccessPolicy }),
+      toolAccessPolicy: options.toolAccessPolicy ?? ALLOW_ALL_ACCESS,
     };
     const engine =
       options.resultForms === undefined && options.agentTools === undefined

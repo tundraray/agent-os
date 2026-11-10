@@ -10,10 +10,11 @@ import { createAssessAgent } from './agents/assess-agent.js';
 import { createDefinitionMemory, DEFAULT_MEMORY_ADMIN_ROLE, readDeploymentEntries } from './agents/definition-memory.js';
 import { definitionMemoryFingerprint } from './agents/fingerprint.js';
 import { createResultFormRegistry, type ResultForm, SHIPPED_RESULT_FORMS } from './agents/result-forms.js';
-import { CONFIGURATION_ACCESS_POLICY, type ToolAccessPolicy } from './agents/tool-access-policy.js';
+import type { ToolAccessPolicy } from './agents/tool-access-policy.js';
 import { BASE_TOOLS, createToolRegistry, type ToolRegistryEntry } from './agents/tool-registry.js';
 import { createAssess } from './assess/assess.js';
 import { findGroupTableByPair, type GroupTable, GroupTableSchema } from './calibration/group-table.js';
+import { buildCatalogField } from './capabilities/catalog-field.js';
 import { buildSourcesField } from './capabilities/sources-field.js';
 import type { AgentProcessConfig, AgentTimings, ProcessConfigRejection } from './config/agent-config.schema.js';
 import { loadProcessConfig } from './config/load-process-config.js';
@@ -30,6 +31,7 @@ import { shippedGroupTables } from './processes/shipped-group-tables.js';
 import { CLAIM_ASSESSMENT_FORM, claimAssessmentAgent } from './research-flow/forms/claim-assessment.js';
 import { bindGroupTables, RESEARCH_FORMS } from './research-flow/research-forms.js';
 import { RESEARCH_IMMEDIATE_TOOLS, RESEARCH_TOOLS, researchTaskTools } from './research-flow/research-tools.js';
+import { createPostgresGatherPlans } from './research-flow/tools/gather.js';
 import type { EngineRuntimePorts } from './runs/start-investigation.js';
 import { postgresOutsideTaskTranscripts } from './transcripts/transcript-writes.js';
 
@@ -45,8 +47,11 @@ export interface CreateEngineOptions {
     readonly handlers: Pick<HandlerRegistry, 'register'>;
     readonly eventConsumers: Pick<EventConsumerRegistry, 'register'>;
   };
-  /** Checks the configured sources (DC-14) and serves the gather capability: tools, argument schemas and snapshots. */
-  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
+  /**
+   * Checks the configured sources (DC-14), describes the catalog of each start (KD-1) and serves the gather capability:
+   * tools, argument schemas and snapshots.
+   */
+  readonly sourceRegistry: Pick<SourceRegistry, 'resolveTool' | 'describeSource' | 'currentSnapshot'>;
   /** `sourceId` of the sources connected in the deployment; empty runs every investigation on model knowledge (KD-8). */
   readonly connectedSources: readonly string[];
   /** Process configurations as data, each through `loadProcessConfig` (KD-7, AC-12.3). */
@@ -86,9 +91,9 @@ export interface CreateEngineOptions {
   /**
    * The rights port of agent tool calls (design-agent-core.md, «Порт прав»): asked on every call by the investigation's
    * owner, the tool and its source; a refusal is the outcome `access_denied`, and neither the tool nor the source is
-   * called. Without it, what the process configuration allows is allowed (`CONFIGURATION_ACCESS_POLICY`).
+   * called. Required: the package has no default (design-catalog-planning.md, KD-6).
    */
-  readonly toolAccessPolicy?: ToolAccessPolicy;
+  readonly toolAccessPolicy: ToolAccessPolicy;
   readonly logger: EngineLogger;
 }
 
@@ -163,7 +168,8 @@ function loadConfigs(
       checkAgentModels(config, context.catalog) ??
       (context.requireVerifier ? checkVerifierDefinition(config) : null);
     if (fault !== null) {
-      throw rejectedAt(index, fault);
+      // The refusal names the process, not only its index (design-catalog-planning.md, AC-05.2).
+      throw rejectedAt(index, { ...fault, message: `process ${config.processId}: ${fault.message}` });
     }
     return config;
   });
@@ -331,9 +337,11 @@ export function composeEngine(options: CreateEngineOptions, composition: EngineC
   const registries: AgentRegistries = {
     tools: createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS, ...(composition.tools ?? [])]),
     forms: createResultFormRegistry(bindGroupTables(composition.resultForms, groupTables)),
-    // A closure: the registry of `apps/api` is a class, and its method needs its `this`.
+    // Closures: the registry of `apps/api` is a class, and its methods need its `this`.
     resolveTool: (request) => options.sourceRegistry.resolveTool(request),
+    describeSource: (sourceId) => options.sourceRegistry.describeSource(sourceId),
     buildSourcesField,
+    buildCatalogField,
   };
   const timings: AgentRunTimings = {
     turnMs: options.turnMs ?? DEFAULT_AGENT_TIMINGS.turnMs,
@@ -376,8 +384,8 @@ export function composeEngine(options: CreateEngineOptions, composition: EngineC
     gateway,
     registries,
     processTools: RESEARCH_IMMEDIATE_TOOLS,
-    processTaskTools: researchTaskTools({ sources: options.sourceRegistry, clock, logger }),
-    accessPolicy: options.toolAccessPolicy ?? CONFIGURATION_ACCESS_POLICY,
+    processTaskTools: researchTaskTools({ sources: options.sourceRegistry, plans: createPostgresGatherPlans(options.database), clock, logger }),
+    accessPolicy: options.toolAccessPolicy,
     timings,
     clock,
     logger,
@@ -417,6 +425,8 @@ export function composeEngine(options: CreateEngineOptions, composition: EngineC
       adminRole: options.memoryAdminRole ?? DEFAULT_MEMORY_ADMIN_ROLE,
     }),
     sourceRegistry: options.sourceRegistry,
+    connectedSources: options.connectedSources,
+    accessPolicy: options.toolAccessPolicy,
     clock,
     logger,
   });

@@ -65,11 +65,11 @@ export interface ViewedRun {
   readonly failure?: unknown;
 }
 
-/** One line of the `{{sources}}` field of the system block (UC-13). */
+/** One line of the `{{sources}}` field of the system block: a source of the run with its tools (UC-13, KD-3). */
 export interface ViewedSourceLine {
   readonly sourceId: string;
-  readonly toolName: string;
-  readonly argsSchema: unknown;
+  readonly description: string;
+  readonly tools: readonly { readonly toolName: string; readonly description: string; readonly argsSchema: unknown }[];
 }
 
 /** A tool result of the session: its name, and its body as the engine wrote it. */
@@ -173,6 +173,13 @@ export interface ScriptedModel {
   scriptAgent(agentName: string, ...steps: ScriptedStep[]): void;
   /** Turns of one agent, in arrival order. */
   callsOfAgent(agentName: string): RecordedModelCall[];
+  /**
+   * The whole recorded prompt of every turn of one agent, in arrival order, as one text per turn: the system block, every
+   * message's text, each tool call's name and arguments and each tool result as sent. What a transcript check reads for an
+   * id or a description that must be present or absent (NFR-02, AC-07.1, AC-06.1); it compares with literals of the
+   * declaration, never with the model's output.
+   */
+  promptsOfAgent(agentName: string): readonly string[];
   /**
    * Tells the double the prompts of definitions that carry no marker, replacing what it was told before. Two different
    * agents whose prompts cannot be told apart fail here, loudly: the scenarios would answer the wrong agent.
@@ -301,12 +308,15 @@ function calledAgents(prompt: GenerateOptions['prompt']): ReadonlyMap<string, { 
   return new Map(called);
 }
 
-/** The lines of the `{{sources}}` field: the JSON lines of the system block that name a source tool. */
+/**
+ * The lines of the `{{sources}}` field: the JSON lines of the system block that name a source with its tools. A line of
+ * `{{catalog}}` names a source without tools and is not one of them.
+ */
 function sourceLinesOf(system: string): readonly ViewedSourceLine[] {
   return system.split('\n').flatMap((line) => {
     if (!line.startsWith('{')) return [];
     const parsed = JSON.parse(line) as Partial<ViewedSourceLine>;
-    return parsed.sourceId === undefined || parsed.toolName === undefined ? [] : [parsed as ViewedSourceLine];
+    return parsed.sourceId === undefined || !Array.isArray(parsed.tools) ? [] : [parsed as ViewedSourceLine];
   });
 }
 
@@ -350,6 +360,25 @@ function viewOf(call: RecordedModelCall): AgentCallView {
       return sourceLinesOf(call.system);
     },
   };
+}
+
+/** The text of one prompt part: a text as it is, a tool call's name and arguments, a tool result's name and value. */
+function partText(part: Exclude<GenerateOptions['prompt'][number]['content'], string>[number]): string {
+  if (part.type === 'text' || part.type === 'reasoning') return part.text;
+  if (part.type === 'tool-call') return `${part.toolName} ${typeof part.input === 'string' ? part.input : JSON.stringify(part.input)}`;
+  if (part.type === 'tool-result') {
+    const value = 'value' in part.output ? part.output.value : undefined;
+    return `${part.toolName} ${typeof value === 'string' ? value : JSON.stringify(value)}`;
+  }
+  return JSON.stringify(part);
+}
+
+/** The whole prompt of a call as one text, message by message in prompt order. */
+function promptTextOf(prompt: GenerateOptions['prompt']): string {
+  const lines = prompt.map((message) =>
+    typeof message.content === 'string' ? message.content : message.content.map(partText).join('\n'),
+  );
+  return lines.join('\n');
 }
 
 /** The answer content of scripted tool calls: `tool-call` parts with fresh ids and the arguments as JSON text. */
@@ -577,6 +606,7 @@ export function createScriptedModel(modelOptions: ScriptedModelOptions = {}): Sc
       agentScripts.set(agentName, script);
     },
     callsOfAgent: (agentName) => calls.filter((call) => call.agent === agentName),
+    promptsOfAgent: (agentName) => calls.filter((call) => call.agent === agentName).map((call) => promptTextOf(call.prompt)),
     recognizeAgents: (next) => {
       prompts = recognizedPrompts(next);
     },

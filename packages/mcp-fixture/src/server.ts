@@ -3,7 +3,7 @@ import { CallLog } from './call-log.js';
 import { createLogDataset, type LogDataset } from './dataset.js';
 import { FaultSchedule } from './fault-schedule.js';
 import { FaultTransport } from './fault-transport.js';
-import { FixtureServer } from './fixture-server.js';
+import { FixtureServer, FixtureSourceSchema } from './fixture-server.js';
 import { createScenarioDataset } from './scenarios/scenario-dataset.js';
 import { loadScenarioSet } from './scenarios/scenario-sets.js';
 import { DatasetVersionSchema } from './versions.js';
@@ -12,9 +12,11 @@ import { DatasetVersionSchema } from './versions.js';
  * Process entry: serves the scenario named by `FIXTURE_SCENARIO` (`<set>/<scenario>`) or, when it is empty, the
  * dataset named by `FIXTURE_DATASET` (default `v1`) over stdio, and exits when stdin closes, so a client that dies
  * leaves no orphan process. A scenario value that names no scenario is a startup error with its reason.
+ * `FIXTURE_SOURCE` picks what is served: `logs` (default) or `backoffice`, the orders of the same dataset.
  * With `FIXTURE_CALL_LOG` every `tools/call` is logged and `FIXTURE_FAULTS` rules apply; rules without a log are a
  * startup error. Under `NODE_ENV=production` the rules file is never read.
  */
+const source = FixtureSourceSchema.default('logs').parse(nonEmpty(process.env.FIXTURE_SOURCE));
 const scenarioName = nonEmpty(process.env.FIXTURE_SCENARIO);
 const dataset =
   scenarioName === undefined
@@ -29,13 +31,16 @@ if (faultsPath !== undefined && callLogPath === undefined) {
 }
 
 if (callLogPath === undefined) {
-  await new FixtureServer(dataset).connect(new StdioServerTransport(), exit);
+  await new FixtureServer(dataset, source).connect(new StdioServerTransport(), exit);
 } else {
   const transport = new FaultTransport({
     schedule: faultsPath === undefined ? FaultSchedule.empty() : FaultSchedule.fromFile(faultsPath),
     log: new CallLog(callLogPath),
   });
-  await new FixtureServer(dataset, (requestId) => transport.takeResultFault(requestId)).connect(transport, exit);
+  await new FixtureServer(dataset, source, (requestId) => transport.takeResultFault(requestId)).connect(
+    transport,
+    exit,
+  );
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

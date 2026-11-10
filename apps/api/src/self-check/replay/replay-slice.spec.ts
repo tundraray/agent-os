@@ -12,6 +12,14 @@ const FIRST_SCENARIO = 'fx-sc-88559311';
 /** `smoke/ledger-write-errors`. */
 const SMOKE_SCENARIO = 'fx-sc-6030e7dc';
 
+/** A catalog source with its slice, as the run row records it. */
+function source(
+  sourceId: string,
+  snapshot: string | null,
+): ReplaySliceSource['catalog'][number] {
+  return { sourceId, snapshot };
+}
+
 function page(
   sourceId: string,
   snapshot: string,
@@ -30,12 +38,12 @@ describe('replay slice', () => {
   it.each<[string, ReplaySliceSource, unknown]>([
     [
       'the run row slice, which wins over the pages',
-      { sourceSnapshots: { fixture: V1 }, evidence: [page('fixture', V2)] },
+      { catalog: [source('fixture', V1)], evidence: [page('fixture', V2)] },
       { kind: 'dataset', snapshot: V1, dataset: 'v1', from: 'run_row' },
     ],
     [
       'a scenario slice from the run row',
-      { sourceSnapshots: { fixture: SMOKE_SCENARIO }, evidence: [] },
+      { catalog: [source('fixture', SMOKE_SCENARIO)], evidence: [] },
       {
         kind: 'scenario',
         snapshot: SMOKE_SCENARIO,
@@ -45,9 +53,26 @@ describe('replay slice', () => {
       },
     ],
     [
-      'the pages of an investigation started before the slices were recorded',
+      'the one slice the fixture and the back office of a scenario both report',
       {
-        sourceSnapshots: null,
+        catalog: [
+          source('backoffice', SMOKE_SCENARIO),
+          source('fixture', SMOKE_SCENARIO),
+        ],
+        evidence: [],
+      },
+      {
+        kind: 'scenario',
+        snapshot: SMOKE_SCENARIO,
+        setName: 'smoke',
+        scenarioId: 'ledger-write-errors',
+        from: 'run_row',
+      },
+    ],
+    [
+      'the pages of an investigation without a catalog',
+      {
+        catalog: [],
         evidence: [page('fixture', V2), page('fixture', V2)],
       },
       { kind: 'dataset', snapshot: V2, dataset: 'v2', from: 'evidence' },
@@ -55,7 +80,7 @@ describe('replay slice', () => {
     [
       'the pages when the slice was not read at start',
       {
-        sourceSnapshots: { fixture: null },
+        catalog: [source('fixture', null)],
         evidence: [page('fixture', FIRST_SCENARIO)],
       },
       {
@@ -73,41 +98,50 @@ describe('replay slice', () => {
 
   it.each<[string, ReplaySliceSource, string]>([
     [
-      'no slice in the row and no pages',
-      { sourceSnapshots: null, evidence: [] },
+      'an empty catalog in the row and no pages',
+      { catalog: [], evidence: [] },
       'no_slice',
     ],
     [
-      'an empty slice in the row and no pages',
-      { sourceSnapshots: { fixture: null }, evidence: [] },
+      'a catalog source without its slice and no pages',
+      { catalog: [source('fixture', null)], evidence: [] },
       'no_slice',
     ],
     [
       'pages on several slices',
       {
-        sourceSnapshots: null,
+        catalog: [],
         evidence: [page('fixture', V1), page('fixture', V2)],
       },
       'several_slices',
     ],
     [
-      'several sources in the row',
-      { sourceSnapshots: { fixture: V1, other: 'other-slice' }, evidence: [] },
+      'several catalog sources with slices in the row',
+      {
+        catalog: [source('fixture', V1), source('other', 'other-slice')],
+        evidence: [],
+      },
       'several_slices',
     ],
     [
       'a row slice of another source',
-      { sourceSnapshots: { fixture: null, other: V1 }, evidence: [] },
+      {
+        catalog: [source('fixture', null), source('other', V1)],
+        evidence: [],
+      },
       'not_fixture',
     ],
     [
       'pages of another source',
-      { sourceSnapshots: null, evidence: [page('other', V1)] },
+      { catalog: [], evidence: [page('other', V1)] },
       'not_fixture',
     ],
     [
       'a fixture slice found neither in v1, v2 nor the known sets',
-      { sourceSnapshots: { fixture: 'fx-sc-00000000' }, evidence: [] },
+      {
+        catalog: [source('fixture', 'fx-sc-00000000')],
+        evidence: [],
+      },
       'not_known',
     ],
   ])('refuses %s with replay_slice_unknown', (_, source, reason) => {

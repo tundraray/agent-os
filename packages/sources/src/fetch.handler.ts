@@ -1,9 +1,9 @@
 import type { HandlerResult, TaskContext, TaskHandler } from '@agent-os/runtime';
 import { AttemptStoppedError } from './attempt-stopped.error.js';
 import { FetchCheckpointSchema, FetchInputSchema } from './fetch-input.js';
+import { SOURCE_FETCH_WORKFLOW as SOURCE_FETCH } from './source-declaration.js';
 import type { ToolExecutor, ToolOutcome } from './tool-executor.js';
 
-const SOURCE_FETCH = 'source.fetch';
 /** Kind of the input reference that pins a source's snapshot: `{kind: "source", ref: sourceId, snapshot}`. */
 const SOURCE_REF_KIND = 'source';
 

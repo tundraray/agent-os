@@ -299,6 +299,21 @@ const TEMPLATES: Readonly<Record<MechanismName, MechanismTemplates>> = {
       support: 'yes',
     }),
   },
+  payment_method_declined: {
+    observed: ({ traceId, trace, record }) => ({
+      text: `в трассе ${traceId} провайдер отклонил авторизацию платежа через ${record.durationMs} мс`,
+      atoms: recordAtoms(record, trace),
+    }),
+    meaningWrong: ({ traceId, trace, record }) => ({
+      text: `в трассе ${traceId} провайдер одобрил авторизацию платежа за ${record.durationMs} мс`,
+      atoms: recordAtoms(record, trace),
+    }),
+    causal: ({ traceId, trace, record }) => ({
+      text: `платёж в трассе ${traceId} не прошёл, потому что провайдер отклонил его авторизацию`,
+      atoms: recordAtoms(record, trace),
+      support: 'yes',
+    }),
+  },
   no_cause: {
     observed: ({ traceId, trace, record }) => ({
       text: `в трассе ${traceId} платёж завершился ошибкой через ${record.durationMs} мс после авторизации`,

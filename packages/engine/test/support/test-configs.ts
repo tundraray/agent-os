@@ -99,7 +99,7 @@ export interface AgentProbeOptions {
   readonly sourcesField?: readonly ProbeAgent[];
   /** Tools a definition has beside its own, such as the tool marked as reading the run's sources. */
   readonly extraTools?: Partial<Readonly<Record<ProbeAgent, readonly string[]>>>;
-  /** The process's `sources`; none by default. */
+  /** The process's `sources`; one counting-source pair by default. */
   readonly sources?: readonly { readonly sourceId: string; readonly toolName: string }[];
   /** The `sources` of a definition; a definition without them inherits its parent's. */
   readonly definitionSources?: Partial<Readonly<Record<ProbeAgent, readonly string[]>>>;
@@ -112,13 +112,19 @@ const PROBE_PROMPTS: Readonly<Record<ProbeAgent, string>> = {
   recorder: 'You record one result of a probe investigation toward the goal: {{goal}}.',
 };
 
+/**
+ * The process ceiling of a probe without `sources`: one pair of a counting source the harness connects, so the catalog
+ * is not empty and the investigation runs in mode `sources` with `rootAgent` (an empty catalog means `modelKnowledgeRoot`).
+ */
+const DEFAULT_PROBE_CEILING = [{ sourceId: 'fixture', toolName: 'search_logs' }];
+
 /** What a probe prompt with the field adds. */
 const SOURCES_LINE = '\n\nSources:\n{{sources}}';
 
 /**
  * The probe configuration as data (Test Strategy): `lead` (root; `memory_read`, `memory_write`, `call_agent` -> helper),
  * `helper` (`memory_read`, `memory_write`, `call_agent` -> leaf, recorder), `leaf` (`finish` only, form `text`, the
- * `modelKnowledgeRoot`), `recorder` (`finish` only, form `probe_record`); `agentLimits.maxDepth` 2; no sources. Every
+ * `modelKnowledgeRoot`), `recorder` (`finish` only, form `probe_record`); `agentLimits.maxDepth` 2; the ceiling is one counting-source pair. Every
  * prompt carries its agent's marker, so the model double tells the agent of a turn by its system prompt.
  */
 export function agentProbeConfig(options: AgentProbeOptions = {}) {
@@ -137,7 +143,7 @@ export function agentProbeConfig(options: AgentProbeOptions = {}) {
     processId: options.processId ?? PROBE_PROCESS_ID,
     version: options.version ?? 1,
     goal: 'Exercise the agent runtime on data only.',
-    sources: options.sources ?? [],
+    sources: options.sources ?? DEFAULT_PROBE_CEILING,
     agents: {
       lead: definition('lead', { tools: ['memory_read', 'memory_write', 'call_agent'], calls: ['helper'], result: 'text' }),
       helper: definition('helper', {
@@ -192,12 +198,35 @@ interface V3Definition extends Fields {
 }
 
 interface V3Data extends Fields {
+  readonly sources: readonly SourcePair[];
   readonly agents: Readonly<Record<ResearchFlowAgent, V3Definition>>;
   readonly limits: Fields;
   readonly agentLimits: Fields;
 }
 
-/** The shipped v3 as data, with only the named numbers changed; `createEngine` loads it as it loads the shipped one. */
+interface SourcePair {
+  readonly sourceId: string;
+  readonly toolName: string;
+}
+
+/**
+ * The ceiling of the catalog-planning scenarios (design-catalog-planning.md, Test Strategy): the shipped pairs and both
+ * tools of `backoffice`, each pair once — the shipped v3 that names `backoffice` itself gets nothing twice.
+ */
+const BACKOFFICE_CEILING: readonly SourcePair[] = [
+  { sourceId: 'backoffice', toolName: 'search_orders' },
+  { sourceId: 'backoffice', toolName: 'get_order' },
+];
+
+function twoSourceCeiling(shipped: readonly SourcePair[]): readonly SourcePair[] {
+  const named = new Set(shipped.map(({ sourceId, toolName }) => `${sourceId}/${toolName}`));
+  return [...shipped, ...BACKOFFICE_CEILING.filter(({ sourceId, toolName }) => !named.has(`${sourceId}/${toolName}`))];
+}
+
+/**
+ * The shipped v3 as data on the two-source ceiling (`fixture` and `backoffice`), with only the named numbers changed;
+ * `createEngine` loads it as it loads the shipped one.
+ */
 export function researchFlowV3Config(overrides: ResearchFlowOverrides = {}) {
   const shipped = deepResearchProcessV3 as V3Data;
   const agents = Object.fromEntries(
@@ -213,6 +242,7 @@ export function researchFlowV3Config(overrides: ResearchFlowOverrides = {}) {
   return {
     ...shipped,
     ...(overrides.version === undefined ? {} : { version: overrides.version }),
+    sources: twoSourceCeiling(shipped.sources),
     agents,
     limits: { ...shipped.limits, ...(overrides.investigationTokens === undefined ? {} : { investigationTokens: overrides.investigationTokens }) },
     agentLimits: { ...shipped.agentLimits, ...(overrides.maxDepth === undefined ? {} : { maxDepth: overrides.maxDepth }) },

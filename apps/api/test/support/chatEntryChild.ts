@@ -1,11 +1,20 @@
 import { type ChildProcess, fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { applyMigrations } from '@agent-os/db';
+import { BACKOFFICE_SOURCE_ID } from '@agent-os/sources';
 import pg from 'pg';
+import { SOURCES_DECLARATION } from '../../src/sources/sources.config.js';
 import type {
   ChatEntryCrashPoint,
   HarnessMessage,
@@ -15,8 +24,11 @@ import {
   type ChatCallsMessage,
   type ChatCallsRequest,
   ENGINE_FILES_VARIABLES,
+  ENGINE_JOURNEY_VARIABLE,
   ENGINE_PATH_VARIABLE,
   type EngineFiles,
+  type EngineJourneyName,
+  fixtureScenarioOf,
   RESEARCH_FLOW_PATH,
   type StartFailedMessage,
 } from './engineScriptedRoles.js';
@@ -75,8 +87,8 @@ const FIXTURE_BUILD = packageBuild('mcp-fixture', 'mcp-fixture');
 
 /**
  * What the child runs: `engine-double` — the engine port double and no source (`E2E_CHAT_ENTRY_DOUBLES=1`);
- * `research-flow` — the real engine and fixture source with the shipped v3 as the server loads it, its agents scripted,
- * the launch without a budget.
+ * `research-flow` — the real engine and both fixture processes (`logs`, `backoffice`) with the shipped v3 as the server
+ * loads it, its agents scripted, the launch without a budget.
  */
 export type ChatEntryChildMode = 'engine-double' | 'research-flow';
 
@@ -346,12 +358,50 @@ export type ChildApi = (
   init?: { method?: string; body?: string },
 ) => Promise<Response>;
 
+/**
+ * What the session's children read besides the mode and the engine files; {@link ChatEntrySession.start} may override
+ * either for one child (a restart of the same session with a narrower table, source-planning E2E-1 S2).
+ */
+export interface ChatEntrySettings {
+  /**
+   * `SOURCE_ACCESS_TABLE` of the child (`{"<user id>": ["<sourceId>", …]}`). Empty (the default) keeps the allow-all
+   * double of the rights port; any other value is the server's own table, so a user absent from it reads no source.
+   */
+  readonly sourceAccessTable?: string;
+  /** What the scripted agents and the chat model play (research-flow mode); `provider-adapter` by default. */
+  readonly journey?: EngineJourneyName;
+}
+
+/** One `tools/call` a fixture process of the session received, from the call log both processes share. */
+export interface FixtureCall {
+  /** 1-based order in the log, across both processes and across restarts. */
+  readonly seq: number;
+  readonly tool: string;
+  /** The fixture process that received it. */
+  readonly pid: number;
+}
+
+/** The tools of `backoffice` as declared: a call of the shared log is the back office's when its tool is one of them. */
+export const BACKOFFICE_TOOLS: ReadonlySet<string> = new Set(
+  SOURCES_DECLARATION.find(
+    (source) => source.sourceId === BACKOFFICE_SOURCE_ID,
+  )?.tools.map((tool) => tool.name) ?? [],
+);
+
 /** A run of the scenario in its own scratch database: its children and its rows. */
 export interface ChatEntrySession {
-  /** Starts a child on the scratch database, with `crashAt` as its `CHAT_ENTRY_CRASH_AT`; resolves once it is ready. */
+  /**
+   * Starts a child on the scratch database, with `crashAt` as its `CHAT_ENTRY_CRASH_AT` and the session's settings
+   * with `overrides` over them; resolves once it is ready.
+   */
   start(
     crashAt?: ChatEntryCrashPoint,
+    overrides?: ChatEntrySettings,
   ): Promise<{ readonly child: ChatEntryChild; readonly api: ChildApi }>;
+  /** `DATABASE_URL` of the scratch database, for the readers of `selfCheckDb.ts` (transcripts, agent runs). */
+  readonly databaseUrl: string;
+  /** Every `tools/call` the fixture processes of the session received so far, in log order (research-flow mode). */
+  fixtureCalls(): FixtureCall[];
   /** Starts a child expected to refuse its start; resolves once it has exited, with what it reported. */
   startRefused(): Promise<RefusedStart>;
   /** The log of the child started last: its last output lines, read to the end after {@link startRefused}. */
@@ -397,16 +447,31 @@ export function aliveChildren(): number[] {
   });
 }
 
+/** The fixture call log at `path`; empty while no process has written it. */
+function readFixtureCalls(path: string): FixtureCall[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const { seq, tool, pid } = JSON.parse(line) as FixtureCall;
+      return { seq, tool, pid };
+    });
+}
+
 /**
  * Creates a migrated scratch database, gives `use` a session over it, then kills whatever child is left, waits for
  * its exit and drops the database. Every child of the session runs in `mode`, the engine port double by default. With
  * `engineFiles`, in the research-flow mode, `processFile` replaces the shipped configuration and `groupTablesDir` is the
- * server's `RESEARCH_GROUP_TABLES_DIR`, each on its own.
+ * server's `RESEARCH_GROUP_TABLES_DIR`, each on its own. `settings` are the rights table and the journey of every child
+ * ({@link ChatEntrySettings}). In the research-flow mode both fixture processes of every child serve the journey's
+ * `FIXTURE_SCENARIO` and write one call log of the session, which outlives a restart and is deleted with the session.
  */
 export async function withChatEntrySession<T>(
   use: (session: ChatEntrySession) => Promise<T>,
   mode: ChatEntryChildMode = 'engine-double',
   engineFiles?: Partial<EngineFiles>,
+  settings: ChatEntrySettings = {},
 ): Promise<T> {
   assertChildBuildFresh(mode);
   const name = `${DATABASE_PREFIX}${randomBytes(6).toString('hex')}`;
@@ -418,13 +483,31 @@ export async function withChatEntrySession<T>(
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
   const groupTablesDir = engineFiles?.groupTablesDir ?? '';
   const researchFlow = mode === 'research-flow';
-  const spawnChild = (crashAt?: ChatEntryCrashPoint): ChatEntryChild => {
+  const callLogPath = join(tmpdir(), `${name}-fixture-calls.jsonl`);
+  /** Variables of the rights, the sources and the journey; outside the research-flow mode no source is connected. */
+  const sourceSettings = (child: ChatEntrySettings): Record<string, string> => {
+    const journey = child.journey ?? 'provider-adapter';
+    if (!researchFlow && journey !== 'provider-adapter') {
+      throw new Error(`The journey ${journey} needs the research-flow mode`);
+    }
+    return {
+      SOURCE_ACCESS_TABLE: child.sourceAccessTable ?? '',
+      [ENGINE_JOURNEY_VARIABLE]: researchFlow ? journey : '',
+      FIXTURE_SCENARIO: researchFlow ? fixtureScenarioOf(journey) : '',
+      FIXTURE_CALL_LOG: researchFlow ? callLogPath : '',
+    };
+  };
+  const spawnChild = (
+    crashAt?: ChatEntryCrashPoint,
+    overrides: ChatEntrySettings = {},
+  ): ChatEntryChild => {
     const child = new ChatEntryChild({
       ...MODE_SETTINGS[mode],
       DATABASE_URL: databaseUrl,
       CHAT_ENTRY_CRASH_AT: crashAt ?? '',
       [ENGINE_FILES_VARIABLES.processFile]: engineFiles?.processFile ?? '',
       RESEARCH_GROUP_TABLES_DIR: researchFlow ? groupTablesDir : '',
+      ...sourceSettings({ ...settings, ...overrides }),
     });
     children.push(child);
     const { pid } = child;
@@ -437,8 +520,8 @@ export async function withChatEntrySession<T>(
   try {
     await applyMigrations(databaseUrl);
     return await use({
-      start: async (crashAt) => {
-        const child = spawnChild(crashAt);
+      start: async (crashAt, overrides) => {
+        const child = spawnChild(crashAt, overrides);
         const port = await within(child.ready, BOOT_MS, () =>
           child.failure(`was not ready within ${BOOT_MS} ms`),
         );
@@ -474,6 +557,8 @@ export async function withChatEntrySession<T>(
               : { code: reported.code, message: reported.message },
         };
       },
+      databaseUrl,
+      fixtureCalls: () => readFixtureCalls(callLogPath),
       lastChildLog: () => children.at(-1)?.log ?? '',
       query: async (text, values) => (await pool.query(text, values)).rows,
       until: async (what, child, read) => {
@@ -492,6 +577,7 @@ export async function withChatEntrySession<T>(
   } finally {
     for (const child of children) await child.kill();
     await pool.end();
+    rmSync(callLogPath, { force: true });
     await onServer((client) =>
       client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`),
     );

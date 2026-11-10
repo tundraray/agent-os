@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 import { agentsConfigIdentity, type RunRecord } from '@agent-os/engine';
 import type { ScenarioKey } from '@agent-os/mcp-fixture';
 import type { FormCheckResult } from '../judge/form-check.js';
@@ -98,6 +99,14 @@ interface RunEntryCommon {
   readonly contradictingClaims: number | null;
   /** The failure signals; null for a run judged by a key. */
   readonly signals: FailureSignals | null;
+  /**
+   * A run judged by a scenario key only (design-catalog-planning.md, FR-10, AC-10.1): the sources of all branches of
+   * the first accepted plan revision, in the order the branches name them; null without an accepted plan. A run without
+   * a key leaves it out.
+   */
+  readonly planSources?: readonly string[] | null;
+  /** A run judged by a scenario key only: whether `planSources` hold every `sources` id of the key; false without a plan. */
+  readonly planNamedKeySources?: boolean;
 }
 
 /** A scenario or a source investigation with its runs; one left «не прогнан» has `ran: false` and no runs. */
@@ -169,6 +178,8 @@ export interface RunEntryInput {
   readonly signals: FailureSignals | null;
   /** `RunEntry.injectionInBasis`; left out of a replays run. */
   readonly injectionInBasis?: boolean | null;
+  /** The `sources` of the scenario key; left out of a run without a key, which then has no plan sources mark. */
+  readonly keySources?: readonly string[];
 }
 
 /** A run's row of the result file: statuses, counts and identifiers from the record and the judge form. */
@@ -179,6 +190,7 @@ export function runEntry({
   firstError,
   signals,
   injectionInBasis,
+  keySources,
 }: RunEntryInput): RunEntry {
   return {
     investigationId: record.investigationId,
@@ -195,8 +207,76 @@ export function runEntry({
         ? judgeForm.form.contradictingClaimIds.length
         : null,
     signals,
+    ...(keySources === undefined ? {} : planSourcesMark(record, keySources)),
     ...runCounts(record, injectionInBasis),
   };
+}
+
+/** The part of a stored plan revision the mark reads: the sources of each branch, as `plan_write` accepted them. */
+const StoredPlanSourcesSchema = z.object({
+  branches: z.array(z.object({ sources: z.array(z.string()) })),
+});
+
+export interface PlanSourcesMark {
+  readonly planSources: readonly string[] | null;
+  readonly planNamedKeySources: boolean;
+}
+
+/**
+ * Whether the first accepted plan named the sources the scenario needs (design-catalog-planning.md, FR-10, AC-10.1):
+ * a comparison of source ids, never of text. Only accepted revisions are stored, so the lowest revision is the first
+ * accepted plan; without one the mark is `false`.
+ */
+export function planSourcesMark(
+  record: Pick<RunRecord, 'planRevisions'>,
+  keySources: readonly string[],
+): PlanSourcesMark {
+  const first = firstRevision(record.planRevisions);
+  if (first === undefined) {
+    return { planSources: null, planNamedKeySources: false };
+  }
+  const { branches } = StoredPlanSourcesSchema.parse(first.plan);
+  const planSources = [...new Set(branches.flatMap(({ sources }) => sources))];
+  return {
+    planSources,
+    planNamedKeySources: keySources.every((sourceId) =>
+      planSources.includes(sourceId),
+    ),
+  };
+}
+
+function firstRevision(
+  revisions: RunRecord['planRevisions'],
+): RunRecord['planRevisions'][number] | undefined {
+  return revisions.reduce<RunRecord['planRevisions'][number] | undefined>(
+    (first, revision) =>
+      first === undefined || revision.revision < first.revision
+        ? revision
+        : first,
+    undefined,
+  );
+}
+
+/** Keyed runs whose first accepted plan named the key's sources, out of the runs with a mark. */
+export interface PlanNamedKeySourcesShare {
+  readonly named: number;
+  readonly total: number;
+}
+
+/**
+ * The share the report shows (FR-10): over the keyed runs of the items that ran, each run being one investigation with
+ * its own plan — with one run per scenario, the share of scenarios; null when no run has a mark.
+ */
+export function planNamedKeySourcesShare(
+  results: readonly ItemResult[],
+): PlanNamedKeySourcesShare | null {
+  const marks = results.flatMap((item) =>
+    item.runs.flatMap((run) =>
+      run.planNamedKeySources === undefined ? [] : [run.planNamedKeySources],
+    ),
+  );
+  if (marks.length === 0) return null;
+  return { named: marks.filter(Boolean).length, total: marks.length };
 }
 
 function runCounts(

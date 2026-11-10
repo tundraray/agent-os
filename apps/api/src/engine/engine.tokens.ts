@@ -25,3 +25,10 @@ export const ENGINE_PROCESSES = Symbol('ENGINE_PROCESSES');
  * process's checker agent (`Engine.checkCalibration`, DC-10); tests replace it with a table for the loaded configuration.
  */
 export const ENGINE_GROUP_TABLES = Symbol('ENGINE_GROUP_TABLES');
+
+/**
+ * The rights port of agent tool calls `createEngine` takes (design-catalog-planning.md, KD-6): the `SourceAccessTable`
+ * of `SOURCE_ACCESS_TABLE` by default; tests that run investigations on sources without checking rights replace it with
+ * the allow-all double of `test/support/accessDoubles.ts`.
+ */
+export const SOURCE_ACCESS_POLICY = Symbol('SOURCE_ACCESS_POLICY');

@@ -247,6 +247,97 @@ export async function answerRowOf(investigationId: string) {
   return row;
 }
 
+/**
+ * The investigation's catalog as its engine row stores it (design-catalog-planning.md, KD-1, Data Model): the mode and
+ * the `source_catalog` written once at start, with the row's version (`xmin`), so a test proves a later start or read
+ * left the row untouched. Undefined before the engine row exists.
+ */
+export async function catalogRowOf(investigationId: string) {
+  const [row] = await db()
+    .select({
+      sourceMode: researchEngineRuns.sourceMode,
+      sourceCatalog: researchEngineRuns.sourceCatalog,
+      rowVersion: sql<string>`${researchEngineRuns}.xmin::text`,
+    })
+    .from(researchEngineRuns)
+    .where(eq(researchEngineRuns.investigationId, investigationId));
+  return row;
+}
+
+const StoredPlanSchema = z.object({
+  branches: z.array(
+    z.object({
+      question: z.string(),
+      approach: z.string(),
+      sources: z.array(z.string()).optional(),
+      sourceReason: z.string().optional(),
+    }),
+  ),
+});
+
+/**
+ * The plan revisions of the investigation by number, each with its branches as stored: the `sources` and `sourceReason`
+ * of a branch are null when the revision holds none (a plan written before the catalog check, or a defect).
+ */
+export async function planRevisionsOf(investigationId: string) {
+  const rows = await db()
+    .select()
+    .from(researchPlanRevisions)
+    .where(eq(researchPlanRevisions.investigationId, investigationId))
+    .orderBy(asc(researchPlanRevisions.revision));
+  return rows.map((row) => ({
+    revision: row.revision,
+    reason: row.reason,
+    branches: StoredPlanSchema.parse(row.plan).branches.map((branch) => ({
+      question: branch.question,
+      approach: branch.approach,
+      sources: branch.sources ?? null,
+      sourceReason: branch.sourceReason ?? null,
+    })),
+  }));
+}
+
+const StoredOutcomeSchema = z.object({ outcome: z.string(), detail: z.unknown().optional() });
+
+/**
+ * The tool calls of the investigation in the order they were recorded, each with its run's agent, its ended outcome code
+ * (`success`, `rejected`, `access_denied`, … ; null while it goes on), its `reason` and `detail`, and its audit row: the
+ * source and outcome the audit recorded for it, through `audit_id` → `agent_tool_audit` (null for a call without an audit
+ * row; `auditSourceId` null for an audit row without a source).
+ */
+export async function toolCallAuditsOf(investigationId: string) {
+  const rows = await db()
+    .select({
+      runTaskId: researchAgentToolCalls.runTaskId,
+      agent: researchAgentRuns.agentName,
+      turn: researchAgentToolCalls.turn,
+      callIndex: researchAgentToolCalls.callIndex,
+      tool: researchAgentToolCalls.toolName,
+      arguments: researchAgentToolCalls.arguments,
+      state: researchAgentToolCalls.state,
+      storedOutcome: researchAgentToolCalls.outcome,
+      reason: researchAgentToolCalls.reason,
+      auditId: researchAgentToolCalls.auditId,
+      auditSourceId: agentToolAudit.sourceId,
+      auditOutcome: agentToolAudit.outcome,
+      auditResourceId: agentToolAudit.resourceId,
+      auditRecordedAt: agentToolAudit.recordedAt,
+    })
+    .from(researchAgentToolCalls)
+    .innerJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchAgentToolCalls.runTaskId))
+    .leftJoin(agentToolAudit, eq(agentToolAudit.id, researchAgentToolCalls.auditId))
+    .where(eq(researchAgentToolCalls.investigationId, investigationId))
+    .orderBy(asc(researchAgentToolCalls.createdAt), asc(researchAgentToolCalls.callIndex));
+  return rows.map(({ storedOutcome, ...row }) => {
+    const ended = StoredOutcomeSchema.safeParse(storedOutcome);
+    return {
+      ...row,
+      outcome: ended.success ? ended.data.outcome : null,
+      detail: ended.success ? (ended.data.detail ?? null) : null,
+    };
+  });
+}
+
 /** The owners a file's investigations were started for; each test file has its own instance of this module. */
 const investigationOwners = new Set<string>();
 

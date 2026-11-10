@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type Database, researchAgentToolCalls, researchInvestigations } from '@agent-os/db';
+import { agentToolAudit, type Database, researchAgentToolCalls, researchInvestigations } from '@agent-os/db';
 import type { RuntimeTx, TaskContext } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { sessionRepository } from './session.repository.js';
@@ -49,6 +49,9 @@ export type CallEnding =
       readonly sourceId?: string | null;
     };
 
+/** The reason of a call the rights port refused. */
+const ACCESS_DENIED = 'access_denied';
+
 /** What the `outcome` of a call holds before it ends: its task answers a request made before (DC-11). */
 export const REPEAT_MARK = { repeat: true } as const;
 
@@ -77,6 +80,12 @@ const ALLOWED: Readonly<Record<ToolCallState, readonly ToolCallState[]>> = {
  * was not in one of the expected states (a retry of a step that already happened), nothing written; `fenced` and
  * `stopping` — the guard refused, `decide` did not run and nothing was written (ADR-0006: after a stop no call goes on).
  */
+/**
+ * Result of {@link toolCallsRepository.sourceRevoked}: `read` — whether the investigation already has a call the rights
+ * port refused on the source; `fenced` and `stopping` — the guard refused and nothing was read.
+ */
+export type RevokedResult = { readonly outcome: 'read'; readonly revoked: boolean } | { readonly outcome: 'fenced' } | { readonly outcome: 'stopping' };
+
 export type TransitionResult =
   | { readonly outcome: 'written'; readonly call: ToolCallRow }
   | { readonly outcome: 'not_in_state'; readonly call: ToolCallRow }
@@ -182,6 +191,33 @@ export const toolCallsRepository = {
       .from(researchAgentToolCalls)
       .where(eq(researchAgentToolCalls.runTaskId, runTaskId))
       .orderBy(asc(researchAgentToolCalls.callIndex));
+  },
+
+  /**
+   * Whether the source is revoked for the attempt's investigation (design-catalog-planning.md, DC-9): a call of the
+   * investigation already ended `access_denied`, and its audit row names this source. A fact of the recorded calls, read
+   * under the attempt's guard in the mode `requireActive`; no other store holds it (ADR-0001).
+   */
+  async sourceRevoked(ctx: CallContext, sourceId: string): Promise<RevokedResult> {
+    const guarded = await ctx.withAttemptGuard(
+      async (tx): Promise<RevokedResult> => {
+        const [denied] = await tx
+          .select({ id: researchAgentToolCalls.id })
+          .from(researchAgentToolCalls)
+          .innerJoin(agentToolAudit, eq(agentToolAudit.id, researchAgentToolCalls.auditId))
+          .where(
+            and(
+              eq(researchAgentToolCalls.investigationId, ctx.investigationId),
+              eq(researchAgentToolCalls.reason, ACCESS_DENIED),
+              eq(agentToolAudit.sourceId, sourceId),
+            ),
+          )
+          .limit(1);
+        return { outcome: 'read', revoked: denied !== undefined };
+      },
+      { requireActive: true },
+    );
+    return guarded.outcome === 'committed' ? guarded.value : guarded;
   },
 
   /**

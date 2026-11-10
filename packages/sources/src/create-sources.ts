@@ -1,7 +1,8 @@
 import type { Clock, HandlerRegistry } from '@agent-os/runtime';
 import { FetchHandler } from './fetch.handler.js';
 import type { SourceAdapter } from './source-adapter.js';
-import { createSourceRegistry, type SourceAllowlist, type SourceRegistry } from './source-registry.js';
+import type { SourceDeclaration } from './source-declaration.js';
+import { createSourceRegistry, type SourceRegistry } from './source-registry.js';
 import type { SourcesLogger } from './sources-logger.js';
 import type { SourcesSettings } from './sources.settings.js';
 import { ToolExecutor } from './tool-executor.js';
@@ -11,7 +12,8 @@ export interface CreateSourcesOptions {
   readonly handlers: HandlerRegistry;
   /** Adapters of the connected sources; `createSources` owns them from here on and closes them in `close()`. */
   readonly adapters: readonly SourceAdapter[];
-  readonly allowlist: SourceAllowlist;
+  /** The declared sources with their descriptions; its tools are the `source.fetch` allowlist. */
+  readonly declaration: SourceDeclaration;
   readonly settings: SourcesSettings;
   readonly clock: Clock;
   readonly logger: SourcesLogger;
@@ -24,13 +26,14 @@ export interface Sources {
 }
 
 /**
- * Assembly function of the sources package (design-mcp-source.md, Contract Definitions): checks the allowlist
- * against the adapters' descriptors, then registers the `source.fetch` handler. A refused configuration throws
- * with `sourceId` and `toolName` (AC-11.3) before anything is registered or any source process is started.
+ * Assembly function of the sources package (design-catalog-planning.md, KD-2): checks the declaration against the
+ * adapters' descriptors — every declared source has an adapter, every source and tool a description within its
+ * length, every declared tool is read-only — then registers the `source.fetch` handler. A refused configuration
+ * throws with `sourceId` and `toolName` (AC-11.3, AC-01.1) before anything is registered or any process is started.
  */
 export function createSources(options: CreateSourcesOptions): Sources {
-  const { handlers, adapters, allowlist, settings, clock, logger } = options;
-  const registry = createSourceRegistry({ adapters, allowlist });
+  const { handlers, adapters, declaration, settings, clock, logger } = options;
+  const registry = createSourceRegistry({ adapters, declaration });
   handlers.register(new FetchHandler(new ToolExecutor({ registry, settings, clock, logger })));
   return { registry, close: () => closeAdapters(adapters) };
 }

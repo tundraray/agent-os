@@ -6,6 +6,7 @@ import {
   researchClaims,
   researchEvidence,
   researchLlmCalls,
+  researchPlanRevisions,
 } from '@agent-os/db';
 import { type AnyColumn, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ import {
 } from '../view/investigation-view.js';
 import { usageRepository } from '../view/usage.repository.js';
 import { engineRunsRepository } from './engine-runs.repository.js';
-import type { SourceSnapshots } from './source-snapshots.js';
+import type { SourceCatalog } from './source-catalog.js';
 
 /**
  * Everything the self-check needs about a finished or running investigation (design-self-check.md, Contract
@@ -33,8 +34,11 @@ export interface RunRecord {
   /** The value of `InvestigationView.status`, whatever its source (design-lifecycle.md, KD-1). */
   readonly status: InvestigationViewStatus;
   readonly config: RunRecordConfig;
-  /** Null for an investigation started before the slices were recorded; a slice is null when it was not read in time. */
-  readonly sourceSnapshots: SourceSnapshots | null;
+  /**
+   * The source catalog recorded at start, as `readAgentTree` gives it (design-catalog-planning.md, KD-1): a slice is
+   * null when it was not read in time; empty for an investigation on model knowledge.
+   */
+  readonly catalog: SourceCatalog;
   /** As `InvestigationView.answer` gives it, `removed` included; null until the investigation is answered. */
   readonly answer: InvestigationView['answer'];
   /** The latest revision of each claim, in the order the claims were first written. */
@@ -46,6 +50,17 @@ export interface RunRecord {
   readonly calls: readonly RunRecordCall[];
   /** The agent tree with every tool call, its outcome and refusal reason. */
   readonly agentTree: AgentTree;
+  /**
+   * The plan revisions `plan_write` accepted, by revision number from 1 (design-catalog-planning.md, FR-10): a refused
+   * plan writes no revision, so the first one here is the first accepted plan. Empty when no plan was accepted.
+   */
+  readonly planRevisions: readonly RunRecordPlanRevision[];
+}
+
+interface RunRecordPlanRevision {
+  readonly revision: number;
+  /** The plan as stored: the goal, readiness criteria and branches, each with its `sources`. */
+  readonly plan: unknown;
 }
 
 type RunRecordUsage = InvestigationView['usage'] & {
@@ -126,7 +141,6 @@ const NOT_FOUND: ReadRunRecordResult = { outcome: 'rejected', code: 'investigati
 
 const CONFIG_FINGERPRINT_LENGTH = 12;
 
-const SourceSnapshotsSchema = z.record(z.string(), z.string().nullable()).nullable();
 const AtomsSchema = z.array(z.unknown());
 
 /**
@@ -146,7 +160,7 @@ export async function readRunRecord(
     return NOT_FOUND;
   }
   const processConfig = frozenProcessConfig(runStatus.run.processConfig);
-  const [recorded, usageRows, byAgentAndModel, claims, evidence, calls, treeRead] = await Promise.all([
+  const [recorded, usageRows, byAgentAndModel, claims, evidence, calls, treeRead, planRevisions] = await Promise.all([
     engineRunsRepository.readRun(db, investigationId),
     usageRepository.byRoleAndModel(db, investigationId),
     usageByAgentAndModel(db, investigationId),
@@ -154,6 +168,7 @@ export async function readRunRecord(
     evidenceOf(db, investigationId),
     callsOf(db, investigationId),
     readAgentTree(db, { investigationId, resourceId: ownerId }),
+    planRevisionsOf(db, investigationId),
   ]);
   if (recorded === undefined || treeRead.outcome === 'rejected') {
     // Deleted between the two reads.
@@ -168,13 +183,14 @@ export async function readRunRecord(
       query: recorded.query,
       status: view.status,
       config: { processConfig, fingerprint: configFingerprint(processConfig) },
-      sourceSnapshots: SourceSnapshotsSchema.parse(runStatus.run.sourceSnapshots),
+      catalog: treeRead.tree.catalog,
       answer: view.answer,
       claims,
       evidence,
       usage: { ...view.usage, byAgentAndModel },
       calls,
       agentTree: treeRead.tree,
+      planRevisions,
     },
   };
 }
@@ -259,6 +275,14 @@ async function usageByAgentAndModel(db: Database, investigationId: string): Prom
     .groupBy(researchAgentRuns.agentName, researchLlmCalls.model)
     .orderBy(asc(researchAgentRuns.agentName), asc(researchLlmCalls.model));
   return rows.map((row) => ({ ...row, costUsd: Number(row.costUsd) }));
+}
+
+function planRevisionsOf(db: Database, investigationId: string): Promise<RunRecordPlanRevision[]> {
+  return db
+    .select({ revision: researchPlanRevisions.revision, plan: researchPlanRevisions.plan })
+    .from(researchPlanRevisions)
+    .where(eq(researchPlanRevisions.investigationId, investigationId))
+    .orderBy(asc(researchPlanRevisions.revision));
 }
 
 function callsOf(db: Database, investigationId: string): Promise<RunRecordCall[]> {

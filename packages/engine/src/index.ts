@@ -22,12 +22,7 @@ export type {
   WriteDefinitionMemoryInput,
   WriteDefinitionMemoryResult,
 } from './agents/definition-memory.js';
-export {
-  CONFIGURATION_ACCESS_POLICY,
-  type ToolAccessDecision,
-  type ToolAccessPolicy,
-  type ToolAccessRequest,
-} from './agents/tool-access-policy.js';
+export type { ToolAccessDecision, ToolAccessPolicy, ToolAccessRequest } from './agents/tool-access-policy.js';
 export type { ReadAnswerMessageResult } from './answer/answer-message.js';
 export {
   type AnswerMessage,
@@ -70,6 +65,7 @@ export type { EngineLogFields, EngineLogger, ResolveModel, RoleModel } from './p
 export { deepResearchProcessV3 } from './processes/shipped-processes.js';
 export { shippedGroupTables } from './processes/shipped-group-tables.js';
 export { configFingerprint, readRunRecord, type ReadRunRecordResult, type RunRecord } from './runs/run-record.js';
+export type { CatalogSource, CatalogTool, SourceCatalog } from './runs/source-catalog.js';
 export { purgeExpiredTranscripts } from './transcripts/purge-transcripts.js';
 export {
   readTranscripts,

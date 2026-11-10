@@ -658,6 +658,7 @@ export async function judgedRun(
       judgeForm: null,
       firstError: null,
       signals: null,
+      keySources: key.sources,
     });
   }
   if (record.answer === null) {
@@ -668,6 +669,7 @@ export async function judgedRun(
       judgeForm: null,
       firstError: null,
       signals: null,
+      keySources: key.sources,
     });
   }
   const judged = await judgeRunWithKey(deps, {
@@ -693,6 +695,7 @@ export async function judgedRun(
     judgeForm: judged.checked,
     firstError: firstErrorOf(key, run, verdict, pageTraceIds),
     signals: null,
+    keySources: key.sources,
     injectionInBasis: injectionInBasis({
       established: record.answer.established ?? [],
       injectionTraceIds: key.injectionTraceIds,

@@ -11,6 +11,7 @@ import {
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { LEDGER_SPENT_TOKENS } from '../model/ledger.js';
+import { type SourceCatalog, SourceCatalogSchema } from '../runs/source-catalog.js';
 import { treeBudgetExhausted } from './collect-reader.js';
 import type { DefinitionMemorySnapshot } from './definition-memory.js';
 import { SnapshotSchema } from './fingerprint.js';
@@ -19,8 +20,8 @@ import { SnapshotSchema } from './fingerprint.js';
  * `Engine.readAgentTree` (design-agent-core.md, «Операции движка», DC-11, DC-16, FR-09): the runs of an investigation's
  * agent tree as its owner reads them — each with its parent and call, its assignment and the prologue's first message,
  * its task status, its result or failure, its own spending and its subtree's by the ledger, its turns with their ledger
- * rows and transcripts, and its tool calls with their outcomes — with the definition memory snapshot of the start and
- * `budgetExhausted`. Another owner's or an unknown investigation is `investigation_not_found`.
+ * rows and transcripts, and its tool calls with their outcomes — with the definition memory snapshot and the source
+ * catalog of the start (design-catalog-planning.md, KD-1) and `budgetExhausted`. Another owner's or an unknown investigation is `investigation_not_found`.
  */
 
 export interface AgentTreeTurn {
@@ -73,6 +74,11 @@ export interface AgentTree {
   readonly runs: readonly AgentTreeRun[];
   /** The definition memory the investigation ran with, by agent name (AC-22.4); empty for a start without one. */
   readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
+  /**
+   * The source catalog recorded at start (design-catalog-planning.md, KD-1): each source with its description, ceiling
+   * tools with descriptions and slice; empty for an investigation on model knowledge.
+   */
+  readonly catalog: SourceCatalog;
   readonly budgetExhausted: boolean;
 }
 
@@ -161,7 +167,7 @@ export async function readAgentTree(
   const { investigationId } = input;
   if (!z.uuid().safeParse(investigationId).success) return NOT_FOUND;
   const [engineRun] = await db
-    .select({ snapshot: researchEngineRuns.definitionMemorySnapshot })
+    .select({ snapshot: researchEngineRuns.definitionMemorySnapshot, catalog: researchEngineRuns.sourceCatalog })
     .from(researchEngineRuns)
     .where(and(eq(researchEngineRuns.investigationId, investigationId), eq(researchEngineRuns.resourceId, input.resourceId)));
   if (engineRun === undefined) return NOT_FOUND;
@@ -209,6 +215,7 @@ export async function readAgentTree(
       investigationId,
       runs,
       definitionMemorySnapshot: SnapshotSchema.parse(engineRun.snapshot ?? {}),
+      catalog: SourceCatalogSchema.parse(engineRun.catalog),
       budgetExhausted,
     },
   };

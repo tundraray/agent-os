@@ -102,3 +102,59 @@ export const SourceInfoSchema = z.object({
   datasetVersion: z.string(),
   recordCount: z.int().min(0),
 });
+
+/* Back-office tools (`FIXTURE_SOURCE=backoffice`): orders and payments of the same dataset as the logs. */
+
+const ORDER_STATUSES = ['paid', 'failed'] as const;
+const PAYMENT_METHODS = ['card', 'paypal', 'sepa_debit'] as const;
+const ORDER_ID = /^ord-[0-9a-f]{8}$/;
+
+/** Arguments without the cursor: the cursor travels in `SourceCall.cursor`. */
+export const SearchOrdersArgsSchema = z
+  .strictObject({
+    from: LogQueryShape.from,
+    to: LogQueryShape.to,
+    status: z.enum(ORDER_STATUSES).optional(),
+    paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+    pageSize: z.int().min(1).max(SEARCH_PAGE_SIZE_MAX).default(SEARCH_PAGE_SIZE_MAX),
+  })
+  .refine(windowIsOrdered, WINDOW_ORDER);
+
+export const GetOrderArgsSchema = z.strictObject({
+  orderId: z.string().regex(ORDER_ID, 'orderId must be ord- and 8 lowercase hex characters'),
+});
+
+const OrderShape = {
+  orderId: z.string().regex(ORDER_ID),
+  createdAt: z.string(),
+  amount: z.number(),
+  currency: z.string(),
+  status: z.enum(ORDER_STATUSES),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+};
+
+const PaymentSchema = z.object({
+  paymentId: z.string(),
+  traceId: z.string(),
+  amount: z.number(),
+  currency: z.string(),
+  status: z.enum(['authorized', 'failed']),
+  failureReason: z.string().nullable(),
+  requestedAt: z.string(),
+  resolvedAt: z.string(),
+});
+
+export const SearchOrdersResultSchema = z
+  .object({
+    snapshot: SnapshotSchema,
+    orders: z.array(z.object(OrderShape)),
+    ...TotalShape,
+    nextCursor: z.string().min(1).nullable(),
+  })
+  .refine(totalIsPaired, TOTAL_PAIRED);
+
+/** `order` is null when no order has the requested id. */
+export const GetOrderResultSchema = z.object({
+  snapshot: SnapshotSchema,
+  order: z.object({ ...OrderShape, payments: z.array(PaymentSchema) }).nullable(),
+});

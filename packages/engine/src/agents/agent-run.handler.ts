@@ -27,7 +27,7 @@ import {
   runNotAfter,
 } from './agent-task-spec.js';
 import { childCallEnding, taskToolCallEnding } from './child-failure.js';
-import { type AgentRegistries, sourcesValueOf } from './definition-check.js';
+import { type AgentRegistries, type SourceFieldValues, sourceFieldValuesOf } from './definition-check.js';
 import { closureStep, type FormRun, runForcedEnd, runPrologue } from './process-code.js';
 import type { ResultForm } from './result-forms.js';
 import {
@@ -158,8 +158,8 @@ interface Attempt {
   readonly run: AgentRunContext;
   readonly row: AgentRunRow;
   readonly startedAt: Date;
-  /** The value of `{{sources}}`, built once per attempt from the sources of the run row (DC-32). */
-  readonly sourcesValue: string;
+  /** The values of `{{sources}}` and `{{catalog}}`, built once per attempt from the sources of the run row (DC-32). */
+  readonly fieldValues: SourceFieldValues;
 }
 
 export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[] {
@@ -236,8 +236,8 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
       notAfter: row.notAfter,
     };
     const tools = agentToolsOf(definition.tools, { registry: deps.registries.tools, resultSchema: form.resultSchema });
-    const sourcesValue = sourcesValueOf(definition, { config: frame.config, runSources: row.sources }, deps.registries);
-    return { ctx, input, frame, definition, form, tools, run, row, startedAt: deps.clock.now(), sourcesValue };
+    const fieldValues = sourceFieldValuesOf(definition, { config: frame.config, runSources: row.sources }, deps.registries);
+    return { ctx, input, frame, definition, form, tools, run, row, startedAt: deps.clock.now(), fieldValues };
   }
 
   /** The session with its calls, as the window rule reads it. */
@@ -383,7 +383,7 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
 
   function viewOf(attempt: Attempt, session: RunSession, heldStage: WindowStage): SessionView {
     const { frame, definition, tools } = attempt;
-    const system = { sourcesValue: attempt.sourcesValue };
+    const system = { fieldValues: attempt.fieldValues };
     return sessionViewOf({ frame, agentName: attempt.input.agentName, definition, tools, session, heldStage, system });
   }
 

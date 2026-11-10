@@ -23,7 +23,7 @@ const cancelled: EngineRunStatus = {
     tokensSpent: 1_500,
     answerId: null,
     answer: null,
-    sourceSnapshots: null,
+    sourceCatalog: [],
     definitionMemorySnapshot: null,
     createdAt: new Date('2026-11-01T00:00:00.000Z'),
   },

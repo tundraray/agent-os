@@ -6,7 +6,8 @@
 export interface ToolAccessRequest {
   /** The owner of the investigation (`resourceId`). */
   readonly resourceId: string;
-  readonly toolName: string;
+  /** The tool called; null asks for the right to the source as a whole (the start asks it for every catalog candidate). */
+  readonly toolName: string | null;
   /** The source the call would reach; null for a tool without one. */
   readonly sourceId: string | null;
 }
@@ -17,11 +18,3 @@ export interface ToolAccessPolicy {
   decide(request: ToolAccessRequest): Promise<ToolAccessDecision> | ToolAccessDecision;
 }
 
-/**
- * The policy without a port: what the process configuration allows is allowed. The executor has already refused a tool
- * outside the definition and the run's sources are the configuration's, so nothing is left to refuse here; the rights of
- * an employee to single sources come with `access-control` (Open Questions).
- */
-export const CONFIGURATION_ACCESS_POLICY: ToolAccessPolicy = {
-  decide: () => 'allowed',
-};
