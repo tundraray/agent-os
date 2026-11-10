@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0009](ADR-0009-agent-definitions-as-process-data.md)
 
-Расширен [ADR-0009](ADR-0009-agent-definitions-as-process-data.md) (2026-11-08): вторая форма конфигурации — определения агентов.
+Расширен ADR-0009 (2026-11-08): вторая форма конфигурации — определения агентов. Форма ролей удалена из кода вместе с процессом v2 (agent-runtime / research-flow, T7.0), и процесс задают только определения агентов.
 
 ## Decision
 
