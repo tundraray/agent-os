@@ -3,7 +3,8 @@ import { InvestigationSpecSchema, ProvenanceSchema } from "./research.js";
 
 /**
  * Contracts of deep research started from a chat thread (design-chat-entry.md, Contract Definitions).
- * Actions on a launch have no HTTP endpoint: they travel as a `POST /api/chat` turn with message metadata (KD-2).
+ * Confirm and decline travel as a `POST /api/chat` turn with message metadata (KD-2); a stop has its own route
+ * (design-lifecycle.md, KD-4).
  */
 
 /** Keys of the message metadata the part reads and writes; server and web use these, never string literals. */
@@ -18,7 +19,8 @@ export const RESEARCH_METADATA_KEYS = {
   researchAnswer: "researchAnswer",
 } as const;
 
-const LaunchKeySchema = z.string().min(1).max(200);
+/** The key of a launch: the id of its card's `deepResearch` call (KD-1); also the `:launchKey` of the stop route. */
+export const LaunchKeySchema = z.string().min(1).max(200);
 const MessageIdSchema = z.string().min(1).max(255);
 
 /** Where the investigation takes its facts from: the connected sources, or the model's own knowledge (KD-8). */
@@ -45,11 +47,21 @@ export const ResearchDecisionReplySchema = z.object({
 });
 export type ResearchDecisionReply = z.infer<typeof ResearchDecisionReplySchema>;
 
+/** Confidence group of an accepted claim (design-engine.md, KD-5); with three groups `very_high` is unused. */
+export const ResearchAnswerConfidenceSchema = z.enum(["very_high", "high", "medium", "low"]);
+export type ResearchAnswerConfidence = z.infer<typeof ResearchAnswerConfidenceSchema>;
+
+/**
+ * A claim of the answer. `confidence` is the group of an established claim, `causal` marks a causal conclusion in
+ * `assumed` (then `verified` is true). Messages written before agent-quality lack both and read as null and false.
+ */
 const ResearchAnswerClaimSchema = z.object({
   text: z.string().min(1),
   /** Numbers of the answer's `sources` this claim cites. */
   footnotes: z.array(z.number().int().min(1)),
   verified: z.boolean(),
+  confidence: ResearchAnswerConfidenceSchema.nullable().default(null),
+  causal: z.boolean().default(false),
 });
 export type ResearchAnswerClaim = z.infer<typeof ResearchAnswerClaimSchema>;
 
@@ -75,58 +87,108 @@ const ResearchStopReasonSchema = z.enum([
 
 const CLAIM_GROUPS = ["established", "assumed", "unknown"] as const;
 
+/** Most items the summary of an answer holds (design-engine.md, Contract `ResearchAnswerMetadata`). */
+const SUMMARY_ITEMS_MAX = 3;
+
+/** An item of the answer's summary: the verbatim text of an accepted claim of this answer and its group. */
+const ResearchAnswerSummaryItemSchema = z.object({
+  claimId: z.string().min(1),
+  text: z.string().min(1),
+  confidence: ResearchAnswerConfidenceSchema,
+});
+export type ResearchAnswerSummaryItem = z.infer<typeof ResearchAnswerSummaryItemSchema>;
+
+const researchAnswerFields = z.object({
+  launchKey: LaunchKeySchema,
+  goal: InvestigationSpecSchema.shape.query,
+  /** Summary string of messages written before agent-quality; null in every message the engine builds. */
+  summary: z.string().nullable(),
+  /** Empty: no summary. Messages written before agent-quality lack the field and read as empty. */
+  summaryItems: z.array(ResearchAnswerSummaryItemSchema).max(SUMMARY_ITEMS_MAX).default([]),
+  outcome: z.enum(["answered", "partial", "inconclusive"]),
+  stopReason: ResearchStopReasonSchema.nullable(),
+  established: z.array(ResearchAnswerClaimSchema),
+  assumed: z.array(ResearchAnswerClaimSchema),
+  unknown: z.array(ResearchAnswerClaimSchema),
+  sources: z.array(ResearchAnswerSourceSchema),
+  sourceMode: ResearchSourceModeSchema,
+});
+
 /**
- * Value of `researchAnswer` on the answer message. `launch` points at the user message of an explicit launch or at
- * the card's tool call of a proposal. `summary` is the synthesis's brief conclusion, null in an answer built by code
- * (DC-10). Without sources nothing is established, no claim cites a footnote and there are no sources (KD-8, DC-9).
+ * Without sources nothing is established, no claim cites a footnote or carries a group or a causal flag, there is no
+ * summary and there are no sources (KD-8, DC-9; design-engine.md, Contract `ResearchAnswerMetadata`).
  */
-export const ResearchAnswerMetadataSchema = z
-  .object({
-    launchKey: LaunchKeySchema,
-    goal: InvestigationSpecSchema.shape.query,
-    summary: z.string().nullable(),
-    outcome: z.enum(["answered", "partial", "inconclusive"]),
-    stopReason: ResearchStopReasonSchema.nullable(),
+function checkNoSourcesAnswer(answer: z.output<typeof researchAnswerFields>, ctx: z.RefinementCtx): void {
+  if (answer.sourceMode !== "model_knowledge") {
+    return;
+  }
+  if (answer.established.length > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["established"],
+      message: "nothing is established without sources",
+    });
+  }
+  if (answer.summaryItems.length > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["summaryItems"],
+      message: "an answer without sources has no summary items",
+    });
+  }
+  for (const group of CLAIM_GROUPS) {
+    answer[group].forEach((claim, index) => {
+      if (claim.footnotes.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: [group, index, "footnotes"],
+          message: "a claim cites no source without sources",
+        });
+      }
+      if (claim.confidence !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: [group, index, "confidence"],
+          message: "a claim has no group without sources",
+        });
+      }
+      if (claim.causal) {
+        ctx.addIssue({
+          code: "custom",
+          path: [group, index, "causal"],
+          message: "a claim is not causal without sources",
+        });
+      }
+    });
+  }
+  if (answer.sources.length > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["sources"],
+      message: "an answer without sources lists none",
+    });
+  }
+}
+
+/**
+ * The `researchAnswer` metadata without `launch`: what the engine builds for the answer message (design-engine.md,
+ * `buildResearchAnswer`, `Engine.readAnswerMessage`). The chat server adds only `launch`.
+ */
+export const ResearchAnswerBodySchema = researchAnswerFields.superRefine(checkNoSourcesAnswer);
+export type ResearchAnswerBody = z.infer<typeof ResearchAnswerBodySchema>;
+
+/**
+ * Value of `researchAnswer` on the answer message: the engine's body plus `launch`, which points at the user message
+ * of an explicit launch or at the card's tool call of a proposal.
+ */
+export const ResearchAnswerMetadataSchema = researchAnswerFields
+  .extend({
     launch: z.union([
       z.strictObject({ messageId: MessageIdSchema }),
       z.strictObject({ toolCallId: z.string().min(1).max(255) }),
     ]),
-    established: z.array(ResearchAnswerClaimSchema),
-    assumed: z.array(ResearchAnswerClaimSchema),
-    unknown: z.array(ResearchAnswerClaimSchema),
-    sources: z.array(ResearchAnswerSourceSchema),
-    sourceMode: ResearchSourceModeSchema,
   })
-  .superRefine((answer, ctx) => {
-    if (answer.sourceMode !== "model_knowledge") {
-      return;
-    }
-    if (answer.established.length > 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["established"],
-        message: "nothing is established without sources",
-      });
-    }
-    for (const group of CLAIM_GROUPS) {
-      answer[group].forEach((claim, index) => {
-        if (claim.footnotes.length > 0) {
-          ctx.addIssue({
-            code: "custom",
-            path: [group, index, "footnotes"],
-            message: "a claim cites no source without sources",
-          });
-        }
-      });
-    }
-    if (answer.sources.length > 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["sources"],
-        message: "an answer without sources lists none",
-      });
-    }
-  });
+  .superRefine(checkNoSourcesAnswer);
 export type ResearchAnswerMetadata = z.infer<typeof ResearchAnswerMetadataSchema>;
 
 // ---------------------------------------------------------------------------
@@ -189,6 +251,12 @@ export const ThreadResearchResponseSchema = z.object({
 });
 export type ThreadResearchResponse = z.infer<typeof ThreadResearchResponseSchema>;
 
+/** Body of `POST /api/threads/:threadId/research/:launchKey/stop` (design-lifecycle.md, ResearchStopResponse). */
+export const ResearchStopResponseSchema = z.object({
+  launch: ResearchLaunchViewSchema,
+});
+export type ResearchStopResponse = z.infer<typeof ResearchStopResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // Tool `deepResearch`
 // ---------------------------------------------------------------------------
@@ -218,3 +286,41 @@ export const DeepResearchToolResultSchema = z.union([
   }),
 ]);
 export type DeepResearchToolResult = z.infer<typeof DeepResearchToolResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Tool `stopResearch` (design-lifecycle.md, KD-4)
+// ---------------------------------------------------------------------------
+
+/** Input of the `stopResearch` tool: the `launchKey` of the card the user means, when the model can name it. */
+export const StopResearchToolInputSchema = z.object({
+  launchKey: LaunchKeySchema.optional(),
+});
+export type StopResearchToolInput = z.infer<typeof StopResearchToolInputSchema>;
+
+/** A running launch of the thread the agent asks the user about: its key and goal. */
+const StopResearchCandidateSchema = z.object({
+  launchKey: LaunchKeySchema,
+  goal: InvestigationSpecSchema.shape.query,
+});
+
+/**
+ * Result of the `stopResearch` tool. `launch` is the launch after the stop: `stopped`, or as it already was, without an
+ * error; with `stop_failed` it is unchanged. Without a launch: `not_found` (no such launch in the thread),
+ * `nothing_to_stop` (no key named and nothing running) or `ambiguous` with the running launches as `candidates`.
+ */
+export const StopResearchToolResultSchema = z.union([
+  z.object({
+    launch: ResearchLaunchViewSchema,
+    error: z.literal("stop_failed").optional(),
+  }),
+  z.object({
+    launch: z.null(),
+    error: z.enum(["not_found", "nothing_to_stop"]),
+  }),
+  z.object({
+    launch: z.null(),
+    error: z.literal("ambiguous"),
+    candidates: z.array(StopResearchCandidateSchema).min(2),
+  }),
+]);
+export type StopResearchToolResult = z.infer<typeof StopResearchToolResultSchema>;

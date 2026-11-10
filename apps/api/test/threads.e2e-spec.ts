@@ -458,6 +458,21 @@ describe('Threads API (integration, real Postgres)', () => {
       expect(body.errorCode).toBe('VALIDATION_FAILED');
       expect(body.message).toEqual([expect.stringContaining('cursor')]);
     });
+
+    // design-self-check.md KD-3: `system:self-check` owns the self-check program's investigations and no sign-in
+    // issues it, so the dev header may not claim a `system:` owner.
+    // @category: edge-case
+    // @dependency: SessionGuard
+    // @complexity: low
+    it('rejects a reserved system: user id in the dev header with 401', async () => {
+      const t = await startApp();
+
+      const res = await t.http
+        .get('/api/threads')
+        .set('x-user-id', 'system:self-check');
+
+      expect(res.status).toBe(401);
+    });
   });
 
   // ---------------------------------------------------------------------------

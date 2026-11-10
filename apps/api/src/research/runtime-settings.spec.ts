@@ -16,6 +16,8 @@ describe('runtimeSettingsVariables', () => {
     ['RUNTIME_MAX_RECOVERIES', '7', 'maxRecoveries', 7],
     ['RUNTIME_DELIVERY_MAX_ATTEMPTS', '7', 'deliveryMaxAttempts', 7],
     ['RUNTIME_SHUTDOWN_GRACE_MS', '777', 'shutdownGraceMs', 777],
+    ['RUNTIME_QUEUE_WAIT_MS', '7777', 'queueWaitMs', 7777],
+    ['RUNTIME_ATTEMPT_MS', '77777', 'attemptMs', 77777],
     [
       'RUNTIME_CRASH_AT',
       'dispatch.after-claim',

@@ -24,7 +24,7 @@
 // Budget: E2E 2 of 2 for the part - E2E-1 here, E2E-2 the L1 browser scenario in docs/features/deep-research/chat-entry/l1-browser-scenarios.md (executed by hand; the repo has no browser runner), the way chat-shell keeps its own.
 // E2E-1 stays because nothing at a lower level can prove a real process death: the in-process rows prove the rule (INT-2 D1 redelivery, INT-2 D4 retry), not that the state a dying process leaves is the one the loop expects.
 // ROI uses the raw skill formula like the sibling parts; no E2E test reaches a ">50" threshold with it. The PRD names this test: NFR-03 "проверяется тестом с убийством процесса".
-// The no-source mode (PRD 1.12) adds no process-kill row: the mode is a stored value copied once (INT-1 A6) and stored in the answer message (INT-2 D5), and a restart changes neither (the kill rows below keep the same launch and answer rows).
+// The no-source mode (PRD 1.12) adds no process-kill row: the mode is a stored value copied once (INT-1 A6) and stored in the answer message (INT-2 D1 and the engine builder row `model_knowledge with claims`), and a restart changes neither (the kill rows below keep the same launch and answer rows).
 // It adds observations to the L1 scenario (L1-6 extended, L1-7 new), which is where the real boot without the fixture package, the log lines and the screen-reader reading can be seen.
 
 import { randomUUID } from 'node:crypto';
@@ -336,7 +336,7 @@ describe('deep-research / chat-entry - E2E (built api process, real Postgres, sc
             nextAppendAt: null,
           },
         ],
-        investigations: [{ ofLaunch: true, status: 'active' }],
+        investigations: [{ ofLaunch: true, status: 'completed' }],
         storedAnswers: 1,
         returnedAnswers: 1,
         answer: {
@@ -365,6 +365,7 @@ describe('deep-research / chat-entry - E2E (built api process, real Postgres, sc
                 outcome: 'answered',
                 stopReason: null,
                 summary: null,
+                summaryItems: [],
                 sourceMode: 'model_knowledge',
                 established: [],
                 assumed: [
@@ -372,6 +373,8 @@ describe('deep-research / chat-entry - E2E (built api process, real Postgres, sc
                     text: 'Платежи падали из-за просроченного сертификата.',
                     footnotes: [],
                     verified: false,
+                    confidence: null,
+                    causal: false,
                   },
                 ],
                 unknown: [],

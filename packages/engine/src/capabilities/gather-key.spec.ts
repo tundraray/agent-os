@@ -3,8 +3,8 @@ import { gatherKeyFields, type GatherRequest } from './gather-key.js';
 
 // DC-4 (FR-02), the engine's half of the dedup key: the fields of a `source.fetch` task that enter the runtime's
 // `dedup_key` (input, input references, expected output) depend only on the tool, its arguments and the pinned
-// snapshot. Defects caught: the decision's `rationale` (or another field of the decision) reaching the task input or
-// the expected output, so a replan with another rationale creates a second task; the expected output built from the
+// snapshot. Defects caught: another field beside the request (here a `rationale`) reaching the task input or the
+// expected output, so the same request with another note creates a second task; the expected output built from the
 // arguments in their arrival order, so the same request with its keys reordered gets another key; the snapshot left
 // out of the input references, so a request after a snapshot change is served from the old task.
 
@@ -19,11 +19,8 @@ function reordered(value: unknown): unknown {
   );
 }
 
-const request = (args: Record<string, unknown>, rationale: string): GatherRequest => ({
-  kind: 'requestEvidence',
+const request = (args: Record<string, unknown>, rationale: string): GatherRequest & { readonly rationale: string } => ({
   rationale,
-  evidenceIds: [],
-  await: true,
   sourceId: 'fixture',
   toolName: 'search_logs',
   args,

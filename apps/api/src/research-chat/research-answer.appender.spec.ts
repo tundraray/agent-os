@@ -1,5 +1,10 @@
 import type { DatabaseConnection } from '@agent-os/db';
-import type { Engine, StartInvestigationResult } from '@agent-os/engine';
+import {
+  buildResearchAnswer,
+  type Engine,
+  type ReadAnswerMessageResult,
+  type StartInvestigationResult,
+} from '@agent-os/engine';
 import type { Clock, Runtime } from '@agent-os/runtime';
 import type { Memory } from '@mastra/memory';
 import type { ThreadRunRegistry } from '../threads/thread-run-registry.js';
@@ -87,7 +92,6 @@ function appenderUnderTest(settings: AnswerAppenderSettings = SETTINGS) {
     settings,
     { db: {} } as unknown as DatabaseConnection,
     {} as Engine,
-    {} as Runtime,
     clock,
     {} as Memory,
     {} as ThreadsService,
@@ -298,5 +302,227 @@ describe('ResearchLaunchService start of a launch discarded meanwhile', () => {
       decisionError: 'not_found',
     });
     expect(cancel.mock.calls).toEqual([['inv-1', 'user-1']]);
+  });
+});
+
+const CLAIM_ID = '7b0c2a52-3f0e-4c5a-9d64-1f0b6a3c2e10';
+const PAGE_ID = '2f6e8d14-5a7b-4c39-8e21-9d0c3b4a5f67';
+
+/**
+ * The message the engine stored for `inv-1`, built as the engine builds it: one established claim with the group words
+ * of `high`, citing one page. The delivery takes it as it is.
+ */
+const ENGINE_MESSAGE = buildResearchAnswer({
+  answer: {
+    outcome: 'answered',
+    stopReason: null,
+    summaryItems: [
+      {
+        claimId: CLAIM_ID,
+        text: 'Возвраты растут из-за брака',
+        confidence: 'high',
+      },
+    ],
+    established: [
+      {
+        claimId: CLAIM_ID,
+        text: 'Возвраты растут из-за брака',
+        evidenceIds: [PAGE_ID],
+        verified: true,
+        confidence: 'high',
+      },
+    ],
+    assumed: [],
+    unknown: [],
+  },
+  // Goal and key differ from the launch row's: a message re-derived from the row would not match.
+  goal: 'Цель из движка',
+  launchKey: 'engine-launch-1',
+  sourceMode: 'sources',
+  pages: new Map([
+    [
+      PAGE_ID,
+      {
+        sourceId: 'orders-db',
+        toolName: 'query',
+        snapshot: '2026-11-05T11:30:00Z',
+        truncated: false,
+      },
+    ],
+  ]),
+});
+
+/** The text of {@link ENGINE_MESSAGE}, written out: the saved message must carry exactly this. */
+const ENGINE_TEXT = [
+  '**Ответ ресерча** · Есть ответ\nЦель: Цель из движка',
+  '### Главное из установленного\n- Возвраты растут из-за брака (уверенность высокая)',
+  '### Установлено\n- Возвраты растут из-за брака [1] (уверенность высокая)',
+  '### Источники (1)\n1. orders-db · query · 2026-11-05T11:30:00Z',
+].join('\n\n');
+
+type ReadAnswer = () => Promise<ReadAnswerMessageResult>;
+
+const FOUND: ReadAnswer = () =>
+  Promise.resolve({ outcome: 'found', message: ENGINE_MESSAGE });
+
+interface SavedMessage {
+  id: string;
+  content: { parts: { text: string }[]; metadata: Record<string, unknown> };
+}
+
+/** An appender over one launch of `inv-1` whose engine answers `readAnswerMessage`; the thread has no chat run. */
+function deliveryUnderTest(
+  readAnswerMessage: ReadAnswer,
+  fields: Partial<LaunchRecord> = {},
+) {
+  const { clock } = fakeClock();
+  const pending = launchRow({
+    state: 'answer_pending',
+    investigationId: 'inv-1',
+    controllerTaskId: 'task-1',
+    sourceMode: 'sources',
+    ...fields,
+  });
+  launches.listAwaitingAnswer.mockResolvedValue([pending]);
+  launches.findByLaunchKey.mockResolvedValue(pending);
+  launches.transition.mockResolvedValue(pending);
+  const saveMessages = vi.fn((_args: { messages: SavedMessage[] }) =>
+    Promise.resolve({ messages: [] }),
+  );
+  const read = vi.fn(readAnswerMessage);
+  const appender = new ResearchAnswerAppender(
+    SETTINGS,
+    { db: {} } as unknown as DatabaseConnection,
+    { readAnswerMessage: read } as unknown as Engine,
+    clock,
+    { saveMessages } as unknown as Memory,
+    {
+      withOwnedThread: (
+        _threadId: string,
+        _userId: string,
+        fn: () => unknown,
+      ) => fn(),
+    } as unknown as ThreadsService,
+    { hasRuns: () => Promise.resolve(false) } as unknown as ThreadRunRegistry,
+    {
+      recoverLaunching: () => Promise.resolve(),
+    } as unknown as ResearchLaunchService,
+  );
+  const saved = () =>
+    saveMessages.mock.calls.flatMap(([args]) =>
+      args.messages.map(({ id, content }) => ({
+        id,
+        text: content.parts.map((part) => part.text).join(''),
+        researchAnswer: content.metadata.researchAnswer,
+      })),
+    );
+  return { appender, saved, read };
+}
+
+const RETRY = {
+  launchKey: 'launch-1',
+  from: 'answer_pending',
+  to: 'answer_pending',
+  set: {
+    appendFailedAt: new Date('2026-11-05T12:00:00Z'),
+    nextAppendAt: new Date('2026-11-05T12:00:00.050Z'),
+  },
+};
+
+// Invariant 9, KD-8 (design-engine.md, Contract «Engine.readAnswerMessage»): the chat server takes the engine's message
+// as it is and adds only `launch`; an answer not ready (`no_answer`: the investigation is not closed `completed`) or a
+// failed read is a failed write retried after the pause (DC-2, AC-19.1 of design-lifecycle.md).
+// Risk: the delivery rebuilds or edits the engine's message, writes it without `launch`, or writes it before the
+// answer is ready.
+describe('ResearchAnswerAppender delivers the engine-built message', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    {
+      name: 'a proposal',
+      fields: {},
+      launch: { toolCallId: 'launch-1' },
+    },
+    {
+      name: 'an explicit launch',
+      fields: { mode: 'explicit' as const, userMessageId: 'user-message-1' },
+      launch: { messageId: 'user-message-1' },
+    },
+  ])(
+    'found, $name: saves the text as it is and the metadata with launch $launch',
+    async ({ fields, launch }) => {
+      const delivery = deliveryUnderTest(FOUND, fields);
+
+      await delivery.appender.runOnce();
+
+      expect(delivery.read.mock.calls).toEqual([
+        [{ investigationId: 'inv-1', resourceId: 'user-1' }],
+      ]);
+      expect(delivery.saved()).toEqual([
+        {
+          id: 'research-answer-inv-1',
+          text: ENGINE_TEXT,
+          researchAnswer: { ...ENGINE_MESSAGE.metadata, launch },
+        },
+      ]);
+      expect(launches.transition.mock.calls).toEqual([
+        [
+          {},
+          {
+            launchKey: 'launch-1',
+            from: 'answer_pending',
+            to: 'answered',
+            set: {
+              answeredAt: new Date('2026-11-05T12:00:00Z'),
+              appendFailedAt: null,
+              nextAppendAt: null,
+            },
+          },
+        ],
+      ]);
+    },
+  );
+
+  it.each([
+    {
+      name: 'no_answer',
+      read: (() =>
+        Promise.resolve({
+          outcome: 'rejected',
+          code: 'no_answer',
+        })) as ReadAnswer,
+    },
+    {
+      name: 'investigation_not_found',
+      read: (() =>
+        Promise.resolve({
+          outcome: 'rejected',
+          code: 'investigation_not_found',
+        })) as ReadAnswer,
+    },
+    {
+      name: 'a read that throws',
+      read: (() =>
+        Promise.reject(new Error('database unavailable'))) as ReadAnswer,
+    },
+  ])('$name: saves nothing and retries after the pause', async ({ read }) => {
+    const delivery = deliveryUnderTest(read);
+
+    await delivery.appender.runOnce();
+
+    expect(delivery.saved()).toEqual([]);
+    expect(launches.transition.mock.calls).toEqual([[{}, RETRY]]);
+  });
+
+  it('a repeated write after a regenerate (answer_reappend) saves the same message under the same id', async () => {
+    const first = deliveryUnderTest(FOUND);
+    await first.appender.runOnce();
+    const again = deliveryUnderTest(FOUND, { state: 'answer_reappend' });
+    await again.appender.runOnce();
+
+    expect(again.saved()).toEqual(first.saved());
+    expect(again.saved().map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: 'research-answer-inv-1', text: ENGINE_TEXT },
+    ]);
   });
 });

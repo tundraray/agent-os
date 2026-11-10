@@ -24,6 +24,9 @@ const RuntimeEnvSchema = z.object({
   RUNTIME_MAX_RECOVERIES: integer(3, 0),
   RUNTIME_DELIVERY_MAX_ATTEMPTS: integer(5, 1),
   RUNTIME_SHUTDOWN_GRACE_MS: integer(5_000, 0),
+  // Task limits (design-lifecycle.md, Runtime settings).
+  RUNTIME_QUEUE_WAIT_MS: integer(600_000, 1_000),
+  RUNTIME_ATTEMPT_MS: integer(900_000, 1_000),
   DB_POOL_MAX: integer(10, 1),
   // Passed through unparsed: its only parser is crash-points.ts.
   RUNTIME_CRASH_AT: z.preprocess(unsetWhenEmpty, z.string().optional()),
@@ -44,6 +47,10 @@ export interface RuntimeConfig {
   maxRecoveries: number;
   deliveryMaxAttempts: number;
   shutdownGraceMs: number;
+  /** `RUNTIME_QUEUE_WAIT_MS`: how long a ready task may wait for its first claim; capped by the task deadline. */
+  queueWaitMs: number;
+  /** `RUNTIME_ATTEMPT_MS`: limit of one attempt; capped by the time left to the task deadline. */
+  attemptMs: number;
   dbPoolMax: number;
   /** Raw `<point>[:n]`, unset by default. */
   crashAt: string | undefined;
@@ -78,6 +85,8 @@ export function parseRuntimeConfig(
     maxRecoveries: s.RUNTIME_MAX_RECOVERIES,
     deliveryMaxAttempts: s.RUNTIME_DELIVERY_MAX_ATTEMPTS,
     shutdownGraceMs: s.RUNTIME_SHUTDOWN_GRACE_MS,
+    queueWaitMs: s.RUNTIME_QUEUE_WAIT_MS,
+    attemptMs: s.RUNTIME_ATTEMPT_MS,
     dbPoolMax: s.DB_POOL_MAX,
     crashAt: s.RUNTIME_CRASH_AT,
     nodeEnv: s.NODE_ENV,

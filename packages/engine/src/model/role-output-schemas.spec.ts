@@ -1,14 +1,12 @@
 import { z } from 'zod';
-import { SynthesisOutputSchema } from '../answer/synthesize.handler.js';
 import { WorkerOutputSchema } from '../claims/claim.schema.js';
-import { ControllerOutputSchema } from '../controller/decision.schema.js';
-import { PlanOutputSchema } from '../controller/plan-role.js';
-import { VerifierOutputSchema } from '../verify/verify.handler.js';
+import { SynthesisOutputSchema } from '../research-flow/forms/answer-draft.js';
+import { ClaimAssessmentSchema } from '../verify/claim-assessment.js';
 
 // KD-7, T7.3: the provider's native `json_schema` output (and its `count_tokens`) refuses an object schema whose
 // `additionalProperties` is anything but `false` — a free-form `args` record stopped every sourced investigation at its
-// first controller step with `model_unavailable`. Defect caught: a role output schema, as `ContextBuilder` sends it
-// (`z.toJSONSchema`), has an object node without `additionalProperties: false`, at any depth.
+// first step with `model_unavailable`. Defect caught: an output schema, as the request sends it (`z.toJSONSchema`), has
+// an object node without `additionalProperties: false`, at any depth.
 
 /** JSON-pointer-like paths of the object nodes the provider would refuse. */
 function openObjects(node: unknown, path: string): string[] {
@@ -21,10 +19,8 @@ function openObjects(node: unknown, path: string): string[] {
 
 describe('role output schemas as the provider receives them', () => {
   it.each<[string, z.ZodType]>([
-    ['plan', PlanOutputSchema],
-    ['controller', ControllerOutputSchema],
     ['worker', WorkerOutputSchema],
-    ['verifier', VerifierOutputSchema],
+    ['verifier ClaimAssessment (DC-14: closed at every level)', ClaimAssessmentSchema],
     ['synthesis', SynthesisOutputSchema],
   ])('%s: every object node has additionalProperties false', (_role, schema) => {
     expect(openObjects(z.toJSONSchema(schema), '')).toEqual([]);

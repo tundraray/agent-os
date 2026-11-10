@@ -34,6 +34,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AppModule } from '../src/app.module.js';
 import {
+  ENGINE_GROUP_TABLES,
   ENGINE_RESOLVE_MODEL,
   ENGINE_TOKEN_COUNTER,
   RESEARCH_ENGINE,
@@ -50,6 +51,7 @@ import {
 import { assistantModel, titleModel } from './support/mockModels.js';
 import { createRuntimeApp } from './support/runtimeApp.js';
 import { newUser } from './support/seed.js';
+import { TEST_GROUP_TABLES } from './support/testGroupTables.js';
 import { closeRuntimeDb, query } from './support/wiring-handlers.js';
 
 describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-process Nest + real Postgres)', () => {
@@ -58,10 +60,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   const WORKERS_STOPPED = 'Runtime workers stopped';
   /** EngineModule (deep-research / engine) registers its handlers right after source.fetch, before the workers start. */
   const ENGINE_REGISTRATIONS = [
-    'register research.controller@1',
-    'register research.analyze@1',
-    'register research.verify@1',
-    'register research.synthesize@1',
+    'register agent.root@1',
+    'register agent.run@1',
   ];
 
   const tempDirs: string[] = [];
@@ -161,7 +161,9 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
       ]);
       // EngineModule creates the engine after SourcesModule binds the registry: with the fixture connected it runs in
       // the sources mode (DC-14 checked against the bound registry, not the empty one).
-      expect(runtime.app.get<Engine>(RESEARCH_ENGINE).sourceMode).toBe('sources');
+      expect(runtime.app.get<Engine>(RESEARCH_ENGINE).sourceMode).toBe(
+        'sources',
+      );
 
       // The fixture process starts on the first call through the registry SourcesModule provides.
       const registry = runtime.app.get<SourceRegistry>(SOURCE_REGISTRY);
@@ -238,6 +240,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
         .useValue(createThreadTitleAgent(titleModel().model))
         .overrideProvider(SOURCE_ADAPTERS)
         .useValue([writable])
+        .overrideProvider(ENGINE_GROUP_TABLES)
+        .useValue(TEST_GROUP_TABLES)
         .compile();
       app = moduleRef.createNestApplication();
     } finally {
@@ -272,7 +276,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   // Verification items:
   // - app.init() resolves; source.fetch is not registered
   // - RESEARCH_ENGINE resolves to an Engine with sourceMode `model_knowledge`
-  // - a started investigation reaches its research.controller task in research_tasks
+  // - a started investigation reaches its agent.root task in research_tasks (the server loads the agents-form v3, T3.6)
   it('starts without the fixture and runs the engine on model knowledge (UC-12)', async () => {
     const register = vi.spyOn(HandlerRegistry.prototype, 'register');
     const silentModel: ResolveModel = (modelId) =>
@@ -293,7 +297,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
           }),
       });
     const fixedCounter: TokenCounter = {
-      countInputTokens: () =>
+      countTurnInputTokens: () =>
         Promise.resolve({ outcome: 'counted', inputTokens: 100 }),
     };
 
@@ -332,7 +336,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
           WHERE investigation_id = $1 AND task_id = $2`,
         [started.investigationId, started.controllerTaskId],
       );
-      expect(tasks).toEqual([{ workflowType: 'research.controller' }]);
+      expect(tasks).toEqual([{ workflowType: 'agent.root' }]);
     } finally {
       await runtime.close();
     }

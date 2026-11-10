@@ -3,6 +3,8 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
+import { ENGINE_GROUP_TABLES } from './../src/engine/engine.tokens.js';
+import { TEST_GROUP_TABLES } from './support/testGroupTables.js';
 
 // Boots the full app, so Postgres must be running (pnpm db:up).
 describe('ChatController (e2e)', () => {
@@ -11,7 +13,10 @@ describe('ChatController (e2e)', () => {
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(ENGINE_GROUP_TABLES)
+      .useValue(TEST_GROUP_TABLES)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     await app.init();

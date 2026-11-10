@@ -11,9 +11,20 @@ import type {
   HarnessMessage,
   ReadyMessage,
 } from './chatEntryDoubles.js';
+import {
+  type ChatCallsMessage,
+  type ChatCallsRequest,
+  ENGINE_FILES_VARIABLES,
+  ENGINE_PATH_VARIABLE,
+  type EngineFiles,
+  RESEARCH_FLOW_PATH,
+  type StartFailedMessage,
+} from './engineScriptedRoles.js';
+import { assertTestDatabase } from './testDatabaseGuard.js';
 
 /**
- * Child-process harness of E2E-1 (NFR-03, UC-5, UC-E6), modelled on the engine's `engineChild.ts` and on the api boot
+ * Child-process harness of the chat-entry E2E-1 (NFR-03, UC-5, UC-E6) and of the agent-runtime / research-flow E2E-2 (the
+ * real engine with scripted agents, {@link ChatEntryChildMode}), modelled on the engine's `engineChild.ts` and on the api boot
  * rows of `research-runtime-boot.e2e-spec.ts`. The child runs only compiled code (`pnpm --filter api build:child` →
  * `dist/test-child/`) over the packages' built `dist`; a build older than its sources is refused before anything is
  * spawned. Every run has its own scratch database (`CREATE DATABASE`, migrations through the entry of `@agent-os/db`,
@@ -59,13 +70,37 @@ const CHILD_BUILDS: readonly ChildBuild[] = [
   },
 ];
 
+/** The fixture process the real sources start: only the mode with the real engine connects it. */
+const FIXTURE_BUILD = packageBuild('mcp-fixture', 'mcp-fixture');
+
+/**
+ * What the child runs: `engine-double` — the engine port double and no source (`E2E_CHAT_ENTRY_DOUBLES=1`);
+ * `research-flow` — the real engine and fixture source with the shipped v3 as the server loads it, its agents scripted,
+ * the launch without a budget.
+ */
+export type ChatEntryChildMode = 'engine-double' | 'research-flow';
+
+const MODE_SETTINGS: Readonly<
+  Record<ChatEntryChildMode, Readonly<Record<string, string>>>
+> = {
+  'engine-double': {
+    E2E_CHAT_ENTRY_DOUBLES: '1',
+    E2E_ENGINE_SCRIPTED_ROLES: '',
+    [ENGINE_PATH_VARIABLE]: '',
+  },
+  'research-flow': {
+    E2E_CHAT_ENTRY_DOUBLES: '',
+    E2E_ENGINE_SCRIPTED_ROLES: '1',
+    [ENGINE_PATH_VARIABLE]: RESEARCH_FLOW_PATH,
+  },
+};
+
 /**
  * Settings of every child: workers on with fast polling, and a short `RESEARCH_LAUNCH_RECOVERY_MS`, so the loop of a
  * restarted process takes a row a dead one left in `launching` within a second.
  */
 const CHILD_SETTINGS: Readonly<Record<string, string>> = {
   NODE_ENV: 'test',
-  E2E_CHAT_ENTRY_DOUBLES: '1',
   RUNTIME_WORKERS: 'on',
   RUNTIME_CONCURRENCY: '2',
   RUNTIME_POLL_MS: '50',
@@ -81,7 +116,6 @@ const STOP_MS = 30_000;
 const STATE_MS = 30_000;
 const POLL_MS = 100;
 const OUTPUT_TAIL_LINES = 80;
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
 function newestMtime(dir: string): { file: string; mtimeMs: number } {
   let newest = { file: dir, mtimeMs: 0 };
@@ -94,8 +128,10 @@ function newestMtime(dir: string): { file: string; mtimeMs: number } {
 }
 
 /** Throws, naming the build command, when a build the child executes is missing or older than its sources. */
-function assertChildBuildFresh(): void {
-  for (const build of CHILD_BUILDS) {
+function assertChildBuildFresh(mode: ChatEntryChildMode): void {
+  const builds =
+    mode === 'engine-double' ? CHILD_BUILDS : [...CHILD_BUILDS, FIXTURE_BUILD];
+  for (const build of builds) {
     let builtMs: number;
     try {
       builtMs = statSync(build.output).mtimeMs;
@@ -125,28 +161,9 @@ function sharedDatabaseUrl(): string {
   return url;
 }
 
-/**
- * Refuses a server that does not look like the local test one: the harness creates and drops databases, so it runs
- * only against a local host on the dev test port 5433, or the CI database `agent_os`, or a name containing `test`.
- */
-function assertTestDatabase(url: string): void {
-  const { hostname, port, pathname } = new URL(url);
-  const name = pathname.slice(1);
-  if (
-    LOCAL_HOSTS.includes(hostname) &&
-    (port === '5433' || name === 'agent_os' || name.includes('test'))
-  ) {
-    return;
-  }
-  throw new Error(
-    `Refusing to create or drop databases on ${hostname}:${port || '5432'}/${name}: ` +
-      'the chat-entry E2E runs only against a local test server (port 5433, or database agent_os or *test*)',
-  );
-}
-
 async function onServer<T>(use: (client: pg.Client) => Promise<T>): Promise<T> {
   const url = sharedDatabaseUrl();
-  assertTestDatabase(url);
+  assertTestDatabase(url, 'chat-entry E2E');
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
@@ -180,6 +197,11 @@ export class ChatEntryChild {
   readonly exited: Promise<number | null>;
   /** The port the api listens on, once `ready`. */
   readonly ready: Promise<number>;
+  /** What the child reported of a failed start, once its IPC channel has closed; null when it reported none. */
+  readonly startFailure: Promise<StartFailedMessage | null>;
+  /** Resolves once the process has ended and its output streams are read to the end. */
+  readonly drained: Promise<void>;
+  private listening = false;
 
   constructor(env: Readonly<Record<string, string>>) {
     this.process = fork(CHILD_ENTRY, [], {
@@ -200,9 +222,22 @@ export class ChatEntryChild {
     this.exited = new Promise((resolve) => {
       this.process.on('exit', (code) => resolve(code));
     });
+    this.drained = new Promise((resolve) => {
+      this.process.on('close', () => resolve());
+    });
+    let startFailed: StartFailedMessage | null = null;
+    this.process.on('message', (message: ChildMessage) => {
+      if (message.kind === 'startFailed') startFailed = message;
+    });
+    // Every message is emitted before `disconnect`: the channel closes after the last one is read.
+    this.startFailure = new Promise((resolve) => {
+      this.process.on('disconnect', () => resolve(startFailed));
+    });
     this.ready = new Promise((resolve, reject) => {
-      this.process.on('message', (message: ReadyMessage) => {
-        if (message.kind === 'ready') resolve(message.port);
+      this.process.on('message', (message: ChildMessage) => {
+        if (message.kind !== 'ready') return;
+        this.listening = true;
+        resolve(message.port);
       });
       void this.exited.then((code) =>
         reject(this.failure(`exited ${code} before it was ready`)),
@@ -220,9 +255,35 @@ export class ChatEntryChild {
     return this.process.exitCode === null && this.process.signalCode === null;
   }
 
+  /** Whether the child ever reported `ready`: its api accepted requests. */
+  get listened(): boolean {
+    return this.listening;
+  }
+
+  /** The child's last output lines, as far as they have arrived. */
+  get log(): string {
+    return this.output.join('\n');
+  }
+
   /** Lets the controller of the investigation succeed in this process. */
   release(investigationId: string): void {
     this.send({ kind: 'release', investigationId });
+  }
+
+  /** The messages of every chat model call the child received so far, in arrival order (research-flow mode). */
+  chatCalls(): Promise<ChatCallsMessage['calls']> {
+    const reply = new Promise<ChatCallsMessage['calls']>((resolve) => {
+      const listener = (message: ChildMessage): void => {
+        if (message.kind !== 'chatCalls') return;
+        this.process.off('message', listener);
+        resolve(message.calls);
+      };
+      this.process.on('message', listener);
+    });
+    this.send({ kind: 'chatCalls' });
+    return within(reply, STATE_MS, () =>
+      this.failure(`sent no chat calls within ${STATE_MS} ms`),
+    );
   }
 
   /** The exit code of a child expected to end by itself (at its crash point). */
@@ -252,11 +313,14 @@ export class ChatEntryChild {
     );
   }
 
-  private send(message: HarnessMessage): void {
+  private send(message: HarnessMessage | ChatCallsRequest): void {
     if (!this.running) throw this.failure('is not running');
     this.process.send(message);
   }
 }
+
+/** IPC of the child to the harness. */
+type ChildMessage = ReadyMessage | ChatCallsMessage | StartFailedMessage;
 
 /** `promise`, or the error of `failure` after `ms`: a guard, not a delay. */
 async function within<T>(
@@ -288,6 +352,10 @@ export interface ChatEntrySession {
   start(
     crashAt?: ChatEntryCrashPoint,
   ): Promise<{ readonly child: ChatEntryChild; readonly api: ChildApi }>;
+  /** Starts a child expected to refuse its start; resolves once it has exited, with what it reported. */
+  startRefused(): Promise<RefusedStart>;
+  /** The log of the child started last: its last output lines, read to the end after {@link startRefused}. */
+  lastChildLog(): string;
   /** A statement on the scratch database, over the test's own connection. */
   query<Row extends pg.QueryResultRow>(
     text: string,
@@ -304,12 +372,22 @@ export interface ChatEntrySession {
   ): Promise<T>;
 }
 
-/** Pids of every child the harness started; a finished suite expects none of them alive. */
-const spawned: number[] = [];
+/** How a child that was expected to refuse its start ended. */
+export interface RefusedStart {
+  /** Null when the process was ended by a signal. */
+  readonly exitCode: number | null;
+  /** Whether it reported `ready` before it exited. */
+  readonly listened: boolean;
+  /** The error it reported (`startFailed`); null when it reported none. */
+  readonly failure: Pick<StartFailedMessage, 'code' | 'message'> | null;
+}
+
+/** Pids of the children the harness started and has not seen exit; a finished suite expects none of them. */
+const spawned = new Set<number>();
 
 /** Children the harness started that are still alive (orphans once the suite is over). */
 export function aliveChildren(): number[] {
-  return spawned.filter((pid) => {
+  return [...spawned].filter((pid) => {
     try {
       process.kill(pid, 0);
       return true;
@@ -321,12 +399,16 @@ export function aliveChildren(): number[] {
 
 /**
  * Creates a migrated scratch database, gives `use` a session over it, then kills whatever child is left, waits for
- * its exit and drops the database.
+ * its exit and drops the database. Every child of the session runs in `mode`, the engine port double by default. With
+ * `engineFiles`, in the research-flow mode, `processFile` replaces the shipped configuration and `groupTablesDir` is the
+ * server's `RESEARCH_GROUP_TABLES_DIR`, each on its own.
  */
 export async function withChatEntrySession<T>(
   use: (session: ChatEntrySession) => Promise<T>,
+  mode: ChatEntryChildMode = 'engine-double',
+  engineFiles?: Partial<EngineFiles>,
 ): Promise<T> {
-  assertChildBuildFresh();
+  assertChildBuildFresh(mode);
   const name = `${DATABASE_PREFIX}${randomBytes(6).toString('hex')}`;
   await onServer((client) => client.query(`CREATE DATABASE "${name}"`));
   const url = new URL(sharedDatabaseUrl());
@@ -334,16 +416,29 @@ export async function withChatEntrySession<T>(
   const databaseUrl = url.toString();
   const children: ChatEntryChild[] = [];
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+  const groupTablesDir = engineFiles?.groupTablesDir ?? '';
+  const researchFlow = mode === 'research-flow';
+  const spawnChild = (crashAt?: ChatEntryCrashPoint): ChatEntryChild => {
+    const child = new ChatEntryChild({
+      ...MODE_SETTINGS[mode],
+      DATABASE_URL: databaseUrl,
+      CHAT_ENTRY_CRASH_AT: crashAt ?? '',
+      [ENGINE_FILES_VARIABLES.processFile]: engineFiles?.processFile ?? '',
+      RESEARCH_GROUP_TABLES_DIR: researchFlow ? groupTablesDir : '',
+    });
+    children.push(child);
+    const { pid } = child;
+    if (pid !== undefined) {
+      spawned.add(pid);
+      void child.exited.then(() => spawned.delete(pid));
+    }
+    return child;
+  };
   try {
     await applyMigrations(databaseUrl);
     return await use({
       start: async (crashAt) => {
-        const child = new ChatEntryChild({
-          DATABASE_URL: databaseUrl,
-          CHAT_ENTRY_CRASH_AT: crashAt ?? '',
-        });
-        children.push(child);
-        if (child.pid !== undefined) spawned.push(child.pid);
+        const child = spawnChild(crashAt);
         const port = await within(child.ready, BOOT_MS, () =>
           child.failure(`was not ready within ${BOOT_MS} ms`),
         );
@@ -359,6 +454,27 @@ export async function withChatEntrySession<T>(
             }),
         };
       },
+      startRefused: async () => {
+        const child = spawnChild();
+        const exitCode = await within(child.exited, BOOT_MS, () =>
+          child.failure(`did not exit within ${BOOT_MS} ms`),
+        );
+        const reported = await within(child.startFailure, STOP_MS, () =>
+          child.failure(`kept its IPC channel open after the exit`),
+        );
+        await within(child.drained, STOP_MS, () =>
+          child.failure(`kept its output open after the exit`),
+        );
+        return {
+          exitCode,
+          listened: child.listened,
+          failure:
+            reported === null
+              ? null
+              : { code: reported.code, message: reported.message },
+        };
+      },
+      lastChildLog: () => children.at(-1)?.log ?? '',
       query: async (text, values) => (await pool.query(text, values)).rows,
       until: async (what, child, read) => {
         const startedAt = Date.now();

@@ -1,13 +1,21 @@
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication, InjectionToken } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { DatabaseConnection } from '@agent-os/db';
+import { deepResearchProcessV3 } from '@agent-os/engine';
 import type { HandlerRegistry, Runtime } from '@agent-os/runtime';
 import type { Mastra } from '@mastra/core/mastra';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
-import { RESEARCH_ENGINE } from '../../src/engine/engine.tokens.js';
+import {
+  ENGINE_GROUP_TABLES,
+  ENGINE_PROCESSES,
+  ENGINE_RESOLVE_MODEL,
+  ENGINE_TOKEN_COUNTER,
+  RESEARCH_ENGINE,
+} from '../../src/engine/engine.tokens.js';
 import {
   ASSISTANT_INSTRUCTIONS,
   turnModelId,
@@ -40,52 +48,115 @@ import {
 } from './chatEntryDoubles.js';
 import { createTestMastra } from './createTestApp.js';
 import {
+  type ChatCallsMessage,
+  type ChatCallsRequest,
+  createEngineScriptedRoles,
+  ENGINE_FILES_VARIABLES,
+  ENGINE_JOURNEY,
+  ENGINE_PATH_VARIABLE,
+  RESEARCH_FLOW_PATH,
+  type StartFailedMessage,
+} from './engineScriptedRoles.js';
+import {
   DEEP_RESEARCH_TOOL,
   deepResearchCallStep,
   SCRIPTED_CHAT_MODEL_ID,
+  type ScriptedChatModel,
   scriptedChatModel,
+  textStep,
   titleModel,
 } from './mockModels.js';
+import { TEST_GROUP_TABLES } from './testGroupTables.js';
 
 /**
- * Entry of the chat-entry child process (E2E-1), run only compiled (`pnpm --filter api build:child` →
- * `dist/test-child/`); `dist/main.js` and `src/` never import it. It boots the real `AppModule` the way `main.ts` does
- * (listen, then the Mastra workers) with the doubled boundaries only, selected by `E2E_CHAT_ENTRY_DOUBLES=1`: the
- * scripted chat model with one `deepResearch` call, the engine port over the real runtime whose controller task the
- * harness releases over IPC, no source adapter, and the threads' `Memory` wrapped for the append crash point. It reads
- * only its environment: `DATABASE_URL` (its own scratch database), the Runtime Settings, the part's settings and
- * `CHAT_ENTRY_CRASH_AT` (the crash points of `chatEntryDoubles.ts`).
+ * Entry of the chat-entry child process, run only compiled (`pnpm --filter api build:child` → `dist/test-child/`);
+ * `dist/main.js` and `src/` never import it. It boots the real `AppModule` the way `main.ts` does (listen, then the
+ * Mastra workers) with the scripted chat model, in one of two modes:
  *
- * IPC: `ready` with the port once the api accepts requests; `release` lets an investigation's controller succeed;
- * `stop` closes the app and exits 0.
+ * - `E2E_CHAT_ENTRY_DOUBLES=1` (deep-research / chat-entry E2E-1): one `deepResearch` call, the engine port over the
+ *   real runtime whose controller task the harness releases over IPC, no source adapter, the test group table, and the
+ *   threads' `Memory` wrapped for the append crash point of `CHAT_ENTRY_CRASH_AT` (the crash points of
+ *   `chatEntryDoubles.ts`);
+ * - `E2E_ENGINE_SCRIPTED_ROLES=1` with `E2E_ENGINE_PATH=research-flow` (agent-runtime / research-flow E2E-2): the server of
+ *   the shipped v3 as it ships — `EngineModule`'s default `ENGINE_PROCESSES` and `ENGINE_GROUP_TABLES` and the tables of
+ *   `RESEARCH_GROUP_TABLES_DIR` beside them; only `ENGINE_RESOLVE_MODEL` and `ENGINE_TOKEN_COUNTER` are the scripted agents
+ *   of `engineScriptedRoles.ts`. Only `E2E_ENGINE_PROCESS_FILE`, when given, replaces the configuration; the chat model
+ *   calls `deepResearch` without a budget, so the launch takes the budget of the loaded configuration, then answers the
+ *   plain turns of {@link ENGINE_JOURNEY}.
+ *
+ * It reads only its environment: `DATABASE_URL` (its own scratch database), the Runtime Settings, the part's settings,
+ * the mode, the process file and `CHAT_ENTRY_CRASH_AT`.
+ *
+ * IPC: `ready` with the port once the api accepts requests; `release` lets an investigation's controller succeed (the
+ * engine double); `chatCalls` sends back the input of every
+ * chat model call; `stop` closes the app and exits 0. A failed start sends `startFailed` with the error's code and
+ * message, then exits 1.
  */
 
-/** The research mode turn's goal and budget, as the scripted model calls the tool. */
+/** The research mode turn's goal and budget, as the scripted model calls the tool in the doubles mode. */
 const RESEARCH_GOAL = 'Почему падали платежи после релиза?';
 const RESEARCH_TOKEN_BUDGET = 400_000;
 
-function send(message: ReadyMessage): void {
+type ChildMode = 'engine-double' | 'research-flow';
+
+/** IPC of the harness to the child, in either mode. */
+type ChildRequest = HarnessMessage | ChatCallsRequest;
+
+function send(message: ReadyMessage | ChatCallsMessage): void {
   if (!process.send) throw new Error('The child process has no IPC channel');
   process.send(message);
 }
 
-async function main(): Promise<INestApplication> {
-  if (process.env.E2E_CHAT_ENTRY_DOUBLES !== '1') {
+function modeOf(env: NodeJS.ProcessEnv): ChildMode {
+  const doubles = env.E2E_CHAT_ENTRY_DOUBLES === '1';
+  const researchFlow =
+    env.E2E_ENGINE_SCRIPTED_ROLES === '1' &&
+    env[ENGINE_PATH_VARIABLE] === RESEARCH_FLOW_PATH;
+  if (doubles === researchFlow) {
     throw new Error(
-      'The chat-entry child runs only with its doubles: set E2E_CHAT_ENTRY_DOUBLES=1',
+      'The chat-entry child runs in exactly one mode: set E2E_CHAT_ENTRY_DOUBLES=1 (engine double) or ' +
+        `E2E_ENGINE_SCRIPTED_ROLES=1 with ${ENGINE_PATH_VARIABLE}=${RESEARCH_FLOW_PATH} (real engine, scripted agents)`,
     );
   }
+  return doubles ? 'engine-double' : 'research-flow';
+}
+
+const readJson = (file: string): unknown =>
+  JSON.parse(readFileSync(file, 'utf8')) as unknown;
+
+/** The configuration of the path `research-flow`: the file when one is given, otherwise null — the server's own. */
+function researchFlowFile(env: NodeJS.ProcessEnv): unknown {
+  const processFile = env[ENGINE_FILES_VARIABLES.processFile] ?? '';
+  return processFile === '' ? null : readJson(processFile);
+}
+
+function scriptChat(chatModel: ScriptedChatModel, mode: ChildMode): void {
+  if (mode === 'engine-double') {
+    chatModel.script(
+      deepResearchCallStep({
+        goal: RESEARCH_GOAL,
+        tokenBudget: RESEARCH_TOKEN_BUDGET,
+      }).step,
+    );
+    return;
+  }
+  chatModel.script(
+    deepResearchCallStep({ goal: ENGINE_JOURNEY.goal }).step,
+    ...ENGINE_JOURNEY.replies.map((reply) => textStep(reply)),
+  );
+}
+
+async function main(): Promise<INestApplication> {
+  const mode = modeOf(process.env);
   const hit = crashPoint(process.env.CHAT_ENTRY_CRASH_AT, process.env.NODE_ENV);
   const chatModel = scriptedChatModel();
-  chatModel.script(
-    deepResearchCallStep({
-      goal: RESEARCH_GOAL,
-      tokenBudget: RESEARCH_TOKEN_BUDGET,
-    }).step,
-  );
+  scriptChat(chatModel, mode);
   let engine: ChildEngine | undefined;
   let resolveLaunches: (() => ResearchLaunchService) | undefined;
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const researchFlow = mode === 'research-flow';
+  const editedV3 = researchFlow ? researchFlowFile(process.env) : null;
+  const roles = createEngineScriptedRoles(editedV3 ?? deepResearchProcessV3);
+  const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
     .useFactory({
       factory: (config: ConfigService) =>
@@ -108,34 +179,65 @@ async function main(): Promise<INestApplication> {
       inject: [ConfigService],
     })
     .overrideProvider(THREAD_TITLE_AGENT)
-    .useValue(createThreadTitleAgent(titleModel().model))
-    .overrideProvider(THREAD_MEMORY)
-    .useFactory({
-      factory: async (mastra: Mastra) =>
-        crashAfterAnswerSave(await resolveThreadMemory(mastra), hit),
-      inject: [MASTRA],
-    })
-    .overrideProvider(SOURCE_ADAPTERS)
-    .useValue([])
-    .overrideProvider(RESEARCH_ENGINE)
-    .useFactory({
-      factory: (runtime: Runtime, database: DatabaseConnection) => {
-        engine = createChildEngine({ runtime, pool: database.pool, hit });
-        return engine;
-      },
-      inject: [RESEARCH_RUNTIME, RESEARCH_DATABASE],
-    })
-    .compile();
+    .useValue(createThreadTitleAgent(titleModel().model));
+  if (!researchFlow) {
+    builder.overrideProvider(ENGINE_GROUP_TABLES).useValue(TEST_GROUP_TABLES);
+  }
+  if (editedV3 !== null) {
+    builder.overrideProvider(ENGINE_PROCESSES).useValue([editedV3]);
+  }
+  const moduleRef = await (
+    mode === 'engine-double'
+      ? builder
+          .overrideProvider(THREAD_MEMORY)
+          .useFactory({
+            factory: async (mastra: Mastra) =>
+              crashAfterAnswerSave(await resolveThreadMemory(mastra), hit),
+            inject: [MASTRA],
+          })
+          .overrideProvider(SOURCE_ADAPTERS)
+          .useValue([])
+          .overrideProvider(RESEARCH_ENGINE)
+          .useFactory({
+            factory: (runtime: Runtime, database: DatabaseConnection) => {
+              engine = createChildEngine({
+                runtime,
+                pool: database.pool,
+                hit,
+              });
+              return engine;
+            },
+            inject: [RESEARCH_RUNTIME, RESEARCH_DATABASE],
+          })
+      : builder
+          .overrideProvider(ENGINE_RESOLVE_MODEL)
+          .useValue(roles.resolveModel)
+          .overrideProvider(ENGINE_TOKEN_COUNTER)
+          .useValue(roles.tokenCounter)
+  ).compile();
   const get = <T>(token: InjectionToken): T =>
     moduleRef.get<T>(token, { strict: false });
   resolveLaunches = () => get<ResearchLaunchService>(ResearchLaunchService);
-  if (!engine)
-    throw new Error('RESEARCH_ENGINE was not resolved to the double');
+  if (mode === 'engine-double') {
+    if (!engine)
+      throw new Error('RESEARCH_ENGINE was not resolved to the double');
+    // Before `listen` starts the workers, so the first claim of a controller task finds its handler and the end of the
+    // task finds the consumer that closes its investigation.
+    get<HandlerRegistry>(HANDLER_REGISTRY).register(engine.controllerHandler);
+    get<Runtime>(RESEARCH_RUNTIME).eventConsumers.register(
+      engine.lifecycleConsumer,
+    );
+  }
   const controller = engine;
-  // Before `listen` starts the workers, so the first claim of a controller task finds its handler.
-  get<HandlerRegistry>(HANDLER_REGISTRY).register(controller.controllerHandler);
-  process.on('message', (message: HarnessMessage) => {
-    if (message.kind === 'release') controller.release(message.investigationId);
+  process.on('message', (message: ChildRequest) => {
+    if (message.kind === 'release')
+      controller?.release(message.investigationId);
+    if (message.kind === 'chatCalls') {
+      send({
+        kind: 'chatCalls',
+        calls: chatModel.calls.map((call) => call.messages),
+      });
+    }
   });
 
   const app = moduleRef.createNestApplication();
@@ -148,7 +250,7 @@ async function main(): Promise<INestApplication> {
 }
 
 const ready = main();
-process.on('message', (message: HarnessMessage) => {
+process.on('message', (message: ChildRequest) => {
   if (message.kind !== 'stop') return;
   ready
     .then((app) => app.close())
@@ -162,5 +264,16 @@ process.on('message', (message: HarnessMessage) => {
 });
 ready.catch((error: unknown) => {
   console.error('Chat-entry child failed', error);
-  process.exit(1);
+  const code =
+    error instanceof Error && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : null;
+  const failed: StartFailedMessage = {
+    kind: 'startFailed',
+    code,
+    message: error instanceof Error ? error.message : String(error),
+  };
+  // Exit once the message is written, so the harness reads it before the exit.
+  if (process.send) process.send(failed, () => process.exit(1));
+  else process.exit(1);
 });

@@ -1,11 +1,14 @@
-import type {
-  Engine,
-  InvestigationView,
-  ReadInvestigationResult,
-  StartInvestigationInput,
-  StartInvestigationResult,
+import {
+  buildResearchAnswer,
+  type Engine,
+  type InvestigationView,
+  type ReadAnswerMessageResult,
+  type ReadInvestigationResult,
+  type StartInvestigationInput,
+  type StartInvestigationResult,
 } from '@agent-os/engine';
 import type {
+  EventConsumer,
   HandlerResult,
   Runtime,
   TaskContext,
@@ -13,6 +16,7 @@ import type {
 } from '@agent-os/runtime';
 import type { Memory } from '@mastra/memory';
 import type pg from 'pg';
+import { doubleLifecycleConsumer, viewStatusOf } from './engineDouble.js';
 import {
   completed,
   type Latch,
@@ -107,16 +111,11 @@ const DEFAULT_TOKEN_BUDGET = 300_000;
 /** The text of the answer's one claim; the answer is a function of the investigation id only. */
 const ANSWER_CLAIM = 'Платежи падали из-за просроченного сертификата.';
 
-const TERMINAL_STATUSES: Readonly<Record<string, InvestigationView['status']>> =
-  {
-    succeeded: 'completed',
-    failed: 'failed',
-    cancelled: 'cancelled',
-  };
-
 export interface ChildEngine extends Engine {
   /** The handler of the controller tasks; registered before the workers start. */
   readonly controllerHandler: TaskHandler;
+  /** Closes the investigation when its controller task ends, as `engine.lifecycle`; registered before the workers start. */
+  readonly lifecycleConsumer: EventConsumer;
   /** Lets the controller of the investigation succeed (the harness's IPC `release`), now or once it runs. */
   release(investigationId: string): void;
   /** `EngineModule.onModuleInit` binds the real engine to the provider this double replaces; it is ignored. */
@@ -127,8 +126,9 @@ interface ControllerRow {
   investigationId: string;
   taskId: string;
   investigationStatus: string;
-  taskStatus: string;
   tokenBudget: string;
+  launchKey: string;
+  query: string;
 }
 
 function whenAborted(signal: AbortSignal): Promise<void> {
@@ -142,7 +142,9 @@ function whenAborted(signal: AbortSignal): Promise<void> {
  * The engine port over the real runtime, as the engine starts an investigation: `InvestigationService.create`, then one
  * controller task through `TaskScheduler.propose`. A start with a launch key that already has a controller task of
  * the user answers `existing` with it (the engine's idempotence by `launchKey`); the controller task is held until the
- * harness releases it, then succeeds; a read derives the view from the rows, with a fixed answer of the no-source mode.
+ * harness releases it, then succeeds, and `lifecycleConsumer` closes the investigation as `engine.lifecycle` does; a read
+ * derives the view's status from the investigation row, with a fixed answer of the no-source mode, and
+ * `readAnswerMessage` the message the engine's `buildResearchAnswer` builds from that answer once it is `completed`.
  */
 export function createChildEngine(deps: {
   runtime: Pick<Runtime, 'investigations' | 'scheduler'>;
@@ -166,8 +168,9 @@ export function createChildEngine(deps: {
   ): Promise<ControllerRow | undefined> => {
     const { rows } = await pool.query<ControllerRow>(
       `SELECT i.investigation_id AS "investigationId", t.task_id AS "taskId",
-              i.status AS "investigationStatus", t.status AS "taskStatus",
-              t.input->>'tokenBudget' AS "tokenBudget"
+              i.status AS "investigationStatus",
+              t.input->>'tokenBudget' AS "tokenBudget",
+              t.input->>'launchKey' AS "launchKey", i.query
          FROM app.research_investigations i
          JOIN app.research_tasks t
            ON t.investigation_id = i.investigation_id AND t.workflow_type = $1
@@ -242,6 +245,24 @@ export function createChildEngine(deps: {
     };
   }
 
+  const answerOf = (row: ControllerRow) => ({
+    answerId: `answer-${row.investigationId}`,
+    outcome: 'answered' as const,
+    stopReason: null,
+    summary: null,
+    established: [],
+    assumed: [
+      {
+        claimId: 'c1',
+        text: ANSWER_CLAIM,
+        evidenceIds: [],
+        verified: false,
+      },
+    ],
+    unknown: [],
+    removed: [],
+  });
+
   const view = (
     row: ControllerRow,
     status: InvestigationView['status'],
@@ -252,26 +273,7 @@ export function createChildEngine(deps: {
     processId: PROCESS_ID,
     version: 1,
     sourceMode: 'model_knowledge',
-    answer:
-      status === 'completed'
-        ? {
-            answerId: `answer-${row.investigationId}`,
-            outcome: 'answered',
-            stopReason: null,
-            summary: null,
-            established: [],
-            assumed: [
-              {
-                claimId: 'c1',
-                text: ANSWER_CLAIM,
-                evidenceIds: [],
-                verified: false,
-              },
-            ],
-            unknown: [],
-            removed: [],
-          }
-        : null,
+    answer: status === 'completed' ? answerOf(row) : null,
     usage: {
       byRoleAndModel: [],
       totalTokens: 0,
@@ -283,6 +285,10 @@ export function createChildEngine(deps: {
   return {
     sourceMode: 'model_knowledge',
     controllerHandler: testHandler(CONTROLLER_WORKFLOW, runController),
+    lifecycleConsumer: doubleLifecycleConsumer(
+      runtime.investigations,
+      (workflowType) => workflowType === CONTROLLER_WORKFLOW,
+    ),
     startInvestigation: start,
     async readInvestigation({
       investigationId,
@@ -295,15 +301,76 @@ export function createChildEngine(deps: {
       if (row === undefined) {
         return { outcome: 'rejected', code: 'investigation_not_found' };
       }
-      const status =
-        TERMINAL_STATUSES[row.taskStatus] ??
-        (row.investigationStatus === 'active' ? 'running' : 'cancelled');
-      return { outcome: 'found', view: view(row, status) };
+      return {
+        outcome: 'found',
+        view: view(row, viewStatusOf(row.investigationStatus)),
+      };
     },
-    recordSignal: () =>
+    async readAnswerMessage({
+      investigationId,
+      resourceId,
+    }): Promise<ReadAnswerMessageResult> {
+      const row = await controllerOf(
+        'i.investigation_id = $2 AND i.resource_id = $3',
+        [investigationId, resourceId],
+      );
+      if (row === undefined) {
+        return { outcome: 'rejected', code: 'investigation_not_found' };
+      }
+      if (viewStatusOf(row.investigationStatus) !== 'completed') {
+        return { outcome: 'rejected', code: 'no_answer' };
+      }
+      return {
+        outcome: 'found',
+        message: buildResearchAnswer({
+          answer: answerOf(row),
+          goal: row.query,
+          launchKey: row.launchKey,
+          sourceMode: 'model_knowledge',
+          pages: new Map(),
+        }),
+      };
+    },
+    assess: () =>
       Promise.reject(
         new Error(
-          'engine double: recordSignal is not part of the chat-entry boundary',
+          'engine double: assess is not part of the chat-entry boundary',
+        ),
+      ),
+    writeDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: writeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    removeDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: removeDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    listDefinitionMemory: () =>
+      Promise.reject(
+        new Error(
+          'engine double: listDefinitionMemory is not part of the chat-entry boundary',
+        ),
+      ),
+    readAgentTree: () =>
+      Promise.reject(
+        new Error(
+          'engine double: readAgentTree is not part of the chat-entry boundary',
+        ),
+      ),
+    assessAgent: () =>
+      Promise.reject(
+        new Error(
+          'engine double: assessAgent is not part of the chat-entry boundary',
+        ),
+      ),
+    checkCalibration: () =>
+      Promise.reject(
+        new Error(
+          'engine double: checkCalibration is not part of the chat-entry boundary',
         ),
       ),
     release: (investigationId) => releaseOf(investigationId).release(),

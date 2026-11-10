@@ -118,7 +118,65 @@ const rows: Row[] = [
     null,
   ],
   ['a sources answer', ResearchAnswerMetadataSchema, sourcesAnswer, null],
-  ['a model_knowledge answer', ResearchAnswerMetadataSchema, modelKnowledgeAnswer, null],
+  [
+    'a model_knowledge answer',
+    ResearchAnswerMetadataSchema,
+    modelKnowledgeAnswer,
+    null,
+  ],
+  // agent-quality engine (design-engine.md, Contract `ResearchAnswerMetadata`): at most three summary items, and the
+  // no-sources rule extended to summaryItems, confidence and causal.
+  [
+    'a fourth summary item',
+    ResearchAnswerMetadataSchema,
+    {
+      ...sourcesAnswer,
+      summaryItems: ['c1', 'c2', 'c3', 'c4'].map((claimId) => ({
+        claimId,
+        text: 'The p95 latency doubled after the deploy',
+        confidence: 'high',
+      })),
+    },
+    ['summaryItems'],
+  ],
+  [
+    'a model_knowledge answer with a summary item',
+    ResearchAnswerMetadataSchema,
+    {
+      ...modelKnowledgeAnswer,
+      summaryItems: [
+        {
+          claimId: 'c1',
+          text: 'Retries need backoff with jitter',
+          confidence: 'low',
+        },
+      ],
+    },
+    ['summaryItems'],
+  ],
+  [
+    'a model_knowledge answer with a confidence',
+    ResearchAnswerMetadataSchema,
+    {
+      ...modelKnowledgeAnswer,
+      assumed: [
+        {
+          ...claim('Retries need backoff with jitter', []),
+          confidence: 'medium',
+        },
+      ],
+    },
+    ['assumed', 0, 'confidence'],
+  ],
+  [
+    'a model_knowledge answer with a causal claim',
+    ResearchAnswerMetadataSchema,
+    {
+      ...modelKnowledgeAnswer,
+      assumed: [{ ...claim('Retries cause the latency', []), causal: true }],
+    },
+    ['assumed', 0, 'causal'],
+  ],
 ];
 
 describe('chat-entry contract rules', () => {
@@ -133,5 +191,53 @@ describe('chat-entry contract rules', () => {
     expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(
       errorPath,
     );
+  });
+});
+
+// UC-E5 (parse half), KD-8: a message written before agent-quality still parses with the new fields at their
+// defaults, and a new message keeps them instead of stripping them.
+describe('researchAnswer metadata across the agent-quality update', () => {
+  it('reads an old message with an empty summary list, null confidence and no causal flag', () => {
+    const parsed = ResearchAnswerMetadataSchema.parse(sourcesAnswer);
+
+    expect(parsed.summary).toBe('The deploy doubled the p95 latency.');
+    expect(parsed.summaryItems).toEqual([]);
+    expect(parsed.established[0]).toMatchObject({
+      confidence: null,
+      causal: false,
+    });
+    expect(parsed.assumed[0]).toMatchObject({
+      confidence: null,
+      causal: false,
+    });
+  });
+
+  it('keeps summaryItems, confidence and causal of a new message', () => {
+    const summaryItem = {
+      claimId: 'claim-1',
+      text: 'The p95 latency doubled after the deploy',
+      confidence: 'very_high',
+    };
+    const parsed = ResearchAnswerMetadataSchema.parse({
+      ...sourcesAnswer,
+      summary: null,
+      summaryItems: [summaryItem],
+      established: [
+        {
+          ...claim('The p95 latency doubled after the deploy', [1]),
+          confidence: 'very_high',
+        },
+      ],
+      assumed: [
+        {
+          ...claim('The deploy caused the growth', [1]),
+          causal: true,
+        },
+      ],
+    });
+
+    expect(parsed.summaryItems).toEqual([summaryItem]);
+    expect(parsed.established[0]?.confidence).toBe('very_high');
+    expect(parsed.assumed[0]?.causal).toBe(true);
   });
 });

@@ -1,0 +1,2605 @@
+{
+  "source": {
+    "about": "Claims of the first four deep-research investigations on real models whose recorded verifier answer is support: yes while the check revision was written insufficient (values_missing). Records come from the training fixture MCP source; no employee data. Used by src/recorded-runs.spec.ts (UC-R1, design-engine.md 1.5.3, Regression on Recorded Runs).",
+    "database": "agent_os, local Postgres on localhost:5433",
+    "exportedAt": "2026-11-08T10:47:15.011525+00:00",
+    "exportCommand": "docker compose -f infra/docker-compose.yml exec -T postgres psql -U agent -d agent_os -At -f - < <query file>",
+    "investigations": [
+      {
+        "investigationId": "62f7d864-3af3-40e0-8b34-36e2744f17ba",
+        "processId": "deep-research",
+        "processVersion": 2,
+        "createdAt": "2026-11-07T23:35:07.567221+00:00"
+      },
+      {
+        "investigationId": "3581b8c6-c27c-4796-8e07-ee03d6f1dab0",
+        "processId": "deep-research",
+        "processVersion": 2,
+        "createdAt": "2026-11-07T23:36:35.68967+00:00"
+      },
+      {
+        "investigationId": "6b292528-fc32-4dea-8fe3-daab7c5fae3b",
+        "processId": "deep-research",
+        "processVersion": 2,
+        "createdAt": "2026-11-07T23:38:29.172632+00:00"
+      },
+      {
+        "investigationId": "8e13df70-0239-430c-863a-ecba7ca9647b",
+        "processId": "deep-research",
+        "processVersion": 2,
+        "createdAt": "2026-11-07T23:41:08.035338+00:00"
+      }
+    ],
+    "promptVersions": {
+      "controller": [
+        "7485016af5d6"
+      ],
+      "plan": [
+        "1bd0cc4482ae"
+      ],
+      "verifier": [
+        "11947cf5ff16"
+      ],
+      "worker": [
+        "c171320a3b96"
+      ]
+    },
+    "pages": [
+      {
+        "pageId": "cd200908-e42f-4cc0-8375-2cd1ef1c6cb7",
+        "investigationId": "62f7d864-3af3-40e0-8b34-36e2744f17ba",
+        "sourceId": "fixture",
+        "toolName": "aggregate_logs",
+        "snapshot": "fx-v1-2157485c",
+        "normalizedArgs": {
+          "to": "2026-09-15T00:00:00Z",
+          "from": "2026-09-14T00:00:00Z",
+          "level": "error",
+          "bucket": "15m",
+          "cursor": null,
+          "groupBy": "level"
+        }
+      },
+      {
+        "pageId": "76971532-f63f-48a2-b1ae-9719936d342d",
+        "investigationId": "6b292528-fc32-4dea-8fe3-daab7c5fae3b",
+        "sourceId": "fixture",
+        "toolName": "aggregate_logs",
+        "snapshot": "fx-v1-2157485c",
+        "normalizedArgs": {
+          "to": "2026-09-16T00:00:00Z",
+          "from": "2026-09-14T00:00:00Z",
+          "bucket": "1h",
+          "cursor": null,
+          "groupBy": "status",
+          "service": "payment-api"
+        }
+      },
+      {
+        "pageId": "6a2959e6-33df-4265-b9a3-38712123574a",
+        "investigationId": "6b292528-fc32-4dea-8fe3-daab7c5fae3b",
+        "sourceId": "fixture",
+        "toolName": "aggregate_logs",
+        "snapshot": "fx-v1-2157485c",
+        "normalizedArgs": {
+          "to": "2026-09-16T00:00:00Z",
+          "from": "2026-09-14T00:00:00Z",
+          "level": "error",
+          "bucket": "1h",
+          "cursor": null,
+          "groupBy": "event",
+          "service": "payment-api"
+        }
+      },
+      {
+        "pageId": "088b2a86-5c3a-4d80-809d-1031dde3ebe5",
+        "investigationId": "8e13df70-0239-430c-863a-ecba7ca9647b",
+        "sourceId": "fixture",
+        "toolName": "aggregate_logs",
+        "snapshot": "fx-v1-2157485c",
+        "normalizedArgs": {
+          "to": "2026-09-15T00:00:00Z",
+          "from": "2026-09-14T00:00:00Z",
+          "level": "error",
+          "bucket": "1h",
+          "cursor": null,
+          "groupBy": "service"
+        }
+      }
+    ],
+    "claimFields": "text, atoms, pointer: the worker revision (status unverified) just before the check revision; checkStatus: the check revision status; assessment: assessment.answer of the check revision; pages: items of every page the pointer names, by page id.",
+    "claimCount": 6,
+    "queries": {
+      "claims": "with latest as (select distinct on (claim_id) * from app.research_claims where investigation_id in ('62f7d864-3af3-40e0-8b34-36e2744f17ba','3581b8c6-c27c-4796-8e07-ee03d6f1dab0','6b292528-fc32-4dea-8fe3-daab7c5fae3b','8e13df70-0239-430c-863a-ecba7ca9647b') order by claim_id, seq desc), checked as (select * from latest where status = 'insufficient' and assessment->'answer'->>'support' = 'yes') select json_agg(json_build_object('claimId', k.claim_id, 'investigationId', k.investigation_id, 'checkStatus', k.status, 'text', w.text, 'atoms', w.atoms, 'pointer', w.pointer, 'assessment', k.assessment->'answer', 'pages', (select json_object_agg(p->>'pageId', convert_from(ec.bytes, 'UTF8')::json->'items') from jsonb_array_elements(w.pointer) p join app.research_evidence_contents ec on ec.evidence_id = (p->>'pageId')::uuid)) order by k.seq) from checked k cross join lateral (select * from app.research_claims r where r.claim_id = k.claim_id and r.status = 'unverified' and r.seq < k.seq order by r.seq desc limit 1) w",
+      "count": "with latest as (select distinct on (claim_id) * from app.research_claims where investigation_id in ('62f7d864-3af3-40e0-8b34-36e2744f17ba','3581b8c6-c27c-4796-8e07-ee03d6f1dab0','6b292528-fc32-4dea-8fe3-daab7c5fae3b','8e13df70-0239-430c-863a-ecba7ca9647b') order by claim_id, seq desc) select count(*) from latest where status = 'insufficient' and assessment->'answer'->>'support' = 'yes'",
+      "source": "select json_build_object('runs', (select json_agg(json_build_object('investigationId', r.investigation_id, 'processId', r.process_id, 'processVersion', r.process_version, 'createdAt', r.created_at) order by r.created_at) from app.research_engine_runs r where r.investigation_id in ('62f7d864-3af3-40e0-8b34-36e2744f17ba','3581b8c6-c27c-4796-8e07-ee03d6f1dab0','6b292528-fc32-4dea-8fe3-daab7c5fae3b','8e13df70-0239-430c-863a-ecba7ca9647b')), 'promptVersions', (select json_object_agg(role, versions) from (select role, json_agg(distinct prompt_version) versions from app.research_llm_transcripts where investigation_id in ('62f7d864-3af3-40e0-8b34-36e2744f17ba','3581b8c6-c27c-4796-8e07-ee03d6f1dab0','6b292528-fc32-4dea-8fe3-daab7c5fae3b','8e13df70-0239-430c-863a-ecba7ca9647b') group by role) t), 'exportedAt', now())",
+      "pages": "select json_agg(json_build_object('pageId', e.evidence_id, 'investigationId', e.investigation_id, 'sourceId', e.provenance->>'sourceId', 'toolName', e.provenance->>'toolName', 'snapshot', e.provenance->>'snapshot', 'normalizedArgs', e.provenance->'normalizedArgs') order by e.created_at) from app.research_evidence e where e.evidence_id in ('cd200908-e42f-4cc0-8375-2cd1ef1c6cb7','76971532-f63f-48a2-b1ae-9719936d342d','6a2959e6-33df-4265-b9a3-38712123574a','088b2a86-5c3a-4d80-809d-1031dde3ebe5')"
+    }
+  },
+  "claims": [
+    {
+      "claimId": "ae57e066-aa75-440b-9069-8a5f37c549df",
+      "investigationId": "62f7d864-3af3-40e0-8b34-36e2744f17ba",
+      "checkStatus": "insufficient",
+      "text": "Пик ошибок 2026-09-14 пришёлся на интервал 22:00–22:15 UTC, где зафиксировано 8 ошибок, это максимум за день.",
+      "atoms": [
+        {
+          "kind": "event",
+          "value": "error"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-14T22:00:00.000Z/2026-09-14T22:15:00.000Z"
+        },
+        {
+          "kind": "number",
+          "value": "8"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "cd200908-e42f-4cc0-8375-2cd1ef1c6cb7",
+          "records": [
+            69
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "observation"
+      },
+      "pages": {
+        "cd200908-e42f-4cc0-8375-2cd1ef1c6cb7": [
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T00:15:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T00:30:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T00:45:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T01:15:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T01:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T01:45:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T02:15:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T02:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T03:15:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T04:30:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T05:15:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T05:30:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T05:45:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T06:15:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T06:45:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T07:15:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T07:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T07:45:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T08:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T08:45:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T09:15:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T09:30:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T09:45:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T10:15:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T10:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T10:45:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T11:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T11:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T12:15:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T12:45:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T13:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T13:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T14:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T14:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T15:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T15:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T15:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T16:15:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T16:30:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T17:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T17:15:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T17:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T17:45:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T18:15:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T18:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T18:45:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T19:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T19:45:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T20:15:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "error",
+            "start": "2026-09-14T20:30:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T20:45:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T21:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T21:30:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T21:45:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "error",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T22:15:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T22:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T22:45:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T23:15:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T23:30:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T23:45:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "claimId": "e054b5ce-01f7-4a34-a671-57543723822d",
+      "investigationId": "6b292528-fc32-4dea-8fe3-daab7c5fae3b",
+      "checkStatus": "insufficient",
+      "text": "С 00:00 до 01:00 UTC 15 сентября 2026 записано 39 ошибок (статус error).",
+      "atoms": [
+        {
+          "kind": "number",
+          "value": "39"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-15T00:00:00.000Z/2026-09-15T01:00:00.000Z"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "76971532-f63f-48a2-b1ae-9719936d342d",
+          "records": [
+            46
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "quantitative"
+      },
+      "pages": {
+        "76971532-f63f-48a2-b1ae-9719936d342d": [
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 625,
+            "key": "ok",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 621,
+            "key": "ok",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 621,
+            "key": "ok",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 624,
+            "key": "ok",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "error",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 623,
+            "key": "ok",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 620,
+            "key": "ok",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 624,
+            "key": "ok",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "error",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 619,
+            "key": "ok",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 622,
+            "key": "ok",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 624,
+            "key": "ok",
+            "start": "2026-09-14T15:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 622,
+            "key": "ok",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 624,
+            "key": "ok",
+            "start": "2026-09-14T17:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 624,
+            "key": "ok",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "error",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 622,
+            "key": "ok",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 622,
+            "key": "ok",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "error",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 620,
+            "key": "ok",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "error",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 620,
+            "key": "ok",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "error",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 621,
+            "key": "ok",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 39,
+            "key": "error",
+            "start": "2026-09-15T00:00:00.000Z"
+          },
+          {
+            "count": 587,
+            "key": "ok",
+            "start": "2026-09-15T00:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "error",
+            "start": "2026-09-15T01:00:00.000Z"
+          },
+          {
+            "count": 589,
+            "key": "ok",
+            "start": "2026-09-15T01:00:00.000Z"
+          },
+          {
+            "count": 34,
+            "key": "error",
+            "start": "2026-09-15T02:00:00.000Z"
+          },
+          {
+            "count": 592,
+            "key": "ok",
+            "start": "2026-09-15T02:00:00.000Z"
+          },
+          {
+            "count": 45,
+            "key": "error",
+            "start": "2026-09-15T03:00:00.000Z"
+          },
+          {
+            "count": 579,
+            "key": "ok",
+            "start": "2026-09-15T03:00:00.000Z"
+          },
+          {
+            "count": 40,
+            "key": "error",
+            "start": "2026-09-15T04:00:00.000Z"
+          },
+          {
+            "count": 586,
+            "key": "ok",
+            "start": "2026-09-15T04:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "error",
+            "start": "2026-09-15T05:00:00.000Z"
+          },
+          {
+            "count": 589,
+            "key": "ok",
+            "start": "2026-09-15T05:00:00.000Z"
+          },
+          {
+            "count": 29,
+            "key": "error",
+            "start": "2026-09-15T06:00:00.000Z"
+          },
+          {
+            "count": 597,
+            "key": "ok",
+            "start": "2026-09-15T06:00:00.000Z"
+          },
+          {
+            "count": 25,
+            "key": "error",
+            "start": "2026-09-15T07:00:00.000Z"
+          },
+          {
+            "count": 599,
+            "key": "ok",
+            "start": "2026-09-15T07:00:00.000Z"
+          },
+          {
+            "count": 42,
+            "key": "error",
+            "start": "2026-09-15T08:00:00.000Z"
+          },
+          {
+            "count": 584,
+            "key": "ok",
+            "start": "2026-09-15T08:00:00.000Z"
+          },
+          {
+            "count": 27,
+            "key": "error",
+            "start": "2026-09-15T09:00:00.000Z"
+          },
+          {
+            "count": 597,
+            "key": "ok",
+            "start": "2026-09-15T09:00:00.000Z"
+          },
+          {
+            "count": 39,
+            "key": "error",
+            "start": "2026-09-15T10:00:00.000Z"
+          },
+          {
+            "count": 587,
+            "key": "ok",
+            "start": "2026-09-15T10:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "error",
+            "start": "2026-09-15T11:00:00.000Z"
+          },
+          {
+            "count": 587,
+            "key": "ok",
+            "start": "2026-09-15T11:00:00.000Z"
+          },
+          {
+            "count": 41,
+            "key": "error",
+            "start": "2026-09-15T12:00:00.000Z"
+          },
+          {
+            "count": 585,
+            "key": "ok",
+            "start": "2026-09-15T12:00:00.000Z"
+          },
+          {
+            "count": 48,
+            "key": "error",
+            "start": "2026-09-15T13:00:00.000Z"
+          },
+          {
+            "count": 576,
+            "key": "ok",
+            "start": "2026-09-15T13:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "error",
+            "start": "2026-09-15T14:00:00.000Z"
+          },
+          {
+            "count": 589,
+            "key": "ok",
+            "start": "2026-09-15T14:00:00.000Z"
+          },
+          {
+            "count": 38,
+            "key": "error",
+            "start": "2026-09-15T15:00:00.000Z"
+          },
+          {
+            "count": 586,
+            "key": "ok",
+            "start": "2026-09-15T15:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "error",
+            "start": "2026-09-15T16:00:00.000Z"
+          },
+          {
+            "count": 589,
+            "key": "ok",
+            "start": "2026-09-15T16:00:00.000Z"
+          },
+          {
+            "count": 45,
+            "key": "error",
+            "start": "2026-09-15T17:00:00.000Z"
+          },
+          {
+            "count": 579,
+            "key": "ok",
+            "start": "2026-09-15T17:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "error",
+            "start": "2026-09-15T18:00:00.000Z"
+          },
+          {
+            "count": 591,
+            "key": "ok",
+            "start": "2026-09-15T18:00:00.000Z"
+          },
+          {
+            "count": 31,
+            "key": "error",
+            "start": "2026-09-15T19:00:00.000Z"
+          },
+          {
+            "count": 593,
+            "key": "ok",
+            "start": "2026-09-15T19:00:00.000Z"
+          },
+          {
+            "count": 36,
+            "key": "error",
+            "start": "2026-09-15T20:00:00.000Z"
+          },
+          {
+            "count": 590,
+            "key": "ok",
+            "start": "2026-09-15T20:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "error",
+            "start": "2026-09-15T21:00:00.000Z"
+          },
+          {
+            "count": 587,
+            "key": "ok",
+            "start": "2026-09-15T21:00:00.000Z"
+          },
+          {
+            "count": 46,
+            "key": "error",
+            "start": "2026-09-15T22:00:00.000Z"
+          },
+          {
+            "count": 580,
+            "key": "ok",
+            "start": "2026-09-15T22:00:00.000Z"
+          },
+          {
+            "count": 41,
+            "key": "error",
+            "start": "2026-09-15T23:00:00.000Z"
+          },
+          {
+            "count": 583,
+            "key": "ok",
+            "start": "2026-09-15T23:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "claimId": "5e4a2163-0c4f-4920-9c13-b858bea69b8a",
+      "investigationId": "6b292528-fc32-4dea-8fe3-daab7c5fae3b",
+      "checkStatus": "insufficient",
+      "text": "Количество записей payment.result резко возрастает с 3 в 23:00 14 сентября до 39 в 00:00 15 сентября, то есть рост совпадает по времени с выкладкой 2026-09-15 00:00, но записи не содержат сервис, уровень ошибки и тип таймаута, поэтому они сами по себе не подтверждают, что рост вызван выкладкой.",
+      "atoms": [
+        {
+          "kind": "event",
+          "value": "payment.result"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-14T23:00:00.000Z/2026-09-15T00:00:00.000Z"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "6a2959e6-33df-4265-b9a3-38712123574a",
+          "records": [
+            21,
+            22
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          },
+          {
+            "record": 1,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "quantitative"
+      },
+      "pages": {
+        "6a2959e6-33df-4265-b9a3-38712123574a": [
+          {
+            "count": 1,
+            "key": "payment.result",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment.result",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment.result",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment.result",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment.result",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment.result",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment.result",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "payment.result",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment.result",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment.result",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment.result",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment.result",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment.result",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment.result",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "payment.result",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment.result",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 39,
+            "key": "payment.result",
+            "start": "2026-09-15T00:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "payment.result",
+            "start": "2026-09-15T01:00:00.000Z"
+          },
+          {
+            "count": 34,
+            "key": "payment.result",
+            "start": "2026-09-15T02:00:00.000Z"
+          },
+          {
+            "count": 45,
+            "key": "payment.result",
+            "start": "2026-09-15T03:00:00.000Z"
+          },
+          {
+            "count": 40,
+            "key": "payment.result",
+            "start": "2026-09-15T04:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "payment.result",
+            "start": "2026-09-15T05:00:00.000Z"
+          },
+          {
+            "count": 29,
+            "key": "payment.result",
+            "start": "2026-09-15T06:00:00.000Z"
+          },
+          {
+            "count": 25,
+            "key": "payment.result",
+            "start": "2026-09-15T07:00:00.000Z"
+          },
+          {
+            "count": 42,
+            "key": "payment.result",
+            "start": "2026-09-15T08:00:00.000Z"
+          },
+          {
+            "count": 27,
+            "key": "payment.result",
+            "start": "2026-09-15T09:00:00.000Z"
+          },
+          {
+            "count": 39,
+            "key": "payment.result",
+            "start": "2026-09-15T10:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "payment.result",
+            "start": "2026-09-15T11:00:00.000Z"
+          },
+          {
+            "count": 41,
+            "key": "payment.result",
+            "start": "2026-09-15T12:00:00.000Z"
+          },
+          {
+            "count": 48,
+            "key": "payment.result",
+            "start": "2026-09-15T13:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "payment.result",
+            "start": "2026-09-15T14:00:00.000Z"
+          },
+          {
+            "count": 38,
+            "key": "payment.result",
+            "start": "2026-09-15T15:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "payment.result",
+            "start": "2026-09-15T16:00:00.000Z"
+          },
+          {
+            "count": 45,
+            "key": "payment.result",
+            "start": "2026-09-15T17:00:00.000Z"
+          },
+          {
+            "count": 35,
+            "key": "payment.result",
+            "start": "2026-09-15T18:00:00.000Z"
+          },
+          {
+            "count": 31,
+            "key": "payment.result",
+            "start": "2026-09-15T19:00:00.000Z"
+          },
+          {
+            "count": 36,
+            "key": "payment.result",
+            "start": "2026-09-15T20:00:00.000Z"
+          },
+          {
+            "count": 37,
+            "key": "payment.result",
+            "start": "2026-09-15T21:00:00.000Z"
+          },
+          {
+            "count": 46,
+            "key": "payment.result",
+            "start": "2026-09-15T22:00:00.000Z"
+          },
+          {
+            "count": 41,
+            "key": "payment.result",
+            "start": "2026-09-15T23:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "claimId": "8828205d-a190-436c-b103-33657d5000bc",
+      "investigationId": "8e13df70-0239-430c-863a-ecba7ca9647b",
+      "checkStatus": "insufficient",
+      "text": "Сервис ledger записал в бакетах с 13:00 по 23:00 2026-09-14 в сумме 44 записи уровня error.",
+      "atoms": [
+        {
+          "kind": "service",
+          "value": "ledger"
+        },
+        {
+          "kind": "number",
+          "value": "44"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-14T13:00:00.000Z/2026-09-14T23:00:00.000Z"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "088b2a86-5c3a-4d80-809d-1031dde3ebe5",
+          "records": [
+            38,
+            41,
+            44,
+            45,
+            48,
+            49,
+            52,
+            55,
+            58,
+            61,
+            64
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          },
+          {
+            "record": 1,
+            "relation": "supports"
+          },
+          {
+            "record": 2,
+            "relation": "supports"
+          },
+          {
+            "record": 3,
+            "relation": "supports"
+          },
+          {
+            "record": 4,
+            "relation": "supports"
+          },
+          {
+            "record": 5,
+            "relation": "supports"
+          },
+          {
+            "record": 6,
+            "relation": "supports"
+          },
+          {
+            "record": 7,
+            "relation": "supports"
+          },
+          {
+            "record": 8,
+            "relation": "supports"
+          },
+          {
+            "record": 9,
+            "relation": "supports"
+          },
+          {
+            "record": 10,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "quantitative"
+      },
+      "pages": {
+        "088b2a86-5c3a-4d80-809d-1031dde3ebe5": [
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "payment-api",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "provider-adapter",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T15:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T17:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "ledger",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "ledger",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "payment-api",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "provider-adapter",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T23:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "claimId": "b6d58559-c7d8-48da-8074-bf0ca25c9c2a",
+      "investigationId": "8e13df70-0239-430c-863a-ecba7ca9647b",
+      "checkStatus": "insufficient",
+      "text": "Сервис payment-api записал в бакетах с 00:00 по 10:00 2026-09-14 в сумме 24 записи уровня error.",
+      "atoms": [
+        {
+          "kind": "service",
+          "value": "payment-api"
+        },
+        {
+          "kind": "number",
+          "value": "24"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-14T00:00:00.000Z/2026-09-14T10:00:00.000Z"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "088b2a86-5c3a-4d80-809d-1031dde3ebe5",
+          "records": [
+            1,
+            4,
+            7,
+            10,
+            13,
+            16,
+            18,
+            21,
+            24,
+            27,
+            30
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          },
+          {
+            "record": 1,
+            "relation": "supports"
+          },
+          {
+            "record": 2,
+            "relation": "supports"
+          },
+          {
+            "record": 3,
+            "relation": "supports"
+          },
+          {
+            "record": 4,
+            "relation": "supports"
+          },
+          {
+            "record": 5,
+            "relation": "supports"
+          },
+          {
+            "record": 6,
+            "relation": "supports"
+          },
+          {
+            "record": 7,
+            "relation": "supports"
+          },
+          {
+            "record": 8,
+            "relation": "supports"
+          },
+          {
+            "record": 9,
+            "relation": "supports"
+          },
+          {
+            "record": 10,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "quantitative"
+      },
+      "pages": {
+        "088b2a86-5c3a-4d80-809d-1031dde3ebe5": [
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "payment-api",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "provider-adapter",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T15:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T17:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "ledger",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "ledger",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "payment-api",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "provider-adapter",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T23:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "claimId": "378b7b8b-6160-4366-9e6c-8b59d6c6df0e",
+      "investigationId": "8e13df70-0239-430c-863a-ecba7ca9647b",
+      "checkStatus": "insufficient",
+      "text": "Сервис payment-api записал в бакетах с 11:00 по 23:00 2026-09-14 в сумме 40 записей уровня error.",
+      "atoms": [
+        {
+          "kind": "service",
+          "value": "payment-api"
+        },
+        {
+          "kind": "number",
+          "value": "40"
+        },
+        {
+          "kind": "interval",
+          "value": "2026-09-14T11:00:00.000Z/2026-09-14T23:00:00.000Z"
+        }
+      ],
+      "pointer": [
+        {
+          "pageId": "088b2a86-5c3a-4d80-809d-1031dde3ebe5",
+          "records": [
+            33,
+            36,
+            39,
+            42,
+            46,
+            50,
+            53,
+            56,
+            59,
+            62,
+            65
+          ]
+        }
+      ],
+      "assessment": {
+        "records": [
+          {
+            "record": 0,
+            "relation": "supports"
+          },
+          {
+            "record": 1,
+            "relation": "supports"
+          },
+          {
+            "record": 2,
+            "relation": "supports"
+          },
+          {
+            "record": 3,
+            "relation": "supports"
+          },
+          {
+            "record": 4,
+            "relation": "supports"
+          },
+          {
+            "record": 5,
+            "relation": "supports"
+          },
+          {
+            "record": 6,
+            "relation": "supports"
+          },
+          {
+            "record": 7,
+            "relation": "supports"
+          },
+          {
+            "record": 8,
+            "relation": "supports"
+          },
+          {
+            "record": 9,
+            "relation": "supports"
+          },
+          {
+            "record": 10,
+            "relation": "supports"
+          }
+        ],
+        "support": "yes",
+        "claimType": "quantitative"
+      },
+      "pages": {
+        "088b2a86-5c3a-4d80-809d-1031dde3ebe5": [
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T00:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T01:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T02:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T03:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T04:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "ledger",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T05:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T06:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T07:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T08:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "payment-api",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "provider-adapter",
+            "start": "2026-09-14T09:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T10:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T11:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T12:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "payment-api",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "provider-adapter",
+            "start": "2026-09-14T13:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T14:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T15:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T16:00:00.000Z"
+          },
+          {
+            "count": 8,
+            "key": "ledger",
+            "start": "2026-09-14T17:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T18:00:00.000Z"
+          },
+          {
+            "count": 1,
+            "key": "ledger",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "payment-api",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "provider-adapter",
+            "start": "2026-09-14T19:00:00.000Z"
+          },
+          {
+            "count": 5,
+            "key": "ledger",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T20:00:00.000Z"
+          },
+          {
+            "count": 2,
+            "key": "ledger",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "payment-api",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 4,
+            "key": "provider-adapter",
+            "start": "2026-09-14T21:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "ledger",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "payment-api",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 6,
+            "key": "provider-adapter",
+            "start": "2026-09-14T22:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "ledger",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "payment-api",
+            "start": "2026-09-14T23:00:00.000Z"
+          },
+          {
+            "count": 3,
+            "key": "provider-adapter",
+            "start": "2026-09-14T23:00:00.000Z"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -58,8 +58,6 @@ const MC_18_NO_SOURCES = 'Ресерч завершён. Ответ из зна�
 const MC_31 = 'Источники данных не подключены — ответ будет из знаний модели.';
 const MC_32 = 'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.';
 const MC_33 = 'из знаний модели, без источника';
-const MC_34 = 'Краткий пересказ — основания в утверждениях ниже';
-const SUMMARY = 'Расходы выросли из-за новых кластеров.';
 
 type ChatReply = (body: unknown) => Response | Promise<Response>;
 
@@ -375,8 +373,6 @@ describe('Shell: polling the research state and appending the answer in the open
       expect(within(drawn).getByRole('heading', { name: 'Ответ ресерча' })).toBeInTheDocument();
       expect(within(drawn).getByText('Есть ответ')).toBeInTheDocument();
       expect(within(drawn).getByText(GOAL_A)).toBeInTheDocument();
-      expect(within(drawn).getByText(SUMMARY)).toBeInTheDocument();
-      expect(within(drawn).getByText(MC_34)).toBeInTheDocument();
       expect(within(drawn).getByRole('heading', { name: 'Установлено' })).toBeInTheDocument();
       expect(within(drawn).getByRole('link', { name: 'Источник 1' })).toBeInTheDocument();
       expect(within(drawn).getByRole('button', { name: 'Источники (1)' })).toBeInTheDocument();
@@ -599,8 +595,8 @@ describe('Shell: polling the research state and appending the answer in the open
           launch: { messageId: 'u-a' },
           sourceMode: 'model_knowledge',
           assumed: [
-            { text: CLAIM_1, footnotes: [], verified: false },
-            { text: CLAIM_2, footnotes: [], verified: false },
+            { text: CLAIM_1, footnotes: [], verified: false, confidence: null, causal: false },
+            { text: CLAIM_2, footnotes: [], verified: false, confidence: null, causal: false },
           ],
         },
         STORED_TEXT,

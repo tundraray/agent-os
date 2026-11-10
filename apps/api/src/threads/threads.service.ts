@@ -102,9 +102,11 @@ export class ThreadsService {
   }
 
   /**
-   * Runs `fn` under the thread's `ThreadWriteLock` after the ownership check
-   * made under the same lock, so a write tied to the thread (an investigation
-   * of `research`) is serialised with the thread's delete: it either sees the
+   * Runs `fn` under the thread's `ThreadWriteLock` after the ownership check,
+   * made once before the lock and again under it. The first check keeps a
+   * made-up or foreign `threadId` from taking a lock-pool connection or an
+   * advisory lock; the second serialises a write tied to the thread (an
+   * investigation of `research`) with the thread's delete: it either sees the
    * thread gone (404) or lands before the delete's purge. Missing and foreign
    * threads raise the ownership 404 and `fn` is not called.
    */
@@ -113,6 +115,7 @@ export class ThreadsService {
     userId: string,
     fn: () => Promise<T>,
   ): Promise<T> {
+    await this.getOwnedThread(threadId, userId);
     return this.lock.run(threadId, async () => {
       await this.getOwnedThread(threadId, userId);
       return fn();

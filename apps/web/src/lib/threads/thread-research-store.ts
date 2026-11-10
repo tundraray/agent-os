@@ -29,8 +29,18 @@ export type ThreadResearchState = {
 };
 
 export type ThreadResearchDeps = {
-  api: Pick<ThreadsApiClient, "getThreadResearch" | "getThreadMessages">;
+  api: Pick<ThreadsApiClient, "getThreadResearch" | "getThreadMessages" | "stopResearch">;
 };
+
+/**
+ * How a stop ended (design-web.md, Contract `ThreadResearch.stop`): `applied` — the answer's view stands in `launches`;
+ * `refused` — the request failed or timed out and one state read was started; `stale` — the store shows another thread
+ * or is closed, nothing applied.
+ */
+export type ThreadResearchStopOutcome =
+  | { outcome: "applied"; launch: ResearchLaunchView }
+  | { outcome: "refused" }
+  | { outcome: "stale" };
 
 /** What the open tab's feed holds when the answers are checked (KD-6). */
 export type AnswerFeed = {
@@ -55,6 +65,8 @@ export type ThreadResearch = {
    * once and hands the missing answers, in their stored order, to `append`. A failed read is retried after one period.
    */
   appendMissingAnswers: (feed: AnswerFeed, append: (answers: UIMessage[]) => void) => void;
+  /** Stops a launch of the open thread and applies the answer as a read result (KD-3); never throws. */
+  stop: (launchKey: string) => Promise<ThreadResearchStopOutcome>;
 };
 
 const EMPTY: Pick<ThreadResearchState, "threadId" | "launches" | "announcements"> = {
@@ -105,6 +117,11 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let readAgain = false;
+  /**
+   * Bumped whenever a stop answer is applied: a read that began before it may carry the state the stop replaced, so its
+   * result is dropped and the thread is read again (invariant 4).
+   */
+  let stopsApplied = 0;
   /** False until the first successful read of the open thread: the states it finds are not events. */
   let baselineTaken = false;
   /** The last event seen per launch, so each event is announced once. */
@@ -118,31 +135,49 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
     timer = undefined;
   };
 
-  const announce = (launches: readonly ResearchLaunchView[]): ResearchAnnouncement[] => {
+  /**
+   * `stoppedKey` — the launch a stop answer brought: its state is the user's own action, an event even before the
+   * first read. Only a read takes the baseline, so the states that read finds for other launches stay silent.
+   */
+  const announce = (launches: readonly ResearchLaunchView[], stoppedKey?: string): ResearchAnnouncement[] => {
     const events: ResearchAnnouncement[] = [];
     const seen = new Map<string, ResearchAnnouncementKind | null>();
     for (const launch of launches) {
       const kind = eventOf(launch);
       seen.set(launch.launchKey, kind);
-      if (!baselineTaken || kind === null || lastEvent.get(launch.launchKey) === kind) continue;
+      const counts = baselineTaken || launch.launchKey === stoppedKey;
+      if (!counts || kind === null || lastEvent.get(launch.launchKey) === kind) continue;
       events.push({ id: nextAnnouncementId++, kind, launchKey: launch.launchKey, sourceMode: launch.sourceMode });
     }
     lastEvent = seen;
-    baselineTaken = true;
+    if (stoppedKey === undefined) baselineTaken = true;
     return events;
+  };
+
+  /** Puts launches in the store and announces their events by the one rule both reads and stop answers follow. */
+  const apply = (launches: readonly ResearchLaunchView[], stoppedKey?: string): void => {
+    const events = announce(launches, stoppedKey);
+    store.setState(events.length > 0 ? { launches, announcements: events } : { launches });
   };
 
   const read = async (threadId: string, readGeneration: number): Promise<void> => {
     let pollOn = store.getState().launches.some(keepsPollAlive);
+    const stopsBefore = stopsApplied;
+    const outdated = (): boolean => stopsApplied !== stopsBefore;
     try {
       const { launches } = await api.getThreadResearch(threadId);
       if (readGeneration !== generation) return;
-      const events = announce(launches);
-      store.setState(events.length > 0 ? { launches, announcements: events } : { launches });
-      pollOn = launches.some(keepsPollAlive);
+      if (outdated()) {
+        readAgain = true;
+      } else {
+        apply(launches);
+        pollOn = launches.some(keepsPollAlive);
+      }
     } catch (error) {
       if (readGeneration !== generation) return;
-      if (isThreadsApiError(error) && error.kind === "not_found") {
+      if (outdated()) {
+        readAgain = true;
+      } else if (isThreadsApiError(error) && error.kind === "not_found") {
         // The thread is gone: nothing more to poll and no launches to show.
         store.setState({ launches: [] });
         pollOn = false;
@@ -218,6 +253,31 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
     void readAnswers(threadId, generation, new Set(wanted), append);
   };
 
+  const stop = async (launchKey: string): Promise<ThreadResearchStopOutcome> => {
+    const { threadId } = store.getState();
+    if (threadId === null) return { outcome: "stale" };
+    const stopGeneration = generation;
+    let launch: ResearchLaunchView;
+    try {
+      launch = await api.stopResearch(threadId, launchKey);
+    } catch (error) {
+      if (stopGeneration !== generation) return { outcome: "stale" };
+      console.warn("[deep-research] research stop request failed", { threadId, ...describeThreadsError(error) });
+      // The stop may have been applied before the failure: one read shows the launch as the server has it (KD-4).
+      start(threadId);
+      return { outcome: "refused" };
+    }
+    if (stopGeneration !== generation) return { outcome: "stale" };
+    const { launches } = store.getState();
+    const known = launches.some((item) => item.launchKey === launchKey);
+    stopsApplied += 1;
+    apply(
+      known ? launches.map((item) => (item.launchKey === launchKey ? launch : item)) : [...launches, launch],
+      launchKey,
+    );
+    return { outcome: "applied", launch };
+  };
+
   const close = (): void => {
     generation += 1;
     stopTimer();
@@ -243,6 +303,7 @@ export function createThreadResearch({ api }: ThreadResearchDeps): ThreadResearc
     },
     close,
     appendMissingAnswers,
+    stop,
   };
 }
 

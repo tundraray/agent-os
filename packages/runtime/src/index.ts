@@ -1,4 +1,5 @@
 export { type CancelTimer, type Clock, systemClock } from './clock.js';
+export { computeDedupKey, type DedupKeySource } from './dedup-key.js';
 export {
   createRuntime,
   type Runtime,

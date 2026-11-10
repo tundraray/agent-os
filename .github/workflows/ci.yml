@@ -98,6 +98,8 @@ jobs:
       - run: pnpm --filter @agent-os/sources test:e2e
       - run: pnpm --filter api test:e2e:runtime
       - run: pnpm --filter api test:e2e:chat-entry
+      - run: pnpm --filter api test:e2e:lifecycle
+      - run: pnpm --filter api test:e2e:research-flow
 
   # Research engine against a real Postgres 16 (design-engine.md, Test Strategy): its own job with
   # its own database, so the engine suite never shares rows with the runtime suites above. The

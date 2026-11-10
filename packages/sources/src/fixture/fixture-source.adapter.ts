@@ -117,6 +117,7 @@ export interface FixtureSourceAdapterOptions {
 function fixtureEnv(fixture: FixtureSettings): Record<string, string> {
   return {
     FIXTURE_DATASET: fixture.dataset,
+    ...(fixture.scenario === null ? {} : { FIXTURE_SCENARIO: fixture.scenario }),
     ...(fixture.faultsPath === null ? {} : { FIXTURE_FAULTS: fixture.faultsPath }),
     ...(fixture.callLogPath === null ? {} : { FIXTURE_CALL_LOG: fixture.callLogPath }),
   };

@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { canonicalJson } from './canonical-json.js';
-import { DatasetVersionSchema } from './versions.js';
+import { LogDatasetVersionSchema } from './versions.js';
 
 /**
  * Opaque fixture cursor: base64url of canonical JSON with the dataset version and snapshot the page came from,
  * the hash of the query it continues and the offset of the next record among the query's matches.
  */
 const CursorPayloadSchema = z.strictObject({
-  datasetVersion: DatasetVersionSchema,
+  datasetVersion: LogDatasetVersionSchema,
   snapshot: z.string().min(1),
   queryHash: z.string().regex(/^[0-9a-f]{64}$/),
   offset: z.int().min(0),

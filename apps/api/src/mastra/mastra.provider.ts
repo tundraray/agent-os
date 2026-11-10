@@ -6,6 +6,10 @@ import { PostgresStore } from '@mastra/pg';
 import { createDeepResearchTool } from '../research-chat/deep-research.tool.js';
 import { DEEP_RESEARCH_TOOL } from '../research-chat/research-turn.js';
 import { ResearchLaunchService } from '../research-chat/research-launch.service.js';
+import {
+  createStopResearchTool,
+  STOP_RESEARCH_TOOL,
+} from '../research-chat/stop-research.tool.js';
 import { createAssistantAgent } from './agents/assistant.agent.js';
 import { MASTRA } from './mastra.constants.js';
 import { parseModelId, type ReasoningEffort } from './models.js';
@@ -23,6 +27,9 @@ export const mastraProvider: Provider = {
             // Resolved when the tool runs: the service's own dependencies reach back to MASTRA, so neither module
             // imports the other (design-chat-entry.md, C3 api).
             [DEEP_RESEARCH_TOOL]: createDeepResearchTool(() =>
+              moduleRef.get(ResearchLaunchService, { strict: false }),
+            ),
+            [STOP_RESEARCH_TOOL]: createStopResearchTool(() =>
               moduleRef.get(ResearchLaunchService, { strict: false }),
             ),
           },

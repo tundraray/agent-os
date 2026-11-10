@@ -3,8 +3,12 @@ import type { MastraDBMessage, StorageThreadType } from '@mastra/core/memory';
 import { Memory } from '@mastra/memory';
 import type { MockInstance } from 'vitest';
 import { ThreadDeletionHooks } from './thread-deletion-hooks.js';
-import { ThreadRunRegistry } from './thread-run-registry.js';
-import { ThreadWriteLock } from './thread-write-lock.js';
+import {
+  type ThreadRunClock,
+  type ThreadRunMarks,
+  ThreadRunRegistry,
+} from './thread-run-registry.js';
+import { type ThreadLockPool, ThreadWriteLock } from './thread-write-lock.js';
 import type { ThreadTitleAgent } from './thread-title.agent.js';
 import {
   ThreadTitleService,
@@ -12,6 +16,23 @@ import {
   type ThreadTitleResult,
 } from './thread-title.service.js';
 import { ThreadsService } from './threads.service.js';
+
+/** The run registry of a service whose tests register no chat run: its marks and clock are never reached. */
+const idleRunRegistry = () =>
+  new ThreadRunRegistry({
+    settleTimeoutMs: 5_000,
+    marks: {} as ThreadRunMarks,
+    clock: {} as ThreadRunClock,
+  });
+
+/** A lock pool double granting every advisory lock at once (the lock itself: thread-write-lock.spec.ts). */
+const grantedLocks: ThreadLockPool = {
+  connect: () =>
+    Promise.resolve({
+      query: () => Promise.resolve({}),
+      release: () => undefined,
+    }),
+};
 
 const TIMEOUT_MS = 20;
 /** For cases that hold the model answer open: long enough not to time out. */
@@ -98,7 +119,7 @@ function setup(options: {
     first: options.first,
   });
   const generate = vi.fn<Generate>(options.generate);
-  const lock = new ThreadWriteLock();
+  const lock = new ThreadWriteLock(grantedLocks);
   const service = new ThreadTitleService(
     store.memory,
     { generate },
@@ -108,7 +129,7 @@ function setup(options: {
   const threads = new ThreadsService(
     store.memory,
     lock,
-    new ThreadRunRegistry(5_000),
+    idleRunRegistry(),
     new ThreadDeletionHooks(),
     5_000,
   );

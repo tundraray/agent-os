@@ -5,7 +5,9 @@ import {
   type Investigation,
   type InvestigationSpec,
   InvestigationSpecSchema,
+  type InvestigationStatus,
   InvestigationStatusSchema,
+  type RuntimeEventType,
   RuntimeEventTypeSchema,
   type Task,
   TaskOutcomeSchema,
@@ -36,8 +38,26 @@ import { RunningTaskRegistry } from './running-task.registry.js';
 import { type InvestigationRow, TaskRepository } from './task.repository.js';
 
 const { queued, running, waiting, cancelled } = TaskStatusSchema.enum;
-const { active, deleting } = InvestigationStatusSchema.enum;
-const { InvestigationCancelled, TaskCancelled } = RuntimeEventTypeSchema.enum;
+const { active, deleting, cancelled: investigationCancelled } =
+  InvestigationStatusSchema.enum;
+const {
+  InvestigationCancelled,
+  InvestigationCompleted,
+  InvestigationFailed,
+  TaskCancelled,
+} = RuntimeEventTypeSchema.enum;
+
+/** The statuses `closeInTx` closes an investigation with (KD-1). */
+type ClosedStatus = Extract<InvestigationStatus, 'completed' | 'failed'>;
+/** The statuses that end an `active` investigation and its unfinished tasks. */
+type EndStatus = ClosedStatus | 'cancelled';
+
+/** The event each end of an investigation writes. */
+const END_EVENTS = {
+  cancelled: InvestigationCancelled,
+  completed: InvestigationCompleted,
+  failed: InvestigationFailed,
+} as const satisfies Record<EndStatus, RuntimeEventType>;
 
 /** No investigation with this id for the owner. */
 class InvestigationNotFoundError extends Error {
@@ -190,18 +210,59 @@ export class InvestigationService {
       );
     }
     if (investigation.status !== active) return undefined;
+    return this.endInTx(tx, investigationId, investigationCancelled);
+  }
 
+  /**
+   * Closes an `active` investigation in the caller's transaction — the delivery transaction of the
+   * event that ended its controller task (KD-1): the investigation FOR NO KEY UPDATE, then its
+   * unfinished tasks by `task_id`, as `cancel`. It becomes `completed` or `failed` with its
+   * `InvestigationCompleted` or `InvestigationFailed` event; `queued` and `waiting` tasks end
+   * `cancelled` with `cancel_requested`, `running` ones get `cancel_requested_at`. An investigation
+   * that is not `active` (missing, already closed or stopped) is left as it is, so a repeated
+   * delivery changes nothing. Attempts of this process are not aborted here: the heartbeat ends them.
+   *
+   * No owner check: `investigationId` must be the id of a server-written event (the one the
+   * consumer is delivering), never a value from a request. The only caller is the engine's
+   * `engine.lifecycle` consumer, registered through `Runtime.eventConsumers`; the API's
+   * services do not call it.
+   */
+  async closeInTx(
+    tx: RuntimeTx,
+    investigationId: string,
+    status: ClosedStatus,
+  ): Promise<void> {
+    const investigation = await this.tasks.lockInvestigation(
+      tx,
+      investigationId,
+    );
+    if (investigation?.status !== active) return;
+    const summary = await this.endInTx(tx, investigationId, status);
+    this.logger.log(
+      `investigation closed investigationId=${investigationId} status=${status} cancelledTasks=${summary.cancelledTasks} cancelRequestedTasks=${summary.cancelRequestedTasks}`,
+    );
+  }
+
+  /**
+   * Moves the locked `active` investigation to `status` with its event and ends its unfinished
+   * tasks: `running` ones get a cancel request, the others end `cancelled`, caused by that event.
+   */
+  private async endInTx(
+    tx: RuntimeTx,
+    investigationId: string,
+    status: EndStatus,
+  ): Promise<CancelSummary> {
     const [row] = await tx
       .update(researchInvestigations)
       .set({
-        status: InvestigationStatusSchema.enum.cancelled,
+        status,
         revision: sql`${researchInvestigations.revision} + 1`,
         updatedAt: this.clock.now(),
       })
       .where(eq(researchInvestigations.investigationId, investigationId))
       .returning();
-    const cancelEvent = await this.events.append(tx, {
-      type: InvestigationCancelled,
+    const endEvent = await this.events.append(tx, {
+      type: END_EVENTS[status],
       investigationId,
       taskId: null,
       causationId: null,
@@ -231,7 +292,7 @@ export class InvestigationService {
       if (task.status === running) {
         if (await this.requestCancel(tx, task))
           summary.cancelRequestedTasks += 1;
-      } else if (await this.cancelTask(tx, task, cancelEvent.eventId)) {
+      } else if (await this.cancelTask(tx, task, endEvent.eventId)) {
         summary.cancelledTasks += 1;
       }
     }

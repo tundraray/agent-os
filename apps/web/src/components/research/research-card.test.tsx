@@ -8,6 +8,8 @@ import { ResearchCard, type ResearchCardAction, type ResearchCardDecisionError, 
 const GOAL = 'Почему выросли расходы на облако';
 const MC_31 = 'Источники данных не подключены — ответ будет из знаний модели.';
 const MC_30 = 'Доступно, когда агент закончит ответ.';
+const MC_4 = 'Ресерч ещё запускается. Остановите его через несколько секунд.';
+const MC_16 = 'Не удалось остановить ресерч. Попробуйте ещё раз.';
 
 type CardCase = {
   name: string;
@@ -107,25 +109,58 @@ describe('ResearchCard — MC-31 by the launch mode', () => {
   });
 });
 
-// UXRD KD-8, MC-30: while a reply streams, every decision button stays in the Tab order, is aria-disabled, reads MC-30 and does nothing.
-describe('ResearchCard — decisions unavailable while a reply streams', () => {
-  it.each([
-    { name: '«Запустить»', launch: { mode: 'proposal', state: 'proposed' }, button: 'Запустить' },
-    { name: '«Не нужно»', launch: { mode: 'proposal', state: 'proposed' }, button: 'Не нужно' },
-    { name: '«Остановить»', launch: { state: 'running' }, button: 'Остановить' },
-  ] as const)('$name', async ({ launch, button }) => {
-    const user = userEvent.setup();
-    const { onDecision } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', ...launch }), replyStreaming: true });
-    const target = screen.getByRole('button', { name: button });
+// U-3 — DC-7, DC-9 and DC-10 (card side), UC-E10, Invariants 1 and 2 (design-web, Contract «ResearchCard»; UXRD KD-5, KD-6; deep-research
+// UXRD KD-8, MC-30). Catches: «Остановить» dead while a reply streams; MC-4 as an alert; MC-4 surviving a press or a change of state.
+describe('ResearchCard — U-3: with replyStreaming only «Запустить» and «Не нужно» are unavailable', () => {
+  const CONFIRMATION = 'Остановить ресерч? Ответа не будет, потраченный бюджет не вернётся.';
 
-    expect(target).toHaveAttribute('aria-disabled', 'true');
-    expect(target).toHaveAccessibleDescription(MC_30);
-    await user.click(target);
+  it('«Запустить» and «Не нужно» stay in the Tab order, are aria-disabled, read MC-30 and do nothing', async () => {
+    const user = userEvent.setup();
+    const { onDecision } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', mode: 'proposal', state: 'proposed' }), replyStreaming: true });
+
+    for (const name of ['Запустить', 'Не нужно']) {
+      await user.tab();
+      const target = screen.getByRole('button', { name });
+      expect(target).toHaveFocus();
+      expect(target).toHaveAttribute('aria-disabled', 'true');
+      expect(target).toHaveAccessibleDescription(MC_30);
+      await user.click(target);
+    }
     expect(onDecision).not.toHaveBeenCalled();
-    expect(screen.queryByText('Остановить ресерч? Ответа не будет, потраченный бюджет не вернётся.')).toBeNull();
   });
 
-  it('the confirmed «Остановить» is unavailable while «Продолжить» still works', async () => {
+  type User = ReturnType<typeof userEvent.setup>;
+  it.each<{ name: string; leave: (user: User) => Promise<void>; decision: ResearchCardAction | null }>([
+    { name: '«Продолжить» returns the row and focus to «Остановить»', leave: (user) => user.click(screen.getByRole('button', { name: 'Продолжить' })), decision: null },
+    { name: 'Esc returns the row and focus to «Остановить»', leave: (user) => user.keyboard('{Escape}'), decision: null },
+    { name: 'the confirmed «Остановить» reports stop and focuses the card', leave: (user) => user.click(screen.getAllByRole('button', { name: 'Остановить' })[0]), decision: 'stop' },
+  ])('$name', async ({ leave, decision }) => {
+    const user = userEvent.setup();
+    const { onDecision, card } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', state: 'running' }), replyStreaming: true });
+    const stop = screen.getByRole('button', { name: 'Остановить' });
+    expect(stop).not.toHaveAttribute('aria-disabled');
+    expect(stop).not.toHaveAccessibleDescription();
+
+    await user.click(stop);
+    expect(screen.getByText(CONFIRMATION)).toBeInTheDocument();
+    for (const button of within(card).getAllByRole('button')) {
+      expect(button).not.toHaveAttribute('aria-disabled');
+      expect(button).not.toHaveAccessibleDescription();
+    }
+    expect(screen.getByRole('button', { name: 'Продолжить' })).toHaveFocus();
+    await leave(user);
+
+    if (decision === null) {
+      expect(screen.queryByText(CONFIRMATION)).toBeNull();
+      expect(screen.getByRole('button', { name: 'Остановить' })).toHaveFocus();
+      expect(onDecision).not.toHaveBeenCalled();
+    } else {
+      expect(onDecision).toHaveBeenCalledExactlyOnceWith(decision);
+      expect(card).toHaveFocus();
+    }
+  });
+
+  it('the confirmed «Остановить» still works when a reply starts streaming while the confirmation is open', async () => {
     const user = userEvent.setup();
     const onDecision = vi.fn();
     const launch = researchLaunchView({ launchKey: 'k1', state: 'running' });
@@ -134,12 +169,49 @@ describe('ResearchCard — decisions unavailable while a reply streams', () => {
     rerender(<ResearchCard launch={launch} replyStreaming onDecision={onDecision} />);
 
     const confirm = screen.getAllByRole('button', { name: 'Остановить' })[0];
-    expect(confirm).toHaveAttribute('aria-disabled', 'true');
-    expect(confirm).toHaveAccessibleDescription(MC_30);
+    expect(confirm).not.toHaveAttribute('aria-disabled');
+    expect(confirm).not.toHaveAccessibleDescription();
     await user.click(confirm);
-    expect(onDecision).not.toHaveBeenCalled();
+    expect(onDecision).toHaveBeenCalledExactlyOnceWith('stop');
+  });
+
+  // The line after a stop: MC-4 politely (no alert) and gone after the row's «Остановить» until a new value; MC-16 an alert, as before.
+  it.each([
+    { error: 'still_launching', text: MC_4, alert: false, survivesPress: false },
+    { error: 'stop_failed', text: MC_16, alert: true, survivesPress: true },
+  ] as const)('$error: the line, its role, the press and a new value', async ({ error, text, alert, survivesPress }) => {
+    const user = userEvent.setup();
+    const launch = researchLaunchView({ launchKey: 'k1', state: 'running' });
+    const card = (decisionError: ResearchCardDecisionError | null) => (
+      <ResearchCard launch={launch} decisionError={decisionError} replyStreaming onDecision={vi.fn()} />
+    );
+    const { rerender } = render(card(error));
+
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.getByText(text).closest('[role="alert"]') !== null).toBe(alert);
+
+    await user.click(screen.getByRole('button', { name: 'Остановить' }));
     await user.click(screen.getByRole('button', { name: 'Продолжить' }));
-    expect(screen.getByRole('button', { name: 'Остановить' })).toHaveFocus();
+    expect(screen.queryByText(text) !== null).toBe(survivesPress);
+    rerender(card(error));
+    expect(screen.queryByText(text) !== null).toBe(survivesPress);
+
+    rerender(card(null));
+    rerender(card(error));
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
+
+  it.each<CardCase>([
+    { name: 'still_launching, proposal', launch: { mode: 'proposal', state: 'proposed' }, decisionError: 'still_launching' },
+    { name: 'still_launching, stopping', launch: { state: 'running' }, pendingDecision: 'stop', decisionError: 'still_launching' },
+    { name: 'still_launching, completed', launch: { state: 'completed', answerMessageId: 'm-answer' }, decisionError: 'still_launching' },
+    { name: 'still_launching, stopped', launch: { state: 'stopped' }, decisionError: 'still_launching' },
+    { name: 'stop_failed, stopping', launch: { state: 'running' }, pendingDecision: 'stop', decisionError: 'stop_failed' },
+    { name: 'stop_failed, stopped', launch: { state: 'stopped' }, decisionError: 'stop_failed' },
+  ])('$name: no line outside «Идёт»', ({ launch, pendingDecision, decisionError }) => {
+    const { card } = renderCard({ launch: researchLaunchView({ launchKey: 'k1', ...launch }), pendingDecision, decisionError, replyStreaming: true });
+    expect(within(card).queryByText(MC_4)).toBeNull();
+    expect(within(card).queryByText(MC_16)).toBeNull();
   });
 });
 

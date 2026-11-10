@@ -7,6 +7,9 @@ dist/
 *.log
 *.tsbuildinfo
 
+# Run directories of the self-check program (default reports directory)
+apps/api/self-check-reports/
+
 # Claude Code agent memory (local)
 .claude/agent-memory/
 .playwright-mcp

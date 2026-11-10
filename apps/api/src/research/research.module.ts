@@ -32,8 +32,11 @@ import {
 } from './research.tokens.js';
 import { runtimeSettingsVariables } from './runtime-settings.js';
 
-/** Runtime Settings parsed from the environment; internal to this module. */
-const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
+/**
+ * Runtime Settings parsed from the environment. Exported for `EngineModule`, which passes their `leaseMs` to
+ * `createEngine` and checks the agent deadline margin against it (design-agent-core.md, Runtime Settings).
+ */
+export const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
 
 /**
  * Composition root of the research runtime (ADR-0001, ADR-0004): it reads the environment,
@@ -84,7 +87,12 @@ const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
           logger: new NestRuntimeLogger('ResearchRuntime'),
           clock,
         }),
-      inject: [RESEARCH_DATABASE, RUNTIME_SETTINGS, ThreadsService, RUNTIME_CLOCK],
+      inject: [
+        RESEARCH_DATABASE,
+        RUNTIME_SETTINGS,
+        ThreadsService,
+        RUNTIME_CLOCK,
+      ],
     },
     {
       provide: HANDLER_REGISTRY,
@@ -97,6 +105,7 @@ const RUNTIME_SETTINGS = Symbol('RUNTIME_SETTINGS');
     HANDLER_REGISTRY,
     RUNTIME_CLOCK,
     RESEARCH_DATABASE,
+    RUNTIME_SETTINGS,
   ],
 })
 export class ResearchModule

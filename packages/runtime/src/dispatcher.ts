@@ -50,6 +50,7 @@ import {
   loadUpstream,
 } from './task-context.js';
 import { TaskScheduler } from './task-scheduler.js';
+import { attemptLimit } from './task-limits.js';
 import { checkTaskSpec } from './task-spec.js';
 import { TaskRepository } from './task.repository.js';
 
@@ -99,7 +100,12 @@ type AttemptOutcome =
   /** `waiting` on the tasks of `waitFor`, whose edges `registerWait` recorded. */
   | { kind: 'wait'; waitFor: string[] }
   /** The lease is lost: nothing is written. */
-  | { kind: 'dropped' };
+  | { kind: 'dropped' }
+  /**
+   * The attempt ran past its limit: its lease is made expired and nothing else is written, so the
+   * collector retries or fails the task by the rules of a lost attempt (KD-3, Flow 4).
+   */
+  | { kind: 'expired' };
 
 /** What `TaskHandler.run` did before the outcome is decided. */
 type Execution =
@@ -151,7 +157,8 @@ export const CANCELLED_EVENT_PAYLOAD = {
 /**
  * Outcome of an execution (Data Contract, Dispatcher: итог попытки). An abort decides regardless
  * of the handler's result or exception: `deadline` fails with class `deadline`, `cancelled`
- * cancels, `shutdown` releases to `queued`, `lease_lost` writes nothing.
+ * cancels, `shutdown` releases to `queued`, `lease_lost` writes nothing, `attempt_timeout` expires
+ * the lease.
  */
 function decideOutcome(execution: Execution): AttemptOutcome {
   switch (execution.kind) {
@@ -178,6 +185,8 @@ function outcomeOfAbort(reason: AbortReasonKind): AttemptOutcome {
   switch (reason) {
     case 'lease_lost':
       return { kind: 'dropped' };
+    case 'attempt_timeout':
+      return { kind: 'expired' };
     case 'shutdown':
       return { kind: 'released' };
     case 'deadline':
@@ -229,6 +238,9 @@ function outcomeOfResult(value: unknown): AttemptOutcome {
     case 'wait':
       // The schema requires a non-empty `waitFor` for kind `wait`.
       return { kind: 'wait', waitFor: [...new Set(result.waitFor)] };
+    case 'yield':
+      // Written as a graceful release: back to `queued`, attempt counters settled, no outcome.
+      return { kind: 'released' };
   }
 }
 
@@ -244,7 +256,7 @@ const whenAborted = (signal: AbortSignal): Promise<void> =>
  * when a slot frees — claims ready tasks while slots (`RUNTIME_CONCURRENCY`) are free: `queued`,
  * investigation `active`, type and version registered here, no `depends_on` edge to a task not
  * `succeeded`; `FOR UPDATE OF … SKIP LOCKED`, lease, `TaskStarted`. Each attempt runs its handler
- * outside any transaction with an `AbortSignal` (deadline, heartbeat, shutdown) and ends with
+ * outside any transaction with an `AbortSignal` (attempt limit, deadline, heartbeat, shutdown) and ends with
  * one guarded write of its outcome and event.
  */
 export class Dispatcher {
@@ -488,14 +500,14 @@ export class Dispatcher {
             kind: 'threw' as const,
             error: new Error('Handler is no longer registered'),
           };
-      stopTimers();
+      await stopTimers();
       await this.settle(row, decideOutcome(execution));
     } catch (error) {
       this.logger.error(
         `attempt failed investigationId=${row.investigationId} taskId=${row.taskId} attempt=${row.attempt} error=${errorName(error)}`,
       );
     } finally {
-      stopTimers();
+      await stopTimers();
       handle.release();
     }
   }
@@ -546,12 +558,22 @@ export class Dispatcher {
     }
   }
 
-  /** Deadline timer and heartbeat of the attempt; returns their idempotent stop. */
-  private armTimers(row: TaskRow, handle: RunningTaskHandle): () => void {
+  /**
+   * The attempt's limit timer — `RUNTIME_ATTEMPT_MS` or the task's deadline, whichever ends first
+   * (KD-3) — and its heartbeat. Returns their idempotent stop, which resolves once a heartbeat in
+   * flight has ended: no heartbeat extends the lease after the attempt's outcome is written.
+   */
+  private armTimers(
+    row: TaskRow,
+    handle: RunningTaskHandle,
+  ): () => Promise<void> {
     const deadlineAt = row.deadlineAt ?? this.clock.now();
-    const cancelDeadline = this.clock.setTimer(
-      Math.max(deadlineAt.getTime() - this.clock.now().getTime(), 0),
-      () => handle.abort('deadline'),
+    const limit = attemptLimit(
+      this.config.attemptMs,
+      deadlineAt.getTime() - this.clock.now().getTime(),
+    );
+    const cancelLimit = this.clock.setTimer(limit.ms, () =>
+      handle.abort(limit.reason),
     );
     const heartbeat = new Heartbeat(
       {
@@ -566,8 +588,8 @@ export class Dispatcher {
     );
     heartbeat.start();
     return () => {
-      cancelDeadline();
-      heartbeat.stop();
+      cancelLimit();
+      return heartbeat.stop();
     };
   }
 
@@ -578,30 +600,64 @@ export class Dispatcher {
   /** Writes the outcome, retrying a failed commit; after the retries the lease expires (Flow 3). */
   private async settle(row: TaskRow, outcome: AttemptOutcome): Promise<void> {
     const context = `investigationId=${row.investigationId} taskId=${row.taskId} attempt=${row.attempt}`;
-    if (outcome.kind === 'dropped') {
-      this.logger.warn(`lease_lost, outcome not written ${context}`);
-      return;
+    switch (outcome.kind) {
+      case 'dropped':
+        this.logger.warn(`lease_lost, outcome not written ${context}`);
+        return;
+      case 'expired':
+        if (await this.commit(context, (tx) => this.expireLease(tx, row))) {
+          this.logger.warn(`attempt_timeout, lease expired ${context}`);
+        }
+        return;
+      default:
+        this.crashPoints.hit('dispatch.before-terminal');
+        if (
+          await this.commit(context, (tx) => this.writeOutcome(tx, row, outcome))
+        ) {
+          this.crashPoints.hit('dispatch.after-terminal');
+        }
     }
-    this.crashPoints.hit('dispatch.before-terminal');
+  }
+
+  /**
+   * Commits `write`, retrying a failed commit up to {@link OUTCOME_COMMIT_RETRIES} times. `true`
+   * once written; `false` when fenced (the attempt is no longer the task's current one) or the
+   * retries are spent.
+   */
+  private async commit(
+    context: string,
+    write: (tx: RuntimeTx) => Promise<boolean>,
+  ): Promise<boolean> {
     for (let failures = 0; ; failures += 1) {
       try {
-        const written = await this.db.transaction((tx) =>
-          this.writeOutcome(tx, row, outcome),
-        );
-        if (!written) {
-          this.logger.warn(`fenced outcome ${context}`);
-          return;
-        }
-        this.crashPoints.hit('dispatch.after-terminal');
-        return;
+        const written = await this.db.transaction(write);
+        if (!written) this.logger.warn(`fenced outcome ${context}`);
+        return written;
       } catch (error) {
         this.logger.error(
           `outcome commit failed ${context} error=${errorName(error)} retry=${failures + 1}/${OUTCOME_COMMIT_RETRIES}`,
         );
-        if (failures >= OUTCOME_COMMIT_RETRIES) return;
+        if (failures >= OUTCOME_COMMIT_RETRIES) return false;
         await this.pause(backoffDelay(this.config.pollMs, failures + 1));
       }
     }
+  }
+
+  /**
+   * The write of an attempt past its limit (KD-3): guarded by `running` and the attempt, it sets
+   * `lease_expires_at` 1 ms in the past — the collector's `lease_expires_at < now` matches it on
+   * its next pass — and writes nothing else. A retry is the collector's alone (ADR-0001).
+   */
+  private async expireLease(tx: RuntimeTx, row: TaskRow): Promise<boolean> {
+    const expired = await this.tasks.transition(
+      tx,
+      { taskId: row.taskId, from: [running], attempt: row.attempt },
+      {
+        kind: 'set',
+        fields: { leaseExpiresAt: new Date(this.clock.now().getTime() - 1) },
+      },
+    );
+    return expired !== undefined;
   }
 
   /**
@@ -613,7 +669,7 @@ export class Dispatcher {
   private async writeOutcome(
     tx: RuntimeTx,
     claimedRow: TaskRow,
-    outcome: Exclude<AttemptOutcome, { kind: 'dropped' }>,
+    outcome: Exclude<AttemptOutcome, { kind: 'dropped' | 'expired' }>,
   ): Promise<boolean> {
     const proposals =
       outcome.kind === 'succeeded' ? outcome.result.proposedTasks : [];
@@ -676,7 +732,7 @@ export class Dispatcher {
   private async outcomeWrite(
     tx: RuntimeTx,
     current: TaskRow,
-    outcome: Exclude<AttemptOutcome, { kind: 'dropped' }>,
+    outcome: Exclude<AttemptOutcome, { kind: 'dropped' | 'expired' }>,
   ): Promise<OutcomeWrite> {
     if (current.cancelRequestedAt !== null) {
       return this.failureWrite(current, CANCEL_REQUESTED_FAILURE);
@@ -913,6 +969,8 @@ interface HeartbeatDeps {
  */
 class Heartbeat {
   private cancel: CancelTimer | undefined;
+  /** The beat being written, if any. */
+  private beating: Promise<void> | undefined;
   private stopped = false;
   private failures = 0;
   private leaseExpiresAt: Date;
@@ -929,14 +987,20 @@ class Heartbeat {
     this.next(this.deps.config.heartbeatMs);
   }
 
-  stop(): void {
+  /** Stops beating; resolves once a beat in flight has ended. */
+  async stop(): Promise<void> {
     this.stopped = true;
     this.cancel?.();
+    await this.beating;
   }
 
   private next(delayMs: number): void {
     if (this.stopped || this.handle.signal.aborted) return;
-    this.cancel = this.deps.clock.setTimer(delayMs, () => void this.beat());
+    this.cancel = this.deps.clock.setTimer(delayMs, () => {
+      this.beating = this.beat().finally(() => {
+        this.beating = undefined;
+      });
+    });
   }
 
   private async beat(): Promise<void> {

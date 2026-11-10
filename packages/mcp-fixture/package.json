@@ -6,11 +6,17 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "ground-truth",
+    "scenario-sets"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "oxlint --deny-warnings src/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "generate": "tsc -p tsconfig.json && node dist/generate-ground-truth.js"
+    "test": "vitest run",
+    "generate": "tsc -p tsconfig.build.json && node dist/generate-ground-truth.js"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
@@ -19,7 +25,8 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "oxlint": "^1.90.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.2"
   },
   "exports": {
     ".": {

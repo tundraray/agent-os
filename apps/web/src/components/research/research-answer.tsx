@@ -10,7 +10,12 @@ import {
   TelescopeIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
-import type { ResearchAnswerClaim, ResearchAnswerMetadata, ResearchAnswerSource } from '@agent-os/contracts';
+import type {
+  ResearchAnswerClaim,
+  ResearchAnswerConfidence,
+  ResearchAnswerMetadata,
+  ResearchAnswerSource,
+} from '@agent-os/contracts';
 import { cn } from 'cn';
 
 export type ResearchAnswerProps = {
@@ -34,6 +39,14 @@ const STOP_REASON = {
   context_overflow: 'Остановлен: материала больше, чем агент может учесть',
 } as const satisfies Record<NonNullable<ResearchAnswerMetadata['stopReason']>, string>;
 
+/** Group words of a claim (agent-quality UXRD, MC-1; design-web.md, KD-6): words only, no score. */
+const CONFIDENCE_WORDS = {
+  very_high: 'уверенность очень высокая',
+  high: 'уверенность высокая',
+  medium: 'уверенность средняя',
+  low: 'уверенность низкая',
+} as const satisfies Record<ResearchAnswerConfidence, string>;
+
 const GROUPS = [
   { key: 'established', title: 'Установлено' },
   { key: 'assumed', title: 'Предположения' },
@@ -50,8 +63,6 @@ export function ResearchAnswer({ answer, onShowLaunch }: ResearchAnswerProps) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const withoutSources = answer.sourceMode === 'model_knowledge';
   const groups = GROUPS.map((group) => ({ ...group, claims: answer[group.key] })).filter((group) => group.claims.length > 0);
-  // The summary retells the claims; with none there is nothing to retell (UXRD KD-11).
-  const summary = groups.length > 0 ? answer.summary : null;
   const sourceRecordId = (number: number) => `${idPrefix}-source-${number}`;
 
   const showSource = (number: number) => {
@@ -76,10 +87,18 @@ export function ResearchAnswer({ answer, onShowLaunch }: ResearchAnswerProps) {
         </div>
       )}
 
-      {summary !== null && (
+      {/* Only the engine's items decide the summary; the `summary` string of older messages is never drawn (design-web.md, KD-5). */}
+      {answer.summaryItems.length > 0 && (
         <div className="flex flex-col gap-1">
-          <p className="text-foreground text-base leading-[26px] break-words">{summary}</p>
-          <p className="text-muted-foreground text-xs font-medium">Краткий пересказ — основания в утверждениях ниже</p>
+          <p className="text-muted-foreground text-xs font-medium">Главное из установленного</p>
+          <ul className="flex list-disc flex-col ps-5">
+            {answer.summaryItems.map((item) => (
+              <li key={item.claimId} className="text-foreground text-base leading-[26px] break-words">
+                {item.text}
+                <ConfidenceLabel confidence={item.confidence} />
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -188,17 +207,40 @@ function Claim({
               </a>
             </span>
           ))}
-          {!claim.verified && (
-            <>
-              {' '}
-              <span className="border-border text-muted-foreground inline-block rounded-sm border px-1 text-xs font-medium whitespace-nowrap">
-                не проверено
-              </span>
-            </>
+          {claim.confidence !== null && <ConfidenceLabel confidence={claim.confidence} />}
+          {/* A causal claim passed the check, so it never also carries «не проверено»: one framed label at most. */}
+          {claim.causal ? (
+            <FramedLabel>причинная связь не доказана</FramedLabel>
+          ) : (
+            !claim.verified && <FramedLabel>не проверено</FramedLabel>
           )}
         </>
       )}
     </li>
+  );
+}
+
+/** MC-1 after the footnotes or a summary item: muted words without a frame, moved whole to the next line. */
+function ConfidenceLabel({ confidence }: { confidence: ResearchAnswerConfidence }) {
+  return (
+    <>
+      {' '}
+      <span className="text-muted-foreground ms-1 inline-block text-xs font-medium whitespace-nowrap">
+        {CONFIDENCE_WORDS[confidence]}
+      </span>
+    </>
+  );
+}
+
+/** «не проверено» and MC-3: a muted label in a frame, moved whole to the next line. */
+function FramedLabel({ children }: { children: string }) {
+  return (
+    <>
+      {' '}
+      <span className="border-border text-muted-foreground inline-block rounded-sm border px-1 text-xs font-medium whitespace-nowrap">
+        {children}
+      </span>
+    </>
   );
 }
 

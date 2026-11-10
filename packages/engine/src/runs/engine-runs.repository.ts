@@ -1,7 +1,11 @@
 import { type Database, researchEngineRuns, researchInvestigations, researchTasks } from '@agent-os/db';
+import type { RuntimeTx } from '@agent-os/runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import type { ProcessConfig } from '../config/process-config.schema.js';
+import { AGENT_ROOT_WORKFLOW } from '../agents/agent-task-spec.js';
+import type { DefinitionMemorySnapshot } from '../agents/definition-memory.js';
+import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
+import type { SourceSnapshots } from './source-snapshots.js';
 
 export type EngineRunRow = typeof researchEngineRuns.$inferSelect;
 
@@ -10,24 +14,36 @@ export interface NewEngineRun {
   readonly investigationId: string;
   readonly resourceId: string;
   readonly launchKey: string;
-  readonly config: ProcessConfig;
+  readonly config: AgentProcessConfig;
   readonly sourceMode: SourceMode;
   readonly tokenBudget: number;
+  /** The slice of each configured source read at start; written once, with the row (KD-7). */
+  readonly sourceSnapshots: SourceSnapshots;
+  /** The definition memory snapshot of the start (DC-24). */
+  readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
 }
 
-/** An engine row with the statuses the view is derived from. */
+/** An engine row with the investigation's status, which the view's status is derived from. */
 export interface EngineRunStatus {
   readonly run: EngineRunRow;
   readonly investigationStatus: string;
-  /** Null while no controller task is recorded. */
-  readonly controllerTaskStatus: string | null;
 }
 
 /**
  * Queries of `research_engine_runs` (ADR-0003: drizzle-orm). The engine writes only its own table; the runtime's
- * `research_investigations` and `research_tasks` are only read, for the statuses of the view.
+ * `research_investigations` is only read, for the status of the view, and `research_tasks` for the root check.
  */
 export const engineRunsRepository = {
+  /** The engine row with the investigation's thread and query; `undefined` without an engine row. */
+  async readRun(db: Database, investigationId: string) {
+    const [row] = await db
+      .select({ run: researchEngineRuns, threadId: researchInvestigations.threadId, query: researchInvestigations.query })
+      .from(researchEngineRuns)
+      .innerJoin(researchInvestigations, eq(researchInvestigations.investigationId, researchEngineRuns.investigationId))
+      .where(eq(researchEngineRuns.investigationId, investigationId));
+    return row;
+  },
+
   async findByLaunchKey(db: Database, resourceId: string, launchKey: string): Promise<EngineRunRow | undefined> {
     const [row] = await db
       .select()
@@ -64,6 +80,8 @@ export const engineRunsRepository = {
         processConfig: run.config,
         sourceMode: run.sourceMode,
         tokenBudget: run.tokenBudget,
+        sourceSnapshots: run.sourceSnapshots,
+        definitionMemorySnapshot: run.definitionMemorySnapshot,
       })
       .onConflictDoNothing()
       .returning();
@@ -77,20 +95,49 @@ export const engineRunsRepository = {
       .where(eq(researchEngineRuns.investigationId, investigationId));
   },
 
-  /** The owner's engine row with its investigation's and controller task's statuses; `undefined` for another owner. */
+  /**
+   * Whether `taskId` is the main task of an engine investigation, read in the caller's transaction (the delivery
+   * transaction of `engine.lifecycle`): the `agent.root` task of that investigation, which has an engine row
+   * (design-agent-core.md, KD-1). Decided by the task row, not by `controller_task_id`: a root that ends before the
+   * start records its id still closes the investigation. The runtime's `research_tasks` is only read, by its key.
+   */
+  async isControllerTask(tx: RuntimeTx, investigationId: string, taskId: string): Promise<boolean> {
+    const [row] = await tx
+      .select({ taskId: researchTasks.taskId })
+      .from(researchTasks)
+      .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchTasks.investigationId))
+      .where(
+        and(
+          eq(researchTasks.taskId, taskId),
+          eq(researchTasks.investigationId, investigationId),
+          eq(researchTasks.workflowType, AGENT_ROOT_WORKFLOW),
+        ),
+      );
+    return row !== undefined;
+  },
+
+  /** The question of the investigation, as its start recorded it. */
+  async readQuery(db: Database, investigationId: string): Promise<string> {
+    const [row] = await db
+      .select({ query: researchInvestigations.query })
+      .from(researchInvestigations)
+      .where(eq(researchInvestigations.investigationId, investigationId));
+    if (row === undefined) throw new Error(`investigation ${investigationId} is missing`);
+    return row.query;
+  },
+
+  /** The owner's engine row with its investigation's status; `undefined` for another owner. */
   async readStatus(db: Database, investigationId: string, resourceId: string): Promise<EngineRunStatus | undefined> {
     const [row] = await db
       .select({
         run: researchEngineRuns,
         investigationStatus: researchInvestigations.status,
-        controllerTaskStatus: researchTasks.status,
       })
       .from(researchEngineRuns)
       .innerJoin(
         researchInvestigations,
         eq(researchInvestigations.investigationId, researchEngineRuns.investigationId),
       )
-      .leftJoin(researchTasks, eq(researchTasks.taskId, researchEngineRuns.controllerTaskId))
       .where(
         and(eq(researchEngineRuns.investigationId, investigationId), eq(researchEngineRuns.resourceId, resourceId)),
       );

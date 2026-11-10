@@ -8,8 +8,12 @@
 // Primary failure mode (turns red when): the startup check of ResearchModule lets an unapplied migration through, does not name the files,
 // or runs after the api binds its port; or the api does not start on a migrated database. Which files count as pending (an edited applied
 // file, a file timestamped before the last applied one) is the rule of packages/db/src/pending-migrations.spec.ts.
-// Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the api runs from `dist/main.js`
-// (`pnpm --filter api test:e2e:runtime` builds it first). Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
+// Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the refusal rows run the api from
+// `dist/main.js`. The "api starts" row runs the test entry `test/support/apiBootChildMain.ts` (`dist/test-child/`): it starts the api as
+// `main.ts` does, with the test group table in `ENGINE_GROUP_TABLES`, because the server start requires the table of its verifier
+// (`Engine.checkCalibration`, DC-10) and the shipped one comes from the owner's calibration. The refusal rows stay on `dist/main.js`: the
+// migration check of `ResearchModule.onModuleInit` refuses before `EngineModule` looks for a table. `pnpm --filter api test:e2e:runtime`
+// builds both first. Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -43,6 +47,11 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
     const API_ROOT = fileURLToPath(new URL('..', import.meta.url));
     /** `nest build` output, built by `test:e2e:runtime` first. */
     const API_ENTRY = join(API_ROOT, 'dist/main.js');
+    /** `main.ts` with the test group table (`pnpm build:child`, run by `test:e2e:runtime` first). */
+    const BOOT_ENTRY = join(
+      API_ROOT,
+      'dist/test-child/test/support/apiBootChildMain.js',
+    );
     /** A migrator run or an api boot, the scratch database included. */
     const PROCESS_MS = 60_000;
     const ROW_TIMEOUT_MS = 3 * PROCESS_MS;
@@ -174,10 +183,16 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
       }
     }
 
-    function startApi(url: string, port: number): Started {
-      return startProcess(process.execPath, [API_ENTRY], {
+    function startApi(
+      url: string,
+      port: number,
+      entry: string = API_ENTRY,
+      env: Record<string, string> = {},
+    ): Started {
+      return startProcess(process.execPath, [entry], {
         DATABASE_URL: url,
         PORT: String(port),
+        ...env,
       });
     }
 
@@ -209,7 +224,7 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
         const url = await createScratchDatabase();
         await applyMigrations(url);
         const apiPort = await freePort();
-        const api = startApi(url, apiPort);
+        const api = startApi(url, apiPort, BOOT_ENTRY);
         try {
           const status = await within(
             (async () => {
@@ -276,6 +291,39 @@ describe('research-runtime / runtime - E2E-2 boot of the api (real Postgres, chi
           expect(run.exitCode, run.output).not.toBeNull();
           expect(namedMigrations(run.output)).toEqual([...pending].sort());
           // The check ran before `listen`: a listen on the held port would have failed first.
+          expect(run.output).not.toContain('EADDRINUSE');
+        } finally {
+          await new Promise((resolve) => held.close(resolve));
+        }
+      },
+      ROW_TIMEOUT_MS,
+    );
+
+    // agent-runtime / agent-core — design-agent-core.md, Runtime Settings, DC-27: «Сборка `apps/api` при старте сверяет
+    // запас с суммой `leaseMs` runtime и `AGENT_TURN_MS` и не стартует, если он меньше».
+    // Catches: the server starts with a margin that leaves no room for the last turn's tool calls, or the message does
+    // not name the three settings. The database is migrated, so the migration check passes and the engine's check refuses.
+    it(
+      'a deadline margin below the lease plus a turn: the api exits non-zero before binding its port, naming the three settings',
+      async () => {
+        const url = await createScratchDatabase();
+        await applyMigrations(url);
+        const held = await holdPort();
+        try {
+          const run = await untilExit(
+            startApi(url, held.port, API_ENTRY, {
+              RUNTIME_LEASE_MS: '30000',
+              AGENT_TURN_MS: '60000',
+              AGENT_DEADLINE_MARGIN_MS: '89999',
+            }),
+            'the api to refuse the start',
+          );
+
+          expect(run.exitCode, run.output).not.toBe(0);
+          expect(run.exitCode, run.output).not.toBeNull();
+          expect(run.output).toContain(
+            'AGENT_DEADLINE_MARGIN_MS (89999) must not be less than RUNTIME_LEASE_MS (30000) + AGENT_TURN_MS (60000)',
+          );
           expect(run.output).not.toContain('EADDRINUSE');
         } finally {
           await new Promise((resolve) => held.close(resolve));

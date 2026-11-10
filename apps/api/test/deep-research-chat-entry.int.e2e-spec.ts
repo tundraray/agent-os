@@ -14,7 +14,7 @@
 //   ResearchAnswerConsumer, ResearchAnswerAppender, ResearchChatController. SessionGuard is real (users are told apart by `x-user-id`).
 // - Boundaries that are doubled, and only these: (1) the chat model - the MockLanguageModel of test/support/mockModels.ts, scripted per turn (a `deepResearch` tool call with a goal and a token budget, or plain text);
 //   it records the options of every call (the forced tool choice, the thinking setting) and the message list it received; (2) the engine port (`Engine.startInvestigation`, `Engine.readInvestigation`): a test double over the
-//   real runtime that creates a real investigation whose controller task is a test handler held by a latch (wiring-handlers.ts `testHandler`), and answers `readInvestigation` with a scripted `InvestigationView`
+//   real runtime that creates a real investigation whose controller task is a test handler held by a latch (wiring-handlers.ts `testHandler`), and answers `readInvestigation` with a scripted `InvestigationView` and `readAnswerMessage` with the message `buildResearchAnswer` of `@agent-os/engine` builds from it
 //   (answer, claims, evidence records with provenance). The engine itself is proven in packages/engine; here its contract (design-engine.md, Contract Definitions) is the boundary.
 //   The double also carries the source mode (design-engine.md v1.9): `Engine.sourceMode` is settable between steps of a test (the stand-in for restarting the process with another set of sources), the scripted `InvestigationView`
 //   has its own `sourceMode` (set when the double starts the investigation, not changed afterwards, as the engine guarantees), and `EvidenceReader.get` is a counting spy so that "the loop reads no evidence" is observable.
@@ -27,14 +27,14 @@
 // Budget (whole part): Integration 5 (limit 3; up to 5 under the integration-e2e-testing rule only when each extra test names the defect no other test catches).
 //   INT-1..INT-3 (this file) are the core budget. INT-4 and INT-5 are the two web tests and the two extras; their unique defects are stated in their headers. Table-driven rows keep the ACs of one rule or one flow in one test.
 //   E2E 2 (limit 2): E2E-1 in deep-research-chat-entry.e2e-spec.ts, E2E-2 the L1 browser scenario in docs/features/deep-research/chat-entry/l1-browser-scenarios.md.
-//   The no-source mode (PRD 1.12) adds rows to these tests, not tests: INT-1 A6, INT-2 D5, an assertion block in INT-2 D1. The count stays 5 of 5 for the part and the extras are still INT-4 and INT-5 only.
+//   The no-source mode (PRD 1.12) adds rows to these tests, not tests: INT-1 A6 and an assertion block in INT-2 D1 (INT-2 D5 was removed by the agent-quality test audit). The count stays 5 of 5 for the part and the extras are still INT-4 and INT-5 only.
 //
 // Proven elsewhere (not in this file; see the "AC -> proving test" table in the generation report and "Proven at unit level" at the end of this file):
 // - the runtime primitives (cancel idempotence, purge of investigations, event delivery, EventConsumer contract) - packages/runtime and research-runtime-wiring.e2e-spec.ts
-// - "after cancel no new model call and no source call" (AC-01.4, the second half of AC-21.1) - engine INT-2 L5 (packages/engine/test/deep-research-engine.int.e2e-spec.ts)
+// - "after cancel no new model call and no source call" (AC-01.4, the second half of AC-21.1) - agent-core INT-3 A (packages/engine/test/agent-runtime-agent-core.int.e2e-spec.ts)
 // - the deletion order of ThreadsService.delete and owner isolation of the runtime - research-runtime-wiring.e2e-spec.ts INT-5; here only what the part adds to it (the `purge` hook of launch rows, T4)
 // - restart of the process between steps (NFR-03, UC-5, UC-E6) - deep-research-chat-entry.e2e-spec.ts
-// - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (INT-1 C7, INT-2 L6, loader table); here only what the part does with the mode the engine reports
+// - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (research-flow INT-1 B, INT-2 F, loader table); here only what the part does with the mode the engine reports
 // - AC-26.1, service side (the process starts with no fixture package and `connectedSources` is empty): the api composition - extends apps/api/test/sources-wiring.e2e-spec.ts (named for the plan; not part of this skeleton set). The chat side of AC-26.1
 //   (chat accepts messages, the research is proposed and launched, and the part adds no source check) is A6 below
 // - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (docs/features/deep-research/chat-entry/l1-browser-scenarios.md)
@@ -80,6 +80,7 @@ import {
   deepResearchCallStep,
   DEEP_RESEARCH_TOOL,
   heldStep,
+  STOP_RESEARCH_TOOL,
   type RecordedChatCall,
   textStep,
 } from './support/mockModels.js';
@@ -110,8 +111,8 @@ import {
 const RESEARCH_TURN_MODEL = 'anthropic/claude-haiku-5-5';
 /** The scripted chat model's id: the model of ordinary turns. */
 const CHAT_MODEL = 'mock/chat';
-/** `investigationTokens.default` of the shipped deep-research configuration. */
-const DEFAULT_TOKEN_BUDGET = 300_000;
+/** `investigationTokens.default` of the shipped deep-research configuration, v3. */
+const DEFAULT_TOKEN_BUDGET = 800_000;
 /** Above `high`: a research turn must still run with `high` (Haiku 5.5 turns thinking off only up to it, KD-9). */
 const REASONING_EFFORT = 'max';
 /** Long enough for a chat turn with the real Memory and lock; not a latency check. */
@@ -156,8 +157,8 @@ async function chat(
     .expect(200);
   const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
   await vi.waitFor(
-    () => {
-      if (runs.hasRuns(threadId))
+    async () => {
+      if (await runs.hasRuns(threadId))
         throw new Error(`chat run of ${threadId} still registered`);
     },
     { timeout: TURN_TIMEOUT_MS, interval: 25 },
@@ -692,7 +693,7 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         expect(turnOptions(t.chatModel.calls[1])).toEqual({
           modelId: CHAT_MODEL,
           toolChoice: { type: 'auto' },
-          tools: [DEEP_RESEARCH_TOOL],
+          tools: [DEEP_RESEARCH_TOOL, STOP_RESEARCH_TOOL],
           thinking: undefined,
           effort: undefined,
         });
@@ -1089,9 +1090,9 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // an answer of an investigation without sources is stored with footnotes, sources or `established` claims, or without `sourceMode` (the web then draws it as a checked answer), or its text carries no MC-32 / MC-33
   // (the copy and the next chat turn lose the caveat), or the loop reads evidence for it; an answer of an investigation with a source carries the no-source warning or marks.
   // Behavior: TaskSucceeded of the row's `controllerTaskId` -> consumer moves the row to `answer_pending` in the delivery transaction (no external call) -> the loop pass picks the rows in completion order, skips threads with a registered run, and under the
-  //   thread lock re-reads the row, reads the answer and provenance through the engine port, saves `research-answer-<investigationId>` with Markdown text and `researchAnswer` metadata, marks `answered` -> GET /research and GET /messages show it
+  //   thread lock re-reads the row, reads the engine-built answer message through the engine port (`Engine.readAnswerMessage`, design-engine.md KD-8), saves `research-answer-<investigationId>` with Markdown text and `researchAnswer` metadata, marks `answered` -> GET /research and GET /messages show it
   // @category: core-functionality
-  // @dependency: ResearchAnswerConsumer, ResearchAnswerAppender, ThreadRunRegistry, ThreadsService.withOwnedThread, ChatController (client copies of answers), engine port double (readInvestigation, EvidenceReader), Mastra Memory, injected clock, research_chat_launches, Postgres
+  // @dependency: ResearchAnswerConsumer, ResearchAnswerAppender, ThreadRunRegistry, ThreadsService.withOwnedThread, ChatController (client copies of answers), engine port double (readInvestigation, readAnswerMessage), EvidenceReader read counter, Mastra Memory, injected clock, research_chat_launches, Postgres
   // @complexity: high
   //
   // Verification items (table; every row reads the stored messages of the thread with their metadata and `createdAt`, and the launch rows):
@@ -1107,11 +1108,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
   // - D4 give-up window and queue (UC-E4, AC-20.6, DC-4): the memory write fails on every try -> the row stays `answer_pending`, the pauses between tries start at `RUNTIME_POLL_MS` and double up to 16 times that, a later finished
   //   investigation of the same thread writes nothing while the earlier one retries; at `RESEARCH_APPEND_GIVE_UP_MS` after the first failure the row is `failed` (GET /research: `failed`, no `answerMessageId`), the earlier-finished one is
   //   not retried again, and the next row is then written
-  // - D5 answer without sources (UC-12 answer half, AC-27.3 server half, DC-9, KD-8; unique defect: the loop treating a no-source answer as a sourced one - reading evidence that does not exist, numbering footnotes, dropping the mode from the metadata - or
-  //   storing the caveat only in the metadata so that the copy and the model lose it; the builder's rule table is a unit test): the double's `InvestigationView` has `sourceMode` `model_knowledge`, two claims in `assumed` with no evidence, `established` empty, outcome `answered`;
-  //   one pass after TaskSucceeded -> one message `research-answer-<investigationId>`; `researchAnswer.sourceMode` is `model_knowledge`, `established` is empty, claims have no footnote numbers, the source list is empty; the text starts with MC-32 and has MC-33 after each of the two
-  //   claims and no `[n]`; the counting spy on `EvidenceReader.get` has zero calls; GET /messages after a reload returns the same message once; the next plain chat turn of the thread: the message list the chat model double received contains that text with MC-32 and both MC-33
-  //   (the model is not told the claims are checked); GET /research shows `completed` with `answerMessageId`.
+  // - D5 answer without sources: removed by the agent-quality test audit; the delivery of a stored message is D1 (the loop stores the engine's message as is, so the mode cannot be lost on the way),
+  //   and the no-source text and metadata (MC-32 first, MC-33 after each claim, no footnotes or sources) are the builder row `model_knowledge with claims` in packages/engine/src/answer/research-answer.builder.spec.ts.
   describe('INT-2', () => {
     it(
       'INT-2 D1: a finished controller task appends one answer message with Markdown text and researchAnswer metadata (mode sources, no no-source warning or mark) at the end of the thread, redelivery changes nothing, child and foreign events are ignored, and failure or cancel appends nothing',
@@ -1233,8 +1231,9 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         await launchReaching(answered.launchKey, 'answer_pending');
         await t.runAppenderOnce();
 
-        // Assert (AC-20.1, AC-20.7, AC-27.4, DC-10): one answer message at the end of the thread; its text is the whole
-        // answer in Markdown — summary and MC-34, footnotes by first appearance, no `removed`, no MC-32 or MC-33.
+        // Assert (AC-20.1, AC-20.7, AC-27.4; design-engine.md KD-8, invariant 9): one answer message at the end of the
+        // thread, the engine's message as it is — footnotes by first appearance, no `removed`, no MC-32 or MC-33; the
+        // summary string of an answer without summary items is never shown (agent-quality UXRD KD-7).
         const answerId = answerIdOf(answered.investigationId);
         const stored = await storedMessagesOf(threadId);
         expect(
@@ -1246,10 +1245,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           [
             '**Ответ ресерча** · Есть ответ',
             'Цель: Почему выросло время ответа API',
-            '',
-            'Время ответа выросло после релиза 4.2.',
-            '',
-            'Краткий пересказ — основания в утверждениях ниже',
             '',
             '### Установлено',
             '- p95 вырос с 180 до 420 мс [1][2]',
@@ -1270,7 +1265,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         ).toEqual({
           launchKey: answered.launchKey,
           goal: 'Почему выросло время ответа API',
-          summary: 'Время ответа выросло после релиза 4.2.',
+          summary: null,
+          summaryItems: [],
           outcome: 'answered',
           stopReason: null,
           launch: { messageId: answered.messageId },
@@ -1279,6 +1275,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
               text: 'p95 вырос с 180 до 420 мс',
               footnotes: [1, 2],
               verified: true,
+              confidence: null,
+              causal: false,
             },
           ],
           assumed: [
@@ -1286,6 +1284,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
               text: 'Рост вызван новой политикой повторов',
               footnotes: [2],
               verified: false,
+              confidence: null,
+              causal: false,
             },
           ],
           unknown: [
@@ -1293,6 +1293,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
               text: 'Затронуты ли мобильные клиенты',
               footnotes: [],
               verified: false,
+              confidence: null,
+              causal: false,
             },
           ],
           sources: [
@@ -1313,7 +1315,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           ],
           sourceMode: 'sources',
         });
-        expect(t.evidenceReads).toBe(2);
+        // The chat server reads no evidence: the engine's message already lists the sources (KD-8).
+        expect(t.evidenceReads).toBe(0);
         // The card is completed with its answer link and no no-source mode; GET /messages returns the answer once.
         expect(await research(user, threadId)).toEqual([
           expect.objectContaining({
@@ -1412,8 +1415,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         const turn = chat(user, threadId, question);
         const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
         await vi.waitFor(
-          () => {
-            expect(runs.hasRuns(threadId)).toBe(true);
+          async () => {
+            expect(await runs.hasRuns(threadId)).toBe(true);
             expect(t.chatModel.calls).toHaveLength(callsBefore + 1);
           },
           { timeout: TURN_TIMEOUT_MS, interval: 25 },
@@ -1508,8 +1511,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           sseChunks(res.text).some((chunk) => chunk.type === 'error'),
         ).toBe(false);
         await vi.waitFor(
-          () => {
-            expect(runs.hasRuns(threadId)).toBe(false);
+          async () => {
+            expect(await runs.hasRuns(threadId)).toBe(false);
           },
           { timeout: TURN_TIMEOUT_MS, interval: 25 },
         );
@@ -1560,17 +1563,18 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         // first answer, under the lock of the other thread; meanwhile the stop decision turn runs to its end.
         const hold = t.gate();
         const reached = latch();
-        const readInvestigation = t.engine.readInvestigation.bind(t.engine);
+        const readAnswerMessage = t.engine.readAnswerMessage.bind(t.engine);
         const reads = vi
-          .spyOn(t.engine, 'readInvestigation')
+          .spyOn(t.engine, 'readAnswerMessage')
           .mockImplementation(async (input) => {
             if (input.investigationId === delivered.investigationId) {
               reached.release();
               await hold.promise;
             }
-            return readInvestigation(input);
+            return readAnswerMessage(input);
           });
         let stop: Awaited<ReturnType<typeof decide>>;
+        let readIds: string[] = [];
         try {
           const pass = t.runAppenderOnce();
           await reached.promise;
@@ -1585,8 +1589,12 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
           hold.release();
           await pass;
         } finally {
+          readIds = reads.mock.calls.map(([input]) => input.investigationId);
           reads.mockRestore();
         }
+        // The pass that listed the stopped row before the stop never read its answer: the row was re-read under the lock.
+        expect(readIds).toContain(delivered.investigationId);
+        expect(readIds).not.toContain(stoppable.investigationId);
 
         // Assert (AC-21.1): the stop cancelled the investigation once and the card says stopped; the pass that listed
         // the row before the stop wrote only the other thread's answer.
@@ -1764,147 +1772,6 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
       },
       TURN_TIMEOUT_MS * 4,
     );
-    it(
-      'INT-2 D5: the answer of an investigation without sources is stored with the mode, no footnotes or sources and no evidence read, its text opens with the warning and marks every claim so that the reload, the copy and the next chat turn keep the caveat',
-      async () => {
-        // Arrange: the engine runs without sources (the double's investigations take `model_knowledge`); the launch
-        // answers with two assumed claims.
-        t.engine.setSourceMode('model_knowledge');
-        const user = t.user();
-        const threadId = await t.createThread(user);
-        const knowledge = await launchResearch(
-          user,
-          threadId,
-          'Как снизить отток подписчиков',
-        );
-        t.engine.succeed(knowledge.investigationId, {
-          answer: () => ({
-            answerId: 'answer-d5',
-            outcome: 'answered',
-            stopReason: null,
-            summary: null,
-            established: [],
-            assumed: [
-              {
-                claimId: 'c1',
-                text: 'Отток снижают напоминания перед списанием',
-                evidenceIds: [],
-                verified: false,
-              },
-              {
-                claimId: 'c2',
-                text: 'Годовой тариф удерживает дольше месячного',
-                evidenceIds: [],
-                verified: false,
-              },
-            ],
-            unknown: [],
-            removed: [],
-          }),
-        });
-        await launchReaching(knowledge.launchKey, 'answer_pending');
-
-        // Act: one pass.
-        await t.runAppenderOnce();
-
-        // Assert (DC-9, AC-27.3): the text opens with MC-32 and marks each claim with MC-33 — no `[n]`, no
-        // «не проверено», no source list; the metadata carries the mode with no footnotes or sources; no evidence read.
-        const knowledgeId = answerIdOf(knowledge.investigationId);
-        const knowledgeText = [
-          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
-          '',
-          '**Ответ ресерча** · Есть ответ',
-          'Цель: Как снизить отток подписчиков',
-          '',
-          '### Предположения',
-          '- Отток снижают напоминания перед списанием (из знаний модели, без источника)',
-          '- Годовой тариф удерживает дольше месячного (из знаний модели, без источника)',
-        ].join('\n');
-        const stored = await storedMessagesOf(threadId);
-        expect(
-          stored.slice(-1).map((message) => [message.id, message.text]),
-        ).toEqual([[knowledgeId, knowledgeText]]);
-        const answerMetadata = (id: string) =>
-          stored.find((message) => message.id === id)?.metadata?.[
-            RESEARCH_METADATA_KEYS.researchAnswer
-          ];
-        expect(answerMetadata(knowledgeId)).toEqual({
-          launchKey: knowledge.launchKey,
-          goal: 'Как снизить отток подписчиков',
-          summary: null,
-          outcome: 'answered',
-          stopReason: null,
-          launch: { messageId: knowledge.messageId },
-          established: [],
-          assumed: [
-            {
-              text: 'Отток снижают напоминания перед списанием',
-              footnotes: [],
-              verified: false,
-            },
-            {
-              text: 'Годовой тариф удерживает дольше месячного',
-              footnotes: [],
-              verified: false,
-            },
-          ],
-          unknown: [],
-          sources: [],
-          sourceMode: 'model_knowledge',
-        });
-        expect(t.evidenceReads).toBe(0);
-        expect(
-          (await research(user, threadId)).map((view) => [
-            view.launchKey,
-            view.state,
-            view.answerMessageId,
-            view.sourceMode,
-          ]),
-        ).toEqual([
-          [knowledge.launchKey, 'completed', knowledgeId, 'model_knowledge'],
-        ]);
-
-        // Act + Assert (AC-27.3, reload): GET /messages returns the answer once with its text and mode.
-        const history = await messages(user, threadId);
-        expect(
-          history
-            .filter((message) => message.id.startsWith('research-answer-'))
-            .map((message) => [
-              message.id,
-              message.parts,
-              metadataValue(message, RESEARCH_METADATA_KEYS.researchAnswer),
-            ]),
-        ).toEqual([
-          [
-            knowledgeId,
-            [expect.objectContaining({ type: 'text', text: knowledgeText })],
-            answerMetadata(knowledgeId),
-          ],
-        ]);
-
-        // Act (DC-9): the next plain chat turn of the thread.
-        t.chatModel.script(textStep('Начните с напоминаний перед списанием.'));
-        const nextCall = t.chatModel.calls.length;
-        await chat(user, threadId, userMessage('С чего начать?'));
-
-        // Assert: the model received the answer with the caveat — MC-32 and MC-33 after both claims, no footnotes.
-        const prompt = JSON.stringify(t.chatModel.calls[nextCall]?.messages);
-        expect(prompt).toContain(
-          'Источники данных не подключены — ответ опирается только на знания модели и не проверен по данным.',
-        );
-        expect(prompt).toContain(
-          '- Отток снижают напоминания перед списанием (из знаний модели, без источника)',
-        );
-        expect(prompt).toContain(
-          '- Годовой тариф удерживает дольше месячного (из знаний модели, без источника)',
-        );
-        expect(prompt).not.toContain('[1]');
-        expect(prompt).not.toContain('(не проверено)');
-        expect(t.memoryFaults.answerWrites).toBe(1);
-        expect(t.chatModel.remaining()).toBe(0);
-      },
-      TURN_TIMEOUT_MS * 4,
-    );
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -2019,12 +1886,16 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
 
         // Assert (AC-22.2, UC-11): X is discarded and its finished investigation got the cancel; the answer went with
         // the tail and the passes after the run do not bring it back; U1 is followed only by the new reply with Z's
-        // card; GET /research lists Z only.
+        // card; GET /research lists Z only. The cancel finds X already closed `completed` and changes nothing: only an
+        // `active` investigation moves to `cancelled` (design-lifecycle.md, state diagram), so no InvestigationCancelled.
         expect((await launchOf(answered.launchKey))?.state).toBe('discarded');
         expect(t.cancels.calls.slice(cancelsBefore)).toEqual([
           { investigationId: answered.investigationId, resourceId: user },
         ]);
-        expect(await cancellationsOf(answered.investigationId)).toBe(1);
+        expect(await cancellationsOf(answered.investigationId)).toBe(0);
+        expect(await investigationStatus(user, answered.investigationId)).toBe(
+          'completed',
+        );
         const stored = await storedMessagesOf(answerThread);
         expect(stored.map((message) => message.role)).toEqual([
           'user',
@@ -2073,8 +1944,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         const turn = chat(user, threadId, question);
         const runs = t.moduleRef.get(ThreadRunRegistry, { strict: false });
         await vi.waitFor(
-          () => {
-            expect(runs.hasRuns(threadId)).toBe(true);
+          async () => {
+            expect(await runs.hasRuns(threadId)).toBe(true);
             expect(t.chatModel.calls).toHaveLength(callsBefore + 1);
           },
           { timeout: TURN_TIMEOUT_MS, interval: 25 },
@@ -2082,7 +1953,8 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         await t.runAppenderOnce();
 
         // Assert (DC-5, KD-4): Y waits to be re-appended and its card stays completed, without a link to the removed
-        // answer; its investigation is not cancelled; nothing is written while the run is registered.
+        // answer; its investigation is not cancelled and stays closed `completed` (only an `active` investigation moves to
+        // `cancelled`, design-lifecycle.md state diagram); nothing is written while the run is registered.
         expect((await launchOf(other.launchKey))?.state).toBe(
           'answer_reappend',
         );
@@ -2096,7 +1968,7 @@ describe('deep-research / chat-entry - integration (in-process Nest + real runti
         ]);
         expect(t.cancels.calls).toEqual([]);
         expect(await investigationStatus(user, other.investigationId)).toBe(
-          'active',
+          'completed',
         );
         expect(t.memoryFaults.answerWrites).toBe(writesBefore);
         expect(await storedIdsOf(threadId)).not.toContain(answerId);
@@ -2370,7 +2242,10 @@ describe('deep-research / chat-entry - integration without source adapters (in-p
 
         // Assert (AC-26.1 chat share, AC-27.1): the chat took the message and offered the tool with the production
         // instruction; the same tool and instruction as with sources are compared below.
-        expect(noSourceTurn?.tools).toEqual([DEEP_RESEARCH_TOOL]);
+        expect(noSourceTurn?.tools).toEqual([
+          DEEP_RESEARCH_TOOL,
+          STOP_RESEARCH_TOOL,
+        ]);
         expect(noSourceTurn?.system).toContain(ASSISTANT_INSTRUCTIONS);
 
         // Act: mode launches without sources — started, refused, and held at the start.
@@ -2610,7 +2485,7 @@ describe('deep-research / chat-entry - integration without source adapters (in-p
 // - `discardRepliesAfter` (extends threads.service.spec.ts): last user message is the last one without `researchDecision`, the tail may hold hidden pairs and answers, `repeated` is true only when the request's last message equals the stored one,
 //   `beforeDelete` sees the tail before the delete and its exception cancels it. AC-22.2 (rule), KD-7.
 // - `ThreadRunRegistry.hasRuns` (extends thread-run-registry.spec.ts).
-// - Answer message builder (table + fast-check property): footnote numbers follow the first appearance of a source and are stable for the same input; the Markdown text and the `researchAnswer` metadata agree on the numbers; the section `removed`
+// - Answer message builder — now in the engine, packages/engine/src/answer/research-answer.builder.spec.ts (agent-quality design-engine.md KD-8; the chat server only adds `launch`, research-answer.appender.spec.ts) (table + fast-check property): footnote numbers follow the first appearance of a source and are stable for the same input; the Markdown text and the `researchAnswer` metadata agree on the numbers; the section `removed`
 //   never appears; outcome and stop reason pass through. AC-20.7 (server share).
 //   Rows added for the mode `model_knowledge` (UC-12, UC-E8): the text starts with MC-32 and carries MC-33 after every claim (and after none when there are no claims), no `[n]` and no source section; `established` is empty and no claim has a footnote number;
 //   the Markdown text and the metadata agree on the claims; in the mode `sources` neither MC-32 nor MC-33 appears. AC-27.3 (server share), DC-9 (rule).

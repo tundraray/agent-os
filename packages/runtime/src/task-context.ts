@@ -1,7 +1,9 @@
 import {
   EvidenceInputSchema,
   ExpectedOutputSchema,
+  FailureReasonSchema,
   InputRefSchema,
+  InvestigationStatusSchema,
   RuntimeEventTypeSchema,
   TASK_OUTCOME_MAX_BYTES,
   TaskEdgeKindSchema,
@@ -28,6 +30,7 @@ import {
 import { z } from 'zod';
 import {
   type Database,
+  researchInvestigations,
   researchTaskDependencies,
   researchTasks,
 } from '@agent-os/db';
@@ -37,6 +40,7 @@ import type { EventLog } from './event-log.js';
 import type { EvidenceStore } from './evidence.store.js';
 import type { RuntimeTx, TaskRow } from './guarded-transition.js';
 import type {
+  AttemptGuardOptions,
   AttemptGuardResult,
   RegisterWaitResult,
   TaskContext,
@@ -45,7 +49,8 @@ import type {
 import type { TaskScheduler } from './task-scheduler.js';
 import type { TaskRepository } from './task.repository.js';
 
-const { running, succeeded } = TaskStatusSchema.enum;
+const { cancelled, failed, running, succeeded } = TaskStatusSchema.enum;
+const { active } = InvestigationStatusSchema.enum;
 const { ToolCallReserved, EvidenceStored } = RuntimeEventTypeSchema.enum;
 
 /** Postgres `foreign_key_violation`: the task row is gone (its investigation was deleted). */
@@ -122,6 +127,7 @@ export async function loadUpstream(
       kind: researchTaskDependencies.kind,
       status: researchTasks.status,
       outputRefs: researchTasks.outputRefs,
+      failureReason: researchTasks.failureReason,
     })
     .from(researchTaskDependencies)
     .innerJoin(
@@ -140,6 +146,10 @@ export async function loadUpstream(
       kind: TaskEdgeKindSchema.parse(row.kind),
       status,
       outputRefs: status === succeeded ? row.outputRefs : [],
+      failure:
+        status === failed || status === cancelled
+          ? FailureReasonSchema.parse(row.failureReason)
+          : null,
     };
   });
 }
@@ -322,14 +332,25 @@ export class AttemptContext implements TaskContext {
    * A one-task transaction (invariant 13): both timeouts bounded by `RUNTIME_LEASE_MS` for this
    * transaction only (`set_config(…, true)`, the value as a parameter — ADR-0003), then the task row
    * FOR UPDATE — held to the commit, so neither claim, reaper nor outcome changes the task meanwhile —
-   * and the check `running` with this attempt. `cancel_requested_at` is not part of the check.
+   * and the check `running` with this attempt. `cancel_requested_at` is not part of the check, unless
+   * the mode `requireActive` asks for it: then a cancel request or an investigation that is not
+   * `active` refuses with `stopping` (design-lifecycle.md, KD-2). A cancel or a closure sets the
+   * request under the same task row lock, so it either commits before this read or waits for the commit.
    */
+  withAttemptGuard<T>(
+    work: (tx: RuntimeTx) => Promise<T>,
+  ): Promise<AttemptGuardResult<T>>;
+  withAttemptGuard<T>(
+    work: (tx: RuntimeTx) => Promise<T>,
+    options: AttemptGuardOptions,
+  ): Promise<AttemptGuardResult<T, true>>;
   async withAttemptGuard<T>(
     work: (tx: RuntimeTx) => Promise<T>,
-  ): Promise<AttemptGuardResult<T>> {
+    options?: AttemptGuardOptions,
+  ): Promise<AttemptGuardResult<T, true>> {
     this.refuseInsideGuard('withAttemptGuard');
     const timeout = String(this.deps.leaseMs);
-    let fenced = false;
+    let refused: 'fenced' | 'stopping' | undefined;
     try {
       const value = await this.deps.db.transaction(async (tx) => {
         await tx.execute(
@@ -337,22 +358,38 @@ export class AttemptContext implements TaskContext {
         );
         const [own] = await this.deps.tasks.lockTasks(tx, [this.taskId]);
         if (own?.status !== running || own.attempt !== this.attempt) {
-          fenced = true;
+          refused = 'fenced';
+          tx.rollback();
+        } else if (
+          options?.requireActive === true &&
+          (own.cancelRequestedAt !== null ||
+            (await this.investigationStatus(tx)) !== active)
+        ) {
+          refused = 'stopping';
           tx.rollback();
         }
         return this.guardedWork.run(true, () => work(tx));
       });
       return { outcome: 'committed', value };
     } catch (error) {
-      if (fenced && error instanceof TransactionRollbackError) {
-        this.warnFenced('withAttemptGuard');
-        return { outcome: 'fenced' };
+      if (refused !== undefined && error instanceof TransactionRollbackError) {
+        if (refused === 'fenced') this.warnFenced('withAttemptGuard');
+        return { outcome: refused };
       }
       this.deps.logger.warn(
         `withAttemptGuard rolled back investigationId=${this.investigationId} taskId=${this.taskId} attempt=${this.attempt} error=${error instanceof Error ? error.name : typeof error}`,
       );
       throw error;
     }
+  }
+
+  /** The investigation's status, read after the task row lock in the guard's transaction. */
+  private async investigationStatus(tx: RuntimeTx): Promise<string | undefined> {
+    const [row] = await tx
+      .select({ status: researchInvestigations.status })
+      .from(researchInvestigations)
+      .where(eq(researchInvestigations.investigationId, this.investigationId));
+    return row?.status;
   }
 
   private async appendEvidenceStored(

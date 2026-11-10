@@ -59,7 +59,15 @@ async function startController(options: {
   const runs = {
     register: vi.fn(() => {
       options.journal?.push('register');
-      return { signal: options.signal, abort: vi.fn(), release };
+      return {
+        signal: options.signal,
+        abort: vi.fn(),
+        mark: vi.fn(() => {
+          options.journal?.push('mark');
+          return Promise.resolve();
+        }),
+        release,
+      };
     }),
   };
   const moduleRef = await Test.createTestingModule({
@@ -100,7 +108,8 @@ const chatBody = {
   ],
 };
 
-// AC-16.1 (b), KD-6: the chat registers its run before the ownership check and releases it once Mastra's save is done.
+// AC-16.1 (b), KD-6: the chat registers its run before the ownership check, writes the run's mark only after it, and
+// releases the run once Mastra's save is done.
 describe('ChatController.chat run registration', () => {
   const apps: INestApplication[] = [];
 
@@ -134,7 +143,7 @@ describe('ChatController.chat run registration', () => {
     expect(res.status).toBe(404);
     expect(res.body).toEqual(threadNotFound().getResponse());
     expect(t.runs.register).toHaveBeenCalledWith('t-1');
-    expect(journal[0]).toBe('register');
+    expect(journal).toEqual(['register', 'getOwnedThread', 'mark']);
     expect(t.stream).not.toHaveBeenCalled();
     expect(t.release).toHaveBeenCalledTimes(1);
   });

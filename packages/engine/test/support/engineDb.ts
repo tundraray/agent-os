@@ -1,18 +1,24 @@
 import {
+  agentToolAudit,
   createDatabase,
   type Database,
   type DatabaseConnection,
+  researchAgentMemory,
+  researchAgentMessages,
+  researchAgentRuns,
+  researchAgentToolCalls,
   researchClaims,
-  researchDecisions,
   researchEngineRuns,
+  researchEvidence,
   researchInvestigations,
   researchLlmCalls,
+  researchLlmTranscripts,
   researchPlanRevisions,
-  researchSignals,
   researchTasks,
 } from '@agent-os/db';
 import type { InvestigationService } from '@agent-os/runtime';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { assertTestDatabase, databaseUrl } from './database-url.js';
 
 /**
@@ -56,16 +62,6 @@ export async function engineRowsOf(investigationId: string) {
       .from(researchPlanRevisions)
       .where(eq(researchPlanRevisions.investigationId, investigationId))
       .orderBy(asc(researchPlanRevisions.revision)),
-    decisions: await db()
-      .select()
-      .from(researchDecisions)
-      .where(eq(researchDecisions.investigationId, investigationId))
-      .orderBy(asc(researchDecisions.step), asc(researchDecisions.callIndex)),
-    signals: await db()
-      .select()
-      .from(researchSignals)
-      .where(eq(researchSignals.investigationId, investigationId))
-      .orderBy(asc(researchSignals.recordedAt), asc(researchSignals.signalId)),
     claims: await db()
       .select()
       .from(researchClaims)
@@ -79,6 +75,80 @@ export async function engineRowsOf(investigationId: string) {
   };
 }
 
+/**
+ * The `research_llm_transcripts` rows of the investigation as stored, in the order of its `research_llm_calls` rows
+ * above: a transcript is written in the same guarded transaction as its ledger row (design-self-check.md, KD-1).
+ */
+export function llmTranscriptsOf(investigationId: string) {
+  return db()
+    .select()
+    .from(researchLlmTranscripts)
+    .where(eq(researchLlmTranscripts.investigationId, investigationId))
+    .orderBy(asc(researchLlmTranscripts.createdAt), asc(researchLlmTranscripts.callId));
+}
+
+/**
+ * The rows of the investigation's agent tree, table by table (design-agent-core.md, Data Model): runs, session messages,
+ * tool calls, the audit rows those calls reference (an audit row no call references: {@link auditOf}) and the investigation's
+ * memory notes. Runs and calls in creation order, messages by run and number, notes by number.
+ */
+export async function agentRowsOf(investigationId: string) {
+  const toolCalls = await db()
+    .select()
+    .from(researchAgentToolCalls)
+    .where(eq(researchAgentToolCalls.investigationId, investigationId))
+    .orderBy(asc(researchAgentToolCalls.createdAt), asc(researchAgentToolCalls.callIndex));
+  const auditIds = toolCalls.flatMap((call) => (call.auditId === null ? [] : [call.auditId]));
+  return {
+    runs: await db()
+      .select()
+      .from(researchAgentRuns)
+      .where(eq(researchAgentRuns.investigationId, investigationId))
+      .orderBy(asc(researchAgentRuns.createdAt), asc(researchAgentRuns.taskId)),
+    messages: await db()
+      .select()
+      .from(researchAgentMessages)
+      .where(eq(researchAgentMessages.investigationId, investigationId))
+      .orderBy(asc(researchAgentMessages.runTaskId), asc(researchAgentMessages.seq)),
+    toolCalls,
+    audit:
+      auditIds.length === 0
+        ? []
+        : await db().select().from(agentToolAudit).where(inArray(agentToolAudit.id, auditIds)).orderBy(asc(agentToolAudit.recordedAt)),
+    memory: await db()
+      .select()
+      .from(researchAgentMemory)
+      .where(eq(researchAgentMemory.investigationId, investigationId))
+      .orderBy(asc(researchAgentMemory.seq)),
+  };
+}
+
+/**
+ * Every audit row of an owner, oldest first. The audit table holds no investigation or run (AC-10.2), so a test that
+ * counts audit rows per call reads them by its own unique user: an audit row no call references shows only here.
+ */
+export function auditOf(resourceId: string) {
+  return db().select().from(agentToolAudit).where(eq(agentToolAudit.resourceId, resourceId)).orderBy(asc(agentToolAudit.recordedAt));
+}
+
+/** The session messages of one run, by number. */
+export function sessionOf(runTaskId: string) {
+  return db()
+    .select()
+    .from(researchAgentMessages)
+    .where(eq(researchAgentMessages.runTaskId, runTaskId))
+    .orderBy(asc(researchAgentMessages.seq));
+}
+
+/** The ledger rows of the investigation's agent turns (role `agent`), oldest first. */
+export function llmCallsOf(investigationId: string) {
+  return db()
+    .select()
+    .from(researchLlmCalls)
+    .where(and(eq(researchLlmCalls.investigationId, investigationId), eq(researchLlmCalls.role, 'agent')))
+    .orderBy(asc(researchLlmCalls.createdAt), asc(researchLlmCalls.callId));
+}
+
 /** Tasks of the investigation as the runtime stored them, oldest first. */
 export function tasksOf(investigationId: string) {
   return db()
@@ -88,27 +158,146 @@ export function tasksOf(investigationId: string) {
     .orderBy(asc(researchTasks.createdAt), asc(researchTasks.taskId));
 }
 
+/** The tool calls of the investigation with their run's agent and parent, in the order the calls were recorded. */
+export function agentToolCallsOf(investigationId: string) {
+  return db()
+    .select({
+      runTaskId: researchAgentToolCalls.runTaskId,
+      agent: researchAgentRuns.agentName,
+      parentTaskId: researchAgentRuns.parentTaskId,
+      turn: researchAgentToolCalls.turn,
+      callIndex: researchAgentToolCalls.callIndex,
+      tool: researchAgentToolCalls.toolName,
+      arguments: researchAgentToolCalls.arguments,
+      state: researchAgentToolCalls.state,
+      outcome: researchAgentToolCalls.outcome,
+      reason: researchAgentToolCalls.reason,
+      childTaskId: researchAgentToolCalls.childTaskId,
+    })
+    .from(researchAgentToolCalls)
+    .innerJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchAgentToolCalls.runTaskId))
+    .where(eq(researchAgentToolCalls.investigationId, investigationId))
+    .orderBy(asc(researchAgentToolCalls.createdAt), asc(researchAgentToolCalls.callIndex));
+}
+
+/** Every revision of the investigation's claims in write order, with the run that wrote it (null for a task that is no run). */
+export function claimRevisionsOf(investigationId: string) {
+  return db()
+    .select({
+      seq: researchClaims.seq,
+      claimId: researchClaims.claimId,
+      claimIndex: researchClaims.claimIndex,
+      text: researchClaims.text,
+      status: researchClaims.status,
+      confidence: researchClaims.confidence,
+      claimType: researchClaims.claimType,
+      assessment: researchClaims.assessment,
+      evidenceIds: researchClaims.evidenceIds,
+      pointer: researchClaims.pointer,
+      authorTaskId: researchClaims.taskId,
+      authorAgent: researchAgentRuns.agentName,
+    })
+    .from(researchClaims)
+    .leftJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchClaims.taskId))
+    .where(eq(researchClaims.investigationId, investigationId))
+    .orderBy(asc(researchClaims.seq));
+}
+
+const GatherResultSchema = z.object({
+  page: z.string(),
+  returned: z.number(),
+  repeat: z.literal(true).optional(),
+});
+
 /**
- * The row version (`xmin`) of every row of the investigation — its own row, its tasks and the engine rows — keyed by
- * `table:primary key`. Two equal snapshots mean no row was written in between ("no row changed" checks).
+ * The pages of the investigation: `stored`, the evidence rows the source's fetch wrote, and `gathered`, each `gather` call
+ * that returned a page, with its `repeat` mark.
  */
-export async function rowVersionsOf(investigationId: string): Promise<Map<string, string>> {
-  const id = sql`${investigationId}::uuid`;
-  const { rows } = await db().execute<{ key: string; version: string }>(sql`
-    select 'research_investigations:' || investigation_id as key, xmin::text as version
-      from ${researchInvestigations} where investigation_id = ${id}
-    union all select 'research_tasks:' || task_id, xmin::text from ${researchTasks} where investigation_id = ${id}
-    union all select 'research_engine_runs:' || investigation_id, xmin::text
-      from ${researchEngineRuns} where investigation_id = ${id}
-    union all select 'research_plan_revisions:' || revision, xmin::text
-      from ${researchPlanRevisions} where investigation_id = ${id}
-    union all select 'research_decisions:' || decision_id, xmin::text from ${researchDecisions} where investigation_id = ${id}
-    union all select 'research_signals:' || signal_id, xmin::text from ${researchSignals} where investigation_id = ${id}
-    union all select 'research_claims:' || claim_revision_id, xmin::text
-      from ${researchClaims} where investigation_id = ${id}
-    union all select 'research_llm_calls:' || call_id, xmin::text from ${researchLlmCalls} where investigation_id = ${id}
-  `);
-  return new Map(rows.map((row) => [row.key, row.version]));
+export async function gatherPagesOf(investigationId: string) {
+  const stored = await db()
+    .select({ pageId: researchEvidence.evidenceId, taskId: researchEvidence.taskId, provenance: researchEvidence.provenance, coverage: researchEvidence.coverage })
+    .from(researchEvidence)
+    .where(eq(researchEvidence.investigationId, investigationId))
+    .orderBy(asc(researchEvidence.createdAt), asc(researchEvidence.evidenceId));
+  const gathered = (await agentToolCallsOf(investigationId))
+    .filter((call) => call.tool === 'gather')
+    .flatMap((call) => {
+      const page = GatherResultSchema.safeParse((call.outcome as { result?: unknown } | null)?.result);
+      if (!page.success) return [];
+      return [{ runTaskId: call.runTaskId, agent: call.agent, callIndex: call.callIndex, page: page.data.page, returned: page.data.returned, repeat: page.data.repeat === true }];
+    });
+  return { stored, gathered };
+}
+
+/**
+ * The engine row with the answer and the root run's result, each with its row version: one `xmin` on both proves the answer
+ * and the result were written by one transaction (KD-3). Undefined before the root's task is recorded.
+ */
+export async function answerRowOf(investigationId: string) {
+  const [row] = await db()
+    .select({
+      engineRun: researchEngineRuns,
+      engineVersion: sql<string>`${researchEngineRuns}.xmin::text`,
+      rootResult: researchAgentRuns.result,
+      rootVersion: sql<string>`${researchAgentRuns}.xmin::text`,
+    })
+    .from(researchEngineRuns)
+    .innerJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchEngineRuns.controllerTaskId))
+    .where(eq(researchEngineRuns.investigationId, investigationId));
+  return row;
+}
+
+/** The owners a file's investigations were started for; each test file has its own instance of this module. */
+const investigationOwners = new Set<string>();
+
+/** Registers the owner of an investigation for {@link assertNoActiveInvestigations}. */
+export function trackInvestigationOwner(resourceId: string): void {
+  investigationOwners.add(resourceId);
+}
+
+/** How many owners the file registered: a file whose check must bite asserts this is not zero, the check alone passes on none. */
+export function trackedOwnerCount(): number {
+  return investigationOwners.size;
+}
+
+/** Investigations of the file's owners that a cleanup found still `active`: what the cleanup would otherwise hide from the check. */
+const leftBehind: string[] = [];
+
+/**
+ * Cancels through the real service, noting first an investigation of the file's owners that is still `active`. A test that
+ * stops one on purpose has cancelled it already, so only what a test left running is noted.
+ */
+export async function cancelNotingLeftBehind(
+  database: Database,
+  investigations: Pick<InvestigationService, 'cancel'>,
+  { investigationId, resourceId }: { readonly investigationId: string; readonly resourceId: string },
+): Promise<void> {
+  if (investigationOwners.has(resourceId)) {
+    const [row] = await database
+      .select({ status: researchInvestigations.status })
+      .from(researchInvestigations)
+      .where(eq(researchInvestigations.investigationId, investigationId));
+    if (row?.status === 'active') leftBehind.push(investigationId);
+  }
+  await investigations.cancel(investigationId, resourceId);
+}
+
+/**
+ * Fails naming every investigation of the file's owners that a cleanup found `active` or that still is: a suite must not
+ * leave work to the next one.
+ */
+export async function assertNoActiveInvestigations(): Promise<void> {
+  if (leftBehind.length > 0) {
+    throw new Error(`the suite left active investigations for its cleanup: ${leftBehind.join(', ')}`);
+  }
+  if (investigationOwners.size === 0) return;
+  const left = await db()
+    .select({ investigationId: researchInvestigations.investigationId })
+    .from(researchInvestigations)
+    .where(and(inArray(researchInvestigations.resourceId, [...investigationOwners]), eq(researchInvestigations.status, 'active')));
+  if (left.length > 0) {
+    throw new Error(`the suite left active investigations: ${left.map((row) => row.investigationId).join(', ')}`);
+  }
 }
 
 /**
@@ -123,7 +312,7 @@ export async function cancelLeftovers(database: Database, investigations: Pick<I
     .from(researchInvestigations)
     .innerJoin(researchEngineRuns, eq(researchEngineRuns.investigationId, researchInvestigations.investigationId))
     .where(eq(researchInvestigations.status, 'active'));
-  for (const { investigationId, resourceId } of leftovers) {
-    await investigations.cancel(investigationId, resourceId);
+  for (const leftover of leftovers) {
+    await cancelNotingLeftBehind(database, investigations, leftover);
   }
 }

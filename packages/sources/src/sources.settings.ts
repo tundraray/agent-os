@@ -5,6 +5,8 @@ export type SourcesEnv = Readonly<Record<string, string | undefined>>;
 
 export interface FixtureSettings {
   readonly dataset: 'v1' | 'v2';
+  /** `<set>/<scenario>` the fixture process serves instead of `dataset`; set by the self-check program only. */
+  readonly scenario: string | null;
   readonly faultsPath: string | null;
   readonly callLogPath: string | null;
 }
@@ -28,6 +30,7 @@ const SourcesEnvSchema = z
     SOURCE_RETRY_CAP_MS: milliseconds(5_000),
     SOURCE_MAX_PAGES: z.coerce.number().int().positive().default(1_000),
     FIXTURE_DATASET: z.enum(['v1', 'v2']).default('v1'),
+    FIXTURE_SCENARIO: z.string().optional(),
     FIXTURE_FAULTS: z.string().optional(),
     FIXTURE_CALL_LOG: z.string().optional(),
   })
@@ -43,6 +46,7 @@ const SourcesEnvSchema = z
       maxPages: env.SOURCE_MAX_PAGES,
       fixture: {
         dataset: env.FIXTURE_DATASET,
+        scenario: env.FIXTURE_SCENARIO ?? null,
         faultsPath: env.FIXTURE_FAULTS ?? null,
         callLogPath: env.FIXTURE_CALL_LOG ?? null,
       },

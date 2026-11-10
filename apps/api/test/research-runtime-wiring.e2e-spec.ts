@@ -6,12 +6,19 @@
 // `start`, `stop` and the pool's `close()` to the Nest phases (UC-E8).
 // Run: `pnpm --filter api test:e2e:runtime`, never in parallel with the runtime package's suites against one database.
 
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ApiErrorSchema, type ToolCallGrant } from '@agent-os/contracts';
-import type { HandlerResult, TaskContext } from '@agent-os/runtime';
+import {
+  type Clock,
+  type HandlerResult,
+  systemClock,
+  type TaskContext,
+} from '@agent-os/runtime';
 import { Logger } from '@nestjs/common';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { RUNTIME_CLOCK } from '../src/research/research.tokens.js';
 import { createRuntimeApp, type RuntimeApp } from './support/runtimeApp.js';
 import { newUser } from './support/seed.js';
 import {
@@ -359,6 +366,8 @@ describe('research-runtime / runtime - wiring of ResearchModule (in-process Nest
           }),
         ],
         runtime: { concurrency: 1, leaseMs: 60_000, heartbeatMs: 60_000 },
+        // The engine refuses a margin below the lease plus a turn (DC-27): 60 s + 60 s needs more than the default 90 s.
+        engine: { AGENT_DEADLINE_MARGIN_MS: '120000' },
       });
       let remoteId: string;
       try {
@@ -582,5 +591,160 @@ describe('research-runtime / runtime - wiring of ResearchModule (in-process Nest
       },
       30_000,
     );
+  });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // AC-01.4 (registration), DC-4  The transcript purge timer of EngineModule (agent-quality / self-check)
+  // ---------------------------------------------------------------------------------------------------------------
+  // Design: docs/features/agent-quality/design-self-check.md, C3 api: «раз в час он вызывает purgeExpiredTranscripts со сроком из
+  // TRANSCRIPT_RETENTION_DAYS. Очистка удаляет транскрипты старше срока и ничего больше; журнал вызовов с расходом остаётся.»
+  // Unique defect no other test catches: the module wiring of the timer. The hourly cadence, the 30-day default and `stop` are unit-proven in
+  // src/engine/transcript-retention.spec.ts, the purge scope in the engine's INT-2 T3; only the booted application shows that EngineModule arms
+  // the timer, passes the term of the setting and the main database, and cancels the timer at shutdown.
+  // Primary failure mode (turns red when): no hourly timer at boot; the term is not the one of TRANSCRIPT_RETENTION_DAYS (the 11-day transcript
+  // survives the 30-day default); the timer stays armed after the application closes.
+  // Mock boundary: the clock only (`RUNTIME_CLOCK` override). It holds the one-hour timers and hands every other timer to the system clock.
+  // The purge is global: it also removes other files' transcripts older than 10 days, so this file runs serially with the other suites.
+  describe('AC-01.4 transcript purge timer', () => {
+    const HOUR_MS = 60 * 60 * 1000;
+    const LATCH_MS = 15_000;
+    const MODEL = 'anthropic/claude-haiku-5-5';
+
+    interface HeldTimer {
+      readonly callback: () => void;
+      cancelled: boolean;
+    }
+
+    /**
+     * The system clock whose one-hour timers are held for the test to fire; `firstArmed` resolves when the first one is
+     * set (at boot, or once a first pass at start is done), `nextArmed` when the next one is.
+     */
+    function hourlyTimerClock() {
+      const held: HeldTimer[] = [];
+      let armed = latch();
+      const firstArmed = armed.promise;
+      const clock: Clock = {
+        now: () => systemClock.now(),
+        random: () => systemClock.random(),
+        setTimer: (ms, callback) => {
+          if (ms !== HOUR_MS) return systemClock.setTimer(ms, callback);
+          const timer: HeldTimer = { callback, cancelled: false };
+          held.push(timer);
+          armed.release();
+          return () => {
+            timer.cancelled = true;
+          };
+        },
+      };
+      return {
+        clock,
+        held,
+        firstArmed,
+        nextArmed: (): Promise<void> => {
+          armed = latch();
+          return armed.promise;
+        },
+        /** The timer armed last: the one that is live. */
+        live: (): HeldTimer | undefined => held.at(-1),
+      };
+    }
+
+    /** Boots the app with `TRANSCRIPT_RETENTION_DAYS=days`; the variable is read only while the module compiles. */
+    async function bootWithRetentionDays(
+      days: string,
+      options: Parameters<typeof createRuntimeApp>[0],
+    ): Promise<RuntimeApp> {
+      const previous = process.env.TRANSCRIPT_RETENTION_DAYS;
+      process.env.TRANSCRIPT_RETENTION_DAYS = days;
+      try {
+        return await createRuntimeApp(options);
+      } finally {
+        if (previous === undefined)
+          delete process.env.TRANSCRIPT_RETENTION_DAYS;
+        else process.env.TRANSCRIPT_RETENTION_DAYS = previous;
+      }
+    }
+
+    async function transcriptExists(callId: string): Promise<boolean> {
+      const rows = await query<{ callId: string }>(
+        `SELECT call_id AS "callId" FROM app.research_llm_transcripts WHERE call_id = $1`,
+        [callId],
+      );
+      return rows.length === 1;
+    }
+
+    afterAll(async () => {
+      await closeRuntimeDb();
+    });
+
+    // What the purge keeps (the younger transcript, the journal row) is the engine's INT-2 T3; here only the wiring.
+    it('with TRANSCRIPT_RETENTION_DAYS=10 the booted app arms an hourly timer, its firing purges with the term of the setting (the 11-day transcript goes), and closing the app cancels the timer', async () => {
+      const timers = hourlyTimerClock();
+      const workflowType = uniqueWorkflowType('purge');
+      const app = await bootWithRetentionDays('10', {
+        handlers: [testHandler(workflowType, async () => completed())],
+        runtime: { workers: false },
+        overrides: [{ token: RUNTIME_CLOCK, value: timers.clock }],
+      });
+      const resourceId = newUser();
+      const expiredCallId = randomUUID();
+      try {
+        // Armed at boot: an hourly timer is live (whether or not a first pass ran before it was set).
+        await within(timers.firstArmed, LATCH_MS, 'the hourly timer at boot');
+        expect(timers.live()?.cancelled).toBe(false);
+
+        const threadId = await app.createThread(resourceId);
+        try {
+          const { investigationId } = await app.investigations.create({
+            resourceId,
+            threadId,
+            query: 'transcript purge timer',
+            budget: { maxTasks: 1, maxToolCalls: 2 },
+          });
+          const proposed = await app.scheduler.propose(
+            taskSpec({
+              investigationId,
+              workflowType,
+              input: { key: 'purge' },
+            }),
+            'purge-requester',
+          );
+          if (proposed.outcome !== 'created') {
+            throw new Error(`task not created: ${JSON.stringify(proposed)}`);
+          }
+          await query(
+            `INSERT INTO app.research_llm_calls
+                 (call_id, investigation_id, task_id, attempt, role, model, reserved_tokens, counted_input_tokens)
+               VALUES ($1, $2, $3, 1, 'worker', $4, 100, 10)`,
+            [expiredCallId, investigationId, proposed.taskId, MODEL],
+          );
+          // Older than the 10-day term of the setting, younger than the 30-day default: only the setting's term removes it.
+          await query(
+            `INSERT INTO app.research_llm_transcripts
+                 (call_id, llm_call_id, investigation_id, task_id, attempt, role, model, prompt_version, input, created_at)
+               VALUES ($1, $1, $2, $3, 1, 'worker', $4, '0123456789ab', '{}'::jsonb, now() - interval '11 days')`,
+            [expiredCallId, investigationId, proposed.taskId, MODEL],
+          );
+          expect(await transcriptExists(expiredCallId)).toBe(true);
+
+          // The hour passes: the live timer fires, the purge runs with the term of the setting and, once it is done,
+          // the timer is armed for the next hour.
+          const rearmed = timers.nextArmed();
+          timers.live()?.callback();
+          await within(rearmed, LATCH_MS, 'the next hourly timer');
+
+          expect(await transcriptExists(expiredCallId)).toBe(false);
+        } finally {
+          await request(app.app.getHttpServer())
+            .delete(`/threads/${threadId}`)
+            .set('x-user-id', resourceId);
+        }
+      } finally {
+        await app.close();
+      }
+
+      // Removed at shutdown: the timer armed for the next hour is cancelled.
+      expect(timers.live()?.cancelled).toBe(true);
+    }, 30_000);
   });
 });

@@ -15,6 +15,7 @@ import type {
   TaskScheduler,
 } from '@agent-os/runtime';
 import { AppModule } from '../../src/app.module.js';
+import { ENGINE_GROUP_TABLES } from '../../src/engine/engine.tokens.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import {
   HANDLER_REGISTRY,
@@ -26,12 +27,18 @@ import {
 } from '../../src/threads/thread-title.agent.js';
 import { assistantModel, titleModel } from './mockModels.js';
 import { cleanupUsers, seed } from './seed.js';
+import { TEST_GROUP_TABLES } from './testGroupTables.js';
 
 export interface RuntimeAppOptions {
   /** Test handlers, registered before the workers start. */
   handlers: readonly TaskHandler[];
   /** Runtime Settings over the test defaults (workers on, 2 slots, 50 ms poll, pool of 4). */
   runtime?: Partial<RuntimeConfig>;
+  /**
+   * Engine variables (`AGENT_*`) set like the runtime settings, e.g. an `AGENT_DEADLINE_MARGIN_MS` that covers a long
+   * `leaseMs` — `EngineModule` refuses a margin below the lease plus `AGENT_TURN_MS` (DC-27).
+   */
+  engine?: Readonly<Record<string, string>>;
   /** Providers replaced by a value, e.g. the engine's model and token counter doubles. */
   overrides?: readonly ProviderOverride[];
 }
@@ -68,6 +75,8 @@ const SETTING_VARIABLES: Record<keyof RuntimeConfig, string> = {
   maxRecoveries: 'RUNTIME_MAX_RECOVERIES',
   deliveryMaxAttempts: 'RUNTIME_DELIVERY_MAX_ATTEMPTS',
   shutdownGraceMs: 'RUNTIME_SHUTDOWN_GRACE_MS',
+  queueWaitMs: 'RUNTIME_QUEUE_WAIT_MS',
+  attemptMs: 'RUNTIME_ATTEMPT_MS',
   dbPoolMax: 'DB_POOL_MAX',
   crashAt: 'RUNTIME_CRASH_AT',
   nodeEnv: 'NODE_ENV',
@@ -116,22 +125,25 @@ function overrideEnv(
 export async function createRuntimeApp(
   options: RuntimeAppOptions,
 ): Promise<RuntimeApp> {
-  const restoreEnv = overrideEnv(
-    settingVariables({
+  const restoreEnv = overrideEnv({
+    ...settingVariables({
       workers: true,
       concurrency: 2,
       pollMs: 50,
       dbPoolMax: 4,
       ...options.runtime,
     }),
-  );
+    ...options.engine,
+  });
   let moduleRef: TestingModule;
   try {
     let builder = Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(MASTRA)
       .useFactory({ factory: createRuntimeMastra, inject: [ConfigService] })
       .overrideProvider(THREAD_TITLE_AGENT)
-      .useValue(createThreadTitleAgent(titleModel().model));
+      .useValue(createThreadTitleAgent(titleModel().model))
+      .overrideProvider(ENGINE_GROUP_TABLES)
+      .useValue(TEST_GROUP_TABLES);
     for (const { token, value } of options.overrides ?? []) {
       builder = builder.overrideProvider(token).useValue(value);
     }

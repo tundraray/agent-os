@@ -25,6 +25,8 @@ export const WEATHER_TOOL = 'getWeather';
 export const FAILING_TOOL = 'failing';
 /** The part's research tool (design-chat-entry.md, KD-1); the research chat app registers it on the test agent. */
 export const DEEP_RESEARCH_TOOL = 'deepResearch';
+/** The agent's stop tool (design-lifecycle.md, KD-4); the research chat app registers it next to `deepResearch`. */
+export const STOP_RESEARCH_TOOL = 'stopResearch';
 
 const USAGE = {
   inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
@@ -188,6 +190,25 @@ export function deepResearchCallStep(input: {
       finish('tool-calls'),
     ]),
   };
+}
+
+/**
+ * Scenario "stopResearch call": the model calls the agent's stop tool, with
+ * the `launchKey` it names or without one, and ends the step for the tool.
+ * Script the reply that follows the tool result as the next step.
+ */
+export function stopResearchCallStep(input: {
+  launchKey?: string;
+}): StreamStep {
+  return step([
+    {
+      type: 'tool-call',
+      toolCallId: `call-${STOP_RESEARCH_TOOL}-${randomUUID()}`,
+      toolName: STOP_RESEARCH_TOOL,
+      input: JSON.stringify(input),
+    },
+    finish('tool-calls'),
+  ]);
 }
 
 /**

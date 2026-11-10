@@ -4,6 +4,8 @@ import { type CallUsage, callCostUsd } from './cost.js';
 // AC-11.1 (price half): a call is priced by the catalog tier of its whole input and by the usage
 // fields of C3 — uncached input, cache write, cache read and output each at their own rate.
 // Defect caught: one rate for every request (the Haiku 5.5 tier above 100 000 input tokens).
+// AC-21.1 (price half, UC-8): the rows with cache reads price them below plain input; defect caught: cache reads
+// priced as plain input.
 const usage = (
   inputTokens: number,
   outputTokens: number,

@@ -12,6 +12,7 @@ import type { App } from 'supertest/types.js';
 import { z } from 'zod';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
+import { ENGINE_GROUP_TABLES } from '../../src/engine/engine.tokens.js';
 import { MASTRA } from '../../src/mastra/mastra.constants.js';
 import {
   createThreadTitleAgent,
@@ -24,6 +25,7 @@ import {
   type TitleModel,
   WEATHER_TOOL,
 } from './mockModels.js';
+import { TEST_GROUP_TABLES } from './testGroupTables.js';
 
 export interface TestAppOptions {
   /** Mock model of the `assistant` agent; default — one with no scripted responses. */
@@ -120,6 +122,8 @@ export async function createTestApp(
     })
     .overrideProvider(THREAD_TITLE_AGENT)
     .useValue(createThreadTitleAgent(title.model))
+    .overrideProvider(ENGINE_GROUP_TABLES)
+    .useValue(TEST_GROUP_TABLES)
     .compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
