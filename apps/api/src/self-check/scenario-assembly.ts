@@ -1,8 +1,9 @@
 import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import {
+  type ClaimAssessmentAgent,
+  claimAssessmentAgent,
   createEngine,
   type Engine,
-  loadProcessConfig,
   type ResolveModel,
   type TokenCounter,
 } from '@agent-os/engine';
@@ -52,8 +53,8 @@ export interface ScenarioAssemblyInput {
   /** The run's process configuration as data; `createEngine` checks it. */
   readonly processConfig: unknown;
   /**
-   * The judge's catalog model. With the `verifier` model of the run's configuration it is what `Engine.assess` may
-   * call: the judge, and the calibration of the `verifier` call (design-engine.md, «Кто оценивает»).
+   * The judge's catalog model. With the checker agent's model of the run's configuration it is what `Engine.assess` may
+   * call: the judge, and the calibration of the checker agent (design-engine.md, «Кто оценивает»).
    */
   readonly judgeModel: string;
   /**
@@ -111,17 +112,37 @@ function fixtureVariables(served: string): SourcesEnv {
     : { FIXTURE_SCENARIO: served };
 }
 
+/** The role the program reads the definition memory's scope `deployment` with: calibration keys its table by those entries. */
+const SELF_CHECK_MEMORY_ADMIN_ROLE = 'agent-memory-admin';
+
+/** The checker agent's active `deployment` records, as the turns see them; the form forbids the `user` scope. */
+export async function currentDeploymentEntries(
+  engine: Pick<Engine, 'listDefinitionMemory'>,
+  agent: ClaimAssessmentAgent,
+): Promise<{ readonly id: string; readonly text: string }[]> {
+  const records = await engine.listDefinitionMemory({
+    processId: agent.processId,
+    agentName: agent.agentName,
+    reader: {
+      userId: SELF_CHECK_OWNER,
+      roles: [SELF_CHECK_MEMORY_ADMIN_ROLE],
+    },
+  });
+  return records
+    .filter((record) => record.scope === 'deployment')
+    .map(({ id, text }) => ({ id, text }));
+}
+
 /**
- * The models `Engine.assess` may call: the judge and the `verifier` model of the configuration. A configuration the
- * schema refuses adds none — `createEngine` refuses it with `process_config_rejected` anyway.
+ * The models `Engine.assess` and `Engine.assessAgent` may call: the judge and the model of the configuration's
+ * definition of the form `claim_assessment`. A configuration the schema refuses adds none — `createEngine` refuses it
+ * with `process_config_rejected` anyway.
  */
 function assessModels(judgeModel: string, processConfig: unknown): string[] {
-  const loaded = loadProcessConfig(processConfig);
-  if (!loaded.ok) return [judgeModel];
-  const verifierModel = loaded.config.roles.verifier.model;
-  return verifierModel === judgeModel
+  const checkerModel = claimAssessmentAgent(processConfig)?.model;
+  return checkerModel === undefined || checkerModel === judgeModel
     ? [judgeModel]
-    : [judgeModel, verifierModel];
+    : [judgeModel, checkerModel];
 }
 
 function sourcesLogger(logger: SelfCheckLogger): SourcesLogger {
@@ -135,7 +156,7 @@ function sourcesLogger(logger: SelfCheckLogger): SourcesLogger {
 /**
  * Assembly for one scenario (design-self-check.md, C3 self-check, «сборка на сценарий»): the same assembly functions
  * as the server — `createRuntime`, `createSources` with the fixture adapter on `FIXTURE_SCENARIO`, `createEngine` with
- * the run's configuration and `assessModels` = [judge model, `verifier` model of that configuration] — over the
+ * the run's configuration and `assessModels` = [judge model, the checker agent's model of that configuration] — over the
  * database of `DATABASE_URL`, its investigations owned by `system:self-check`. The engine is built without the mandatory-calibration flag. Handlers are registered
  * before the workers start; with the workers off `runtime.start` is not called at all, and `Engine.assess` — model
  * gateway, ledger, transcripts — works without it.
@@ -180,8 +201,7 @@ export async function assembleScenario(
       clock,
       logger: sourcesLog,
     });
-    const { handlers, eventConsumers, scheduler, investigations, evidence } =
-      runtime;
+    const { handlers, eventConsumers, scheduler, investigations } = runtime;
     const engine = createEngine({
       database: database.db,
       runtime: {
@@ -189,12 +209,12 @@ export async function assembleScenario(
         eventConsumers,
         scheduler,
         investigations,
-        evidence,
       },
       sourceRegistry: sources.registry,
       connectedSources: [FIXTURE_SOURCE_ID],
       processes: [input.processConfig],
       assessModels: assessModels(input.judgeModel, input.processConfig),
+      memoryAdminRole: SELF_CHECK_MEMORY_ADMIN_ROLE,
       resolveModel: input.resolveModel,
       tokenCounter: input.tokenCounter,
       clock,

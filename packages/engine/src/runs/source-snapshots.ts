@@ -1,6 +1,6 @@
 import type { Clock } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
-import type { ProcessConfig } from '../config/process-config.schema.js';
+import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { EngineLogger } from '../ports.js';
 
 /**
@@ -26,7 +26,7 @@ export interface SourceSnapshotDeps {
  */
 export async function readSourceSnapshots(
   deps: SourceSnapshotDeps,
-  config: Pick<ProcessConfig, 'sources'>,
+  config: Pick<AgentProcessConfig, 'sources'>,
 ): Promise<SourceSnapshots> {
   const sourceIds = [...new Set(config.sources.map((source) => source.sourceId))];
   const slices = await Promise.all(sourceIds.map((sourceId) => readOne(deps, sourceId)));

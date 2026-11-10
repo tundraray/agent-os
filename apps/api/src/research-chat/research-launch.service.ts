@@ -8,13 +8,13 @@ import type {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import {
-  deepResearchProcessV2,
+  deepResearchProcessV3,
   type Engine,
   type InvestigationView,
-  loadProcessConfig,
 } from '@agent-os/engine';
 import type { Runtime } from '@agent-os/runtime';
 import type { MastraDBMessage } from '@mastra/core/memory';
+import { z } from 'zod';
 import { withFields } from '../common/log-fields.js';
 import { RESEARCH_ENGINE } from '../engine/engine.tokens.js';
 import {
@@ -115,15 +115,32 @@ function answeredInvestigationIds(message: MastraDBMessage): string[] {
     : [];
 }
 
-/** Bounds of a launch's token budget: `investigationTokens` of the shipped `deep-research` configuration. */
+/** The one part of the shipped configuration a launch reads; `createEngine` checks the whole file at the start. */
+const LaunchBudgetConfigSchema = z.object({
+  limits: z.object({
+    investigationTokens: z.object({
+      default: z.number().int().min(1),
+      max: z.number().int().min(1),
+    }),
+  }),
+});
+
+/**
+ * Bounds of a launch's token budget: `limits.investigationTokens` of the shipped `deep-research` v3. Called while
+ * modules are imported, before any settings exist, so it reads the data object, not the agents-form loader, which
+ * needs the timings from the settings. A missing field stops the import naming the field.
+ */
 export function investigationTokenLimits(): { default: number; max: number } {
-  const loaded = loadProcessConfig(deepResearchProcessV2);
-  if (!loaded.ok) {
+  const parsed = LaunchBudgetConfigSchema.safeParse(deepResearchProcessV3);
+  if (!parsed.success) {
+    const fields = parsed.error.issues
+      .map((issue) => issue.path.join('.'))
+      .join(', ');
     throw new Error(
-      `the shipped ${PROCESS_ID} configuration is refused: ${loaded.rejection.message}`,
+      `the shipped ${PROCESS_ID} configuration lacks a valid ${fields}`,
     );
   }
-  return loaded.config.limits.investigationTokens;
+  return parsed.data.limits.investigationTokens;
 }
 
 /** The controller's final status in the view, as the action it is for the launch row (KD-3 reconciliation). */

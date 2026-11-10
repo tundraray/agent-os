@@ -181,9 +181,15 @@ export function toRunSession(rows: readonly SessionMessageRow[], calls: readonly
 }
 
 /**
+ * Where the system block of a view comes from: a turn renders the definition's prompt with the value of `{{sources}}`,
+ * and a recorded turn keeps the block it went to the model with, so no field is substituted again at the read.
+ */
+export type ViewSystem = { readonly sourcesValue: string } | { readonly recordedInstructions: string };
+
+/**
  * The view of a run's next turn by the window rule (KD-5), from the held stage: the definition's prompt rendered for the
  * investigation, its `deployment` entries in the system block and its owner's `user` entries in the envelope, its tools
- * and its session. The transcript read rebuilds the view of a recorded turn the same way.
+ * and its session. The transcript read rebuilds the view of a recorded turn the same way, over its recorded system block.
  */
 export function sessionViewOf(input: {
   readonly frame: RunFrame;
@@ -192,19 +198,28 @@ export function sessionViewOf(input: {
   readonly tools: readonly AgentToolDefinition[];
   readonly session: RunSession;
   readonly heldStage: WindowStage;
+  readonly system: ViewSystem;
   /** The window to fit; the definition's by default. */
   readonly windowTokens?: number;
 }): SessionView {
-  const { frame, definition, session } = input;
+  const { frame, definition, session, system } = input;
   if (session.opening === null) throw new Error(`the session of agent ${input.agentName} has no opening message`);
   const entries = frame.snapshot[input.agentName] ?? [];
   return buildSessionView({
-    prompt: renderPromptTemplate(definition.prompt, {
-      goal: frame.config.goal,
-      query: frame.query,
-      sourceMode: frame.sourceMode,
-      answerSections: frame.config.answer.sections.join(', '),
-    }),
+    ...('recordedInstructions' in system
+      ? { prompt: '', recordedInstructions: system.recordedInstructions }
+      : {
+          prompt: renderPromptTemplate(
+            definition.prompt,
+            {
+              goal: frame.config.goal,
+              query: frame.query,
+              sourceMode: frame.sourceMode,
+              answerSections: frame.config.answer.sections.join(', '),
+              sources: system.sourcesValue,
+            },
+          ),
+        }),
     deploymentEntries: entries.filter((entry) => entry.scope === 'deployment'),
     userEntries: entries.filter((entry) => entry.scope === 'user'),
     tools: input.tools,

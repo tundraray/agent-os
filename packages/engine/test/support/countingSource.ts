@@ -44,6 +44,46 @@ export interface CountingSource {
    * (AC-25.3, DC-10: the fetch task exists and fails); `null` sets it back.
    */
   failCalls(which: ((call: RecordedSourceCall) => boolean) | null): void;
+  /** The next call is recorded at once and answers when `until` settles (INT-2 A: the second request meets a live one). */
+  holdNextCall(until: Promise<void>): void;
+}
+
+/** A log line as the real source's `search_logs` and `get_trace` return it. */
+export interface SourceLogLine {
+  readonly ts: string;
+  readonly service: string;
+  readonly level: string;
+  readonly event: string;
+  readonly traceId: string;
+  readonly spanSeq: number;
+  readonly status: string;
+  readonly durationMs: number;
+  readonly message: string;
+}
+
+/** A record of the shape the real source returns: the pointer rules and `checkAtoms` see what they see in production. */
+export function sourceLogLine(fields: Partial<SourceLogLine> = {}): SourceLogLine {
+  return {
+    ts: '2026-09-15T19:04:12.000Z',
+    service: 'payment-api',
+    level: 'error',
+    event: 'payment.failed',
+    traceId: '4bf92f3577b34da6',
+    spanSeq: 1,
+    status: 'timeout',
+    durationMs: 5_012,
+    message: 'provider did not answer in time',
+    ...fields,
+  };
+}
+
+/** A count group as the real source's `aggregate_logs` returns it, one per time bucket and value. */
+export function sourceCountGroup(
+  key: string,
+  count: number,
+  start = '2026-09-15T19:00:00.000Z',
+): { readonly start: string; readonly key: string; readonly count: number } {
+  return { start, key, count };
 }
 
 /** What the fixture adapter answers when its process is gone (row K-5 of the mcp-source classification). */
@@ -61,6 +101,7 @@ export function createCountingSource(): CountingSource {
   let recordsOf: RecordsOf = () => [];
   let unavailable = false;
   let failing: ((call: RecordedSourceCall) => boolean) | null = null;
+  let heldUntil: Promise<void> | null = null;
 
   const adapter: SourceAdapter = {
     descriptor: {
@@ -73,14 +114,17 @@ export function createCountingSource(): CountingSource {
         resultSchema: anyValue,
       })),
     },
-    call(call: SourceCall): Promise<CallOutcome> {
+    async call(call: SourceCall): Promise<CallOutcome> {
       const recorded = { toolName: call.toolName, args: call.args, cursor: call.cursor };
       calls.push(recorded);
+      const hold = heldUntil;
+      heldUntil = null;
+      await hold;
       if (unavailable || failing?.(recorded) === true) {
-        return Promise.resolve(connectionLost);
+        return connectionLost;
       }
       const items = recordsOf(recorded);
-      return Promise.resolve({
+      return {
         kind: 'page',
         page: {
           snapshot: SNAPSHOT,
@@ -91,7 +135,7 @@ export function createCountingSource(): CountingSource {
           nextCursor: null,
           exhausted: true,
         },
-      });
+      };
     },
     currentSnapshot: () =>
       unavailable ? Promise.reject(new Error('counting source is unavailable')) : Promise.resolve(SNAPSHOT),
@@ -112,6 +156,9 @@ export function createCountingSource(): CountingSource {
     },
     failCalls: (which) => {
       failing = which;
+    },
+    holdNextCall: (until) => {
+      heldUntil = until;
     },
   };
 }

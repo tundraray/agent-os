@@ -26,8 +26,8 @@ import {
   AgentTaskInputSchema,
   runNotAfter,
 } from './agent-task-spec.js';
-import { childCallEnding } from './child-failure.js';
-import type { AgentRegistries } from './definition-check.js';
+import { childCallEnding, taskToolCallEnding } from './child-failure.js';
+import { type AgentRegistries, sourcesValueOf } from './definition-check.js';
 import { closureStep, type FormRun, runForcedEnd, runPrologue } from './process-code.js';
 import type { ResultForm } from './result-forms.js';
 import {
@@ -46,7 +46,7 @@ import type { ToolAccessPolicy } from './tool-access-policy.js';
 import { type ToolCallRow, toolCallsRepository as toolCalls } from './tool-calls.repository.js';
 import { baseImmediateTools, createToolExecutor, POSTGRES_AGENT_TREE, type ToolExecutor } from './tool-executor.js';
 import { agentToolsOf } from './tool-registry.js';
-import type { AgentRunContext } from './tools/tool-context.js';
+import type { AgentRunContext, ImmediateTool, TaskTool } from './tools/tool-context.js';
 import {
   decideAfterTurn,
   decideAnswer,
@@ -85,6 +85,10 @@ export interface AgentRunHandlerDeps {
   readonly investigations: Pick<InvestigationService, 'listForThread'>;
   readonly gateway: Pick<ModelGateway, 'turn'>;
   readonly registries: AgentRegistries;
+  /** The immediate tools of the process modules, by name; the assembly point passes them, this module does not import those. */
+  readonly processTools: ReadonlyMap<string, ImmediateTool>;
+  /** The `task` tools of the process modules, by name; passed the same way. */
+  readonly processTaskTools: ReadonlyMap<string, TaskTool>;
   readonly accessPolicy: ToolAccessPolicy;
   readonly timings: AgentRunTimings;
   readonly clock: { now(): Date };
@@ -154,13 +158,16 @@ interface Attempt {
   readonly run: AgentRunContext;
   readonly row: AgentRunRow;
   readonly startedAt: Date;
+  /** The value of `{{sources}}`, built once per attempt from the sources of the run row (DC-32). */
+  readonly sourcesValue: string;
 }
 
 export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[] {
   const { database, timings } = deps;
   const executor: ToolExecutor = createToolExecutor({
     registry: deps.registries.tools,
-    tools: baseImmediateTools(deps.registries.tools),
+    tools: new Map([...baseImmediateTools(deps.registries.tools), ...deps.processTools]),
+    taskTools: deps.processTaskTools,
     accessPolicy: deps.accessPolicy,
     calls: toolCalls,
     tree: POSTGRES_AGENT_TREE,
@@ -229,7 +236,8 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
       notAfter: row.notAfter,
     };
     const tools = agentToolsOf(definition.tools, { registry: deps.registries.tools, resultSchema: form.resultSchema });
-    return { ctx, input, frame, definition, form, tools, run, row, startedAt: deps.clock.now() };
+    const sourcesValue = sourcesValueOf(definition, { config: frame.config, runSources: row.sources }, deps.registries);
+    return { ctx, input, frame, definition, form, tools, run, row, startedAt: deps.clock.now(), sourcesValue };
   }
 
   /** The session with its calls, as the window rule reads it. */
@@ -240,7 +248,7 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
 
   /** What the form's process code works with for this run (KD-8). */
   function formRunOf(attempt: Attempt): FormRun {
-    const { ctx, form, frame, definition, input } = attempt;
+    const { ctx, form, frame, definition, input, run } = attempt;
     return {
       ctx,
       form,
@@ -250,8 +258,9 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
         runTaskId: ctx.taskId,
         agentName: input.agentName,
         definition,
-        assignment: form.prologue === undefined ? input.assignment : null,
+        assignment: input.assignment,
         sourceMode: frame.sourceMode,
+        depth: run.depth,
       },
       assignment: input.assignment,
       snapshotEntries: frame.snapshot[input.agentName] ?? [],
@@ -330,11 +339,12 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
 
   /**
    * A child's result, or `child_failed` with its reason from the closed list (DC-6), ends its call (`waiting` → `done`)
-   * with the spend of the child's subtree.
+   * with the spend of the child's subtree; a task tool's call ends with the tool's own result by the task's outcome.
    */
   async function endChildCall(attempt: Attempt, call: ToolCallRow, child: UpstreamTask): Promise<void> {
-    const ended = await toolCalls.transition(attempt.ctx, { callId: call.id, from: ['waiting'] }, (tx) =>
-      childCallEnding(tx, call, child, childResultMaxBytes),
+    const tool = deps.processTaskTools.get(call.toolName);
+    const ended = await toolCalls.transition(attempt.ctx, { callId: call.id, from: ['waiting'] }, (tx, locked) =>
+      tool === undefined ? childCallEnding(tx, call, child, childResultMaxBytes) : taskToolCallEnding(tx, { call: locked, child, tool }),
     );
     if (ended.outcome === 'fenced') abandon('fenced');
     if (ended.outcome === 'stopping') abandon('cancelled');
@@ -373,7 +383,8 @@ export function createAgentRunHandlers(deps: AgentRunHandlerDeps): TaskHandler[]
 
   function viewOf(attempt: Attempt, session: RunSession, heldStage: WindowStage): SessionView {
     const { frame, definition, tools } = attempt;
-    return sessionViewOf({ frame, agentName: attempt.input.agentName, definition, tools, session, heldStage });
+    const system = { sourcesValue: attempt.sourcesValue };
+    return sessionViewOf({ frame, agentName: attempt.input.agentName, definition, tools, session, heldStage, system });
   }
 
   type TurnStep =

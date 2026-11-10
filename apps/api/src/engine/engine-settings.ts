@@ -14,6 +14,8 @@ export interface EngineSettings {
 export interface EngineStartSettings extends EngineSettings {
   /** The agent settings of design-agent-core.md (Runtime Settings) that `createEngine` takes. */
   readonly agent: AgentSettings;
+  /** `RESEARCH_GROUP_TABLES_DIR` (design-research-flow.md, Runtime Settings): the deployment's group tables; empty when none. */
+  readonly groupTablesDir: string;
 }
 
 /** design-agent-core.md, Runtime Settings: the agent runs' timings and the definition memory's admin role. */
@@ -48,6 +50,7 @@ const DEFAULT_MEMORY_ADMIN_ROLE = 'agent-memory-admin';
  * `RESEARCH_ANTHROPIC_BASE_URL` takes the default; a value that is not an http(s) URL throws naming the variable.
  * The chat agent's base variable is never read: Mastra reads that one for its string models as a base with the version.
  * The five `AGENT_*` settings take the design's defaults when unset or empty; an invalid one throws naming it.
+ * `RESEARCH_GROUP_TABLES_DIR` is taken as it is, empty when unset.
  */
 export function parseEngineSettings(
   read: (name: string) => string | undefined,
@@ -56,6 +59,7 @@ export function parseEngineSettings(
     anthropicBaseUrl: parseBaseUrl(read(BASE_URL_VARIABLE)),
     anthropicApiKey: read('ANTHROPIC_API_KEY') ?? '',
     agent: parseAgentSettings(read),
+    groupTablesDir: read('RESEARCH_GROUP_TABLES_DIR') ?? '',
   };
 }
 

@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { findPromptTemplateFault } from './prompt-template.js';
-import type { AnyProcessConfig, ProcessConfigRejection } from './process-config.schema.js';
+
+/** A configuration the loader or an engine-creation check refuses (AC-12.2); `path` points at the faulty field. */
+export interface ProcessConfigRejection {
+  readonly code: 'process_config_rejected';
+  readonly path: readonly (string | number)[];
+  readonly message: string;
+}
 
 /** The tool every definition has without naming it: it returns the run's result (design-agent-core.md). */
 const FINISH_TOOL = 'finish';
@@ -20,7 +26,7 @@ const uniqueNames = z.array(name).superRefine((items, context) => {
   });
 });
 
-/** The same closed field list as a role prompt (ADR-0009): `goal`, `query`, `sourceMode`, `answerSections`. */
+/** The closed field list of a definition's prompt (ADR-0009, KD-9). */
 const promptTemplate = z
   .string()
   .min(1)
@@ -67,14 +73,20 @@ const AgentDefinitionSchema = z.strictObject({
 });
 
 /**
- * The agents form of a process configuration (KD-7, ADR-0009): data only, unknown keys are refused, `capabilities` and
- * `roles` of the roles form are not allowed. The loader picks it by the `agents` key alone.
+ * A source id or a source tool name: what `gather` accepts, nothing a path or a query could hide in. The load refuses
+ * any other, so no source stands in `{{sources}}` that every `gather` would refuse.
+ */
+export const SourceNameSchema = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
+
+/**
+ * A process configuration (KD-7, ADR-0009): data only, unknown keys are refused, and a file without `agents` does not
+ * load.
  */
 export const AgentProcessConfigSchema = z.strictObject({
   processId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
   version: positive,
   goal: z.string().min(1),
-  sources: z.array(z.strictObject({ sourceId: z.string().min(1), toolName: z.string().min(1) })),
+  sources: z.array(z.strictObject({ sourceId: SourceNameSchema, toolName: SourceNameSchema })),
   agents: z
     .record(name, AgentDefinitionSchema)
     .refine((agents) => Object.keys(agents).length >= 1 && Object.keys(agents).length <= 16, {
@@ -107,15 +119,6 @@ export const AgentProcessConfigSchema = z.strictObject({
 
 export type AgentProcessConfig = z.infer<typeof AgentProcessConfigSchema>;
 export type AgentDefinition = AgentProcessConfig['agents'][string];
-
-/** The agents form is the configuration with the `agents` key; nothing else (no `processId`) chooses it (ADR-0009). */
-export function hasAgentsKey(data: unknown): boolean {
-  return typeof data === 'object' && data !== null && Object.hasOwn(data, 'agents');
-}
-
-export function isAgentsForm(config: AnyProcessConfig): config is AgentProcessConfig {
-  return hasAgentsKey(config);
-}
 
 /** Timings the load checks a definition's `deadlineMs` against (DC-1, DC-27); they come from `createEngine`. */
 export interface AgentTimings {

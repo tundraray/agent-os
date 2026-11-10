@@ -3,14 +3,21 @@ import { computeDedupKey, type InvestigationService, type RuntimeTx, type TaskSc
 import { runOccupiedTokens } from '../model/ledger.js';
 import { childSources, childTaskSpec } from './agent-task-spec.js';
 import type { ToolAccessPolicy } from './tool-access-policy.js';
-import type { CallContext, CallEnding, ToolCallRow, TransitionResult, toolCallsRepository } from './tool-calls.repository.js';
+import {
+  type CallContext,
+  type CallEnding,
+  REPEAT_MARK,
+  type ToolCallRow,
+  type TransitionResult,
+  type toolCallsRepository,
+} from './tool-calls.repository.js';
 import type { ToolRegistry, ToolRegistryEntry } from './tool-registry.js';
 import { type CallAgentArgs, childrenStarted, decideCallAgent } from './tools/call-agent.js';
 import { checkFinish } from './tools/finish.js';
 import { investigationReadTool } from './tools/investigation-read.js';
 import { memoryReadTool } from './tools/memory-read.js';
 import { memoryWriteTool } from './tools/memory-write.js';
-import type { AgentRunContext, ImmediateTool } from './tools/tool-context.js';
+import type { AgentRunContext, ImmediateTool, TaskTool } from './tools/tool-context.js';
 
 /**
  * The executor of an agent's tool calls (design-agent-core.md, KD-3, C3 `ToolExecutor`). For each call of a turn, in
@@ -22,6 +29,8 @@ import type { AgentRunContext, ImmediateTool } from './tools/tool-context.js';
 
 const FINISH = 'finish';
 const CALL_AGENT = 'call_agent';
+/** The task statuses the runtime deduplicates on: a `failed` or `cancelled` task lets the same request make a new one. */
+const LIVE_TASK_STATUSES: ReadonlySet<string> = new Set(['queued', 'running', 'waiting', 'succeeded']);
 
 /** What the share and the limits of `call_agent` are read from, inside the call's guarded transaction. */
 export interface AgentTreeReads {
@@ -35,6 +44,8 @@ export interface ToolExecutorDeps {
   readonly registry: ToolRegistry;
   /** The tools of classes `read` and `write` by name; {@link baseImmediateTools} for the base tools. */
   readonly tools: ReadonlyMap<string, ImmediateTool>;
+  /** The tools of class `task` other than `call_agent`, by name; none by default. */
+  readonly taskTools?: ReadonlyMap<string, TaskTool>;
   readonly accessPolicy: ToolAccessPolicy;
   readonly calls: Pick<typeof toolCallsRepository, 'transition'>;
   readonly tree: AgentTreeReads;
@@ -76,6 +87,8 @@ const refusal = (reason: string, detail?: unknown): CallEnding => ({
   reason,
   ...(detail === undefined ? {} : { detail }),
 });
+
+const withSource = (ending: CallEnding, sourceId: string | null): CallEnding => (sourceId === null ? ending : { ...ending, sourceId });
 
 /** What the code decides before a call runs: a refusal, the result of a lone `finish`, or the tool with its arguments. */
 type Precheck =
@@ -120,6 +133,7 @@ function stepOf(result: TransitionResult): Step {
 }
 
 export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
+  const taskTools: ReadonlyMap<string, TaskTool> = deps.taskTools ?? new Map();
   const end = (ctx: CallContext, call: ToolCallRow, ending: CallEnding) =>
     deps.calls.transition(ctx, { callId: call.id, from: ['requested'] }, async () => ending);
 
@@ -129,6 +143,80 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     const investigations = await deps.investigations.listForThread(run.resourceId, run.threadId);
     const tasks = investigations.find((investigation) => investigation.investigationId === run.investigationId)?.tasks;
     return tasks?.find((task) => task.dedupKey === dedupKey)?.taskId;
+  }
+
+  /** The live task the investigation has with the key of `spec` (a task tool's repeat, DC-11). */
+  async function liveTask(run: AgentRunContext, spec: TaskSpec): Promise<string | undefined> {
+    const dedupKey = computeDedupKey(spec);
+    const investigations = await deps.investigations.listForThread(run.resourceId, run.threadId);
+    const tasks = investigations.find((investigation) => investigation.investigationId === run.investigationId)?.tasks;
+    return tasks?.find((task) => task.dedupKey === dedupKey && LIVE_TASK_STATUSES.has(task.status))?.taskId;
+  }
+
+  /**
+   * `starting` → `waiting` of a task tool: its task is proposed — or, on a retry, found among the live ones — and its id
+   * recorded. Only the first `propose` of a call may tell a race: the runtime subscribes a task's creator too, so a retry's
+   * `subscribed` is not a repeat. A refused admission ends the call `task_limit`.
+   */
+  async function proposeToolTask(ctx: CallContext, run: AgentRunContext, call: ToolCallRow, retry: boolean): Promise<Step> {
+    const spec = call.taskSpec as TaskSpec;
+    let childTaskId = retry ? await liveTask(run, spec) : undefined;
+    let raced = false;
+    if (childTaskId === undefined) {
+      const proposed = await deps.scheduler.propose(spec, requesterKey(call));
+      if (proposed.outcome === 'rejected') {
+        if (proposed.reason === 'investigation_inactive') return { kind: 'stop', outcome: 'stopping' };
+        if (proposed.reason !== 'budget_exhausted') {
+          throw new Error(`task of call ${call.id} refused: ${proposed.reason}`);
+        }
+        const sourceId = taskTools.get(call.toolName)?.sourceOf?.(call.arguments) ?? null;
+        return stepOf(
+          await deps.calls.transition(ctx, { callId: call.id, from: ['starting'] }, async () =>
+            withSource(refusal('task_limit', proposed.details), sourceId),
+          ),
+        );
+      }
+      childTaskId = proposed.taskId;
+      raced = !retry && proposed.outcome === 'subscribed' && call.outcome === null;
+    }
+    const taskId = childTaskId;
+    return stepOf(
+      await deps.calls.transition(ctx, { callId: call.id, from: ['starting'] }, async () => ({
+        to: 'waiting',
+        childTaskId: taskId,
+        ...(raced ? { outcome: REPEAT_MARK } : {}),
+      })),
+    );
+  }
+
+  /**
+   * `requested` → `starting` of a task tool: its preparation runs before the guarded write, since it may read a source;
+   * the specification is built in the write, with no share.
+   */
+  async function startToolTask(
+    ctx: CallContext,
+    run: AgentRunContext,
+    call: ToolCallRow,
+    work: { readonly tool: TaskTool; readonly args: unknown; readonly sourceId: string | null },
+  ): Promise<Step> {
+    const { tool, args, sourceId } = work;
+    const preparation = await tool.prepare({
+      run,
+      args,
+      signal: ctx.signal,
+      findLiveTask: (spec) => liveTask(run, spec),
+    });
+    if (preparation.kind === 'stopped') return { kind: 'stop', outcome: 'stopping' };
+    if (preparation.kind === 'ending') return stepOf(await end(ctx, call, withSource(preparation.ending, sourceId)));
+    const { prepared, repeat } = preparation;
+    const started = await deps.calls.transition(ctx, { callId: call.id, from: ['requested'] }, async () => ({
+      to: 'starting',
+      shareTokens: null,
+      taskSpec: tool.taskSpec({ run, prepared }),
+      ...(repeat ? { outcome: REPEAT_MARK } : {}),
+    }));
+    if (started.outcome !== 'written' || started.call.state !== 'starting') return stepOf(started);
+    return proposeToolTask(ctx, run, started.call, false);
   }
 
   /**
@@ -198,13 +286,17 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     checked: Extract<Precheck, { kind: 'run' }>,
   ): Promise<Step> {
     const tool = deps.tools.get(call.toolName);
-    const sourceId = tool?.sourceOf?.(checked.args) ?? null;
+    const taskTool = taskTools.get(call.toolName);
+    const sourceId = (tool ?? taskTool)?.sourceOf?.(checked.args) ?? null;
     const access = await deps.accessPolicy.decide({ resourceId: run.resourceId, toolName: call.toolName, sourceId });
     if (access === 'access_denied') {
       return stepOf(await end(ctx, call, { to: 'rejected', outcome: 'access_denied', reason: 'access_denied', sourceId }));
     }
     if (checked.entry.effect === 'task' && call.toolName === CALL_AGENT) {
       return startChild(ctx, run, call, checked.args as CallAgentArgs);
+    }
+    if (checked.entry.effect === 'task' && taskTool !== undefined) {
+      return startToolTask(ctx, run, call, { tool: taskTool, args: checked.args, sourceId });
     }
     if (tool === undefined) throw new Error(`tool ${call.toolName} of class ${checked.entry.effect} has no executor`);
     return stepOf(
@@ -224,7 +316,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         if (call.state === 'waiting' && call.childTaskId !== null) {
           step = { kind: 'wait', taskId: call.childTaskId };
         } else if (call.state === 'starting') {
-          step = await proposeChild(ctx, run, call, true);
+          step = taskTools.has(call.toolName) ? await proposeToolTask(ctx, run, call, true) : await proposeChild(ctx, run, call, true);
         } else if (call.state === 'requested') {
           const checked = precheck(call, { position, size: calls.length }, { run, registry: deps.registry });
           if (checked.kind === 'ending') step = stepOf(await end(ctx, call, checked.ending));
@@ -232,7 +324,8 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           else step = await runRequested(ctx, run, call, checked);
         }
         if (step.kind === 'stop') return { outcome: step.outcome };
-        if (step.kind === 'wait') waitFor.push(step.taskId);
+        // Two equal calls of one turn wait for the same task.
+        if (step.kind === 'wait' && !waitFor.includes(step.taskId)) waitFor.push(step.taskId);
       }
       return { outcome: 'executed', finish, waitFor };
     },

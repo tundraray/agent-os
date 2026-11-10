@@ -1,4 +1,5 @@
-import type { RuntimeTx } from '@agent-os/runtime';
+import type { TaskSpec } from '@agent-os/contracts';
+import type { RuntimeTx, UpstreamTask } from '@agent-os/runtime';
 import type { z } from 'zod';
 import type { AgentDefinition, AgentProcessConfig } from '../../config/agent-config.schema.js';
 import type { CallEnding, ToolCallRow } from '../tool-calls.repository.js';
@@ -42,6 +43,43 @@ export interface ImmediateTool {
   /** The source the call reaches, for the rights port and the audit; none for the base tools. */
   sourceOf?(args: unknown): string | null;
   run(input: ToolRun<unknown>): Promise<CallEnding>;
+}
+
+/** What the step before a `task` call's guarded write ended with. */
+export type TaskToolPreparation =
+  /** The call ends here, with no task. */
+  | { readonly kind: 'ending'; readonly ending: CallEnding }
+  /** The call goes on to its task: `prepared` is what its specification is built from; `repeat` marks the call. */
+  | { readonly kind: 'task'; readonly prepared: unknown; readonly repeat: boolean }
+  /** The attempt was stopped during the step: the call stays as it is. */
+  | { readonly kind: 'stopped' };
+
+/**
+ * A tool of class `task` other than `call_agent` (design-agent-core.md, Реестр инструментов: a `task` tool gives the
+ * task's specification by its arguments and the session's result by the task's outcome). It takes no share of the run's
+ * tokens. A process module implements it; the assembly point passes it to the executor.
+ */
+export interface TaskTool {
+  readonly name: string;
+  /** The source the call reaches, for the rights port and the audit. */
+  sourceOf?(args: unknown): string | null;
+  /** Outside any transaction, so it may do I/O: everything the specification needs and whether the call goes on at all. */
+  prepare(input: {
+    readonly run: AgentRunContext;
+    readonly args: unknown;
+    readonly signal: AbortSignal;
+    /** The live task of the investigation with the key of `spec` (queued, running, waiting or succeeded). */
+    readonly findLiveTask: (spec: TaskSpec) => Promise<string | undefined>;
+  }): Promise<TaskToolPreparation>;
+  /** The task's specification, inside the guarded write of `starting`, from what {@link TaskTool.prepare} returned. */
+  taskSpec(input: { readonly run: AgentRunContext; readonly prepared: unknown }): TaskSpec;
+  /** How the call ends once its task is final; `repeat` is the mark the call's row carries. */
+  ending(input: {
+    readonly tx: RuntimeTx;
+    readonly call: ToolCallRow;
+    readonly child: UpstreamTask;
+    readonly repeat: boolean;
+  }): Promise<CallEnding>;
 }
 
 /** Bytes of a value as JSON text. */

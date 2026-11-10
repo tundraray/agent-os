@@ -2,10 +2,10 @@ import { z } from 'zod';
 import {
   type ComparisonMetric,
   type LevelName,
-  METRICS,
   type MetricDefinition,
   type MetricInput,
   type MetricValue,
+  METRICS,
   metricsOfRunKind,
   type RunKind,
   runMetrics,
@@ -135,12 +135,12 @@ interface RunFiles {
 /**
  * Compares two result files; a file that is not a result file of the program throws. A run id not in the form `run`
  * writes (`RUN_ID_PATTERN`) is refused as `invalid_arguments`: the comparison directory is named by the two ids, so
- * nothing read from a file may shape a path.
+ * nothing read from a file may shape a path. The metric list is the candidate's form's, unless a caller names its own.
  */
 export function compareRunFiles(
   files: RunFiles,
   resampling: Resampling,
-  metrics: readonly MetricDefinition[] = METRICS,
+  metrics?: readonly MetricDefinition[],
 ): CompareOutcome {
   const baseline =
     files.baseline === null ? null : parseRunFile(files.baseline);
@@ -162,7 +162,12 @@ export function compareRunFiles(
   }
   return {
     ok: true,
-    comparison: compareRuns(baseline, candidate, resampling, metrics),
+    comparison: compareRuns(
+      baseline,
+      candidate,
+      resampling,
+      metrics ?? METRICS,
+    ),
   };
 }
 
@@ -557,6 +562,8 @@ const RunFileSchema = z.looseObject({
       investigations: z.array(z.looseObject({ investigationId: z.string() })),
     }),
   ]),
+  // The form of the run: an agents-form run names its definitions.
+  config: z.looseObject({ definitions: z.record(z.string(), z.unknown()) }),
   thresholds: z.unknown(),
   complete: z.boolean(),
   results: z.array(

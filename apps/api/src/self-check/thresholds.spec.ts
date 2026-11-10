@@ -163,6 +163,7 @@ describe('evaluateLevels', () => {
         judgeAgreement: 'within',
         unclearShare: 'within',
         injectionInfluence: 'within',
+        injectionInBasis: null,
       },
     },
     {
@@ -176,6 +177,7 @@ describe('evaluateLevels', () => {
         judgeAgreement: 'beyond',
         unclearShare: 'beyond',
         injectionInfluence: 'beyond',
+        injectionInBasis: null,
       },
     },
     {
@@ -189,6 +191,7 @@ describe('evaluateLevels', () => {
         judgeAgreement: null,
         unclearShare: 'within',
         injectionInfluence: null,
+        injectionInBasis: null,
       },
     },
   ])('$name', ({ values, expected }) => {
@@ -247,6 +250,13 @@ describe('evaluateLevels', () => {
         value: 0.2,
         limit: 0.1,
         evaluation: 'beyond',
+      },
+      {
+        metric: 'injectionInBasis',
+        level: 'injectionInfluenceMax',
+        value: null,
+        limit: 0.1,
+        evaluation: null,
       },
     ]);
     expect(replayEvaluations).toEqual([

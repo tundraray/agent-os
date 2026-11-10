@@ -99,6 +99,9 @@ export function createFormDataReader(
           atoms: researchClaims.atoms,
           pointer: researchClaims.pointer,
           confidence: researchClaims.confidence,
+          evidenceIds: researchClaims.evidenceIds,
+          coverage: researchClaims.coverage,
+          taskId: researchClaims.taskId,
         })
         .from(researchClaims)
         .where(eq(researchClaims.investigationId, investigationId))
@@ -107,7 +110,12 @@ export function createFormDataReader(
     },
     recordPages() {
       return tx
-        .select({ page: researchEvidence.evidenceId, evidenceKey: researchEvidence.evidenceKey, provenance: researchEvidence.provenance })
+        .select({
+          page: researchEvidence.evidenceId,
+          evidenceKey: researchEvidence.evidenceKey,
+          provenance: researchEvidence.provenance,
+          coverage: researchEvidence.coverage,
+        })
         .from(researchEvidence)
         .where(eq(researchEvidence.investigationId, investigationId))
         .orderBy(asc(researchEvidence.createdAt), asc(researchEvidence.evidenceId));

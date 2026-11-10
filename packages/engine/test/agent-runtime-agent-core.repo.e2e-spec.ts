@@ -8,7 +8,7 @@
 // a double, as in every harness. Isolation: a unique `resourceId` per test, no truncate.
 
 import { randomUUID } from 'node:crypto';
-import type { EvidenceInput } from '@agent-os/contracts';
+import type { EventEnvelope, EvidenceInput } from '@agent-os/contracts';
 import {
   agentDefinitionMemory,
   agentToolAudit,
@@ -58,9 +58,12 @@ import { baseImmediateTools, createToolExecutor, POSTGRES_AGENT_TREE } from '../
 import { BASE_TOOLS, createToolRegistry } from '../src/agents/tool-registry.js';
 import { type AgentProcessConfig, AgentProcessConfigSchema } from '../src/config/agent-config.schema.js';
 import { createProcessSet } from '../src/config/process-set.js';
-import { runOccupiedTokens } from '../src/model/ledger.js';
+import { abandonReservations, postgresCallLedger, runOccupiedTokens } from '../src/model/ledger.js';
+import { createLifecycleConsumer } from '../src/lifecycle/lifecycle.consumer.js';
+import { readRunRecord } from '../src/runs/run-record.js';
 import { purgeExpiredTranscripts } from '../src/transcripts/purge-transcripts.js';
 import { readTranscripts } from '../src/transcripts/read-transcripts.js';
+import { postgresOutsideTaskTranscripts } from '../src/transcripts/transcript-writes.js';
 import { databaseUrl } from './support/database-url.js';
 import { newUser } from './support/new-user.js';
 
@@ -861,6 +864,7 @@ describe('результат finish ссылается только на сво�
           definition: config.agents.lead!,
           assignment: 'find the cause',
           sourceMode: 'model_knowledge' as const,
+          depth: 0,
         },
         assignment: 'find the cause',
         snapshotEntries: [],
@@ -1191,6 +1195,363 @@ describe('чужое расследование не читается', () => {
     expect(
       await db().select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.investigationId, seeded.investigationId)),
     ).toEqual([]);
+  }, 30_000);
+});
+
+/** The investigation's rows that a deletion must take: the engine row, its ledger and its transcripts, the judge's included. */
+async function investigationLeftovers(investigationId: string, judgeCallId: string) {
+  const engineRuns = await db().select().from(researchEngineRuns).where(eq(researchEngineRuns.investigationId, investigationId));
+  const llmCalls = await db().select().from(researchLlmCalls).where(eq(researchLlmCalls.investigationId, investigationId));
+  const transcripts = await db().select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.investigationId, investigationId));
+  const judge = await db().select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.callId, judgeCallId));
+  return { engineRuns: engineRuns.length, llmCalls: llmCalls.length, transcripts: transcripts.length, judge: judge.length };
+}
+
+/** Moves `created_at` of one transcript `days` back from now, the age a retention term sees. */
+const ageTranscript = (callId: string, days: number) =>
+  db()
+    .update(researchLlmTranscripts)
+    .set({ createdAt: sql`now() - make_interval(days => ${days})` })
+    .where(eq(researchLlmTranscripts.callId, callId));
+
+const callIdsOf = (read: Awaited<ReturnType<typeof readTranscripts>>) =>
+  read.outcome === 'found' ? read.transcripts.map((transcript) => transcript.callId) : read;
+
+// Carried over from agent-quality-self-check INT-2 T1, T2 and deep-research-engine V1 (purge half): the run record and the transcripts of an investigation are read by its owner only, a read by task gives
+// only that task's transcripts, and deleting the conversation takes the engine row, its ledger and every transcript bound
+// to it, the judge call's through `Engine.assess` included.
+// Defects caught: a run record read across owners; a read by task that returns another task's or the judge's
+// transcripts; an engine row, a ledger row or a judge transcript that outlives the deletion of its conversation.
+describe('запись прогона и транскрипты: только владельцу, и удаление беседы уносит всё', () => {
+  it('readRunRecord is the owner’s only, a read by task gives that task’s transcripts, and the deletion takes the engine row, the ledger and the judge’s transcript', async () => {
+    const owner = newUser();
+    const seeded = await seedAgentInvestigation(owner);
+    const { investigationId } = seeded;
+    const judgeCallId = await postgresOutsideTaskTranscripts(db()).open({
+      role: 'judge',
+      model: 'anthropic/claude-sonnet-5-5',
+      binding: { investigationId },
+      opening: { promptVersion: '0123456789ab', input: { instructions: 'Judge the answer.', messages: [] } },
+    });
+
+    const ownRecord = await readRunRecord(db(), { investigationId, ownerId: owner });
+    const strangerRecord = await readRunRecord(db(), { investigationId, ownerId: newUser() });
+    const byTask = await readTranscripts(db(), { investigationId, ownerId: owner, taskId: seeded.runTaskId, retention: 'no_term' });
+    const all = await readTranscripts(db(), { investigationId, ownerId: owner, retention: 'no_term' });
+    const before = await investigationLeftovers(investigationId, judgeCallId);
+    await runtime.investigations.purgeThread({ threadId: threadOf.get(investigationId)!, resourceId: owner });
+
+    expect(ownRecord.outcome === 'found' ? [ownRecord.record.ownerId, ownRecord.record.agentTree.runs.length] : ownRecord).toEqual([owner, 1]);
+    expect(strangerRecord).toEqual({ outcome: 'rejected', code: 'investigation_not_found' });
+    expect(callIdsOf(byTask)).toEqual(seeded.callIds);
+    expect(callIdsOf(all)).toEqual(expect.arrayContaining([...seeded.callIds, judgeCallId]));
+    expect(before).toEqual({ engineRuns: 1, llmCalls: 1, transcripts: 2, judge: 1 });
+    expect(await readRunRecord(db(), { investigationId, ownerId: owner })).toEqual({ outcome: 'rejected', code: 'investigation_not_found' });
+    expect(await investigationLeftovers(investigationId, judgeCallId)).toEqual({ engineRuns: 0, llmCalls: 0, transcripts: 0, judge: 0 });
+  });
+});
+
+// Carried over from agent-quality-self-check INT-2 T3 and T4: under a term a transcript past it is no longer read even
+// before the purge removes it; the purge removes only the transcripts past the term, never their ledger rows, and keeps
+// those of the kept owner (`system:self-check`) and of a call outside any investigation whatever their age.
+// Defects caught: an expired transcript still read; the purge removing a ledger row or a young transcript; the purge
+// removing the self-check program's transcripts in the shared database or a call bound to no investigation.
+describe('срок хранения транскриптов', () => {
+  it('reads a transcript at 29 days and not at 31 under a 30-day term, and the purge then removes only the older one', async () => {
+    const owner = newUser();
+    const seeded = await seedAgentInvestigation(owner, 2);
+    const [older, newer] = seeded.callIds as [string, string];
+    await ageTranscript(older, 31);
+    await ageTranscript(newer, 29);
+    const read = () => readTranscripts(db(), { investigationId: seeded.investigationId, ownerId: owner, retention: { days: 30 } });
+
+    const beforePurge = callIdsOf(await read());
+    const stored = (await db().select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.investigationId, seeded.investigationId))).length;
+    await purgeExpiredTranscripts(db(), { days: 30 }, newUser());
+
+    expect(beforePurge).toEqual([newer]);
+    expect(stored).toBe(2);
+    expect(callIdsOf(await read())).toEqual([newer]);
+    expect(callIdsOf(await readTranscripts(db(), { investigationId: seeded.investigationId, ownerId: owner, retention: 'no_term' }))).toEqual([newer]);
+    expect((await db().select().from(researchLlmCalls).where(eq(researchLlmCalls.investigationId, seeded.investigationId))).length).toBe(2);
+  });
+
+  it('keeps the 400-day-old transcripts of the kept owner and of a call outside any investigation, and removes the employee’s', async () => {
+    const keptOwner = newUser();
+    const kept = await seedAgentInvestigation(keptOwner);
+    const employee = await seedAgentInvestigation(newUser());
+    const selfCheckRunId = `self-check:run:${randomUUID()}`;
+    const outside = await postgresOutsideTaskTranscripts(db()).open({
+      role: 'judge',
+      model: 'anthropic/claude-sonnet-5-5',
+      binding: { selfCheckRunId },
+      opening: { promptVersion: '0123456789ab', input: { instructions: 'Judge the check.', messages: [] } },
+    });
+    for (const callId of [...kept.callIds, ...employee.callIds, outside]) await ageTranscript(callId, 400);
+
+    await purgeExpiredTranscripts(db(), { days: 30 }, keptOwner);
+
+    expect(callIdsOf(await readTranscripts(db(), { investigationId: kept.investigationId, ownerId: keptOwner, retention: 'no_term' }))).toEqual(
+      kept.callIds,
+    );
+    expect(callIdsOf(await readTranscripts(db(), { selfCheckRunId, retention: 'no_term' }))).toEqual([outside]);
+    expect(await db().select().from(researchLlmTranscripts).where(eq(researchLlmTranscripts.investigationId, employee.investigationId))).toEqual([]);
+  });
+});
+
+/** A task of `workflowType` in the investigation, written as the runtime stores one; nothing claims it. */
+async function lifecycleTask(investigationId: string, workflowType: string): Promise<string> {
+  const taskId = randomUUID();
+  await db().insert(researchTasks).values({
+    taskId,
+    investigationId,
+    workflowType,
+    workflowVersion: 1,
+    input: {},
+    inputRefs: [],
+    expectedOutput: { description: `a task of ${workflowType}`, completeness: 'all' },
+    dedupKey: `v1:${taskId}`,
+    maxToolCalls: 1,
+    maxRetries: 0,
+    deadlineMs: 120_000,
+    maxTokens: 100_000,
+  });
+  return taskId;
+}
+
+/** The investigation's status, its row version and the number of its `InvestigationCompleted` events. */
+async function closureOf(investigationId: string) {
+  const { rows } = await connection.pool.query<{ status: string; version: string; completed: number }>(
+    `SELECT i.status, i.xmin::text AS version,
+            (SELECT count(*)::int FROM app.research_events e
+              WHERE e.investigation_id = i.investigation_id AND e.type = 'InvestigationCompleted') AS completed
+       FROM app.research_investigations i WHERE i.investigation_id = $1`,
+    [investigationId],
+  );
+  return rows[0];
+}
+
+// Carried over from agent-quality-lifecycle INT-3 C5 (design-lifecycle.md, KD-1, Flow 3):
+// `engine.lifecycle` closes an investigation from the end of its root task only, once, in the delivery transaction, and
+// never over a stop. The root's id is not recorded in the engine row here, as when the root ends before the start records it.
+// Defects caught: the end of a run that is not the root closes the investigation; a redelivered end writes a second
+// `InvestigationCompleted` or changes the row; a stop committed before the root's end is overridden to `completed`; a
+// cancel after the close changes `completed`; the close needs the recorded `controller_task_id`.
+describe('engine.lifecycle закрывает расследование один раз и только концом корня', () => {
+  it('a child run’s end closes nothing, the root’s closes once, a redelivery and a later cancel change nothing, and an earlier stop stays', async () => {
+    const owner = newUser();
+    const { config } = definitionMemoryFixture();
+    const consumer = createLifecycleConsumer(runtime.investigations);
+    const withEngineRow = async (): Promise<{ investigationId: string; root: string; child: string }> => {
+      const investigationId = await newInvestigation(owner);
+      await db().insert(researchEngineRuns).values({
+        investigationId,
+        resourceId: owner,
+        launchKey: `launch-${randomUUID()}`,
+        processId: config.processId,
+        processVersion: 1,
+        processConfig: config,
+        sourceMode: 'model_knowledge',
+        tokenBudget: 300_000,
+        definitionMemorySnapshot: {},
+      });
+      return { investigationId, root: await lifecycleTask(investigationId, 'agent.root'), child: await lifecycleTask(investigationId, 'agent.run') };
+    };
+    const deliver = (investigationId: string, taskId: string) =>
+      db().transaction((tx) =>
+        consumer.handle(tx, { eventId: randomUUID(), type: 'TaskSucceeded', investigationId, taskId } as unknown as EventEnvelope),
+      );
+
+    const closing = await withEngineRow();
+    await deliver(closing.investigationId, closing.child);
+    const afterChild = await closureOf(closing.investigationId);
+    await deliver(closing.investigationId, closing.root);
+    const afterRoot = await closureOf(closing.investigationId);
+    await deliver(closing.investigationId, closing.root);
+    await runtime.investigations.cancel(closing.investigationId, owner);
+    const afterRepeat = await closureOf(closing.investigationId);
+
+    const stopped = await withEngineRow();
+    await runtime.investigations.cancel(stopped.investigationId, owner);
+    await deliver(stopped.investigationId, stopped.root);
+
+    expect([afterChild?.status, afterChild?.completed]).toEqual(['active', 0]);
+    expect([afterRoot?.status, afterRoot?.completed]).toEqual(['completed', 1]);
+    expect(afterRepeat).toEqual(afterRoot);
+    expect((await closureOf(stopped.investigationId))?.status).toBe('cancelled');
+  });
+});
+
+// Carried over from deep-research-engine INT-2 L5 («late close», DC-9): a call that comes
+// back after the answer's write abandoned its reservation closes as `already_abandoned`, without an error and without a
+// change of the ledger: the row stays `abandoned` and charged in full, and the investigation's counters stay as they are.
+// Defects caught: the late close throws (the task fails after its answer), re-charges the call by its usage, or moves the
+// counters a second time.
+describe('поздний ответ после брошенного резерва', () => {
+  it('closes as already_abandoned and changes neither the ledger row nor the counters', async () => {
+    const owner = newUser();
+    const { config } = definitionMemoryFixture();
+    const investigationId = await newInvestigation(owner);
+    await db().insert(researchEngineRuns).values({
+      investigationId,
+      resourceId: owner,
+      launchKey: `launch-${randomUUID()}`,
+      processId: config.processId,
+      processVersion: 1,
+      processConfig: config,
+      sourceMode: 'model_knowledge',
+      tokenBudget: 300_000,
+      definitionMemorySnapshot: {},
+    });
+    const counters = async () => {
+      const [run] = await db().select().from(researchEngineRuns).where(eq(researchEngineRuns.investigationId, investigationId));
+      return [run?.tokensSpent, run?.tokensReserved];
+    };
+    const ledgerRow = async (callId: string) => {
+      const [row] = await db().select().from(researchLlmCalls).where(eq(researchLlmCalls.callId, callId));
+      return [row?.status, row?.chargedTokens, row?.inputTokens];
+    };
+
+    const outcome = await inAttempt(investigationId, async (ctx) => {
+      const reserved = await postgresCallLedger.reserve(ctx, {
+        role: 'agent',
+        model: 'anthropic/claude-haiku-5-5',
+        countedInputTokens: 1_000,
+        reservedTokens: 3_000,
+        transcript: { promptVersion: '0123456789ab', input: { instructions: 'Answer.', messages: [] } },
+      });
+      if (reserved.outcome !== 'reserved') throw new Error(`reserve ${reserved.outcome}`);
+      await db().transaction((tx) => abandonReservations(tx, investigationId, { all: true }));
+      const atAbandon = { counters: await counters(), row: await ledgerRow(reserved.callId) };
+      const closed = await postgresCallLedger.close(ctx, {
+        callId: reserved.callId,
+        status: 'settled',
+        usage: { inputTokens: 900, outputTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        chargedTokens: 940,
+        costUsd: 0.001,
+        transcript: { outcome: 'answered', response: { object: null, finishReason: 'stop', text: 'late' } },
+      });
+      return { closed, atAbandon, afterClose: { counters: await counters(), row: await ledgerRow(reserved.callId) } };
+    });
+
+    expect(outcome.closed).toBe('already_abandoned');
+    expect(outcome.atAbandon).toEqual({ counters: [3_000, 0], row: ['abandoned', 3_000, null] });
+    expect(outcome.afterClose).toEqual(outcome.atAbandon);
+  });
+});
+
+// Carried over from agent-quality-lifecycle INT-3 C1 (the reserve half) and C4 (a, b, d)
+// (design-lifecycle.md, KD-2): after a stop committed by any instance, the next reserve of a call of that investigation is
+// `stopping` and writes nothing, while a call that was already reserved and answered after the stop still closes its
+// reservation, so the counters add up. The stop is read from the database, so the instance that made it does not matter.
+// Defects caught: a reserve after the stop that writes a ledger row and starts a call; a call answered after the stop
+// that cannot close its reservation, so `tokensReserved` never comes down; counters that no longer match the ledger.
+describe('резерв после остановки', () => {
+  it('refuses the next reserve with stopping and no row, and lets the call reserved before the stop close and charge', async () => {
+    const owner = newUser();
+    const { config } = definitionMemoryFixture();
+    const investigationId = await newInvestigation(owner);
+    await db().insert(researchEngineRuns).values({
+      investigationId,
+      resourceId: owner,
+      launchKey: `launch-${randomUUID()}`,
+      processId: config.processId,
+      processVersion: 1,
+      processConfig: config,
+      sourceMode: 'model_knowledge',
+      tokenBudget: 300_000,
+      definitionMemorySnapshot: {},
+    });
+    const request = {
+      role: 'agent',
+      model: 'anthropic/claude-haiku-5-5',
+      countedInputTokens: 1_000,
+      reservedTokens: 3_000,
+      transcript: { promptVersion: '0123456789ab', input: { instructions: 'Answer.', messages: [] } },
+    } as const;
+
+    // Another instance over the same database, without workers: the stop it makes reaches this one only through the rows.
+    const elsewhere = createDatabase({ connectionString: databaseUrl(), poolMax: 2 });
+    const otherInstance = createRuntime({
+      database: elsewhere,
+      config: { ...parseRuntimeConfig({}), workers: false },
+      threads: { withOwnedThread: (_threadId, _resourceId, work) => work() },
+      logger: { log: () => undefined, warn: () => undefined, error: () => undefined },
+      clock: systemClock,
+    });
+    const outcome = await inAttempt(investigationId, async (ctx) => {
+      const first = await postgresCallLedger.reserve(ctx, request);
+      if (first.outcome !== 'reserved') throw new Error(`reserve ${first.outcome}`);
+      await otherInstance.investigations.cancel(investigationId, owner);
+      const second = await postgresCallLedger.reserve(ctx, request);
+      const closed = await postgresCallLedger.close(ctx, {
+        callId: first.callId,
+        status: 'settled',
+        usage: { inputTokens: 900, outputTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        chargedTokens: 940,
+        costUsd: 0.001,
+        transcript: { outcome: 'answered', response: { object: null, finishReason: 'stop', text: 'answered after the stop' } },
+      });
+      return { second, closed };
+    }).finally(() => elsewhere.close());
+
+    const rows = await db().select().from(researchLlmCalls).where(eq(researchLlmCalls.investigationId, investigationId));
+    const [run] = await db().select().from(researchEngineRuns).where(eq(researchEngineRuns.investigationId, investigationId));
+    expect(outcome).toEqual({ second: { outcome: 'stopping' }, closed: 'closed' });
+    expect(rows.map((row) => [row.status, row.chargedTokens])).toEqual([['settled', 940]]);
+    expect([run?.tokensSpent, run?.tokensReserved]).toEqual([940, 0]);
+  });
+});
+
+// Carried over from agent-quality-engine INT-3 B1 and B2 (DC-5) at the ledger: a reserve
+// that fits the budget only once the open reserves of other calls close is `busy` and writes nothing; one that the
+// investigation's own spending already rules out is `refused` without waiting; one that fits is reserved.
+// Defects caught: a parallel call refused `investigation_tokens_exhausted` because of others' open reserves instead of
+// waiting; a waiting call that writes a ledger row; an over-budget call told to wait.
+describe('резерв рядом с открытыми резервами других вызовов', () => {
+  it('is busy without a row while others hold the budget, refused when the spending alone rules it out, reserved when it fits', async () => {
+    const owner = newUser();
+    const { config } = definitionMemoryFixture();
+    const investigationId = await newInvestigation(owner);
+    await db().insert(researchEngineRuns).values({
+      investigationId,
+      resourceId: owner,
+      launchKey: `launch-${randomUUID()}`,
+      processId: config.processId,
+      processVersion: 1,
+      processConfig: config,
+      sourceMode: 'model_knowledge',
+      tokenBudget: 6_000,
+      definitionMemorySnapshot: {},
+    });
+    const counters = (tokensSpent: number, tokensReserved: number) =>
+      db().update(researchEngineRuns).set({ tokensSpent, tokensReserved }).where(eq(researchEngineRuns.investigationId, investigationId));
+    const request = {
+      role: 'agent',
+      model: 'anthropic/claude-haiku-5-5',
+      countedInputTokens: 1_000,
+      reservedTokens: 3_000,
+      transcript: { promptVersion: '0123456789ab', input: { instructions: 'Answer.', messages: [] } },
+    } as const;
+    const rowsOf = async () => (await db().select().from(researchLlmCalls).where(eq(researchLlmCalls.investigationId, investigationId))).length;
+
+    const outcomes = await inAttempt(investigationId, async (ctx) => {
+      // Others' open reserves of 4 000: 4 000 + 3 000 is over 6 000 only while they are open.
+      await counters(0, 4_000);
+      const busy = [await postgresCallLedger.reserve(ctx, request), await rowsOf()];
+      // The spending alone: 4 000 spent + 3 000 is over 6 000 whatever closes.
+      await counters(4_000, 0);
+      const refused = [await postgresCallLedger.reserve(ctx, request), await rowsOf()];
+      await counters(0, 0);
+      const reserved = await postgresCallLedger.reserve(ctx, request);
+      return { busy, refused, reserved: [reserved.outcome, await rowsOf()] };
+    });
+
+    expect(outcomes).toEqual({
+      busy: [{ outcome: 'busy' }, 0],
+      refused: [{ outcome: 'refused', code: 'investigation_tokens_exhausted' }, 0],
+      reserved: ['reserved', 1],
+    });
   });
 });
 

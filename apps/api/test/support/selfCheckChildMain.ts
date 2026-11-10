@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import type { ResolveModel } from '@agent-os/engine';
 import { loadScenarioSet } from '@agent-os/mcp-fixture';
@@ -6,7 +7,6 @@ import { runCli } from '../../src/self-check/cli.js';
 import {
   CALIBRATION_ERRS_ON_VARIABLE,
   REPORTS_DIR_VARIABLE,
-  SOLVING_ROLE_MODEL,
 } from './selfCheckChild.js';
 import {
   createSelfCheckModels,
@@ -28,7 +28,8 @@ import {
  *
  * Under `calibrate` the verifier answers the calibration pairs of the set by their key, erring on the pair kinds named in
  * `SELF_CHECK_CALIBRATION_ERRS_ON` (comma-separated; empty — no error), so two calibrations of one test give two
- * different tables.
+ * different tables. An agents-form file given with `--config` — the same file the server of the row loads — has its
+ * definitions told to the double, so its edited checker agent is recognised.
  */
 
 /**
@@ -52,8 +53,7 @@ function calibrationErrsOn(): string[] {
 
 /**
  * The scenarios of the command's set in set order (empty for a command without `--set` or with an unknown set, which
- * the program refuses itself), with the cause scenarios scripted by the configuration: solved only with
- * {@link SOLVING_ROLE_MODEL}.
+ * the program refuses itself), with every cause scenario scripted as {@link UNGROUNDED_CAUSE}.
  */
 function scriptScenarios(
   models: SelfCheckModels,
@@ -63,7 +63,7 @@ function scriptScenarios(
     args: [...argv],
     options: {
       set: { type: 'string' },
-      'role-model': { type: 'string' },
+      config: { type: 'string' },
     },
     strict: false,
     allowPositionals: true,
@@ -74,18 +74,24 @@ function scriptScenarios(
   models.useSet(values.set);
   if (argv[0] === 'calibrate') {
     models.calibrating(values.set, calibrationErrsOn());
+    recognizeConfigFile(models, values.config);
   }
   const scenarios = loaded.set.scenarios.map(
     (scenario) => `${scenario.setName}/${scenario.scenarioId}`,
   );
-  if (values['role-model'] !== SOLVING_ROLE_MODEL) {
-    for (const scenario of scenarios) {
-      if (models.keyOf(scenario).kind === 'cause') {
-        models.behave(scenario, UNGROUNDED_CAUSE);
-      }
+  for (const scenario of scenarios) {
+    if (models.keyOf(scenario).kind === 'cause') {
+      models.behave(scenario, UNGROUNDED_CAUSE);
     }
   }
   return scenarios;
+}
+
+/** Tells the double the definitions of an agents-form `--config` file; anything else is the program's to refuse. */
+function recognizeConfigFile(models: SelfCheckModels, file: unknown): void {
+  if (typeof file !== 'string') return;
+  const config = JSON.parse(readFileSync(file, 'utf8')) as { agents?: unknown };
+  if (config.agents !== undefined) models.recognizeConfig(config);
 }
 
 /** `resolveModel` of the double that tells it which scenario each assembly is for (see the file comment). */

@@ -11,13 +11,11 @@ import {
 } from '@agent-os/db';
 import {
   createEngine,
-  deepResearchProcessV2,
+  deepResearchProcessV3,
   type Engine,
   type EngineLogger,
   type GroupTable,
-  type SignalKind,
   type TokenCounter,
-  type TokenCountRequest,
   type TokenCountResult,
 } from '@agent-os/engine';
 import {
@@ -45,19 +43,20 @@ import {
   type SourcesSettings,
 } from '@agent-os/sources';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { z } from 'zod';
 // The internal assembly and the result forms are internal to the package: the harness registers its probe forms through
 // `composeEngine` from the sources (ADR-0010), as the design says; `createEngine` takes no forms.
 import { type ResultForm, SHIPPED_RESULT_FORMS } from '../../src/agents/result-forms.js';
 import type { ToolAccessPolicy } from '../../src/agents/tool-access-policy.js';
+import type { ToolRegistryEntry } from '../../src/agents/tool-registry.js';
 // The repository is internal to the package; the harness writes seeded claims through it, as the handlers do.
 import { claimsRepository } from '../../src/claims/claims.repository.js';
 import { composeEngine, type CreateEngineOptions } from '../../src/create-engine.js';
 import type { AgentTurnCountRequest } from '../../src/model/token-counter.js';
 import { COUNTING_SOURCE_ID, type CountingSource, createCountingSource } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
-import { cancelLeftovers } from './engineDb.js';
+import { cancelLeftovers, cancelNotingLeftBehind, trackInvestigationOwner } from './engineDb.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedModelOptions } from './scriptedModel.js';
+import { agentPromptsOf, type ResearchFlowOverrides, researchFlowGroupTable, researchFlowV3Config } from './test-configs.js';
 import { turnInputCharacters } from './turnCount.js';
 
 /**
@@ -70,17 +69,12 @@ import { turnInputCharacters } from './turnCount.js';
 /** Budget of the shipped deep-research configuration: what a start asks `InvestigationService.create` for. */
 const DEFAULT_BUDGET = { maxTasks: 300, maxToolCalls: 3_000 };
 
-/** The signal kind every harness engine registers (UC-5): a note with its text. */
-export const TEST_NOTE_KIND: SignalKind = { kind: 'test.note', payloadSchema: z.object({ note: z.string() }) };
-
 /** What may change when the engine is (re)built over the same database. */
 export interface EngineBuildOptions {
   /** Process configurations as data; the shipped deep-research configuration by default. */
   processes?: readonly unknown[];
   /** The counting source's id by default (mode `sources`); `[]` for the no-source mode. */
   connectedSources?: readonly string[];
-  /** Signal kinds of `createEngine`; `[TEST_NOTE_KIND]` by default. */
-  signalKinds?: readonly SignalKind[];
   /** The catalog models `Engine.assess` may call (`createEngine`'s `assessModels`); none by default. */
   assessModels?: readonly string[];
   /** Group tables of `createEngine` (KD-3); the shipped ones (none calibrated yet) by default. */
@@ -94,7 +88,7 @@ export interface EngineBuildOptions {
 export interface SeededClaim {
   readonly text: string;
   readonly atoms: readonly { readonly kind: 'text' | 'number' | 'time'; readonly value: string }[];
-  /** Stored as given, its pages in `evidenceIds`: `research.verify` checks it. */
+  /** Stored as given, its pages in `evidenceIds`. */
   readonly pointer: readonly { readonly pageId: string; readonly records: readonly number[] }[];
 }
 
@@ -118,6 +112,8 @@ export interface HarnessSource {
   readonly allowlist: SourceAllowlist;
   /** A new adapter per assembly: stopping an assembly closes its adapter with its sources. */
   adapter(logger: SourcesLogger): SourceAdapter;
+  /** Further adapters of the same assembly, for a process with several sources (UC-16). */
+  extraAdapters?(logger: SourcesLogger): readonly SourceAdapter[];
 }
 
 /** The agent settings of `createEngine` (design-agent-core.md, Runtime Settings); the engine's defaults without them. */
@@ -148,6 +144,8 @@ export interface EngineHarnessOptions extends EngineBuildOptions {
    * package's sources (ADR-0010); without them through the public `createEngine` of the built package, as before.
    */
   resultForms?: readonly ResultForm[];
+  /** Tool entries beside the engine's; like `resultForms`, they build the engine through `composeEngine`. */
+  agentTools?: readonly ToolRegistryEntry[];
   /** The rights port of agent tool calls; what the configuration allows is allowed by default. */
   toolAccessPolicy?: ToolAccessPolicy;
   /** The agent settings of `createEngine`. */
@@ -176,18 +174,11 @@ export interface LogLines {
 }
 
 /**
- * Deterministic `TokenCounter`: one token per character of the instructions and the messages, plus `offset` — set it
- * to make the counted input differ from what the model double reports (DC-13).
+ * Deterministic `TokenCounter`: one token per character of what a turn sends, plus `offset` — set it to make the
+ * counted input differ from what the model double reports (DC-13).
  */
 export interface OffsetTokenCounter extends TokenCounter {
   offset: number;
-  /** Every request counted, in order. */
-  readonly requests: TokenCountRequest[];
-  /**
-   * Consulted before each count: it may hold the count (a latch or a barrier) and may answer a count of its own; with
-   * `undefined` the request is counted as usual. A test that sets it sets it back to `undefined` before it ends.
-   */
-  intercept: ((request: TokenCountRequest) => Promise<number | undefined> | number | undefined) | undefined;
   /**
    * Every agent-turn request counted (DC-30), in order, over the harness's whole life: the harness never clears it, so a
    * test that reads it empties it first. An agent turn counts one token per character of its system block, its messages
@@ -195,7 +186,7 @@ export interface OffsetTokenCounter extends TokenCounter {
    */
   readonly turnRequests: AgentTurnCountRequest[];
   /**
-   * The {@link intercept} of an agent turn's count: it may hold the count and may answer a count of its own (UC-E15 answers
+   * Consulted before each turn's count: it may hold the count and may answer a count of its own (UC-E15 answers
    * by the order of the requests inside a turn); with `undefined` the request is counted as usual. A test that sets it
    * sets it back to `undefined` before it ends.
    */
@@ -311,11 +302,6 @@ export interface EngineHarness {
    */
   seedRevisions(seed: { readonly investigationId: string; readonly taskId: string; readonly revisions: readonly SeededRevision[] }): Promise<void>;
   /**
-   * Evidence ids the engine read through `EvidenceReader.get`, in order — workers, checks, answer messages and
-   * `readAnswerMessage` alike (INT-2 A5: the status read reads none). A test may empty it.
-   */
-  readonly evidenceReads: string[];
-  /**
    * The state a start killed between `InvestigationService.create` and the engine row leaves (KD-9): an investigation
    * created by the real service, with no engine row and no task. The deep-research budget by default.
    */
@@ -393,18 +379,6 @@ function threadOwnershipDouble(owners: ReadonlyMap<string, string>): ThreadOwner
 function offsetTokenCounter(): OffsetTokenCounter {
   const counter: OffsetTokenCounter = {
     offset: 0,
-    requests: [],
-    intercept: undefined,
-    async countInputTokens(request): Promise<TokenCountResult> {
-      counter.requests.push(request);
-      const intercepted = await counter.intercept?.(request);
-      if (intercepted !== undefined) {
-        return { outcome: 'counted', inputTokens: intercepted };
-      }
-      const characters =
-        request.system.length + request.messages.reduce((sum, message) => sum + message.content.length, 0);
-      return { outcome: 'counted', inputTokens: characters + counter.offset };
-    },
     turnRequests: [],
     interceptTurn: undefined,
     async countTurnInputTokens(request): Promise<TokenCountResult> {
@@ -483,6 +457,28 @@ function heldContext(ctx: TaskContext, hold: (at: 'checkpoint' | 'guarded', chec
   });
 }
 
+/** What a research-flow scenario changes in its assembly: the shipped numbers, the sources, the options of any harness. */
+export interface ResearchFlowHarnessOptions extends EngineHarnessOptions {
+  /** The named numbers of `researchFlowV3Config`; the shipped v3 without them. */
+  readonly overrides?: ResearchFlowOverrides;
+  /** No source connected: the investigation starts in `model_knowledge` mode. */
+  readonly noSources?: boolean;
+}
+
+/**
+ * The assembly of the research-flow scenarios (design-research-flow.md, Test Strategy): the shipped v3, its test group
+ * table by the loaded `verifier`, and the counting source.
+ */
+export function createResearchFlowHarness({ overrides, noSources, ...options }: ResearchFlowHarnessOptions = {}): Promise<EngineHarness> {
+  const config = researchFlowV3Config(overrides);
+  return createEngineHarness({
+    processes: [config],
+    groupTables: [researchFlowGroupTable(config)],
+    ...(noSources === true ? { connectedSources: [] } : {}),
+    ...options,
+  });
+}
+
 /** Builds the database, runtime, sources and engine, and starts the runtime's workers unless they are off. */
 export async function createEngineHarness(options: EngineHarnessOptions = {}): Promise<EngineHarness> {
   const config: RuntimeConfig = {
@@ -498,7 +494,6 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const logs = { runtime: recordingLogs(), engine: recordingLogs(), sources: recordingLogs() };
   const owners = new Map<string, string>();
   const endedRuns: { taskId: string; attempt: number }[] = [];
-  const evidenceReads: string[] = [];
   const handlerHold: HandlerHold = { at: undefined };
   const schedulerHold: SchedulerHold = { afterPropose: undefined };
   /** The engine's handlers as registered, held at their points by `handlerHold`, with every end of `run` recorded in `endedRuns`. */
@@ -525,9 +520,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const model = createScriptedModel(options.model);
   const sourcesSettings = options.source?.settings ?? parseSourcesSettings({ SOURCE_RETRY_BASE_MS: '10', SOURCE_RETRY_CAP_MS: '50' });
   let build: EngineBuildOptions = {
-    processes: options.processes ?? [deepResearchProcessV2],
+    processes: options.processes ?? [deepResearchProcessV3],
     connectedSources: options.connectedSources ?? [COUNTING_SOURCE_ID],
-    signalKinds: options.signalKinds ?? [TEST_NOTE_KIND],
     assessModels: options.assessModels ?? [],
     // Uncalibrated unless a test passes tables: the shipped tables must not change what a test asserts.
     groupTables: options.groupTables ?? [],
@@ -549,7 +543,10 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     });
     const sources = createSources({
       handlers: runtime.handlers,
-      adapters: [options.source?.adapter(sourcesLogger(logs.sources)) ?? countingSource.adapter],
+      adapters: [
+        options.source?.adapter(sourcesLogger(logs.sources)) ?? countingSource.adapter,
+        ...(options.source?.extraAdapters?.(sourcesLogger(logs.sources)) ?? []),
+      ],
       allowlist: options.source?.allowlist ?? countingSource.allowlist,
       settings: sourcesSettings,
       clock,
@@ -567,19 +564,12 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       runtime: {
         scheduler,
         investigations: runtime.investigations,
-        evidence: {
-          get: (evidenceId, resourceId) => {
-            evidenceReads.push(evidenceId);
-            return runtime.evidence.get(evidenceId, resourceId);
-          },
-        },
         handlers: { register: (handler) => runtime.handlers.register(observed(handler)) },
         eventConsumers: runtime.eventConsumers,
       },
       sourceRegistry: sources.registry,
       connectedSources: build.connectedSources ?? [],
       processes: build.processes ?? [],
-      signalKinds: build.signalKinds ?? [],
       assessModels: build.assessModels ?? [],
       ...(build.groupTables === undefined ? {} : { groupTables: build.groupTables }),
       resolveModel: model.resolveModel,
@@ -590,9 +580,13 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       ...(options.toolAccessPolicy === undefined ? {} : { toolAccessPolicy: options.toolAccessPolicy }),
     };
     const engine =
-      options.resultForms === undefined
+      options.resultForms === undefined && options.agentTools === undefined
         ? createEngine(engineOptions)
-        : composeEngine(engineOptions, { resultForms: [...SHIPPED_RESULT_FORMS, ...options.resultForms] });
+        : composeEngine(engineOptions, {
+            resultForms: [...SHIPPED_RESULT_FORMS, ...(options.resultForms ?? [])],
+            ...(options.agentTools === undefined ? {} : { tools: options.agentTools }),
+          });
+    model.recognizeAgents((build.processes ?? []).flatMap(agentPromptsOf));
     if (fence) {
       await cancelLeftovers(database.db, runtime.investigations);
     }
@@ -609,14 +603,15 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     },
     readInvestigation: (input) => engine.readInvestigation(input),
     readAnswerMessage: (input) => engine.readAnswerMessage(input),
-    recordSignal: (input) => engine.recordSignal(input),
     assess: (request) => engine.assess(request),
     writeDefinitionMemory: (input) => engine.writeDefinitionMemory(input),
     removeDefinitionMemory: (input) => engine.removeDefinitionMemory(input),
     listDefinitionMemory: (input) => engine.listDefinitionMemory(input),
     readAgentTree: (input) => engine.readAgentTree(input),
     assessAgent: (request) => engine.assessAgent(request),
+    checkCalibration: () => engine.checkCalibration(),
     startInvestigation: async (input) => {
+      trackInvestigationOwner(input.resourceId);
       const result = await engine.startInvestigation(input);
       if (result.outcome !== 'rejected') {
         started.set(result.investigationId, input.resourceId);
@@ -706,7 +701,6 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
           })),
         }),
       ),
-    evidenceReads,
     seedShell: ({ resourceId, threadId, query, budget = DEFAULT_BUDGET }) =>
       current.runtime.investigations.create({ resourceId, threadId, query, budget }),
     rebuildEngine: async (next = {}, { fence = true } = {}) => {
@@ -717,7 +711,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     },
     cancelStarted: async () => {
       for (const [investigationId, resourceId] of started) {
-        await current.runtime.investigations.cancel(investigationId, resourceId);
+        await cancelNotingLeftBehind(database.db, current.runtime.investigations, { investigationId, resourceId });
       }
       started.clear();
     },

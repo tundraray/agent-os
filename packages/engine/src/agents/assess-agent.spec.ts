@@ -7,6 +7,7 @@ import { type AssessAgentRequest, type AssessAgentResult, createAssessAgent } fr
 import { createResultFormRegistry, type FormBindings, type ResultForm, TEXT_FORM } from './result-forms.js';
 import { envelope } from './session-window.js';
 import { BASE_TOOLS, createToolRegistry } from './tool-registry.js';
+import { PROBE_RECORD_DETAIL_FORM } from '../../test/support/probe-forms.js';
 
 // UC-14, DC-25 (design-agent-core.md, `Engine.assessAgent`): the turns of one definition outside an investigation —
 // the prologue's `build`, turns with the investigation's view, tools and turn limit, `evaluate` on every `finish` — with
@@ -97,6 +98,7 @@ const CONFIG = {
     reader: definition({ tools: ['memory_read'], result: 'text' }),
     collector: definition({ result: 'probe_collect' }),
     outsider: definition({ model: SONNET }),
+    recorder: definition({ result: 'probe_record' }),
   },
   rootAgent: 'checker',
   agentLimits: { maxDepth: 1 },
@@ -156,7 +158,7 @@ async function assess(patch: Partial<AssessAgentRequest>, results: readonly unkn
   const assessAgent = createAssessAgent({
     models: new Map([[HAIKU, model]]),
     catalog: DEFAULT_MODEL_CATALOG,
-    forms: createResultFormRegistry([TEXT_FORM, GROUPING_FORM, COLLECTING_FORM]),
+    forms: createResultFormRegistry([TEXT_FORM, GROUPING_FORM, COLLECTING_FORM, PROBE_RECORD_DETAIL_FORM]),
     tools: createToolRegistry(BASE_TOOLS),
     clock,
     logger: { log: () => undefined, warn: () => undefined, error: () => undefined },
@@ -225,6 +227,33 @@ describe('assessAgent по UC-14', () => {
     expect(observed.result).toEqual(expected);
     expect(observed.modelCalls).toBe(modelCalls);
     expect(observed.opened).toHaveLength(modelCalls);
+  });
+
+  // DC-20. Defect caught: the notice of a refused `finish` carries only the reason, so the next turn has no `detail`.
+  it('a refusal with detail: the next turn reads the same detail, and the result has no group', async () => {
+    const observed = await assess({ agentName: 'recorder', prologueInput: { assignment: { task: 'the probe task' } } }, [{ note: 'first', refuse: true }, { note: 'second' }]);
+
+    expect(observed.result).toEqual({ outcome: 'finished', result: { note: 'second' }, usage: usageOf(2) });
+    expect(observed.opened[1]?.opening.input).toMatchObject({
+      messages: [
+        { role: 'user' },
+        { role: 'assistant' },
+        {
+          role: 'tool',
+          results: [
+            {
+              toolCallId: 'c1',
+              toolName: 'finish',
+              output: envelope(
+                'tool finish',
+                'engine',
+                '{"outcome":"rejected","reason":"invalid_result: refused_by_probe","detail":{"reason":"refused_by_probe","detail":{"missing":"the probe field","attempt":1}}}',
+              ),
+            },
+          ],
+        },
+      ],
+    });
   });
 
   it('writes a transcript of role agent per turn with the whole input and the agent name', async () => {

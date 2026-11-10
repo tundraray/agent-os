@@ -60,10 +60,6 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   const WORKERS_STOPPED = 'Runtime workers stopped';
   /** EngineModule (deep-research / engine) registers its handlers right after source.fetch, before the workers start. */
   const ENGINE_REGISTRATIONS = [
-    'register research.controller@1',
-    'register research.analyze@1',
-    'register research.verify@2',
-    'register research.synthesize@1',
     'register agent.root@1',
     'register agent.run@1',
   ];
@@ -280,7 +276,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   // Verification items:
   // - app.init() resolves; source.fetch is not registered
   // - RESEARCH_ENGINE resolves to an Engine with sourceMode `model_knowledge`
-  // - a started investigation reaches its research.controller task in research_tasks
+  // - a started investigation reaches its agent.root task in research_tasks (the server loads the agents-form v3, T3.6)
   it('starts without the fixture and runs the engine on model knowledge (UC-12)', async () => {
     const register = vi.spyOn(HandlerRegistry.prototype, 'register');
     const silentModel: ResolveModel = (modelId) =>
@@ -301,10 +297,8 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
           }),
       });
     const fixedCounter: TokenCounter = {
-      countInputTokens: () =>
-        Promise.resolve({ outcome: 'counted', inputTokens: 100 }),
       countTurnInputTokens: () =>
-        Promise.reject(new Error('v2 runs no agent turn')),
+        Promise.resolve({ outcome: 'counted', inputTokens: 100 }),
     };
 
     const runtime = await createRuntimeApp({
@@ -342,7 +336,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
           WHERE investigation_id = $1 AND task_id = $2`,
         [started.investigationId, started.controllerTaskId],
       );
-      expect(tasks).toEqual([{ workflowType: 'research.controller' }]);
+      expect(tasks).toEqual([{ workflowType: 'agent.root' }]);
     } finally {
       await runtime.close();
     }

@@ -1,5 +1,8 @@
+import type { AgentTree } from '@agent-os/engine';
 import {
+  claimAuthors,
   countFirstErrorsByRole,
+  type FirstErrorRole,
   type FirstErrorRun,
   findFirstError,
 } from './first-error.js';
@@ -177,5 +180,136 @@ describe('countFirstErrorsByRole', () => {
       verifier: 1,
       synthesis: 0,
     });
+  });
+});
+
+/** The frozen definitions the authors are read by: an analyst is a definition with `claims_write`. */
+const configOf = (analyst: string, deepAnalyst: string) => ({
+  agents: {
+    controller: { tools: ['call_agent'] },
+    [analyst]: { tools: ['gather', 'claims_write', 'call_agent'] },
+    [deepAnalyst]: { tools: ['gather', 'claims_write', 'call_agent'] },
+    verifier: { tools: [] },
+  },
+});
+
+/** An analyst under the root and one under it, each with its `claims_write`: `w1` by the first, `s1` by the second. */
+const treeOf = (analyst: string, deepAnalyst: string) =>
+  ({
+    runs: [
+      ['root', 'controller', null, null],
+      ['run-w', analyst, 'root', 'w1'],
+      ['run-s', deepAnalyst, 'run-w', 's1'],
+    ].map(([runTaskId, agentName, parent, claimId]) => ({
+      runTaskId,
+      agentName,
+      parent: parent === null ? null : { taskId: parent, callIndex: 0 },
+      toolCalls:
+        claimId === null
+          ? []
+          : [
+              {
+                toolName: 'claims_write',
+                state: 'done',
+                outcome: {
+                  outcome: 'success',
+                  result: { claimIds: [claimId] },
+                },
+              },
+            ],
+    })),
+  }) as unknown as AgentTree;
+
+// DC-12: the analyst of a claim is the run that wrote it.
+describe('этап первой ошибки v3', () => {
+  const authors = claimAuthors(
+    treeOf('worker', 'subworker'),
+    configOf('worker', 'subworker'),
+  );
+  const authored = (claimId: string, status: string) => ({
+    ...claim(claimId, status, [KEY_PAGE]),
+    author: authors.get(claimId),
+  });
+
+  it.each<[string, Partial<FirstErrorRun>, FirstErrorRole, string]>([
+    [
+      'the key records were not collected',
+      { pages: [{ evidenceId: OTHER_PAGE, traceIds: ['trace-noise'] }] },
+      'controller',
+      'сбор — controller',
+    ],
+    [
+      'analysis by a worker',
+      { claims: [authored('w1', 'causal')] },
+      'worker',
+      'анализ — worker',
+    ],
+    [
+      'analysis by a subworker',
+      { claims: [authored('s1', 'causal')] },
+      'subworker',
+      'анализ — subworker',
+    ],
+    [
+      'a supported claim of a subworker, not grounded',
+      {
+        claims: [authored('s1', 'supported')],
+        establishedClaimIds: ['s1'],
+        verdict: 'cause_not_grounded',
+      },
+      'subworker',
+      'анализ — subworker',
+    ],
+    [
+      'the check',
+      { claims: [authored('s1', 'refuted')] },
+      'verifier',
+      'проверка — verifier',
+    ],
+    [
+      'the answer',
+      { claims: [authored('w1', 'supported')] },
+      'synthesis',
+      'ответ — synthesis',
+    ],
+    [
+      'a claim left without a check',
+      { claims: [authored('s1', 'unverified')] },
+      'controller',
+      'сбор — controller',
+    ],
+  ])('%s', (_case, overrides, role, stage) => {
+    expect(findFirstError(run(overrides))).toEqual({ role, stage });
+  });
+});
+
+// DC-12: the analyst is a definition with `claims_write`, and one called by an analyst is the subworker; no name decides.
+describe('автор утверждения по определению, а не по имени', () => {
+  it('renamed analysts keep their roles', () => {
+    const authors = claimAuthors(
+      treeOf('analyst', 'deep_analyst'),
+      configOf('analyst', 'deep_analyst'),
+    );
+
+    expect(Object.fromEntries(authors)).toEqual({
+      w1: 'worker',
+      s1: 'subworker',
+    });
+  });
+});
+
+// DC-12: the run summary has four roles, a subworker's error counted as a worker's.
+describe('сводка по четырём ролям', () => {
+  it('counts a subworker as a worker', () => {
+    expect(
+      countFirstErrorsByRole([
+        'controller',
+        'worker',
+        'subworker',
+        'subworker',
+        'verifier',
+        'synthesis',
+      ]),
+    ).toEqual({ controller: 1, worker: 3, verifier: 1, synthesis: 1 });
   });
 });

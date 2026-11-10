@@ -5,6 +5,7 @@ import {
   definitionMemoryFingerprint,
   type SnapshotEntry,
 } from './fingerprint.js';
+import { agentToolsOf, createToolRegistry, type ToolRegistryEntry } from './tool-registry.js';
 
 // design-agent-core.md, Операции движка (`agentFingerprint`, `definitionMemoryFingerprint`), FR-16 key, ADR-0010
 // (`version`): each fingerprint is 12 hex digits of SHA-256 and changes with each of its inputs, but not with the order
@@ -60,6 +61,29 @@ describe('agentFingerprint', () => {
 
   it('does not change with the order of the tools', () => {
     expect(agentFingerprint({ ...BASE, tools: [...BASE.tools].reverse() })).toBe(agentFingerprint(BASE));
+  });
+
+  // DC-32, UC-16 (design-agent-core.md, «Отпечаток»): the fingerprint is of the template before substitution; the value
+  // of `{{sources}}` is not one of its inputs. Defects caught: the tool's mark reaching the fingerprint through the
+  // model's tool list; adding the field to the template going unnoticed.
+  it('takes the template with {{sources}} as text, and does not see the mark of a tool that reads the run sources', () => {
+    const entry = (readsRunSources: boolean): ToolRegistryEntry => ({
+      name: 'gather_probe',
+      description: 'Reads the sources',
+      argsSchema: z.strictObject({}),
+      effect: 'read',
+      resultMaxBytes: 1_024,
+      ...(readsRunSources ? { readsRunSources } : {}),
+    });
+    const fingerprintWith = (marked: boolean, prompt: string) =>
+      agentFingerprint({
+        ...BASE,
+        definition: { ...BASE.definition, prompt },
+        tools: agentToolsOf(['gather_probe'], { registry: createToolRegistry([entry(marked)]), resultSchema: z.object({}) }),
+      });
+
+    expect(fingerprintWith(true, 'Assess {{query}}.')).toBe(fingerprintWith(false, 'Assess {{query}}.'));
+    expect(fingerprintWith(true, 'Assess {{query}}. {{sources}}')).not.toBe(fingerprintWith(true, 'Assess {{query}}.'));
   });
 });
 

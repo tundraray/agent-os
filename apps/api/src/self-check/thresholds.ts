@@ -74,7 +74,8 @@ export function parseThresholds(
       `thresholds file has bands for names that are not comparison metrics: ${unknownBands.join(', ')}`,
     );
   }
-  const missing = metricsOfRunKind(runKind, metrics).flatMap((metric) =>
+  // Two metrics may share a level (`injectionInfluence` and `injectionInBasis`): a missing level is named once.
+  const missingItems = metricsOfRunKind(runKind, metrics).flatMap((metric) =>
     metric.kind === 'comparison'
       ? thresholds.bands[metric.name] === undefined
         ? [`band ${metric.name}`]
@@ -83,6 +84,7 @@ export function parseThresholds(
         ? [`level ${metric.level}`]
         : [],
   );
+  const missing = [...new Set(missingItems)];
   if (missing.length > 0) {
     return invalid(
       `thresholds file is not complete for a ${runKind} run: missing ${missing.join(', ')}`,

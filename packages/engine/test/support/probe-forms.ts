@@ -173,3 +173,60 @@ const PROBE_DEADLINE_FORM: ResultForm = {
 
 /** The forms the agent-core harness adds to the shipped ones. */
 export const PROBE_FORMS: readonly ResultForm[] = [PROBE_RECORD_FORM, PROBE_DEADLINE_FORM];
+
+/** The structured `detail` of a refusal of the two variants below: the tests compare it as a literal (DC-20). */
+const PROBE_REFUSAL_DETAIL = { missing: 'the probe field', attempt: 1 } as const;
+
+const REFUSED_BY_PROBE = 'refused_by_probe';
+
+/** The refusal of a result with the refusal field, with its `detail`; null for any other result. */
+function refusalWithDetail(result: unknown): ClosureDecision | null {
+  return RecordResultSchema.parse(result).refuse === true ? { kind: 'refuse', reason: REFUSED_BY_PROBE, detail: PROBE_REFUSAL_DETAIL } : null;
+}
+
+const RefusedFinishRowSchema = z.object({
+  run: z.string(),
+  toolName: z.string(),
+  state: z.string(),
+  outcome: z.object({ detail: z.object({ detail: z.unknown() }).optional() }).nullable(),
+});
+
+/** The `detail` of a refused `finish` of this run, read back from its call row; null when there is none. */
+async function refusedDetailOf(context: FormRunContext, reader: FormDataReader): Promise<unknown> {
+  const calls = z.array(RefusedFinishRowSchema).parse(await reader.toolCalls());
+  const refused = calls.find((call) => call.run === context.runTaskId && call.toolName === 'finish' && call.state === 'rejected');
+  return refused?.outcome?.detail?.detail ?? null;
+}
+
+/**
+ * `probe_record` whose closure refuses with `detail`, writes that `detail` as a note of its own, and accepts a later result
+ * only when `collect` found the `detail` in the row of the refused `finish` (UC-12 run 1).
+ */
+const PROBE_RECORD_READING_FORM: ResultForm = {
+  ...PROBE_RECORD_FORM,
+  closure: {
+    collect: refusedDetailOf,
+    evaluate: ({ result, collected }, bindings): ClosureDecision => {
+      const refusal = refusalWithDetail(result);
+      if (refusal !== null) return refusal;
+      return collected === null ? { kind: 'refuse', reason: REFUSED_BY_PROBE } : { kind: 'accept', result: grouped(RecordResultSchema.parse(result), bindings) };
+    },
+    write: async (tx, context, decision) => {
+      await note(tx, context, decision.kind === 'accept' ? PROBE_NOTES.accepted : PROBE_NOTES.refused);
+      if (decision.kind === 'refuse') await note(tx, context, `probe closure detail: ${JSON.stringify(decision.detail)}`);
+    },
+  },
+};
+
+/** The forms of UC-12 run 1: the shipped list with the variant that reads the refused call. */
+export const PROBE_FORMS_READING: readonly ResultForm[] = [PROBE_RECORD_READING_FORM, PROBE_DEADLINE_FORM];
+
+/** `probe_record` whose closure refuses with `detail` and reads nothing, so `Engine.assessAgent` takes it (UC-14). */
+export const PROBE_RECORD_DETAIL_FORM: ResultForm = {
+  ...PROBE_RECORD_FORM,
+  closure: {
+    evaluate: ({ result }, bindings): ClosureDecision =>
+      refusalWithDetail(result) ?? { kind: 'accept', result: grouped(RecordResultSchema.parse(result), bindings) },
+    write: () => Promise.reject(new Error('write is never called outside an investigation')),
+  },
+};

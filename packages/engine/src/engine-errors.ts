@@ -22,34 +22,26 @@ export const ENGINE_FAILURE_CLASSES = {
   context_overflow: 'validation_rejected',
 } as const satisfies Record<string, FailureClass>;
 
-export type EngineFailureCode = keyof typeof ENGINE_FAILURE_CLASSES;
-
 /**
- * Warning of a task that succeeds without claims: the model output failed the role schema, or
- * the model refused, after one retry. Not a failure.
+ * `Engine.checkCalibration` refused the server start: no group table has the pair of fingerprints of the checker agent
+ * of a process's highest loaded version (design-research-flow.md, KD-4, DC-10). The `calibrate` command builds that table.
  */
-export type EngineWarningCode = 'invalid_model_output';
-
-/**
- * Creation refused under `requireCalibration` (the server start): a loaded configuration with the `verify` capability has
- * no group table for its `verifier` model and prompt version (DC-2). The `calibrate` command builds that table.
- */
-export class CalibrationMissingError extends Error {
-  override readonly name = 'CalibrationMissingError';
+export class AgentCalibrationMissingError extends Error {
+  override readonly name = 'AgentCalibrationMissingError';
   readonly code = 'calibration_missing';
   readonly processId: string;
   readonly version: number;
-  readonly model: string;
-  readonly promptVersion: string;
+  readonly agentFingerprint: string;
+  readonly definitionMemoryFingerprint: string;
 
-  constructor(missing: { processId: string; version: number; model: string; promptVersion: string }) {
+  constructor(missing: { processId: string; version: number; agentFingerprint: string; definitionMemoryFingerprint: string }) {
     super(
-      `no group table for process ${missing.processId} version ${missing.version}: verifier model ${missing.model}, ` +
-        `prompt version ${missing.promptVersion}; build one with the calibrate command`,
+      `no group table for process ${missing.processId} version ${missing.version}: agent fingerprint ${missing.agentFingerprint}, ` +
+        `definition memory fingerprint ${missing.definitionMemoryFingerprint}; build one with the calibrate command`,
     );
     this.processId = missing.processId;
     this.version = missing.version;
-    this.model = missing.model;
-    this.promptVersion = missing.promptVersion;
+    this.agentFingerprint = missing.agentFingerprint;
+    this.definitionMemoryFingerprint = missing.definitionMemoryFingerprint;
   }
 }

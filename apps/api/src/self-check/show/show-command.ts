@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import {
-  deepResearchProcessV2,
+  deepResearchProcessV3,
   readTranscripts,
   type RunRecord,
   type TranscriptRetention,
@@ -178,7 +178,7 @@ async function judgeShow(
   if (record.answer === null) return null;
   const assembly = await program.assembleScenario({
     scenario: JUDGE_ASSEMBLY_SERVED,
-    processConfig: deepResearchProcessV2,
+    processConfig: deepResearchProcessV3,
     workers: false,
   });
   try {

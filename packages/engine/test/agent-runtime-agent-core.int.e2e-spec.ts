@@ -3,9 +3,9 @@
 // Generated: 2026-11-08 | Part: agent-core | Test type: Integration (in-process runtime + engine + real Postgres, scripted model), CI job `e2e-engine`
 // Implementation timing: created alongside the slice each test names (INT-1 the turn loop + registry + tree read; INT-2 sibling runs; INT-3 cancellation of the tree; INT-4 the budget share and its return).
 //
-// File name and placement. Same package, harness and config as `deep-research-engine.int.e2e-spec.ts` and `agent-quality-engine.int.e2e-spec.ts` (`test/**/*.e2e-spec.ts` of `vitest.config.e2e.ts`; run with
-// `pnpm --filter @agent-os/engine test:e2e`, never in the default `vitest run`). Everything below lives in this package (the agent module, the ledger, the tree read); `apps/api` loads only v2 (`ENGINE_PROCESSES`)
-// and does not load the probe process, so this part has no api test. The process-kill matrix is the sibling file `agent-runtime-agent-core.e2e-spec.ts` (E2E-1).
+// File name and placement. Same package, harness and config as `agent-runtime-research-flow.int.e2e-spec.ts` (`test/**/*.e2e-spec.ts` of `vitest.config.e2e.ts`; run with
+// `pnpm --filter @agent-os/engine test:e2e`, never in the default `vitest run`). Everything below lives in this package (the agent module, the ledger, the tree read); `apps/api` loads only the shipped
+// deep-research (`ENGINE_PROCESSES`) and does not load the probe process, so this part has no api test. The process-kill matrix is the sibling file `agent-runtime-agent-core.e2e-spec.ts` (E2E-1).
 //
 // Started as `it.todo` skeletons; every row is implemented (plan phases 1-7, fix cycle 1). The Given/When/Then comments are the rows' specification.
 //
@@ -52,10 +52,12 @@
 import { type AgentTree, type AgentTreeRun, readRunRecord, readTranscripts, type StartInvestigationResult } from '@agent-os/engine';
 import { type Clock, type RuntimeConfig, systemClock } from '@agent-os/runtime';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { agentRowsOf, auditOf, closeEngineDb, llmCallsOf, llmTranscriptsOf, sessionOf, tasksOf } from './support/engineDb.js';
 import { createEngineHarness, type EngineHarness, type EngineHarnessOptions } from './support/engineHarness.js';
 import { newLaunchKey, newUser } from './support/new-user.js';
-import { PROBE_DEADLINE_RESULT, PROBE_FORMS, type RecordAssignment } from './support/probe-forms.js';
+import { PROBE_DEADLINE_RESULT, PROBE_FORMS, PROBE_FORMS_READING, type RecordAssignment } from './support/probe-forms.js';
+import { PROBE_READS_SOURCES_TOOL, PROBE_SOURCE_IDS, PROBE_SOURCE_PAIRS, probeSources } from './support/probe-sources.js';
 import { agentMarker, type RecordedModelCall, type ScriptedStep, type ScriptedToolCall, type ScriptedUsage } from './support/scriptedModel.js';
 import { agentProbeConfig, PROBE_MODELS, PROBE_PROCESS_ID, type ProbeAgent } from './support/test-configs.js';
 
@@ -308,7 +310,7 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
   // AC: "AC-07.2: ... сумма по запускам равна расходу расследования."  and  NFR-02: "сессии и заметки памяти уходят только к провайдерам моделей, которыми уже пользуется расследование."
   // Behavior: question -> `agent.root` (lead) turns: write a note and ask a tool outside its definition -> call_agent(helper) -> helper writes a note and calls leaf -> leaf finish -> helper finish -> lead reads memory, finish
   //           -> root task ends -> `engine.lifecycle` closes the investigation `completed` -> the tree read shows three runs
-  // Catches: the engine only works for the domain it was written for (a v2-shaped assumption left in the agent module: it imports a process module, needs `config.roles`, or the root is not recognised as the controller task so the investigation is never closed);
+  // Catches: the engine only works for the domain it was written for (a domain assumption in the agent module: it imports a process module, or the root is not recognised as the root task so the investigation is never closed);
   //   a child's messages leak into the parent's session; a tool outside the definition is executed instead of refused; a tool call without exactly one audit row (zero or two) or an audit row that carries arguments; a turn that makes more than one
   //   provider request (the Mastra one-request assumption of KD-1, read as double calls == journal rows); a session view whose beginning changes between turns, which silently disables the cache.
   // @category: core-functionality
@@ -333,7 +335,7 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
   //   - Budget sums (AC-07.2): the per-run spend of the tree adds up to the investigation's charged total
   //   - Stable prefix (AC-21.1): for consecutive turns of lead, the prompt messages up to the previous turn's last message are identical (same content, same order), the cache mark is on the system block and on the last message of each view, and
   //     the previous turn's mark is not left behind on an older message
-  //   - v2 untouched: no source call (counting source at zero) and no `research.controller` task is created for this process
+  //   - No domain step: the probe process makes no source call (counting source at zero)
   describe('INT-1', () => {
     let harness: EngineHarness;
     /** Held latches are opened after each test, so a failed test leaves no scripted call pending (rule 9). */
@@ -590,9 +592,8 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
         expect(messagesOf(current).slice(0, previous.length)).toEqual(previous);
       }
 
-      // v2 untouched: no source call and no `research.controller` task
+      // No domain step: the probe process makes no source call
       expect(harness.countingSource.calls).toHaveLength(0);
-      expect(tasks.filter((task) => task.workflowType === 'research.controller')).toEqual([]);
     }, CASE_MS);
   });
 
@@ -756,16 +757,18 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
   //   Then (verification items):
   //   - Every agent task of the investigation (`agent.root`, both `agent.run`) is `cancelled`; the helper's in-flight double call was aborted (its signal fired); the queued helper has no attempt and no session row
   //   - After the transition: a snapshot of `research_llm_calls` ids, `research_agent_tool_calls` ids and `model.calls.length` taken right after `cancel` returns equals the one taken after all runs ended - no new reserve, no new model call, no new tool call (AC-08.1)
-  //   - The aborted call's ledger row is read as in v2 `INT-2 L5` (the in-flight reservation stays counted with the charged total); this test adds no new rule for it
+  //   - The aborted call's ledger row follows the late-close rule (the in-flight reservation stays counted with the charged total; the repo file's late-close case); this test adds no new rule for it
   //   - The waiting parent is cancelled by the same transition and is not woken by its cancelled children (no wake attempt, no duplicate turn)
   // Row B - close on a root failure
   //   Given: lead's `deadlineMs` is short on the injected runtime clock; lead called one helper and waits; the helper's model call is `hangUntilAborted`.
   //   When: the runtime clock passes lead's deadline (the injected clock and the lease/deadline sweep, not `engineClock.offsetMs`, which moves only `notAfter`).
   //   Then: lead's task is `failed` with class `deadline`; the investigation is `failed`; the helper's task is `cancelled` by the close transition and its model call was aborted; the ledger and tool-call snapshots do not grow after the close.
   // Row C (task text, plan 1.2; the second run of UC-E10 and the second case of DC-18): helper ended by the runtime with
-  //   `recovery_exhausted` while leaf is still in a model call; lead, woken with `child_failed`, answers `finish` at once.
-  //   Then: the root ends `succeeded` and the investigation `completed`; the close cancels leaf by the same transition, its
-  //   model call is aborted, and the journal and tool-call snapshots do not grow after the close (ADR-0006).
+  //   `recovery_exhausted` while leaf is still in a model call; lead, woken with `child_failed`, answers `finish`.
+  //   Then: before lead's closing turn leaf is `running` with no cancel request; the root ends `succeeded` and the investigation
+  //   `completed`; the close cancels leaf by the same transition, its model call is aborted, and the journal and tool-call
+  //   snapshots do not grow after the close (ADR-0006). Absorbs research-flow INT-2 D (the same close on the research forms:
+  //   the forms write through the same guarded process code, so the probe form proves it once).
   describe('INT-3', () => {
     afterAll(async () => {
       await closeEngineDb();
@@ -833,6 +836,8 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
       readonly inFlightAborted: boolean | undefined;
       readonly nothingAfterClose: boolean;
       readonly pending: Record<string, number>;
+      /** `[status, cancelRequestedAt]` of the descendant before the root's closing turn: the cancel can only come from the close. */
+      readonly descendantBeforeClose?: readonly [string | undefined, unknown];
     }
 
     /** What the close left: the tasks once the cancelled descendant's attempts ended, and the journal against `atClose`. */
@@ -908,11 +913,14 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
           // model call hangs; lead answers `finish` as soon as it gets `child_failed`
           const harness = await probeHarness({ runtime: RECOVERY_RUNTIME });
           const held: Array<() => void> = [];
+          // The closing turn waits until leaf's state is read, so the root cannot close before it.
+          const preconditionRead = latch();
+          held.push(preconditionRead.open);
           try {
             harness.model.scriptAgent(
               'lead',
               turn(call('call_agent', { agent: 'helper', assignment: 'Delegate to leaf.' })),
-              finishWith('finished without helper'),
+              { ...finishWith('finished without helper'), holdUntil: preconditionRead.wait },
             );
             harness.model.scriptAgent('helper', turn(call('call_agent', { agent: 'leaf', assignment: 'Hang in the model.' })));
             harness.model.scriptAgent('leaf', { hangUntilAborted: true });
@@ -920,6 +928,10 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
             const helperTask = await exhaustHelperRecovery(harness, started, held);
             expect((helperTask.failureReason as { code?: string } | null)?.code).toBe('recovery_exhausted');
             const [inFlight] = harness.model.callsOfAgent('leaf');
+            // Absorbs research-flow INT-2 D: the failed helper has cancelled nothing before the close.
+            const leafBeforeClose = (await tasksOf(started.investigationId)).find((task) => (task.input as { agentName?: string }).agentName === 'leaf');
+            const descendantBeforeClose = [leafBeforeClose?.status, leafBeforeClose?.cancelRequestedAt] as const;
+            preconditionRead.open();
 
             // When: lead gets `child_failed` and finishes
             const closed = await closedStatus(harness, started);
@@ -933,6 +945,7 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
               leadCalls: lead.toolCalls.map((row) => [row.toolName, row.outcome] as const),
               inFlightAborted: inFlight?.abortSignal?.aborted,
               pending: harness.model.pendingAgents(),
+              descendantBeforeClose,
             };
           } finally {
             for (const release of held) release();
@@ -958,6 +971,7 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
           inFlightAborted: true,
           nothingAfterClose: true,
           pending: { lead: 0, helper: 0, leaf: 0 },
+          descendantBeforeClose: ['running', null],
         },
       ],
     ])('%s', async (_case, scenario, expected) => {
@@ -1255,6 +1269,71 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
   // Time: the engine clock (`engineClock.offsetMs`) moves `notAfter`; the gateway's deadline timer of UC-E14 is held by
   // `engineClock.holdTimers` and fired by the test. Agent settings of the whole describe: AGENT_TURN_MS 60 000 (above the
   // engine's RUNTIME_LEASE_MS 30 000, UC-E14), AGENT_DEADLINE_MARGIN_MS 20 000. No sleeps.
+  // UC-12 run 1 runs on the variant of `probe_record` that reads the refused call, in a harness of its own: two engines on one
+  // database would both claim its tasks, so it is a sibling of the `describe` below, not a case of it. Runs 2-8 keep the base form.
+  describe('INT-5 run 1', () => {
+    let harness: EngineHarness;
+
+    beforeAll(async () => {
+      harness = await probeHarness({ resultForms: PROBE_FORMS_READING, agent: { turnMs: INT5_TURN_MS, deadlineMarginMs: 20_000, leaseMs: INT5_LEASE_MS } });
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+      await closeEngineDb();
+    });
+
+    afterEach(async () => {
+      await harness.cancelStarted();
+    });
+
+    it('INT-5 UC-12 run 1: the prologue opens the session in the data envelope; a refused finish writes its note with the refusal and its detail, which the model reads next turn and a later closure finds in the call row; an accepted one its note and the result with the bound group', async () => {
+      // Given: recorder first answers finish with the refusal field, then a plain finish
+      harness.model.scriptAgent('lead', turn(call('call_agent', { agent: 'helper', assignment: 'Have the result recorded.' })), finishWith('lead done'));
+      harness.model.scriptAgent(
+        'helper',
+        turn(call('call_agent', { agent: 'recorder', assignment: JSON.stringify({ task: 'the probe task' } satisfies RecordAssignment) })),
+        finishWith('helper done'),
+      );
+      harness.model.scriptAgent('recorder', turn(call('finish', { note: 'first try', refuse: true })), turn(call('finish', { note: 'second try' })));
+      const started = await startProbe(harness);
+
+      // When: the runs go
+      expect(await closedStatus(harness, started)).toBe('completed');
+
+      // Then: the first session message is the prologue's, inside the envelope the model gets
+      const tree = await treeOf(harness, started);
+      const recorder = runOf(tree, 'recorder');
+      const session = await sessionOf(recorder.runTaskId);
+      expect([session[0]?.kind, contentOf(session[0]!)]).toEqual(['prologue', { text: 'Record this: the probe task' }]);
+      expect(recorder.assignment).toBeNull();
+      const [firstTurn, secondTurn] = harness.model.callsOfAgent('recorder');
+      expect(firstTurn!.user).toBe('<data source="prologue" author="engine">\nRecord this: the probe task\n</data>');
+      // The first finish refused `invalid_result` with the closure's reason and detail; its notes were written with the refusal
+      expect(recorder.toolCalls.map((row) => [row.toolName, row.state, row.outcome])).toEqual([
+        ['finish', 'rejected', { outcome: 'rejected', reason: 'invalid_result', detail: { reason: 'refused_by_probe', detail: { missing: 'the probe field', attempt: 1 } } }],
+        ['finish', 'done', { outcome: 'success', result: { note: 'second try', group: 'probe-group-a' } }],
+      ]);
+      expect((await agentRowsOf(started.investigationId)).memory.filter((note) => note.agentName === 'recorder').map((note) => note.text)).toEqual([
+        'probe closure: refused',
+        'probe closure detail: {"missing":"the probe field","attempt":1}',
+        'probe closure: accepted',
+      ]);
+      // The model reads the detail with the refusal in its next turn
+      const refusedResult = secondTurn!.prompt.at(-1)!;
+      expect(refusedResult.role).toBe('tool');
+      expect((refusedResult.content as { output: { value: string } }[])[0]!.output.value).toBe(
+        '<data source="tool finish" author="engine">\n{&quot;detail&quot;:{&quot;detail&quot;:{&quot;attempt&quot;:1,&quot;missing&quot;:&quot;the probe field&quot;},&quot;reason&quot;:&quot;refused_by_probe&quot;},&quot;reason&quot;:&quot;invalid_result&quot;,&quot;outcome&quot;:&quot;rejected&quot;}\n</data>',
+      );
+      // The second finish is accepted only because `collect` found the detail in the refused call's row
+      expect([recorder.status, recorder.result]).toEqual(['succeeded', { note: 'second try', group: 'probe-group-a' }]);
+      expect(runOf(tree, 'helper').toolCalls.find((row) => row.toolName === 'call_agent')?.outcome).toEqual({
+        outcome: 'success',
+        result: { note: 'second try', group: 'probe-group-a' },
+      });
+    }, CASE_MS);
+  });
+
   describe('INT-5', () => {
     let harness: EngineHarness;
 
@@ -1329,32 +1408,6 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
     /** The outcome helper's call of recorder ended with. */
     const helperCallOutcome = async (started: Started) =>
       runOf(await treeOf(harness, started), 'helper').toolCalls.find((row) => row.toolName === 'call_agent')?.outcome;
-
-    it('INT-5 UC-12 run 1: the prologue opens the session in the data envelope; a refused finish writes its note with the refusal, an accepted one its note and the result with the bound group', async () => {
-      // Given: recorder first answers finish with the refusal field, then a plain finish
-      const started = await startRecorder({ task: 'the probe task' }, [
-        turn(call('finish', { note: 'first try', refuse: true })),
-        turn(call('finish', { note: 'second try' })),
-      ]);
-
-      // When: the runs go
-      expect(await closedStatus(harness, started)).toBe('completed');
-
-      // Then: the first session message is the prologue's, inside the envelope the model gets
-      const recorder = runOf(await treeOf(harness, started), 'recorder');
-      const session = await sessionOf(recorder.runTaskId);
-      expect([session[0]?.kind, contentOf(session[0]!)]).toEqual(['prologue', { text: 'Record this: the probe task' }]);
-      expect(recorder.assignment).toBeNull();
-      expect(harness.model.callsOfAgent('recorder')[0]!.user).toBe('<data source="prologue" author="engine">\nRecord this: the probe task\n</data>');
-      // The first finish refused `invalid_result` with the closure's reason; its note was written with the refusal
-      expect(recorder.toolCalls.map((row) => [row.toolName, row.state, row.outcome])).toEqual([
-        ['finish', 'rejected', { outcome: 'rejected', reason: 'invalid_result', detail: { reason: 'refused_by_probe' } }],
-        ['finish', 'done', { outcome: 'success', result: { note: 'second try', group: 'probe-group-a' } }],
-      ]);
-      expect(await notesOf(started, 'recorder')).toEqual(['probe closure: refused', 'probe closure: accepted']);
-      expect([recorder.status, recorder.result]).toEqual(['succeeded', { note: 'second try', group: 'probe-group-a' }]);
-      expect(await helperCallOutcome(started)).toEqual({ outcome: 'success', result: { note: 'second try', group: 'probe-group-a' } });
-    }, CASE_MS);
 
     it('INT-5 UC-12 run 2: a recorder that never finishes ends with the result of its forced end instead of turn_limit', async () => {
       // Given: recorder answers text without a call on each of its four turns, the last one included
@@ -1532,6 +1585,9 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
       expect(task.finishedAt!.getTime()).toBeLessThan(task.deadlineAt!.getTime());
     }, CASE_MS);
 
+    // Absorbs research-flow INT-3 B (the root's deadline over the chain worker - subworker - verifier): the bound of one lease
+    // per level is this row's rule, the root's answer by code on its forced end is research-flow INT-3 A, and the reason
+    // `deadline` of `not_after` is stop-reason.spec.ts.
     it("INT-5 UC-E14: leaf, cut by the gateway at its notAfter one lease before helper's, ends not_after; helper wakes with child_failed(deadline), starts no turn and completes by its forced end before its task deadline", async () => {
       // Given: helper with the form probe_deadline; leaf's deadlineMs is above helper's rest, so helper's notAfter sets
       // leaf's; the double never answers leaf's turn; the gateway's deadline timers are held for the test to fire
@@ -1590,6 +1646,93 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
       const transcripts = (await llmTranscriptsOf(started.investigationId)).filter((row) => row.callId === ledger[0]!.callId);
       expect(transcripts.map((row) => (row.input as { view?: { stage?: number } }).view?.stage)).toEqual([2]);
       expect(runOf(await treeOf(harness, started), 'helper').status).toBe('succeeded');
+    }, CASE_MS);
+  });
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // INT-6  The sources field in a real run and the real `resolveTool` at the load (UC-16, UC-2 wiring; KD-9, DC-31, DC-32)
+  // ---------------------------------------------------------------------------------------------------------------
+  // Over the file's INT-1..INT-5 limit: the unit tables see neither `row.sources` of a real tree nor the closure over the
+  // real source registry that `composeEngine` passes; each row names the defect only the assembled engine shows.
+  describe('INT-6', () => {
+    const ALPHA_LINE =
+      '{"sourceId":"alpha","toolName":"search","argsSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"default":10,"type":"number"}},"required":["query"],"additionalProperties":false}}';
+    const BETA_LINE =
+      '{"sourceId":"beta","toolName":"search","argsSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"default":10,"type":"number"}},"required":["query"],"additionalProperties":false}}';
+    const NO_SOURCES = 'No data source is available to this run.';
+    const READER = PROBE_READS_SOURCES_TOOL.name;
+    const sourcesOptions = {
+      sourcesField: ['lead', 'helper', 'leaf'],
+      extraTools: { lead: [READER], helper: [READER], leaf: [READER] },
+      sources: PROBE_SOURCE_PAIRS,
+    } as const;
+    const buildOptions = { agentTools: [PROBE_READS_SOURCES_TOOL], connectedSources: PROBE_SOURCE_IDS };
+
+    afterAll(async () => {
+      await closeEngineDb();
+    });
+
+    // UC-16. Given: the process has sources `alpha` and `beta`; `lead`, `helper` and `leaf` carry `{{sources}}` and the
+    // marked tool; `helper` is narrowed to `beta`, `leaf` to none.
+    // When: `lead` calls `helper`, `helper` makes two turns and calls `leaf`.
+    // Then: the system block of `lead` has both pairs, of `helper` only `beta` and the same bytes on every turn, of `leaf`
+    // the text without sources; the transcript of `helper` read through `readTranscripts` carries the block of its turn.
+    // Catches: the value taken from the process's sources instead of `row.sources` (guard, rule 15); a value rebuilt
+    // differently between turns; the field substituted again at the read.
+    it('INT-6 UC-16: each run of the tree sees the source tools of its own sources, the same bytes on every turn', async () => {
+      const config = agentProbeConfig({ ...sourcesOptions, definitionSources: { helper: ['beta'], leaf: [] } });
+      const harness = await probeHarness({ processes: [config], source: probeSources(), ...buildOptions });
+      try {
+        harness.model.scriptAgent('lead', turn(call('call_agent', { agent: 'helper', assignment: 'Check beta.' })), finishWith('lead done'));
+        harness.model.scriptAgent(
+          'helper',
+          turn(call('memory_read', {})),
+          turn(call('call_agent', { agent: 'leaf', assignment: 'Answer.' })),
+          finishWith('helper done'),
+        );
+        harness.model.scriptAgent('leaf', finishWith('leaf done'));
+
+        const started = await startProbe(harness);
+        expect(await closedStatus(harness, started)).toBe('completed');
+
+        const read = await readTranscripts(harness.db, { investigationId: started.investigationId, ownerId: started.resourceId, retention: 'no_term' });
+        if (read.outcome !== 'found') throw new Error('the transcripts must read');
+        const blocksOf = (agent: string) =>
+          read.transcripts.filter((transcript) => transcript.agentName === agent).map((transcript) => (transcript.input as { instructions: string }).instructions);
+
+        const [leadBlock] = blocksOf('lead');
+        expect(leadBlock).toContain(`\n\nSources:\n${ALPHA_LINE}\n${BETA_LINE}\n\n`);
+        const helperBlocks = blocksOf('helper');
+        expect(helperBlocks).toHaveLength(3);
+        expect(helperBlocks[0]).toContain(`\n\nSources:\n${BETA_LINE}\n\n`);
+        expect(helperBlocks[0]).not.toContain('"sourceId":"alpha"');
+        expect(new Set(helperBlocks).size).toBe(1);
+        expect(blocksOf('leaf')[0]).toContain(`\n\nSources:\n${NO_SOURCES}\n\n`);
+
+        // The read gives back the block the model got on that turn.
+        const sentToHelper = harness.model.callsOfAgent('helper').map((recorded) => recorded.prompt[0]?.content);
+        expect(sentToHelper).toEqual(helperBlocks);
+      } finally {
+        await harness.cancelStarted();
+        await harness.close();
+      }
+    }, CASE_MS);
+
+    // UC-2, the wiring. Given: a real assembly whose source `beta` has an argument schema that makes the value of the field
+    // longer than 8 192 bytes. When: the engine is created. Then: `process_config_rejected` at the prompt of the definition
+    // that names the field.
+    // Catches: `composeEngine` passing no real `resolveTool` (guard, rule 15: one that always answers null): no pair resolves
+    // and the oversized configuration loads.
+    it('INT-6 UC-2: a real source whose schema makes the value longer than its limit refuses the configuration at the prompt', async () => {
+      const oversized = z.strictObject({ query: z.string() }).describe('d'.repeat(8_193));
+
+      await expect(
+        probeHarness({
+          processes: [agentProbeConfig(sourcesOptions)],
+          source: probeSources({ betaArgs: oversized }),
+          ...buildOptions,
+        }),
+      ).rejects.toMatchObject({ code: 'process_config_rejected', path: [0, 'agents', 'lead', 'prompt'] });
     }, CASE_MS);
   });
 });

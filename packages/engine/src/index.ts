@@ -11,6 +11,7 @@ export type {
   AssessAgentResult,
   CalibratingMark,
 } from './agents/assess-agent.js';
+export { definitionMemoryFingerprint } from './agents/fingerprint.js';
 export type {
   DefinitionMemoryRecord,
   DefinitionMemoryScope,
@@ -42,17 +43,19 @@ export type {
   AssessRole,
   AssessUsage,
 } from './assess/assess.js';
-export { type GroupTable, GroupTableSchema } from './calibration/group-table.js';
+export { findGroupTableByPair, type GroupTable, GroupTableSchema } from './calibration/group-table.js';
+export {
+  type ClaimAssessmentAgent,
+  claimAssessmentAgent,
+  type ClaimAssessmentPrologueInput,
+} from './research-flow/forms/claim-assessment.js';
+export { type AgentsConfigIdentity, agentsConfigIdentity } from './research-flow/agents-config-identity.js';
+export { checkedClaimOf, checkerCallEnd, claimWritingAgents } from './research-flow/checker-calls.js';
 export type { ModelCatalog, ModelCatalogEntry } from './config/model-catalog.js';
 export type { SourceMode } from './config/source-check.js';
 export { createEngine, type CreateEngineOptions } from './create-engine.js';
-export type { Engine, RecordSignalInput, RecordSignalResult } from './engine.js';
-export {
-  loadProcessConfig,
-  type LoadProcessConfigResult,
-  type ProcessConfig,
-  type ProcessConfigRejection,
-} from './config/load-process-config.js';
+export type { Engine } from './engine.js';
+export type { AgentProcessConfig as ProcessConfig, ProcessConfigRejection } from './config/agent-config.schema.js';
 export {
   AnthropicTokenCounter,
   type AnthropicTokenCounterOptions,
@@ -61,13 +64,11 @@ export { promptVersion } from './model/prompt-version.js';
 export type {
   RoleMessage,
   TokenCounter,
-  TokenCountRequest,
   TokenCountResult,
 } from './model/token-counter.js';
 export type { EngineLogFields, EngineLogger, ResolveModel, RoleModel } from './ports.js';
-export { deepResearchProcessV2 } from './processes/shipped-processes.js';
+export { deepResearchProcessV3 } from './processes/shipped-processes.js';
 export { shippedGroupTables } from './processes/shipped-group-tables.js';
-export type { SignalKind, SignalPayloadSchema } from './signals/signal-registry.js';
 export { configFingerprint, readRunRecord, type ReadRunRecordResult, type RunRecord } from './runs/run-record.js';
 export { purgeExpiredTranscripts } from './transcripts/purge-transcripts.js';
 export {
@@ -100,7 +101,7 @@ export {
   type ClaimProfile,
   type ClaimType,
 } from './verify/claim-assessment.js';
-export { buildClaimCheck, type ClaimCheck, type ClaimCheckInput, type ClaimCheckPage } from './verify/claim-check.js';
+export { buildClaimCheck, type ClaimCheckInput, type ClaimCheckPage } from './verify/claim-check.js';
 export {
   type ClaimDecision,
   type DecideClaimInput,

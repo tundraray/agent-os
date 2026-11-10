@@ -1,7 +1,6 @@
 import type { Investigation, TaskSpec } from '@agent-os/contracts';
 import { AGENT_ROOT_WORKFLOW, AGENT_WORKFLOW_VERSION, type AgentTaskInput } from '../agents/agent-task-spec.js';
 import type { AgentProcessConfig } from '../config/agent-config.schema.js';
-import type { ProcessConfig } from '../config/process-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
 
 /** What a start asks of the investigation it records: the thread, its owner, the query and the runtime budget. */
@@ -42,7 +41,7 @@ export type TokenBudgetResolution =
 /** The investigation's token budget: the configured default without one, otherwise a whole number in [1, max]. */
 export function resolveTokenBudget(
   requested: number | undefined,
-  limits: ProcessConfig['limits']['investigationTokens'],
+  limits: AgentProcessConfig['limits']['investigationTokens'],
 ): TokenBudgetResolution {
   if (requested === undefined) {
     return { ok: true, tokenBudget: limits.default };
@@ -53,41 +52,11 @@ export function resolveTokenBudget(
   return { ok: true, tokenBudget: requested };
 }
 
-/** Workflow type of an investigation's controller task. */
-export const CONTROLLER_WORKFLOW = 'research.controller';
-
 /** Subscriber key of the tasks the engine proposes from a start. */
 export const ENGINE_REQUESTER_KEY = 'research.engine';
 
 /**
- * The controller task of an investigation (design-engine.md, Runtime settings): its deadline from the configuration,
- * `maxTokens` the investigation's token budget, one tool call and no retries — it calls no tool. The spec depends only
- * on the recorded run, so a repeated start proposes the same task and the runtime answers `subscribed`.
- */
-export function controllerTaskSpec(run: {
-  readonly investigationId: string;
-  readonly config: ProcessConfig;
-  readonly tokenBudget: number;
-}): TaskSpec {
-  return {
-    investigationId: run.investigationId,
-    workflowType: CONTROLLER_WORKFLOW,
-    workflowVersion: 1,
-    input: { investigationId: run.investigationId },
-    inputRefs: [],
-    expectedOutput: { description: 'The answerId and outcome of the investigation', completeness: 'all' },
-    dependsOn: [],
-    budget: {
-      maxToolCalls: 1,
-      maxRetries: 0,
-      deadlineMs: run.config.limits.taskBudgets[CONTROLLER_WORKFLOW].deadlineMs,
-      maxTokens: run.tokenBudget,
-    },
-  };
-}
-
-/**
- * The root of an agents-form investigation (DC-22): in the mode without sources the definition `modelKnowledgeRoot`
+ * The root of an investigation (DC-22): in the mode without sources the definition `modelKnowledgeRoot`
  * when the key is set; otherwise, in either mode, `rootAgent`.
  */
 export function rootAgentOf(
@@ -100,7 +69,7 @@ export function rootAgentOf(
 }
 
 /**
- * The root task of an agents-form investigation (design-agent-core.md, KD-1, KD-4, «Задачи запусков»): `agent.root`
+ * The root task of an investigation (design-agent-core.md, KD-1, KD-4, «Задачи запусков»): `agent.root`
  * version 1 with the question as its assignment, the share the investigation's whole budget, one tool call and no
  * retries, the root definition's deadline. Its sources are the root definition's (the process's without them), none in
  * the mode without sources. The spec depends only on the recorded run, so a repeated start proposes the same task and

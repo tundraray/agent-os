@@ -5,7 +5,6 @@ import { parseArgs } from 'node:util';
 import { type Database, researchInvestigations } from '@agent-os/db';
 import {
   type AssessBinding,
-  type ProcessConfig,
   readRunRecord,
   type RunRecord,
 } from '@agent-os/engine';
@@ -33,12 +32,15 @@ import {
   writeRunResult,
 } from '../result/run-result.js';
 import {
+  type AgentModel,
   JUDGE_WINDOW_MS,
   judgedRun,
   newRunId,
-  parseRoleModel,
+  parseAgentModels,
   readThresholdsCopy,
   readThresholdsFile,
+  runDeadlineMs,
+  type RunnableConfig,
   THRESHOLDS_COPY_FILE_NAME,
 } from '../run/run-command.js';
 import {
@@ -81,8 +83,8 @@ export interface ReplayOptions {
   readonly ownerId: string;
   readonly runsPerInvestigation: number;
   readonly choice: ReplayConfigChoice;
-  /** Another catalog model for one role of the chosen configuration; null keeps its models. */
-  readonly roleModel: { readonly role: string; readonly model: string } | null;
+  /** Other catalog models for agents of the chosen configuration, one per `--agent-model`. */
+  readonly agentModels: readonly AgentModel[];
   /** The thresholds file as given; null without one. */
   readonly thresholdsPath: string | null;
 }
@@ -111,7 +113,7 @@ const refusal = (
 
 /**
  * `replay --investigation <id> [--investigation <id> ...] --owner <ownerId> [--runs <n>] [--config frozen|shipped]
- * [--role-model <role>=<model>] [--thresholds <file>]`. On success the run directory is printed to stdout by the
+ * [--agent-model <agent>=<model> ...] [--thresholds <file>]`. On success the run directory is printed to stdout by the
  * command line.
  */
 export async function executeReplayCommand(
@@ -124,11 +126,12 @@ export async function executeReplayCommand(
 
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
 
-function parseReplayArgs(
+export function parseReplayArgs(
   args: readonly string[],
 ): { readonly ok: true; readonly options: ReplayOptions } | ReplayRefusal {
   let values: {
     readonly investigation?: string[];
+    readonly 'agent-model'?: string[];
     readonly [name: string]: string | string[] | undefined;
   };
   try {
@@ -141,7 +144,7 @@ function parseReplayArgs(
         owner: { type: 'string' },
         runs: { type: 'string' },
         config: { type: 'string' },
-        'role-model': { type: 'string' },
+        'agent-model': { type: 'string', multiple: true },
         thresholds: { type: 'string' },
       },
     }));
@@ -160,13 +163,13 @@ function parseReplayArgs(
   const runs = single('runs');
   const choice = single('config') ?? DEFAULT_CHOICE;
   const thresholds = single('thresholds');
-  const roleModel = parseRoleModel(single('role-model'));
+  const agentModels = parseAgentModels(values['agent-model'] ?? []);
+  if (!agentModels.ok) return refusal('invalid_arguments', agentModels.reason);
   const usage = usageError({
     investigationIds,
     owner,
     runs,
     choice,
-    roleModel,
   });
   if (usage !== null) return refusal('invalid_arguments', usage);
   return {
@@ -177,7 +180,7 @@ function parseReplayArgs(
       runsPerInvestigation:
         runs === undefined ? DEFAULT_RUNS_PER_INVESTIGATION : Number(runs),
       choice: CHOICES.find((known) => known === choice) ?? DEFAULT_CHOICE,
-      roleModel: roleModel === 'invalid' ? null : roleModel,
+      agentModels: agentModels.agentModels,
       thresholdsPath: thresholds === undefined ? null : resolve(thresholds),
     },
   };
@@ -189,7 +192,6 @@ function usageError(given: {
   readonly owner: string | undefined;
   readonly runs: string | undefined;
   readonly choice: string;
-  readonly roleModel: ReplayOptions['roleModel'] | 'invalid';
 }): string | null {
   if (given.investigationIds.length === 0) {
     return 'no investigation given (--investigation <id>)';
@@ -206,9 +208,6 @@ function usageError(given: {
   if (!CHOICES.some((known) => known === given.choice)) {
     return `--config must be one of ${CHOICES.join(', ')}, got "${given.choice}"`;
   }
-  if (given.roleModel === 'invalid') {
-    return '--role-model must be <role>=<provider/model>';
-  }
   return null;
 }
 
@@ -221,7 +220,7 @@ interface ReplayItem {
   readonly slice: FixtureSlice;
   /** What the fixture is started on: `v1`, `v2` or `<set>/<scenario>`. */
   readonly served: string;
-  readonly processConfig: ProcessConfig;
+  readonly processConfig: RunnableConfig;
   /** The scenario key of an original run on a scenario slice; null for an investigation without a key. */
   readonly key: ScenarioKey | null;
   /** `self-check:copy:<investigationId>` of the original, inherited by a repeat of a repeat. */
@@ -339,19 +338,15 @@ async function readItems(
         `the slice of ${investigationId} cannot be determined: ${resolved.reason}`,
       );
     }
-    const frozen = read.record.config.processConfig;
-    if ('agents' in frozen) {
-      // DC-29: replay works with the roles form; an agents-form investigation is a defect of the input, not a fallback.
-      throw new Error(
-        `replay reads the roles form only: investigation ${investigationId} runs on the agents form`,
-      );
-    }
     const config = replayConfig({
       choice: options.choice,
-      frozen,
-      roleModel: options.roleModel,
+      frozen: read.record.config.processConfig,
+      agentModels: options.agentModels,
     });
     if (!config.ok) {
+      if (config.code === 'invalid_arguments') {
+        return refusal('invalid_arguments', config.reason);
+      }
       return refusal(
         'process_config_rejected',
         `process configuration rejected at ${config.path.join('.')}: ${config.message}`,
@@ -500,9 +495,7 @@ async function replayItem(
       scenarioWaiterPorts(assembly, program.clock),
       {
         runs: await startRepeats(context, assembly, item),
-        controllerDeadlineMs:
-          item.processConfig.limits.taskBudgets['research.controller']
-            .deadlineMs,
+        controllerDeadlineMs: runDeadlineMs(item.processConfig),
       },
     );
     const deps: JudgeDeps = {

@@ -1,11 +1,6 @@
 import { z } from 'zod';
 import type { AgentTurnMessage } from './role-agent.js';
-import type {
-  AgentTurnCountRequest,
-  TokenCounter,
-  TokenCountRequest,
-  TokenCountResult,
-} from './token-counter.js';
+import type { AgentTurnCountRequest, TokenCounter, TokenCountResult } from './token-counter.js';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
@@ -32,8 +27,7 @@ export interface AnthropicTokenCounterOptions {
 /**
  * `TokenCounter` over the provider's `count_tokens` (design-engine.md, Contract Definitions):
  * `POST <base>/v1/messages/count_tokens` with `x-api-key` and `anthropic-version`, the model
- * without its `anthropic/` prefix and the body of the call — role messages and `output_config`
- * with the output JSON schema. The key and base come from the assembly point, never from the
+ * without its `anthropic/` prefix and the body of the turn. The key and base come from the assembly point, never from the
  * environment. Network failures and non-2xx answers come back as `failed`, not as exceptions.
  */
 export class AnthropicTokenCounter implements TokenCounter {
@@ -41,13 +35,6 @@ export class AnthropicTokenCounter implements TokenCounter {
 
   constructor(private readonly options: AnthropicTokenCounterOptions) {
     this.url = `${options.baseUrl.replace(/\/+$/, '')}${COUNT_TOKENS_PATH}`;
-  }
-
-  countInputTokens(
-    request: TokenCountRequest,
-    signal: AbortSignal,
-  ): Promise<TokenCountResult> {
-    return this.count(countTokensBody(request), signal);
   }
 
   /** The turn's whole input: its tools as `tools`, its calls and results as `tool_use` and `tool_result` blocks (DC-30). */
@@ -94,19 +81,6 @@ async function errorTypeOf(response: Response): Promise<string> {
   } catch {
     return HTTP_ERROR;
   }
-}
-
-function countTokensBody(request: TokenCountRequest) {
-  return {
-    model: request.model.replace(PROVIDER_PREFIX, ''),
-    system: request.system,
-    // The cache mark is not a field of the provider's message; the input counts the same with or without it.
-    messages: request.messages.map(({ role, content }) => ({ role, content })),
-    output_config: {
-      effort: request.effort,
-      format: { type: 'json_schema', schema: request.outputSchema },
-    },
-  };
 }
 
 type ContentBlock =

@@ -1,5 +1,5 @@
 import type { SourceRegistry } from '@agent-os/sources';
-import type { ProcessConfig, ProcessConfigRejection } from './process-config.schema.js';
+import type { AgentProcessConfig, ProcessConfigRejection } from './agent-config.schema.js';
 
 /** `sources` when the deployment has a connected source, `model_knowledge` when it has none (KD-8). */
 export type SourceMode = 'sources' | 'model_knowledge';
@@ -11,12 +11,12 @@ export type SourceCheckResult =
   | { readonly ok: false; readonly rejection: ProcessConfigRejection };
 
 /**
- * With a connected source, every configured pair of a configuration of either form must resolve through the
+ * With a connected source, every configured pair of a configuration must resolve through the
  * `source.fetch` allowlist (DC-14); the path is `[configIndex, 'sources', sourceIndex]`. Without one there is nothing to check against: the engine runs on model
  * knowledge and its creation writes one warning (DC-18).
  */
 export function checkProcessSources(input: {
-  readonly configs: readonly Pick<ProcessConfig, 'processId' | 'version' | 'sources'>[];
+  readonly configs: readonly Pick<AgentProcessConfig, 'processId' | 'version' | 'sources'>[];
   readonly registry: Pick<SourceRegistry, 'resolveTool'>;
   readonly connectedSources: readonly string[];
 }): SourceCheckResult {

@@ -1,5 +1,4 @@
 import type { Clock, TaskContext } from '@agent-os/runtime';
-import { z } from 'zod';
 import { DEFAULT_MODEL_CATALOG } from '../config/model-catalog.js';
 import type { EngineLogger, RoleModel } from '../ports.js';
 import type {
@@ -8,23 +7,20 @@ import type {
   ReservationOutcome,
   ReservationRequest,
 } from './ledger.js';
-import { createModelGateway, type ModelCallResult } from './model-gateway.js';
-import type { RoleGeneration, RoleModelClient } from './role-agent.js';
+import { type AgentTurnResult, createModelGateway } from './model-gateway.js';
+import type { AgentTurnGeneration, AgentTurnModelClient } from './role-agent.js';
 import type { TokenCounter, TokenCountResult } from './token-counter.js';
 
-// Error handling of design-engine.md: how each outcome of `generate` drives ModelGateway.
-// Provider errors (statusCode 429, 500, 529, network without statusCode) and a failed count are
-// retried twice, each call under its own reservation, then `model_unavailable`; an invalid output
-// and a refusal (`content-filter`) are retried once, then `invalid_model_output`, the refusal's
-// usage charged; an aborted call is no answer and is not retried.
-// Defects caught: a retry without a new reservation, an aborted call retried or taken as an answer,
-// a refusal that charges nothing or is retried more than once, a reservation refused as `stopping` that still calls the
-// model or is retried.
-// Transcript (design-self-check.md, Flow 3, AC-01.1, DC-1): every reservation carries the transcript input and
-// prompt version, every close the transcript outcome and the response as the client returned it — a provider error
-// `provider_error` without a response, a refusal `invalid_output`. Defects caught: an attempt whose close carries no
-// outcome, a response validated or replaced before it is stored, a refusal stored as an answer.
-// Boundary doubles: the model client, the reservation ledger, the token counter and the clock.
+// Error handling of design-engine.md and design-agent-core.md (Error Handling): how each outcome of a turn request
+// drives ModelGateway. Provider errors (statusCode 429, 500, 529, network without statusCode) and a failed count are
+// retried twice, each request under its own reservation, then `model_unavailable`; a final status is not retried; an
+// aborted request is no answer and is not retried.
+// Defects caught: a retry without a new reservation, an aborted request retried or taken as an answer, an answer that
+// resolved after the cancel kept, a reservation refused as `stopping` that still calls the model or is retried.
+// Transcript (design-self-check.md, Flow 3, AC-01.1, DC-1): every reservation carries the transcript input and prompt
+// version, every close the transcript outcome — a provider error `provider_error` without a response. Defects caught: an
+// attempt whose close carries no outcome.
+// Boundary doubles: the turn client, the reservation ledger, the token counter and the clock.
 
 const NOW = new Date('2026-11-01T10:00:00.000Z');
 const IN_ONE_HOUR = new Date(NOW.getTime() + 3_600_000);
@@ -35,17 +31,17 @@ const RESERVED = COUNTED + MARGIN + MAX_OUTPUT;
 const HAIKU = 'anthropic/claude-haiku-5-5';
 const PROMPT_VERSION = '0123456789ab';
 const INSTRUCTIONS = 'You analyse log records.';
-const QUESTION = 'Which service failed first?';
+const TRANSCRIPT_INPUT = {
+  instructions: INSTRUCTIONS,
+  view: { throughSeq: 0, stubbedCalls: [], collapsedTurns: [], stage: 0 },
+} as const;
 
-const OutputSchema = z.object({ claims: z.array(z.string()) });
-type Output = z.infer<typeof OutputSchema>;
-
-/** Moves the world while the call runs: a cancel of the investigation or the arrival of `notAfter`. */
+/** Moves the world while the request runs: a cancel of the investigation or the arrival of `notAfter`. */
 interface CallControls {
   cancel(): void;
   reachNotAfter(): void;
 }
-type Step = RoleGeneration | Error | ((controls: CallControls) => RoleGeneration);
+type Step = AgentTurnGeneration | Error | ((controls: CallControls) => AgentTurnGeneration);
 
 const usage = (inputTokens: number, outputTokens: number) => ({
   inputTokens,
@@ -53,46 +49,39 @@ const usage = (inputTokens: number, outputTokens: number) => ({
   cachedInputTokens: 0,
   cacheCreationInputTokens: 0,
 });
-const answer: RoleGeneration = {
-  finishReason: 'stop',
-  object: { claims: ['payments failed first'] },
-  text: '{"claims":["payments failed first"]}',
+const answer: AgentTurnGeneration = {
+  finishReason: 'tool-calls',
+  text: '',
+  toolCalls: [{ toolCallId: 'tc-1', toolName: 'memory_read', args: {} }],
   usage: usage(1_000, 200),
 };
-const invalid: RoleGeneration = {
-  finishReason: 'stop',
-  object: { claims: 'not a list' },
-  text: '',
-  usage: usage(1_000, 150),
-};
-const refusal: RoleGeneration = {
-  finishReason: 'content-filter',
-  object: undefined,
-  text: '',
-  usage: usage(900, 40),
-};
+const aborted: AgentTurnGeneration = { finishReason: 'aborted', text: '', toolCalls: [], usage: usage(0, 0) };
 const apiError = (statusCode?: number): Error =>
   Object.assign(new Error('provider error'), {
     name: 'AI_APICallError',
     ...(statusCode === undefined ? {} : { statusCode }),
   });
-/** The call is cancelled while it runs; the client then resolves the way `generate` does. */
+/** The request is cancelled while it runs; the client then resolves the way `generateTurn` does. */
 const cancelledThen =
-  (generation: RoleGeneration) =>
-  (controls: CallControls): RoleGeneration => {
+  (generation: AgentTurnGeneration) =>
+  (controls: CallControls): AgentTurnGeneration => {
     controls.cancel();
     return generation;
   };
-/** `notAfter` arrives while the call runs and interrupts it. */
-const interruptedAtNotAfter = (controls: CallControls): RoleGeneration => {
+/** `notAfter` arrives while the request runs and interrupts it. */
+const interruptedAtNotAfter = (controls: CallControls): AgentTurnGeneration => {
   controls.reachNotAfter();
   return aborted;
 };
-const aborted: RoleGeneration = {
-  finishReason: 'aborted',
-  object: undefined,
-  text: '',
-  usage: usage(0, 0),
+
+/** A language model that is never asked: the turn client double answers instead. */
+const TURN_MODEL: Extract<RoleModel, { specificationVersion: 'v4' }> = {
+  specificationVersion: 'v4',
+  provider: 'anthropic.messages',
+  modelId: 'claude-haiku-5-5',
+  supportedUrls: {},
+  doGenerate: (): Promise<never> => Promise.reject(new Error('the turn client double answers the turn')),
+  doStream: () => Promise.reject(new Error('a turn does not stream')),
 };
 
 interface Scenario {
@@ -101,12 +90,12 @@ interface Scenario {
   /** The ledger refuses the reservation: the task budget, or stopped or closed work (design-lifecycle.md, KD-2). */
   refuse?: 'task_tokens_exhausted' | 'stopping';
   notAfter?: Date;
-  /** The investigation is cancelled before the call is asked for. */
+  /** The investigation is cancelled before the turn is asked for. */
   cancelledBefore?: boolean;
 }
 
 interface Observed {
-  result: ModelCallResult<Output>;
+  result: AgentTurnResult;
   generateCalls: number;
   countCalls: number;
   reservations: ReservationRequest[];
@@ -162,19 +151,20 @@ async function run(scenario: Scenario): Promise<Observed> {
       events.push('reserve');
       return Promise.resolve({ outcome: 'reserved', callId: `call-${reservations.length}` });
     },
-    close(_ctx, closing) {
+    async close(_ctx, closing) {
       closings.push({
         callId: closing.callId,
         status: closing.status,
         chargedTokens: closing.chargedTokens,
         transcript: closing.transcript,
       });
+      await closing.writeAnswer?.({} as never);
       events.push(`close:${closing.status}`);
-      return Promise.resolve('closed');
+      return 'closed';
     },
   };
-  const client: RoleModelClient = {
-    generate() {
+  const turnClient: AgentTurnModelClient = {
+    generateTurn() {
       generateCalls += 1;
       const step = steps.shift();
       if (step === undefined) throw new Error('the scenario has no more model steps');
@@ -187,14 +177,12 @@ async function run(scenario: Scenario): Promise<Observed> {
     },
   };
   const tokenCounter: TokenCounter = {
-    countInputTokens: () => {
+    countTurnInputTokens: () => {
       countCalls += 1;
       return Promise.resolve(counts.shift() ?? { outcome: 'counted', inputTokens: COUNTED });
     },
-    countTurnInputTokens: () => Promise.reject(new Error('a role call counts no agent turn')),
   };
-  // Retry delays fire at once and are recorded; the `notAfter` timer, an hour away, fires only
-  // when a step reaches it.
+  // Retry delays fire at once and are recorded; the `notAfter` timer, an hour away, fires only when a step reaches it.
   const clock: Clock = {
     now: () => NOW,
     random: () => 0,
@@ -211,26 +199,29 @@ async function run(scenario: Scenario): Promise<Observed> {
   const logger: EngineLogger = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
   const gateway = createModelGateway({
-    // The client double never reads the model instance.
-    models: new Map([[HAIKU, {} as RoleModel]]),
+    models: new Map([[HAIKU, TURN_MODEL]]),
     tokenCounter,
     catalog: DEFAULT_MODEL_CATALOG,
     clock,
     logger,
     ledger,
-    client,
+    turnClient,
   });
-  const result = await gateway.call({
+  const result = await gateway.turn({
     ctx: taskContext(controller.signal),
-    role: 'worker',
-    roleConfig: { model: HAIKU, effort: 'low', maxOutputTokens: MAX_OUTPUT, marginTokens: MARGIN },
+    agentName: 'worker',
+    definition: { model: HAIKU, effort: 'low', maxOutputTokens: MAX_OUTPUT, marginTokens: MARGIN },
     promptVersion: PROMPT_VERSION,
     instructions: INSTRUCTIONS,
-    messages: [{ role: 'user', content: QUESTION }],
-    outputSchema: OutputSchema,
+    messages: [{ role: 'user', content: 'Which service failed first?' }],
+    tools: [],
+    toolChoice: 'auto',
+    inputLimitTokens: 100_000,
+    transcriptInput: TRANSCRIPT_INPUT,
     notAfter: scenario.notAfter ?? IN_ONE_HOUR,
-    checkpointAnswer: () => {
-      events.push('checkpoint');
+    busyWaitMs: 30_000,
+    writeAnswer: () => {
+      events.push('answer');
       return Promise.resolve();
     },
   });
@@ -244,34 +235,20 @@ const failedClosings = (n: number) =>
     chargedTokens: 0,
     transcript: { outcome: 'provider_error' as const, response: null },
   }));
-/** The transcript input every reservation of the call carries: the instructions and messages as sent. */
+/** The transcript input every reservation of the turn carries: the instructions and the view reference. */
 const reservationOf: ReservationRequest = {
-  role: 'worker',
+  role: 'agent',
   model: HAIKU,
   countedInputTokens: COUNTED,
   reservedTokens: RESERVED,
-  transcript: {
-    promptVersion: PROMPT_VERSION,
-    input: { instructions: INSTRUCTIONS, messages: [{ role: 'user', content: QUESTION }] },
-  },
+  transcript: { promptVersion: PROMPT_VERSION, input: TRANSCRIPT_INPUT },
 };
 const answeredTranscript = {
   outcome: 'answered',
-  response: {
-    object: { claims: ['payments failed first'] },
-    finishReason: 'stop',
-    text: '{"claims":["payments failed first"]}',
-  },
-} as const;
-const invalidTranscript = {
-  outcome: 'invalid_output',
-  response: { object: { claims: 'not a list' }, finishReason: 'stop' },
-} as const;
-const refusalTranscript = {
-  outcome: 'invalid_output',
-  response: { object: null, finishReason: 'content-filter' },
+  response: { object: { toolCalls: answer.toolCalls }, finishReason: 'tool-calls' },
 } as const;
 const modelUnavailable = { outcome: 'failed', code: 'model_unavailable', failureClass: 'transport_protocol' } as const;
+const answered = { outcome: 'answered', answer: { callId: 'call-3', text: '', toolCalls: answer.toolCalls } } as const;
 
 describe('ModelGateway retry policy', () => {
   it.each([
@@ -279,7 +256,7 @@ describe('ModelGateway retry policy', () => {
     ['statusCode 500', 500],
     ['statusCode 529', 529],
     ['a network error without statusCode', undefined],
-  ])('retries %s twice, each call under its own reservation, then model_unavailable', async (_case, statusCode) => {
+  ])('retries %s twice, each request under its own reservation, then model_unavailable', async (_case, statusCode) => {
     const observed = await run({ steps: [apiError(statusCode), apiError(statusCode), apiError(statusCode)] });
 
     expect(observed.result).toEqual(modelUnavailable);
@@ -294,14 +271,14 @@ describe('ModelGateway retry policy', () => {
       'a provider error twice, then an answer — answered on the third reservation',
       { steps: [apiError(500), apiError(529), answer] },
       {
-        result: { outcome: 'answered', output: { claims: ['payments failed first'] } },
+        result: answered,
         generateCalls: 3,
         reservations: [reservationOf, reservationOf, reservationOf],
         closings: [
           ...failedClosings(2),
           { callId: 'call-3', status: 'settled', chargedTokens: 1_200, transcript: answeredTranscript },
         ],
-        events: ['reserve', 'close:failed', 'reserve', 'close:failed', 'reserve', 'checkpoint', 'close:settled'],
+        events: ['reserve', 'close:failed', 'reserve', 'close:failed', 'reserve', 'answer', 'close:settled'],
       },
     ],
     [
@@ -322,84 +299,32 @@ describe('ModelGateway retry policy', () => {
       { result: modelUnavailable, generateCalls: 0, reservations: [], delays: [1_000, 3_000] },
     ],
     [
-      'an invalid output twice — one retry, then invalid_model_output, both calls settled',
-      { steps: [invalid, invalid] },
-      {
-        result: { outcome: 'invalid_model_output' },
-        generateCalls: 2,
-        closings: [
-          { callId: 'call-1', status: 'settled', chargedTokens: 1_150, transcript: invalidTranscript },
-          { callId: 'call-2', status: 'settled', chargedTokens: 1_150, transcript: invalidTranscript },
-        ],
-        delays: [],
-      },
-    ],
-    [
-      'a refusal twice — one retry, then invalid_model_output, the refusal usage charged',
-      { steps: [refusal, refusal] },
-      {
-        result: { outcome: 'invalid_model_output' },
-        generateCalls: 2,
-        closings: [
-          { callId: 'call-1', status: 'settled', chargedTokens: 940, transcript: refusalTranscript },
-          { callId: 'call-2', status: 'settled', chargedTokens: 940, transcript: refusalTranscript },
-        ],
-      },
-    ],
-    [
-      'an invalid output, then an answer — answered',
-      { steps: [invalid, answer] },
-      {
-        result: { outcome: 'answered', output: { claims: ['payments failed first'] } },
-        generateCalls: 2,
-        events: ['reserve', 'close:settled', 'reserve', 'checkpoint', 'close:settled'],
-      },
-    ],
-    [
-      'a call aborted by the cancel — no answer, no retry, the reservation left open',
+      'a request aborted by the cancel — no answer, no retry, the reservation left open',
       { steps: [cancelledThen(aborted), answer] },
-      {
-        result: { outcome: 'no_answer', reason: 'cancelled' },
-        generateCalls: 1,
-        closings: [],
-        events: ['reserve'],
-      },
+      { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 1, closings: [], events: ['reserve'] },
     ],
     [
-      'a call interrupted at notAfter — no answer, no retry, the reservation left open',
+      'a request interrupted at notAfter — no answer, no retry, the reservation left open',
       { steps: [interruptedAtNotAfter, answer] },
-      {
-        result: { outcome: 'no_answer', reason: 'deadline' },
-        generateCalls: 1,
-        closings: [],
-        events: ['reserve'],
-      },
+      { result: { outcome: 'no_answer', reason: 'deadline' }, generateCalls: 1, closings: [], events: ['reserve'] },
     ],
     [
-      'an answer that resolves after the cancel — dropped, no checkpoint, nothing closed',
+      'an answer that resolves after the cancel — dropped, nothing written, nothing closed',
       { steps: [cancelledThen(answer)] },
       { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 1, closings: [], events: ['reserve'] },
     ],
     [
-      'the signal already aborted by a cancel — no count, no reservation, no call (invariant 4)',
+      'the signal already aborted by a cancel — no count, no reservation, no request (invariant 4)',
       { steps: [answer], cancelledBefore: true },
       { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 0, countCalls: 0, reservations: [] },
     ],
     [
-      'notAfter already passed — no count, no reservation, no call',
+      'notAfter already passed — no count, no reservation, no request',
       { steps: [answer], notAfter: NOW },
       { result: { outcome: 'no_answer', reason: 'deadline' }, generateCalls: 0, reservations: [] },
     ],
     [
-      'a refused task reservation — task_tokens_exhausted before the network',
-      { steps: [answer], refuse: 'task_tokens_exhausted' },
-      {
-        result: { outcome: 'failed', code: 'task_tokens_exhausted', failureClass: 'budget_exhausted' },
-        generateCalls: 0,
-      },
-    ],
-    [
-      'a reservation refused with stopping — no answer as by a cancel, no call, nothing closed (KD-2)',
+      'a reservation refused with stopping — no answer as by a cancel, no request, nothing closed (KD-2)',
       { steps: [answer], refuse: 'stopping' },
       { result: { outcome: 'no_answer', reason: 'cancelled' }, generateCalls: 0, closings: [], delays: [] },
     ],

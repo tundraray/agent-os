@@ -2,11 +2,7 @@ import { execFile } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import {
-  type ProcessConfig,
-  promptVersion,
-  type RunRecord,
-} from '@agent-os/engine';
+import { agentsConfigIdentity, type RunRecord } from '@agent-os/engine';
 import type { ScenarioKey } from '@agent-os/mcp-fixture';
 import type { FormCheckResult } from '../judge/form-check.js';
 import type { JudgeIdentity } from '../judge/judge-call.js';
@@ -19,16 +15,16 @@ import {
   type RunMetrics,
   runMetrics,
 } from '../metrics.js';
-import type { FailureSignals } from '../signals.js';
+import { type FailureSignals, unverifiedByRefusal } from '../signals.js';
 import type { Thresholds } from '../thresholds.js';
 import type { FirstError } from '../verdict/first-error.js';
 import type { Verdict } from '../verdict/verdict.js';
 
 /**
  * The run result file (design-self-check.md, Contract Definitions, `RunResult`): what a run measured, as JSON in the
- * run directory. The `engine` part measures the effect of its changes by it, and `compare` reads two of them. Steps,
- * tokens and cost of a run come from its run record — accepted controller decisions and the call journal — never from
- * a count the program keeps itself.
+ * run directory. The `engine` part measures the effect of its changes by it, and `compare` reads two of them. Model
+ * calls, tokens and cost of a run come from its run record — the call journal and the agent tree — never from a count
+ * the program keeps itself.
  */
 
 /** The result file's name in the run directory. */
@@ -40,8 +36,6 @@ export const RESULT_FILE_NAME = 'result.json';
  */
 export const RUN_ID_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}$/;
-
-type ProcessRole = keyof ProcessConfig['roles'];
 
 /** What the run went over: a scenario set with its fingerprint, or the source investigations of a replays run. */
 export type RunItems =
@@ -55,21 +49,37 @@ export type RunItems =
       readonly investigations: readonly { readonly investigationId: string }[];
     };
 
-/** The configuration of the run: its fingerprint, each role's model and prompt version, and for replays which one. */
+/**
+ * The configuration of the run: its fingerprint, each definition's model and fingerprint, and for replays which one was
+ * taken.
+ */
 export interface RunConfig {
   readonly fingerprint: string;
-  readonly roles: Readonly<
-    Record<
-      ProcessRole,
-      { readonly model: string; readonly promptVersion: string }
-    >
+  /** By definition name. */
+  readonly definitions: Readonly<
+    Record<string, { readonly model: string; readonly fingerprint: string }>
   >;
   /** A replays run takes the frozen configuration of the original or the shipped one; null for a scenarios run. */
   readonly choice: 'frozen' | 'shipped' | null;
 }
 
+/** What a run counts of its agent tree. */
+interface RunCounts {
+  /** The ledger rows of the agents' turns. */
+  readonly modelCalls: number;
+  /** Claims left `unverified` by a refused or failed call of the checker. */
+  readonly unverifiedByRefusal: number;
+  /**
+   * A scenarios run only: whether the basis of an established claim of the answer holds a record of the key's
+   * `injectionTraceIds`; null when the run has no answer or the scenario no such text.
+   */
+  readonly injectionInBasis?: boolean | null;
+}
+
 /** One run of a scenario or of a source investigation. */
-export interface RunEntry {
+export type RunEntry = RunEntryCommon & RunCounts;
+
+interface RunEntryCommon {
   readonly investigationId: string;
   readonly status: RunRecord['status'];
   /** Null when the investigation has no answer. */
@@ -79,8 +89,6 @@ export interface RunEntry {
   readonly verdict: Verdict | null;
   /** The first-error stage of an unsolved cause run; null otherwise. */
   readonly firstError: FirstError | null;
-  /** Accepted controller decisions. */
-  readonly steps: number;
   /** From the call journal of the investigation. */
   readonly tokens: number;
   readonly costUsd: number;
@@ -134,6 +142,8 @@ export interface RunResult {
   readonly kind: RunKind;
   /** ISO 8601. */
   readonly createdAt: string;
+  /** The `version` of the process configuration the run used. */
+  readonly processVersion: number;
   /** The git commit of the program, or null when it cannot be read. */
   readonly codeVersion: string | null;
   readonly items: RunItems;
@@ -157,6 +167,8 @@ export interface RunEntryInput {
   readonly judgeForm: FormCheckResult<KeyedJudgeForm> | null;
   readonly firstError: FirstError | null;
   readonly signals: FailureSignals | null;
+  /** `RunEntry.injectionInBasis`; left out of a replays run. */
+  readonly injectionInBasis?: boolean | null;
 }
 
 /** A run's row of the result file: statuses, counts and identifiers from the record and the judge form. */
@@ -166,6 +178,7 @@ export function runEntry({
   judgeForm,
   firstError,
   signals,
+  injectionInBasis,
 }: RunEntryInput): RunEntry {
   return {
     investigationId: record.investigationId,
@@ -174,8 +187,6 @@ export function runEntry({
     stopReason: record.answer?.stopReason ?? null,
     verdict,
     firstError,
-    steps: record.decisions.filter((decision) => decision.status === 'accepted')
-      .length,
     tokens: record.usage.totalTokens,
     costUsd: record.usage.totalCostUsd,
     establishedClaims: record.answer?.established?.length ?? 0,
@@ -184,47 +195,68 @@ export function runEntry({
         ? judgeForm.form.contradictingClaimIds.length
         : null,
     signals,
+    ...runCounts(record, injectionInBasis),
   };
 }
 
-/** The configuration as the result file names it: the fingerprint and, per role, the model and its prompt version. */
+function runCounts(
+  record: RunRecord,
+  injectionInBasis: RunEntryInput['injectionInBasis'],
+): RunCounts {
+  return {
+    modelCalls: record.calls.filter((call) => call.role === 'agent').length,
+    unverifiedByRefusal: unverifiedByRefusal({
+      claims: record.claims,
+      agentTree: record.agentTree,
+      processConfig: record.config.processConfig,
+    }).length,
+    injectionInBasis,
+  };
+}
+
+/** A run's configuration, with the version `buildRunResult` puts at the top of the result file. */
+export type ResolvedRunConfig = RunConfig & {
+  readonly processVersion: number;
+};
+
+/** The configuration as the result file names it: the fingerprint and, per definition, the model and its fingerprint. */
 export function runConfig(
-  config: Pick<RunRecord['config'], 'processConfig' | 'fingerprint'>,
+  config: Pick<RunRecord['config'], 'processConfig'>,
   choice: RunConfig['choice'],
-): RunConfig {
-  const { processConfig } = config;
-  if ('agents' in processConfig) {
-    // DC-29: the result file names the roles of the roles form; an agents-form configuration is a defect, not a fallback.
+): ResolvedRunConfig {
+  return agentsRunConfig(config.processConfig, choice);
+}
+
+/** A configuration as data, named the way a run record of it would be. */
+export function agentsRunConfig(
+  processConfig: unknown,
+  choice: RunConfig['choice'],
+): ResolvedRunConfig {
+  const identity = agentsConfigIdentity(processConfig);
+  if (identity === null) {
     throw new Error(
-      `the result file names the roles form only: ${processConfig.processId} is of the agents form`,
+      'the configuration of a run has no identity, though the engine accepted it',
     );
   }
-  const roleOf = (role: ProcessRole) => {
-    const { model, prompt } = processConfig.roles[role];
-    return { model, promptVersion: promptVersion(prompt) };
-  };
   return {
-    fingerprint: config.fingerprint,
-    roles: {
-      plan: roleOf('plan'),
-      controller: roleOf('controller'),
-      worker: roleOf('worker'),
-      verifier: roleOf('verifier'),
-      synthesis: roleOf('synthesis'),
-    },
+    processVersion: identity.version,
+    fingerprint: identity.fingerprint,
+    definitions: identity.definitions,
     choice,
   };
 }
 
 export type RunResultInput = Omit<
   RunResult,
-  'createdAt' | 'complete' | 'metrics'
+  'createdAt' | 'processVersion' | 'config' | 'complete' | 'metrics'
 > & {
   readonly createdAt: Date;
+  readonly config: ResolvedRunConfig;
 };
 
 /** The result file of a run: `complete` and `metrics` follow from the results, so they cannot disagree with them. */
 export function buildRunResult(input: RunResultInput): RunResult {
+  const { processVersion, ...config } = input.config;
   const metricInput: MetricInput = {
     items: input.results.map(metricItem),
     judgeAgreement: input.judgeAgreement,
@@ -233,9 +265,10 @@ export function buildRunResult(input: RunResultInput): RunResult {
     runId: input.runId,
     kind: input.kind,
     createdAt: input.createdAt.toISOString(),
+    processVersion,
     codeVersion: input.codeVersion,
     items: input.items,
-    config: input.config,
+    config,
     judge: input.judge,
     thresholds: input.thresholds,
     complete: input.results.every((item) => item.ran),
@@ -268,6 +301,7 @@ function metricRun(entry: RunEntry): MetricRun {
     contradictingClaims: entry.contradictingClaims ?? 0,
     signals: entry.signals,
     firstErrorRole: entry.firstError?.role ?? null,
+    injectionInBasis: entry.injectionInBasis ?? null,
   };
 }
 

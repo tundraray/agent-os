@@ -1,5 +1,5 @@
 import type { Database } from '@agent-os/db';
-import type { Clock, EvidenceReader } from '@agent-os/runtime';
+import type { Clock } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { z } from 'zod';
 import { readAgentTree, type ReadAgentTreeResult } from './agents/agent-tree.js';
@@ -18,9 +18,7 @@ import type { Assess, AssessRequest, AssessResult } from './assess/assess.js';
 import type { ResultFormRegistry } from './agents/result-forms.js';
 import type { ProcessSet } from './config/process-set.js';
 import type { SourceMode } from './config/source-check.js';
-import type { EngineLogger, RoleModel } from './ports.js';
-import type { SignalRegistry } from './signals/signal-registry.js';
-import { signalsRepository as signals } from './signals/signals.repository.js';
+import type { EngineLogger } from './ports.js';
 import { engineRunsRepository as runs } from './runs/engine-runs.repository.js';
 import {
   type EngineRuntimePorts,
@@ -31,21 +29,6 @@ import {
 import { type ReadInvestigationResult, toInvestigationView } from './view/investigation-view.js';
 import { usageRepository as usage } from './view/usage.repository.js';
 
-export interface RecordSignalInput {
-  readonly investigationId: string;
-  readonly resourceId: string;
-  readonly kind: string;
-  readonly payload: unknown;
-}
-
-/** A refusal writes no row (DC-5). */
-export type RecordSignalResult =
-  | { readonly outcome: 'recorded'; readonly signalId: string }
-  | {
-      readonly outcome: 'rejected';
-      readonly code: 'investigation_not_found' | 'signal_kind_unknown' | 'signal_payload_invalid';
-    };
-
 /** The research engine (design-engine.md, Contract Definitions). */
 export interface Engine {
   /**
@@ -55,21 +38,14 @@ export interface Engine {
   readonly sourceMode: SourceMode;
   startInvestigation(input: StartInvestigationInput): Promise<StartInvestigationResult>;
   /**
-   * Records an external signal of the owner's investigation; the controller's next decision reads it (AC-04.1). Refused
-   * with `investigation_not_found` for another owner's or an unknown investigation, `signal_kind_unknown` for a kind
-   * outside the engine's options and `signal_payload_invalid` for a payload off its kind's schema or over 4 KiB.
-   */
-  recordSignal(input: RecordSignalInput): Promise<RecordSignalResult>;
-  /**
    * The owner's investigation; `investigation_not_found` for another owner's or an unknown one. Reads no evidence: the
    * answer message is not part of the view.
    */
   readInvestigation(input: { investigationId: string; resourceId: string }): Promise<ReadInvestigationResult>;
   /**
    * The answer message for the chat, read by the chat server's delivery only (design-engine.md, KD-8): the stored message
-   * of an investigation completed with an answer, or — for an answer written before agent-quality — the one built now by
-   * UXRD KD-7. `investigation_not_found` for another owner's or an unknown investigation, `no_answer` for one not
-   * completed with an answer; a database or page read that fails throws. The chat server adds only `launch`.
+   * of an investigation completed with an answer. `investigation_not_found` for another owner's or an unknown
+   * investigation, `no_answer` for one not completed with an answer; a database read that fails throws. The chat server adds only `launch`.
    */
   readAnswerMessage(input: { investigationId: string; resourceId: string }): Promise<ReadAnswerMessageResult>;
   /**
@@ -82,7 +58,7 @@ export interface Engine {
   /**
    * Writes a record of an agent definition's memory (design-agent-core.md, FR-22): the scope `deployment` by a holder of
    * the memory admin role, a `user` scope by its user only. Refused without a write: `unknown_definition` — no loaded
-   * agents-form definition of the process has that agent; `no_write_right`; `scope_not_allowed` — a `user` record for a
+   * definition of the process has that agent; `no_write_right`; `scope_not_allowed` — a `user` record for a
    * definition whose result form forbids that memory (DC-24); `limit_reached` — a text over 2000 characters, or the scope's
    * active texts would pass 8 KiB (DC-15).
    */
@@ -101,7 +77,7 @@ export interface Engine {
    */
   readAgentTree(input: { investigationId: string; resourceId: string }): Promise<ReadAgentTreeResult>;
   /**
-   * The turns of one agents-form definition outside an investigation (design-agent-core.md, DC-25), beside `assess`
+   * The turns of one definition outside an investigation (design-agent-core.md, DC-25), beside `assess`
    * and for the same aims — calibration and measuring the influence of a text: the prologue's `build`, turns with the
    * view, tools and turn limit of an investigation, `evaluate` on each `finish`; no `collect`, `write`, forced end,
    * reserve or token count. The binding «table by the definition's fingerprint pair» is replaced by the calibrating
@@ -110,24 +86,29 @@ export interface Engine {
    * input and the agent's name; no task, run row, session or ledger row.
    */
   assessAgent(request: AssessAgentRequest): Promise<AssessAgentResult>;
+  /**
+   * The server start's check (design-research-flow.md, KD-4, DC-10), called only by `EngineModule.onModuleInit` before
+   * the task handlers start: the highest loaded version of each process needs the group table of its checker agent's
+   * `agentFingerprint` and the
+   * `definitionMemoryFingerprint` of that agent's current `deployment` records. Rejects with `calibration_missing`
+   * naming the process, the version and both fingerprints, or with the failure of the read; either stops the start.
+   */
+  checkCalibration(): Promise<void>;
 }
 
 /** What a created engine runs on, after `createEngine` has checked it. */
 export interface EngineDeps {
   readonly database: Database;
   readonly runtime: EngineRuntimePorts;
-  /** Details of the pages an answer cites, for `readAnswerMessage`; `readInvestigation` never reads it. */
-  readonly evidence: Pick<EvidenceReader, 'get'>;
   readonly processes: ProcessSet;
   readonly sourceMode: SourceMode;
-  /** Role model instances by catalog id, resolved through `resolveModel` at creation (for the role agents). */
-  readonly models: ReadonlyMap<string, RoleModel>;
-  readonly signalKinds: SignalRegistry;
   /** `Engine.assess` over the `assessModels` of `createEngine`. */
   readonly assess: Assess;
   /** `Engine.assessAgent` over the same `assessModels` and the engine's registries. */
   readonly assessAgent: AssessAgent;
-  /** The engine's result forms: an agents-form start takes its definition memory snapshot by them (DC-24). */
+  /** `Engine.checkCalibration` over the loaded processes and the engine's group tables. */
+  readonly checkCalibration: () => Promise<void>;
+  /** The engine's result forms: a start takes its definition memory snapshot by them (DC-24). */
   readonly forms: ResultFormRegistry;
   /** The definition memory over the loaded processes and the engine's result forms. */
   readonly definitionMemory: DefinitionMemory;
@@ -145,6 +126,7 @@ export function buildEngine(deps: EngineDeps): Engine {
     sourceMode,
     assess: deps.assess,
     assessAgent: deps.assessAgent,
+    checkCalibration: deps.checkCalibration,
     startInvestigation: startInvestigation({
       database,
       sourceMode,
@@ -155,17 +137,6 @@ export function buildEngine(deps: EngineDeps): Engine {
       clock: deps.clock,
       logger: deps.logger,
     }),
-    async recordSignal({ investigationId, resourceId, kind, payload }) {
-      if (!z.uuid().safeParse(investigationId).success) {
-        return NOT_FOUND;
-      }
-      const checked = deps.signalKinds.check(kind, payload);
-      if (checked.outcome === 'rejected') {
-        return checked;
-      }
-      const signalId = await signals.record(database, { investigationId, resourceId, kind, payload: checked.payload });
-      return signalId === undefined ? NOT_FOUND : { outcome: 'recorded', signalId };
-    },
     async readInvestigation({ investigationId, resourceId }) {
       if (!z.uuid().safeParse(investigationId).success) {
         return NOT_FOUND;
@@ -177,7 +148,7 @@ export function buildEngine(deps: EngineDeps): Engine {
       const usageRows = await usage.byRoleAndModel(database, investigationId);
       return { outcome: 'found', view: toInvestigationView(status, usageRows) };
     },
-    readAnswerMessage: (input) => readAnswerMessage({ database, evidence: deps.evidence }, input),
+    readAnswerMessage: (input) => readAnswerMessage(database, input),
     writeDefinitionMemory: (input) => deps.definitionMemory.write(input),
     removeDefinitionMemory: (input) => deps.definitionMemory.remove(input),
     listDefinitionMemory: (input) => deps.definitionMemory.list(input),

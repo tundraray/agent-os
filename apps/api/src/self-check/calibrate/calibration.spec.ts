@@ -1,10 +1,11 @@
 import {
-  type AssessRequest,
-  type AssessResult,
+  type AssessAgentRequest,
+  type AssessAgentResult,
+  buildClaimCheck,
+  claimAssessmentAgent,
   type ClaimProfile,
-  deepResearchProcessV2,
-  loadProcessConfig,
-  promptVersion,
+  deepResearchProcessV3,
+  definitionMemoryFingerprint,
 } from '@agent-os/engine';
 import {
   buildCalibrationPairs,
@@ -15,7 +16,7 @@ import { systemClock } from '@agent-os/runtime';
 import { describe, expect, it } from 'vitest';
 import {
   atomCheckOf,
-  calibrate,
+  calibrateAgent,
   type CalibrationReport,
   type GroupCount,
   renderCalibrationReport,
@@ -23,16 +24,15 @@ import {
 } from './calibration.js';
 
 // AC-06.1, AC-15.2, DC-1 (design-engine.md, «Как калибровка ставит таблицу групп»): calibration measures the rule the
-// engine decides by — every pair goes through `buildClaimCheck`, `Engine.assess` with the `verifier` role and
-// `decideClaim` — and builds the group table from the established pairs: profiles ranked by the lower bound of the
-// 90 % Wilson interval of the share correct, cut into 3 or 4 consecutive groups of about equal established pairs,
-// never splitting a profile (plan Notes 1, decision 1). Defects caught: a decision taken by another rule than
-// `decideClaim`; ranking by the raw share (a profile of two pairs above one of ten); a profile split between groups;
-// a failed or off-form pair counted as a right decision; a table bound to another model or prompt version.
+// engine decides by — every pair goes through the checker agent by `Engine.assessAgent` and `decideClaim` — and builds
+// the group table from the established pairs: profiles ranked by the lower bound of the 90 % Wilson interval of the
+// share correct, cut into 3 or 4 consecutive groups of about equal established pairs, never splitting a profile (plan
+// Notes 1, decision 1). Defects caught: a decision taken by another rule than `decideClaim`; ranking by the raw share (a
+// profile of two pairs above one of ten); a profile split between groups; a failed or off-form pair counted as a right
+// decision; a table bound to another model or checker.
 
-const loaded = loadProcessConfig(deepResearchProcessV2);
-if (!loaded.ok) throw new Error('the shipped configuration is refused');
-const VERIFIER = loaded.config.roles.verifier;
+const CHECKER = claimAssessmentAgent(deepResearchProcessV3);
+if (CHECKER === null) throw new Error('v3 has no claim_assessment definition');
 const RUN_ID = 'self-check:run:2026-11-07T10-00-00-000Z-0a1b2c3d';
 
 type Relation = 'supports' | 'contradicts' | 'unrelated';
@@ -180,20 +180,23 @@ const QUANTITATIVE_TWO: ProfileShape = {
 };
 
 interface Run {
-  readonly requests: AssessRequest<unknown>[];
-  readonly outcome: Awaited<ReturnType<typeof calibrate>>;
+  readonly requests: AssessAgentRequest[];
+  readonly outcome: Awaited<ReturnType<typeof calibrateAgent>>;
 }
 
+/** The checker agent answers each pair in order: an accepted `finish` with the scripted assessment, or a failed call. */
 async function run(
   pairs: readonly Scripted[],
   groupCount: GroupCount = 3,
 ): Promise<Run> {
   const byId = new Map(pairs.map((item) => [item.pair.pairId, item]));
   const order = pairs.map((item) => item.pair.pairId);
-  const requests: AssessRequest<unknown>[] = [];
-  const assess = <T>(request: AssessRequest<T>): Promise<AssessResult<T>> => {
+  const requests: AssessAgentRequest[] = [];
+  const assessAgent = (
+    request: AssessAgentRequest,
+  ): Promise<AssessAgentResult> => {
     const item = byId.get(order[requests.length]!)!;
-    requests.push(request as AssessRequest<unknown>);
+    requests.push(request);
     if (item.answer === 'model_unavailable') {
       return Promise.resolve({
         outcome: 'failed',
@@ -202,7 +205,7 @@ async function run(
       });
     }
     // In schema, but naming no record: the form rule of `decideClaim` refuses it.
-    const output =
+    const assessment =
       item.answer === 'off_form'
         ? { support: 'yes', claimType: 'observation', records: [] }
         : {
@@ -214,20 +217,22 @@ async function run(
             })),
           };
     return Promise.resolve({
-      outcome: 'answered',
-      output: output as T,
+      outcome: 'finished',
+      result: { assessment },
       usage: USAGE,
     });
   };
-  const outcome = await calibrate({
+  const outcome = await calibrateAgent({
     pairSet: {
       pairs: pairs.map((item) => item.pair),
       fingerprint: 'abcdef012345',
     },
     scenarioSet: 'first',
-    verifier: VERIFIER,
+    config: deepResearchProcessV3,
+    agent: CHECKER!,
+    deploymentEntries: [],
     groupCount,
-    assess,
+    assessAgent,
     selfCheckRunId: RUN_ID,
     clock: systemClock,
   });
@@ -239,7 +244,7 @@ function reportOf({ outcome }: Run): CalibrationReport {
   return outcome.report;
 }
 
-describe('calibrate: the three shares per pair kind (AC-06.1, DC-1)', () => {
+describe('calibrateAgent: the three shares per pair kind (AC-06.1, DC-1)', () => {
   it('compares support, type and the decideClaim outcome with the key of each pair', async () => {
     const calibration = await run([
       // All three match.
@@ -291,15 +296,7 @@ describe('calibrate: the three shares per pair kind (AC-06.1, DC-1)', () => {
       },
       { pairKind: 'causal', supportMatch: 1, typeMatch: 1, decisionMatch: 1 },
     ]);
-    // The same verifier call as in an investigation, bound to the calibration run.
-    expect(calibration.requests[0]).toMatchObject({
-      role: 'verifier',
-      model: VERIFIER.model,
-      effort: VERIFIER.effort,
-      maxOutputTokens: VERIFIER.maxOutputTokens,
-      instructions: VERIFIER.prompt,
-      binding: { selfCheckRunId: RUN_ID },
-    });
+    expect(calibration.requests).toHaveLength(4);
   });
 });
 
@@ -307,7 +304,7 @@ describe('calibrate: the three shares per pair kind (AC-06.1, DC-1)', () => {
 // its records support it and it is not causal, the engine's own rule, where the atom check only enters the profile.
 // Defect caught: calibration keying «should be established» on the values matching, so a confirmed pair whose atoms
 // are missing counts as a wrong decision and a pair whose values match but meaning is wrong as a right one.
-describe('calibrate: «should be established» by the engine rule, without the values', () => {
+describe('calibrateAgent: «should be established» by the engine rule, without the values', () => {
   it('counts a confirmed pair right whatever its values, and a confirmed pair of wrong meaning wrong', async () => {
     const valuesFound = scripted(
       {
@@ -451,7 +448,7 @@ describe('renderCalibrationReport: the old veto share and the value check labels
   });
 });
 
-describe('calibrate: ranking by the Wilson lower bound and the groups (AC-15.2, H-03)', () => {
+describe('calibrateAgent: ranking by the Wilson lower bound and the groups (AC-15.2, H-03)', () => {
   it.each<[string, Scripted[], unknown, unknown, boolean[]]>([
     [
       'puts a profile of two right pairs below one of nine right in ten, counts pairs and share per group and flags H-03',
@@ -525,10 +522,11 @@ describe('calibrate: ranking by the Wilson lower bound and the groups (AC-15.2, 
       ['medium', 0],
       ['low', 0],
     ]);
-    // Bound to the calibrated verifier: its model and the prompt version of its template.
+    // Bound to the calibrated checker: its model and the pair of fingerprints.
     expect(report.table).toMatchObject({
-      model: VERIFIER.model,
-      promptVersion: promptVersion(VERIFIER.prompt),
+      model: CHECKER!.model,
+      agentFingerprint: CHECKER!.agentFingerprint,
+      definitionMemoryFingerprint: definitionMemoryFingerprint([]),
       scenarioSet: 'first',
       pairsFingerprint: 'abcdef012345',
     });
@@ -558,7 +556,7 @@ describe('splitIntoGroups: consecutive groups of about equal pairs, a profile ne
   });
 });
 
-describe('calibrate: refusals and failed pairs', () => {
+describe('calibrateAgent: refusals and failed pairs', () => {
   it('refuses with calibration_empty when no pair is established', async () => {
     const { outcome } = await run([
       scripted(SHOULD_BE_ESTABLISHED, {
@@ -600,6 +598,217 @@ describe('calibrate: refusals and failed pairs', () => {
     expect(text).toContain(`${unavailable.pair.pairId} — model_unavailable`);
     expect(text).toContain(`${offForm.pair.pairId} — invalid_assessment`);
   });
+});
+
+// AC-16.2, AC-16.3, Flow 4 (design-research-flow.md, «Калибровка проверяющего агента»): the agents form judges each pair
+// with `Engine.assessAgent` on the prologue input built from the pair's records. Defects caught: a packet other than the
+// prologue's, so the table does not fit the real checker; a table without the two fingerprints; a failed pair that stops
+// the calibration or earns a profile; a build defect (`rejected`) reported as an ordinary wrong pair.
+describe('calibrateAgent: the agents form (AC-16.2, AC-16.3, Flow 4)', () => {
+  const AGENT = claimAssessmentAgent(deepResearchProcessV3);
+  if (AGENT === null) throw new Error('v3 has no claim_assessment definition');
+  const MEMORY = [{ id: 'entry-1', text: 'a rule of the deployment' }];
+  const CONFIRMED: Answer = {
+    support: 'yes',
+    claimType: 'observation',
+    relations: ['supports'],
+  };
+
+  const finished = (answer: Answer): AssessAgentResult => ({
+    outcome: 'finished',
+    result: {
+      claimId: 'scenario/pair',
+      status: 'supported',
+      group: null,
+      profile: profileOf(OBSERVATION_ONE),
+      assessment: {
+        support: answer.support,
+        claimType: answer.claimType,
+        records: answer.relations.map((relation, record) => ({
+          record,
+          relation,
+        })),
+      },
+    },
+    usage: USAGE,
+  });
+  const CONFIRMED_RESULT = finished(CONFIRMED);
+  const pairOf = (
+    key: Parameters<typeof scripted>[0] = SHOULD_BE_ESTABLISHED,
+  ) => scripted(key, CONFIRMED).pair;
+
+  async function runAgent(
+    script: readonly {
+      readonly pair: CalibrationPair;
+      readonly result: AssessAgentResult;
+    }[],
+  ) {
+    const requests: AssessAgentRequest[] = [];
+    const outcome = await calibrateAgent({
+      pairSet: {
+        pairs: script.map((item) => item.pair),
+        fingerprint: 'abcdef012345',
+      },
+      scenarioSet: 'first',
+      config: deepResearchProcessV3,
+      agent: AGENT!,
+      deploymentEntries: MEMORY,
+      groupCount: 3,
+      assessAgent: (request) => {
+        const item = script[requests.length]!;
+        requests.push(request);
+        return Promise.resolve(item.result);
+      },
+      selfCheckRunId: RUN_ID,
+      clock: systemClock,
+    });
+    return { requests, outcome };
+  }
+
+  it('gives assessAgent the prologue input whose packet equals the check of the same records (AC-16.3)', async () => {
+    const pair = pairOf();
+
+    const { requests } = await runAgent([{ pair, result: CONFIRMED_RESULT }]);
+
+    const [request] = requests;
+    expect(request).toMatchObject({
+      agentName: 'verifier',
+      config: deepResearchProcessV3,
+      deploymentEntries: MEMORY,
+      binding: { selfCheckRunId: RUN_ID },
+    });
+    const input = request!.prologueInput as {
+      kind: string;
+      claimId: string;
+      text: string;
+      atoms: CalibrationPair['claimAtoms'];
+      pages: (CalibrationPair['pages'][number] & { pageId: string })[];
+      agentFingerprint: string;
+      definitionMemoryFingerprint: string;
+    };
+    expect(input).toMatchObject({
+      kind: 'claim',
+      claimId: pair.pairId,
+      text: pair.claimText,
+      atoms: pair.claimAtoms,
+      agentFingerprint: AGENT.agentFingerprint,
+    });
+    const packet = (
+      claimText: string,
+      atoms: CalibrationPair['claimAtoms'],
+      pages: CalibrationPair['pages'],
+    ): string =>
+      buildClaimCheck({
+        claimText,
+        atomCheck: atomCheckOf(atoms, pages),
+        pages,
+      });
+    expect(packet(input.text, input.atoms, input.pages)).toBe(
+      packet(pair.claimText, pair.claimAtoms, pair.pages),
+    );
+  });
+
+  it('writes a table keyed by the two fingerprints, with the model and the set (AC-16.2)', async () => {
+    const { outcome } = await runAgent([
+      { pair: pairOf(), result: CONFIRMED_RESULT },
+    ]);
+
+    if (!outcome.ok) throw new Error(outcome.reason);
+    const { table } = outcome.report;
+    expect(table).toMatchObject({
+      model: 'anthropic/claude-haiku-5-5',
+      agentFingerprint: AGENT.agentFingerprint,
+      definitionMemoryFingerprint: definitionMemoryFingerprint([
+        {
+          id: 'entry-1',
+          scope: 'deployment',
+          text: 'a rule of the deployment',
+        },
+      ]),
+      scenarioSet: 'first',
+      pairsFingerprint: 'abcdef012345',
+      profiles: [{ profile: profileOf(OBSERVATION_ONE), group: 'high' }],
+    });
+    const text = renderCalibrationReport(outcome.report, '/tables/v3.json');
+    expect(text).toContain(`отпечаток агента: ${AGENT.agentFingerprint}`);
+    expect(text).not.toContain('undefined');
+  });
+
+  it.each<[string, AssessAgentResult, string]>([
+    [
+      'a packet over the limit',
+      {
+        outcome: 'ended',
+        result: {
+          claimId: 'scenario/pair',
+          status: 'insufficient',
+          group: null,
+        },
+        usage: USAGE,
+      },
+      'needs_narrowing',
+    ],
+    [
+      'a second answer off the form',
+      { outcome: 'invalid_result', usage: USAGE },
+      'invalid_assessment',
+    ],
+    ...(
+      [
+        'model_unavailable',
+        'not_after',
+        'context_overflow',
+        'prologue_oversize',
+        'prologue_refused',
+      ] as const
+    ).map((code): [string, AssessAgentResult, string] => [
+      `the failed outcome ${code}`,
+      { outcome: 'failed', code, usage: USAGE },
+      code,
+    ]),
+  ])(
+    'lists %s as a wrong pair without a profile and judges the next pair',
+    async (_, result, failure) => {
+      const wrong = pairOf();
+      const next = pairOf();
+
+      const { requests, outcome } = await runAgent([
+        { pair: wrong, result },
+        { pair: next, result: CONFIRMED_RESULT },
+      ]);
+
+      if (!outcome.ok) throw new Error(outcome.reason);
+      expect(requests).toHaveLength(2);
+      expect(outcome.report.pairs[0]).toMatchObject({
+        pairId: wrong.pairId,
+        failure,
+        decisionCorrect: false,
+        profile: null,
+      });
+      expect(outcome.report.pairs[1]).toMatchObject({
+        pairId: next.pairId,
+        failure: null,
+        decisionCorrect: true,
+      });
+      expect(outcome.report.usage.inputTokens).toBe(20);
+      expect(
+        renderCalibrationReport(outcome.report, '/tables/v3.json'),
+      ).toContain(`${wrong.pairId} — ${failure}`);
+    },
+  );
+
+  it.each(['agent_not_detachable', 'model_unavailable'] as const)(
+    'ends the calibration with %s when the call is rejected, a defect of the build',
+    async (code) => {
+      const { requests, outcome } = await runAgent([
+        { pair: pairOf(), result: { outcome: 'rejected', code } },
+        { pair: pairOf(), result: CONFIRMED_RESULT },
+      ]);
+
+      expect(outcome).toMatchObject({ ok: false, code });
+      expect(requests).toHaveLength(1);
+    },
+  );
 });
 
 // design-self-check.md 1.7.2, `CalibrationPair.expectedValuesMatch`: the key says what the engine's atom check gives

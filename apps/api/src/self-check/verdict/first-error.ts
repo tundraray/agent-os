@@ -1,18 +1,25 @@
+import { type AgentTree, claimWritingAgents } from '@agent-os/engine';
+import { z } from 'zod';
+
 /**
  * The first-error stage of an unsolved cause scenario (design-self-check.md, «Как находится этап первой ошибки»,
- * DC-16). Only trace identifiers, claim statuses, the answer's composition and the verdict code decide it; no model
- * text is read here.
+ * DC-16; design-research-flow.md, «Этап первой ошибки v3», DC-12). Only trace identifiers, claim statuses, the answer's
+ * composition, the verdict code and who wrote a claim decide it; no model text is read here.
  */
 
 /** The stage label of each role, as the report shows it. */
 export const FIRST_ERROR_STAGES = {
   controller: 'сбор — controller',
   worker: 'анализ — worker',
+  subworker: 'анализ — subworker',
   verifier: 'проверка — verifier',
   synthesis: 'ответ — synthesis',
 } as const;
 export type FirstErrorRole = keyof typeof FIRST_ERROR_STAGES;
 export type FirstErrorStage = (typeof FIRST_ERROR_STAGES)[FirstErrorRole];
+/** The four roles a run's summary counts: a subworker's error is a worker's. */
+export type FirstErrorSummaryRole = Exclude<FirstErrorRole, 'subworker'>;
+type ClaimAuthor = 'worker' | 'subworker';
 
 /** The verdict codes of an unsolved cause scenario; «неясно» codes have no first-error stage. */
 export type CauseFailureCode =
@@ -32,6 +39,8 @@ export interface FirstErrorClaim {
   readonly claimId: string;
   readonly status: string;
   readonly evidenceIds: readonly string[];
+  /** The analyst whose run wrote the claim; left out for a claim no `claims_write` wrote, where analysis is the worker's. */
+  readonly author?: ClaimAuthor | undefined;
 }
 
 export interface FirstErrorRun {
@@ -86,17 +95,58 @@ export function findFirstError(run: FirstErrorRun): FirstError {
 /** The first-error count of each role over a launch's unsolved cause runs; every role is present. */
 export function countFirstErrorsByRole(
   roles: readonly FirstErrorRole[],
-): Record<FirstErrorRole, number> {
-  const counts: Record<FirstErrorRole, number> = {
+): Record<FirstErrorSummaryRole, number> {
+  const counts: Record<FirstErrorSummaryRole, number> = {
     controller: 0,
     worker: 0,
     verifier: 0,
     synthesis: 0,
   };
   for (const role of roles) {
-    counts[role] += 1;
+    counts[role === 'subworker' ? 'worker' : role] += 1;
   }
   return counts;
+}
+
+const ClaimsWriteOutcomeSchema = z.object({
+  result: z.object({ claimIds: z.array(z.string()) }),
+});
+
+const AnalystDefinitionsSchema = z.object({
+  agents: z.record(z.string(), z.object({ tools: z.array(z.string()) })),
+});
+
+/**
+ * Who wrote each claim, by the `claims_write` calls of the analysts' runs: an analyst is a run whose frozen definition
+ * has `claims_write`, and one called by another analyst is the subworker; no agent name decides. A claim the root
+ * writes when it closes has no such call: analysis is then the worker's place.
+ */
+export function claimAuthors(
+  tree: AgentTree,
+  processConfig: unknown,
+): Map<string, ClaimAuthor> {
+  const analysts = claimWritingAgents(
+    AnalystDefinitionsSchema.parse(processConfig).agents,
+  );
+  const agentOfRun = new Map(
+    tree.runs.map((run) => [run.runTaskId, run.agentName]),
+  );
+  const authors = new Map<string, ClaimAuthor>();
+  for (const run of tree.runs) {
+    if (!analysts.has(run.agentName)) continue;
+    const caller =
+      run.parent === null ? undefined : agentOfRun.get(run.parent.taskId);
+    const author =
+      caller !== undefined && analysts.has(caller) ? 'subworker' : 'worker';
+    for (const call of run.toolCalls) {
+      if (call.toolName !== 'claims_write' || call.state !== 'done') continue;
+      const outcome = ClaimsWriteOutcomeSchema.parse(call.outcome);
+      for (const claimId of outcome.result.claimIds) {
+        authors.set(claimId, author);
+      }
+    }
+  }
+  return authors;
 }
 
 function firstErrorRole(run: FirstErrorRun): FirstErrorRole {
@@ -123,14 +173,12 @@ function firstErrorRole(run: FirstErrorRun): FirstErrorRole {
   const { claim: furthest } = ranked.reduce((best, next) =>
     next.advance > best.advance ? next : best,
   );
-  const statusRole = ROLE_BY_STATUS[furthest.status];
-  if (statusRole !== undefined) {
-    return statusRole;
-  }
-  if (!established.has(furthest.claimId)) {
-    return 'synthesis';
-  }
-  return ROLE_BY_VERDICT[run.verdict];
+  const role =
+    ROLE_BY_STATUS[furthest.status] ??
+    (established.has(furthest.claimId)
+      ? ROLE_BY_VERDICT[run.verdict]
+      : 'synthesis');
+  return role === 'worker' ? (furthest.author ?? 'worker') : role;
 }
 
 /** A supported claim in «Установлено» advanced further than a supported claim the answer left out of it. */

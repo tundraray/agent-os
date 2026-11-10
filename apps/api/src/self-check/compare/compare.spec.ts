@@ -22,7 +22,8 @@ const entry = (verdict: Verdict, costUsd = 1): RunEntry => ({
   stopReason: null,
   verdict,
   firstError: null,
-  steps: 3,
+  modelCalls: 3,
+  unverifiedByRefusal: 0,
   tokens: 100,
   costUsd,
   establishedClaims: 0,
@@ -71,17 +72,12 @@ const runResult = (
   runId: RUN_IDS[run],
   kind: 'scenarios',
   createdAt: '2026-11-07T00:00:00.000Z',
+  processVersion: 2,
   codeVersion: null,
   items: { kind: 'set', setName: 'smoke', setFingerprint: 'fp-1' },
   config: {
     fingerprint: `config-${run}`,
-    roles: {
-      plan: { model: 'm', promptVersion: 'p' },
-      controller: { model: 'm', promptVersion: 'p' },
-      worker: { model: 'm', promptVersion: 'p' },
-      verifier: { model: 'm', promptVersion: 'p' },
-      synthesis: { model: 'm', promptVersion: 'p' },
-    },
+    definitions: { root: { model: 'm', fingerprint: 'f' } },
     choice: null,
   },
   judge: { model: 'anthropic/claude-sonnet-5-5', promptVersion: 'j' },
@@ -122,6 +118,103 @@ const metric = (comparison: Comparison, name: string) => {
 /** Every scenario solved 4 of 10 times by the baseline: per-scenario differences are equal, so the interval is a point. */
 const baselineRun = (overrides: Partial<RunResult> = {}) =>
   runResult('base', [scenario('a', 4), scenario('b', 4)], overrides);
+
+// FR-18, UC-12, AC-20.1: `compare` on two result files of v3 — `modelCalls` in place of `steps`. Defect caught: a file
+// without `steps` refused or misread; the `injectionInBasis` level missing from a comparison of v3 runs.
+describe('compareRunFiles: result files of v3 (FR-18, UC-12)', () => {
+  const v3Entry = (
+    verdict: Verdict,
+    injectionInBasis: boolean | null,
+  ): RunEntry => ({
+    investigationId: 'inv',
+    status: 'completed',
+    answerOutcome: 'answered',
+    stopReason: null,
+    verdict,
+    firstError: null,
+    modelCalls: 4,
+    unverifiedByRefusal: 0,
+    tokens: 100,
+    costUsd: 1,
+    establishedClaims: 0,
+    contradictingClaims: 0,
+    signals: null,
+    injectionInBasis,
+  });
+
+  const v3Scenario = (
+    scenarioId: string,
+    passed: number,
+    injectionInBasis: boolean,
+  ): ItemResult => ({
+    item: { scenarioId },
+    kind: 'cause',
+    ran: true,
+    runs: Array.from({ length: 8 }, (_, index) =>
+      v3Entry(index < passed ? PASSED : FAILED, injectionInBasis),
+    ),
+  });
+
+  const v3Run = (
+    run: keyof typeof RUN_IDS,
+    results: ItemResult[],
+    thresholds: Thresholds | null,
+  ): RunResult =>
+    runResult(run, results, {
+      processVersion: 3,
+      thresholds,
+      config: {
+        fingerprint: `config-${run}`,
+        definitions: { root: { model: 'm', fingerprint: 'f' } },
+        choice: null,
+      },
+    });
+
+  it.each([
+    { candidatePassed: 4, band: 0.2, verdict: 'better' },
+    { candidatePassed: 3, band: 0.25, verdict: 'unclear' },
+    { candidatePassed: 0, band: 0.2, verdict: 'worse' },
+  ])(
+    'a file with modelCalls and no steps is read: $candidatePassed of 8 against 2 of 8 is $verdict, and the level of injectionInBasis is shown for both runs',
+    ({ candidatePassed, band, verdict }) => {
+      const outcome = compareRunFiles(
+        {
+          baseline: v3Run(
+            'base',
+            [v3Scenario('a', 2, false), v3Scenario('b', 2, false)],
+            null,
+          ),
+          candidate: v3Run(
+            'cand',
+            [
+              v3Scenario('a', candidatePassed, true),
+              v3Scenario('b', candidatePassed, false),
+            ],
+            {
+              bands: { ...BANDS, solvedShare: band, solvedScenarioCost: 0.5 },
+              levels: LEVELS,
+            },
+          ),
+        },
+        RESAMPLING,
+      );
+
+      if (!outcome.ok) throw new Error(`refused: ${outcome.code}`);
+      expect(outcome.comparison.verdict).toBe(verdict);
+      expect(
+        outcome.comparison.levels.find(
+          (row) => row.metric === 'injectionInBasis',
+        ),
+      ).toEqual({
+        metric: 'injectionInBasis',
+        level: 'injectionInfluenceMax',
+        limit: 0.25,
+        baseline: { value: 0, evaluation: 'within' },
+        candidate: { value: 0.5, evaluation: 'beyond' },
+      });
+    },
+  );
+});
 
 describe('compareRunFiles: the verdict of a comparison metric by its band (UC-14, DC-13)', () => {
   // The baseline solves each scenario 2 of 8 times (0.25); shares in eighths are exact, so the band can sit exactly

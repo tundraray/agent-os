@@ -3,13 +3,9 @@ import type { RuntimeTx } from '@agent-os/runtime';
 import { and, eq, inArray } from 'drizzle-orm';
 import { AGENT_ROOT_WORKFLOW } from '../agents/agent-task-spec.js';
 import type { DefinitionMemorySnapshot } from '../agents/definition-memory.js';
-import type { AnyProcessConfig } from '../config/process-config.schema.js';
+import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { SourceSnapshots } from './source-snapshots.js';
-import { CONTROLLER_WORKFLOW } from './start-rules.js';
-
-/** The tasks whose end closes an investigation: the controller of the roles form and the root run of the agents form. */
-const MAIN_WORKFLOWS = [CONTROLLER_WORKFLOW, AGENT_ROOT_WORKFLOW];
 
 export type EngineRunRow = typeof researchEngineRuns.$inferSelect;
 
@@ -18,13 +14,13 @@ export interface NewEngineRun {
   readonly investigationId: string;
   readonly resourceId: string;
   readonly launchKey: string;
-  readonly config: AnyProcessConfig;
+  readonly config: AgentProcessConfig;
   readonly sourceMode: SourceMode;
   readonly tokenBudget: number;
   /** The slice of each configured source read at start; written once, with the row (KD-7). */
   readonly sourceSnapshots: SourceSnapshots;
-  /** The definition memory snapshot of an agents-form start (DC-24); absent for the roles form. */
-  readonly definitionMemorySnapshot?: DefinitionMemorySnapshot;
+  /** The definition memory snapshot of the start (DC-24). */
+  readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
 }
 
 /** An engine row with the investigation's status, which the view's status is derived from. */
@@ -35,9 +31,19 @@ export interface EngineRunStatus {
 
 /**
  * Queries of `research_engine_runs` (ADR-0003: drizzle-orm). The engine writes only its own table; the runtime's
- * `research_investigations` is only read, for the status of the view, and `research_tasks` for the controller check.
+ * `research_investigations` is only read, for the status of the view, and `research_tasks` for the root check.
  */
 export const engineRunsRepository = {
+  /** The engine row with the investigation's thread and query; `undefined` without an engine row. */
+  async readRun(db: Database, investigationId: string) {
+    const [row] = await db
+      .select({ run: researchEngineRuns, threadId: researchInvestigations.threadId, query: researchInvestigations.query })
+      .from(researchEngineRuns)
+      .innerJoin(researchInvestigations, eq(researchInvestigations.investigationId, researchEngineRuns.investigationId))
+      .where(eq(researchEngineRuns.investigationId, investigationId));
+    return row;
+  },
+
   async findByLaunchKey(db: Database, resourceId: string, launchKey: string): Promise<EngineRunRow | undefined> {
     const [row] = await db
       .select()
@@ -75,7 +81,7 @@ export const engineRunsRepository = {
         sourceMode: run.sourceMode,
         tokenBudget: run.tokenBudget,
         sourceSnapshots: run.sourceSnapshots,
-        definitionMemorySnapshot: run.definitionMemorySnapshot ?? null,
+        definitionMemorySnapshot: run.definitionMemorySnapshot,
       })
       .onConflictDoNothing()
       .returning();
@@ -91,10 +97,9 @@ export const engineRunsRepository = {
 
   /**
    * Whether `taskId` is the main task of an engine investigation, read in the caller's transaction (the delivery
-   * transaction of `engine.lifecycle`): a `research.controller` task or an `agent.root` task of that investigation, which
-   * has an engine row (design-agent-core.md, KD-1). Decided by the task row, not by `controller_task_id`: a controller
-   * or a root that ends before the start records its id still closes the investigation. The runtime's `research_tasks`
-   * is only read, by its key.
+   * transaction of `engine.lifecycle`): the `agent.root` task of that investigation, which has an engine row
+   * (design-agent-core.md, KD-1). Decided by the task row, not by `controller_task_id`: a root that ends before the
+   * start records its id still closes the investigation. The runtime's `research_tasks` is only read, by its key.
    */
   async isControllerTask(tx: RuntimeTx, investigationId: string, taskId: string): Promise<boolean> {
     const [row] = await tx
@@ -105,7 +110,7 @@ export const engineRunsRepository = {
         and(
           eq(researchTasks.taskId, taskId),
           eq(researchTasks.investigationId, investigationId),
-          inArray(researchTasks.workflowType, MAIN_WORKFLOWS),
+          eq(researchTasks.workflowType, AGENT_ROOT_WORKFLOW),
         ),
       );
     return row !== undefined;

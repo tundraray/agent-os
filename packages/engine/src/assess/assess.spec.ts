@@ -1,11 +1,11 @@
 import type { Clock } from '@agent-os/runtime';
 import { z } from 'zod';
-import { loadProcessConfig } from '../config/load-process-config.js';
+import { AgentProcessConfigSchema } from '../config/agent-config.schema.js';
 import { DEFAULT_MODEL_CATALOG } from '../config/model-catalog.js';
 import { promptVersion } from '../model/prompt-version.js';
 import type { RoleCall, RoleGeneration, RoleModelClient } from '../model/role-agent.js';
 import type { EngineLogger, RoleModel } from '../ports.js';
-import { deepResearchProcessV2 } from '../processes/shipped-processes.js';
+import { deepResearchProcessV3 } from '../processes/shipped-processes.js';
 import type {
   OutsideTaskClosing,
   OutsideTaskOpening,
@@ -50,6 +50,8 @@ const invalid: RoleGeneration = {
   text: '',
   usage: usage(1_000, 50),
 };
+/** A judge answer the provider's filter stopped: the object parses, and it is still no verdict. */
+const filtered: RoleGeneration = { ...answer, finishReason: 'content-filter' };
 const apiError = (statusCode: number): Error =>
   Object.assign(new Error('provider error'), { name: 'AI_APICallError', statusCode });
 
@@ -155,19 +157,6 @@ describe('assess', () => {
       delays: [],
     },
     {
-      name: 'a process role outside the list is refused the same way',
-      steps: [answer],
-      overrides: { model: SONNET, role: 'verifier' },
-      outcome: {
-        outcome: 'failed',
-        code: 'model_unavailable',
-        usage: spend(0, 0, 0),
-      },
-      providerCalls: 0,
-      closedOutcomes: [],
-      delays: [],
-    },
-    {
       name: 'an answer on the schema is answered with its spend',
       steps: [answer],
       outcome: {
@@ -185,6 +174,18 @@ describe('assess', () => {
       outcome: {
         outcome: 'invalid_output',
         usage: spend(2_000, 100, 0.00025),
+      },
+      providerCalls: 2,
+      closedOutcomes: ['invalid_output', 'invalid_output'],
+      delays: [],
+    },
+    {
+      // G1: `content-filter` is a refusal (classifyResolution), not a verdict, even when the object is on the schema.
+      name: 'an answer stopped by the content filter is not a verdict: retried once, then invalid_output',
+      steps: [filtered, filtered, answer],
+      outcome: {
+        outcome: 'invalid_output',
+        usage: spend(2_000, 200, 0.0003),
       },
       providerCalls: 2,
       closedOutcomes: ['invalid_output', 'invalid_output'],
@@ -239,7 +240,6 @@ describe('assess', () => {
   it.each<{ name: string; binding: AssessBinding; role: AssessRequest<Verdict>['role'] }>([
     { name: 'a judge call bound to a self-check run', binding: { selfCheckRunId: RUN_ID }, role: 'judge' },
     { name: 'a judge call bound to an investigation', binding: { investigationId: INVESTIGATION_ID }, role: 'judge' },
-    { name: 'a calibration call of a process role', binding: { selfCheckRunId: RUN_ID }, role: 'verifier' },
   ])('writes one transcript per attempt with the role and binding of the request: $name', async ({ binding, role }) => {
     const observed = harness([invalid, answer]);
 
@@ -268,15 +268,14 @@ describe('assess', () => {
     expect(observed.calls).toEqual([]);
   });
 
-  it('versions the instructions as they are: the role template gives its version, a trailing space another', async () => {
-    const loaded = loadProcessConfig(deepResearchProcessV2);
-    if (!loaded.ok) throw new Error('the shipped configuration does not load');
-    const template = loaded.config.roles.verifier.prompt;
+  it('versions the instructions as they are: the checker template gives its version, a trailing space another', async () => {
+    const template = AgentProcessConfigSchema.parse(deepResearchProcessV3).agents.verifier?.prompt;
+    if (template === undefined) throw new Error('the shipped configuration has no verifier');
 
     const exact = harness([answer]);
     const trailingSpace = harness([answer]);
-    await exact.assess({ role: 'verifier', instructions: template });
-    await trailingSpace.assess({ role: 'verifier', instructions: `${template} ` });
+    await exact.assess({ role: 'judge', instructions: template });
+    await trailingSpace.assess({ role: 'judge', instructions: `${template} ` });
 
     expect(exact.opened[0]?.opening.promptVersion).toBe(promptVersion(template));
     expect(trailingSpace.opened[0]?.opening.promptVersion).not.toBe(promptVersion(template));

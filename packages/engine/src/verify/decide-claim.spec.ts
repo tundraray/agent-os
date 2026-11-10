@@ -47,7 +47,8 @@ const profile = (fields: Pick<ClaimProfile, 'independentRecords' | 'contradictio
 
 const TABLE: GroupTable = {
   model: 'anthropic/claude-haiku-4-5',
-  promptVersion: '0123456789ab',
+  agentFingerprint: '0123456789ab',
+  definitionMemoryFingerprint: 'abcdef012345',
   scenarioSet: 'first',
   pairsFingerprint: 'ba9876543210',
   calibratedAt: '2026-11-07T10:00:00.000Z',
@@ -70,7 +71,7 @@ const assessment = (support: string, claimType: string, relations: Relation[]) =
 const ALL_SUPPORT: Relation[] = ['supports', 'supports', 'supports', 'supports'];
 const ONE_CONTRADICTS: Relation[] = ['unrelated', 'unrelated', 'contradicts', 'unrelated'];
 
-/** A claim to decide: its atoms are checked against the records of its pointer, as `research.verify` does. */
+/** A claim to decide: its atoms are checked against the records of its pointer, as `claim_assessment` does. */
 interface Claim {
   readonly assessment: unknown;
   readonly atoms?: readonly Atom[];

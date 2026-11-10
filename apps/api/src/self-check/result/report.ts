@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  type FirstErrorRole,
+  type FirstErrorSummaryRole,
   FIRST_ERROR_STAGES,
 } from '../verdict/first-error.js';
 import type { Verdict } from '../verdict/verdict.js';
@@ -15,16 +15,17 @@ import type {
   LevelOfRun,
   MetricComparison,
 } from '../compare/compare.js';
-import type {
-  ItemResult,
-  RunEntry,
-  RunItems,
-  RunResult,
+import {
+  type ItemResult,
+  type RunConfig,
+  type RunEntry,
+  type RunItems,
+  type RunResult,
 } from './run-result.js';
 
 /**
  * The Markdown report of a run (design-self-check.md, «Что видно в отчёте», Contract «Файл порогов»): every run with
- * its verdict and reason code, first-error stage, steps, tokens and cost; the run's metrics; and every admissible
+ * its verdict and reason code, first-error stage, model calls, tokens and cost; the run's metrics; and every admissible
  * level the run measures — with «в пределах» or «за пределом допустимого» when a thresholds file was passed, without
  * an evaluation when it was not. It is built from the result file alone: codes, counts and identifiers, never a
  * prompt, a record or a model answer.
@@ -46,17 +47,17 @@ const EVALUATION_LABELS: Readonly<
   beyond: 'за пределом допустимого',
 };
 
-/** The four signals in the order of FR-07. */
+/** The four signals of a run in the order of FR-07 (design-research-flow.md, «Сигналы сбоя v3»). */
 export const SIGNAL_LABELS = {
   lowJudgeScore: 'низкая оценка судьи',
   discardedClaims: 'много отсеянных утверждений',
-  controllerRejections: 'отклонённые решения controller',
+  rejectedCalls: 'отклонённые вызовы',
   stopReason: 'причина остановки',
 } as const satisfies Readonly<Record<keyof FailureSignals, string>>;
 const SIGNALS = [
   'lowJudgeScore',
   'discardedClaims',
-  'controllerRejections',
+  'rejectedCalls',
   'stopReason',
 ] as const satisfies readonly (keyof FailureSignals)[];
 
@@ -65,7 +66,7 @@ const FIRST_ERROR_ROLES = [
   'worker',
   'verifier',
   'synthesis',
-] as const satisfies readonly FirstErrorRole[];
+] as const satisfies readonly FirstErrorSummaryRole[];
 
 const NONE = '—';
 
@@ -106,23 +107,35 @@ function header(result: RunResult): string[] {
     `- Создан: ${result.createdAt}; код: ${result.codeVersion === null ? NONE : `\`${result.codeVersion}\``}`,
     `- Завершён: ${result.complete ? 'да' : 'нет — есть сценарии «не прогнан»'}`,
     `- Конфигурация: отпечаток \`${config.fingerprint}\`${config.choice === null ? '' : `, взята ${config.choice === 'frozen' ? 'замороженная' : 'поставляемая'}`}`,
+    `- Версия процесса: ${result.processVersion}`,
     `- Судья: \`${judge.model}\`, версия промпта \`${judge.promptVersion}\``,
     `- Согласие судьи: ${result.judgeAgreement === null ? NONE : `${result.judgeAgreement.correct} из ${result.judgeAgreement.total}`}`,
     '',
-    '| Роль | Модель | Версия промпта |',
-    '|---|---|---|',
-    ...Object.entries(config.roles).map(
-      ([role, { model, promptVersion }]) =>
-        `| ${role} | \`${model}\` | \`${promptVersion}\` |`,
-    ),
+    ...configTable(config),
     '',
+  ];
+}
+
+function configTable(config: RunConfig): string[] {
+  return [
+    '| Агент | Модель | Отпечаток |',
+    '|---|---|---|',
+    ...Object.entries(config.definitions).map(
+      ([agent, { model, fingerprint }]) =>
+        `| ${agent} | \`${model}\` | \`${fingerprint}\` |`,
+    ),
   ];
 }
 
 /** Every level the run kind measures; evaluated only against a thresholds file. */
 function levels(result: RunResult): string[] {
   const values = result.metrics.values;
-  const evaluated = evaluateLevels(result.kind, values, result.thresholds);
+  const evaluated = evaluateLevels(
+    result.kind,
+    values,
+    result.thresholds,
+    METRICS,
+  );
   const rows =
     evaluated === null
       ? metricsOfRunKind(result.kind, METRICS).flatMap((metric) =>
@@ -197,7 +210,7 @@ function itemSection(item: ItemResult): string[] {
           `Сигналы сбоя исходного расследования: ${item.sourceSignals === null ? `${NONE} (у исходного есть ключ: повторы получают вердикт)` : firedSignals(item.sourceSignals)}`,
           '',
         ]),
-    '| Расследование | Статус | Исход ответа | stopReason | Вердикт | Причина | Этап первой ошибки | Шаги | Токены | Стоимость, USD | Установлено | Противоречат ключу | Сигналы сбоя |',
+    `| Расследование | Статус | Исход ответа | stopReason | Вердикт | Причина | Этап первой ошибки | Вызовы модели | Токены | Стоимость, USD | Установлено | Противоречат ключу | Сигналы сбоя |`,
     '|---|---|---|---|---|---|---|---|---|---|---|---|---|',
     ...item.runs.map(runRow),
     '',
@@ -213,7 +226,7 @@ function runRow(run: RunEntry): string {
     run.verdict === null ? NONE : VERDICT_LABELS[run.verdict.verdict],
     run.verdict === null ? NONE : `\`${run.verdict.reason}\``,
     run.firstError === null ? NONE : run.firstError.stage,
-    String(run.steps),
+    String(run.modelCalls),
     String(run.tokens),
     run.costUsd.toFixed(4),
     String(run.establishedClaims),

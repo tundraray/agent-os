@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { agentDefinitionMemory, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, eq, isNull, or, type SQL, sql } from 'drizzle-orm';
-import { type AgentDefinition, type AgentProcessConfig, isAgentsForm } from '../config/agent-config.schema.js';
+import type { AgentDefinition, AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { ProcessSet } from '../config/process-set.js';
 import type { SnapshotEntry } from './fingerprint.js';
 import type { ResultFormRegistry } from './result-forms.js';
@@ -94,10 +94,10 @@ function userScopeForbidden(definition: AgentDefinition, forms: ResultFormRegist
   return forms.get(definition.result)?.userMemoryForbidden === true;
 }
 
-/** The definition of the process's highest loaded version, when it is of the agents form and has the agent. */
+/** The definition of the process's highest loaded version, when it has the agent. */
 function findDefinition(processes: ProcessSet, processId: string, agentName: string): AgentDefinition | undefined {
   const resolved = processes.resolve(processId);
-  if (!resolved.ok || !isAgentsForm(resolved.config) || !Object.hasOwn(resolved.config.agents, agentName)) {
+  if (!resolved.ok || !Object.hasOwn(resolved.config.agents, agentName)) {
     return undefined;
   }
   return resolved.config.agents[agentName];
@@ -200,6 +200,18 @@ export function createDefinitionMemory(deps: DefinitionMemoryDeps): DefinitionMe
       }));
     },
   };
+}
+
+/** The current records of the scope `deployment` of one definition, as `definitionMemoryFingerprint` takes them. */
+export async function readDeploymentEntries(
+  database: Database,
+  definition: { readonly processId: string; readonly agentName: string },
+): Promise<SnapshotEntry[]> {
+  const rows = await database
+    .select({ id: agentDefinitionMemory.id, text: agentDefinitionMemory.text })
+    .from(agentDefinitionMemory)
+    .where(activeOfScope({ ...definition, scope: 'deployment', userId: null }));
+  return rows.map((row) => ({ id: row.id, scope: 'deployment', text: row.text }));
 }
 
 /**

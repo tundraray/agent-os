@@ -15,6 +15,7 @@ import {
   researchTasks,
 } from '@agent-os/db';
 import {
+  claimAssessmentAgent,
   createEngine,
   type Engine,
   type ResolveModel,
@@ -53,6 +54,7 @@ import { RESULT_FILE_NAME } from '../../src/self-check/result/run-result.js';
 import type { ScenarioAssembly } from '../../src/self-check/scenario-assembly.js';
 import type { SelfCheckLogger } from '../../src/self-check/scenario-assembly.js';
 import { SOURCES_ALLOWLIST } from '../../src/sources/sources.config.js';
+import { researchFlowGroupTable } from './researchFlowConfig.js';
 import {
   createSelfCheckModels,
   type SelfCheckModels,
@@ -163,7 +165,10 @@ export interface EmployeeInvestigation {
 
 export interface EmployeeInvestigationRequest {
   readonly question: string;
-  /** The configuration the investigation runs with, as data: it is frozen in its run row. */
+  /**
+   * The configuration the investigation runs with, as data: it is frozen in its run row. An agents-form one gets the
+   * test group table of its loaded checker agent.
+   */
   readonly processConfig: unknown;
   /**
    * The dataset the fixture serves (`v1`, `v2`), the investigation run to its end by the real engine; or `legacy` — an
@@ -231,6 +236,11 @@ export interface SelfCheckApp {
    * longer serves the slice it is asked for (UC-E3); `null` undoes it.
    */
   serveInstead(requested: string, served: string | null): void;
+  /**
+   * From now on the assembly of `scenario` runs on this configuration instead of the one the command chose: a scenario
+   * under a changed limit (`researchFlowV3Config`). `null` undoes it.
+   */
+  runScenarioOn(scenario: string, processConfig: unknown): void;
   /**
    * An employee's investigation in the database, made by the real engine and runtime on the real fixture with the
    * scripted models: started for a new `e2e-` owner through `Engine.startInvestigation`, waited for until it is no
@@ -310,6 +320,7 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
   const openAssemblies = new Set<ScenarioAssembly>();
   let datasetScript: string | null = null;
   const substitutes = new Map<string, string>();
+  const scenarioConfigs = new Map<string, unknown>();
 
   /** What the scripted roles answer from while `served` is assembled: a dataset follows its script. */
   const scriptOf = (served: string): string =>
@@ -349,7 +360,12 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
           const served = substitutes.get(request.scenario) ?? request.scenario;
           models.assembling(scriptOf(served));
           return tracked(
-            await program.assembleScenario({ ...request, scenario: served }),
+            await program.assembleScenario({
+              ...request,
+              scenario: served,
+              processConfig:
+                scenarioConfigs.get(request.scenario) ?? request.processConfig,
+            }),
           );
         },
       };
@@ -362,6 +378,10 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
     serveInstead(requested, served) {
       if (served === null) substitutes.delete(requested);
       else substitutes.set(requested, served);
+    },
+    runScenarioOn(scenario, processConfig) {
+      if (processConfig === null) scenarioConfigs.delete(scenario);
+      else scenarioConfigs.set(scenario, processConfig);
     },
     saveEmployeeInvestigation(request) {
       if (request.dataset !== 'legacy') {
@@ -420,6 +440,16 @@ export function createSelfCheckApp(options: SelfCheckAppOptions): SelfCheckApp {
 
 const isDatasetVersion = (value: string): value is DatasetVersion =>
   DATASET_VERSIONS.some((version) => version === value);
+
+/** The arguments of `run` and `replay` that give these agents other models, one `--agent-model` each. */
+export function agentModelArgs(
+  agentModels: Readonly<Record<string, string>>,
+): string[] {
+  return Object.entries(agentModels).flatMap(([agent, model]) => [
+    '--agent-model',
+    `${agent}=${model}`,
+  ]);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Employee investigations in the database
@@ -491,8 +521,7 @@ async function saveEmployeeInvestigation(
     logger: ports.logger,
   });
   try {
-    const { handlers, eventConsumers, scheduler, investigations, evidence } =
-      runtime;
+    const { handlers, eventConsumers, scheduler, investigations } = runtime;
     const engine = createEngine({
       database: database.db,
       runtime: {
@@ -500,11 +529,13 @@ async function saveEmployeeInvestigation(
         eventConsumers,
         scheduler,
         investigations,
-        evidence,
       },
       sourceRegistry: sources.registry,
       connectedSources: [FIXTURE_SOURCE_ID],
       processes: [request.processConfig],
+      ...(claimAssessmentAgent(request.processConfig) === null
+        ? {}
+        : { groupTables: [researchFlowGroupTable(request.processConfig)] }),
       resolveModel: ports.resolveModel,
       tokenCounter: ports.tokenCounter,
       clock: ports.clock,

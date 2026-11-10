@@ -1,7 +1,6 @@
 import {
   type AssessRequest,
-  deepResearchProcessV2,
-  loadProcessConfig,
+  deepResearchProcessV3,
   type RunRecord,
 } from '@agent-os/engine';
 import { systemClock } from '@agent-os/runtime';
@@ -26,15 +25,15 @@ vi.mock('@agent-os/engine', async (importOriginal) => ({
   readTranscripts: () => Promise.resolve({ outcome: 'found', transcripts: [] }),
 }));
 
-const loaded = loadProcessConfig(deepResearchProcessV2);
-if (!loaded.ok) throw new Error('the shipped configuration is refused');
+/** The shipped v3 as a run record names its frozen configuration. */
+const SHIPPED = deepResearchProcessV3 as RunRecord['config']['processConfig'];
 
 const RECORD: RunRecord = {
   investigationId: '00000000-0000-4000-8000-000000000001',
   ownerId: 'system:self-check',
   query: 'Почему 15 сентября выросли ошибки оплаты?',
   status: 'completed',
-  config: { processConfig: loaded.config, fingerprint: '0123456789ab' },
+  config: { processConfig: SHIPPED, fingerprint: '0123456789ab' },
   sourceSnapshots: { fixture: 'fx-v1-2157485c' },
   answer: {
     answerId: '00000000-0000-4000-8000-000000000002',
@@ -46,15 +45,21 @@ const RECORD: RunRecord = {
     removed: [],
   },
   claims: [],
-  decisions: [],
   evidence: [],
   usage: {
     byRoleAndModel: [],
+    byAgentAndModel: [],
     totalTokens: 0,
     totalCostUsd: 0,
     tokenBudget: 300_000,
   },
   calls: [],
+  agentTree: {
+    investigationId: '00000000-0000-4000-8000-000000000001',
+    runs: [],
+    definitionMemorySnapshot: {},
+    budgetExhausted: false,
+  },
 };
 
 describe('executeShowCommand: the judge assembly runs no workers', () => {
@@ -107,7 +112,7 @@ describe('executeShowCommand: the judge assembly runs no workers', () => {
     expect(requests).toEqual([
       {
         scenario: 'v1',
-        processConfig: deepResearchProcessV2,
+        processConfig: deepResearchProcessV3,
         workers: false,
       },
     ]);

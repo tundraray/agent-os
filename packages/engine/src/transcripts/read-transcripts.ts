@@ -2,12 +2,14 @@ import { type Database, researchInvestigations, researchLlmCalls, researchLlmTra
 import { and, asc, eq, gte, isNull, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type AgentRunRow, agentRunsRepository } from '../agents/agent-runs.repository.js';
-import { SHIPPED_RESULT_FORMS } from '../agents/result-forms.js';
+import { type ResultForm, SHIPPED_RESULT_FORMS } from '../agents/result-forms.js';
 import { readRunFrame, type RunFrame, sessionViewOf, toRunSession } from '../agents/run-session.js';
 import { OPENING_SEQ, type WindowStage } from '../agents/session-window.js';
 import { sessionRepository } from '../agents/session.repository.js';
 import { toolCallsRepository } from '../agents/tool-calls.repository.js';
 import { agentToolsOf, BASE_TOOLS, createToolRegistry } from '../agents/tool-registry.js';
+import { RESEARCH_FORMS } from '../research-flow/research-forms.js';
+import { RESEARCH_TOOLS } from '../research-flow/research-tools.js';
 import type { TranscriptUsage } from './transcript-writes.js';
 
 /**
@@ -128,12 +130,13 @@ const ViewReferenceSchema = z.object({
 
 /** A window the view of stages 0–3 always fits: the rebuilt view stays at its recorded stage. */
 const UNBOUNDED_WINDOW = Number.MAX_SAFE_INTEGER;
-const TOOL_REGISTRY = createToolRegistry(BASE_TOOLS);
+const TOOL_REGISTRY = createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS]);
+const RESULT_FORMS: readonly ResultForm[] = [...SHIPPED_RESULT_FORMS, ...RESEARCH_FORMS];
 
 /**
  * The turns of agent runs with their agent and their input rebuilt from the session (KD-2): the session up to the last
- * message the view covered, at the stage it recorded — stage 4 by the definition's window, with the engine's shipped
- * result forms. A turn whose run (and with it its session) is gone reads as a deleted investigation: null.
+ * message the view covered, at the stage it recorded — stage 4 by the definition's window, with the engine's result
+ * forms. A turn whose run (and with it its session) is gone reads as a deleted investigation: null.
  */
 async function withAgentTurns(
   db: Database,
@@ -153,7 +156,7 @@ async function withAgentTurns(
     const run = runs.get(transcript.taskId);
     if (run === undefined) return null;
     frame ??= await readRunFrame(db, investigationId);
-    const messages = await rebuiltMessages(db, { frame, run, ...reference.data.view });
+    const messages = await rebuiltMessages(db, { frame, run, instructions: reference.data.instructions, ...reference.data.view });
     read.push({ ...transcript, agentName: run.agentName, input: { instructions: reference.data.instructions, messages } });
   }
   return read;
@@ -161,7 +164,13 @@ async function withAgentTurns(
 
 async function rebuiltMessages(
   db: Database,
-  turn: { readonly frame: RunFrame; readonly run: AgentRunRow; readonly throughSeq: number; readonly stage: number },
+  turn: {
+    readonly frame: RunFrame;
+    readonly run: AgentRunRow;
+    readonly instructions: string;
+    readonly throughSeq: number;
+    readonly stage: number;
+  },
 ) {
   const { frame, run } = turn;
   const definition = frame.config.agents[run.agentName];
@@ -171,7 +180,7 @@ async function rebuiltMessages(
     sessionRepository.read(db, run.taskId).then((all) => all.filter((row) => row.seq <= Math.max(turn.throughSeq, OPENING_SEQ))),
     toolCallsRepository.ofRun(db, run.taskId),
   ]);
-  const form = SHIPPED_RESULT_FORMS.find((shipped) => shipped.name === definition.result);
+  const form = RESULT_FORMS.find((known) => known.name === definition.result);
   const tools = agentToolsOf(definition.tools, { registry: TOOL_REGISTRY, resultSchema: form?.resultSchema ?? z.unknown() });
   const stage = turn.stage as WindowStage;
   return sessionViewOf({
@@ -181,6 +190,8 @@ async function rebuiltMessages(
     tools,
     session: toRunSession(rows, calls),
     heldStage: stage,
+    // The block the turn went with: the fields are not substituted again (design-agent-core.md, «Транскрипт»).
+    system: { recordedInstructions: turn.instructions },
     ...(stage < 4 ? { windowTokens: UNBOUNDED_WINDOW } : {}),
   }).messages;
 }

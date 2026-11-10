@@ -1,6 +1,5 @@
 import { type ResearchAnswerConfidence, ResearchAnswerConfidenceSchema } from '@agent-os/contracts';
 import { z } from 'zod';
-import { promptVersion } from '../model/prompt-version.js';
 import { type ClaimProfile, ClaimProfileSchema } from '../verify/claim-assessment.js';
 
 /** The group of a profile the calibration did not see, and of every claim without a table (DC-11). */
@@ -12,16 +11,17 @@ const share = z.number().min(0).max(1);
 const hex12 = z.string().regex(/^[0-9a-f]{12}$/);
 
 /**
- * The group table file (design-engine.md, Contract Definitions, «Таблица групп»), built by calibration: the `verifier`
- * model and its prompt version (the transcript's prompt version format); the scenario set, the fingerprint of the pairs
- * `buildCalibrationPairs` returned and the calibration time; the number of groups, 3 or 4; the group of each profile
- * the calibration saw; per group the number of established pairs and the share correct; per pair kind the three shares
- * that matched the key.
+ * The group table file (design-research-flow.md, «Таблица групп v3»), built by calibration: the key, the pair
+ * `agentFingerprint` + `definitionMemoryFingerprint` of the checker agent, and its model, written to be read; the scenario
+ * set, the fingerprint of the pairs `buildCalibrationPairs` returned and the calibration time; the number of groups, 3 or
+ * 4; the group of each profile the calibration saw; per group the number of established pairs and the share correct; per
+ * pair kind the three shares that matched the key.
  */
 export const GroupTableSchema = z
   .strictObject({
     model: z.string().min(1),
-    promptVersion: hex12,
+    agentFingerprint: hex12,
+    definitionMemoryFingerprint: hex12,
     scenarioSet: z.string().min(1),
     pairsFingerprint: hex12,
     calibratedAt: z.iso.datetime(),
@@ -52,16 +52,14 @@ export const GroupTableSchema = z
   });
 export type GroupTable = z.infer<typeof GroupTableSchema>;
 
-/**
- * The table calibrated for this `verifier` role: the same model and the prompt version of its template. Any edit of the
- * template or another model finds no table (KD-3, DC-2).
- */
-export function findGroupTable(
+/** The table calibrated for this pair of fingerprints of the checker agent (KD-4 of research-flow, DC-10). */
+export function findGroupTableByPair(
   tables: readonly GroupTable[],
-  verifier: { readonly model: string; readonly prompt: string },
+  pair: { readonly agentFingerprint: string; readonly definitionMemoryFingerprint: string },
 ): GroupTable | undefined {
-  const version = promptVersion(verifier.prompt);
-  return tables.find((table) => table.model === verifier.model && table.promptVersion === version);
+  return tables.find(
+    (table) => table.agentFingerprint === pair.agentFingerprint && table.definitionMemoryFingerprint === pair.definitionMemoryFingerprint,
+  );
 }
 
 const sameProfile = (left: ClaimProfile, right: ClaimProfile): boolean =>

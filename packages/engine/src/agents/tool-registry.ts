@@ -17,6 +17,8 @@ export interface ToolRegistryEntry {
   readonly effect: ToolEffectClass;
   /** Bytes of a result before it is paged or cut; at most {@link TOOL_RESULT_MAX_BYTES}. */
   readonly resultMaxBytes: number;
+  /** Allows `{{sources}}` in the prompt of a definition that has the tool (KD-9); the model does not see the mark. */
+  readonly readsRunSources?: boolean;
 }
 
 /** The closed list of tools by name; a definition names tools only from it (ADR-0009). */
@@ -27,6 +29,40 @@ const agentName = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
 
 /** A reference of a note to a record or a claim of this investigation. */
 const NoteRefSchema = z.strictObject({ type: z.enum(['record', 'claim']), id: z.string().min(1) });
+
+const INVESTIGATION_VIEWS = ['plan', 'claims', 'record_pages', 'records', 'runs'] as const;
+
+/** The fields each view of `investigation_read` takes besides `view`; `page` is required by `records`. */
+const INVESTIGATION_VIEW_FIELDS: Readonly<Record<(typeof INVESTIGATION_VIEWS)[number], readonly string[]>> = {
+  plan: [],
+  claims: ['cursor'],
+  record_pages: ['cursor'],
+  records: ['page', 'from', 'cursor'],
+  runs: ['cursor', 'run', 'from'],
+};
+
+/**
+ * The arguments of `investigation_read`: one object at the root, as the provider takes tool arguments (DC-30). The
+ * fields a view does not take, and `records` without `page`, are refused here, as a union of one object per view would.
+ */
+const InvestigationReadArgsSchema = z
+  .strictObject({
+    view: z.enum(INVESTIGATION_VIEWS),
+    cursor: z.string().optional(),
+    page: z.string().min(1).optional(),
+    run: z.string().min(1).optional(),
+    from: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((args, ctx) => {
+    const allowed = INVESTIGATION_VIEW_FIELDS[args.view];
+    const foreign = Object.keys(args).filter((key) => key !== 'view' && !allowed.includes(key));
+    if (foreign.length > 0) {
+      ctx.addIssue({ code: 'unrecognized_keys', keys: foreign, message: `view ${args.view} does not take ${foreign.join(', ')}` });
+    }
+    if (args.view === 'records' && args.page === undefined) {
+      ctx.addIssue({ code: 'invalid_type', expected: 'string', path: ['page'], message: 'view records requires page' });
+    }
+  });
 
 /** The base tools (design-agent-core.md, Базовые инструменты); their execution is the `ToolExecutor`'s. */
 export const BASE_TOOLS: readonly ToolRegistryEntry[] = [
@@ -63,23 +99,7 @@ export const BASE_TOOLS: readonly ToolRegistryEntry[] = [
       'record pages, the records of one page from a number, or the results of finished agent runs. A long result ' +
       'comes in pages with a cursor to continue. The whole result of one run, of any size, comes in pieces of its ' +
       'JSON text: view "runs" with the run and a byte offset - from 0, then the "next" of each piece until it is null.',
-    argsSchema: z.discriminatedUnion('view', [
-      z.strictObject({ view: z.literal('plan') }),
-      z.strictObject({ view: z.literal('claims'), cursor: z.string().optional() }),
-      z.strictObject({ view: z.literal('record_pages'), cursor: z.string().optional() }),
-      z.strictObject({
-        view: z.literal('records'),
-        page: z.string().min(1),
-        from: z.number().int().nonnegative().optional(),
-        cursor: z.string().optional(),
-      }),
-      z.strictObject({
-        view: z.literal('runs'),
-        cursor: z.string().optional(),
-        run: z.string().min(1).optional(),
-        from: z.number().int().nonnegative().optional(),
-      }),
-    ]),
+    argsSchema: InvestigationReadArgsSchema,
     effect: 'read',
     resultMaxBytes: TOOL_RESULT_MAX_BYTES,
   },

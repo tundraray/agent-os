@@ -10,7 +10,7 @@
   },
   "signals": {
     "discardedShare": 0.5,
-    "controllerRejections": 3
+    "rejectedCalls": 3
   },
   "resampling": {
     "resamples": 2000,

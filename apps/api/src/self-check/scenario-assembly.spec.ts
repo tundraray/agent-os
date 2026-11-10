@@ -1,6 +1,6 @@
 import {
   type CreateEngineOptions,
-  deepResearchProcessV2,
+  deepResearchProcessV3,
 } from '@agent-os/engine';
 import {
   parseRuntimeConfig,
@@ -8,7 +8,7 @@ import {
   systemClock,
 } from '@agent-os/runtime';
 import { MockLanguageModelV4 } from 'ai/test';
-import { describe, expect, it, type Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { assembleScenario } from './scenario-assembly.js';
 import { loadSelfCheckSettings } from './settings.js';
 
@@ -51,35 +51,54 @@ vi.mock('@agent-os/runtime', async (importOriginal) => {
 });
 
 describe('assembleScenario with the workers off (show)', () => {
-  it('builds the engine for the judge and verifier models and never calls runtime.start', async () => {
-    const settings = loadSelfCheckSettings();
-    const logs: string[] = [];
-    const logger = {
-      debug() {},
-      log: (message: string) => {
-        logs.push(message);
-      },
-      warn() {},
-      error() {},
-    };
-    const assembly = await assembleScenario({
+  beforeEach(() => {
+    created.length = 0;
+    engines.length = 0;
+  });
+
+  function assemble(processConfig: unknown, logs: string[] = []) {
+    return assembleScenario({
       // Nothing listens here: the assembly connects lazily, and a judge-only assembly makes no query before a call.
       databaseUrl: 'postgres://nobody:nobody@127.0.0.1:1/none',
       scenario: 'v1',
-      processConfig: deepResearchProcessV2,
-      judgeModel: settings.judge.model,
+      processConfig,
+      judgeModel: loadSelfCheckSettings().judge.model,
       runtime: { ...parseRuntimeConfig({}), workers: false },
       clock: systemClock,
       resolveModel: (modelId) =>
         new MockLanguageModelV4({ provider: 'spec', modelId }),
       tokenCounter: {
-        countInputTokens: () =>
-          Promise.resolve({ outcome: 'counted', inputTokens: 0 }),
         countTurnInputTokens: () =>
           Promise.reject(new Error('the self-check runs no agent turn')),
       },
-      logger,
+      logger: {
+        debug() {},
+        log: (message: string) => {
+          logs.push(message);
+        },
+        warn() {},
+        error() {},
+      },
     });
+  }
+
+  // Flow 4: `Engine.assessAgent` may call the checker agent's model. Defect caught: a calibration whose every pair is
+  // rejected as `model_unavailable`, because the checker agent's model is missing from the allowed list.
+  it("allows the model of the checker agent for the configuration's calibration", async () => {
+    const assembly = await assemble(deepResearchProcessV3);
+    try {
+      expect(engines.at(-1)?.assessModels).toEqual([
+        'anthropic/claude-sonnet-5-5',
+        'anthropic/claude-haiku-5-5',
+      ]);
+    } finally {
+      await assembly.close();
+    }
+  });
+
+  it('builds the engine for the judge and the checker models and never calls runtime.start', async () => {
+    const logs: string[] = [];
+    const assembly = await assemble(deepResearchProcessV3, logs);
     try {
       // The observed runtime is the one of the assembly: the observation is wired, not vacuous.
       expect(created).toHaveLength(1);
@@ -90,9 +109,8 @@ describe('assembleScenario with the workers off (show)', () => {
       ).toEqual([]);
       // The engine is there for the judge call.
       expect(typeof assembly.engine.assess).toBe('function');
-      // design-engine.md, «Кто оценивает»: `Engine.assess` may call the judge and the configuration's `verifier`
-      // model — calibration's call. Defect caught: an assembly whose calibration call is refused as
-      // `model_unavailable`.
+      // design-engine.md, «Кто оценивает»: `Engine.assess` may call the judge and the configuration's checker model —
+      // calibration's call. Defect caught: an assembly whose calibration call is refused as `model_unavailable`.
       expect(engines.at(-1)?.assessModels).toEqual([
         'anthropic/claude-sonnet-5-5',
         'anthropic/claude-haiku-5-5',

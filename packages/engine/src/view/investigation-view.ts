@@ -1,8 +1,7 @@
 import { type InvestigationStatus, InvestigationStatusSchema } from '@agent-os/contracts';
 import type { z } from 'zod';
 import { type InvestigationAnswer, InvestigationAnswerSchema } from '../answer/code-answer.js';
-import { AgentProcessConfigSchema, hasAgentsKey } from '../config/agent-config.schema.js';
-import { type AnyProcessConfig, type ProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
+import { type AgentProcessConfig, AgentProcessConfigSchema } from '../config/agent-config.schema.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { ModelRole } from '../model/ledger.js';
 import type { EngineRunStatus } from '../runs/engine-runs.repository.js';
@@ -10,7 +9,7 @@ import type { RoleModelUsageRow } from './usage.repository.js';
 
 export type InvestigationViewStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
-type AnswerSection = ProcessConfig['answer']['sections'][number];
+type AnswerSection = AgentProcessConfig['answer']['sections'][number];
 
 /**
  * A stored answer as any version of the engine wrote it. The view always fills `summaryItems`, `confidence` and
@@ -21,7 +20,7 @@ type StoredAnswer = z.input<typeof InvestigationAnswerSchema>;
 
 /**
  * The answer as the view shows it: `outcome` and `stopReason`, then the sections the investigation's configuration
- * names, in its order (ProcessConfig `answer`); a section the configuration leaves out is absent. The section `summary`
+ * names, in its order (the configuration's `answer`); a section the configuration leaves out is absent. The section `summary`
  * is the summary string of an answer written before agent-quality and the summary items after it (KD-4).
  */
 type InvestigationAnswerView = Pick<StoredAnswer, 'answerId' | 'outcome' | 'stopReason'> &
@@ -61,7 +60,7 @@ interface RoleModelUsage {
 
 /** The ledger of the investigation by role and model, its total and its budget (AC-11.1). */
 interface InvestigationUsage {
-  /** In the order of the roles (`plan`, `controller`, `worker`, `verifier`, `synthesis`), then by model. */
+  /** By model. */
   readonly byRoleAndModel: readonly RoleModelUsage[];
   /**
    * Charged plus the open reservations: a cancelled investigation keeps the reservation of its interrupted call open in
@@ -109,7 +108,7 @@ export function toInvestigationView(
   };
 }
 
-const ROLE_ORDER: readonly ModelRole[] = ['plan', 'controller', 'worker', 'verifier', 'synthesis', 'agent'];
+const ROLE_ORDER: readonly ModelRole[] = ['agent'];
 
 function usageView(run: EngineRunStatus['run'], rows: readonly RoleModelUsageRow[]): InvestigationUsage {
   const byRoleAndModel = rows
@@ -123,7 +122,7 @@ function usageView(run: EngineRunStatus['run'], rows: readonly RoleModelUsageRow
   };
 }
 
-/** The column's CHECK allows only the five roles; anything else is a defect. */
+/** The engine writes only `agent` ledger rows; any other role is a defect. */
 function recordedRole(value: string): ModelRole {
   const role = ROLE_ORDER.find((candidate) => candidate === value);
   if (role === undefined) {
@@ -132,17 +131,14 @@ function recordedRole(value: string): ModelRole {
   return role;
 }
 
-/**
- * The frozen configuration of an investigation, of either form (DC-29, ADR-0009, KD-7): one with the `agents` key
- * through the agents schema, any other through `ProcessConfigSchema` — the same choice the load makes.
- */
-export function frozenProcessConfig(data: unknown): AnyProcessConfig {
-  return hasAgentsKey(data) ? AgentProcessConfigSchema.parse(data) : ProcessConfigSchema.parse(data);
+/** The frozen configuration of an investigation (DC-29, ADR-0009, KD-7), through the schema the load uses. */
+export function frozenProcessConfig(data: unknown): AgentProcessConfig {
+  return AgentProcessConfigSchema.parse(data);
 }
 
 /**
- * The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15), of
- * either form (DC-29). An answer written before agent-quality reads with the same schema: no summary items, no group, no
+ * The stored answer (a `jsonb` keeps no key order) laid out in the sections of the recorded configuration (DC-15,
+ * DC-29). An answer written before agent-quality reads with the same schema: no summary items, no group, no
  * causal flag (UC-E5).
  */
 function answerView(answer: InvestigationAnswer, processConfig: unknown): InvestigationAnswerView {

@@ -35,7 +35,7 @@ const shell: Investigation = {
 
 const someTask = {
   taskId: '00000000-0000-4000-8000-0000000000aa',
-  workflowType: 'research.controller',
+  workflowType: 'agent.root',
   workflowVersion: 1,
   status: 'queued',
   dedupKey: 'v1:abc',

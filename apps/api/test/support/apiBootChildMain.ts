@@ -10,7 +10,7 @@ import { TEST_GROUP_TABLES } from './testGroupTables.js';
  * build:child` → `dist/test-child/`); `dist/main.js` and `src/` never import it. It starts the api the way `main.ts`
  * does — `AppModule`, `configureApp`, shutdown hooks, `listen(PORT)`, then the Mastra workers — with one difference:
  * `ENGINE_GROUP_TABLES` holds the test group table, so the start does not depend on the owner's real calibration
- * (`requireCalibration`, DC-2). Nothing else is doubled. A failed start exits non-zero, as `main.ts` does.
+ * (`Engine.checkCalibration`, DC-10). Nothing else is doubled. A failed start exits non-zero, as `main.ts` does.
  */
 async function bootstrap(): Promise<void> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })

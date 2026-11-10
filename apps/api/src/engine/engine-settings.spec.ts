@@ -36,6 +36,24 @@ describe('parseEngineSettings - RESEARCH_ANTHROPIC_BASE_URL', () => {
   );
 });
 
+// Risk (DD Runtime Settings): the deployment's table directory is lost between the variable and `createEngine`, or a
+// value is altered on the way (design-research-flow.md, Runtime Settings).
+describe('parseEngineSettings - RESEARCH_GROUP_TABLES_DIR', () => {
+  it.each<[string, Record<string, string>, string]>([
+    ['unset', {}, ''],
+    ['empty', { RESEARCH_GROUP_TABLES_DIR: '' }, ''],
+    [
+      'set',
+      { RESEARCH_GROUP_TABLES_DIR: '/srv/agent-os/group tables/' },
+      '/srv/agent-os/group tables/',
+    ],
+  ])('takes the directory when %s', (_, env, expected) => {
+    expect(parseEngineSettings((name) => env[name]).groupTablesDir).toBe(
+      expected,
+    );
+  });
+});
+
 // Risk: an agent setting starts with a default other than the design's, or an invalid value starts the engine with
 // NaN timings instead of stopping the start naming the variable (design-agent-core.md, Runtime Settings).
 describe('parseEngineSettings - agent settings', () => {

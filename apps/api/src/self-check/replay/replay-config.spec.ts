@@ -1,104 +1,153 @@
-import {
-  deepResearchProcessV2,
-  loadProcessConfig,
-  type ProcessConfig,
-} from '@agent-os/engine';
+import { deepResearchProcessV3, type RunRecord } from '@agent-os/engine';
+import { parseReplayArgs } from './replay-command.js';
 import { replayConfig, type ReplayConfigInput } from './replay-config.js';
 
 const SONNET = 'anthropic/claude-sonnet-5-5';
 
-function parsed(data: unknown): ProcessConfig {
-  const result = loadProcessConfig(data);
-  if (!result.ok)
-    throw new Error(
-      `fixture configuration rejected at ${result.rejection.path.join('.')}`,
-    );
-  return result.config;
-}
+/** A frozen configuration without agents: data no swap can apply to. */
+const frozenWithoutAgents = {
+  processId: 'deep-research',
+  version: 3,
+} as unknown as ReplayConfigInput['frozen'];
 
-const shipped = parsed(deepResearchProcessV2);
-/** A frozen configuration that differs from the shipped one in the worker prompt text (UC-6a). */
-const frozen = parsed({
-  ...shipped,
-  roles: {
-    ...shipped.roles,
-    worker: {
-      ...shipped.roles.worker,
-      prompt: `${shipped.roles.worker.prompt}\nKeep each step short.`,
+type AgentsForm = Extract<
+  RunRecord['config']['processConfig'],
+  { agents: unknown }
+>;
+
+// AC-18.2: a v3 original is repeated on its own frozen configuration; a swap stays in its agent.
+describe('replay configuration on the agents form', () => {
+  const shippedV3 = deepResearchProcessV3 as AgentsForm;
+  const worker = shippedV3.agents.worker;
+  if (worker === undefined) throw new Error('the shipped v3 has a worker');
+  /** A frozen v3 that differs from the shipped one in the worker prompt, so the choice is visible. */
+  const frozenV3: AgentsForm = {
+    ...shippedV3,
+    agents: {
+      ...shippedV3.agents,
+      worker: { ...worker, prompt: `${worker.prompt}\nKeep each step short.` },
     },
-  },
-});
+  };
 
-function rolesExcept(config: ProcessConfig, role: string): unknown {
-  return Object.fromEntries(
-    Object.entries(config.roles).filter(([name]) => name !== role),
-  );
-}
+  it('takes the frozen configuration without a swap', () => {
+    expect(
+      replayConfig({
+        choice: 'frozen',
+        frozen: frozenV3,
+        agentModels: [],
+      }),
+    ).toEqual({ ok: true, choice: 'frozen', processConfig: frozenV3 });
+  });
 
-// UC-6a, AC-02.2: the configuration the choice names is the one used, a model swap stays in its role.
-describe('replay configuration', () => {
-  it.each<[string, ReplayConfigInput, ProcessConfig]>([
-    [
-      'frozen gives the original configuration',
-      { choice: 'frozen', frozen, roleModel: null },
-      frozen,
-    ],
-    [
-      'shipped gives the shipped deep-research',
-      { choice: 'shipped', frozen, roleModel: null },
-      shipped,
-    ],
-  ])('%s', (_, input, expected) => {
-    expect(replayConfig(input)).toEqual({
+  // The shipped configuration of a replay is v3, whatever the saved one is.
+  it.each<[string, ReplayConfigInput['frozen']]>([
+    ['a frozen v3', frozenV3],
+    ['a frozen configuration without agents', frozenWithoutAgents],
+  ])('--config shipped takes the shipped v3 over %s', (_, frozenConfig) => {
+    expect(
+      replayConfig({
+        choice: 'shipped',
+        frozen: frozenConfig,
+        agentModels: [],
+      }),
+    ).toEqual({ ok: true, choice: 'shipped', processConfig: shippedV3 });
+  });
+
+  it('swaps exactly the named agents of the frozen configuration', () => {
+    const result = replayConfig({
+      choice: 'frozen',
+      frozen: frozenV3,
+      agentModels: [
+        { agent: 'worker', model: SONNET },
+        { agent: 'verifier', model: SONNET },
+      ],
+    });
+
+    expect(result).toEqual({
       ok: true,
-      choice: input.choice,
-      processConfig: expected,
+      choice: 'frozen',
+      processConfig: {
+        ...frozenV3,
+        agents: {
+          ...frozenV3.agents,
+          worker: { ...frozenV3.agents.worker, model: SONNET },
+          verifier: { ...frozenV3.agents.verifier, model: SONNET },
+        },
+      },
     });
   });
 
-  it.each<[ReplayConfigInput['choice'], ProcessConfig]>([
-    ['frozen', frozen],
-    ['shipped', shipped],
-  ])(
-    '%s with another worker model swaps that role only and marks the choice',
-    (choice, base) => {
-      const result = replayConfig({
-        choice,
-        frozen,
-        roleModel: { role: 'worker', model: SONNET },
-      });
-      if (!result.ok) throw new Error(`rejected at ${result.path.join('.')}`);
-      expect(result.choice).toBe(choice);
-      expect(result.processConfig.roles.worker).toEqual({
-        ...base.roles.worker,
-        model: SONNET,
-      });
-      expect(rolesExcept(result.processConfig, 'worker')).toEqual(
-        rolesExcept(base, 'worker'),
-      );
-    },
-  );
+  it('refuses --agent-model over a frozen configuration without agents with invalid_arguments', () => {
+    expect(
+      replayConfig({
+        choice: 'frozen',
+        frozen: frozenWithoutAgents,
+        agentModels: [{ agent: 'worker', model: SONNET }],
+      }),
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' });
+  });
 
-  it.each<[string, ReplayConfigInput['roleModel'], (string | number)[]]>([
+  it('refuses an unknown agent at its path', () => {
+    expect(
+      replayConfig({
+        choice: 'frozen',
+        frozen: frozenV3,
+        agentModels: [{ agent: 'no-such-agent', model: SONNET }],
+      }),
+    ).toMatchObject({
+      ok: false,
+      code: 'process_config_rejected',
+      path: ['agents', 'no-such-agent', 'limits'],
+    });
+  });
+});
+
+describe('replay arguments', () => {
+  const ORIGINAL = ['--investigation', 'one', '--owner', 'someone'];
+
+  it.each<[string, string[], ReplayConfigInput['choice']]>([
+    ['no choice repeats on the frozen configuration', [], 'frozen'],
     [
-      'an unknown role',
-      { role: 'planner', model: SONNET },
-      ['roles', 'planner'],
+      '--config shipped takes the shipped one',
+      ['--config', 'shipped'],
+      'shipped',
     ],
-    [
-      'a model that is not provider/model',
-      { role: 'worker', model: 'sonnet' },
-      ['roles', 'worker', 'model'],
-    ],
-  ])(
-    'refuses %s with process_config_rejected and the path',
-    (_, roleModel, path) => {
-      const result = replayConfig({ choice: 'frozen', frozen, roleModel });
-      expect(result).toMatchObject({
-        ok: false,
-        code: 'process_config_rejected',
-        path,
-      });
-    },
-  );
+  ])('%s', (_, flags, choice) => {
+    expect(parseReplayArgs([...ORIGINAL, ...flags])).toMatchObject({
+      ok: true,
+      options: { choice },
+    });
+  });
+
+  it('takes --agent-model repeated', () => {
+    expect(
+      parseReplayArgs([
+        ...ORIGINAL,
+        '--agent-model',
+        'worker=a/b',
+        '--agent-model',
+        'planner=c/d',
+      ]),
+    ).toMatchObject({
+      ok: true,
+      options: {
+        agentModels: [
+          { agent: 'worker', model: 'a/b' },
+          { agent: 'planner', model: 'c/d' },
+        ],
+      },
+    });
+  });
+
+  it('refuses an agent named twice with invalid_arguments', () => {
+    expect(
+      parseReplayArgs([
+        ...ORIGINAL,
+        '--agent-model',
+        'worker=a/b',
+        '--agent-model',
+        'worker=c/d',
+      ]),
+    ).toMatchObject({ ok: false, code: 'invalid_arguments' });
+  });
 });

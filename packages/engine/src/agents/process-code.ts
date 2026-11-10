@@ -5,7 +5,7 @@ import { agentRunsRepository as agentRuns } from './agent-runs.repository.js';
 import { createFormDataReader } from './collect-reader.js';
 import { refsBelong } from './investigation-refs.js';
 import type { SnapshotEntry } from './fingerprint.js';
-import type { ClosureInput, ForcedEndCode, FormRunContext, ResultForm } from './result-forms.js';
+import type { ClosureDecision, ClosureInput, ForcedEndCode, FormRunContext, ResultForm } from './result-forms.js';
 import { sessionRepository as sessions } from './session.repository.js';
 import type { CallStep } from './tool-calls.repository.js';
 
@@ -102,8 +102,6 @@ export async function runPrologue(run: FormRun): Promise<PrologueOutcome> {
   });
 }
 
-type Evaluated = { readonly kind: 'accept'; readonly result: unknown } | { readonly kind: 'refuse'; readonly reason: string };
-
 /**
  * The closure's `collect` and `evaluate` over a result, and its `write` for a `finish` (not for the prologue's `end`,
  * whose refusal writes nothing). A form without a closure accepts a result that passes its schema.
@@ -113,7 +111,7 @@ async function evaluateResult(
   tx: RuntimeTx,
   input: Pick<ClosureInput, 'result' | 'prologueInput'>,
   options: { readonly writeRefusal: boolean } = { writeRefusal: false },
-): Promise<Evaluated> {
+): Promise<ClosureDecision> {
   const closure = run.form.closure;
   if (closure === undefined) {
     const parsed = run.form.resultSchema.safeParse(input.result);
@@ -125,11 +123,11 @@ async function evaluateResult(
   return decision;
 }
 
-const invalidResult = (reason: string): CallStep => ({
+const invalidResult = (reason: string, detail?: unknown): CallStep => ({
   to: 'rejected',
   outcome: 'rejected',
   reason: 'invalid_result',
-  detail: { reason },
+  detail: detail === undefined ? { reason } : { reason, detail },
 });
 
 /**
@@ -137,7 +135,7 @@ const invalidResult = (reason: string): CallStep => ({
  * in its guarded transaction. The result's references go first: one of another investigation or to nothing refuses it
  * `invalid_result` with the reason `foreign_ref`, and nothing of the closure runs (DC-4). `accept` — the closure's rows,
  * the call's outcome and the run's result; `refuse` — the closure's rows and the call refused `invalid_result` with the
- * reason, a notice the model reads next turn.
+ * reason and the decision's `detail`, a notice the model reads next turn.
  */
 export function closureStep(run: FormRun, finish: { readonly result: unknown }) {
   return async (tx: RuntimeTx): Promise<CallStep> => {
@@ -147,7 +145,7 @@ export function closureStep(run: FormRun, finish: { readonly result: unknown }) 
     if (row === undefined) throw new Error(`run row of task ${run.ctx.taskId} is missing`);
     const prologueInput = row.prologueInput ?? row.assignment;
     const decision = await evaluateResult(run, tx, { result: finish.result, prologueInput }, { writeRefusal: true });
-    if (decision.kind === 'refuse') return invalidResult(decision.reason);
+    if (decision.kind === 'refuse') return invalidResult(decision.reason, decision.detail);
     await agentRuns.writeEnding(tx, run.ctx.taskId, { result: decision.result });
     return { to: 'done', outcome: 'success', result: decision.result };
   };

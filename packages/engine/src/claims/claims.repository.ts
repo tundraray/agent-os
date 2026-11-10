@@ -12,6 +12,10 @@ export interface TaskClaims {
   /** Coverage of the collection the claims rest on; code carries it, the model cannot widen it (AC-05.3). */
   readonly coverage: Coverage | null;
   readonly claims: readonly WorkerClaim[];
+  /** The number of the first claim, for a task that writes claims in several calls; 0 by default. */
+  readonly firstClaimIndex?: number;
+  /** The ids of the claims, one per claim in order, when the caller decided them; random by default. */
+  readonly claimIds?: readonly string[];
 }
 
 /**
@@ -60,12 +64,12 @@ export const claimsRepository = {
       await tx
         .insert(researchClaims)
         .values(
-          input.claims.map((claim, claimIndex) => ({
+          input.claims.map((claim, position) => ({
             claimRevisionId: randomUUID(),
             investigationId: input.investigationId,
-            claimId: randomUUID(),
+            claimId: input.claimIds?.[position] ?? randomUUID(),
             taskId: input.taskId,
-            claimIndex,
+            claimIndex: (input.firstClaimIndex ?? 0) + position,
             text: claim.text,
             atoms: claim.atoms,
             pointer: claim.pointer,
@@ -84,8 +88,19 @@ export const claimsRepository = {
     return written.map((row) => row.claimId);
   },
 
+  /** The number after the last claim of the task, in the caller's transaction; 0 for a task without claims. */
+  async nextClaimIndex(tx: RuntimeTx, taskId: string): Promise<number> {
+    const [last] = await tx
+      .select({ claimIndex: researchClaims.claimIndex })
+      .from(researchClaims)
+      .where(eq(researchClaims.taskId, taskId))
+      .orderBy(desc(researchClaims.claimIndex))
+      .limit(1);
+    return last === undefined ? 0 : last.claimIndex + 1;
+  },
+
   /** The latest revision of each of `claimIds` that belongs to the investigation; ids of other investigations are absent. */
-  latestRevisions(db: Database, investigationId: string, claimIds: readonly string[]): Promise<ClaimRevisionRow[]> {
+  latestRevisions(db: Database | RuntimeTx, investigationId: string, claimIds: readonly string[]): Promise<ClaimRevisionRow[]> {
     return db
       .selectDistinctOn([researchClaims.claimId])
       .from(researchClaims)

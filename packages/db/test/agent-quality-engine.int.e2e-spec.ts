@@ -78,7 +78,7 @@ async function seedBefore(client: pg.Client): Promise<void> {
      VALUES ($1, 'user-1', 'thread-1', 'query', 'active', 10, 10)`,
     [INVESTIGATION],
   );
-  await insertTask(client, { taskId: WORKER_TASK, workflowType: 'worker' });
+  await insertTask(client, { taskId: WORKER_TASK, workflowType: 'agent.run' });
   for (const revision of OLD_REVISIONS) {
     await client.query(
       `INSERT INTO app.research_claims (claim_revision_id, investigation_id, claim_id, task_id, claim_index, text, atoms,
@@ -207,7 +207,8 @@ describe('agent-quality / engine - migration over existing claim revisions (real
 
         await insertTask(client, {
           taskId: VERIFY_TASK,
-          workflowType: 'research.verify',
+          // The verifier's run, as the engine starts it (`AGENT_RUN_WORKFLOW`).
+          workflowType: 'agent.run',
         });
         await insertCheckRevision(client, {
           revisionId: uuid(105),

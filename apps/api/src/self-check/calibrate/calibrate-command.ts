@@ -1,22 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import {
-  deepResearchProcessV2,
-  loadProcessConfig,
-  type ProcessConfig,
-} from '@agent-os/engine';
+import { claimAssessmentAgent, deepResearchProcessV3 } from '@agent-os/engine';
 import {
   buildCalibrationPairs,
   type DatasetVersion,
   loadScenarioSet,
 } from '@agent-os/mcp-fixture';
 import type { SelfCheckProgram } from '../program.js';
-import type { ScenarioAssembly } from '../scenario-assembly.js';
+import {
+  currentDeploymentEntries,
+  type ScenarioAssembly,
+} from '../scenario-assembly.js';
 import { newRunId } from '../run/run-command.js';
 import { formatThreadId } from '../thread-ids.js';
 import {
-  calibrate,
+  calibrateAgent,
+  type CalibrationResult,
   type GroupCount,
   renderCalibrationReport,
   writeGroupTable,
@@ -24,11 +24,13 @@ import {
 
 /**
  * The `calibrate` command of the self-check program (design-engine.md, Contract «Программа самопроверки — команда
- * `calibrate`», Flow 5): the calibration pairs of a scenario set judged by the `verifier` call of a configuration,
- * and the group table written to `--out`. Every refusal — `set_invalid`, `process_config_rejected`,
- * `calibration_prompt_has_fields` — comes before the first call; `calibration_empty` comes after the calls and writes
- * no table. The engine is assembled without the runtime
- * workers, as for `show`: calibration needs only `Engine.assess`, claims no queued task and cancels no investigation.
+ * `calibrate`»; design-research-flow.md, Flow 4): the calibration pairs of a scenario set judged by the definition of
+ * the form `claim_assessment` of a configuration — the shipped one, or the file given with `--config` — through
+ * `Engine.assessAgent`, and the group table written to `--out`. Every refusal — `set_invalid`,
+ * `process_config_rejected` — comes before the first call: `createEngine` checks the configuration, so a bad one is
+ * refused by the assembly, and one with no such definition after it; `calibration_empty` comes after the calls and
+ * writes no table. The engine is assembled without the runtime workers, as for `show`: calibration claims no queued
+ * task and cancels no investigation.
  */
 
 export interface CalibrateOptions {
@@ -46,8 +48,9 @@ export interface CalibrateRefusal {
     | 'invalid_arguments'
     | 'set_invalid'
     | 'process_config_rejected'
-    | 'calibration_prompt_has_fields'
-    | 'calibration_empty';
+    | 'calibration_empty'
+    | 'agent_not_detachable'
+    | 'model_unavailable';
   readonly reason: string;
 }
 
@@ -144,70 +147,106 @@ async function calibrateSet(
   if (!loadedSet.ok) return refusal('set_invalid', loadedSet.detail);
   const processConfig = await readProcessConfig(options.configPath);
   if (!processConfig.ok) return processConfig;
-  const { verifier } = processConfig.config.roles;
-  // `loadProcessConfig` refuses unpaired braces, so any `{{` left is a field. With one, the call's instructions would
-  // differ from the role's rendered prompt, and the table would be bound to another prompt version (Flow 5).
-  if (verifier.prompt.includes('{{')) {
-    return refusal(
-      'calibration_prompt_has_fields',
-      'the verifier prompt has template fields; calibration needs it without fields, as the call sends it',
-    );
-  }
   const pairSet = buildCalibrationPairs(loadedSet.set);
-  const runId = newRunId(program.clock.now());
-  const selfCheckRunId = formatThreadId({ kind: 'run', runId });
-  const assembly = await assembleChecked(program, processConfig.data);
+  const run: SetRun = { program, options, set: loadedSet.set.name, pairSet };
+  return calibrateChecker(run, processConfig.data);
+}
+
+/** The command's program and options, and the pairs of the set. */
+interface SetRun {
+  readonly program: SelfCheckProgram;
+  readonly options: CalibrateOptions;
+  readonly set: string;
+  readonly pairSet: ReturnType<typeof buildCalibrationPairs>;
+}
+
+const newSelfCheckRunId = (program: SelfCheckProgram): string =>
+  formatThreadId({ kind: 'run', runId: newRunId(program.clock.now()) });
+
+async function calibrateChecker(
+  run: SetRun,
+  data: unknown,
+): Promise<CalibrateOutcome> {
+  const { program, options, pairSet } = run;
+  const selfCheckRunId = newSelfCheckRunId(program);
+  const assembly = await assembleChecked(program, data);
   if (!('engine' in assembly)) return assembly;
-  program.logger.log('self-check calibration started', {
-    selfCheckRunId,
-    set: loadedSet.set.name,
-    pairsFingerprint: pairSet.fingerprint,
-    pairs: pairSet.pairs.length,
-    model: verifier.model,
-    groupCount: options.groupCount,
-  });
-  let calibrated: Awaited<ReturnType<typeof calibrate>>;
+  let calibrated: CalibrationResult;
   try {
-    calibrated = await calibrate({
+    const agent = claimAssessmentAgent(data);
+    if (agent === null) {
+      return refusal(
+        'invalid_arguments',
+        'the configuration has no definition with the result form claim_assessment',
+      );
+    }
+    const deploymentEntries = await currentDeploymentEntries(
+      assembly.engine,
+      agent,
+    );
+    logStarted(run, selfCheckRunId, agent.model);
+    calibrated = await calibrateAgent({
       pairSet,
-      scenarioSet: loadedSet.set.name,
-      verifier,
+      scenarioSet: run.set,
+      config: data,
+      agent,
+      deploymentEntries,
       groupCount: options.groupCount,
-      assess: (request) => assembly.engine.assess(request),
+      assessAgent: (request) => assembly.engine.assessAgent(request),
       selfCheckRunId,
       clock: program.clock,
     });
   } finally {
     await assembly.close();
   }
+  return writtenTable(run, selfCheckRunId, calibrated);
+}
+
+function logStarted(run: SetRun, selfCheckRunId: string, model: string): void {
+  run.program.logger.log('self-check calibration started', {
+    selfCheckRunId,
+    set: run.set,
+    pairsFingerprint: run.pairSet.fingerprint,
+    pairs: run.pairSet.pairs.length,
+    model,
+    groupCount: run.options.groupCount,
+  });
+}
+
+async function writtenTable(
+  run: SetRun,
+  selfCheckRunId: string,
+  calibrated: CalibrationResult,
+): Promise<CalibrateOutcome> {
   if (!calibrated.ok) return refusal(calibrated.code, calibrated.reason);
   const { report } = calibrated;
-  await writeGroupTable(options.outPath, report.table);
-  program.logger.log('self-check calibration written', {
+  const { outPath } = run.options;
+  await writeGroupTable(outPath, report.table);
+  run.program.logger.log('self-check calibration written', {
     selfCheckRunId,
-    outPath: options.outPath,
-    promptVersion: report.table.promptVersion,
+    outPath,
+    agentFingerprint: report.table.agentFingerprint,
+    definitionMemoryFingerprint: report.table.definitionMemoryFingerprint,
     profiles: report.table.profiles.length,
   });
   return {
     ok: true,
-    outPath: options.outPath,
-    report: renderCalibrationReport(report, options.outPath),
+    outPath,
+    report: renderCalibrationReport(report, outPath),
   };
 }
 
 type ReadConfig =
   | {
       readonly ok: true;
-      /** The configuration as data, for the assembly. */
+      /** The configuration as data; `createEngine` checks it. */
       readonly data: unknown;
-      readonly config: ProcessConfig;
     }
   | CalibrateRefusal;
 
-/** The shipped configuration, or the JSON file given; unreadable, not JSON or refused by the schema is a refusal. */
+/** The shipped configuration, or the JSON file given; an unreadable file or one that is not JSON is a refusal. */
 async function readProcessConfig(path: string | null): Promise<ReadConfig> {
-  let data: unknown = deepResearchProcessV2;
+  let data: unknown = deepResearchProcessV3;
   if (path !== null) {
     try {
       data = JSON.parse(await readFile(path, 'utf8')) as unknown;
@@ -218,18 +257,10 @@ async function readProcessConfig(path: string | null): Promise<ReadConfig> {
       );
     }
   }
-  const loaded = loadProcessConfig(data);
-  if (!loaded.ok) {
-    const { path: at, message } = loaded.rejection;
-    return refusal(
-      'process_config_rejected',
-      `process configuration rejected at ${at.join('.')}: ${message}`,
-    );
-  }
-  return { ok: true, data, config: loaded.config };
+  return { ok: true, data };
 }
 
-/** The assembly without workers; `createEngine`'s catalog refusal of a role or `assess` model is the command's. */
+/** The assembly without workers; `createEngine`'s refusal of the configuration or an `assess` model is the command's. */
 async function assembleChecked(
   program: SelfCheckProgram,
   processConfig: unknown,

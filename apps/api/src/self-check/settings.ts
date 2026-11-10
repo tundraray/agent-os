@@ -2,9 +2,9 @@ import type { ProcessConfig } from '@agent-os/engine';
 import { z } from 'zod';
 import shippedSettings from './self-check.settings.json' with { type: 'json' };
 
-type Effort = ProcessConfig['roles']['worker']['effort'];
+type Effort = ProcessConfig['agents'][string]['effort'];
 
-/** The same effort levels a process role takes; `satisfies` keeps the list inside the engine's type. */
+/** The same effort levels an agent definition takes; `satisfies` keeps the list inside the engine's type. */
 const EFFORTS = [
   'low',
   'medium',
@@ -34,8 +34,8 @@ const SelfCheckSettingsSchema = z.strictObject({
   signals: z.strictObject({
     /** Share of discarded claims among all claims of the investigation. */
     discardedShare: z.number().gt(0).lte(1),
-    /** Number of rejected controller decisions. */
-    controllerRejections: positiveInteger,
+    /** Number of refused calls over all runs of an investigation's tree. */
+    rejectedCalls: positiveInteger,
   }),
   /** Bootstrap of the comparison interval: how many resamples and their constant seed. */
   resampling: z.strictObject({

@@ -1,8 +1,9 @@
 import type { Clock } from '@agent-os/runtime';
+import { z } from 'zod';
 import type { AssessBinding, AssessUsage } from '../assess/assess.js';
 import { type AgentDefinition, AgentProcessConfigSchema } from '../config/agent-config.schema.js';
 import type { ModelCatalog } from '../config/model-catalog.js';
-import { renderPromptTemplate } from '../config/prompt-template.js';
+import { NO_SOURCES_TEXT, renderPromptTemplate } from '../config/prompt-template.js';
 import { callCostUsd, type CallUsage } from '../model/cost.js';
 import { promptVersion } from '../model/prompt-version.js';
 import { classifyRejection, PROVIDER_RETRIES, providerRetryDelayMs } from '../model/retry-policy.js';
@@ -10,6 +11,7 @@ import {
   type AgentToolCall,
   type AgentTurnGeneration,
   type AgentTurnModelClient,
+  type JsonValue,
   mastraAgentTurnClient,
   type ReportedUsage,
 } from '../model/role-agent.js';
@@ -135,7 +137,11 @@ function addUsage(total: AssessUsage, usage: CallUsage | null, costUsd: number):
 /** What a turn's calls write back into the session outside an investigation: only `finish` exists. */
 type TurnVerdict =
   | { readonly kind: 'accepted'; readonly result: unknown }
-  | { readonly kind: 'next'; readonly results: readonly { readonly call: AgentToolCall; readonly reason: string }[]; readonly notice: string | null };
+  | {
+      readonly kind: 'next';
+      readonly results: readonly { readonly call: AgentToolCall; readonly reason: string; readonly detail?: JsonValue }[];
+      readonly notice: string | null;
+    };
 
 export function createAssessAgent(deps: AssessAgentDeps): AssessAgent {
   const client = deps.client ?? mastraAgentTurnClient;
@@ -186,12 +192,17 @@ export function createAssessAgent(deps: AssessAgentDeps): AssessAgent {
       opening = { kind: 'prologue', text: built.firstMessage };
     }
 
-    const prompt = renderPromptTemplate(definition.prompt, {
-      goal: config.goal,
-      query: typeof request.prologueInput === 'string' ? request.prologueInput : '',
-      sourceMode: OUTSIDE_SOURCE_MODE,
-      answerSections: config.answer.sections.join(', '),
-    });
+    const prompt = renderPromptTemplate(
+      definition.prompt,
+      {
+        goal: config.goal,
+        query: typeof request.prologueInput === 'string' ? request.prologueInput : '',
+        sourceMode: OUTSIDE_SOURCE_MODE,
+        answerSections: config.answer.sections.join(', '),
+        // A definition with the field has a tool, so it is `agent_not_detachable` and never comes here.
+        sources: NO_SOURCES_TEXT,
+      },
+    );
     const messages: SessionMessage[] = [];
     let seq = 0;
     let heldStage: WindowStage = 0;
@@ -267,7 +278,9 @@ export function createAssessAgent(deps: AssessAgentDeps): AssessAgent {
       const decided = parsed.success ? evaluate(form, parsed.data, request.prologueInput, bindings) : null;
       if (decided?.kind === 'accept') return { kind: 'accepted', result: decided.result };
       const reason = decided?.kind === 'refuse' ? decided.reason : 'invalid_result';
-      return { kind: 'next', results: [{ call, reason: `invalid_result: ${reason}` }], notice: null };
+      // The same object as in the outcome of the call row in an investigation (DC-20); no `detail`, the same input as before.
+      const detail = decided?.kind === 'refuse' && decided.detail !== undefined ? { detail: z.json().parse({ reason, detail: decided.detail }) } : {};
+      return { kind: 'next', results: [{ call, reason: `invalid_result: ${reason}`, ...detail }], notice: null };
     };
 
     for (let turn = 1; turn <= definition.limits.maxTurns; turn += 1) {
@@ -293,14 +306,14 @@ export function createAssessAgent(deps: AssessAgentDeps): AssessAgent {
       messages.push({ seq: seq++, kind: 'answer', turn, text: generation.text, toolCalls: generation.toolCalls });
       const verdict = verdictOf(generation);
       if (verdict.kind === 'accepted') return { outcome: 'finished', result: verdict.result, usage: spent };
-      for (const { call, reason } of verdict.results) {
+      for (const { call, reason, detail } of verdict.results) {
         messages.push({
           seq: seq++,
           kind: 'result',
           turn,
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output: { outcome: 'rejected', reason },
+          output: { outcome: 'rejected', reason, ...(detail === undefined ? {} : { detail }) },
           author: 'engine',
         });
       }

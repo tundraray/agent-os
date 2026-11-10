@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deepResearchProcessV2 } from '../processes/shipped-processes.js';
+import { deepResearchProcessV3 } from '../processes/shipped-processes.js';
 import type { EngineRunStatus } from '../runs/engine-runs.repository.js';
 import { toInvestigationView } from './investigation-view.js';
 
@@ -40,23 +40,29 @@ const ledgerRow = (role: string, model: string, costUsd: string) => ({
   costUsd,
 });
 
-// AC-11.1, DC-9: the usage of the view — rows in role order, costs as numbers, and a total that counts open reservations.
+// AC-11.1, DC-9: the usage of the view — rows by model, costs as numbers, and a total that counts open reservations; a
+// ledger role other than `agent` is a defect. Defects caught: a cost kept as text, a total without the open reservations,
+// a row of an unknown role shown instead of failing.
 describe('toInvestigationView usage', () => {
-  it('orders the ledger by role and totals the charged tokens with the open reservations', () => {
+  it('orders the ledger by model and totals the charged tokens with the open reservations', () => {
     const { usage } = toInvestigationView(cancelled, [
-      ledgerRow('worker', HAIKU, '0.00009000'),
-      ledgerRow('controller', SONNET, '0.00180000'),
-      ledgerRow('plan', SONNET, '0.00180000'),
+      ledgerRow('agent', SONNET, '0.00180000'),
+      ledgerRow('agent', HAIKU, '0.00009000'),
     ]);
 
     expect(usage.byRoleAndModel.map((row) => [row.role, row.model, row.costUsd])).toEqual([
-      ['plan', SONNET, 0.0018],
-      ['controller', SONNET, 0.0018],
-      ['worker', HAIKU, 0.00009],
+      ['agent', HAIKU, 0.00009],
+      ['agent', SONNET, 0.0018],
     ]);
     expect(usage.totalTokens).toBe(10_500);
-    expect(usage.totalCostUsd).toBeCloseTo(0.00369, 10);
+    expect(usage.totalCostUsd).toBeCloseTo(0.00189, 10);
     expect(usage.tokenBudget).toBe(50_000);
+  });
+
+  it('refuses a ledger row of a role the engine does not write', () => {
+    expect(() => toInvestigationView(cancelled, [ledgerRow('worker', HAIKU, '0.00009000')])).toThrow(
+      'research_llm_calls.role holds an unknown role worker',
+    );
   });
 });
 
@@ -104,7 +110,7 @@ describe('toInvestigationView answer', () => {
     };
 
     const { answer } = toInvestigationView(
-      { investigationStatus: 'completed', run: { ...cancelled.run, processConfig: deepResearchProcessV2, answerId: old.answerId, answer: old } },
+      { investigationStatus: 'completed', run: { ...cancelled.run, processConfig: deepResearchProcessV3, answerId: old.answerId, answer: old } },
       [],
     );
 

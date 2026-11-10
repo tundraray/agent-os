@@ -83,6 +83,11 @@ export type SessionMessage =
 export interface SessionWindowInput {
   /** The definition prompt, already rendered. */
   readonly prompt: string;
+  /**
+   * The system block of a recorded turn as it went to the model: the view takes it instead of `prompt` and the
+   * `deployment` rules, and measures itself by it (design-agent-core.md, «Транскрипт»).
+   */
+  readonly recordedInstructions?: string;
   /** `deployment` entries of the snapshot: rules in the system block. */
   readonly deploymentEntries: readonly MemoryEntry[];
   /** `user` entries of the snapshot: data in the envelope. */
@@ -308,7 +313,7 @@ function toolsText(tools: readonly AgentToolDefinition[]): string {
 export function buildSessionView(input: SessionWindowInput): SessionView {
   const sizeOf = input.sizeOf ?? estimateTokens;
   const budget = input.windowTokens - input.marginTokens;
-  const instructions = systemBlock(input);
+  const instructions = input.recordedInstructions ?? systemBlock(input);
   const opening = openingMessage(input);
   const fixedSize = sizeOf(instructions) + sizeOf(toolsText(input.tools)) + sizeOf(JSON.stringify(opening));
   const groups = groupTurns(input.messages);

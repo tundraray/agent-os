@@ -21,12 +21,6 @@ const CHILD_ENTRY = join(
 /** The shipped entry `pnpm self-check` runs (`nest build`), with the real model boundary. */
 const SHIPPED_ENTRY = join(API_ROOT, 'dist/self-check/main.js');
 
-/**
- * The role model with which the scripted roles of the child solve the cause scenarios: `run` with this
- * `--role-model` is the candidate; the shipped configuration grounds its cause on records before the change.
- */
-export const SOLVING_ROLE_MODEL = 'worker=anthropic/claude-sonnet-5-5';
-
 /** The variable that names the reports directory of a child command. */
 export const REPORTS_DIR_VARIABLE = 'SELF_CHECK_REPORTS_DIR';
 

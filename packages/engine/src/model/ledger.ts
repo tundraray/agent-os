@@ -12,8 +12,8 @@ import { type ChildHolding, occupiedTokens } from '../agents/share-rule.js';
 import type { CallUsage } from './cost.js';
 import { decideReserve } from './reserve-rule.js';
 
-/** A process role of the roles form, or `agent` for every turn of an agent run (design-agent-core.md, Роль `agent`). */
-export type ModelRole = 'plan' | 'controller' | 'worker' | 'verifier' | 'synthesis' | 'agent';
+/** The role of a ledger row: `agent` for every turn of an agent run (design-agent-core.md, Роль `agent`). */
+export type ModelRole = 'agent';
 
 /** A reservation to record before the call (KD-4): counted input + margin + output cap. */
 export interface ReservationRequest {
@@ -246,9 +246,8 @@ export const postgresCallLedger: CallLedger = {
     const guarded = await ctx.withAttemptGuard(
       async (tx): Promise<ReservationOutcome> => {
         const run = await lockEngineRun(tx, ctx.investigationId);
-        // An agent run holds its children's shares besides its own calls (KD-4); a v2 task only its own calls.
-        const held =
-          request.role === 'agent' ? await runOccupiedTokens(tx, ctx.taskId) : await taskTokensHeld(tx, ctx.taskId);
+        // An agent run holds its children's shares besides its own calls (KD-4).
+        const held = await runOccupiedTokens(tx, ctx.taskId);
         const decided = decideReserve({
           ...run,
           taskTokensHeld: held,

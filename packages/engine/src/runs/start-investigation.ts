@@ -3,13 +3,12 @@ import type { Database } from '@agent-os/db';
 import type { InvestigationService, TaskScheduler } from '@agent-os/runtime';
 import { type DefinitionMemorySnapshot, takeDefinitionMemorySnapshot } from '../agents/definition-memory.js';
 import type { ResultFormRegistry } from '../agents/result-forms.js';
-import { AgentProcessConfigSchema, hasAgentsKey, isAgentsForm } from '../config/agent-config.schema.js';
-import { type AnyProcessConfig, ProcessConfigSchema } from '../config/process-config.schema.js';
+import { type AgentProcessConfig, AgentProcessConfigSchema } from '../config/agent-config.schema.js';
 import type { ProcessSet } from '../config/process-set.js';
 import type { SourceMode } from '../config/source-check.js';
 import { type EngineRunRow, engineRunsRepository as runs } from './engine-runs.repository.js';
 import { readSourceSnapshots, type SourceSnapshotDeps, type SourceSnapshots } from './source-snapshots.js';
-import { controllerTaskSpec, ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget, rootTaskSpec } from './start-rules.js';
+import { ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget, rootTaskSpec } from './start-rules.js';
 
 /**
  * Runtime services the engine uses, narrowed to the methods it calls (an E2E child may wrap `propose`); `closeInTx`
@@ -46,11 +45,8 @@ export interface StartDeps extends EngineRuntimePorts, SourceSnapshotDeps {
   readonly database: Database;
   readonly processes: ProcessSet;
   readonly sourceMode: SourceMode;
-  /**
-   * The engine's result forms: an agents-form start takes the definition memory snapshot by them (DC-24). An assembly
-   * without them refuses an agents-form start as a defect.
-   */
-  readonly forms?: ResultFormRegistry;
+  /** The engine's result forms: a start takes the definition memory snapshot by them (DC-24). */
+  readonly forms: ResultFormRegistry;
 }
 
 /** A start whose admitted state contradicts itself: a defect, never a refusal the caller could act on. */
@@ -60,12 +56,12 @@ class StartInvestigationError extends Error {
 
 interface Launch {
   readonly input: StartInvestigationInput;
-  readonly config: AnyProcessConfig;
+  readonly config: AgentProcessConfig;
   readonly tokenBudget: number;
   /** Read once per call, before the first write; a repeated start of a recorded launch reads none. */
   readonly sourceSnapshots: SourceSnapshots;
-  /** The definition memory snapshot of an agents-form start, taken with the source slices (DC-24). */
-  readonly definitionMemorySnapshot?: DefinitionMemorySnapshot;
+  /** The definition memory snapshot of the start, taken with the source slices (DC-24). */
+  readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
 }
 
 /**
@@ -76,15 +72,10 @@ interface Launch {
  */
 export function startInvestigation(deps: StartDeps) {
   /**
-   * The main task of the recorded run: the controller of the roles form, or the root run `agent.root` of the agents
-   * form with the investigation's question (design-agent-core.md, «Операции движка»). Both depend only on the recorded
-   * run.
+   * The main task of the recorded run: the root run `agent.root` with the investigation's question
+   * (design-agent-core.md, «Операции движка»). It depends only on the recorded run.
    */
   async function mainTaskSpec(run: EngineRunRow): Promise<TaskSpec> {
-    if (!hasAgentsKey(run.processConfig)) {
-      const config = ProcessConfigSchema.parse(run.processConfig);
-      return controllerTaskSpec({ investigationId: run.investigationId, config, tokenBudget: run.tokenBudget });
-    }
     return rootTaskSpec({
       investigationId: run.investigationId,
       config: AgentProcessConfigSchema.parse(run.processConfig),
@@ -157,7 +148,7 @@ export function startInvestigation(deps: StartDeps) {
       sourceMode: deps.sourceMode,
       tokenBudget: request.tokenBudget,
       sourceSnapshots: request.sourceSnapshots,
-      ...(request.definitionMemorySnapshot === undefined ? {} : { definitionMemorySnapshot: request.definitionMemorySnapshot }),
+      definitionMemorySnapshot: request.definitionMemorySnapshot,
     });
     if (inserted !== undefined) {
       return proposeController(inserted, 'created');
@@ -178,21 +169,6 @@ export function startInvestigation(deps: StartDeps) {
     );
   }
 
-  /**
-   * The definition memory snapshot of an agents-form start (DC-24): the active records of each definition at this
-   * moment, without the `user` scope of a definition whose form forbids it; none for the roles form.
-   */
-  async function definitionMemorySnapshot(
-    config: AnyProcessConfig,
-    resourceId: string,
-  ): Promise<DefinitionMemorySnapshot | undefined> {
-    if (!isAgentsForm(config)) return undefined;
-    if (deps.forms === undefined) {
-      throw new StartInvestigationError(`${config.processId} version ${config.version} needs the engine's result forms`);
-    }
-    return takeDefinitionMemorySnapshot(deps.database, { config, forms: deps.forms, resourceId });
-  }
-
   return async (input: StartInvestigationInput): Promise<StartInvestigationResult> => {
     const resolution = deps.processes.resolve(input.processId, input.version);
     if (!resolution.ok) {
@@ -209,16 +185,11 @@ export function startInvestigation(deps: StartDeps) {
       return proposeController(recorded, 'existing');
     }
     const sourceSnapshots = await readSourceSnapshots(deps, config);
-    const snapshot = await definitionMemorySnapshot(config, input.resourceId);
-    return launch(
-      {
-        input,
-        config,
-        tokenBudget: budget.tokenBudget,
-        sourceSnapshots,
-        ...(snapshot === undefined ? {} : { definitionMemorySnapshot: snapshot }),
-      },
-      1,
-    );
+    const definitionMemorySnapshot = await takeDefinitionMemorySnapshot(deps.database, {
+      config,
+      forms: deps.forms,
+      resourceId: input.resourceId,
+    });
+    return launch({ input, config, tokenBudget: budget.tokenBudget, sourceSnapshots, definitionMemorySnapshot }, 1);
   };
 }

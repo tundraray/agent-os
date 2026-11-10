@@ -83,17 +83,26 @@ function citesKeyTrace(
   key: Pick<ScenarioKey, 'causeTraceIds'>,
   pageTraceIds: ReadonlyMap<string, readonly string[]>,
 ): boolean {
-  const keyTraces = new Set(key.causeTraceIds);
   const named = new Set(claimIds);
-  return (answer.established ?? [])
-    .filter((claim) => named.has(claim.claimId))
-    .some((claim) =>
-      claim.evidenceIds.some((evidenceId) =>
-        tracesOf(evidenceId, pageTraceIds).some((traceId) =>
-          keyTraces.has(traceId),
-        ),
-      ),
-    );
+  return citesTrace(
+    (answer.established ?? []).filter((claim) => named.has(claim.claimId)),
+    key.causeTraceIds,
+    pageTraceIds,
+  );
+}
+
+/** Whether at least one of the claims cites a page holding a record of the traces. */
+export function citesTrace(
+  claims: readonly { readonly evidenceIds: readonly string[] }[],
+  traceIds: readonly string[],
+  pageTraceIds: ReadonlyMap<string, readonly string[]>,
+): boolean {
+  const wanted = new Set(traceIds);
+  return claims.some((claim) =>
+    claim.evidenceIds.some((evidenceId) =>
+      tracesOf(evidenceId, pageTraceIds).some((traceId) => wanted.has(traceId)),
+    ),
+  );
 }
 
 /** A cited page the caller did not read is a defect of the caller, not a page without key traces. */

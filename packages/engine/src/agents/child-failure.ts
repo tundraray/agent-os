@@ -4,7 +4,7 @@ import { callSubtreeSpentTokens } from '../model/ledger.js';
 import { agentRunsRepository } from './agent-runs.repository.js';
 import { CHILD_RESULT_REREAD } from './session-window.js';
 import type { CallEnding, ToolCallRow } from './tool-calls.repository.js';
-import { cutToFit, jsonBytes } from './tools/tool-context.js';
+import { cutToFit, jsonBytes, type TaskTool } from './tools/tool-context.js';
 
 /** The closed list a parent reads a failed child by (design-agent-core.md, FR-05, DC-6). */
 export type ChildFailedReason = 'budget_exhausted' | 'deadline' | 'turn_limit' | 'model_unavailable' | 'failed';
@@ -61,4 +61,19 @@ export async function childCallEnding(
   }
   const reason = childFailedReason(child.failure);
   return { to: 'done', outcome: 'tool_error', reason: 'child_failed', result: { child_failed: reason }, spentTokens };
+}
+
+/**
+ * How a task tool's call ends once its task is final (`waiting` → `done`): the tool's own result by the task's outcome,
+ * with the `repeat` mark its row carries and the source for the audit. No share, so no subtree to recount.
+ */
+export async function taskToolCallEnding(
+  tx: RuntimeTx,
+  input: { readonly call: ToolCallRow; readonly child: UpstreamTask; readonly tool: TaskTool },
+): Promise<CallEnding> {
+  const { call, child, tool } = input;
+  const repeat = (call.outcome as { readonly repeat?: unknown } | null)?.repeat === true;
+  const ending = await tool.ending({ tx, call, child, repeat });
+  const sourceId = tool.sourceOf?.(call.arguments) ?? null;
+  return sourceId === null ? ending : { ...ending, sourceId };
 }

@@ -4,14 +4,19 @@ import {
   applyMigrations,
   createDatabase,
   type DatabaseConnection,
+  researchAgentMessages,
+  researchAgentRuns,
+  researchAgentToolCalls,
   researchEngineRuns,
   researchInvestigations,
   researchLlmCalls,
   researchLlmTranscripts,
 } from '@agent-os/db';
+import type { AgentTree, Engine } from '@agent-os/engine';
 import { asc, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { SELF_CHECK_OWNER } from '../../src/auth/system-owners.js';
+import { assertTestDatabase } from './testDatabaseGuard.js';
 
 /**
  * Databases of the self-check test files (design-self-check.md, Test Strategy): a migrated scratch database per file —
@@ -31,6 +36,7 @@ function suiteDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
   if (!url)
     throw new Error(`DATABASE_URL is not set (checked env and ${ENV_FILE})`);
+  assertTestDatabase(url, 'self-check E2E');
   return url;
 }
 
@@ -176,6 +182,66 @@ export function transcriptsOf(
       asc(researchLlmTranscripts.createdAt),
       asc(researchLlmTranscripts.callId),
     );
+}
+
+export type AgentRunRow = typeof researchAgentRuns.$inferSelect;
+export type AgentToolCallRow = typeof researchAgentToolCalls.$inferSelect;
+export type AgentMessageRow = typeof researchAgentMessages.$inferSelect;
+
+/** The agent runs of the investigation, oldest first. */
+export function agentRunsOf(
+  url: string,
+  investigationId: string,
+): Promise<AgentRunRow[]> {
+  return connection(url)
+    .db.select()
+    .from(researchAgentRuns)
+    .where(eq(researchAgentRuns.investigationId, investigationId))
+    .orderBy(asc(researchAgentRuns.createdAt), asc(researchAgentRuns.taskId));
+}
+
+/** The tool calls of the investigation's agent runs, in the order they were requested. */
+export function agentToolCallsOf(
+  url: string,
+  investigationId: string,
+): Promise<AgentToolCallRow[]> {
+  return connection(url)
+    .db.select()
+    .from(researchAgentToolCalls)
+    .where(eq(researchAgentToolCalls.investigationId, investigationId))
+    .orderBy(
+      asc(researchAgentToolCalls.createdAt),
+      asc(researchAgentToolCalls.callIndex),
+    );
+}
+
+/** The session messages of the investigation's agent runs, in the order they were written. */
+export function agentMessagesOf(
+  url: string,
+  investigationId: string,
+): Promise<AgentMessageRow[]> {
+  return connection(url)
+    .db.select()
+    .from(researchAgentMessages)
+    .where(eq(researchAgentMessages.investigationId, investigationId))
+    .orderBy(asc(researchAgentMessages.createdAt));
+}
+
+/** The investigation's agent tree as its owner reads it, through the engine of a scenario assembly. */
+export async function agentTreeOf(
+  engine: Pick<Engine, 'readAgentTree'>,
+  investigation: {
+    readonly investigationId: string;
+    readonly resourceId: string;
+  },
+): Promise<AgentTree> {
+  const read = await engine.readAgentTree(investigation);
+  if (read.outcome !== 'found') {
+    throw new Error(
+      `selfCheckDb: no agent tree of ${investigation.investigationId}: ${read.outcome}`,
+    );
+  }
+  return read.tree;
 }
 
 /** The `research_*` tables of the `app` schema with an `investigation_id` column, by name. */

@@ -1,37 +1,38 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
-  type AssessRequest,
-  type AssessResult,
+  type AssessAgentRequest,
+  type AssessAgentResult,
   type AssessUsage,
   type Atom,
   type AtomCheck,
-  buildClaimCheck,
   checkAtoms,
   ClaimAssessmentSchema,
+  type ClaimAssessmentAgent,
+  type ClaimAssessmentPrologueInput,
   type ClaimCheckPage,
   type ClaimProfile,
   decideClaim,
+  definitionMemoryFingerprint,
   type GroupTable,
   GroupTableSchema,
   pointerOverAll,
-  type ProcessConfig,
-  promptVersion,
 } from '@agent-os/engine';
 import type {
   CalibrationPair,
   CalibrationPairSet,
 } from '@agent-os/mcp-fixture';
 import type { Clock } from '@agent-os/runtime';
+import { z } from 'zod';
 
 /**
- * Calibration of the `verifier` call (design-engine.md, KD-3, «Как калибровка ставит таблицу групп», Flow 5): each
- * pair goes through the same call and the same rule as in an investigation — `checkAtoms` over all the pair's records,
- * `buildClaimCheck`, `Engine.assess` with the `verifier` role, `decideClaim` over a pointer to all those records — and
- * is compared with its key by enums
- * only (support, type, established or not); no text of the claim, the records or the answer is read. The established
- * pairs' profiles are ranked by the lower bound of the 90 % Wilson interval of their share correct and cut into 3 or 4
- * consecutive groups of about equal established pairs, a profile never split (plan Notes 1, decision 1).
+ * Calibration of the checker agent (design-research-flow.md, «Калибровка проверяющего агента», Flow 4; design-engine.md,
+ * KD-3, «Как калибровка ставит таблицу групп»): each pair goes through the checker agent's turns by `Engine.assessAgent`
+ * on the prologue input built from the pair's records, then `decideClaim` over a pointer to all those records, and is
+ * compared with its key by enums only (support, type, established or not); no text of the claim, the records or the
+ * answer is read. The established pairs' profiles are ranked by the lower bound of the 90 % Wilson interval of their
+ * share correct and cut into 3 or 4 consecutive groups of about equal established pairs, a profile never split (plan
+ * Notes 1, decision 1). The table is keyed by the agent's two fingerprints.
  */
 
 export type GroupCount = 3 | 4;
@@ -46,27 +47,46 @@ const GROUP_NAMES: Readonly<Record<GroupCount, readonly GroupName[]>> = {
 /** z of the two-sided 90 % interval (plan Notes 1, decision 1). */
 const WILSON_Z = 1.645;
 /** How long after it is asked a verifier call of calibration or of the influence measure may still start. */
-export const CALL_WINDOW_MS = 10 * 60_000;
+const CALL_WINDOW_MS = 10 * 60_000;
 /** Group sizes closer than this are equal: their targets are fractions. */
 const SIZE_EPSILON = 1e-9;
 
-/** `Engine.assess`, the only engine operation calibration uses. */
-type Assess = <T>(request: AssessRequest<T>) => Promise<AssessResult<T>>;
-
-export interface CalibrationInput {
+/** What calibration is given besides its call. */
+interface CalibrationRun {
   readonly pairSet: CalibrationPairSet;
   readonly scenarioSet: string;
-  /** The `verifier` role of the configuration whose call is calibrated; its prompt has no template fields. */
-  readonly verifier: ProcessConfig['roles']['verifier'];
   readonly groupCount: GroupCount;
-  readonly assess: Assess;
   /** `self-check:run:<runId>` of this calibration: every call's transcript is bound to it. */
   readonly selfCheckRunId: string;
   readonly clock: Clock;
 }
 
-/** A pair the call could not judge: the provider was unavailable, or the answer was not in form (DC-7). */
-type PairFailure = 'model_unavailable' | 'invalid_assessment';
+/** What one `Engine.assessAgent` of the checker agent needs, in calibration and in the influence measure. */
+export interface CheckerAgentCall {
+  /** The agents-form configuration as data, for `Engine.assessAgent`. */
+  readonly config: unknown;
+  /** The configuration's checker agent. */
+  readonly agent: ClaimAssessmentAgent;
+  /** The agent's current `deployment` entries: the turns run with them and the table is keyed by them. */
+  readonly deploymentEntries: AssessAgentRequest['deploymentEntries'];
+  readonly assessAgent: (
+    request: AssessAgentRequest,
+  ) => Promise<AssessAgentResult>;
+  /** `self-check:run:<runId>`: every call's transcript is bound to it. */
+  readonly selfCheckRunId: string;
+  readonly clock: Clock;
+}
+
+export type AgentCalibrationInput = CalibrationRun & CheckerAgentCall;
+
+/**
+ * A pair the call could not judge: the provider was unavailable, the answer was not in form (DC-7), the packet was over
+ * the prologue's limit (`needs_narrowing`), or the agent's call failed with its code (Flow 4).
+ */
+type PairFailure =
+  | 'invalid_assessment'
+  | 'needs_narrowing'
+  | Extract<AssessAgentResult, { outcome: 'failed' }>['code'];
 
 /** One pair compared with its key. */
 export interface PairOutcome {
@@ -119,27 +139,78 @@ export type CalibrationResult =
   | { readonly ok: true; readonly report: CalibrationReport }
   | {
       readonly ok: false;
-      readonly code: 'calibration_empty';
+      /** `calibration_empty`, or the code of a call rejected by the engine: a defect of the build (Flow 4). */
+      readonly code:
+        | 'calibration_empty'
+        | Extract<AssessAgentResult, { outcome: 'rejected' }>['code'];
       readonly reason: string;
     };
 
-/** One verifier call per pair, in pair order, then the table; no established pair refuses with `calibration_empty`. */
-export async function calibrate(
-  input: CalibrationInput,
+interface JudgedPair {
+  readonly outcome: PairOutcome;
+  readonly usage: AssessUsage;
+}
+
+/** What identifies the calibrated checker in the table: its model and the agent's two fingerprints. */
+type TableKey = Pick<
+  GroupTable,
+  'model' | 'agentFingerprint' | 'definitionMemoryFingerprint'
+>;
+
+/**
+ * One `Engine.assessAgent` per pair, in pair order, then the table; no established pair refuses with `calibration_empty`.
+ * A pair that fails is listed and the next is judged; a rejected call ends the calibration with its code.
+ */
+export async function calibrateAgent(
+  input: AgentCalibrationInput,
 ): Promise<CalibrationResult> {
-  const pairs: PairOutcome[] = [];
-  let usage: AssessUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    costUsd: 0,
-  };
+  const memoryFingerprint = deploymentMemoryFingerprint(
+    input.deploymentEntries,
+  );
+  const judged: JudgedPair[] = [];
   for (const pair of input.pairSet.pairs) {
-    const judged = await judgePair(input, pair);
-    pairs.push(judged.outcome);
-    usage = addUsage(usage, judged.usage);
+    const called = await judgeAgentPair(input, pair, memoryFingerprint);
+    if ('rejected' in called) {
+      return {
+        ok: false,
+        code: called.rejected,
+        reason: `Engine.assessAgent rejected agent ${input.agent.agentName} on pair ${pair.pairId}: ${called.rejected}`,
+      };
+    }
+    judged.push(called);
   }
+  return tableOf(input, judged, {
+    model: input.agent.model,
+    agentFingerprint: input.agent.agentFingerprint,
+    definitionMemoryFingerprint: memoryFingerprint,
+  });
+}
+
+/** The fingerprint of the checker's `deployment` entries, as the prologue input and the table name it. */
+export function deploymentMemoryFingerprint(
+  entries: CheckerAgentCall['deploymentEntries'],
+): string {
+  return definitionMemoryFingerprint(
+    entries.map((entry) => ({ ...entry, scope: 'deployment' as const })),
+  );
+}
+
+function tableOf(
+  input: CalibrationRun,
+  judged: readonly JudgedPair[],
+  key: TableKey,
+): CalibrationResult {
+  const pairs = judged.map((item) => item.outcome);
+  const usage = judged.reduce<AssessUsage>(
+    (total, item) => addUsage(total, item.usage),
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    },
+  );
   const established = pairs.filter((pair) => pair.profile !== null);
   if (established.length === 0) {
     return {
@@ -151,8 +222,7 @@ export async function calibrate(
   const ranked = rankProfiles(established, input.groupCount);
   const groups = groupLines(ranked, input.groupCount);
   const table = GroupTableSchema.parse({
-    model: input.verifier.model,
-    promptVersion: promptVersion(input.verifier.prompt),
+    ...key,
     scenarioSet: input.scenarioSet,
     pairsFingerprint: input.pairSet.fingerprint,
     calibratedAt: input.clock.now().toISOString(),
@@ -182,31 +252,111 @@ export function atomCheckOf(
   });
 }
 
-async function judgePair(
-  input: CalibrationInput,
+/** The answer an accepted `finish` carries under `Engine.assessAgent`; the decision is taken from it. */
+export const FinishedResultSchema = z.object({
+  assessment: ClaimAssessmentSchema,
+});
+
+/** The prologue's input from the pair's records, of the kind `collect` reads in an investigation (AC-16.3). */
+function prologueInputOf(
   pair: CalibrationPair,
-): Promise<{ readonly outcome: PairOutcome; readonly usage: AssessUsage }> {
-  const { verifier } = input;
-  const atomCheck = atomCheckOf(pair.claimAtoms, pair.pages);
-  const check = buildClaimCheck({
-    roleConfig: verifier,
-    claimText: pair.claimText,
-    atomCheck,
-    pages: pair.pages,
-  });
-  const called = await input.assess({
-    role: 'verifier',
-    model: verifier.model,
-    effort: verifier.effort,
-    maxOutputTokens: verifier.maxOutputTokens,
-    instructions: check.instructions,
-    messages: check.messages,
-    outputSchema: check.outputSchema,
+  fingerprints: Pick<
+    ClaimAssessmentPrologueInput,
+    'agentFingerprint' | 'definitionMemoryFingerprint'
+  >,
+): ClaimAssessmentPrologueInput {
+  return {
+    kind: 'claim',
+    claimId: pair.pairId,
+    text: pair.claimText,
+    atoms: pair.claimAtoms,
+    pages: pair.pages.map((page, index) => ({
+      pageId: `${pair.pairId}/page-${index}`,
+      source: page.source,
+      tool: page.tool,
+      args: page.args,
+      snapshot: page.snapshot,
+      complete: page.complete,
+      records: page.records,
+    })),
+    ...fingerprints,
+  };
+}
+
+/** One `Engine.assessAgent` of the checker agent over the pair's records. */
+export function callCheckerAgent(
+  input: CheckerAgentCall,
+  pair: CalibrationPair,
+  memoryFingerprint: string,
+): Promise<AssessAgentResult> {
+  return input.assessAgent({
+    config: input.config,
+    agentName: input.agent.agentName,
+    prologueInput: prologueInputOf(pair, {
+      agentFingerprint: input.agent.agentFingerprint,
+      definitionMemoryFingerprint: memoryFingerprint,
+    }),
+    deploymentEntries: input.deploymentEntries,
     binding: { selfCheckRunId: input.selfCheckRunId },
     notAfter: new Date(input.clock.now().getTime() + CALL_WINDOW_MS),
   });
+}
+
+async function judgeAgentPair(
+  input: AgentCalibrationInput,
+  pair: CalibrationPair,
+  memoryFingerprint: string,
+): Promise<
+  | JudgedPair
+  | {
+      readonly rejected: Extract<
+        AssessAgentResult,
+        { outcome: 'rejected' }
+      >['code'];
+    }
+> {
+  const called = await callCheckerAgent(input, pair, memoryFingerprint);
+  if (called.outcome === 'rejected') return { rejected: called.code };
+  const assessment =
+    called.outcome === 'finished'
+      ? FinishedResultSchema.parse(called.result).assessment
+      : null;
+  return {
+    usage: called.usage,
+    outcome: comparedWithKey({
+      pair,
+      atomCheck: atomCheckOf(pair.claimAtoms, pair.pages),
+      assessment,
+      callFailure: agentCallFailure(called),
+    }),
+  };
+}
+
+/** Why no assessment came back; only an accepted `finish` carries one. The only accepted prologue end is `needs_narrowing`. */
+function agentCallFailure(
+  called: Exclude<AssessAgentResult, { outcome: 'rejected' }>,
+): PairFailure | null {
+  switch (called.outcome) {
+    case 'finished':
+      return null;
+    case 'ended':
+      return 'needs_narrowing';
+    case 'invalid_result':
+      return 'invalid_assessment';
+    case 'failed':
+      return called.code;
+  }
+}
+
+/** The rule of the engine over one answer, compared with the pair's key by enums only. */
+function comparedWithKey(input: {
+  readonly pair: CalibrationPair;
+  readonly atomCheck: AtomCheck;
+  readonly assessment: unknown;
+  readonly callFailure: PairFailure | null;
+}): PairOutcome {
+  const { pair, atomCheck, assessment, callFailure } = input;
   const { pointer, pages } = pointerOverAll(pair.pages);
-  const assessment = called.outcome === 'answered' ? called.output : null;
   const decision = decideClaim({
     assessment,
     pointer,
@@ -219,31 +369,24 @@ async function judgePair(
   const shouldBeEstablished =
     pair.expectedSupport === 'yes' && pair.expectedType !== 'causal';
   const failure: PairFailure | null =
-    called.outcome === 'failed'
-      ? called.code
-      : decision.reason === 'invalid_assessment'
-        ? 'invalid_assessment'
-        : null;
+    callFailure ??
+    (decision.reason === 'invalid_assessment' ? 'invalid_assessment' : null);
   // A decision other than `invalid_assessment` means the assessment passed the form rule, so it parses.
   const inForm =
     failure === null ? ClaimAssessmentSchema.parse(assessment) : null;
   const established = decision.status === 'supported';
   const establishedByVeto = established && atomCheck.valueCheck !== 'unmatched';
   return {
-    usage: called.usage,
-    outcome: {
-      pairId: pair.pairId,
-      pairKind: pair.pairKind,
-      failure,
-      supportMatch: inForm?.support === pair.expectedSupport,
-      typeMatch: inForm?.claimType === pair.expectedType,
-      shouldBeEstablished,
-      established,
-      decisionCorrect: failure === null && established === shouldBeEstablished,
-      vetoCorrect:
-        failure === null && establishedByVeto === shouldBeEstablished,
-      profile: established ? decision.profile : null,
-    },
+    pairId: pair.pairId,
+    pairKind: pair.pairKind,
+    failure,
+    supportMatch: inForm?.support === pair.expectedSupport,
+    typeMatch: inForm?.claimType === pair.expectedType,
+    shouldBeEstablished,
+    established,
+    decisionCorrect: failure === null && established === shouldBeEstablished,
+    vetoCorrect: failure === null && establishedByVeto === shouldBeEstablished,
+    profile: established ? decision.profile : null,
   };
 }
 
@@ -460,6 +603,9 @@ const profileLabel = (profile: ClaimProfile): string =>
     profile.contradictions ? 'с противоречиями' : 'без противоречий',
   ].join(', ');
 
+const tableKeyLabel = (table: GroupTable): string =>
+  `отпечаток агента: ${table.agentFingerprint}; отпечаток памяти определения: ${table.definitionMemoryFingerprint}`;
+
 /** The calibration report for the developer: printed, the table itself is the file at `outPath`. */
 export function renderCalibrationReport(
   report: CalibrationReport,
@@ -474,7 +620,7 @@ export function renderCalibrationReport(
   return [
     `# Калибровка проверяющего вызова`,
     '',
-    `- Модель: ${table.model}; версия промпта: ${table.promptVersion}`,
+    `- Модель: ${table.model}; ${tableKeyLabel(table)}`,
     `- Набор: ${table.scenarioSet}; отпечаток пар: ${table.pairsFingerprint}; пар: ${report.pairs.length}`,
     `- Время калибровки: ${table.calibratedAt}; групп: ${table.groupCount}`,
     `- Расход: вход ${usage.inputTokens}, выход ${usage.outputTokens} токенов, $${usage.costUsd.toFixed(4)}`,

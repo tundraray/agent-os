@@ -4,15 +4,15 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
-  configFingerprint,
-  deepResearchProcessV2,
-  loadProcessConfig,
-  type ProcessConfig,
+  claimAssessmentAgent,
+  deepResearchProcessV3,
+  type ProcessConfigRejection,
   readTranscripts,
 } from '@agent-os/engine';
 import {
   buildCalibrationPairs,
   buildJudgeChecks,
+  type CalibrationPair,
   loadScenarioSet,
   type Scenario,
   type ScenarioKey,
@@ -31,11 +31,13 @@ import type { RunKind } from '../metrics.js';
 import type { SelfCheckProgram } from '../program.js';
 import { writeReport } from '../result/report.js';
 import {
+  agentsRunConfig,
   buildRunResult,
   type InjectionMeasure,
   type ItemResult,
   type JudgeAgreement,
   readCodeVersion,
+  type ResolvedRunConfig,
   runConfig,
   type RunEntry,
   runEntry,
@@ -43,12 +45,22 @@ import {
   writeRunResult,
 } from '../result/run-result.js';
 import { SELF_CHECK_OWNER } from '../../auth/system-owners.js';
-import type { ScenarioAssembly } from '../scenario-assembly.js';
+import {
+  currentDeploymentEntries,
+  type ScenarioAssembly,
+} from '../scenario-assembly.js';
 import { formatThreadId } from '../thread-ids.js';
 import { parseThresholds, type Thresholds } from '../thresholds.js';
-import { findFirstError, type FirstError } from '../verdict/first-error.js';
+import {
+  claimAuthors,
+  findFirstError,
+  type FirstError,
+} from '../verdict/first-error.js';
 import { scenarioVerdict, type Verdict } from '../verdict/verdict.js';
-import { measureInjection } from './injection-measure.js';
+import {
+  injectionInBasis,
+  measureAgentInjection,
+} from './injection-measure.js';
 import { createRunBudget, type RunBudget } from './run-budget.js';
 import {
   scenarioWaiterPorts,
@@ -78,8 +90,8 @@ export const JUDGE_WINDOW_MS = 10 * 60_000;
 export interface RunOptions {
   readonly setName: string;
   readonly runsPerScenario: number;
-  /** Another catalog model for one role of the shipped `deep-research`; null runs the shipped configuration. */
-  readonly roleModel: { readonly role: string; readonly model: string } | null;
+  /** Other catalog models for agents of the shipped `deep-research`, one per `--agent-model`. */
+  readonly agentModels: readonly AgentModel[];
   /** The thresholds file as given; null without one. */
   readonly thresholdsPath: string | null;
   /** The total token budget of the run; null without a limit. */
@@ -108,8 +120,7 @@ const refusal = (code: RunRefusal['code'], reason: string): RunRefusal => ({
 });
 
 /**
- * `run --set <name> [--runs <n>] [--role-model <role>=<model>] [--thresholds <file>] [--budget <tokens>]`. On success
- * the run directory is printed to stdout by the command line.
+ * `run --set <name> [--runs <n>] [--agent-model <agent>=<model> ...] [--thresholds <file>] [--budget <tokens>]`. On success the run directory is printed to stdout by the command line.
  */
 export async function executeRunCommand(
   args: readonly string[],
@@ -124,7 +135,13 @@ const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
 function parseRunArgs(
   args: readonly string[],
 ): { readonly ok: true; readonly options: RunOptions } | RunRefusal {
-  let values: Record<string, string | undefined>;
+  let values: {
+    readonly set?: string;
+    readonly runs?: string;
+    readonly 'agent-model'?: string[];
+    readonly thresholds?: string;
+    readonly budget?: string;
+  };
   try {
     ({ values } = parseArgs({
       args: [...args],
@@ -133,7 +150,7 @@ function parseRunArgs(
       options: {
         set: { type: 'string' },
         runs: { type: 'string' },
-        'role-model': { type: 'string' },
+        'agent-model': { type: 'string', multiple: true },
         thresholds: { type: 'string' },
         budget: { type: 'string' },
       },
@@ -160,12 +177,9 @@ function parseRunArgs(
       `--budget must be a positive integer of tokens, got "${budget}"`,
     );
   }
-  const roleModel = parseRoleModel(values['role-model']);
-  if (roleModel === 'invalid') {
-    return refusal(
-      'invalid_arguments',
-      '--role-model must be <role>=<provider/model>',
-    );
+  const agentModels = parseAgentModels(values['agent-model'] ?? []);
+  if (!agentModels.ok) {
+    return refusal('invalid_arguments', agentModels.reason);
   }
   return {
     ok: true,
@@ -173,21 +187,148 @@ function parseRunArgs(
       setName: set,
       runsPerScenario:
         runs === undefined ? DEFAULT_RUNS_PER_SCENARIO : Number(runs),
-      roleModel,
+      agentModels: agentModels.agentModels,
       thresholdsPath: thresholds === undefined ? null : resolve(thresholds),
       budgetTokens: budget === undefined ? null : Number(budget),
     },
   };
 }
 
-export function parseRoleModel(
-  value: string | undefined,
-): RunOptions['roleModel'] | 'invalid' {
-  if (value === undefined) return null;
+/** `<name>=<model>` of a model flag; null when either side is empty. */
+function splitModelFlag(
+  value: string,
+): { readonly name: string; readonly model: string } | null {
   const separator = value.indexOf('=');
-  const role = value.slice(0, separator);
+  const name = value.slice(0, separator);
   const model = value.slice(separator + 1);
-  return separator <= 0 || model === '' ? 'invalid' : { role, model };
+  return separator <= 0 || model === '' ? null : { name, model };
+}
+
+/** One `--agent-model <agent>=<model>`. */
+export interface AgentModel {
+  readonly agent: string;
+  readonly model: string;
+}
+
+/** The values of the repeatable `--agent-model`: one agent per flag, no agent twice. */
+export function parseAgentModels(
+  flags: readonly string[],
+):
+  | { readonly ok: true; readonly agentModels: readonly AgentModel[] }
+  | { readonly ok: false; readonly reason: string } {
+  const agentModels: AgentModel[] = [];
+  for (const flag of flags) {
+    const parsed = splitModelFlag(flag);
+    if (parsed === null) {
+      return {
+        ok: false,
+        reason: `--agent-model must be <agent>=<provider/model>, got "${flag}"`,
+      };
+    }
+    if (agentModels.some(({ agent }) => agent === parsed.name)) {
+      return {
+        ok: false,
+        reason: `--agent-model names ${parsed.name} more than once`,
+      };
+    }
+    agentModels.push({ agent: parsed.name, model: parsed.model });
+  }
+  return { ok: true, agentModels };
+}
+
+/** The model flags of a command, as data for `swapModels`. */
+export interface ModelSwaps {
+  readonly agentModels: readonly AgentModel[];
+}
+
+/** The shape a swap writes into; all other fields of the configuration stay as they are. */
+const AgentsDataSchema = z.looseObject({
+  agents: z.record(z.string(), z.looseObject({})),
+});
+
+/**
+ * A process configuration as data with the models of `--agent-model` swapped in, and nothing else changed. A pure
+ * function: `run` and `replay` call it, and the model check before a paid run reads its result. Data without `agents`
+ * is not a configuration of this program: the swap refuses it (`invalid_arguments`). An unknown agent name stays in the
+ * data, so the load refuses it with the path to the field (ADR-0009).
+ */
+export function swapModels(
+  config: unknown,
+  swaps: ModelSwaps,
+):
+  | { readonly ok: true; readonly processConfig: unknown }
+  | {
+      readonly ok: false;
+      readonly code: 'invalid_arguments';
+      readonly reason: string;
+    } {
+  if (swaps.agentModels.length === 0)
+    return { ok: true, processConfig: config };
+  const data = AgentsDataSchema.safeParse(config);
+  if (!data.success) {
+    return {
+      ok: false,
+      code: 'invalid_arguments',
+      reason: '--agent-model needs a configuration with agents',
+    };
+  }
+  const agents = { ...data.data.agents };
+  for (const { agent, model } of swaps.agentModels) {
+    agents[agent] = { ...agents[agent], model };
+  }
+  return { ok: true, processConfig: { ...data.data, agents } };
+}
+
+/**
+ * What the program reads of a configuration; loose, so the parsed value is still the whole configuration. The full
+ * check is `createEngine`'s, at the assembly.
+ */
+const AgentsFormFactsSchema = z.looseObject({
+  processId: z.string(),
+  version: z.number(),
+  rootAgent: z.string(),
+  agents: z.record(
+    z.string(),
+    z.looseObject({ limits: z.looseObject({ deadlineMs: z.number() }) }),
+  ),
+  limits: z.looseObject({
+    investigationTokens: z.looseObject({ default: z.number() }),
+  }),
+});
+
+/** A configuration the program can run, as far as the program reads it. */
+export type RunnableConfig = z.infer<typeof AgentsFormFactsSchema>;
+
+export type LoadRunnableConfigResult =
+  | { readonly ok: true; readonly config: RunnableConfig }
+  | { readonly ok: false; readonly rejection: ProcessConfigRejection };
+
+/** The configuration as data, or its first fault with the path to the field. */
+export function loadRunnableConfig(data: unknown): LoadRunnableConfigResult {
+  const parsed = AgentsFormFactsSchema.safeParse(data);
+  if (parsed.success) return { ok: true, config: parsed.data };
+  const [issue] = parsed.error.issues;
+  return {
+    ok: false,
+    rejection: {
+      code: 'process_config_rejected',
+      path: (issue?.path ?? []).filter(
+        (segment): segment is string | number => typeof segment !== 'symbol',
+      ),
+      message: issue?.message ?? 'not a process configuration',
+    },
+  };
+}
+
+/** How long a run of this configuration may take: its root definition's deadline. */
+export function runDeadlineMs(config: RunnableConfig): number {
+  const root = config.agents[config.rootAgent];
+  if (root === undefined) {
+    throw new Error(
+      `${config.processId}: rootAgent ${config.rootAgent} is not among agents`,
+    );
+  }
+  return root.limits.deadlineMs;
 }
 
 /** What every step of one run shares. */
@@ -198,7 +339,7 @@ interface RunContext {
   /** `self-check:run:<runId>`: the conversation of every scenario run and the binding of the judge checks. */
   readonly selfCheckRunId: string;
   readonly processConfig: unknown;
-  readonly config: ProcessConfig;
+  readonly config: RunnableConfig;
   readonly budget: RunBudget;
 }
 
@@ -212,8 +353,10 @@ async function runScenarioSet(
   const { set } = loadedSet;
   const thresholdsText = await readThresholdsFile(options.thresholdsPath);
   if (thresholdsText !== null && !thresholdsText.ok) return thresholdsText;
-  const processConfig = configWithRoleModel(options.roleModel);
-  const loadedConfig = loadProcessConfig(processConfig);
+  const swapped = swapModels(deepResearchProcessV3, options);
+  if (!swapped.ok) return refusal(swapped.code, swapped.reason);
+  const { processConfig } = swapped;
+  const loadedConfig = loadRunnableConfig(processConfig);
   if (!loadedConfig.ok) {
     const { path, message } = loadedConfig.rejection;
     return refusal(
@@ -294,7 +437,7 @@ async function runScenarioSet(
       fileURLToPath(new URL('.', import.meta.url)),
     ),
     items: { kind: 'set', setName: set.name, setFingerprint: set.fingerprint },
-    config: runConfig(resultConfig(outcomes, config), null),
+    config: resultConfig(outcomes, config),
     judge: judgeIdentity(program.settings.judge, 'withKey'),
     thresholds: await readThresholdsCopy(runDir, thresholdsText !== null),
     results: outcomes.map(({ item }) => ({
@@ -361,28 +504,6 @@ function parseJson(text: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-/**
- * The shipped `deep-research` as data, with another model in one role when asked. It stays data: the schema and the
- * catalog check of `createEngine` refuse it with the path to the field (ADR-0005), an unknown role included.
- */
-function configWithRoleModel(roleModel: RunOptions['roleModel']): unknown {
-  if (roleModel === null) return deepResearchProcessV2;
-  const shipped = loadProcessConfig(deepResearchProcessV2);
-  if (!shipped.ok) {
-    throw new Error(
-      `the shipped deep-research configuration is rejected at ${shipped.rejection.path.join('.')}`,
-    );
-  }
-  const roles: Readonly<Record<string, object>> = shipped.config.roles;
-  const role = Object.hasOwn(roles, roleModel.role)
-    ? roles[roleModel.role]
-    : {};
-  return {
-    ...shipped.config,
-    roles: { ...roles, [roleModel.role]: { ...role, model: roleModel.model } },
-  };
 }
 
 /** A scenario's assembly, or `process_config_rejected` with the path `createEngine` names. */
@@ -488,8 +609,7 @@ async function runScenario(
       scenarioWaiterPorts(assembly, program.clock),
       {
         runs: started,
-        controllerDeadlineMs:
-          config.limits.taskBudgets['research.controller'].deadlineMs,
+        controllerDeadlineMs: runDeadlineMs(config),
       },
     );
     const judge: JudgeDeps = {
@@ -573,6 +693,11 @@ export async function judgedRun(
     judgeForm: judged.checked,
     firstError: firstErrorOf(key, run, verdict, pageTraceIds),
     signals: null,
+    injectionInBasis: injectionInBasis({
+      established: record.answer.established ?? [],
+      injectionTraceIds: key.injectionTraceIds,
+      pageTraceIds,
+    }),
   });
 }
 
@@ -591,6 +716,10 @@ function firstErrorOf(
     return null;
   }
   const { record } = run;
+  const authors =
+    record.agentTree === null
+      ? null
+      : claimAuthors(record.agentTree, record.config.processConfig);
   return findFirstError({
     keyTraceIds: key.causeTraceIds,
     pages: [...pageTraceIds].map(([evidenceId, traceIds]) => ({
@@ -601,6 +730,7 @@ function firstErrorOf(
       claimId,
       status,
       evidenceIds,
+      author: authors?.get(claimId),
     })),
     establishedClaimIds: (record.answer?.established ?? []).map(
       ({ claimId }) => claimId,
@@ -743,10 +873,46 @@ async function measureJudge(
   return { correct, total: checks.length };
 }
 
+/** One scenario's injection measure over its pairs and injection traces. */
+type ScenarioInjectionMeasure = (
+  pairs: readonly CalibrationPair[],
+  injectionTraceIds: readonly string[],
+) => Promise<InjectionMeasure>;
+
+/** The check the run's configuration is measured by: its `claim_assessment` definition. */
+async function injectionMeasureOf(
+  context: RunContext,
+  assembly: ScenarioAssembly,
+): Promise<ScenarioInjectionMeasure> {
+  const { program, config, processConfig, selfCheckRunId } = context;
+  const clock = program.clock;
+  const agent = claimAssessmentAgent(processConfig);
+  if (agent === null) {
+    throw new Error(
+      `${config.processId} has no definition with the result form claim_assessment`,
+    );
+  }
+  const deploymentEntries = await currentDeploymentEntries(
+    assembly.engine,
+    agent,
+  );
+  return (pairs, injectionTraceIds) =>
+    measureAgentInjection({
+      pairs,
+      injectionTraceIds,
+      config: processConfig,
+      agent,
+      deploymentEntries,
+      assessAgent: (request) => assembly.engine.assessAgent(request),
+      selfCheckRunId,
+      clock,
+    });
+}
+
 /**
- * The injection measure of each scenario that ran (design-engine.md, `injectionInfluence`): its `injected`
- * calibration pairs, as `calibrate` builds them, checked by the run's `verifier` through `Engine.assess`. A scenario
- * without text addressed to the model has no such pair and measures nothing.
+ * The injection measure of each scenario that ran (design-engine.md, `injectionInfluence`; on v3
+ * design-research-flow.md, «Самопроверка»): its `injected` calibration pairs, as `calibrate` builds them, checked by the
+ * run's configuration. A scenario without text addressed to the model has no such pair and measures nothing.
  */
 async function measureInjectionOfSet(
   context: RunContext,
@@ -754,7 +920,8 @@ async function measureInjectionOfSet(
   ran: ReadonlySet<string>,
   assembly: ScenarioAssembly,
 ): Promise<Map<string, InjectionMeasure>> {
-  const { program, config, selfCheckRunId } = context;
+  const { program } = context;
+  const measureScenario = await injectionMeasureOf(context, assembly);
   const measures = new Map<string, InjectionMeasure>();
   for (const scenario of set.scenarios) {
     if (!ran.has(scenario.scenarioId)) continue;
@@ -763,14 +930,7 @@ async function measureInjectionOfSet(
       key.injectionTraceIds.length === 0
         ? []
         : buildCalibrationPairs({ ...set, scenarios: [scenario] }).pairs;
-    const measure = await measureInjection({
-      pairs,
-      injectionTraceIds: key.injectionTraceIds,
-      verifier: config.roles.verifier,
-      assess: (request) => assembly.engine.assess(request),
-      selfCheckRunId,
-      clock: program.clock,
-    });
+    const measure = await measureScenario(pairs, key.injectionTraceIds);
     measures.set(scenario.scenarioId, measure);
     if (pairs.length > 0) {
       program.logger.log('injection influence measured', {
@@ -789,12 +949,11 @@ async function measureInjectionOfSet(
  */
 function resultConfig(
   results: readonly ScenarioOutcome[],
-  config: ProcessConfig,
-): Pick<WaitedRun['record']['config'], 'processConfig' | 'fingerprint'> {
+  config: RunnableConfig,
+): ResolvedRunConfig {
   const record = results.flatMap(({ records }) => records)[0];
-  return record === undefined
-    ? { processConfig: config, fingerprint: configFingerprint(config) }
-    : record.config;
+  if (record !== undefined) return runConfig(record.config, null);
+  return agentsRunConfig(config, null);
 }
 
 /** A sortable run id without `:`, so it fits `self-check:run:<runId>` and a directory name (`RUN_ID_PATTERN`). */

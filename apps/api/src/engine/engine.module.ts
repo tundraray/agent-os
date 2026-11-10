@@ -13,7 +13,7 @@ import {
   type AssessResult,
   CONFIGURATION_ACCESS_POLICY,
   createEngine,
-  deepResearchProcessV2,
+  deepResearchProcessV3,
   type Engine,
   type EngineLogFields,
   type EngineLogger,
@@ -62,8 +62,7 @@ import {
 } from './transcript-retention.js';
 
 /** Workflow types `createEngine` registers, for the start log line. */
-const ENGINE_HANDLERS =
-  'research.controller, research.analyze, research.verify, research.synthesize, agent.root, agent.run';
+const ENGINE_HANDLERS = 'agent.root, agent.run';
 
 /** Engine settings parsed from the environment; internal to this module. */
 const ENGINE_SETTINGS = Symbol('ENGINE_SETTINGS');
@@ -113,12 +112,6 @@ class BoundEngine implements Engine {
     return this.engine().startInvestigation(input);
   }
 
-  recordSignal(
-    input: Parameters<Engine['recordSignal']>[0],
-  ): ReturnType<Engine['recordSignal']> {
-    return this.engine().recordSignal(input);
-  }
-
   readInvestigation(
     input: Parameters<Engine['readInvestigation']>[0],
   ): ReturnType<Engine['readInvestigation']> {
@@ -165,6 +158,10 @@ class BoundEngine implements Engine {
     return this.engine().assessAgent(request);
   }
 
+  checkCalibration(): ReturnType<Engine['checkCalibration']> {
+    return this.engine().checkCalibration();
+  }
+
   private engine(): Engine {
     if (this.current === null) {
       throw new Error(
@@ -177,13 +174,14 @@ class BoundEngine implements Engine {
 
 /**
  * Assembly point of `@agent-os/engine` in `apps/api` (design-engine.md, C2; ADR-0004): reads the engine settings and
- * calls `createEngine` with the configurations of `ENGINE_PROCESSES` (the shipped `deep-research`) and the group tables
- * of `ENGINE_GROUP_TABLES` (the shipped ones), the runtime's ports, the source registry and the connected sources, the
- * clock, `resolveModel` and `AnthropicTokenCounter` on one base. It passes `requireCalibration`: without the group
- * table of the configuration's `verifier` model and prompt version the start stops with `calibration_missing` (DC-2).
+ * calls `createEngine` with the configurations of `ENGINE_PROCESSES` (the shipped `deep-research` v3) and the group tables
+ * of `ENGINE_GROUP_TABLES` (the shipped ones) and of `RESEARCH_GROUP_TABLES_DIR`, the runtime's ports, the source registry and the connected sources, the
+ * clock, `resolveModel` and `AnthropicTokenCounter` on one base. A configuration needs the table of its checker agent's
+ * pair of fingerprints: `Engine.checkCalibration`, awaited right after `createEngine`, stops the start with
+ * `calibration_missing`, and so does a failed read of its memory records (design-research-flow.md, KD-4, DC-10).
  *
  * Phase: `onModuleInit`, after `SourcesModule` (imported here, so Nest initialises it first) registered `source.fetch`
- * and bound the registry, and before `ResearchModule` starts the workers in `onApplicationBootstrap` — the four engine
+ * and bound the registry, and before `ResearchModule` starts the workers in `onApplicationBootstrap` — the engine's
  * handlers are registered before the first claim. A refused configuration or a missing group table stops the start
  * here (DC-14, DC-2): `app.init()` inside `listen` throws, so the port is never bound. So does an
  * `AGENT_DEADLINE_MARGIN_MS` less than `RUNTIME_LEASE_MS` plus `AGENT_TURN_MS` (design-agent-core.md, Runtime
@@ -228,7 +226,7 @@ class BoundEngine implements Engine {
         }),
       inject: [ENGINE_SETTINGS],
     },
-    { provide: ENGINE_PROCESSES, useValue: [deepResearchProcessV2] },
+    { provide: ENGINE_PROCESSES, useValue: [deepResearchProcessV3] },
     { provide: ENGINE_GROUP_TABLES, useValue: shippedGroupTables },
     { provide: RESEARCH_ENGINE, useFactory: () => new BoundEngine() },
   ],
@@ -255,12 +253,12 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
     @Inject(RUNTIME_SETTINGS) private readonly runtimeSettings: RuntimeConfig,
   ) {}
 
-  onModuleInit(): void {
-    const { agent } = this.settings;
+  async onModuleInit(): Promise<void> {
+    const { agent, groupTablesDir } = this.settings;
     const { leaseMs } = this.runtimeSettings;
     // DC-27: a margin below the lease plus a turn stops the start before the engine exists.
     assertDeadlineMargin(agent, leaseMs);
-    const { handlers, eventConsumers, scheduler, investigations, evidence } =
+    const { handlers, eventConsumers, scheduler, investigations } =
       this.runtime;
     const logger = new NestEngineLogger();
     const engine = createEngine({
@@ -270,7 +268,6 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
         eventConsumers,
         scheduler,
         investigations,
-        evidence,
       },
       sourceRegistry: this.sourceRegistry,
       connectedSources: this.adapters.map(
@@ -278,7 +275,8 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
       ),
       processes: this.processes,
       groupTables: this.groupTables,
-      requireCalibration: true,
+      // Unset means no directory: `createEngine` refuses a directory it cannot read.
+      ...(groupTablesDir === '' ? {} : { groupTablesDir }),
       resolveModel: this.resolveModel,
       tokenCounter: this.tokenCounter,
       clock: this.clock,
@@ -293,6 +291,8 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
       toolAccessPolicy: CONFIGURATION_ACCESS_POLICY,
       logger,
     });
+    // The created engine, not the provider: test assemblies replace the provider, and their start is checked too.
+    await engine.checkCalibration();
     this.engine.bind(engine);
     logger.log(
       `Research engine handlers registered (${ENGINE_HANDLERS}), sourceMode ${engine.sourceMode}`,

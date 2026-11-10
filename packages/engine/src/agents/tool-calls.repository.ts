@@ -23,7 +23,7 @@ export interface RequestedCall {
 }
 
 /** The attempt functions a transition needs; the handler passes its `TaskContext`. */
-export type CallContext = Pick<TaskContext, 'withAttemptGuard' | 'investigationId' | 'taskId'>;
+export type CallContext = Pick<TaskContext, 'withAttemptGuard' | 'investigationId' | 'taskId' | 'signal'>;
 
 /**
  * How a call ends. `done` carries its audit class and result; `rejected` its code and `rejected` — or `access_denied`
@@ -49,10 +49,19 @@ export type CallEnding =
       readonly sourceId?: string | null;
     };
 
+/** What the `outcome` of a call holds before it ends: its task answers a request made before (DC-11). */
+export const REPEAT_MARK = { repeat: true } as const;
+
 /** A step of a call; the transition table below says from which state each is allowed. */
 export type CallStep =
-  | { readonly to: 'starting'; readonly shareTokens: number; readonly taskSpec: unknown }
-  | { readonly to: 'waiting'; readonly childTaskId: string }
+  | {
+      readonly to: 'starting';
+      /** Null for a task tool, which takes no share and no `maxChildren` slot. */
+      readonly shareTokens: number | null;
+      readonly taskSpec: unknown;
+      readonly outcome?: typeof REPEAT_MARK;
+    }
+  | { readonly to: 'waiting'; readonly childTaskId: string; readonly outcome?: typeof REPEAT_MARK }
   | CallEnding;
 
 const ALLOWED: Readonly<Record<ToolCallState, readonly ToolCallState[]>> = {
@@ -127,10 +136,11 @@ async function writeStep(tx: RuntimeTx, call: ToolCallRow, step: CallStep): Prom
     throw new Error(`tool call ${call.id} cannot go from ${call.state} to ${step.to}`);
   }
   if (step.to === 'done' || step.to === 'rejected') return writeEnding(tx, call, step);
+  const mark = step.outcome === undefined ? {} : { outcome: step.outcome };
   const values =
     step.to === 'starting'
-      ? { state: step.to, shareTokens: step.shareTokens, taskSpec: step.taskSpec, startedAt: sql`now()` }
-      : { state: step.to, childTaskId: step.childTaskId };
+      ? { state: step.to, shareTokens: step.shareTokens, taskSpec: step.taskSpec, startedAt: sql`now()`, ...mark }
+      : { state: step.to, childTaskId: step.childTaskId, ...mark };
   const [moved] = await tx
     .update(researchAgentToolCalls)
     .set(values)

@@ -331,12 +331,6 @@ export function createChildEngine(deps: {
         }),
       };
     },
-    recordSignal: () =>
-      Promise.reject(
-        new Error(
-          'engine double: recordSignal is not part of the chat-entry boundary',
-        ),
-      ),
     assess: () =>
       Promise.reject(
         new Error(
@@ -371,6 +365,12 @@ export function createChildEngine(deps: {
       Promise.reject(
         new Error(
           'engine double: assessAgent is not part of the chat-entry boundary',
+        ),
+      ),
+    checkCalibration: () =>
+      Promise.reject(
+        new Error(
+          'engine double: checkCalibration is not part of the chat-entry boundary',
         ),
       ),
     release: (investigationId) => releaseOf(investigationId).release(),

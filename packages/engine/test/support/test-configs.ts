@@ -1,86 +1,9 @@
-import { deepResearchProcessV2 } from '@agent-os/engine';
-import { agentMarker } from './scriptedModel.js';
-
-/**
- * Process configurations of the integration file, as data — each passes the same loader as the shipped one (KD-1).
- * They are derived from the shipped deep-research configuration and differ only where a case needs it; the counting
- * source impersonates the fixture, so their `sources` pass the DC-14 check unchanged.
- */
+import { deepResearchProcessV3, definitionMemoryFingerprint, type GroupTable } from '@agent-os/engine';
+import { AgentProcessConfigSchema } from '../../src/config/agent-config.schema.js';
+import { claimAssessmentAgent } from '../../src/research-flow/forms/claim-assessment.js';
+import { type AgentPrompt, agentMarker } from './scriptedModel.js';
 
 type Fields = Readonly<Record<string, unknown>>;
-type Role = 'plan' | 'controller' | 'worker' | 'verifier' | 'synthesis';
-
-/** The fields of the shipped data a test configuration overrides. */
-interface ConfigData extends Fields {
-  readonly roles: Readonly<Record<Role, Fields>>;
-  readonly limits: Fields;
-}
-
-const base = deepResearchProcessV2 as ConfigData;
-
-function withRoles(overrides: Partial<Record<Role, Fields>>): ConfigData['roles'] {
-  const roles: Record<Role, Fields> = { ...base.roles };
-  for (const [name, fields] of Object.entries(overrides) as [Role, Fields][]) {
-    roles[name] = { ...base.roles[name], ...fields };
-  }
-  return roles;
-}
-
-/**
- * The second configuration of AC-12.1 (UC-9): another goal, no `verify` and no `analyze`, other prompt text and other
- * windows. Its prompts carry markers a test finds in the packets the model double received.
- */
-export const SECOND_CONFIG_MARKER = 'SECOND-CONFIG-PROMPT';
-const secondConfig = {
-  ...base,
-  processId: 'incident-summary',
-  version: 1,
-  goal: 'Summarise the incident the question names from the logs, without deep analysis.',
-  capabilities: ['plan', 'gather', 'synthesize'],
-  roles: withRoles({
-    plan: {
-      prompt: `${SECOND_CONFIG_MARKER} plan. Goal: {{goal}}\nQuestion: {{query}}\nWrite readiness criteria and branches.`,
-      windowTokens: 5_000,
-      marginTokens: 250,
-    },
-    controller: {
-      prompt: `${SECOND_CONFIG_MARKER} controller. Goal: {{goal}}\nQuestion: {{query}}\nChoose one admissible decision.`,
-      windowTokens: 6_000,
-      marginTokens: 300,
-    },
-  }),
-};
-
-/** C5 step_limit (AC-03.2): two steps at most. */
-const twoStepConfig = { ...base, processId: 'two-steps', limits: { ...base.limits, maxSteps: 2 } };
-
-/**
- * C5 context_overflow (DC-8): a controller window smaller than its mandatory input — the rendered prompt alone is
- * longer than 400 counted tokens of the harness counter (one per character).
- */
-const narrowControllerConfig = {
-  ...base,
-  processId: 'narrow-controller',
-  roles: withRoles({ controller: { windowTokens: 400, marginTokens: 20 } }),
-};
-
-/** C6 (DC-15): versions of one process that differ only in the controller prompt's marker. */
-export const VERSIONED_PROCESS_ID = 'versioned';
-export const versionMarker = (version: number) => `VERSION-${version}-PROMPT`;
-export function versionedConfig(version: number) {
-  return {
-    ...base,
-    processId: VERSIONED_PROCESS_ID,
-    version,
-    roles: withRoles({
-      plan: { prompt: `${versionMarker(version)} plan. Goal: {{goal}}\nQuestion: {{query}}` },
-      controller: { prompt: `${versionMarker(version)} controller. Goal: {{goal}}\nQuestion: {{query}}` },
-    }),
-  };
-}
-
-/** Every configuration a default harness of the file loads. */
-export const TEST_PROCESSES: readonly unknown[] = [base, secondConfig, twoStepConfig, narrowControllerConfig];
 
 // ---------------------------------------------------------------------------------------------------------------
 // The probe process of agent-core (design-agent-core.md, Test Strategy): the agents form, data only
@@ -172,6 +95,14 @@ export interface AgentProbeOptions {
   readonly investigationTokens?: { readonly default: number; readonly max: number };
   readonly maxTasks?: number;
   readonly maxToolCalls?: number;
+  /** The definitions whose template carries `{{sources}}` (UC-16, UC-2). */
+  readonly sourcesField?: readonly ProbeAgent[];
+  /** Tools a definition has beside its own, such as the tool marked as reading the run's sources. */
+  readonly extraTools?: Partial<Readonly<Record<ProbeAgent, readonly string[]>>>;
+  /** The process's `sources`; none by default. */
+  readonly sources?: readonly { readonly sourceId: string; readonly toolName: string }[];
+  /** The `sources` of a definition; a definition without them inherits its parent's. */
+  readonly definitionSources?: Partial<Readonly<Record<ProbeAgent, readonly string[]>>>;
 }
 
 const PROBE_PROMPTS: Readonly<Record<ProbeAgent, string>> = {
@@ -180,6 +111,9 @@ const PROBE_PROMPTS: Readonly<Record<ProbeAgent, string>> = {
   leaf: 'You answer one narrow part of a probe investigation toward the goal: {{goal}}.',
   recorder: 'You record one result of a probe investigation toward the goal: {{goal}}.',
 };
+
+/** What a probe prompt with the field adds. */
+const SOURCES_LINE = '\n\nSources:\n{{sources}}';
 
 /**
  * The probe configuration as data (Test Strategy): `lead` (root; `memory_read`, `memory_write`, `call_agent` -> helper),
@@ -192,9 +126,10 @@ export function agentProbeConfig(options: AgentProbeOptions = {}) {
   const definition = (agent: ProbeAgent, fields: { tools: string[]; calls?: string[]; result: string }) => ({
     model: PROBE_MODELS[agent],
     effort: 'low',
-    prompt: `${agentMarker(agent)} ${PROBE_PROMPTS[agent]}`,
-    tools: fields.tools,
+    prompt: `${agentMarker(agent)} ${PROBE_PROMPTS[agent]}${options.sourcesField?.includes(agent) === true ? SOURCES_LINE : ''}`,
+    tools: [...fields.tools, ...(options.extraTools?.[agent] ?? [])],
     calls: fields.calls ?? [],
+    ...(options.definitionSources?.[agent] === undefined ? {} : { sources: options.definitionSources[agent] }),
     result: fields.result,
     limits: limitsOf(agent),
   });
@@ -202,7 +137,7 @@ export function agentProbeConfig(options: AgentProbeOptions = {}) {
     processId: options.processId ?? PROBE_PROCESS_ID,
     version: options.version ?? 1,
     goal: 'Exercise the agent runtime on data only.',
-    sources: [],
+    sources: options.sources ?? [],
     agents: {
       lead: definition('lead', { tools: ['memory_read', 'memory_write', 'call_agent'], calls: ['helper'], result: 'text' }),
       helper: definition('helper', {
@@ -222,5 +157,112 @@ export function agentProbeConfig(options: AgentProbeOptions = {}) {
       maxToolCalls: options.maxToolCalls ?? 80,
     },
     answer: { sections: ['summary', 'established', 'unknown'] },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The shipped deep-research v3 (design-research-flow.md, Test Strategy)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The six definitions of the shipped v3. */
+export type ResearchFlowAgent = 'controller' | 'planner' | 'worker' | 'subworker' | 'verifier' | 'synthesis';
+
+/** The limits of a definition a scenario may change; a window stays the shipped one, so the load still accepts the result. */
+export type ResearchFlowLimits = Pick<ProbeLimits, 'runTokens' | 'deadlineMs' | 'maxTurns' | 'maxChildren'>;
+
+/** The numbers a scenario may change in the shipped data, and only them. */
+export interface ResearchFlowOverrides {
+  /** `limits.investigationTokens`. */
+  readonly investigationTokens?: { readonly default: number; readonly max: number };
+  readonly agents?: Partial<Readonly<Record<ResearchFlowAgent, Partial<ResearchFlowLimits>>>>;
+  /** `agentLimits.maxDepth`. */
+  readonly maxDepth?: number;
+  /**
+   * Text added at the end of a definition's prompt template: for the row that proves the load refuses it (UC-5), and for
+   * the versions of C6, whose prompts carry their version's marker.
+   */
+  readonly promptSuffix?: Partial<Readonly<Record<ResearchFlowAgent, string>>>;
+  /** `version`, for a second version of the process loaded beside the first (C6). */
+  readonly version?: number;
+}
+
+interface V3Definition extends Fields {
+  readonly prompt: string;
+  readonly limits: Fields;
+}
+
+interface V3Data extends Fields {
+  readonly agents: Readonly<Record<ResearchFlowAgent, V3Definition>>;
+  readonly limits: Fields;
+  readonly agentLimits: Fields;
+}
+
+/** The shipped v3 as data, with only the named numbers changed; `createEngine` loads it as it loads the shipped one. */
+export function researchFlowV3Config(overrides: ResearchFlowOverrides = {}) {
+  const shipped = deepResearchProcessV3 as V3Data;
+  const agents = Object.fromEntries(
+    (Object.entries(shipped.agents) as [ResearchFlowAgent, V3Definition][]).map(([name, definition]) => [
+      name,
+      {
+        ...definition,
+        prompt: definition.prompt + (overrides.promptSuffix?.[name] ?? ''),
+        limits: { ...definition.limits, ...overrides.agents?.[name] },
+      },
+    ]),
+  );
+  return {
+    ...shipped,
+    ...(overrides.version === undefined ? {} : { version: overrides.version }),
+    agents,
+    limits: { ...shipped.limits, ...(overrides.investigationTokens === undefined ? {} : { investigationTokens: overrides.investigationTokens }) },
+    agentLimits: { ...shipped.agentLimits, ...(overrides.maxDepth === undefined ? {} : { maxDepth: overrides.maxDepth }) },
+  };
+}
+
+/** The definitions of a process as the model double recognises them; data that does not load has none. */
+export function agentPromptsOf(process: unknown): readonly AgentPrompt[] {
+  const loaded = AgentProcessConfigSchema.safeParse(process);
+  if (!loaded.success) return [];
+  return Object.entries(loaded.data.agents).map(([agent, definition]) => ({ agent, prompt: definition.prompt }));
+}
+
+const PROFILE_VALUES = {
+  claimType: ['observation', 'quantitative'],
+  valueCheck: ['matched', 'unmatched', 'not_applicable'],
+  independentRecords: ['one', 'two_or_more'],
+  contradictions: [false, true],
+} as const;
+
+/** The group of every `supported` claim under {@link researchFlowGroupTable}: not `low`, which a claim gets with no table too. */
+const RESEARCH_FLOW_TEST_GROUP = 'medium' as const;
+
+/**
+ * The test group table of a v3 configuration: keyed by the pair of fingerprints of its loaded `verifier` with an empty
+ * memory, every profile in one group. It is built from the configuration, so a prompt edit does not turn a test red.
+ */
+export function researchFlowGroupTable(config: unknown): GroupTable {
+  const verifier = claimAssessmentAgent(config);
+  if (verifier === null) throw new Error('the configuration has no claim_assessment definition');
+  const profiles = PROFILE_VALUES.claimType.flatMap((claimType) =>
+    PROFILE_VALUES.valueCheck.flatMap((valueCheck) =>
+      PROFILE_VALUES.independentRecords.flatMap((independentRecords) =>
+        PROFILE_VALUES.contradictions.map((contradictions) => ({
+          profile: { claimType, valueCheck, independentRecords, contradictions },
+          group: RESEARCH_FLOW_TEST_GROUP,
+        })),
+      ),
+    ),
+  );
+  return {
+    model: verifier.model,
+    agentFingerprint: verifier.agentFingerprint,
+    definitionMemoryFingerprint: definitionMemoryFingerprint([]),
+    scenarioSet: 'research-flow-test',
+    pairsFingerprint: '000000000000',
+    calibratedAt: '2026-11-09T00:00:00.000Z',
+    groupCount: 3,
+    profiles,
+    groups: [{ group: RESEARCH_FLOW_TEST_GROUP, establishedPairs: 1, correctShare: 1 }],
+    pairKinds: [],
   };
 }

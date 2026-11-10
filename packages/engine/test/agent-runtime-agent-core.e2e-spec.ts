@@ -2,8 +2,7 @@
 // PRD: docs/features/agent-runtime/prd.md v1.1 (FR-02, FR-05, NFR-03). Test Strategy: UC-E3 (restart at each point of a turn), UC-E4 (restart while the parent waits). Flows 1 and 2 of the Design Doc.
 // Generated: 2026-11-08 | Part: agent-core | Test type: End-to-End (real killed process + built runtime and engine + real Postgres; scripted model program), CI job `e2e-engine`
 // Implementation timing: after all agent-core slices land (final phase only). Needs the engine child to load the probe process and the agent crash points (test code, never `src`).
-// Counterpart in-process file: agent-runtime-agent-core.int.e2e-spec.ts (INT-1..INT-4). The runtime's own kill matrix proves the primitives; this file proves the agent's turn and its tool calls on top of them, as
-// `deep-research-engine.e2e-spec.ts` E2E-2 does for v2.
+// Counterpart in-process file: agent-runtime-agent-core.int.e2e-spec.ts (INT-1..INT-4). The runtime's own kill matrix proves the primitives; this file proves the agent's turn and its tool calls on top of them.
 //
 // Started as `it.todo` skeletons; implemented by plan task T7.5 (K1-K6 by the skeleton, K7-K8 added by the task text). The support listed below is in place.
 //
@@ -11,14 +10,14 @@
 // - Postgres 16 from infra/docker-compose.yml; the compiled child (`pnpm build && pnpm build:child`, `dist/test-child/`) with `RUNTIME_CRASH_AT` for runtime points, `RUNTIME_WORKERS=on`, short `RUNTIME_LEASE_MS`, `RUNTIME_REAPER_MS`, `RUNTIME_POLL_MS`.
 // - The only double is the model boundary. A dead process cannot hand its remaining script to the next one, so the double runs as the existing `fallback` PROGRAM: it answers from the call itself (the agent recognised by its prompt marker, the step from
 //   the number of tool-result messages in the prompt), the same program in the dying child and in the restarted one. It lives in test code (scriptedModel.ts gains the agent role, see the int file's support list).
-// - The probe process (`agent-probe`, data in test/support/test-configs.ts) is selected by the scenario: `EngineChildScenario` gains the process id, and the child registers that config instead of `deepResearchProcessV2`. No fixture source is needed.
+// - The probe process (`agent-probe`, data in test/support/test-configs.ts) is selected by the scenario: `EngineChildScenario` gains the process id, and the child registers that config instead of the shipped deep-research. No fixture source is needed.
 // - Support (in place since T7.5): engineChildMain.ts - the agent crash points below in `CRASH_POINTS` (`ENGINE_CRASH_AT=<point>[:n]`, never read under `NODE_ENV=production`), built as test-code hooks: a wrapper of the model double (K2) and a hook before the reserve of a turn (K1), a `handlerHold`-style wrapper over `withAttemptGuard` (points after a guarded write) and a wrapper over the `TaskScheduler` handed to `createEngine` (points around `propose`). engineChild.ts - a scenario runner for the probe
 //   (start with the same `launchKey`, kill, read what the dead child left, start a fresh child, wait for the closed investigation). engineDb.ts - snapshots of the agent tables (see the int file's support list).
 // - Isolation (project convention, no truncate): a unique `resourceId` and `launchKey` per row; `fileParallelism: false`. Synchronisation only on proven states: the exit code 137 of the dying child, then rows of the test database. No latency assertions; "continues
 //   after restart" is the harness timeout of the wait for the end state.
 //
 // Budget: E2E 1 of 2 (the second slot is left free). E2E-1 is one journey, the restart matrix of NFR-03, with the rows below; nothing at a lower level can prove it - the death of the process between two writes is not reproducible in-process (a held handler is still alive and
-// can write later; a dead one cannot). The in-process zombie-attempt cases of v2 (INT-4 Z1, Z2) prove the fence, not the recovery of an agent turn.
+// can write later; a dead one cannot). An in-process zombie attempt would prove the fence, not the recovery of an agent turn.
 //
 // AC -> proving test: AC-02.1 = K1; AC-02.2, DC-3 = K2, K3; AC-05.4 = K4, K5, K6; DC-23, UC-E11 = K7, K8; NFR-03 = K1..K4 (the four points of the PRD: before the model call, after its answer, after the tool, before the write that records the wait).
 
@@ -151,7 +150,9 @@ describe('agent-runtime / agent-core - E2E (killed process, real Postgres, scrip
   //   K7 - (task text, plan 1.2; UC-E11, DC-23) after the guarded write of recorder's prologue (form `probe_record`), before its first turn.
   //        Then: the prologue is not run again - one first message; recorder ends with the closure's result. Catches: a second run of the form's code after the restart.
   //   K8 - (task text) after the guarded write of recorder's accepted closure, before its task ends.
-  //        Then: the closure is not run again - one closure note; recorder's task `succeeded` with the recorded result and no new turn. Catches: as K7.
+  //        Then: the closure is not run again - one closure note; recorder's task `succeeded` with the result written at the kill and no new turn; its parent helper is woken once
+  //        with that result. Catches: as K7, and a closure whose write the retry repeats or whose parent is woken twice. Absorbs research-flow E2E-1 V2 and R2 (a verification revision
+  //        or an answer written a second time after a kill right after the form's write): the forms' closures run through the same process code, so the probe form proves it once.
   describe('E2E-1', () => {
     it('E2E-1 K1: a process killed between two turns continues with the next turn and runs no recorded turn again', async () => {
       // When: the child dies at the count of lead's second turn, before its reserve
@@ -303,10 +304,16 @@ describe('agent-runtime / agent-core - E2E (killed process, real Postgres, scrip
       const atKill = run.atKill!;
       expect(taskOf(atKill, 'recorder').status).toBe('running');
       expect(atKill.agentRows.memory.map((note) => note.text)).toEqual(['lead note', 'probe closure: accepted']);
+      const recorded = { note: 'recorded', group: 'probe-group-a' };
+      expect(atKill.agentRows.runs.find((row) => row.agentName === 'recorder')?.result).toEqual(recorded);
       // The closure is not run again: one note; recorder `succeeded` with the result, without a new turn (DC-23)
       expectCommonEnd(run.end, { tasks: WHOLE_TREE, notes: TREE_NOTES });
       expect(ledgerOf(run.end, 'recorder')).toEqual(['settled']);
-      expect(run.end.agentRows.runs.find((row) => row.agentName === 'recorder')?.result).toEqual({ note: 'recorded', group: 'probe-group-a' });
+      expect(run.end.agentRows.runs.find((row) => row.agentName === 'recorder')?.result).toEqual(recorded);
+      // helper is woken once, with the result the kill left: one attempt to its wait, one after recorder
+      expect(taskOf(run.end, 'helper').attempt).toBe(2);
+      const recorderCall = run.end.agentRows.toolCalls.find((call) => call.childTaskId === taskOf(run.end, 'recorder').taskId);
+      expect(recorderCall?.outcome).toEqual({ outcome: 'success', result: recorded });
     }, ROW_MS);
   });
 });

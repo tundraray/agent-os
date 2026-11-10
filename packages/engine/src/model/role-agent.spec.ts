@@ -1,97 +1,22 @@
 import { z } from 'zod';
-import { controllerMessages, slotMessages, workerSlots } from '../context/role-packets.js';
+import { agentToolsOf, BASE_TOOLS, createToolRegistry } from '../agents/tool-registry.js';
 import type { RoleModel } from '../ports.js';
+import { RESEARCH_CLOSE_FORM } from '../research-flow/forms/research-close.js';
+import { RESEARCH_TOOLS } from '../research-flow/research-tools.js';
 import {
   type AgentToolCall,
   type AgentToolChoice,
   type AgentToolDefinition,
   type AgentTurnMessage,
+  countedTurnTools,
   mastraAgentTurnClient,
-  mastraRoleModelClient,
 } from './role-agent.js';
-import type { RoleMessage } from './token-counter.js';
-
-// DC-15, KD-6 (Contract «Клиент модели ролей»): at a controller call the client puts the `ephemeral` cache mark on the
-// last part of the stable block of the input, never on the whole request; the requests of the other roles do not
-// change. Asserted on the request that reaches the language model through the real Mastra agent.
-// Defects caught: the mark on the request (it would cache each step's own end), on the changing block, or on a packet
-// of another role; the mark dropped on its way through the agent.
 
 /** A language model of the current specification; ADR-0004 keeps the AI SDK and its test doubles out of src. */
 type LanguageModel = Extract<RoleModel, { specificationVersion: 'v4' }>;
 type GenerateOptions = Parameters<LanguageModel['doGenerate']>[0];
 
 const MARK = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-
-/** The request the model received for one `generate` of the client. */
-async function requestOf(role: string, messages: readonly RoleMessage[]): Promise<GenerateOptions> {
-  const received: GenerateOptions[] = [];
-  const model: LanguageModel = {
-    specificationVersion: 'v4',
-    provider: 'test',
-    modelId: 'test-model',
-    supportedUrls: {},
-    doGenerate: (options) => {
-      received.push(options);
-      return Promise.resolve({
-        content: [{ type: 'text', text: '{"done":true}' }],
-        finishReason: { unified: 'stop', raw: 'end_turn' },
-        usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: 2, text: 2, reasoning: 0 },
-        },
-        warnings: [],
-      });
-    },
-    doStream: () => Promise.reject(new Error('a role call does not stream')),
-  };
-  await mastraRoleModelClient.generate(
-    {
-      role,
-      model,
-      instructions: `the ${role} prompt`,
-      messages,
-      outputSchema: z.object({ done: z.boolean() }).strict(),
-      effort: 'low',
-      maxOutputTokens: 100,
-    },
-    new AbortController().signal,
-  );
-  expect(received).toHaveLength(1);
-  return received[0]!;
-}
-
-const CONTROLLER = controllerMessages(
-  {
-    stable: { tools: [{ sourceId: 'fixture', toolName: 'search_logs', argsSchema: {} }], planRevision: { revision: 1 } },
-    changing: { budget: { stepsLeft: 3 }, admissible: ['wait'] },
-    rejectedAttempts: [{ kind: 'wait', reason: 'nothing_to_wait_for' }],
-    taskCounts: [],
-    claims: [],
-  },
-  [],
-);
-const WORKER = slotMessages(workerSlots({ subquestion: 'what failed?', pages: [{ evidenceId: 'p1', records: [{ a: 1 }] }] }));
-const ASSIGNMENT = slotMessages({ assignment: 'write the plan', evidence: [] });
-
-describe('mastraRoleModelClient: the cache mark of the controller input', () => {
-  it.each<[string, string, readonly RoleMessage[], (typeof MARK | undefined)[]]>([
-    ['controller', 'on the stable block, not on the changing one', CONTROLLER, [MARK, undefined]],
-    ['worker', 'nowhere', WORKER, [undefined]],
-    ['plan', 'nowhere', ASSIGNMENT, [undefined]],
-  ])('%s: the mark is %s', async (role, _, messages, marks) => {
-    const request = await requestOf(role, messages);
-
-    const users = request.prompt.filter((message) => message.role === 'user');
-    expect(users.map((message) => message.providerOptions)).toEqual(marks);
-    // The mark ends the block: its last (here only) part is the text of the stable block, unchanged.
-    expect(users.map((message) => (message.content as { text?: string }[]).map((part) => part.text))).toEqual(
-      messages.map((message) => [message.content]),
-    );
-    // The request carries only the effort: no mark on the whole request.
-    expect(request.providerOptions).toEqual({ anthropic: { effort: 'low' } });
-  });
-});
 
 // KD-1 (ход — один запрос к модели, вызовы инструментов исполняет код движка), ADR-0001: a turn of the agent client is
 // one `doGenerate` of the model through a plain Mastra agent; the calls of the definition tools come back as data and
@@ -260,5 +185,36 @@ describe('mastraAgentTurnClient: a turn with tools makes one model request and r
       [false, true],
       [false, true],
     ]);
+  });
+});
+
+// DC-30: a turn is counted with the tool schemas its request sends. Mastra converts each schema for the model (on a
+// Claude model it flattens a union and moves the checks into descriptions), so a count of the schemas as zod writes them
+// counts other bytes and, for a union at the root, is refused by the provider. Asserted on every tool of the research
+// process against the request the language model received.
+// Defect caught: the counted schemas drifting from the sent ones.
+describe('countedTurnTools: a turn counts the tool schemas its request sends', () => {
+  it('gives every engine tool, finish with its form among them, in the form a Claude model receives it', async () => {
+    const { model: counting, requests } = countingModel([{ type: 'text', text: 'done' }]);
+    const model: LanguageModel = { ...counting, modelId: 'claude-haiku-5-5', provider: 'anthropic.messages' };
+    const registry = createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS]);
+    const tools = agentToolsOf(
+      [...registry.keys()].filter((name) => name !== 'finish'),
+      { registry, resultSchema: RESEARCH_CLOSE_FORM.resultSchema },
+    );
+    const call = { agentName: 'lead', model, instructions: 'the lead prompt', messages: FIRST_TURN, tools };
+
+    await mastraAgentTurnClient.generateTurn(
+      { ...call, toolChoice: 'auto', effort: 'low', maxOutputTokens: 200 },
+      new AbortController().signal,
+    );
+    const sent = requests.generated[0]?.tools?.map((tool) => ({
+      name: tool.name,
+      description: 'description' in tool ? tool.description : undefined,
+      inputSchema: 'inputSchema' in tool ? tool.inputSchema : undefined,
+    }));
+
+    expect(await countedTurnTools(model, tools)).toEqual(sent);
+    expect(sent).toHaveLength(registry.size);
   });
 });

@@ -8,7 +8,7 @@ import type { CallContext, CallStep, ToolCallRow, ToolCallState, TransitionResul
 import { createToolExecutor, type TurnExecution } from './tool-executor.js';
 import { BASE_TOOLS, createToolRegistry } from './tool-registry.js';
 import { TEXT_FORM } from './result-forms.js';
-import type { AgentRunContext, ImmediateTool } from './tools/tool-context.js';
+import type { AgentRunContext, ImmediateTool, TaskTool } from './tools/tool-context.js';
 
 // AC-01.2 (the executor), AC-06.1, AC-10.1, DC-8 (the refusal), DC-12, DC-17, UC-11, UC-E1, invariants 5, 8, 10: a call
 // that breaks the turn's limit, the definition, the schema, the rights, the tree's limits or the share is refused with
@@ -46,7 +46,7 @@ const CONFIG: AgentProcessConfig = AgentProcessConfigSchema.parse({
       model: 'anthropic/claude-haiku-5-5',
       effort: 'low',
       prompt: 'Lead {{query}}.',
-      tools: ['memory_read', 'memory_write', 'call_agent', 'probe_source'],
+      tools: ['memory_read', 'memory_write', 'call_agent', 'probe_source', 'probe_task'],
       calls: ['helper'],
       result: 'text',
       limits: { ...limits, runTokens: 300_000 },
@@ -75,7 +75,16 @@ const PROBE_SOURCE_ENTRY = {
   effect: 'read' as const,
   resultMaxBytes: 1_024,
 };
-const REGISTRY = createToolRegistry([...BASE_TOOLS, PROBE_SOURCE_ENTRY]);
+/** A tool of class `task` other than `call_agent`. */
+const PROBE_TASK_ENTRY = { ...PROBE_SOURCE_ENTRY, name: 'probe_task', effect: 'task' as const };
+const PROBE_TASK_SPEC = { workflowType: 'probe.task', workflowVersion: 1 } as TaskSpec;
+const PROBE_TASK: TaskTool = {
+  name: 'probe_task',
+  prepare: async () => ({ kind: 'task', prepared: null, repeat: false }),
+  taskSpec: () => PROBE_TASK_SPEC,
+  ending: async () => ({ to: 'done', outcome: 'success', result: {} }),
+};
+const REGISTRY = createToolRegistry([...BASE_TOOLS, PROBE_SOURCE_ENTRY, PROBE_TASK_ENTRY]);
 const NOW = new Date('2026-11-08T12:00:00.000Z');
 const RUN_TASK_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -155,6 +164,7 @@ function harness(options: {
   const executor = createToolExecutor({
     registry: REGISTRY,
     tools: new Map(['memory_read', 'memory_write', 'investigation_read', 'probe_source'].map((name) => [name, spyTool(name)])),
+    taskTools: new Map([[PROBE_TASK.name, PROBE_TASK]]),
     accessPolicy: {
       decide(request) {
         accessRequests.push(request);
@@ -271,6 +281,19 @@ describe('вызов отклоняется кодом и ничего не ис
       // The share was recorded in `starting` and is released by the refusal: a refused call no longer counts (KD-4).
       expect(steps.map((step) => step.to)).toEqual(['starting', 'rejected']);
     }
+  });
+
+  it('инструмент-задача, не call_agent, ставит задачу без доли и ждёт её', async () => {
+    const h = harness();
+
+    const executed = await h.execute([call(0, 'probe_task', { q: 'x' })]);
+
+    expect(executed).toEqual({ outcome: 'executed', finish: null, waitFor: ['00000000-0000-4000-8000-0000000000c1'] });
+    expect(h.steps.get('call-0')).toEqual([
+      { to: 'starting', shareTokens: null, taskSpec: PROBE_TASK_SPEC },
+      { to: 'waiting', childTaskId: '00000000-0000-4000-8000-0000000000c1' },
+    ]);
+    expect(h.proposed).toEqual([PROBE_TASK_SPEC]);
   });
 
   it('источники дочернего — пересечение: the child task gets the share, the budget of the design and the shared sources only', async () => {

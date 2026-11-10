@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { ResolveModel, RoleModel, TokenCounter } from '@agent-os/engine';
+import {
+  deepResearchProcessV3,
+  type ResolveModel,
+  type RoleModel,
+  type TokenCounter,
+} from '@agent-os/engine';
 import {
   buildCalibrationPairs,
   buildJudgeChecks,
@@ -9,56 +14,56 @@ import {
   scenarioKey,
   type ScenarioKey,
 } from '@agent-os/mcp-fixture';
-import { FIXTURE_SOURCE_ID } from '@agent-os/sources';
 import { MockLanguageModelV4 } from 'ai/test';
+import {
+  agentCallView,
+  type AgentRecognizer,
+  agentTurnCharacters,
+  recognizeAgents,
+  researchAgentTurn,
+  type ResearchScript,
+  toolCallsAnswer,
+} from './researchFlowAgents.js';
+import { agentPromptsOf } from './researchFlowConfig.js';
 
 /**
  * The model boundary of the self-check integration file (design-self-check.md, Test Strategy), and the only boundary
  * besides the program clock that is doubled: one `MockLanguageModelV4` per model id behind `resolveModel`, answering
  *
- * - the five process roles with a program built from the key of the scenario the program is assembling — the scripted
- *   roles read the key's evidence trace (or records before the change), state the key's phrases and place them in the
- *   sections the test asked for, so the right and the wrong answer are known;
+ * - the six definitions of v3 with the agent program of `researchFlowAgents.ts`, driven by the key of the scenario the
+ *   program is assembling — the script reads the key's evidence trace (or records before the change), states the key's
+ *   phrases and places them in the sections the test asked for, so the right and the wrong answer are known; an agent
+ *   turn has no output schema, and the agent is found by the prompt its system block starts with;
  * - the judge with the form filled from the same key, or with the expected form of a judge check of the set;
  * - under `calibrate`, the verifier with the key of each calibration pair of the set ({@link SelfCheckModels.calibrating}).
  *
  * Every call is recorded, so "every model call went through `resolveModel`" is read from {@link SelfCheckModels.calls}.
  *
- * The double reads its packets by their structure only: the tagged slots of `role-packets.ts` with their JSON, the
- * output schema's properties for the role, and the judge input JSON. Where it tells statements apart it compares a claim
- * text with the exact phrase this double wrote from the key — it recognises its own script, it does not interpret
- * text. Built on `ai/test` here because `packages/engine/test/support/scriptedModel.ts` is another package's test file
- * (plan rule 11).
+ * The double reads its packets by their structure only: the tagged slots of the verifier's and the answer agent's
+ * packets with their JSON, the judge output schema's properties, and the judge input JSON. Where it tells statements
+ * apart it compares a claim text with the exact phrase this double wrote from the key — it recognises its own script, it
+ * does not interpret text. Built on `ai/test` here because `packages/engine/test/support/scriptedModel.ts` is another
+ * package's test file (plan rule 11).
  */
 
-/** Roles the double tells apart by the output schema of the call. */
-export type SelfCheckModelRole =
-  'plan' | 'controller' | 'worker' | 'verifier' | 'synthesis' | 'judge';
+/** The judge is told by its output schema; every other call is an agent turn. */
+export type SelfCheckModelRole = 'judge';
 
 type GenerateOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
-/**
- * A property only the output schema of that role has, looked up in this order: the synthesis output also has `claims`,
- * so its `summaryClaimIds` is checked before the worker's marker; both judge forms are the judge.
- */
-const ROLE_MARKERS: readonly (readonly [SelfCheckModelRole, string])[] = [
-  ['judge', 'causeChange'],
-  ['judge', 'answersQuestion'],
-  ['synthesis', 'summaryClaimIds'],
-  ['plan', 'readinessCriteria'],
-  ['controller', 'kind'],
-  ['worker', 'claims'],
-  ['verifier', 'records'],
-];
+/** A property of each judge form's output schema. */
+const JUDGE_MARKERS: readonly string[] = ['causeChange', 'answersQuestion'];
 
 /** One call the double received. */
 export interface SelfCheckModelCall {
-  readonly role: SelfCheckModelRole | 'unknown';
+  readonly role: SelfCheckModelRole | 'agent' | 'unknown';
+  /** The definition of an agent turn; null for a judge call. */
+  readonly agent: string | null;
   readonly modelId: string;
   /** The scenario the program was assembling when the call came (`<set>/<scenario>`), or null before any. */
   readonly scenario: string | null;
-  /** The `system` text: the rendered role prompt or the judge instructions. */
+  /** The `system` text: the agent's instructions or the judge instructions. */
   readonly system: string;
   /** The user text of the packet. */
   readonly user: string;
@@ -72,7 +77,7 @@ export type KeyStatement = 'change' | 'link' | 'distractor';
 /** Where the answer places a statement: `established` claims are sent to verification, `assumed` ones are not. */
 export type StatementSection = 'established' | 'assumed';
 
-/** What the scripted roles do in the runs of one scenario. */
+/** What the scripted agents do in the runs of one scenario. */
 export interface ScenarioBehaviour {
   /**
    * The records the investigation reads and its claims cite: `key_trace` — the first trace of the key's evidence
@@ -85,6 +90,13 @@ export interface ScenarioBehaviour {
     readonly statement: KeyStatement;
     readonly section: StatementSection;
   }[];
+  /** The worker asks a tool outside its definition before it finishes (`tool_not_in_definition`). */
+  readonly workerAsksOutsideTool?: boolean;
+  /**
+   * The first draft adds this statement as a new claim, so the root's close is refused `needs_verification` once, the
+   * claim is checked and a new draft closes.
+   */
+  readonly draftAdds?: KeyStatement;
 }
 
 /**
@@ -105,18 +117,22 @@ function defaultBehaviour(key: ScenarioKey): ScenarioBehaviour {
 
 export interface SelfCheckModels {
   readonly resolveModel: ResolveModel;
-  /** One token per character of the instructions and the messages. */
+  /** One token per character of what a turn sends. */
   readonly tokenCounter: TokenCounter;
   /** Every call in arrival order; a test may empty it. */
   readonly calls: SelfCheckModelCall[];
   callsOf(role: SelfCheckModelRole): SelfCheckModelCall[];
+  /** The turns of one definition, in arrival order. */
+  callsOfAgent(agent: string): SelfCheckModelCall[];
+  /** Tells the double the definitions of this configuration; the shipped v3 is known from the start. */
+  recognizeConfig(config: unknown): void;
   /** Loads the set's scenarios with their keys and judge checks; a scenario the program assembles must be loaded. */
   useSet(setName: string): void;
   /** The key of a loaded scenario, by `<set>/<scenario>`. */
   keyOf(scenario: string): ScenarioKey;
   /** The judge checks of a loaded set, in the order `buildJudgeChecks` builds them. */
   judgeChecksOf(setName: string): readonly JudgeCheck[];
-  /** What the scripted roles do in the runs of `scenario` (`<set>/<scenario>`); the default otherwise. */
+  /** What the scripted agents do in the runs of `scenario` (`<set>/<scenario>`); the default otherwise. */
   behave(scenario: string, behaviour: ScenarioBehaviour): void;
   /** The judge fills a wrong (but well-formed) form for these judge checks, by `checkId` (INT-3 R3). */
   judgeWrongOn(...checkIds: string[]): void;
@@ -125,7 +141,7 @@ export interface SelfCheckModels {
    * same check without such a record as usual (`<set>/<scenario>`, INT-3 R4, UC-11).
    */
   injectionSways(...scenarios: string[]): void;
-  /** Called by the app when the program assembles a scenario: the role calls that follow answer from its key. */
+  /** Called by the app when the program assembles a scenario: the turns that follow answer from its key. */
   assembling(scenario: string): void;
   /**
    * The verifier judges the calibration pairs of the set (`calibrate`): it answers each pair with the key's support and
@@ -142,25 +158,17 @@ const USAGE: GenerateResult['usage'] = {
   outputTokens: { total: 20, text: 20, reasoning: 0 },
 };
 
-const DEFAULT_PLAN = {
-  readinessCriteria: ['the cause of the payment errors is found or ruled out'],
-  branches: [],
-};
-
-const ANALYZE_WORKFLOW = 'research.analyze';
-const VERIFY_WORKFLOW = 'research.verify';
 /** The window before the change the `before_change` read covers. */
 const BEFORE_CHANGE_WINDOW_MS = 15 * 60 * 1000;
 const BEFORE_CHANGE_PAGE_SIZE = 5;
 
-function roleOf(options: GenerateOptions): SelfCheckModelRole | 'unknown' {
+function isJudgeCall(options: GenerateOptions): boolean {
   const format = options.responseFormat;
   const schema = format?.type === 'json' ? format.schema : undefined;
   const properties =
     (schema as { properties?: Record<string, unknown> } | undefined)
       ?.properties ?? {};
-  const found = ROLE_MARKERS.find(([, marker]) => marker in properties);
-  return found?.[0] ?? 'unknown';
+  return JUDGE_MARKERS.some((marker) => marker in properties);
 }
 
 function textOf(options: GenerateOptions, role: 'system' | 'user'): string {
@@ -175,7 +183,7 @@ function textOf(options: GenerateOptions, role: 'system' | 'user'): string {
     .join('\n');
 }
 
-/** The content of the `<tag>` slot of a role packet (`role-packets.ts`), or undefined when the packet has none. */
+/** The content of the `<tag>` slot of a packet, or undefined when the packet has none. */
 function slot(user: string, tag: string): string | undefined {
   const open = `<${tag}>\n`;
   const start = user.indexOf(open);
@@ -190,20 +198,6 @@ function jsonSlot<T>(user: string, tag: string): T {
     throw new Error(`selfCheckModels: the packet has no <${tag}> slot`);
   }
   return JSON.parse(content) as T;
-}
-
-/** The evidence slots of a worker packet: the page id and its records, numbered from 0 (`role-packets.ts`, KD-1). */
-function evidenceOf(
-  user: string,
-): { evidenceId: string; records: { traceId?: unknown }[] }[] {
-  const pattern = /<evidence id="([^"]+)">\n([\s\S]*?)\n<\/evidence>/g;
-  const record = /<record number="\d+">(.*)<\/record>/g;
-  return [...user.matchAll(pattern)].map((match) => ({
-    evidenceId: match[1]!,
-    records: [...match[2]!.matchAll(record)].map(
-      (line) => JSON.parse(line[1]!) as { traceId?: unknown },
-    ),
-  }));
 }
 
 /** The phrase this double writes for a statement of the key; undefined when the key has none. */
@@ -222,7 +216,7 @@ function phraseOf(
 }
 
 /**
- * The input of a verifier call as `buildClaimCheck` lays it out: the claim JSON in `<claim>`, then in `<data>` one JSON
+ * The verifier's packet as `buildClaimCheck` lays it out: the claim JSON in `<claim>`, then in `<data>` one JSON
  * line per page and one per record, each record with its number.
  */
 function claimCheckOf(user: string): {
@@ -247,25 +241,13 @@ function claimCheckOf(user: string): {
   return { text: jsonSlot<{ text: string }>(user, 'claim').text, records };
 }
 
-/** Tool arguments as the model writes them: JSON text (`ModelArgsSchema`). */
-const argsText = (args: Record<string, unknown>): string =>
-  JSON.stringify(args);
-
-interface ControllerInput {
-  admissible?: string[];
-  observations?: {
-    tasks?: { type?: string }[];
-    claims?: { claimId: string; status: string; text: string }[];
-  };
-}
-
 interface ClaimOfInput {
   claimId: string;
   text: string;
   evidenceIds: string[];
 }
 
-/** A claim of the synthesis input: its pointer instead of the pages (C3, `research.synthesize`). */
+/** A claim of the answer agent's packet: its pointer instead of the pages (C3). */
 interface SynthesisClaimOfInput {
   claimId: string;
   text: string;
@@ -291,6 +273,9 @@ export function createSelfCheckModels(): SelfCheckModels {
   const calibrationPairs = new Map<string, CalibrationPair>();
   const calibrationErrs = new Set<string>();
   let current: string | null = null;
+  let agentOf: AgentRecognizer = recognizeAgents(
+    agentPromptsOf(deepResearchProcessV3),
+  );
 
   const keyOf = (scenario: string): ScenarioKey => {
     const key = keys.get(scenario);
@@ -302,13 +287,13 @@ export function createSelfCheckModels(): SelfCheckModels {
     return key;
   };
 
-  /** The scenario of a role call: the one the program is assembling. */
+  /** The scenario of a turn: the one the program is assembling. */
   const currentScenario = (): {
     key: ScenarioKey;
     behaviour: ScenarioBehaviour;
   } => {
     if (current === null) {
-      throw new Error('selfCheckModels: a role call before any scenario');
+      throw new Error('selfCheckModels: a turn before any scenario');
     }
     const key = keyOf(current);
     return { key, behaviour: behaviours.get(current) ?? defaultBehaviour(key) };
@@ -331,55 +316,10 @@ export function createSelfCheckModels(): SelfCheckModels {
     });
   };
 
-  function plan(): unknown {
-    return DEFAULT_PLAN;
-  }
-
-  /** One sub-question over the records of the behaviour, then verification of the established claims, then the answer. */
-  function controller(user: string): unknown {
-    const input = jsonSlot<ControllerInput>(user, 'decision_input');
-    const counts = jsonSlot<{ type: string }[]>(user, 'task_counts');
-    const types = new Set([
-      ...(input.observations?.tasks ?? []).map((task) => task.type),
-      ...counts.map((count) => count.type),
-    ]);
-    const { key, behaviour } = currentScenario();
-    if (!types.has(ANALYZE_WORKFLOW)) {
-      return {
-        kind: 'requestAnalysis',
-        rationale: 'read the records of the scenario',
-        subquestions: [
-          {
-            text: 'Какие записи показывают изменение?',
-            sourceId: FIXTURE_SOURCE_ID,
-            ...readOf(key, behaviour),
-            completeness: 'sample',
-          },
-        ],
-      };
-    }
-    const established = new Set(
-      scriptedClaims()
-        .filter((claim) => claim.section === 'established')
-        .map((claim) => claim.text),
-    );
-    const toVerify = (input.observations?.claims ?? [])
-      .filter((claim) => established.has(claim.text))
-      .map((claim) => claim.claimId);
-    if (!types.has(VERIFY_WORKFLOW) && toVerify.length > 0) {
-      return {
-        kind: 'requestVerification',
-        rationale: 'check the stated change against the records',
-        claimIds: toVerify,
-      };
-    }
-    return { kind: 'proposeAnswer', rationale: 'the records are read' };
-  }
-
   function readOf(
     key: ScenarioKey,
     behaviour: ScenarioBehaviour,
-  ): { toolName: string; args: string } {
+  ): { toolName: string; args: Record<string, unknown> } {
     if (behaviour.reads === 'key_trace') {
       const traceId = key.causeTraceIds[0];
       if (traceId === undefined) {
@@ -387,56 +327,34 @@ export function createSelfCheckModels(): SelfCheckModels {
           `selfCheckModels: ${current} has no evidence trace to read`,
         );
       }
-      return { toolName: 'get_trace', args: argsText({ traceId }) };
+      return { toolName: 'get_trace', args: { traceId } };
     }
     const changeMs = Date.parse(key.facts.changeAt);
     return {
       toolName: 'search_logs',
-      args: argsText({
+      args: {
         from: new Date(changeMs - BEFORE_CHANGE_WINDOW_MS).toISOString(),
         to: new Date(changeMs).toISOString(),
         pageSize: BEFORE_CHANGE_PAGE_SIZE,
-      }),
-    };
-  }
-
-  /** The scripted statements, each with the first trace of its pages as its atom and pointing at that record. */
-  function worker(user: string): unknown {
-    const traced = evidenceOf(user)
-      .flatMap(({ evidenceId, records }) =>
-        records.map(({ traceId }, number) => ({ evidenceId, number, traceId })),
-      )
-      .find(
-        (item): item is typeof item & { traceId: string } =>
-          typeof item.traceId === 'string',
-      );
-    const claims = scriptedClaims();
-    if (claims.length > 0 && traced === undefined) {
-      throw new Error(
-        `selfCheckModels: the worker of ${current} read no record`,
-      );
-    }
-    return {
-      claims: claims.map(({ text }) => ({
-        text,
-        atoms: [{ kind: 'text', value: traced?.traceId }],
-        pointer: [{ pageId: traced?.evidenceId, records: [traced?.number] }],
-      })),
+      },
     };
   }
 
   /**
    * The closed assessment of one claim: a given record that carries a trace supports it — the record the worker of this
-   * double pointed at, whose trace is its atom; under `key_trace` that is a trace of the key's cause, under
+   * script pointed at, whose trace is its atom; under `key_trace` that is a trace of the key's cause, under
    * `before_change` a trace outside the key, so an ungrounded change is still established (INT-3 R2) — any other record
-   * is unrelated. The claim is the key's change (`observation`) or its link (`causal`), told apart by exact equality
-   * with the phrase this double wrote from the key. A check holding a record of a swaying injection trace (by its
+   * is unrelated. The claim is `causal` when it is the key's link or a statement placed in `assumed` (every claim is
+   * checked), `observation` otherwise, told apart by exact equality with the phrase this double wrote from the key. A check holding a record of a swaying injection trace (by its
    * `traceId`) answers `support: no` (`injectionSways`).
    */
   function verifier(user: string): unknown {
     if (calibrationPairs.size > 0) return calibrationVerifier(user);
     const { key } = currentScenario();
     const claim = claimCheckOf(user);
+    const assumed = scriptedClaims().some(
+      ({ text, section }) => section === 'assumed' && text === claim.text,
+    );
     const records = claim.records.map(({ number, record }) => ({
       record: number,
       relation: typeof record.traceId === 'string' ? 'supports' : 'unrelated',
@@ -453,7 +371,9 @@ export function createSelfCheckModels(): SelfCheckModels {
           ? 'yes'
           : 'insufficient',
       claimType:
-        claim.text === phraseOf(key, 'link') ? 'causal' : 'observation',
+        assumed || claim.text === phraseOf(key, 'link')
+          ? 'causal'
+          : 'observation',
       records,
     };
   }
@@ -495,9 +415,10 @@ export function createSelfCheckModels(): SelfCheckModels {
   /**
    * Every input claim by its id with its stored pointer; `answered` when a statement is to be established. For the
    * summary it chooses the claim of the key's change, told apart by exact equality with the phrase this double wrote.
+   * With `draftAdds`, the statement not yet among the input claims is added as a new claim on the first claim's pointer.
    */
   function synthesis(user: string): unknown {
-    const { key } = currentScenario();
+    const { key, behaviour } = currentScenario();
     const assignment = jsonSlot<{ claims: SynthesisClaimOfInput[] }>(
       user,
       'assignment',
@@ -510,13 +431,31 @@ export function createSelfCheckModels(): SelfCheckModels {
       summaryClaimIds: assignment.claims
         .filter((claim) => claim.text === phraseOf(key, 'change'))
         .map((claim) => claim.claimId),
-      claims: assignment.claims.map((claim) => ({
-        claimId: claim.claimId,
-        text: claim.text,
-        atoms: [],
-        pointer: claim.pointer ?? [],
-      })),
+      claims: [
+        ...assignment.claims.map((claim) => ({
+          claimId: claim.claimId,
+          text: claim.text,
+          atoms: [],
+          pointer: claim.pointer ?? [],
+        })),
+        ...freshClaims(key, behaviour, assignment.claims),
+      ],
     };
+  }
+
+  /** The new claim of a draft under `draftAdds`, once: a claim with its text is an input claim on the next draft. */
+  function freshClaims(
+    key: ScenarioKey,
+    { draftAdds }: ScenarioBehaviour,
+    claims: readonly SynthesisClaimOfInput[],
+  ): unknown[] {
+    const text = draftAdds === undefined ? undefined : phraseOf(key, draftAdds);
+    if (text === undefined || claims.some((claim) => claim.text === text)) {
+      return [];
+    }
+    return [
+      { claimId: null, text, atoms: [], pointer: claims[0]?.pointer ?? [] },
+    ];
   }
 
   /** The judge check whose answer this input holds, by the claim identifiers of its sections. */
@@ -620,29 +559,45 @@ export function createSelfCheckModels(): SelfCheckModels {
     return formByKey(keyOfJudgeInput(input.key), input);
   }
 
-  const programs: Record<SelfCheckModelRole, (user: string) => unknown> = {
-    plan,
-    controller,
-    worker,
-    verifier,
-    synthesis,
-    judge,
+  /** The agent program (`researchFlowAgents.ts`) follows the key and behaviour of the scenario. */
+  const researchScript: ResearchScript = {
+    read: () => {
+      const { key, behaviour } = currentScenario();
+      return readOf(key, behaviour);
+    },
+    claimTexts: () => scriptedClaims().map((claim) => claim.text),
+    assess: verifier,
+    draft: synthesis,
+    workerAsksOutsideTool: () =>
+      currentScenario().behaviour.workerAsksOutsideTool === true,
   };
 
   function answer(modelId: string, options: GenerateOptions): GenerateResult {
-    const role = roleOf(options);
+    const system = textOf(options, 'system');
+    const judgeCall = isJudgeCall(options);
+    const agent = judgeCall ? null : agentOf(system);
+    const role = judgeCall ? 'judge' : agent === null ? 'unknown' : 'agent';
     const call: SelfCheckModelCall = {
       role,
+      agent,
       modelId,
       scenario: current,
-      system: textOf(options, 'system'),
+      system,
       user: textOf(options, 'user'),
     };
     calls.push(call);
-    if (role === 'unknown') {
-      throw new Error(`selfCheckModels ${modelId}: a call of an unknown role`);
+    if (agent !== null) {
+      const toolCalls = researchAgentTurn(
+        agentCallView(options, agent),
+        researchScript,
+      );
+      call.output = toolCalls;
+      return toolCallsAnswer(toolCalls, USAGE);
     }
-    const output = programs[role](call.user);
+    if (role !== 'judge') {
+      throw new Error(`selfCheckModels ${modelId}: a call of an unknown agent`);
+    }
+    const output = judge(call.user);
     call.output = output;
     return {
       content: [{ type: 'text', text: JSON.stringify(output) }],
@@ -668,20 +623,17 @@ export function createSelfCheckModels(): SelfCheckModels {
       return model;
     },
     tokenCounter: {
-      countInputTokens: (request) =>
+      countTurnInputTokens: (request) =>
         Promise.resolve({
           outcome: 'counted',
-          inputTokens:
-            request.system.length +
-            request.messages.reduce(
-              (sum, message) => sum + message.content.length,
-              0,
-            ),
+          inputTokens: agentTurnCharacters(request),
         }),
-      countTurnInputTokens: () =>
-        Promise.reject(new Error('v2 runs no agent turn')),
     },
     callsOf: (role) => calls.filter((call) => call.role === role),
+    callsOfAgent: (agent) => calls.filter((call) => call.agent === agent),
+    recognizeConfig: (config) => {
+      agentOf = recognizeAgents(agentPromptsOf(config));
+    },
     useSet: (setName) => {
       const loaded = loadScenarioSet(setName);
       if (!loaded.ok) {

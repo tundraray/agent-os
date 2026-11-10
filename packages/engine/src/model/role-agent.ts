@@ -3,7 +3,7 @@ import { noopLogger } from '@mastra/core/logger';
 import { createTool } from '@mastra/core/tools';
 import type { z } from 'zod';
 import type { RoleModel } from '../ports.js';
-import type { RoleEffort, RoleMessage } from './token-counter.js';
+import type { CountedTool, RoleEffort, RoleMessage } from './token-counter.js';
 
 /** What one role call sends through its agent. */
 export interface RoleCall<T> {
@@ -36,21 +36,14 @@ export interface RoleGeneration {
 /** The provider options of the message the cache mark ends at: an `ephemeral` cache breakpoint (KD-6). */
 const CACHE_MARK = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const;
 
-/**
- * One message as the role agent sends it to the provider; the transcript stores the same form. A message with
- * `providerOptions` carries the cache mark on its last part; the request itself never carries one.
- */
-export type ProviderMessage = (
+/** One message as the role agent sends it to the provider; the transcript stores the same form. */
+export type ProviderMessage =
   | { readonly role: 'user'; readonly content: string }
-  | { readonly role: 'assistant'; readonly content: string }
-) & { readonly providerOptions?: typeof CACHE_MARK };
+  | { readonly role: 'assistant'; readonly content: string };
 
-/** The messages of a role packet in the form `generate` sends them. */
+/** The messages of a call in the form `generate` sends them. */
 export function providerMessages(messages: readonly RoleMessage[]): ProviderMessage[] {
-  return messages.map(({ role, content, cacheMark }) => {
-    const message: ProviderMessage = role === 'user' ? { role: 'user', content } : { role: 'assistant', content };
-    return cacheMark === true ? { ...message, providerOptions: CACHE_MARK } : message;
-  });
+  return messages.map(({ role, content }) => (role === 'user' ? { role: 'user', content } : { role: 'assistant', content }));
 }
 
 /**
@@ -249,6 +242,35 @@ function turnTools(tools: readonly AgentToolDefinition[]): Record<string, Return
   );
 }
 
+/** The request agent of one turn: its system block with the cache mark, its model and the definition tools. */
+function turnAgent(call: Pick<AgentTurnCall, 'agentName' | 'model' | 'instructions' | 'tools'>): Agent {
+  return createRequestAgent({
+    id: `agent-${call.agentName}`,
+    name: `Agent ${call.agentName}`,
+    instructions: { role: 'system', content: call.instructions, providerOptions: CACHE_MARK },
+    model: call.model,
+    tools: turnTools(call.tools),
+  });
+}
+
+/**
+ * The tools of a turn as the provider counts them, in their order, with the JSON schemas of their arguments exactly as
+ * `mastraAgentTurnClient` sends them on `model` (DC-30): the same request agent builds the same tools with the
+ * compatibility layer of that model, so the count of a turn takes the bytes its request sends, not the schema as zod
+ * writes it.
+ */
+export async function countedTurnTools(model: RoleModel, tools: readonly AgentToolDefinition[]): Promise<CountedTool[]> {
+  const built = await turnAgent({ agentName: 'count', model, instructions: '', tools }).getToolsForExecution({});
+  return tools.map(({ name, description }) => {
+    const parameters = built[name]?.parameters;
+    const json: unknown = parameters !== undefined && 'jsonSchema' in parameters ? parameters.jsonSchema : undefined;
+    if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+      throw new Error(`tool ${name}: Mastra gave no JSON schema of its arguments`);
+    }
+    return { name, description, inputSchema: json as Readonly<Record<string, unknown>> };
+  });
+}
+
 /**
  * The production turn client: a new request agent per turn with the definition tools and `maxSteps: 1`, so one
  * `generate` is one request and its tool calls come back as data (KD-1, ADR-0001). The system block carries the cache
@@ -256,13 +278,7 @@ function turnTools(tools: readonly AgentToolDefinition[]): Record<string, Return
  */
 export const mastraAgentTurnClient: AgentTurnModelClient = {
   async generateTurn(call, signal) {
-    const agent = createRequestAgent({
-      id: `agent-${call.agentName}`,
-      name: `Agent ${call.agentName}`,
-      instructions: { role: 'system', content: call.instructions, providerOptions: CACHE_MARK },
-      model: call.model,
-      tools: turnTools(call.tools),
-    });
+    const agent = turnAgent(call);
     const result = await agent.generate(turnMessages(call.messages), {
       maxSteps: 1,
       toolChoice: call.toolChoice === 'auto' ? 'auto' : { type: 'tool', toolName: call.toolChoice.toolName },

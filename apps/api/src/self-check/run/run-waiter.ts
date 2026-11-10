@@ -51,7 +51,7 @@ export interface StartedRun {
 export interface WaitScenarioRunsInput {
   /** All runs of one scenario, started at once. */
   readonly runs: readonly StartedRun[];
-  /** The total deadline of the configuration's controller task (`limits.taskBudgets['research.controller']`). */
+  /** The total deadline of the run: `limits.deadlineMs` of the root definition. */
   readonly controllerDeadlineMs: number;
 }
 

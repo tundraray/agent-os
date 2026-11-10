@@ -57,7 +57,10 @@ export interface ScreenInput {
   readonly sourceMode: SourceMode;
   readonly claims: readonly DraftClaim[];
   readonly known: ReadonlyMap<string, KnownClaim>;
-  /** The check of every page of {@link referencedPages}; a page without an entry counts as `not_found`. */
+  /**
+   * The check of every page the draft references — the stored pages of each input claim it names (its draft pointer is
+   * never read) and the pointer pages of each new claim; a page without an entry counts as `not_found`.
+   */
   readonly references: ReadonlyMap<string, ReferenceCheck>;
 }
 
@@ -124,17 +127,6 @@ const knownOf = (claim: DraftClaim, known: ScreenInput['known']): KnownClaim | u
   claim.claimId === null ? undefined : known.get(claim.claimId);
 
 /**
- * The pages whose ownership the gateway needs (mode `sources`): the stored pages of each input claim the draft names —
- * its draft pointer is never read — and the pointer pages of each new claim.
- */
-export function referencedPages(claims: readonly DraftClaim[], known: ScreenInput['known']): string[] {
-  return claims.flatMap((claim) => {
-    const stored = knownOf(claim, known);
-    return stored === undefined ? pointerPages(claim.pointer) : [...stored.evidenceIds];
-  });
-}
-
-/**
  * DC-17: without sources there is no evidence to cite, so a claim whose pointer names any page is removed with
  * `evidence_not_found`, and every other claim is new — the answer delivers it as assumed knowledge of the model.
  */
@@ -158,7 +150,7 @@ function screenWithoutSources(claims: readonly DraftClaim[]): ScreenedDraft {
  * and its group (DC-4), `causal` to `assumed` marked causal and verified, `insufficient` to `unknown` without
  * references, `unverified` to `assumed` unverified with its stored pages; a `refuted` one is removed. The stored pages
  * of an `unverified` claim were never checked, so a page of them that is not this investigation's removes it with its
- * reason; the basis of a `supported` or `causal` claim was checked by `research.verify`. A new claim (`claimId` null or
+ * reason; the basis of a `supported` or `causal` claim was checked by the checker agent (`claim_assessment`). A new claim (`claimId` null or
  * unknown) is removed when its pointer names no page, a page that does not exist for the owner, a page of another
  * investigation or a record no input claim's pointer names (AC-09.1); otherwise it is judged by {@link composeAnswer}.
  */

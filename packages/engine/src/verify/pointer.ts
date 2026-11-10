@@ -6,7 +6,7 @@ const MAX_POINTER_RECORDS = 20;
 /**
  * The records a claim rests on, grouped by page: the page id and the numbers of its records — a record's number is its
  * position in the page from zero (KD-1). The schema keeps only the shape, so a worker's empty or broken pointer still
- * reaches `research.verify` and ends `insufficient` there without a model call (DC-6); `checkPointer` holds the rules.
+ * reaches `claim_assessment` and ends `insufficient` there without a model call (DC-6); `checkPointer` holds the rules.
  */
 export const PointerSchema = z.array(
   z.strictObject({

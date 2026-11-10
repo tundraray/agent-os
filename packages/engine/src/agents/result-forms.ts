@@ -19,9 +19,14 @@ export interface FormRunContext {
   readonly runTaskId: string;
   readonly agentName: string;
   readonly definition: AgentDefinition;
-  /** The run's assignment; null for a form with a prologue, whose session has none. */
-  readonly assignment: string | null;
+  /**
+   * The caller's assignment, from the run's task input, also for a form with a prologue: its run row holds null and its
+   * session has no assignment, and the parent's `call_agent` row gets the child's task only after `propose`.
+   */
+  readonly assignment: string;
   readonly sourceMode: SourceMode;
+  /** The run's depth in the agent tree: 0 at the root. */
+  readonly depth: number;
 }
 
 /**
@@ -73,10 +78,14 @@ export interface PrologueFunction {
   readonly firstMessageMaxBytes: number;
 }
 
-/** What `evaluate` decides of a result: accepted (the same or replaced), or refused with a reason. */
+/**
+ * What `evaluate` decides of a result: accepted (the same or replaced), or refused with a reason and, optionally, a
+ * structured `detail`: `write` gets it with the decision, the model reads it next turn, and a later `collect` finds it in
+ * the row of the refused call (DC-20).
+ */
 export type ClosureDecision =
   | { readonly kind: 'accept'; readonly result: unknown }
-  | { readonly kind: 'refuse'; readonly reason: string };
+  | { readonly kind: 'refuse'; readonly reason: string; readonly detail?: unknown };
 
 export interface ClosureInput {
   /** The result of `finish` after the form's schema, or the `end` of the prologue. */
@@ -163,7 +172,7 @@ export const TEXT_FORM: ResultForm = {
   refsOf: (result) => TextResultSchema.safeParse(result).data?.refs ?? [],
 };
 
-/** The forms the engine ships in this part; `research-flow` adds its own here, in the engine's code. */
+/** The base forms of the engine; `create-engine.ts` adds the forms of the research process to them. */
 export const SHIPPED_RESULT_FORMS: readonly ResultForm[] = [TEXT_FORM];
 
 /** The registry of `forms`; a repeated name or a version below 1 is a defect of the engine's code. */

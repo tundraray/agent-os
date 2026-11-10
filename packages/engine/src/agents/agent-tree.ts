@@ -35,6 +35,8 @@ export interface AgentTreeCall {
   readonly callIndex: number;
   readonly turn: number;
   readonly toolName: string;
+  /** As the model gave them; `call_agent`'s name the agent and its assignment, which a refused call has no child run to tell. */
+  readonly arguments: unknown;
   readonly state: string;
   /** The outcome and result or reason as the call stored them; null until the call has one. */
   readonly outcome: unknown;
@@ -141,6 +143,7 @@ async function callsByRun(db: Database, investigationId: string): Promise<Map<st
       callIndex: row.callIndex,
       turn: row.turn,
       toolName: row.toolName,
+      arguments: row.arguments,
       state: row.state,
       outcome: row.outcome,
       reason: row.reason,

@@ -1,15 +1,22 @@
 import type {
+  AgentTree,
+  AgentTreeRun,
   RunRecord,
   Transcript,
   TranscriptRetention,
 } from '@agent-os/engine';
 import { SIGNAL_LABELS } from '../result/report.js';
-import { DISCARDED_STATUSES, type FailureSignals } from '../signals.js';
+import {
+  DISCARDED_STATUSES,
+  type FailureSignals,
+  rejectedCalls,
+  unverifiedByRefusal,
+} from '../signals.js';
 
 /**
  * The report of the `show` command (design-self-check.md, Flow 4, Contract `show`, DC-15): the four failure signals,
- * every model call of the investigation by time with its transcript, the rejected controller decisions and the
- * discarded claims. It is printed for the developer who opened it and never saved; it is the only output of the
+ * every model call of the investigation by time with its transcript, its agent tree, the refused calls, the claims left
+ * unverified by a refusal (design-research-flow.md, «Самопроверка на v3», AC-18.3) and the discarded claims. It is printed for the developer who opened it and never saved; it is the only output of the
  * program that may carry prompts, records and model answers.
  */
 
@@ -46,10 +53,7 @@ export function renderCourseReport(input: CourseReportInput): string {
     '## Вызовы модели по времени',
     '',
     ...callSections(record, input.transcripts),
-    '## Отклонённые решения controller',
-    '',
-    ...rejectedDecisionLines(record),
-    '',
+    ...agentSections(record, record.agentTree),
     '## Отсеянные утверждения',
     '',
     ...discardedClaimLines(record),
@@ -62,8 +66,7 @@ function retentionLabel(retention: TranscriptRetention): string {
 }
 
 function signalLines(signals: FailureSignals): string[] {
-  const { lowJudgeScore, discardedClaims, controllerRejections, stopReason } =
-    signals;
+  const { lowJudgeScore, discardedClaims, stopReason } = signals;
   const judge =
     lowJudgeScore === null
       ? 'не ставится: ответа нет, судья не вызывался'
@@ -75,7 +78,7 @@ function signalLines(signals: FailureSignals): string[] {
   return [
     `- ${SIGNAL_LABELS.lowJudgeScore}: ${judge}`,
     `- ${SIGNAL_LABELS.discardedClaims}: ${MARK(discardedClaims.fired)}; ${discardedClaims.discarded} из ${discardedClaims.total}, доля ${share}`,
-    `- ${SIGNAL_LABELS.controllerRejections}: ${MARK(controllerRejections.fired)}; отклонено ${controllerRejections.rejected}`,
+    `- ${SIGNAL_LABELS.rejectedCalls}: ${MARK(signals.rejectedCalls.fired)}; отклонено ${signals.rejectedCalls.rejected}`,
     `- ${SIGNAL_LABELS.stopReason}: ${MARK(stopReason.fired)}; ${stopReason.stopReason ?? NONE}`,
   ];
 }
@@ -179,15 +182,60 @@ function jsonBlock(value: unknown): string[] {
   ];
 }
 
-function rejectedDecisionLines(record: RunRecord): string[] {
-  const lines = record.decisions.flatMap((decision) =>
-    decision.status === 'rejected'
-      ? [
-          `- шаг ${decision.step}, вызов ${decision.callIndex}: ${decision.rejectionReason}; вид ${decision.kind ?? NONE}; ${decision.decidedBy}; ${decision.decidedAt.toISOString()} (${decision.decisionId})`,
-        ]
-      : [],
+function agentSections(record: RunRecord, tree: AgentTree): string[] {
+  const refused = rejectedCalls(tree).map(
+    ({ agent, tool, reason }) => `- ${agent} · ${tool}: ${reason ?? NONE}`,
   );
-  return lines.length === 0 ? [NONE] : lines;
+  const unverified = unverifiedByRefusal({
+    claims: record.claims,
+    agentTree: tree,
+    processConfig: record.config.processConfig,
+  }).map(({ claimId, text }) => `- ${claimId}: ${text}`);
+  return [
+    '## Дерево агентов',
+    '',
+    ...tree.runs.flatMap(agentRunSection),
+    '## Отклонённые вызовы',
+    '',
+    ...(refused.length === 0 ? [NONE] : refused),
+    '',
+    '## Утверждения без проверки из-за отказа',
+    '',
+    ...(unverified.length === 0 ? [NONE] : unverified),
+    '',
+  ];
+}
+
+/** One run of the tree; its transcripts stand under their call ids in «Вызовы модели по времени». */
+function agentRunSection(run: AgentTreeRun): string[] {
+  const parent =
+    run.parent === null
+      ? 'корень'
+      : `родитель ${run.parent.taskId}, вызов ${run.parent.callIndex}`;
+  const ending =
+    run.failure === null
+      ? `Результат: ${JSON.stringify(run.result)}`
+      : `Причина сбоя: ${JSON.stringify(run.failure)}`;
+  return [
+    `### ${run.agentName} · ${run.runTaskId}`,
+    '',
+    `- ${parent}; глубина ${run.depth}; статус ${run.status}`,
+    `- Задание: ${run.assignment ?? run.prologueFirstMessage ?? NONE}`,
+    `- ${ending}`,
+    `- Расход: доля ${run.shareTokens}, потрачено ${run.spentTokens}, с поддеревом ${run.subtreeSpentTokens}`,
+    `- Транскрипты ходов: ${
+      run.turns.length === 0
+        ? NONE
+        : run.turns
+            .map(({ turn, llmCallId, transcriptCallId }) =>
+              transcriptCallId === null
+                ? `ход ${turn}: ${llmCallId} (транскрипт удалён)`
+                : `ход ${turn}: ${llmCallId}`,
+            )
+            .join(', ')
+    }`,
+    '',
+  ];
 }
 
 /** By the same statuses as the signal «много отсеянных утверждений», then the claims the answer gateway removed. */

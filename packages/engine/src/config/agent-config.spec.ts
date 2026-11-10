@@ -1,9 +1,13 @@
+import type { ResolvedSourceTool, SourceRegistry, SourceSchema } from '@agent-os/sources';
 import { z } from 'zod';
 import { checkAgentDefinitions } from '../agents/definition-check.js';
 import { createResultFormRegistry, type ResultForm, TEXT_FORM } from '../agents/result-forms.js';
-import { BASE_TOOLS, createToolRegistry } from '../agents/tool-registry.js';
-import { deepResearchProcessV2 } from '../processes/shipped-processes.js';
-import { loadAnyProcessConfig, loadProcessConfig } from './load-process-config.js';
+import { BASE_TOOLS, createToolRegistry, type ToolRegistryEntry } from '../agents/tool-registry.js';
+import { buildSourcesField } from '../capabilities/sources-field.js';
+import { deepResearchProcessV3 } from '../processes/shipped-processes.js';
+import { RESEARCH_FORMS } from '../research-flow/research-forms.js';
+import { RESEARCH_TOOLS } from '../research-flow/research-tools.js';
+import { loadProcessConfig } from './load-process-config.js';
 
 // AC-01.1, AC-13.2 (UC-2, UC-13 — the load row), DC-1, DC-22 (the key), DC-28 (UC-15), ADR-0009, ADR-0010: the load of
 // the agents form and its checks against the engine's registries are pure functions, no doubles.
@@ -65,7 +69,7 @@ const leaves = (count: number): Record<string, unknown> =>
 
 describe('agents-form configuration load', () => {
   it('loads a valid agents-form configuration by the agents key', () => {
-    const loaded = loadAnyProcessConfig(agentsConfig(), TIMINGS);
+    const loaded = loadProcessConfig(agentsConfig(), TIMINGS);
 
     expect(loaded.ok).toBe(true);
     expect(loaded.ok && 'agents' in loaded.config ? Object.keys(loaded.config.agents) : []).toEqual([
@@ -113,14 +117,14 @@ describe('agents-form configuration load', () => {
         'it must exceed AGENT_DEADLINE_MARGIN_MS + AGENT_TURN_MS = 150000',
     ],
   ])('refuses %s, naming the agent and the field', (_case, data, path, message) => {
-    expect(loadAnyProcessConfig(data, TIMINGS)).toEqual({
+    expect(loadProcessConfig(data, TIMINGS)).toEqual({
       ok: false,
       rejection: { code: 'process_config_rejected', path, message },
     });
   });
 
   it.each([
-    ['an unknown key of the roles form', agentsConfig({ capabilities: ['plan'] }), ['capabilities']],
+    ['an unknown top-level key', agentsConfig({ capabilities: ['plan'] }), ['capabilities']],
     ['an unknown key of a definition', withAgent('lead', { roles: {} }), ['agents', 'lead', 'roles']],
     [
       'a prompt field outside the closed list',
@@ -147,8 +151,20 @@ describe('agents-form configuration load', () => {
       ['agents', 'lead', 'limits', 'deadlineMs'],
     ],
     ['finish listed in tools', withAgent('helper', { tools: ['finish'] }), ['agents', 'helper', 'tools']],
+    // Fix cycle 2: a name `gather` refuses must not load and stand in {{sources}}.
+    [
+      'a sourceId gather would refuse',
+      agentsConfig({ sources: [{ sourceId: 'jira:prod', toolName: 'search_logs' }] }),
+      ['sources', 0, 'sourceId'],
+    ],
+    [
+      'a toolName gather would refuse',
+      agentsConfig({ sources: [{ sourceId: 'fixture', toolName: 'search logs' }] }),
+      ['sources', 0, 'toolName'],
+    ],
+    ['a sourceId over 64 characters', agentsConfig({ sources: [{ sourceId: 'a'.repeat(65), toolName: 'search_logs' }] }), ['sources', 0, 'sourceId']],
   ])('refuses %s at its path', (_case, data, path) => {
-    const loaded = loadAnyProcessConfig(data, TIMINGS);
+    const loaded = loadProcessConfig(data, TIMINGS);
 
     expect(loaded.ok ? null : loaded.rejection.path).toEqual(path);
   });
@@ -158,12 +174,23 @@ describe('agents-form configuration load', () => {
     const data = withAgent('lead', bounds);
     const sixteen = { ...data, agents: { ...(data['agents'] as object), ...leaves(14) } };
 
-    expect(loadAnyProcessConfig(sixteen, TIMINGS).ok).toBe(true);
+    expect(loadProcessConfig(sixteen, TIMINGS).ok).toBe(true);
   });
 
-  it('loads the shipped v2 as before', () => {
-    expect(loadAnyProcessConfig(deepResearchProcessV2, TIMINGS)).toEqual(loadProcessConfig(deepResearchProcessV2));
-    expect(loadProcessConfig(deepResearchProcessV2).ok).toBe(true);
+  // UC-15, AC-19.1, FR-19: the agents form is the only form. Defect caught: a file without `agents` loads, silently.
+  it('refuses a file without agents with process_config_rejected', () => {
+    const withoutAgents = {
+      processId: 'deep-research',
+      version: 3,
+      goal: 'Find the cause of the incident.',
+      sources: [],
+      limits: { maxSteps: 12 },
+      answer: { sections: ['summary', 'established'] },
+    };
+
+    const loaded = loadProcessConfig(withoutAgents, TIMINGS);
+
+    expect(loaded).toMatchObject({ ok: false, rejection: { code: 'process_config_rejected' } });
   });
 });
 
@@ -180,14 +207,42 @@ const PLACED_FORM: ResultForm = {
 /** A form two definitions of one configuration may not share. */
 const ONCE_FORM: ResultForm = { ...TEXT_FORM, name: 'once', maxDefinitions: 1 };
 
-const REGISTRIES = {
-  tools: createToolRegistry(BASE_TOOLS),
-  forms: createResultFormRegistry([TEXT_FORM, PLACED_FORM, ONCE_FORM]),
+/** A tool with the mark that allows `{{sources}}`, beside the base tools. */
+const READS_SOURCES_TOOL: ToolRegistryEntry = {
+  name: 'reads_sources',
+  description: 'Reads the sources of this run',
+  argsSchema: z.strictObject({}),
+  effect: 'read',
+  resultMaxBytes: 1_024,
+  readsRunSources: true,
 };
+
+/** Bytes of the `sources` value of the one pair of `agentsConfig` by the filler of its argument schema. */
+let schemaFiller = 0;
+const fixtureArgs = (): SourceSchema => z.strictObject({}).describe('x'.repeat(schemaFiller));
+const resolveFixture: SourceRegistry['resolveTool'] = () => ({ adapter: {}, tool: { argsSchema: fixtureArgs() } }) as ResolvedSourceTool;
+
+const REGISTRIES = {
+  tools: createToolRegistry([...BASE_TOOLS, READS_SOURCES_TOOL]),
+  forms: createResultFormRegistry([TEXT_FORM, PLACED_FORM, ONCE_FORM]),
+  resolveTool: resolveFixture,
+  buildSourcesField,
+};
+
+/** The filler that makes the value of the one pair of `agentsConfig` exactly `bytes` long. */
+function setValueBytes(bytes: number): void {
+  schemaFiller = 0;
+  const empty = buildSourcesField({
+    configSources: [{ sourceId: 'fixture', toolName: 'search_logs' }],
+    runSources: ['fixture'],
+    resolveTool: resolveFixture,
+  });
+  schemaFiller = bytes - Buffer.byteLength(empty, 'utf8');
+}
 
 /** Loads `data` and checks it against the registries, as `createEngine` does. */
 function loadAgainstRegistries(data: unknown) {
-  const loaded = loadAnyProcessConfig(data, TIMINGS);
+  const loaded = loadProcessConfig(data, TIMINGS);
   if (!loaded.ok || !('agents' in loaded.config)) {
     throw new Error('the fixture must load as the agents form');
   }
@@ -274,6 +329,80 @@ describe('agents-form configuration against the registries', () => {
     expect(root?.path).toEqual(['agents', 'lead', 'limits', 'windowTokens']);
   });
 
+  // KD-9, DC-31, DC-1, UC-2 (design-agent-core.md, «Поле шаблона sources»). Defects caught: the limit checked after the
+  // window, so a value over the limit is reported at `limits.windowTokens`; the least view estimated without the value;
+  // the field accepted on a definition that cannot gather; a role prompt accepting it.
+  describe('the sources field', () => {
+    const withField = (patch: Record<string, unknown> = {}) =>
+      withAgent('helper', { prompt: 'Sources: {{sources}}', tools: ['reads_sources'], ...patch });
+    const leastOf = (message: string | undefined) => Number(/takes up to (\d+) tokens/.exec(message ?? '')?.[1]);
+
+    afterEach(() => {
+      schemaFiller = 0;
+    });
+
+    it('accepts the field on a definition with a tool marked as reading the run sources', () => {
+      expect(loadAgainstRegistries(withField())).toBeNull();
+    });
+
+    it('accepts the agents-form field at the schema, and the mark alone decides the definition', () => {
+      const fault = loadAgainstRegistries(withField({ tools: ['memory_read'] }));
+
+      expect(fault).toEqual({
+        code: 'process_config_rejected',
+        path: ['agents', 'helper', 'prompt'],
+        message: 'agent helper: {{sources}} needs a tool that reads the sources of the run',
+      });
+    });
+
+    it('accepts a longest value of 8192 bytes under a sufficient window', () => {
+      setValueBytes(8_192);
+
+      expect(loadAgainstRegistries(withField())).toBeNull();
+    });
+
+    it('refuses a value of 8193 bytes at the prompt, even when the window would refuse it too', () => {
+      setValueBytes(8_193);
+
+      expect(loadAgainstRegistries(withField(limitsWith({ windowTokens: 2_000 })))).toEqual({
+        code: 'process_config_rejected',
+        path: ['agents', 'helper', 'prompt'],
+        message: 'agent helper: the longest {{sources}} value takes 8193 bytes, over 8192',
+      });
+    });
+
+    it('measures the value on the sources the definition names, not on the pairs of the process', () => {
+      setValueBytes(8_193);
+
+      expect(loadAgainstRegistries(withField({ sources: [] }))).toBeNull();
+    });
+
+    it('adds the value at its limit to the least view', () => {
+      setValueBytes(8_192);
+      const narrow = limitsWith({ windowTokens: 2_000 });
+
+      const withValue = leastOf(loadAgainstRegistries(withField(narrow))?.message);
+      const withoutField = leastOf(loadAgainstRegistries(withField({ prompt: 'Sources: ', ...narrow }))?.message);
+
+      // 8192 bytes at 3 bytes per token, rounded up on either side of the sum.
+      expect([2_730, 2_731]).toContain(withValue - withoutField);
+    });
+
+    it('does not build the value for a template that does not name the field', () => {
+      const unbuildable = {
+        ...REGISTRIES,
+        buildSourcesField: () => {
+          throw new Error('the value must not be built');
+        },
+      };
+      const loaded = loadProcessConfig(withAgent('helper', { tools: ['reads_sources'] }), TIMINGS);
+      if (!loaded.ok) throw new Error('the fixture must load');
+
+      expect(checkAgentDefinitions(loaded.config, unbuildable)).toBeNull();
+    });
+
+  });
+
   it('refuses a tool registry entry whose result limit is over 16 KiB', () => {
     const [memoryRead] = BASE_TOOLS;
     if (memoryRead === undefined) throw new Error('the base tools are empty');
@@ -282,5 +411,80 @@ describe('agents-form configuration against the registries', () => {
       'tool memory_read allows a result of 16385 bytes, over 16384',
     );
     expect(createToolRegistry([{ ...memoryRead, resultMaxBytes: 16 * 1_024 }]).has('memory_read')).toBe(true);
+  });
+});
+
+// UC-5, AC-13.1, AC-13.2, DC-4 (design-research-flow.md, FR-13): the broken variants of the shipped v3 against the
+// engine's registries. Defects caught: a form of the research process without its placement constraint (`research_close`
+// off the root, `answer_draft` off `modelKnowledgeRoot`, a second checker, a checker or an answer agent with tools).
+describe('deep-research v3: the configuration is refused with the agent, the form and the constraint', () => {
+  const SHIPPED_REGISTRIES = {
+    tools: createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS]),
+    forms: createResultFormRegistry([TEXT_FORM, ...RESEARCH_FORMS]),
+    resolveTool: () => null,
+    buildSourcesField,
+  };
+  const shipped = deepResearchProcessV3 as { agents: Record<string, Record<string, unknown>> };
+  const v3With = (name: string, patch: Record<string, unknown>): Record<string, unknown> => ({
+    ...shipped,
+    agents: { ...shipped.agents, [name]: { ...shipped.agents[name], ...patch } },
+  });
+
+  it('refuses an unknown key of a definition at its path', () => {
+    const loaded = loadProcessConfig(v3With('planner', { roles: {} }), TIMINGS);
+
+    expect(loaded.ok ? null : loaded.rejection.path).toEqual(['agents', 'planner', 'roles']);
+  });
+
+  it.each([
+    [
+      'research_close on a definition that is not the root',
+      v3With('worker', { result: 'research_close' }),
+      ['agents', 'worker', 'result'],
+      'agent worker: form research_close may stand only on rootAgent (onlyOn)',
+    ],
+    [
+      'answer_draft on a definition that is not modelKnowledgeRoot',
+      v3With('planner', { result: 'answer_draft' }),
+      ['agents', 'planner', 'result'],
+      'agent planner: form answer_draft may stand only on modelKnowledgeRoot (onlyOn)',
+    ],
+    [
+      'two definitions with claim_assessment',
+      v3With('synthesis', { result: 'claim_assessment' }),
+      ['agents', 'verifier', 'result'],
+      'agent verifier: form claim_assessment is named by 2 definitions, at most 1 (maxDefinitions)',
+    ],
+    [
+      'a tool on the verifier',
+      v3With('verifier', { tools: ['memory_read'] }),
+      ['agents', 'verifier', 'tools'],
+      'agent verifier: form claim_assessment does not allow tool memory_read (toolsAllowed)',
+    ],
+    [
+      'a tool on the answer agent',
+      v3With('synthesis', { tools: ['memory_read'] }),
+      ['agents', 'synthesis', 'tools'],
+      'agent synthesis: form answer_draft does not allow tool memory_read (toolsAllowed)',
+    ],
+    // DC-14, moved from research-flow INT-1 C: on the shipped v3 only worker and subworker read the run's sources.
+    ...(['verifier', 'controller'] as const).map((agent): [string, Record<string, unknown>, (string | number)[], string] => [
+      `{{sources}} in the template of ${agent}`,
+      v3With(agent, { prompt: `${String(shipped.agents[agent]?.['prompt'])}
+{{sources}}` }),
+      ['agents', agent, 'prompt'],
+      `agent ${agent}: {{sources}} needs a tool that reads the sources of the run`,
+    ]),
+  ])('refuses %s', (_case, data, path, message) => {
+    const loaded = loadProcessConfig(data, TIMINGS);
+    if (!loaded.ok || !('agents' in loaded.config)) {
+      throw new Error('the variant must load as the agents form');
+    }
+
+    expect(checkAgentDefinitions(loaded.config, SHIPPED_REGISTRIES)).toEqual({
+      code: 'process_config_rejected',
+      path,
+      message,
+    });
   });
 });

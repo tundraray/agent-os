@@ -120,7 +120,7 @@ export async function closeTranscript(
   }
 }
 
-/** Role a transcript records: a process role, or `judge` for the self-check judge (design-self-check.md, Transcript). */
+/** Role a transcript records: `agent` for an agent turn, or `judge` for the self-check judge (design-self-check.md, Transcript). */
 export type TranscriptRole = ModelRole | 'judge';
 
 /**

@@ -1,10 +1,10 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
 import type { INestApplication, InjectionToken } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { DatabaseConnection } from '@agent-os/db';
+import { deepResearchProcessV3 } from '@agent-os/engine';
 import type { HandlerRegistry, Runtime } from '@agent-os/runtime';
 import type { Mastra } from '@mastra/core/mastra';
 import { AppModule } from '../../src/app.module.js';
@@ -53,6 +53,8 @@ import {
   createEngineScriptedRoles,
   ENGINE_FILES_VARIABLES,
   ENGINE_JOURNEY,
+  ENGINE_PATH_VARIABLE,
+  RESEARCH_FLOW_PATH,
   type StartFailedMessage,
 } from './engineScriptedRoles.js';
 import {
@@ -69,23 +71,24 @@ import { TEST_GROUP_TABLES } from './testGroupTables.js';
 /**
  * Entry of the chat-entry child process, run only compiled (`pnpm --filter api build:child` → `dist/test-child/`);
  * `dist/main.js` and `src/` never import it. It boots the real `AppModule` the way `main.ts` does (listen, then the
- * Mastra workers) with the scripted chat model and the test group table, in one of two modes:
+ * Mastra workers) with the scripted chat model, in one of two modes:
  *
  * - `E2E_CHAT_ENTRY_DOUBLES=1` (deep-research / chat-entry E2E-1): one `deepResearch` call, the engine port over the
- *   real runtime whose controller task the harness releases over IPC, no source adapter, and the threads' `Memory`
- *   wrapped for the append crash point of `CHAT_ENTRY_CRASH_AT` (the crash points of `chatEntryDoubles.ts`);
- * - `E2E_ENGINE_SCRIPTED_ROLES=1` (agent-quality / engine E2E-1): the real engine and the real fixture source; only
- *   `ENGINE_RESOLVE_MODEL` and `ENGINE_TOKEN_COUNTER` are the scripted roles of `engineScriptedRoles.ts`. The chat model
- *   makes the `deepResearch` call, then answers the plain turns of {@link ENGINE_JOURNEY}. With the variables of
- *   `ENGINE_FILES_VARIABLES` (agent-quality / engine E2E-2) `ENGINE_PROCESSES` holds only the configuration of that
- *   file and `ENGINE_GROUP_TABLES` the tables `calibrate` wrote into that directory, read as they are on disk, so the
- *   start check (`requireCalibration`, DC-2) runs on them.
+ *   real runtime whose controller task the harness releases over IPC, no source adapter, the test group table, and the
+ *   threads' `Memory` wrapped for the append crash point of `CHAT_ENTRY_CRASH_AT` (the crash points of
+ *   `chatEntryDoubles.ts`);
+ * - `E2E_ENGINE_SCRIPTED_ROLES=1` with `E2E_ENGINE_PATH=research-flow` (agent-runtime / research-flow E2E-2): the server of
+ *   the shipped v3 as it ships — `EngineModule`'s default `ENGINE_PROCESSES` and `ENGINE_GROUP_TABLES` and the tables of
+ *   `RESEARCH_GROUP_TABLES_DIR` beside them; only `ENGINE_RESOLVE_MODEL` and `ENGINE_TOKEN_COUNTER` are the scripted agents
+ *   of `engineScriptedRoles.ts`. Only `E2E_ENGINE_PROCESS_FILE`, when given, replaces the configuration; the chat model
+ *   calls `deepResearch` without a budget, so the launch takes the budget of the loaded configuration, then answers the
+ *   plain turns of {@link ENGINE_JOURNEY}.
  *
  * It reads only its environment: `DATABASE_URL` (its own scratch database), the Runtime Settings, the part's settings,
- * the mode, the engine files and `CHAT_ENTRY_CRASH_AT`.
+ * the mode, the process file and `CHAT_ENTRY_CRASH_AT`.
  *
  * IPC: `ready` with the port once the api accepts requests; `release` lets an investigation's controller succeed (the
- * engine double) or the held synthesis call answer (the scripted roles); `chatCalls` sends back the input of every
+ * engine double); `chatCalls` sends back the input of every
  * chat model call; `stop` closes the app and exits 0. A failed start sends `startFailed` with the error's code and
  * message, then exits 1.
  */
@@ -94,7 +97,7 @@ import { TEST_GROUP_TABLES } from './testGroupTables.js';
 const RESEARCH_GOAL = 'Почему падали платежи после релиза?';
 const RESEARCH_TOKEN_BUDGET = 400_000;
 
-type ChildMode = 'engine-double' | 'scripted-roles';
+type ChildMode = 'engine-double' | 'research-flow';
 
 /** IPC of the harness to the child, in either mode. */
 type ChildRequest = HarnessMessage | ChatCallsRequest;
@@ -106,46 +109,25 @@ function send(message: ReadyMessage | ChatCallsMessage): void {
 
 function modeOf(env: NodeJS.ProcessEnv): ChildMode {
   const doubles = env.E2E_CHAT_ENTRY_DOUBLES === '1';
-  const roles = env.E2E_ENGINE_SCRIPTED_ROLES === '1';
-  if (doubles === roles) {
+  const researchFlow =
+    env.E2E_ENGINE_SCRIPTED_ROLES === '1' &&
+    env[ENGINE_PATH_VARIABLE] === RESEARCH_FLOW_PATH;
+  if (doubles === researchFlow) {
     throw new Error(
       'The chat-entry child runs in exactly one mode: set E2E_CHAT_ENTRY_DOUBLES=1 (engine double) or ' +
-        'E2E_ENGINE_SCRIPTED_ROLES=1 (real engine, scripted roles)',
+        `E2E_ENGINE_SCRIPTED_ROLES=1 with ${ENGINE_PATH_VARIABLE}=${RESEARCH_FLOW_PATH} (real engine, scripted agents)`,
     );
   }
-  return doubles ? 'engine-double' : 'scripted-roles';
+  return doubles ? 'engine-double' : 'research-flow';
 }
 
-/**
- * The engine's process configurations and group tables: the files of {@link ENGINE_FILES_VARIABLES} when both are set
- * (in the scripted-roles mode only), otherwise the shipped configuration and the test table.
- */
-function engineFilesOf(
-  env: NodeJS.ProcessEnv,
-  mode: ChildMode,
-): { processes: unknown[]; groupTables: unknown[] } | null {
+const readJson = (file: string): unknown =>
+  JSON.parse(readFileSync(file, 'utf8')) as unknown;
+
+/** The configuration of the path `research-flow`: the file when one is given, otherwise null — the server's own. */
+function researchFlowFile(env: NodeJS.ProcessEnv): unknown {
   const processFile = env[ENGINE_FILES_VARIABLES.processFile] ?? '';
-  const groupTablesDir = env[ENGINE_FILES_VARIABLES.groupTablesDir] ?? '';
-  if (processFile === '' && groupTablesDir === '') return null;
-  if (
-    processFile === '' ||
-    groupTablesDir === '' ||
-    mode !== 'scripted-roles'
-  ) {
-    throw new Error(
-      `The chat-entry child loads engine files only in the scripted-roles mode and with both ` +
-        `${ENGINE_FILES_VARIABLES.processFile} and ${ENGINE_FILES_VARIABLES.groupTablesDir}`,
-    );
-  }
-  const readJson = (file: string): unknown =>
-    JSON.parse(readFileSync(file, 'utf8')) as unknown;
-  return {
-    processes: [readJson(processFile)],
-    groupTables: readdirSync(groupTablesDir)
-      .filter((name) => name.endsWith('.json'))
-      .sort()
-      .map((name) => readJson(join(groupTablesDir, name))),
-  };
+  return processFile === '' ? null : readJson(processFile);
 }
 
 function scriptChat(chatModel: ScriptedChatModel, mode: ChildMode): void {
@@ -159,10 +141,7 @@ function scriptChat(chatModel: ScriptedChatModel, mode: ChildMode): void {
     return;
   }
   chatModel.script(
-    deepResearchCallStep({
-      goal: ENGINE_JOURNEY.goal,
-      tokenBudget: ENGINE_JOURNEY.tokenBudget,
-    }).step,
+    deepResearchCallStep({ goal: ENGINE_JOURNEY.goal }).step,
     ...ENGINE_JOURNEY.replies.map((reply) => textStep(reply)),
   );
 }
@@ -174,8 +153,9 @@ async function main(): Promise<INestApplication> {
   scriptChat(chatModel, mode);
   let engine: ChildEngine | undefined;
   let resolveLaunches: (() => ResearchLaunchService) | undefined;
-  const roles = createEngineScriptedRoles();
-  const engineFiles = engineFilesOf(process.env, mode);
+  const researchFlow = mode === 'research-flow';
+  const editedV3 = researchFlow ? researchFlowFile(process.env) : null;
+  const roles = createEngineScriptedRoles(editedV3 ?? deepResearchProcessV3);
   const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
     .useFactory({
@@ -199,11 +179,12 @@ async function main(): Promise<INestApplication> {
       inject: [ConfigService],
     })
     .overrideProvider(THREAD_TITLE_AGENT)
-    .useValue(createThreadTitleAgent(titleModel().model))
-    .overrideProvider(ENGINE_GROUP_TABLES)
-    .useValue(engineFiles?.groupTables ?? TEST_GROUP_TABLES);
-  if (engineFiles !== null) {
-    builder.overrideProvider(ENGINE_PROCESSES).useValue(engineFiles.processes);
+    .useValue(createThreadTitleAgent(titleModel().model));
+  if (!researchFlow) {
+    builder.overrideProvider(ENGINE_GROUP_TABLES).useValue(TEST_GROUP_TABLES);
+  }
+  if (editedV3 !== null) {
+    builder.overrideProvider(ENGINE_PROCESSES).useValue([editedV3]);
   }
   const moduleRef = await (
     mode === 'engine-double'
@@ -249,10 +230,8 @@ async function main(): Promise<INestApplication> {
   }
   const controller = engine;
   process.on('message', (message: ChildRequest) => {
-    if (message.kind === 'release') {
-      if (controller) controller.release(message.investigationId);
-      else roles.release();
-    }
+    if (message.kind === 'release')
+      controller?.release(message.investigationId);
     if (message.kind === 'chatCalls') {
       send({
         kind: 'chatCalls',

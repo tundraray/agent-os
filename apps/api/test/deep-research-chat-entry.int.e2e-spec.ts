@@ -31,10 +31,10 @@
 //
 // Proven elsewhere (not in this file; see the "AC -> proving test" table in the generation report and "Proven at unit level" at the end of this file):
 // - the runtime primitives (cancel idempotence, purge of investigations, event delivery, EventConsumer contract) - packages/runtime and research-runtime-wiring.e2e-spec.ts
-// - "after cancel no new model call and no source call" (AC-01.4, the second half of AC-21.1) - engine INT-2 L5 (packages/engine/test/deep-research-engine.int.e2e-spec.ts)
+// - "after cancel no new model call and no source call" (AC-01.4, the second half of AC-21.1) - agent-core INT-3 A (packages/engine/test/agent-runtime-agent-core.int.e2e-spec.ts)
 // - the deletion order of ThreadsService.delete and owner isolation of the runtime - research-runtime-wiring.e2e-spec.ts INT-5; here only what the part adds to it (the `purge` hook of launch rows, T4)
 // - restart of the process between steps (NFR-03, UC-5, UC-E6) - deep-research-chat-entry.e2e-spec.ts
-// - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (INT-1 C7, INT-2 L6, loader table); here only what the part does with the mode the engine reports
+// - what an engine without sources does (plan then one synthesis, claims as `assumed`, the single start warning, the mode kept across a rebuild) - packages/engine (research-flow INT-1 B, INT-2 F, loader table); here only what the part does with the mode the engine reports
 // - AC-26.1, service side (the process starts with no fixture package and `connectedSources` is empty): the api composition - extends apps/api/test/sources-wiring.e2e-spec.ts (named for the plan; not part of this skeleton set). The chat side of AC-26.1
 //   (chat accepts messages, the research is proposed and launched, and the part adds no source check) is A6 below
 // - AC-26.2, AC-26.3 (the start warning in the log): engine unit loader table; the log of a real boot is read by hand in L1-7 (docs/features/deep-research/chat-entry/l1-browser-scenarios.md)
@@ -111,8 +111,8 @@ import {
 const RESEARCH_TURN_MODEL = 'anthropic/claude-haiku-5-5';
 /** The scripted chat model's id: the model of ordinary turns. */
 const CHAT_MODEL = 'mock/chat';
-/** `investigationTokens.default` of the shipped deep-research configuration. */
-const DEFAULT_TOKEN_BUDGET = 300_000;
+/** `investigationTokens.default` of the shipped deep-research configuration, v3. */
+const DEFAULT_TOKEN_BUDGET = 800_000;
 /** Above `high`: a research turn must still run with `high` (Haiku 5.5 turns thinking off only up to it, KD-9). */
 const REASONING_EFFORT = 'max';
 /** Long enough for a chat turn with the real Memory and lock; not a latency check. */

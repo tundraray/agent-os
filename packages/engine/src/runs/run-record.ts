@@ -1,11 +1,16 @@
 import { createHash } from 'node:crypto';
 import { type Provenance, ProvenanceSchema } from '@agent-os/contracts';
-import { type Database, researchClaims, researchEvidence, researchLlmCalls, researchTasks } from '@agent-os/db';
-import { asc, eq } from 'drizzle-orm';
+import {
+  type Database,
+  researchAgentRuns,
+  researchClaims,
+  researchEvidence,
+  researchLlmCalls,
+} from '@agent-os/db';
+import { type AnyColumn, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { VERIFY_WORKFLOW } from '../capabilities/verify.js';
-import type { AnyProcessConfig } from '../config/process-config.schema.js';
-import { controllerRepository, type DecisionRow } from '../controller/decisions.repository.js';
+import { type AgentTree, readAgentTree } from '../agents/agent-tree.js';
+import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import {
   frozenProcessConfig,
   type InvestigationView,
@@ -34,21 +39,35 @@ export interface RunRecord {
   readonly answer: InvestigationView['answer'];
   /** The latest revision of each claim, in the order the claims were first written. */
   readonly claims: readonly RunRecordClaim[];
-  /** Every recorded controller output by step and call, attempts before a task restart included. */
-  readonly decisions: readonly RunRecordDecision[];
   /** By time, then by identifier. */
   readonly evidence: readonly RunRecordEvidence[];
-  readonly usage: InvestigationView['usage'];
+  readonly usage: RunRecordUsage;
   /** The ledger rows by time, then by identifier. */
   readonly calls: readonly RunRecordCall[];
+  /** The agent tree with every tool call, its outcome and refusal reason. */
+  readonly agentTree: AgentTree;
+}
+
+type RunRecordUsage = InvestigationView['usage'] & {
+  /** The ledger by agent and model, in the order of the agent names, then the models. */
+  readonly byAgentAndModel: readonly AgentModelUsage[];
+};
+
+/** Calls of one agent's runs on one model, as the ledger recorded them. */
+interface AgentModelUsage {
+  readonly agentName: string;
+  readonly model: string;
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly costUsd: number;
 }
 
 interface RunRecordConfig {
-  /**
-   * The frozen configuration of the investigation (DC-15), of either form (DC-29): a consumer that reads the fields of
-   * the roles form narrows it by the `agents` key.
-   */
-  readonly processConfig: AnyProcessConfig;
+  /** The frozen configuration of the investigation (DC-15, DC-29). */
+  readonly processConfig: AgentProcessConfig;
   /** The first 12 hexadecimal characters of SHA-256 of the configuration with its keys sorted at every depth. */
   readonly fingerprint: string;
 }
@@ -76,28 +95,7 @@ interface RunRecordClaim {
    * reason (`pointer_invalid`, `needs_narrowing`); null on a revision no check wrote.
    */
   readonly assessment?: unknown;
-  /** The check task whose transcripts hold the verifier call; null when the latest revision is not a check's. */
-  readonly checkTaskId?: string | null;
 }
-
-interface RunRecordDecisionBase {
-  readonly decisionId: string;
-  readonly step: number;
-  readonly callIndex: number;
-  /** The controller model, or code without a model call (KD-8). */
-  readonly decidedBy: string;
-  readonly decidedAt: Date;
-}
-
-type RunRecordDecision =
-  | (RunRecordDecisionBase & { readonly status: 'accepted'; readonly kind: string })
-  | (RunRecordDecisionBase & {
-      readonly status: 'rejected';
-      /** Null when the model named no recognised kind. */
-      readonly kind: string | null;
-      /** The code from the engine's closed list of rejection reasons. */
-      readonly rejectionReason: string;
-    });
 
 interface RunRecordEvidence {
   readonly evidenceId: string;
@@ -114,6 +112,10 @@ interface RunRecordCall {
   readonly status: string;
   readonly createdAt: Date;
   readonly closedAt: Date | null;
+  /** The agent of the run that made the call; null for a call outside an agent run. */
+  readonly agentName: string | null;
+  /** The run's task, `AgentTreeRun.runTaskId`; null for a call outside an agent run. */
+  readonly agentRunId: string | null;
 }
 
 export type ReadRunRecordResult =
@@ -143,20 +145,21 @@ export async function readRunRecord(
   if (runStatus === undefined) {
     return NOT_FOUND;
   }
-  const [recorded, usageRows, claims, decisions, evidence, calls] = await Promise.all([
-    controllerRepository.readRun(db, investigationId),
+  const processConfig = frozenProcessConfig(runStatus.run.processConfig);
+  const [recorded, usageRows, byAgentAndModel, claims, evidence, calls, treeRead] = await Promise.all([
+    engineRunsRepository.readRun(db, investigationId),
     usageRepository.byRoleAndModel(db, investigationId),
+    usageByAgentAndModel(db, investigationId),
     latestClaims(db, investigationId),
-    controllerRepository.decisionsOf(db, investigationId),
     evidenceOf(db, investigationId),
     callsOf(db, investigationId),
+    readAgentTree(db, { investigationId, resourceId: ownerId }),
   ]);
-  if (recorded === undefined) {
+  if (recorded === undefined || treeRead.outcome === 'rejected') {
     // Deleted between the two reads.
     return NOT_FOUND;
   }
   const view = toInvestigationView(runStatus, usageRows);
-  const processConfig = frozenProcessConfig(runStatus.run.processConfig);
   return {
     outcome: 'found',
     record: {
@@ -168,10 +171,10 @@ export async function readRunRecord(
       sourceSnapshots: SourceSnapshotsSchema.parse(runStatus.run.sourceSnapshots),
       answer: view.answer,
       claims,
-      decisions: decisions.map(toDecision),
       evidence,
-      usage: view.usage,
+      usage: { ...view.usage, byAgentAndModel },
       calls,
+      agentTree: treeRead.tree,
     },
   };
 }
@@ -180,7 +183,7 @@ export async function readRunRecord(
  * The fingerprint a run record names its configuration by. Stable over the key order a `jsonb` column returns: the same
  * configuration always gives the same fingerprint, so a caller without a record can name a loaded configuration the same way.
  */
-export function configFingerprint(config: AnyProcessConfig): string {
+export function configFingerprint(config: AgentProcessConfig): string {
   return createHash('sha256')
     .update(JSON.stringify(sortedKeys(config)), 'utf8')
     .digest('hex')
@@ -211,40 +214,15 @@ async function latestClaims(db: Database, investigationId: string): Promise<RunR
       claimType: researchClaims.claimType,
       confidence: researchClaims.confidence,
       assessment: researchClaims.assessment,
-      taskId: researchClaims.taskId,
-      workflowType: researchTasks.workflowType,
     })
     .from(researchClaims)
-    .innerJoin(researchTasks, eq(researchTasks.taskId, researchClaims.taskId))
     .where(eq(researchClaims.investigationId, investigationId))
     .orderBy(asc(researchClaims.seq));
   const latest = new Map<string, RunRecordClaim>();
-  for (const { taskId, workflowType, ...revision } of revisions) {
-    latest.set(revision.claimId, {
-      ...revision,
-      atoms: AtomsSchema.parse(revision.atoms),
-      checkTaskId: workflowType === VERIFY_WORKFLOW ? taskId : null,
-    });
+  for (const revision of revisions) {
+    latest.set(revision.claimId, { ...revision, atoms: AtomsSchema.parse(revision.atoms) });
   }
   return [...latest.values()];
-}
-
-/** The table's CHECKs tie the kind to `accepted` and the reason to `rejected`; a row breaking them is a defect. */
-function toDecision(row: DecisionRow): RunRecordDecision {
-  const base: RunRecordDecisionBase = {
-    decisionId: row.decisionId,
-    step: row.step,
-    callIndex: row.callIndex,
-    decidedBy: row.decidedBy,
-    decidedAt: row.createdAt,
-  };
-  if (row.status === 'accepted' && row.kind !== null) {
-    return { ...base, status: 'accepted', kind: row.kind };
-  }
-  if (row.status === 'rejected' && row.rejectionReason !== null) {
-    return { ...base, status: 'rejected', kind: row.kind, rejectionReason: row.rejectionReason };
-  }
-  throw new Error(`research_decisions row ${row.decisionId} breaks the status, kind and reason rule`);
 }
 
 async function evidenceOf(db: Database, investigationId: string): Promise<RunRecordEvidence[]> {
@@ -260,6 +238,29 @@ async function evidenceOf(db: Database, investigationId: string): Promise<RunRec
   return rows.map((row) => ({ ...row, provenance: ProvenanceSchema.parse(row.provenance) }));
 }
 
+const summedTokens = (column: AnyColumn) => sql<number>`coalesce(sum(${column}), 0)::int`;
+
+/** The ledger rows of the agent runs: a row's usage is null while reserved or unreported, a call with no tokens and no cost. */
+async function usageByAgentAndModel(db: Database, investigationId: string): Promise<AgentModelUsage[]> {
+  const rows = await db
+    .select({
+      agentName: researchAgentRuns.agentName,
+      model: researchLlmCalls.model,
+      calls: sql<number>`count(*)::int`,
+      inputTokens: summedTokens(researchLlmCalls.inputTokens),
+      outputTokens: summedTokens(researchLlmCalls.outputTokens),
+      cacheReadTokens: summedTokens(researchLlmCalls.cacheReadTokens),
+      cacheWriteTokens: summedTokens(researchLlmCalls.cacheWriteTokens),
+      costUsd: sql<string>`coalesce(sum(${researchLlmCalls.costUsd}), 0)::text`,
+    })
+    .from(researchLlmCalls)
+    .innerJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchLlmCalls.taskId))
+    .where(eq(researchLlmCalls.investigationId, investigationId))
+    .groupBy(researchAgentRuns.agentName, researchLlmCalls.model)
+    .orderBy(asc(researchAgentRuns.agentName), asc(researchLlmCalls.model));
+  return rows.map((row) => ({ ...row, costUsd: Number(row.costUsd) }));
+}
+
 function callsOf(db: Database, investigationId: string): Promise<RunRecordCall[]> {
   return db
     .select({
@@ -269,8 +270,11 @@ function callsOf(db: Database, investigationId: string): Promise<RunRecordCall[]
       status: researchLlmCalls.status,
       createdAt: researchLlmCalls.createdAt,
       closedAt: researchLlmCalls.closedAt,
+      agentName: researchAgentRuns.agentName,
+      agentRunId: researchAgentRuns.taskId,
     })
     .from(researchLlmCalls)
+    .leftJoin(researchAgentRuns, eq(researchAgentRuns.taskId, researchLlmCalls.taskId))
     .where(eq(researchLlmCalls.investigationId, investigationId))
     .orderBy(asc(researchLlmCalls.createdAt), asc(researchLlmCalls.callId));
 }

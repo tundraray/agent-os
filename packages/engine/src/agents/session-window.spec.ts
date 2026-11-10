@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { AgentDefinition } from '../config/agent-config.schema.js';
+import { type RunFrame, sessionViewOf } from './run-session.js';
 import {
   buildSessionView,
   DATA_PREAMBLE,
@@ -103,6 +105,29 @@ describe('session view by the window rule', () => {
     expect(newest).toMatch(
       /\n\[truncated: \d+ of 2000 characters of memory_read kept; read it again with memory_read\]$/,
     );
+  });
+
+  // DC-32 (design-agent-core.md, «Транскрипт»): the read takes the system block as it went to the model. Defects caught:
+  // stage 4 measured by today's template instead of the recorded block; the field substituted again at the read.
+  it('builds the view of a recorded turn from its system block, which sets the size of stage 4, without substitution', () => {
+    const recordedInstructions = `recorded {{sources}} ${'r'.repeat(2_400)}`;
+    const definition = { prompt: 'Today: {{sources}}', limits: { windowTokens: sizeAt(3) - 300, marginTokens: 0 } } as AgentDefinition;
+    const viewAgainst = (recorded: string) =>
+      sessionViewOf({
+        frame: { config: { goal: 'g', answer: { sections: [] } }, query: 'q', sourceMode: 'sources', snapshot: {} } as unknown as RunFrame,
+        agentName: 'helper',
+        definition,
+        tools: [],
+        session: { opening: { kind: 'assignment', text: 'Find why.' }, messages: SESSION, turnsTaken: 6, notices: new Set() },
+        heldStage: 4,
+        system: { recordedInstructions: recorded },
+      });
+
+    const recorded = viewAgainst(recordedInstructions);
+
+    expect(recorded.instructions).toBe(recordedInstructions);
+    const keptOf = (view: ReturnType<typeof viewAgainst>) => Number(/\[truncated: (\d+) of 2000/.exec(JSON.stringify(toolOutputs(view).at(-1)))?.[1]);
+    expect(keptOf(recorded)).toBeLessThan(keptOf(viewAgainst('short')));
   });
 
   it('holds a reached stage although the session fits at a lower one', () => {

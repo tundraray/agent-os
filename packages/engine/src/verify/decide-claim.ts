@@ -72,7 +72,7 @@ function independentCount(records: readonly PointedRecord[]): number {
  * (design-engine.md, «Как утверждение получает статус», steps 3–6, and «Как считается группа уверенности»). The status
  * depends on the assessment only; the atom check is a feature of the profile (KD-2, Invariant 1). It reads only the
  * assessment's fields, record numbers and typed record fields; the claim text and record text are never read.
- * `research.verify` and calibration both call it, so calibration measures the rule the engine decides by.
+ * The closure of `claim_assessment` and calibration both call it, so calibration measures the rule the engine decides by.
  */
 export function decideClaim(input: DecideClaimInput): ClaimDecision {
   const records = pointedRecords(input.pointer, input.pages);

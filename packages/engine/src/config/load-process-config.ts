@@ -1,21 +1,16 @@
 import type { z } from 'zod';
 import {
+  type AgentProcessConfig,
   AgentProcessConfigSchema,
   type AgentTimings,
   checkAgentReferences,
-  hasAgentsKey,
-} from './agent-config.schema.js';
-import {
-  type AnyProcessConfig,
-  ProcessConfigSchema,
-  type ProcessConfig,
   type ProcessConfigRejection,
-} from './process-config.schema.js';
+} from './agent-config.schema.js';
 
-export type { ProcessConfig, ProcessConfigRejection };
+export type { ProcessConfigRejection };
 
 export type LoadProcessConfigResult =
-  | { readonly ok: true; readonly config: ProcessConfig }
+  | { readonly ok: true; readonly config: AgentProcessConfig }
   | { readonly ok: false; readonly rejection: ProcessConfigRejection };
 
 /** An unknown key is reported at its own path, not at the object that holds it. */
@@ -27,18 +22,6 @@ function rejectionOf(issue: z.core.$ZodIssue): ProcessConfigRejection {
   return { code: 'process_config_rejected', path, message: issue.message };
 }
 
-/**
- * Checks data with the schema `createEngine` uses (AC-12.2); shipped configurations take the same path (AC-12.3).
- * The first fault is returned with its path.
- */
-export function loadProcessConfig(data: unknown): LoadProcessConfigResult {
-  const parsed = ProcessConfigSchema.safeParse(data);
-  if (parsed.success) {
-    return { ok: true, config: parsed.data };
-  }
-  return { ok: false, rejection: firstRejection(parsed.error) };
-}
-
 function firstRejection(error: z.ZodError): ProcessConfigRejection {
   const [firstIssue] = error.issues;
   if (firstIssue === undefined) {
@@ -47,19 +30,12 @@ function firstRejection(error: z.ZodError): ProcessConfigRejection {
   return rejectionOf(firstIssue);
 }
 
-export type LoadAnyProcessConfigResult =
-  | { readonly ok: true; readonly config: AnyProcessConfig }
-  | { readonly ok: false; readonly rejection: ProcessConfigRejection };
-
 /**
- * Loads either form (KD-7, ADR-0009): data with the `agents` key goes through the strict agents schema and the checks
- * across its definitions, any other data through `loadProcessConfig` unchanged. The `timings` bound a definition's
- * `deadlineMs` (DC-1).
+ * Checks data with the strict schema of a process configuration and the checks across its definitions (KD-7,
+ * ADR-0009); shipped configurations take the same path (AC-12.3). The `timings` bound a definition's `deadlineMs`
+ * (DC-1). The first fault is returned with its path.
  */
-export function loadAnyProcessConfig(data: unknown, timings: AgentTimings): LoadAnyProcessConfigResult {
-  if (!hasAgentsKey(data)) {
-    return loadProcessConfig(data);
-  }
+export function loadProcessConfig(data: unknown, timings: AgentTimings): LoadProcessConfigResult {
   const parsed = AgentProcessConfigSchema.safeParse(data);
   if (!parsed.success) {
     return { ok: false, rejection: firstRejection(parsed.error) };

@@ -11,7 +11,7 @@
 // Environment: each row in its own scratch database created with CREATE DATABASE and dropped afterwards; the refusal rows run the api from
 // `dist/main.js`. The "api starts" row runs the test entry `test/support/apiBootChildMain.ts` (`dist/test-child/`): it starts the api as
 // `main.ts` does, with the test group table in `ENGINE_GROUP_TABLES`, because the server start requires the table of its verifier
-// (`requireCalibration`, DC-2) and the shipped one comes from the owner's calibration. The refusal rows stay on `dist/main.js`: the
+// (`Engine.checkCalibration`, DC-10) and the shipped one comes from the owner's calibration. The refusal rows stay on `dist/main.js`: the
 // migration check of `ResearchModule.onModuleInit` refuses before `EngineModule` looks for a table. `pnpm --filter api test:e2e:runtime`
 // builds both first. Migrations come from the entry of @agent-os/db, not from a path into the package (ADR-0004).
 

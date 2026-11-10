@@ -1,8 +1,8 @@
 import { checkPointer } from './pointer.js';
 
-// DC-6 (FR-11, the rule half; the ownership half is research.verify, T2.4): a pointer names 1 to 20 records, each an
+// DC-6 (FR-11, the rule half; the ownership half is the prologue of claim_assessment): a pointer names 1 to 20 records, each an
 // integer position within its own page, none twice. Defect caught: a claim whose pointer names a record that is not on
-// its page, a fractional number, nothing, more than 20 records or one record twice reaches the verifier call.
+// its page, a fractional number, nothing, more than 20 records or one record twice reaches the checker agent.
 
 const PAGE_SIZES = new Map([
   ['p1', 3],

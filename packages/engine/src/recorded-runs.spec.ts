@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import type { FormBindings } from './agents/result-forms.js';
+import { CLAIM_ASSESSMENT_FORM, type ClaimAssessmentPrologueInput } from './research-flow/forms/claim-assessment.js';
 import { checkAtoms } from './verify/check-atoms.js';
 import { ClaimAssessmentSchema } from './verify/claim-assessment.js';
 import { decideClaim } from './verify/decide-claim.js';
@@ -51,11 +53,6 @@ const EXPECTED = [
 ].map((row) => ({ ...row, status: 'supported', reason: null }));
 
 describe('recorded runs of 2026-11-08', () => {
-  // Keeps the red of UC-R1 below a red of the rule, not of the fixture: the recorded claims are the expected ones.
-  it('fixture holds the claims UC-R1 expects', () => {
-    expect(fixture.claims.map((claim) => claim.claimId)).toEqual(EXPECTED.map((row) => row.claimId));
-  });
-
   it('UC-R1: every claim the verifier confirmed over count groups is supported, its time atom judged by the group start', () => {
     const results = fixture.claims.map((claim) => {
       const pages = new Map(Object.entries(claim.pages));
@@ -78,5 +75,49 @@ describe('recorded runs of 2026-11-08', () => {
     });
 
     expect(results).toEqual(EXPECTED);
+  });
+
+  // UC-R1, AC-15.1. Defect caught: the form's prologue and closure part from the recorded statuses on the recorded data.
+  it('UC-R1: the six claims pass the prologue and the closure of claim_assessment with the recorded statuses', () => {
+    const bindings: FormBindings = { groupTables: { kind: 'definition_pair_table', value: [] } };
+    const results = fixture.claims.map((claim) => {
+      const prologueInput: ClaimAssessmentPrologueInput = {
+        kind: 'claim',
+        claimId: claim.claimId,
+        text: claim.text,
+        atoms: claim.atoms,
+        pages: claim.pointer.map(({ pageId, records }) => ({
+          pageId,
+          source: 'recorded',
+          tool: 'aggregate_logs',
+          args: {},
+          snapshot: 'recorded',
+          complete: true,
+          records: records.map((number) => claim.pages[pageId]![number]),
+        })),
+        agentFingerprint: '000000000000',
+        definitionMemoryFingerprint: '111111111111',
+      };
+      const built = CLAIM_ASSESSMENT_FORM.prologue!.build(prologueInput, bindings);
+      const decided = CLAIM_ASSESSMENT_FORM.closure!.evaluate({ result: claim.assessment, prologueInput, collected: null }, bindings);
+      const timeAtom = claim.atoms.find((atom) => atom.kind === 'interval')?.value;
+      const accepted = z
+        .object({
+          kind: z.literal('accept'),
+          result: z.object({ claimId: z.string(), status: z.string() }),
+          revision: z.object({ atoms: z.array(z.object({ value: z.string(), verdict: z.string() })) }),
+        })
+        .parse(decided);
+      return {
+        started: built.kind,
+        claimId: accepted.result.claimId,
+        timeAtom,
+        timeVerdict: accepted.revision.atoms.find((atom) => atom.value === timeAtom)?.verdict,
+        status: accepted.result.status,
+        reason: null,
+      };
+    });
+
+    expect(results).toEqual(EXPECTED.map((row) => ({ started: 'start', ...row })));
   });
 });
