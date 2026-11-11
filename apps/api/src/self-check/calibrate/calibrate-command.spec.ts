@@ -66,9 +66,7 @@ describe('executeCalibrateCommand: refusals before the first call', () => {
 
   // AC-16.2, Flow 4: the agents form is taken from `--config`. Defects caught: an agents-form file refused by the roles
   // schema; `user` records reaching the turns; a configuration with no checker agent calibrated anyway.
-  // Both cases build the smoke set's calibration pairs from full synthetic datasets (~1.3 s locally); CI runners need
-  // more than the 5 s default.
-  describe('with an agents-form configuration', { timeout: 30_000 }, () => {
+  describe('with an agents-form configuration', () => {
     const V3 = deepResearchProcessV3 as {
       agents: Record<string, Record<string, unknown>>;
     };
