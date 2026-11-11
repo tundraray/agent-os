@@ -111,7 +111,7 @@ describe('корень по режиму', () => {
 // its forced end before its task deadline (the margin dropped); a repeated start after a change of the margin proposes
 // another root task instead of being `subscribed` (the margin in the key).
 describe('срок корня во входе задачи', () => {
-  // Only the keys `rootTaskSpec` reads: the root, its deadline and the process sources.
+  // Only the keys `rootTaskSpec` reads: the root and its deadline.
   const config = {
     processId: 'agent-probe',
     rootAgent: 'lead',
@@ -132,6 +132,7 @@ describe('срок корня во входе задачи', () => {
       tokenBudget: 300_000,
       query: 'why do the builds fail',
       sourceMode: 'model_knowledge',
+      catalog: [],
       createdAt: new Date('2026-11-08T10:00:00.000Z'),
     });
     const input = spec.input as AgentTaskInput;

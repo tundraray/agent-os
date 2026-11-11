@@ -6,6 +6,7 @@ import { type AgentDefinition, type AgentProcessConfig, AgentProcessConfigSchema
 import { renderPromptTemplate } from '../config/prompt-template.js';
 import type { SourceMode } from '../config/source-check.js';
 import type { AgentToolCall, AgentToolDefinition, JsonValue } from '../model/role-agent.js';
+import type { SourceFieldValues } from './definition-check.js';
 import { type SnapshotEntry, SnapshotSchema } from './fingerprint.js';
 import {
   buildSessionView,
@@ -181,10 +182,11 @@ export function toRunSession(rows: readonly SessionMessageRow[], calls: readonly
 }
 
 /**
- * Where the system block of a view comes from: a turn renders the definition's prompt with the value of `{{sources}}`,
- * and a recorded turn keeps the block it went to the model with, so no field is substituted again at the read.
+ * Where the system block of a view comes from: a turn renders the definition's prompt with the values of `{{sources}}`
+ * and `{{catalog}}`, and a recorded turn keeps the block it went to the model with, so no field is substituted again at
+ * the read.
  */
-export type ViewSystem = { readonly sourcesValue: string } | { readonly recordedInstructions: string };
+export type ViewSystem = { readonly fieldValues: SourceFieldValues } | { readonly recordedInstructions: string };
 
 /**
  * The view of a run's next turn by the window rule (KD-5), from the held stage: the definition's prompt rendered for the
@@ -216,7 +218,8 @@ export function sessionViewOf(input: {
               query: frame.query,
               sourceMode: frame.sourceMode,
               answerSections: frame.config.answer.sections.join(', '),
-              sources: system.sourcesValue,
+              sources: system.fieldValues.sources,
+              catalog: system.fieldValues.catalog,
             },
           ),
         }),

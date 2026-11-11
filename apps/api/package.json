@@ -24,6 +24,7 @@
     "test:e2e:chat-entry": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/deep-research-chat-entry",
     "test:e2e:lifecycle": "nest build && vitest run --config ./vitest.config.e2e.ts test/agent-quality-lifecycle",
     "test:e2e:research-flow": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/agent-runtime-research-flow",
+    "test:e2e:catalog-planning": "nest build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts test/source-planning-catalog-planning",
     "build:child": "tsc -p tsconfig.child.json",
     "dev": "nest start --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",

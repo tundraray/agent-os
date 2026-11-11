@@ -20,7 +20,7 @@ import {
   createSources,
   FIXTURE_SOURCE_ID,
   FixtureSourceAdapter,
-  type SourceAllowlist,
+  type SourceDeclaration,
   type Sources,
   type SourcesLogger,
   type SourcesSettings,
@@ -37,10 +37,14 @@ import { databaseUrl } from './database-url.js';
 export const SOURCE_FETCH = 'source.fetch';
 export const SEARCH_LOGS = 'search_logs';
 
-/** `source.fetch` may call `search_logs` of the fixture, as `apps/api` allows. */
-const TEST_ALLOWLIST: SourceAllowlist = {
-  [SOURCE_FETCH]: [{ sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS }],
-};
+/** The fixture with `search_logs` declared: `source.fetch` may call it and no other tool. */
+const TEST_DECLARATION: SourceDeclaration = [
+  {
+    sourceId: FIXTURE_SOURCE_ID,
+    description: 'Payment logs of the checkout services; the declaration of the sources package tests.',
+    tools: [{ name: SEARCH_LOGS, description: 'Log records of a time window with optional filters, a page at a time.' }],
+  },
+];
 
 /** Environment variable of the recovery child carrying its scenario as JSON (`fetchChildMain.ts`). */
 export const FETCH_CHILD_SCENARIO_ENV = 'FETCH_CHILD_SCENARIO';
@@ -183,7 +187,7 @@ export function createSourcesHarness(options: SourcesHarnessOptions): SourcesHar
   const sources = createSources({
     handlers: runtime.handlers,
     adapters: [new FixtureSourceAdapter({ serverPath: fixtureServerPath, settings: options.sources, logger: loggers.sources })],
-    allowlist: TEST_ALLOWLIST,
+    declaration: TEST_DECLARATION,
     settings: options.sources,
     clock: systemClock,
     logger: loggers.sources,

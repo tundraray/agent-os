@@ -47,7 +47,7 @@ export interface ToolExecutorDeps {
   /** The tools of class `task` other than `call_agent`, by name; none by default. */
   readonly taskTools?: ReadonlyMap<string, TaskTool>;
   readonly accessPolicy: ToolAccessPolicy;
-  readonly calls: Pick<typeof toolCallsRepository, 'transition'>;
+  readonly calls: Pick<typeof toolCallsRepository, 'transition' | 'sourceRevoked'>;
   readonly tree: AgentTreeReads;
   readonly scheduler: Pick<TaskScheduler, 'propose'>;
   readonly investigations: Pick<InvestigationService, 'listForThread'>;
@@ -279,6 +279,22 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     return proposeChild(ctx, run, started.call, false);
   }
 
+  /**
+   * The executor's own checks of a call's source, before the rights port and in this order (design-catalog-planning.md,
+   * «Отказы исполнителя вызовов»): a source outside the run's sources, then a source the port already refused in this
+   * investigation. Both refusals carry no source and no `detail`, so the model learns nothing it did not name itself.
+   */
+  async function sourceBarred(
+    ctx: CallContext,
+    run: AgentRunContext,
+    sourceId: string,
+  ): Promise<{ readonly kind: 'clear' } | { readonly kind: 'refuse'; readonly code: string } | Extract<Step, { kind: 'stop' }>> {
+    if (!run.sources.includes(sourceId)) return { kind: 'refuse', code: 'source_not_in_catalog' };
+    const revoked = await deps.calls.sourceRevoked(ctx, sourceId);
+    if (revoked.outcome !== 'read') return { kind: 'stop', outcome: revoked.outcome };
+    return revoked.revoked ? { kind: 'refuse', code: 'source_revoked' } : { kind: 'clear' };
+  }
+
   async function runRequested(
     ctx: CallContext,
     run: AgentRunContext,
@@ -288,6 +304,10 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     const tool = deps.tools.get(call.toolName);
     const taskTool = taskTools.get(call.toolName);
     const sourceId = (tool ?? taskTool)?.sourceOf?.(checked.args) ?? null;
+    if (sourceId !== null) {
+      const barred = await sourceBarred(ctx, run, sourceId);
+      if (barred.kind !== 'clear') return barred.kind === 'stop' ? barred : stepOf(await end(ctx, call, refusal(barred.code)));
+    }
     const access = await deps.accessPolicy.decide({ resourceId: run.resourceId, toolName: call.toolName, sourceId });
     if (access === 'access_denied') {
       return stepOf(await end(ctx, call, { to: 'rejected', outcome: 'access_denied', reason: 'access_denied', sourceId }));

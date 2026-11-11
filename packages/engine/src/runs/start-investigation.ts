@@ -1,13 +1,22 @@
 import type { TaskSpec } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { InvestigationService, TaskScheduler } from '@agent-os/runtime';
+import type { SourceRegistry } from '@agent-os/sources';
 import { type DefinitionMemorySnapshot, takeDefinitionMemorySnapshot } from '../agents/definition-memory.js';
+import type { ToolAccessPolicy } from '../agents/tool-access-policy.js';
 import type { ResultFormRegistry } from '../agents/result-forms.js';
 import { type AgentProcessConfig, AgentProcessConfigSchema } from '../config/agent-config.schema.js';
 import type { ProcessSet } from '../config/process-set.js';
 import type { SourceMode } from '../config/source-check.js';
 import { type EngineRunRow, engineRunsRepository as runs } from './engine-runs.repository.js';
-import { readSourceSnapshots, type SourceSnapshotDeps, type SourceSnapshots } from './source-snapshots.js';
+import {
+  buildSourceCatalog,
+  type CatalogCandidate,
+  catalogSourceMode,
+  type SourceCatalog,
+  SourceCatalogSchema,
+} from './source-catalog.js';
+import { readSourceSnapshots, type SourceSnapshotDeps } from './source-snapshots.js';
 import { ENGINE_REQUESTER_KEY, findShell, resolveTokenBudget, rootTaskSpec } from './start-rules.js';
 
 /**
@@ -40,11 +49,18 @@ export type StartInvestigationResult =
     }
   | { readonly outcome: 'rejected'; readonly code: 'process_unknown' | 'budget_out_of_range' };
 
-/** `sources`, `clock` and `logger` read the slice of each configured source at start (KD-7). */
+/**
+ * `sources`, `connectedSources` and `accessPolicy` build the catalog of a start; `sources`, `clock` and `logger` read
+ * the slice of each catalog source (design-catalog-planning.md, KD-1, DC-3).
+ */
 export interface StartDeps extends EngineRuntimePorts, SourceSnapshotDeps {
   readonly database: Database;
   readonly processes: ProcessSet;
-  readonly sourceMode: SourceMode;
+  readonly sources: Pick<SourceRegistry, 'currentSnapshot' | 'describeSource' | 'resolveTool'>;
+  /** `sourceId` of the sources the deployment connected. */
+  readonly connectedSources: readonly string[];
+  /** Asked once per connected ceiling source about the owner's right to the source as a whole. */
+  readonly accessPolicy: ToolAccessPolicy;
   /** The engine's result forms: a start takes the definition memory snapshot by them (DC-24). */
   readonly forms: ResultFormRegistry;
 }
@@ -58,8 +74,13 @@ interface Launch {
   readonly input: StartInvestigationInput;
   readonly config: AgentProcessConfig;
   readonly tokenBudget: number;
-  /** Read once per call, before the first write; a repeated start of a recorded launch reads none. */
-  readonly sourceSnapshots: SourceSnapshots;
+  /**
+   * Built once per call, before the first write, with the slices of its sources; a repeated start of a recorded launch
+   * builds none and asks the rights port nothing.
+   */
+  readonly sourceCatalog: SourceCatalog;
+  /** The mode of the investigation by its catalog: an empty catalog runs on model knowledge (DC-10). */
+  readonly sourceMode: SourceMode;
   /** The definition memory snapshot of the start, taken with the source slices (DC-24). */
   readonly definitionMemorySnapshot: DefinitionMemorySnapshot;
 }
@@ -67,8 +88,9 @@ interface Launch {
 /**
  * `Engine.startInvestigation` (design-engine.md, Contract Definitions; KD-9, DC-15, DC-16, DC-19). Refusals come
  * before any write; the thread-ownership error of `InvestigationService.create` propagates unchanged. A new launch
- * records the slice of each configured source in its engine row (design-self-check.md, KD-7): a slice not read within
- * 2 seconds or failed is recorded empty and the start goes on; the row of a recorded launch is never rewritten.
+ * records its source catalog and the mode it gives in its engine row (design-catalog-planning.md, KD-1, DC-3, DC-10),
+ * each catalog source with the slice read at start (design-self-check.md, KD-7): a slice not read within 2 seconds or
+ * failed is recorded empty and the start goes on; the row of a recorded launch is never rewritten.
  */
 export function startInvestigation(deps: StartDeps) {
   /**
@@ -82,6 +104,7 @@ export function startInvestigation(deps: StartDeps) {
       tokenBudget: run.tokenBudget,
       query: await runs.readQuery(deps.database, run.investigationId),
       sourceMode: run.sourceMode as SourceMode,
+      catalog: SourceCatalogSchema.parse(run.sourceCatalog),
       createdAt: run.createdAt,
     });
   }
@@ -145,9 +168,9 @@ export function startInvestigation(deps: StartDeps) {
       resourceId: input.resourceId,
       launchKey: input.launchKey,
       config: request.config,
-      sourceMode: deps.sourceMode,
+      sourceMode: request.sourceMode,
       tokenBudget: request.tokenBudget,
-      sourceSnapshots: request.sourceSnapshots,
+      sourceCatalog: request.sourceCatalog,
       definitionMemorySnapshot: request.definitionMemorySnapshot,
     });
     if (inserted !== undefined) {
@@ -169,6 +192,16 @@ export function startInvestigation(deps: StartDeps) {
     );
   }
 
+  /** The catalog with the slice of each of its sources; an empty catalog reads none (DC-3, DC-10). */
+  async function withSnapshots(candidates: readonly CatalogCandidate[]): Promise<SourceCatalog> {
+    if (candidates.length === 0) return [];
+    const snapshots = await readSourceSnapshots(
+      deps,
+      candidates.map((candidate) => candidate.sourceId),
+    );
+    return candidates.map((candidate) => ({ ...candidate, snapshot: snapshots[candidate.sourceId] ?? null }));
+  }
+
   return async (input: StartInvestigationInput): Promise<StartInvestigationResult> => {
     const resolution = deps.processes.resolve(input.processId, input.version);
     if (!resolution.ok) {
@@ -184,12 +217,26 @@ export function startInvestigation(deps: StartDeps) {
     if (recorded !== undefined) {
       return proposeController(recorded, 'existing');
     }
-    const sourceSnapshots = await readSourceSnapshots(deps, config);
+    const candidates = await buildSourceCatalog(
+      { sources: deps.sources, accessPolicy: deps.accessPolicy },
+      { resourceId: input.resourceId, config, connectedSources: deps.connectedSources },
+    );
+    const sourceCatalog = await withSnapshots(candidates);
     const definitionMemorySnapshot = await takeDefinitionMemorySnapshot(deps.database, {
       config,
       forms: deps.forms,
       resourceId: input.resourceId,
     });
-    return launch({ input, config, tokenBudget: budget.tokenBudget, sourceSnapshots, definitionMemorySnapshot }, 1);
+    return launch(
+      {
+        input,
+        config,
+        tokenBudget: budget.tokenBudget,
+        sourceCatalog,
+        sourceMode: catalogSourceMode(sourceCatalog),
+        definitionMemorySnapshot,
+      },
+      1,
+    );
   };
 }

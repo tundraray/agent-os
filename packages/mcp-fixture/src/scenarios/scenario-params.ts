@@ -2,8 +2,11 @@ import { z } from 'zod';
 import { LOG_SERVICES, PLANTED_PER_BLOCK_MAX } from '../dataset.js';
 import { BASE_SEGMENT } from '../versions.js';
 
-/** Mechanisms of the catalog: three planted causes and the scenario where nothing in the logs explains the symptom. */
-const MECHANISM_NAMES = ['timeout_lowered', 'provider_slowed', 'ledger_write_errors', 'no_cause'] as const;
+/**
+ * Mechanisms of the catalog: three causes planted in the logs, one whose cause needs the logs and the back office
+ * together (`payment_method_declined`), and the scenario where nothing explains the symptom.
+ */
+const MECHANISM_NAMES = ['timeout_lowered', 'provider_slowed', 'ledger_write_errors', 'payment_method_declined', 'no_cause'] as const;
 export const MechanismNameSchema = z.enum(MECHANISM_NAMES);
 export type MechanismName = z.infer<typeof MechanismNameSchema>;
 

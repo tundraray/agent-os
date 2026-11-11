@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { backOfficeOf, PAYMENT_METHODS } from '../backoffice.js';
 import { canonicalJson, sha256Hex } from '../canonical-json.js';
 import { createLogDataset, type LogDataset } from '../dataset.js';
 import { generateGroundTruth } from '../ground-truth.js';
@@ -40,7 +41,7 @@ function recordsDigest(dataset: LogDataset): string {
 
 // UC-8, AC-03.2: a scenario is a pure function of its parameters, records and key alike.
 describe('determinism: the same parameters give the same records and the same key', () => {
-  it.each<MechanismName>(['timeout_lowered', 'provider_slowed', 'ledger_write_errors', 'no_cause'])('%s', (mechanism) => {
+  it.each<MechanismName>(['timeout_lowered', 'provider_slowed', 'ledger_write_errors', 'payment_method_declined', 'no_cause'])('%s', (mechanism) => {
     const first = createScenarioDataset(scenarioOf(mechanism));
     const second = createScenarioDataset(scenarioOf(mechanism));
 
@@ -77,6 +78,12 @@ describe('key is derived from the records', () => {
     { mechanism: 'timeout_lowered', kind: 'cause', service: 'provider-adapter', evidence: { event: 'provider.response', status: 'late' } },
     { mechanism: 'provider_slowed', kind: 'cause', service: 'provider-adapter', evidence: { event: 'provider.response', status: 'late' } },
     { mechanism: 'ledger_write_errors', kind: 'cause', service: 'ledger', evidence: { event: 'ledger.write', status: 'error' } },
+    {
+      mechanism: 'payment_method_declined',
+      kind: 'cause',
+      service: 'provider-adapter',
+      evidence: { event: 'provider.response', status: 'error' },
+    },
     { mechanism: 'no_cause', kind: 'no_cause', service: null, evidence: null },
   ] as const)('$mechanism', ({ mechanism, kind, service, evidence }) => {
     const scenario = scenarioOf(mechanism);
@@ -242,6 +249,8 @@ describe('package scenario sets', () => {
         setName: name,
         scenarioId: scenario.scenarioId,
         kind: hasCause ? 'cause' : 'no_cause',
+        // AC-02.2: a scenario of the logs alone names only them.
+        sources: ['fixture'],
       });
       expect(key.causeTraceIds.length > 0, scenario.scenarioId).toBe(hasCause);
     }
@@ -253,4 +262,42 @@ describe('package scenario sets', () => {
     expect(composition.causeMechanisms).toBeGreaterThanOrEqual(3);
     expect(composition.noCauseScenarios).toBeGreaterThan(0);
   });
+});
+
+const ORDER_ID = /\bord-[0-9a-f]{8}\b/;
+const METHOD_WORD = new RegExp(`\\b(${PAYMENT_METHODS.join('|')})\\b`);
+
+// AC-02.2, UC-6, FR-10: the cause of a two-sources scenario needs the logs and the back office together.
+describe('package set two-sources', () => {
+  it('every scenario has a recorded answer whose key names both sources, and its cause orders exist in logs and back office', () => {
+    const set = loadPackageSet('two-sources');
+
+    expect(set.scenarios).toHaveLength(3);
+    for (const scenario of set.scenarios) {
+      const key = scenarioKey(scenario);
+      const dataset = createScenarioDataset(scenario);
+      const backOffice = backOfficeOf(dataset);
+
+      expect(key, scenario.scenarioId).toMatchObject({ setName: 'two-sources', kind: 'cause', sources: ['backoffice', 'fixture'] });
+      expect(key.causeTraceIds.length, scenario.scenarioId).toBeGreaterThan(0);
+      const methods = new Set<string>();
+      for (const traceId of key.causeTraceIds) {
+        const trace = dataset.traceRecords(traceId);
+        // Logs: the payment failed and names its order, but no record of the trace names a payment method.
+        const result = trace.find((record) => record.event === 'payment.result');
+        expect(result?.status, traceId).toBe('error');
+        expect(trace.filter((record) => METHOD_WORD.test(record.message)), traceId).toEqual([]);
+        const orderId = ORDER_ID.exec(result?.message ?? '')?.[0];
+        expect(orderId, traceId).toBeDefined();
+        // Back office: the same order with this failed payment, and its method.
+        const order = backOffice.order(orderId as string);
+        expect(order?.payments.find((payment) => payment.traceId === traceId)?.status, traceId).toBe('failed');
+        methods.add(order?.paymentMethod ?? 'missing');
+      }
+      // The cause the logs cannot show: every cause order shares one method, and the key names it.
+      expect(methods.size, scenario.scenarioId).toBe(1);
+      const [method] = [...methods];
+      expect(key.cause?.changePhrase, scenario.scenarioId).toContain(method);
+    }
+  }, SET_GENERATION_TIMEOUT_MS);
 });

@@ -21,7 +21,7 @@ import { createFormDataReader } from '../src/agents/collect-reader.js';
 import { definitionMemoryFingerprint } from '../src/agents/fingerprint.js';
 import { closureStep, type FormRun, runForcedEnd, runPrologue } from '../src/agents/process-code.js';
 import { TEXT_FORM } from '../src/agents/result-forms.js';
-import { CONFIGURATION_ACCESS_POLICY } from '../src/agents/tool-access-policy.js';
+import type { ToolAccessPolicy } from '../src/agents/tool-access-policy.js';
 import { toolCallsRepository } from '../src/agents/tool-calls.repository.js';
 import { createToolExecutor, POSTGRES_AGENT_TREE } from '../src/agents/tool-executor.js';
 import { BASE_TOOLS, createToolRegistry } from '../src/agents/tool-registry.js';
@@ -38,6 +38,9 @@ import { RESEARCH_IMMEDIATE_TOOLS, RESEARCH_TOOLS } from '../src/research-flow/r
 import { databaseUrl } from './support/database-url.js';
 import { assertNoActiveInvestigations, cancelNotingLeftBehind, closeEngineDb, trackInvestigationOwner } from './support/engineDb.js';
 import { newUser } from './support/new-user.js';
+
+/** The rights port of these repository tests: every owner may call every tool and read every source. */
+const ALLOW_ALL_ACCESS: ToolAccessPolicy = { decide: () => 'allowed' };
 
 /** A workflow type only this file registers: no other assembly ever claims its tasks. */
 const WORKFLOW = `test-research-repo-${randomUUID()}`;
@@ -159,7 +162,7 @@ function realExecutor() {
   return createToolExecutor({
     registry: createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS]),
     tools: RESEARCH_IMMEDIATE_TOOLS,
-    accessPolicy: CONFIGURATION_ACCESS_POLICY,
+    accessPolicy: ALLOW_ALL_ACCESS,
     calls: toolCallsRepository,
     tree: POSTGRES_AGENT_TREE,
     scheduler: runtime.scheduler,
@@ -742,6 +745,7 @@ describe('Engine.checkCalibration', () => {
   const anyTool: { argsSchema: SourceSchema } = { argsSchema: z.strictObject({ from: z.string(), to: z.string() }) };
   const SOURCES = {
     resolveTool: () => ({ adapter: {}, tool: anyTool }) as ReturnType<SourceRegistry['resolveTool']>,
+    describeSource: () => 'not part of the calibration check',
     currentSnapshot: notCalled,
   };
 
@@ -766,6 +770,7 @@ describe('Engine.checkCalibration', () => {
       },
       sourceRegistry: SOURCES,
       connectedSources: ['fixture'],
+      toolAccessPolicy: ALLOW_ALL_ACCESS,
       processes: loaded,
       groupTables,
       resolveModel: modelDouble,

@@ -1,6 +1,5 @@
 import type { Clock } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
-import type { AgentProcessConfig } from '../config/agent-config.schema.js';
 import type { EngineLogger } from '../ports.js';
 
 /**
@@ -10,7 +9,7 @@ import type { EngineLogger } from '../ports.js';
  */
 const SNAPSHOT_READ_DEADLINE_MS = 2_000;
 
-/** The slice of each source of the configuration by `sourceId`; `null` when it was not read in time or failed. */
+/** The slice of each source read by `sourceId`; `null` when it was not read in time or failed. */
 export type SourceSnapshots = Readonly<Record<string, string | null>>;
 
 export interface SourceSnapshotDeps {
@@ -20,15 +19,15 @@ export interface SourceSnapshotDeps {
 }
 
 /**
- * Reads the current slice of every source of the configuration at the same time, each read with its own deadline on
- * the engine clock that aborts it. Never rejects: a read that fails or misses the deadline gives an empty slice, and
- * the collection later ends `source_unavailable` as it does today (KD-7).
+ * Reads the current slice of each given source — the start passes the sources of its catalog only (design-catalog-
+ * planning.md, DC-3) — at the same time, each read with its own deadline on the engine clock that aborts it. Never
+ * rejects: a read that fails or misses the deadline gives an empty slice, and the collection later ends
+ * `source_unavailable` as it does today (KD-7).
  */
 export async function readSourceSnapshots(
   deps: SourceSnapshotDeps,
-  config: Pick<AgentProcessConfig, 'sources'>,
+  sourceIds: readonly string[],
 ): Promise<SourceSnapshots> {
-  const sourceIds = [...new Set(config.sources.map((source) => source.sourceId))];
   const slices = await Promise.all(sourceIds.map((sourceId) => readOne(deps, sourceId)));
   return Object.fromEntries(sourceIds.map((sourceId, index) => [sourceId, slices[index] ?? null]));
 }

@@ -39,9 +39,10 @@ const ROOT = contextOf('model_knowledge', QUESTION, 0);
 function readerOf(claims: readonly unknown[]): FormDataReader {
   const unused = () => Promise.reject(new Error('this step does not read it'));
   return {
-    plan: unused,
+    // The forced end of the root reads the plan and the plan_write calls for the reason plan_sources_rejected.
+    plan: () => Promise.resolve({ revision: 1, plan: {} }),
     runs: unused,
-    toolCalls: unused,
+    toolCalls: () => Promise.resolve([]),
     records: unused,
     definitionMemoryFingerprint: unused,
     // The stored row holds more than the packet shows.

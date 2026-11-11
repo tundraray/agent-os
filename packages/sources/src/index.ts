@@ -28,11 +28,18 @@ export { createSources, type CreateSourcesOptions, type Sources } from './create
 export type { SourcesLogger } from './sources-logger.js';
 export {
   createSourceRegistry,
-  type AllowlistedTool,
   type ResolvedSourceTool,
-  type SourceAllowlist,
   type SourceRegistry,
   type SourceToolRequest,
 } from './source-registry.js';
+export {
+  SOURCE_DESCRIPTION_MAX_CHARS,
+  SOURCE_FETCH_WORKFLOW,
+  TOOL_DESCRIPTION_MAX_CHARS,
+  type DeclaredSource,
+  type DeclaredTool,
+  type SourceDeclaration,
+} from './source-declaration.js';
 export { parseSourcesSettings, type FixtureSettings, type SourcesEnv, type SourcesSettings } from './sources.settings.js';
 export { FIXTURE_SOURCE_ID, FixtureSourceAdapter, type FixtureSourceAdapterOptions } from './fixture/fixture-source.adapter.js';
+export { BACKOFFICE_SOURCE_ID, BackofficeSourceAdapter } from './backoffice/backoffice-source.adapter.js';

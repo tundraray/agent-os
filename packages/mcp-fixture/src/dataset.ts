@@ -27,6 +27,24 @@ export interface LogRecord {
   message: string;
 }
 
+/** How a payment trace ends: a provider timeout, a provider decline or the settlement after an in-time approval. */
+export type PaymentOutcome = 'provider_timeout' | 'provider_declined' | Settlement;
+
+/** The order a block's payment trace pays for, as the generator drew it; the back office is built from these. */
+export interface PaymentOrder {
+  orderId: string;
+  traceId: string;
+  /** Amount in EUR. */
+  amount: number;
+  /** `ts` of the trace's `checkout.submit`. */
+  submittedAt: string;
+  /** `ts` of the trace's `provider.request`. */
+  requestedAt: string;
+  /** `ts` of the trace's `payment.result`. */
+  resolvedAt: string;
+  outcome: PaymentOutcome;
+}
+
 /** Half-open index range `[start, end)`. */
 export interface IndexRange {
   start: number;
@@ -48,6 +66,9 @@ export interface LogDataset {
   indexRange(from: string, to: string): IndexRange;
   /** Records of one trace in time order; empty when the trace does not exist. */
   traceRecords(traceId: string): LogRecord[];
+  /** Payment orders, one per block; `submittedAt` never decreases with the index. */
+  readonly orderCount: number;
+  orderAt(index: number): PaymentOrder;
 }
 
 const MESSAGE_MAX_LENGTH = 200;
@@ -84,14 +105,19 @@ interface BlockContext extends BlockSpan {
 export interface ProviderCall {
   latencyMs: number;
   timeoutMs: number;
+  /** The provider replies in time but declines the authorization; absent means it approves. */
+  declined?: boolean;
 }
 
 /** How a payment whose provider replied in time settles. */
 export type Settlement = 'ok' | 'ledger_error' | 'unexplained_error';
 
-/** How payment traces unfold; `requestMs` is the absolute time the request to the provider is sent. */
+/**
+ * How payment traces unfold; `requestMs` is the absolute time the request to the provider is sent and `traceId` the
+ * trace of the payment, already drawn, so reading it draws no random number.
+ */
 export interface PaymentModel {
-  provider(random: Random, requestMs: number): ProviderCall;
+  provider(random: Random, requestMs: number, traceId: string): ProviderCall;
   /** Settlement after an in-time provider reply; absent keeps the pinned trace shape without a `ledger.write` span. */
   settlement?(random: Random, requestMs: number): Settlement;
 }
@@ -131,14 +157,25 @@ export function createGeneratedDataset(plan: GenerationPlan): LogDataset {
   const layouts = blockLayouts(params);
   const blockCount = layouts.reduce((sum, layout) => sum + layout.blockCount, 0);
   const recordCount = blockCount * params.recordsPerBlock;
-  let cached: { blockIndex: number; records: LogRecord[] } | undefined;
+  let cached: ({ blockIndex: number } & GeneratedBlock) | undefined;
   let traceIndex: Map<string, number> | undefined;
 
-  function block(blockIndex: number): LogRecord[] {
+  function generated(blockIndex: number): GeneratedBlock {
     if (cached?.blockIndex !== blockIndex) {
-      cached = { blockIndex, records: generateBlock(plan, layoutOf(layouts, blockIndex), blockIndex) };
+      cached = { blockIndex, ...generateBlock(plan, layoutOf(layouts, blockIndex), blockIndex) };
     }
-    return cached.records;
+    return cached;
+  }
+
+  function block(blockIndex: number): LogRecord[] {
+    return generated(blockIndex).records;
+  }
+
+  function orderAt(index: number): PaymentOrder {
+    if (!Number.isInteger(index) || index < 0 || index >= blockCount) {
+      throw new RangeError(`order index ${index} is outside [0, ${blockCount})`);
+    }
+    return generated(index).order;
   }
 
   function recordAt(index: number): LogRecord {
@@ -179,6 +216,8 @@ export function createGeneratedDataset(plan: GenerationPlan): LogDataset {
       return { start, end: Math.max(start, firstIndexAtOrAfter(Date.parse(to))) };
     },
     traceRecords,
+    orderCount: blockCount,
+    orderAt,
   };
 }
 
@@ -220,14 +259,20 @@ function buildTraceIndex(blockCount: number, block: (blockIndex: number) => LogR
   return index;
 }
 
-function generateBlock(plan: GenerationPlan, layout: BlockLayout, blockIndex: number): LogRecord[] {
+interface GeneratedBlock {
+  records: LogRecord[];
+  order: PaymentOrder;
+}
+
+function generateBlock(plan: GenerationPlan, layout: BlockLayout, blockIndex: number): GeneratedBlock {
   const { params } = plan;
   const context: BlockContext = {
     random: mulberry32(blockSeed(params.seed, blockIndex)),
     startMs: Math.floor(layout.startMs + (blockIndex - layout.firstBlock) * layout.blockSpanMs),
     spanMs: Math.floor(layout.blockSpanMs),
   };
-  const drafts = paymentTrace(context, plan.payment);
+  const { drafts, order } = paymentTrace(context, plan.payment);
+  const at = (offsetMs: number): string => new Date(context.startMs + offsetMs).toISOString();
   const planted = plan.planted?.({ startMs: context.startMs, spanMs: context.spanMs }) ?? [];
   if (planted.length > PLANTED_PER_BLOCK_MAX) {
     throw new RangeError(`block ${blockIndex}: ${planted.length} planted records exceed ${PLANTED_PER_BLOCK_MAX}`);
@@ -236,13 +281,18 @@ function generateBlock(plan: GenerationPlan, layout: BlockLayout, blockIndex: nu
   while (drafts.length < params.recordsPerBlock) {
     drafts.push(backgroundRecord(context));
   }
-  return drafts
+  const records = drafts
     .sort((left, right) => left.offsetMs - right.offsetMs)
     .map(({ offsetMs, ...record }) => ({
       ...record,
-      ts: new Date(context.startMs + offsetMs).toISOString(),
+      ts: at(offsetMs),
       message: record.message.slice(0, MESSAGE_MAX_LENGTH),
     }));
+  const { submitAt, requestAt, resultAt, ...drawn } = order;
+  return {
+    records,
+    order: { ...drawn, submittedAt: at(submitAt), requestedAt: at(requestAt), resolvedAt: at(resultAt) },
+  };
 }
 
 /**
@@ -250,7 +300,7 @@ function generateBlock(plan: GenerationPlan, layout: BlockLayout, blockIndex: nu
  * latency and local timeout; a reply slower than the timeout becomes `provider.timeout` + late `provider.response`.
  * Without a settlement model the trace keeps the pinned `v1`/`v2` shape and draws exactly the same random numbers.
  */
-function paymentTrace(context: BlockContext, model: PaymentModel): RecordDraft[] {
+function paymentTrace(context: BlockContext, model: PaymentModel): { drafts: RecordDraft[]; order: OrderDraft } {
   const { random } = context;
   const traceId = randomHex(random, 16);
   const orderId = `ord-${randomHex(random, 4)}`;
@@ -258,15 +308,16 @@ function paymentTrace(context: BlockContext, model: PaymentModel): RecordDraft[]
   const submitAt = randomInt(random, 0, MAX_TRACE_START_MS);
   const authorizeAt = submitAt + randomInt(random, 5, 30);
   const requestAt = authorizeAt + randomInt(random, 5, 50);
-  const { latencyMs, timeoutMs } = model.provider(random, context.startMs + requestAt);
+  const { latencyMs, timeoutMs, declined: declinedReply } = model.provider(random, context.startMs + requestAt, traceId);
   const timedOut = latencyMs > timeoutMs;
+  const declined = !timedOut && declinedReply === true;
   const resolvedAt = requestAt + (timedOut ? timeoutMs : latencyMs);
   const ledger =
-    timedOut || model.settlement === undefined
+    timedOut || declined || model.settlement === undefined
       ? undefined
       : ledgerStep(random, model.settlement(random, context.startMs + requestAt), resolvedAt);
   const resultAt = (ledger === undefined ? resolvedAt : ledger.offsetMs + ledger.durationMs) + randomInt(random, 1, 20);
-  const outcome: PaymentOutcome = timedOut ? 'provider_timeout' : (ledger?.settlement ?? 'ok');
+  const outcome: PaymentOutcome = timedOut ? 'provider_timeout' : declined ? 'provider_declined' : (ledger?.settlement ?? 'ok');
   const failed = outcome !== 'ok';
 
   const span = (seq: number, draft: Omit<RecordDraft, 'traceId' | 'spanSeq'>): RecordDraft => ({
@@ -324,6 +375,18 @@ function paymentTrace(context: BlockContext, model: PaymentModel): RecordDraft[]
         message: `provider responded in ${latencyMs} ms, after local timeout ${timeoutMs} ms; response discarded`,
       }),
     );
+  } else if (declined) {
+    drafts.push(
+      span(3, {
+        offsetMs: requestAt + latencyMs,
+        service: 'provider-adapter',
+        level: 'warn',
+        event: 'provider.response',
+        status: 'error',
+        durationMs: latencyMs,
+        message: `provider declined the authorization in ${latencyMs} ms`,
+      }),
+    );
   } else {
     drafts.push(
       span(3, {
@@ -351,14 +414,20 @@ function paymentTrace(context: BlockContext, model: PaymentModel): RecordDraft[]
       message: PAYMENT_RESULT_MESSAGE[outcome](orderId),
     }),
   );
-  return drafts;
+  return { drafts, order: { orderId, traceId, amount, submitAt, requestAt, resultAt, outcome } };
 }
 
-type PaymentOutcome = 'provider_timeout' | Settlement;
+/** A payment order before it is placed in time: offsets count from the start of its block. */
+interface OrderDraft extends Omit<PaymentOrder, 'submittedAt' | 'requestedAt' | 'resolvedAt'> {
+  submitAt: number;
+  requestAt: number;
+  resultAt: number;
+}
 
 const PAYMENT_RESULT_MESSAGE: Readonly<Record<PaymentOutcome, (orderId: string) => string>> = {
   ok: (orderId) => `payment authorized for order ${orderId}`,
   provider_timeout: (orderId) => `payment failed for order ${orderId}: provider timeout`,
+  provider_declined: (orderId) => `payment failed for order ${orderId}: authorization declined by provider`,
   ledger_error: (orderId) => `payment failed for order ${orderId}: ledger write failed`,
   unexplained_error: (orderId) => `payment failed for order ${orderId}`,
 };

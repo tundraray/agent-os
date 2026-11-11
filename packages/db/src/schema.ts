@@ -442,10 +442,13 @@ export const researchEngineRuns = app.table(
     answerId: uuid('answer_id'),
     answer: jsonb('answer'),
     /**
-     * Snapshot of each configured source read at start (agent-quality/design-self-check.md, KD-7);
-     * null for investigations started before it was recorded (no backfill).
+     * The investigation's source catalog, written once at start and never changed
+     * (source-planning/design-catalog-planning.md, KD-1, Data Model): the sources connected, in the
+     * process ceiling and allowed to the owner, by `sourceId` in code point order, each with its
+     * description, ceiling tools with descriptions and the slice read at start or null. Empty means
+     * the mode without sources; rows written before it get an empty catalog.
      */
-    sourceSnapshots: jsonb('source_snapshots'),
+    sourceCatalog: jsonb('source_catalog').notNull().default(sql`'[]'::jsonb`),
     /**
      * Active definition memory records of each agent definition at start: id, scope and text
      * (design-agent-core.md, Data Model, DC-24); null for investigations started before it was

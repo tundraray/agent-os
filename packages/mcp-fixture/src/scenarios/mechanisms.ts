@@ -1,6 +1,14 @@
+import { paymentMethodOf, type PaymentMethod } from '../backoffice.js';
 import { providerLatency, type LogRecord, type LogService, type PaymentModel, type Settlement } from '../dataset.js';
 import type { Random } from '../prng.js';
 import type { MechanismName } from './scenario-params.js';
+
+/** Sources a scenario's cause can need: the logs (`fixture`) and the back office (`backoffice`). */
+export type ScenarioSourceId = 'backoffice' | 'fixture';
+
+const LOGS_ONLY: readonly ScenarioSourceId[] = ['fixture'];
+/** In code-point order, as the key states them. */
+const LOGS_AND_BACK_OFFICE: readonly ScenarioSourceId[] = ['backoffice', 'fixture'];
 
 /**
  * One way the generator plants a cause into the logs. It shapes the payment traces around the moment of change and
@@ -11,6 +19,8 @@ export interface Mechanism {
   readonly kind: 'cause' | 'no_cause';
   /** Service where the planted change lives; `null` when nothing in the logs explains the symptom. */
   readonly service: LogService | null;
+  /** Sources without which the cause cannot be found, in code-point order. */
+  readonly sources: readonly ScenarioSourceId[];
   paymentModel(changeMs: number): PaymentModel;
   /** Whether the record proves the planted cause; always `false` for `no_cause`. */
   isCauseEvidence(record: LogRecord, changeMs: number): boolean;
@@ -53,6 +63,7 @@ const timeoutLowered: Mechanism = {
   name: 'timeout_lowered',
   kind: 'cause',
   service: 'provider-adapter',
+  sources: LOGS_ONLY,
   paymentModel: (changeMs) => ({
     provider: (random, requestMs) => ({
       latencyMs: providerLatency(random),
@@ -72,6 +83,7 @@ const providerSlowed: Mechanism = {
   name: 'provider_slowed',
   kind: 'cause',
   service: 'provider-adapter',
+  sources: LOGS_ONLY,
   paymentModel: (changeMs) => ({
     provider: (random, requestMs) => ({
       latencyMs: requestMs >= changeMs ? providerLatency(random, SLOWED_LATENCY_MEAN_EXCESS_MS) : providerLatency(random),
@@ -87,6 +99,7 @@ const ledgerWriteErrors: Mechanism = {
   name: 'ledger_write_errors',
   kind: 'cause',
   service: 'ledger',
+  sources: LOGS_ONLY,
   paymentModel: (changeMs) => ({
     provider: (random) => ({ latencyMs: providerLatency(random), timeoutMs: BASE_TIMEOUT_MS }),
     settlement: settlementAfter(changeMs, { ...BASELINE_SHARES, ledgerError: RAISED_SHARE }),
@@ -99,10 +112,36 @@ const ledgerWriteErrors: Mechanism = {
     Date.parse(record.ts) >= changeMs,
 };
 
+/** Method the provider starts to decline in `payment_method_declined`. */
+const DECLINED_METHOD: PaymentMethod = 'sepa_debit';
+
+/**
+ * From the change on, the provider declines the authorization of every in-time payment of one method. The logs show
+ * the declines and the orders, never the method; the back office shows that the declined orders share it.
+ */
+const paymentMethodDeclined: Mechanism = {
+  name: 'payment_method_declined',
+  kind: 'cause',
+  service: 'provider-adapter',
+  sources: LOGS_AND_BACK_OFFICE,
+  paymentModel: (changeMs) => ({
+    provider: (random, requestMs, traceId) => ({
+      latencyMs: providerLatency(random),
+      timeoutMs: BASE_TIMEOUT_MS,
+      declined: requestMs >= changeMs && paymentMethodOf(traceId) === DECLINED_METHOD,
+    }),
+    settlement: baselineSettlement,
+  }),
+  // Only this mechanism declines, so every decline after the change is evidence of it.
+  isCauseEvidence: (record, changeMs) =>
+    record.event === 'provider.response' && record.status === 'error' && requestMsOf(record) >= changeMs,
+};
+
 const noCause: Mechanism = {
   name: 'no_cause',
   kind: 'no_cause',
   service: null,
+  sources: LOGS_ONLY,
   paymentModel: (changeMs) => ({
     provider: (random) => ({ latencyMs: providerLatency(random), timeoutMs: BASE_TIMEOUT_MS }),
     settlement: settlementAfter(changeMs, { ...BASELINE_SHARES, unexplainedError: RAISED_SHARE }),
@@ -115,5 +154,6 @@ export const MECHANISMS: Readonly<Record<MechanismName, Mechanism>> = {
   timeout_lowered: timeoutLowered,
   provider_slowed: providerSlowed,
   ledger_write_errors: ledgerWriteErrors,
+  payment_method_declined: paymentMethodDeclined,
   no_cause: noCause,
 };

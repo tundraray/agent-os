@@ -137,6 +137,7 @@ const STAND_IN_CAUSE: Readonly<Record<MechanismName, string>> = {
   timeout_lowered: 'ошибки записи в ledger вызвали рост ошибок оплаты',
   provider_slowed: 'ошибки записи в ledger вызвали рост ошибок оплаты',
   ledger_write_errors: 'провайдер стал отвечать медленнее, и это вызвало рост ошибок оплаты',
+  payment_method_declined: 'ошибки записи в ledger вызвали рост ошибок оплаты',
   no_cause: 'понижение таймаута provider-adapter вызвало рост ошибок оплаты',
 };
 

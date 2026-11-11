@@ -34,7 +34,14 @@ const RECORD: RunRecord = {
   query: 'Почему 15 сентября выросли ошибки оплаты?',
   status: 'completed',
   config: { processConfig: SHIPPED, fingerprint: '0123456789ab' },
-  sourceSnapshots: { fixture: 'fx-v1-2157485c' },
+  catalog: [
+    {
+      sourceId: 'fixture',
+      description: 'Logs of the payment service.',
+      tools: [],
+      snapshot: 'fx-v1-2157485c',
+    },
+  ],
   answer: {
     answerId: '00000000-0000-4000-8000-000000000002',
     outcome: 'answered',
@@ -58,8 +65,10 @@ const RECORD: RunRecord = {
     investigationId: '00000000-0000-4000-8000-000000000001',
     runs: [],
     definitionMemorySnapshot: {},
+    catalog: [],
     budgetExhausted: false,
   },
+  planRevisions: [],
 };
 
 describe('executeShowCommand: the judge assembly runs no workers', () => {

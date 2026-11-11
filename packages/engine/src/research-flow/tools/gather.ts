@@ -1,5 +1,5 @@
 import { type Coverage, CoverageSchema, type TaskSpec } from '@agent-os/contracts';
-import { researchEvidence } from '@agent-os/db';
+import { type Database, researchEvidence, researchPlanRevisions } from '@agent-os/db';
 import type { Clock, RuntimeTx } from '@agent-os/runtime';
 import type { SourceRegistry } from '@agent-os/sources';
 import { and, eq, inArray } from 'drizzle-orm';
@@ -68,8 +68,27 @@ const POSTGRES_GATHER_PAGES: GatherPages = {
   },
 };
 
+/** Whether the investigation has a plan revision: read before the task, outside any transaction. */
+export interface GatherPlans {
+  hasRevision(investigationId: string): Promise<boolean>;
+}
+
+export function createPostgresGatherPlans(database: Database): GatherPlans {
+  return {
+    async hasRevision(investigationId) {
+      const [revision] = await database
+        .select({ revision: researchPlanRevisions.revision })
+        .from(researchPlanRevisions)
+        .where(eq(researchPlanRevisions.investigationId, investigationId))
+        .limit(1);
+      return revision !== undefined;
+    },
+  };
+}
+
 export interface GatherToolDeps {
   readonly sources: Pick<SourceRegistry, 'resolveTool' | 'currentSnapshot'>;
+  readonly plans: GatherPlans;
   readonly clock: Clock;
   readonly logger: EngineLogger;
   /** The evidence table by default. */
@@ -82,10 +101,10 @@ interface PreparedGather {
   readonly snapshot: string;
 }
 
-const DENIED: TaskToolPreparation = {
+const refused = (reason: 'plan_missing' | 'tool_not_in_catalog' | 'invalid_arguments'): TaskToolPreparation => ({
   kind: 'ending',
-  ending: { to: 'rejected', outcome: 'access_denied', reason: 'access_denied' },
-};
+  ending: { to: 'rejected', outcome: 'rejected', reason },
+});
 
 /** A collection that produced no page: a result of the call with its reason, not a refusal. */
 const UNAVAILABLE_ENDING: CallEnding = {
@@ -96,12 +115,9 @@ const UNAVAILABLE_ENDING: CallEnding = {
 };
 const UNAVAILABLE: TaskToolPreparation = { kind: 'ending', ending: UNAVAILABLE_ENDING };
 
-/** The narrowed sources of a child run are guarded here alone: the default rights port allows everything. */
-function isSourceOfRun(run: AgentRunContext, request: GatherArgs): boolean {
-  return (
-    run.sources.includes(request.sourceId) &&
-    run.config.sources.some((source) => source.sourceId === request.sourceId && source.toolName === request.toolName)
-  );
+/** The pair of source and tool is in the process's ceiling; the source itself is in the run's catalog by the executor. */
+function isInCeiling(run: AgentRunContext, request: GatherArgs): boolean {
+  return run.config.sources.some((source) => source.sourceId === request.sourceId && source.toolName === request.toolName);
 }
 
 const NormalizedProvenanceSchema = z.object({ normalizedArgs: z.record(z.string(), z.unknown()) });
@@ -121,9 +137,10 @@ function fitResult(query: Record<string, unknown>, rest: Record<string, unknown>
 
 /**
  * `gather` (`task`, design-research-flow.md, DC-11): a `source.fetch` task of the same specification as `proposeGather`'s,
- * so one dedup key names one request over one snapshot and the source is called once. The rights port runs first (the
- * executor), then the sources of the run and the allowlist, the arguments, the snapshot, the search for a live task and
- * the rest of the time.
+ * so one dedup key names one request over one snapshot and the source is called once. The executor checks the catalog,
+ * a revoked source and the rights port first; then, before any task (design-catalog-planning.md, DC-7, DC-8): a plan
+ * revision (`plan_missing`), the pair in the process's ceiling and the registry (`tool_not_in_catalog`), the arguments,
+ * the snapshot, the search for a live task and the rest of the time.
  */
 export function createGatherTool(deps: GatherToolDeps): TaskTool {
   const pages = deps.pages ?? POSTGRES_GATHER_PAGES;
@@ -149,12 +166,11 @@ export function createGatherTool(deps: GatherToolDeps): TaskTool {
 
     async prepare({ run, args, signal, findLiveTask }) {
       const request = args as GatherArgs;
-      if (!isSourceOfRun(run, request)) return DENIED;
+      if (!(await deps.plans.hasRevision(run.investigationId))) return refused('plan_missing');
+      if (!isInCeiling(run, request)) return refused('tool_not_in_catalog');
       const resolved = deps.sources.resolveTool({ workflowType: SOURCE_FETCH_WORKFLOW, sourceId: request.sourceId, toolName: request.toolName });
-      if (resolved === null) return DENIED;
-      if (!resolved.tool.argsSchema.safeParse(request.args).success) {
-        return { kind: 'ending', ending: { to: 'rejected', outcome: 'rejected', reason: 'invalid_arguments' } };
-      }
+      if (resolved === null) return refused('tool_not_in_catalog');
+      if (!resolved.tool.argsSchema.safeParse(request.args).success) return refused('invalid_arguments');
       let snapshot: string;
       try {
         snapshot = await deps.sources.currentSnapshot(request.sourceId, signal);

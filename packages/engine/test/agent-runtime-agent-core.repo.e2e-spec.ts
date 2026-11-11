@@ -52,7 +52,7 @@ import { investigationMemoryRepository } from '../src/agents/investigation-memor
 import { closureStep } from '../src/agents/process-code.js';
 import { createResultFormRegistry, type ResultForm, TEXT_FORM } from '../src/agents/result-forms.js';
 import { sessionRepository } from '../src/agents/session.repository.js';
-import { CONFIGURATION_ACCESS_POLICY } from '../src/agents/tool-access-policy.js';
+import type { ToolAccessPolicy } from '../src/agents/tool-access-policy.js';
 import { type CallStep, toolCallsRepository, type TransitionResult } from '../src/agents/tool-calls.repository.js';
 import { baseImmediateTools, createToolExecutor, POSTGRES_AGENT_TREE } from '../src/agents/tool-executor.js';
 import { BASE_TOOLS, createToolRegistry } from '../src/agents/tool-registry.js';
@@ -66,6 +66,9 @@ import { readTranscripts } from '../src/transcripts/read-transcripts.js';
 import { postgresOutsideTaskTranscripts } from '../src/transcripts/transcript-writes.js';
 import { databaseUrl } from './support/database-url.js';
 import { newUser } from './support/new-user.js';
+
+/** The rights port of these repository tests: every owner may call every tool and read every source. */
+const ALLOW_ALL_ACCESS: ToolAccessPolicy = { decide: () => 'allowed' };
 
 /** A workflow type only this file registers: no other assembly ever claims its tasks. */
 const WORKFLOW = `test-agent-repo-${randomUUID()}`;
@@ -687,7 +690,7 @@ describe('данные и память читаются только своег�
     const executor = createToolExecutor({
       registry,
       tools: baseImmediateTools(registry),
-      accessPolicy: CONFIGURATION_ACCESS_POLICY,
+      accessPolicy: ALLOW_ALL_ACCESS,
       calls: toolCallsRepository,
       tree: POSTGRES_AGENT_TREE,
       scheduler: runtime.scheduler,
@@ -771,7 +774,7 @@ function realExecutor() {
   return createToolExecutor({
     registry,
     tools: baseImmediateTools(registry),
-    accessPolicy: CONFIGURATION_ACCESS_POLICY,
+    accessPolicy: ALLOW_ALL_ACCESS,
     calls: toolCallsRepository,
     tree: POSTGRES_AGENT_TREE,
     scheduler: runtime.scheduler,

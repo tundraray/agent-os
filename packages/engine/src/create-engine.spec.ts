@@ -80,6 +80,7 @@ function registryDouble(allows: boolean) {
   const registry: CreateEngineOptions['sourceRegistry'] = {
     resolveTool: () =>
       allows && state.available ? ({ adapter: {}, tool } as ReturnType<SourceRegistry['resolveTool']>) : null,
+    describeSource: () => 'a source of the double',
     currentSnapshot: notCalled('currentSnapshot'),
   };
   return { registry, state };
@@ -141,6 +142,7 @@ function options(overrides: {
     },
     sourceRegistry: overrides.registry,
     connectedSources: overrides.connectedSources,
+    toolAccessPolicy: { decide: () => 'allowed' },
     processes: [deepResearchProcessV3, secondVersion],
     resolveModel: overrides.resolveModel ?? modelDouble,
     tokenCounter: { countTurnInputTokens: notCalled('countTurnInputTokens') },

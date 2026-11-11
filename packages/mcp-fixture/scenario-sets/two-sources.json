@@ -1,0 +1,53 @@
+{
+  "scenarios": [
+    {
+      "id": "method-declined-01",
+      "params": {
+        "mechanism": "payment_method_declined",
+        "seed": 2101,
+        "changeAt": "2026-09-15T10:00:00.000Z",
+        "distractors": [
+          {
+            "service": "payment-api",
+            "offsetMinutes": -6
+          }
+        ],
+        "injections": []
+      }
+    },
+    {
+      "id": "method-declined-02",
+      "params": {
+        "mechanism": "payment_method_declined",
+        "seed": 2102,
+        "changeAt": "2026-09-14T16:30:00.000Z",
+        "distractors": [
+          {
+            "service": "fraud-check",
+            "offsetMinutes": -3
+          },
+          {
+            "service": "ledger",
+            "offsetMinutes": 15
+          }
+        ],
+        "injections": []
+      }
+    },
+    {
+      "id": "method-declined-03",
+      "params": {
+        "mechanism": "payment_method_declined",
+        "seed": 2103,
+        "changeAt": "2026-09-15T19:45:00.000Z",
+        "distractors": [
+          {
+            "service": "provider-adapter",
+            "offsetMinutes": -8
+          }
+        ],
+        "injections": []
+      }
+    }
+  ]
+}

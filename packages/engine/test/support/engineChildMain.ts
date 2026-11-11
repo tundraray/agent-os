@@ -16,12 +16,13 @@ import {
   type TaskHandler,
   type TaskScheduler,
 } from '@agent-os/runtime';
-import { createSources, FIXTURE_SOURCE_ID, parseSourcesSettings, type SourcesLogger } from '@agent-os/sources';
+import { createSources, parseSourcesSettings, type SourcesLogger } from '@agent-os/sources';
 // The probe forms are registered through the internal assembly `composeEngine` from the package's sources (ADR-0010);
 // `tsconfig.child.json` compiles these sources together with this entry.
 import { SHIPPED_RESULT_FORMS } from '../../src/agents/result-forms.js';
+import type { ToolAccessPolicy } from '../../src/agents/tool-access-policy.js';
 import { composeEngine } from '../../src/create-engine.js';
-import { COUNTING_SOURCE_ID, createCountingSource, sourceLogLine } from './countingSource.js';
+import { COUNTING_SOURCE_ID, COUNTING_SOURCE_IDS, createCountingSource, sourceLogLine } from './countingSource.js';
 import { databaseUrl } from './database-url.js';
 import { PROBE_FORMS } from './probe-forms.js';
 import {
@@ -37,13 +38,16 @@ import {
 import { agentProbeConfig, agentPromptsOf, PROBE_PROCESS_ID, researchFlowGroupTable, researchFlowV3Config } from './test-configs.js';
 import { turnInputCharacters } from './turnCount.js';
 
+/** The child's rights port: every owner may call every tool and read every source. */
+const ALLOW_ALL_ACCESS: ToolAccessPolicy = { decide: () => 'allowed' };
+
 /**
  * Entry of the engine child process (E2E-1), run only compiled (`pnpm --filter @agent-os/engine build:child` →
  * `dist/test-child/`). It is the assembly point of its test and reads only its environment: `DATABASE_URL`, Runtime
  * Settings with `RUNTIME_CRASH_AT`, Sources Settings, the scenario in {@link ENGINE_CHILD_SCENARIO_ENV} and the engine's
  * own crash point in `ENGINE_CRASH_AT`. It builds `createDatabase`, `createRuntime`, `createSources` with the counting
- * source and `createEngine` with the model double and `connectedSources` = the fixture's id, from the packages' `dist`
- * (imported by name), starts the workers and then starts the scenario's investigation — every start with the same
+ * sources (`fixture` and `backoffice`) and `createEngine` with the model double and both as `connectedSources`, from the
+ * packages' `dist` (imported by name), starts the workers and then starts the scenario's investigation — every start with the same
  * `launchKey`, as a user repeats a launch.
  *
  * The engine's crash points live here, in test code, never in `src` (rule 11 of the plan): `ENGINE_CRASH_AT=<point>[:n]`
@@ -250,7 +254,7 @@ function plannerTurn(view: AgentCallView): readonly ScriptedToolCall[] {
   return [
     researchCall('plan_write', {
       readinessCriteria: ['the cause of the failures is named'],
-      branches: [{ question: 'What did payment-api log?', approach: 'search its errors' }],
+      branches: [{ question: 'What did payment-api log?', approach: 'search its errors', sources: [COUNTING_SOURCE_ID], sourceReason: 'it holds the service logs' }],
       reason: 'there is no plan yet',
     }),
   ];
@@ -483,8 +487,8 @@ async function main(): Promise<{ close(): Promise<void> }> {
   countingSource.answerWith(() => [sourceLogLine()]);
   const sources = createSources({
     handlers: runtime.handlers,
-    adapters: [countingSource.adapter],
-    allowlist: countingSource.allowlist,
+    adapters: countingSource.adapters,
+    declaration: countingSource.declaration,
     settings,
     clock: systemClock,
     logger: sourcesLogger,
@@ -542,7 +546,8 @@ async function main(): Promise<{ close(): Promise<void> }> {
       eventConsumers: runtime.eventConsumers,
     },
     sourceRegistry: sources.registry,
-    connectedSources: [FIXTURE_SOURCE_ID],
+    connectedSources: COUNTING_SOURCE_IDS,
+    toolAccessPolicy: ALLOW_ALL_ACCESS,
     resolveModel: model.resolveModel,
     tokenCounter: characterCounter(crash),
     clock: systemClock,

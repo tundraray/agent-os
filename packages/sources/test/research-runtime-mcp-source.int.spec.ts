@@ -20,11 +20,12 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HandlerResultSchema, type EvidenceInput } from '@agent-os/contracts';
-import { DATASET_VERSIONS, generateGroundTruth, type DatasetVersion } from '@agent-os/mcp-fixture';
+import { DATASET_VERSIONS, fixtureServerPath, generateGroundTruth, type DatasetVersion } from '@agent-os/mcp-fixture';
 import type { Clock } from '@agent-os/runtime';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AttemptStoppedError } from '../src/attempt-stopped.error.js';
+import { BACKOFFICE_SOURCE_ID, BackofficeSourceAdapter } from '../src/backoffice/backoffice-source.adapter.js';
 import { FetchHandler } from '../src/fetch.handler.js';
 import { FetchCheckpointSchema, type FetchCheckpoint } from '../src/fetch-input.js';
 import { FIXTURE_SOURCE_ID, FixtureSourceAdapter } from '../src/fixture/fixture-source.adapter.js';
@@ -35,6 +36,8 @@ import {
   SourceInfoSchema,
 } from '../src/fixture/fixture-tools.schema.js';
 import type { McpRequestOptions, McpSourceClient } from '../src/mcp/mcp-source-client.js';
+import type { CallOutcome, SourceAdapter } from '../src/source-adapter.js';
+import type { SourceDeclaration } from '../src/source-declaration.js';
 import { createSourceRegistry } from '../src/source-registry.js';
 import type { SourcesEnv } from '../src/sources.settings.js';
 import { ToolExecutor, type ToolOutcome, type ToolRequest } from '../src/tool-executor.js';
@@ -52,8 +55,21 @@ import { InMemoryTaskContext } from './support/inMemoryTaskContext.js';
 
 const WORKFLOW_TYPE = 'source.fetch';
 const SEARCH_LOGS = 'search_logs';
-/** `get_trace` is a fixture tool, but `source.fetch` may not call it. */
-const ALLOWLIST = { [WORKFLOW_TYPE]: [{ sourceId: FIXTURE_SOURCE_ID, toolName: SEARCH_LOGS }] };
+const FIXTURE_DESCRIPTION = 'Payment logs of the checkout services; the test declaration.';
+
+/** The fixture source declaring `tools`: the declared tools are the `source.fetch` allowlist. */
+function fixtureDeclaration(tools: readonly string[]): SourceDeclaration {
+  return [
+    {
+      sourceId: FIXTURE_SOURCE_ID,
+      description: FIXTURE_DESCRIPTION,
+      tools: tools.map((name) => ({ name, description: `The ${name} tool of the test declaration.` })),
+    },
+  ];
+}
+
+/** `get_trace` is a fixture tool, but `source.fetch` may not call it: only `search_logs` is declared. */
+const DECLARATION = fixtureDeclaration([SEARCH_LOGS]);
 const PAGE_SIZE = 5;
 /** Metric 4: each failure class is injected 30 times. */
 const METRIC_4_REPEAT = 30;
@@ -84,7 +100,7 @@ function clockWithJitter(random: number): Clock {
 
 function executorFor(harness: FixtureHarness, random = 0.5): ToolExecutor {
   return new ToolExecutor({
-    registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: ALLOWLIST }),
+    registry: createSourceRegistry({ adapters: [harness.adapter], declaration: DECLARATION }),
     settings: harness.settings,
     clock: clockWithJitter(random),
     logger: harness.logger,
@@ -500,7 +516,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
         },
       };
       const executor = new ToolExecutor({
-        registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: ALLOWLIST }),
+        registry: createSourceRegistry({ adapters: [harness.adapter], declaration: DECLARATION }),
         settings,
         clock: clockWithJitter(0.5),
         logger: harness.logger,
@@ -523,7 +539,7 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
         logger: harness.logger,
       });
       const executor = new ToolExecutor({
-        registry: createSourceRegistry({ adapters: [missing], allowlist: ALLOWLIST }),
+        registry: createSourceRegistry({ adapters: [missing], declaration: DECLARATION }),
         settings: harness.settings,
         clock: clockWithJitter(0.5),
         logger: harness.logger,
@@ -1042,14 +1058,8 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
     /** AC-15.3 floor; the count itself is read from `fixture://source-info`. */
     const RECORD_COUNT_FLOOR = 100_000;
     const LOCAL_TIMEOUT_AFTER_RELEASE_MS = 1_500;
-    const GROUND_TRUTH_WORKFLOW = 'test.ground_truth';
-    /** A test allowlist: `source.fetch` may not call these tools, the ground-truth check does. */
-    const GROUND_TRUTH_ALLOWLIST = {
-      [GROUND_TRUTH_WORKFLOW]: [
-        { sourceId: FIXTURE_SOURCE_ID, toolName: 'aggregate_logs' },
-        { sourceId: FIXTURE_SOURCE_ID, toolName: 'get_trace' },
-      ],
-    };
+    /** A declaration of its own: the ground-truth check calls the tools the rows above leave undeclared. */
+    const GROUND_TRUTH_DECLARATION = fixtureDeclaration(['aggregate_logs', 'get_trace']);
     /** Whole-window aggregates and the first trace lookup (which indexes every trace) outlast the short call timeout. */
     const LONG_CALL_TIMEOUT_MS = 30_000;
 
@@ -1106,14 +1116,14 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
     /** A fetch through the executor that must complete; returns the items of its single stored page. */
     async function fetchComplete(harness: FixtureHarness, toolName: string, args: Record<string, unknown>): Promise<unknown> {
       const executor = new ToolExecutor({
-        registry: createSourceRegistry({ adapters: [harness.adapter], allowlist: GROUND_TRUTH_ALLOWLIST }),
+        registry: createSourceRegistry({ adapters: [harness.adapter], declaration: GROUND_TRUTH_DECLARATION }),
         settings: harness.settings,
         clock: clockWithJitter(0.5),
         logger: harness.logger,
       });
       const ctx = new InMemoryTaskContext({ maxRetries: 0, maxToolCalls: 1, completeness: 'all' });
       const outcome = await executor.execute(ctx, {
-        workflowType: GROUND_TRUTH_WORKFLOW,
+        workflowType: WORKFLOW_TYPE,
         sourceId: FIXTURE_SOURCE_ID,
         toolName,
         args,
@@ -1223,14 +1233,74 @@ describe('research-runtime / mcp-source - integration (fixture process, in-memor
   });
 });
 
+// KD-7, design-catalog-planning.md «Источник backoffice»: the back-office adapter starts its own fixture process with
+// FIXTURE_SOURCE=backoffice and the same scenario, rules file and call log as the logs adapter.
+// Defect caught: the process is started without FIXTURE_SOURCE (it serves the log tools) or without the scenario (its
+// slice and order ids are not those of the logs); otherwise only E2E-1 would see it.
+describe('catalog-planning / back-office adapter - integration (two fixture processes of one scenario)', () => {
+  const SCENARIO = 'two-sources/method-declined-01';
+  const ORDER_WINDOW = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:10:00.000Z' };
+  const adapters: SourceAdapter[] = [];
+  afterEach(async () => {
+    await Promise.all(adapters.splice(0).map((adapter) => adapter.close()));
+  });
+
+  function backofficeBeside(logs: FixtureHarness): BackofficeSourceAdapter {
+    const adapter = new BackofficeSourceAdapter({
+      serverPath: fixtureServerPath,
+      settings: { ...logs.settings, callTimeoutMs: 30_000 },
+      logger: logs.logger,
+    });
+    adapters.push(adapter);
+    return adapter;
+  }
+
+  function call(adapter: SourceAdapter, toolName: string, args: Record<string, unknown>): Promise<CallOutcome> {
+    return adapter.call({ toolName, args, cursor: null, signal: new AbortController().signal, timeoutMs: 30_000 });
+  }
+
+  function itemsOf(outcome: CallOutcome): readonly unknown[] {
+    if (outcome.kind !== 'page') {
+      throw new Error(`expected a page, got ${JSON.stringify(outcome)}`);
+    }
+    return outcome.page.items;
+  }
+
+  it('the back-office adapter lists search_orders and get_order and reads the slice of the same scenario as the logs adapter', async () => {
+    const logs = fixture({ env: { FIXTURE_SCENARIO: SCENARIO } });
+    const backoffice = backofficeBeside(logs);
+    const signal = new AbortController().signal;
+
+    const logsSnapshot = await logs.adapter.currentSnapshot(signal);
+    const backofficeSnapshot = await backoffice.currentSnapshot(signal);
+    const orders = itemsOf(await call(backoffice, 'search_orders', { ...ORDER_WINDOW, pageSize: 5 }));
+    const [first] = orders as readonly { orderId: string }[];
+    const details = itemsOf(await call(backoffice, 'get_order', { orderId: first?.orderId ?? 'ord-00000000' }));
+
+    expect(backoffice.descriptor).toMatchObject({
+      sourceId: BACKOFFICE_SOURCE_ID,
+      tools: [{ name: 'search_orders' }, { name: 'get_order' }],
+    });
+    // The scenario, not the default dataset: its slice differs from v1, and both processes report the same one.
+    expect(backofficeSnapshot).toBe(logsSnapshot);
+    expect(backofficeSnapshot).not.toBe(V1_SNAPSHOT);
+    expect(orders).toHaveLength(5);
+    expect(orders).toEqual(expect.arrayContaining([expect.objectContaining({ orderId: expect.stringMatching(/^ord-[0-9a-f]{8}$/) })]));
+    expect(details).toEqual([expect.objectContaining({ orderId: first?.orderId, payments: expect.any(Array) })]);
+    // The process's own record: it served the back-office tools, through the same call log as the logs process.
+    expect(logs.readCallLog().map((line) => line.tool)).toEqual(['search_orders', 'get_order']);
+  });
+});
+
 // -----------------------------------------------------------------------------------------------------------------
 // Proven at unit level (provenAt: unit). Named for the plan; NOT part of the integration budget; do not re-check their variants above.
 // -----------------------------------------------------------------------------------------------------------------
-// - sources.registry.spec.ts (SourceRegistry factory, table-driven): AC-11.3 / UC-E2 - allowlisted tool with readOnly: false, pair missing from the descriptor,
+// - sources.registry.spec.ts (SourceRegistry factory, table-driven): AC-11.3 / UC-E2 - declared tool with readOnly: false, tool missing from the descriptor,
 //   duplicate sourceId, FIXTURE_FAULTS set without FIXTURE_CALL_LOG -> each throws with sourceId and toolName; the fixture process is never spawned
-//   (spawn spy at the process boundary). `readOnlyHint` from the server is not read.
+//   (spawn spy at the process boundary). `readOnlyHint` from the server is not read. AC-01.1 / DC-1 - a missing, blank or too long description of a
+//   source or tool, a declared source without an adapter, a connected source without a declaration -> refused with sourceId and toolName.
 // - tool-executor.spec.ts (ToolExecutor + non-MCP stub adapter + in-memory TaskContext): AC-16.1 / UC-7 - a stub adapter with its own descriptor, currentSnapshot and
-//   allowlist row yields a succeeded fetch with the same provenance format, with no change to ToolExecutor or runtime. Needs no Postgres or process;
+//   declaration row yields a succeeded fetch with the same provenance format, with no change to ToolExecutor or runtime. Needs no Postgres or process;
 //   the Design Doc lists it under e2e-runtime, but nothing in it depends on the database (pushed down).
 // - completeness.spec.ts (pagination-and-coverage rule, table): complete only when nextCursor null AND (totalRelation eq with sum(returned) == totalMatched OR exhausted);
 //   gte / null totals never complete; eq with a shortfall -> partial + warning source_ended_early; page_cap and total_cap shapes. INT-2 proves only the wiring.

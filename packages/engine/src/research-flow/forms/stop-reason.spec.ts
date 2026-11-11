@@ -29,7 +29,25 @@ describe('stopReasonOf: the stop reason follows the rule of precedence', () => {
     ['inconclusive', false, null],
     ['inconclusive', true, 'budget_exhausted'],
   ])('%s with budgetExhausted %s is %s', (ending, budgetExhausted, expected) => {
-    expect(stopReasonOf(ending, budgetExhausted)).toBe(expected);
+    expect(stopReasonOf(ending, { budgetExhausted, planSourcesRejected: false })).toBe(expected);
+  });
+});
+
+// AC-06.2 (the rule), Flow 3 (design-catalog-planning.md, «Закрытие корня и причина остановки»). Defect caught: an
+// investigation stopped with no accepted plan and the attempts exhausted carries no reason, or one a later rule decides.
+describe('no accepted plan and attempts exhausted → plan_sources_rejected', () => {
+  it.each<[RootEnding, boolean]>([
+    ['inconclusive', false],
+    ['inconclusive', true],
+    ['turn_limit', false],
+    ['turn_limit', true],
+    ['not_after', false],
+    ['run_tokens_exhausted', false],
+    ['investigation_tokens_exhausted', true],
+    ['model_unavailable', false],
+    ['context_overflow', false],
+  ])('%s with budgetExhausted %s', (ending, budgetExhausted) => {
+    expect(stopReasonOf(ending, { budgetExhausted, planSourcesRejected: true })).toBe('plan_sources_rejected');
   });
 });
 
@@ -44,6 +62,10 @@ const supportedClaim = {
   confidence: 'medium',
   evidenceIds: [PAGE_ID],
 };
+const planWriteCall = (state: string, reason: string | null) => ({ toolName: 'plan_write', state, reason });
+const refusedPlan = planWriteCall('rejected', 'plan_sources_invalid');
+/** `plan_attempts_exhausted` is not an attempt: two refusals and it do not exhaust the attempts. */
+const exhaustedPlan = planWriteCall('rejected', 'plan_attempts_exhausted');
 const unverifiedClaim = { claimId: OPEN_CLAIM, text: 'the cache was cold', status: 'unverified', confidence: null, evidenceIds: [] };
 
 const context: FormRunContext = {
@@ -61,12 +83,14 @@ function readerOf(options: {
   readonly claims: readonly unknown[];
   readonly budgetExhausted?: boolean;
   readonly sourceMode?: string;
+  readonly plan?: unknown;
+  readonly toolCalls?: readonly unknown[];
 }): FormDataReader {
   const unused = () => Promise.reject(new Error('this step does not read it'));
   return {
-    plan: unused,
+    plan: () => Promise.resolve(options.plan === undefined ? { revision: 1, plan: {} } : options.plan),
     runs: unused,
-    toolCalls: unused,
+    toolCalls: () => Promise.resolve(options.toolCalls ?? []),
     records: unused,
     definitionMemoryFingerprint: unused,
     claims: () => Promise.resolve(options.claims),
@@ -129,6 +153,28 @@ describe('the code answer of the root is built from what collect read', () => {
     const { result } = decideCodeAnswer(collected, 'inconclusive');
 
     expect(result).toMatchObject({ outcome: 'inconclusive', stopReason: null });
+  });
+
+  it.each([
+    ['a forced end', 'turn_limit'],
+    ['the closure «не выяснено»', 'inconclusive'],
+  ] as const)('with no plan and three plan attempts refused, %s stops with plan_sources_rejected', async (_, ending) => {
+    const reader = readerOf({ claims: [], budgetExhausted: true, plan: null, toolCalls: [refusedPlan, refusedPlan, refusedPlan] });
+    const collected = await CODE_ANSWER_FORCED_END.turn_limit.collect!(context, reader);
+
+    const answer = decideCodeAnswer(collected, ending);
+
+    expect(answer.result).toMatchObject({ outcome: 'inconclusive', stopReason: 'plan_sources_rejected' });
+    expect(answer.message.text).toContain('Остановлен: план не прошёл проверку источников');
+  });
+
+  it.each([
+    ['two attempts refused', null, [refusedPlan, refusedPlan, exhaustedPlan]],
+    ['an accepted revision', { revision: 1, plan: {} }, [refusedPlan, refusedPlan, refusedPlan]],
+  ] as const)('with %s a forced end keeps its own reason', async (_, plan, toolCalls) => {
+    const answer = await forcedEndAnswer('turn_limit', readerOf({ claims: [], plan, toolCalls }));
+
+    expect(answer).toMatchObject({ outcome: 'inconclusive', stopReason: 'step_limit' });
   });
 
   it('without sources is inconclusive with its reason and cites no page', async () => {

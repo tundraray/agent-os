@@ -199,8 +199,9 @@ export function createAssessAgent(deps: AssessAgentDeps): AssessAgent {
         query: typeof request.prologueInput === 'string' ? request.prologueInput : '',
         sourceMode: OUTSIDE_SOURCE_MODE,
         answerSections: config.answer.sections.join(', '),
-        // A definition with the field has a tool, so it is `agent_not_detachable` and never comes here.
+        // A definition with either field has a tool, so it is `agent_not_detachable` and never comes here.
         sources: NO_SOURCES_TEXT,
+        catalog: NO_SOURCES_TEXT,
       },
     );
     const messages: SessionMessage[] = [];

@@ -8,13 +8,17 @@ import {
   type Transport,
 } from '@modelcontextprotocol/server';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { z } from 'zod';
+import { backOfficeOf } from './backoffice.js';
 import { canonicalJson } from './canonical-json.js';
 import { createLogDataset, type LogDataset } from './dataset.js';
 import type { ResultFaultRule } from './fault-schedule.js';
 import { aggregateLogsTool } from './tools/aggregate-logs.js';
 import type { FixtureTool } from './tools/fixture-tool.js';
+import { getOrderTool } from './tools/get-order.js';
 import { getTraceTool } from './tools/get-trace.js';
 import { searchLogsTool } from './tools/search-logs.js';
+import { searchOrdersTool } from './tools/search-orders.js';
 import { SCENARIO_VERSION, type DatasetVersion } from './versions.js';
 
 const SOURCE_INFO_URI = 'fixture://source-info';
@@ -22,24 +26,36 @@ const SOURCE_INFO_URI = 'fixture://source-info';
 const TEXT_COPY_MAX_BYTES = 1024 * 1024;
 
 const SERVER_INFO = { name: 'agent-os-mcp-fixture', version: '1.0.0' };
-const TOOLS: readonly FixtureTool[] = [searchLogsTool, aggregateLogsTool, getTraceTool];
+
+/** What a fixture process serves (`FIXTURE_SOURCE`): the payment logs or the back office of the same dataset. */
+export const FixtureSourceSchema = z.enum(['logs', 'backoffice']);
+export type FixtureSource = z.infer<typeof FixtureSourceSchema>;
+
+const TOOLS: Readonly<Record<FixtureSource, readonly FixtureTool[]>> = {
+  logs: [searchLogsTool, aggregateLogsTool, getTraceTool],
+  backoffice: [searchOrdersTool, getOrderTool],
+};
 
 /** Result fault of the `tools/call` request with this `id`, if a fault rule matched it. */
 export type ResultFaultLookup = (requestId: RequestId) => ResultFaultRule | undefined;
 
 /**
- * Read-only MCP server over one synthetic log dataset, built on the low-level `Server` so the fixture controls
- * every result byte: tools are `readOnlyHint: true` without `outputSchema`, results are canonical JSON.
+ * Read-only MCP server over one synthetic dataset, serving its logs or its back office, built on the low-level
+ * `Server` so the fixture controls every result byte: tools are `readOnlyHint: true` without `outputSchema`, results
+ * are canonical JSON. Both sources report the dataset's snapshot, so two processes of one scenario share the slice.
  */
 export class FixtureServer {
   private readonly server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
+  private readonly tools: readonly FixtureTool[];
 
   constructor(
     private dataset: LogDataset,
+    private readonly source: FixtureSource,
     private readonly resultFault: ResultFaultLookup = () => undefined,
   ) {
+    this.tools = TOOLS[source];
     this.server.setRequestHandler('tools/list', () => ({
-      tools: TOOLS.map((tool) => ({
+      tools: this.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
@@ -59,7 +75,7 @@ export class FixtureServer {
       const info = {
         snapshot: this.dataset.snapshot,
         datasetVersion: this.dataset.version,
-        recordCount: this.dataset.recordCount,
+        recordCount: this.source === 'logs' ? this.dataset.recordCount : backOfficeOf(this.dataset).orderCount,
       };
       return { contents: [{ uri: SOURCE_INFO_URI, mimeType: 'application/json', text: canonicalJson(info) }] };
     });
@@ -72,7 +88,7 @@ export class FixtureServer {
   }
 
   private async callTool(name: string, args: unknown, fault: ResultFaultRule | undefined): Promise<CallToolResult> {
-    const tool = TOOLS.find((candidate) => candidate.name === name);
+    const tool = this.tools.find((candidate) => candidate.name === name);
     if (tool === undefined) {
       throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool: ${name}`);
     }
@@ -124,8 +140,8 @@ function jsonResult(result: Record<string, unknown>): CallToolResult {
   return { structuredContent, content };
 }
 
-/** Result fields that hold the page's list (`records` or `buckets`). */
-const LIST_KEYS = ['records', 'buckets'] as const;
+/** Result fields that hold the page's list (`records`, `buckets` or `orders`). */
+const LIST_KEYS = ['records', 'buckets', 'orders'] as const;
 const PAD_CHARACTER = 'x';
 
 /**

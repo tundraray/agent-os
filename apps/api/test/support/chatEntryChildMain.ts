@@ -15,6 +15,7 @@ import {
   ENGINE_RESOLVE_MODEL,
   ENGINE_TOKEN_COUNTER,
   RESEARCH_ENGINE,
+  SOURCE_ACCESS_POLICY,
 } from '../../src/engine/engine.tokens.js';
 import {
   ASSISTANT_INSTRUCTIONS,
@@ -38,6 +39,7 @@ import {
   createThreadTitleAgent,
   THREAD_TITLE_AGENT,
 } from '../../src/threads/thread-title.agent.js';
+import { ALLOW_ALL_ACCESS } from './accessDoubles.js';
 import {
   type ChildEngine,
   crashAfterAnswerSave,
@@ -53,7 +55,11 @@ import {
   createEngineScriptedRoles,
   ENGINE_FILES_VARIABLES,
   ENGINE_JOURNEY,
+  ENGINE_JOURNEY_VARIABLE,
   ENGINE_PATH_VARIABLE,
+  type EngineJourneyName,
+  engineJourneyOf,
+  journeyGoal,
   RESEARCH_FLOW_PATH,
   type StartFailedMessage,
 } from './engineScriptedRoles.js';
@@ -82,10 +88,13 @@ import { TEST_GROUP_TABLES } from './testGroupTables.js';
  *   `RESEARCH_GROUP_TABLES_DIR` beside them; only `ENGINE_RESOLVE_MODEL` and `ENGINE_TOKEN_COUNTER` are the scripted agents
  *   of `engineScriptedRoles.ts`. Only `E2E_ENGINE_PROCESS_FILE`, when given, replaces the configuration; the chat model
  *   calls `deepResearch` without a budget, so the launch takes the budget of the loaded configuration, then answers the
- *   plain turns of {@link ENGINE_JOURNEY}.
+ *   plain turns of {@link ENGINE_JOURNEY} (a two-source journey: one proposal turn and the card's confirm after it).
+ *   `E2E_ENGINE_JOURNEY` picks what the agents play and the goal of the call (`EngineJourneyName`); the real `SourcesModule` starts both fixture processes on the session's `FIXTURE_SCENARIO`
+ *   and `FIXTURE_CALL_LOG`.
  *
  * It reads only its environment: `DATABASE_URL` (its own scratch database), the Runtime Settings, the part's settings,
- * the mode, the process file and `CHAT_ENTRY_CRASH_AT`.
+ * the mode, the journey, the process file and `CHAT_ENTRY_CRASH_AT`. Without `SOURCE_ACCESS_TABLE` the rights port
+ * (`SOURCE_ACCESS_POLICY`) is the allow-all double of `accessDoubles.ts`; with it, the server's own table answers.
  *
  * IPC: `ready` with the port once the api accepts requests; `release` lets an investigation's controller succeed (the
  * engine double); `chatCalls` sends back the input of every
@@ -130,7 +139,11 @@ function researchFlowFile(env: NodeJS.ProcessEnv): unknown {
   return processFile === '' ? null : readJson(processFile);
 }
 
-function scriptChat(chatModel: ScriptedChatModel, mode: ChildMode): void {
+function scriptChat(
+  chatModel: ScriptedChatModel,
+  mode: ChildMode,
+  journey: EngineJourneyName,
+): void {
   if (mode === 'engine-double') {
     chatModel.script(
       deepResearchCallStep({
@@ -140,22 +153,42 @@ function scriptChat(chatModel: ScriptedChatModel, mode: ChildMode): void {
     );
     return;
   }
+  const goal = journeyGoal(journey);
+  if (journey === 'provider-adapter') {
+    chatModel.script(
+      deepResearchCallStep({ goal }).step,
+      ...ENGINE_JOURNEY.replies.map((reply) => textStep(reply)),
+    );
+    return;
+  }
+  // The two-source journeys: a research mode turn takes the first step alone; a plain turn takes the call (a proposal)
+  // and the reply after it, and the card's confirm then takes the forced call of its decision turn (S3).
   chatModel.script(
-    deepResearchCallStep({ goal: ENGINE_JOURNEY.goal }).step,
-    ...ENGINE_JOURNEY.replies.map((reply) => textStep(reply)),
+    deepResearchCallStep({ goal }).step,
+    textStep(ENGINE_JOURNEY.replies[0]),
+    deepResearchCallStep({ goal }).step,
   );
 }
 
 async function main(): Promise<INestApplication> {
   const mode = modeOf(process.env);
   const hit = crashPoint(process.env.CHAT_ENTRY_CRASH_AT, process.env.NODE_ENV);
+  const journey = engineJourneyOf(process.env[ENGINE_JOURNEY_VARIABLE]);
+  if (mode === 'engine-double' && journey !== 'provider-adapter') {
+    throw new Error(
+      `${ENGINE_JOURNEY_VARIABLE}=${journey} needs the research-flow mode`,
+    );
+  }
   const chatModel = scriptedChatModel();
-  scriptChat(chatModel, mode);
+  scriptChat(chatModel, mode, journey);
   let engine: ChildEngine | undefined;
   let resolveLaunches: (() => ResearchLaunchService) | undefined;
   const researchFlow = mode === 'research-flow';
   const editedV3 = researchFlow ? researchFlowFile(process.env) : null;
-  const roles = createEngineScriptedRoles(editedV3 ?? deepResearchProcessV3);
+  const roles = createEngineScriptedRoles(
+    editedV3 ?? deepResearchProcessV3,
+    journey,
+  );
   const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MASTRA)
     .useFactory({
@@ -185,6 +218,11 @@ async function main(): Promise<INestApplication> {
   }
   if (editedV3 !== null) {
     builder.overrideProvider(ENGINE_PROCESSES).useValue([editedV3]);
+  }
+  // A session that passes `SOURCE_ACCESS_TABLE` checks rights with the server's own table; otherwise every owner
+  // may read every source.
+  if ((process.env.SOURCE_ACCESS_TABLE ?? '') === '') {
+    builder.overrideProvider(SOURCE_ACCESS_POLICY).useValue(ALLOW_ALL_ACCESS);
   }
   const moduleRef = await (
     mode === 'engine-double'

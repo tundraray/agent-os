@@ -134,6 +134,7 @@ describe('executeRunCommand: the judge spend counts against the run budget', () 
           usage: { totalTokens: investigationTokens, totalCostUsd: 0 },
           calls: [],
           claims: [],
+          planRevisions: [],
           agentTree: { runs: [] },
           config: { processConfig: deepResearchProcessV3 },
         },

@@ -211,7 +211,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
     });
   }, 60_000);
 
-  it('aborts the start before the workers when the allowlist names a tool without readOnly', async () => {
+  it('aborts the start before the workers when the declaration names a tool without readOnly', async () => {
     const writable: SourceAdapter = {
       descriptor: {
         sourceId: 'fixture',
@@ -229,6 +229,22 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
       currentSnapshot: () => Promise.reject(new Error('never called')),
       close: () => Promise.resolve(),
     };
+    // The declared back office is connected and read-only, so the writable logs tool is the only fault.
+    const backoffice: SourceAdapter = {
+      descriptor: {
+        sourceId: 'backoffice',
+        tools: ['search_orders', 'get_order'].map((name) => ({
+          name,
+          paginated: false,
+          readOnly: true,
+          argsSchema: z.object({}),
+          resultSchema: z.unknown(),
+        })),
+      },
+      call: () => Promise.reject(new Error('never called')),
+      currentSnapshot: () => Promise.reject(new Error('never called')),
+      close: () => Promise.resolve(),
+    };
     const timeline = recordPhases();
     const restoreEnv = overrideEnv({ RUNTIME_WORKERS: 'on', DB_POOL_MAX: '2' });
     let app: INestApplication;
@@ -239,7 +255,7 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
         .overrideProvider(THREAD_TITLE_AGENT)
         .useValue(createThreadTitleAgent(titleModel().model))
         .overrideProvider(SOURCE_ADAPTERS)
-        .useValue([writable])
+        .useValue([writable, backoffice])
         .overrideProvider(ENGINE_GROUP_TABLES)
         .useValue(TEST_GROUP_TABLES)
         .compile();
@@ -268,9 +284,9 @@ describe('research-runtime / mcp-source - UC-9 wiring of SourcesModule (in-proce
   // Covers: AC-26.1 (service side): without a connected source the service starts and a new investigation starts in
   // `model_knowledge`. The number of warnings (AC-26.2, AC-26.3) is proven by packages/engine/src/create-engine.spec.ts; the chat
   // half of AC-26.1 by INT-1 A6 of chat-entry; the live log line by scenario L1-7 of chat-entry.
-  // Use case: UC-12. Primary failure mode (turns red when): `connectedSources` comes from SOURCES_ALLOWLIST or SOURCE_REGISTRY.
+  // Use case: UC-12. Primary failure mode (turns red when): `connectedSources` comes from SOURCES_DECLARATION or SOURCE_REGISTRY.
   // @category: integration
-  // @dependency: AppModule (real), SOURCE_ADAPTERS overridden with [] (as the allowlist refusal case above), model and token
+  // @dependency: AppModule (real), SOURCE_ADAPTERS overridden with [] (as the declaration refusal case above), model and token
   // counter doubles, Postgres
   //
   // Verification items:

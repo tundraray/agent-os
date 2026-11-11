@@ -228,13 +228,25 @@ export function agentCallView(
   };
 }
 
+/** One `gather` of the worker: the source, its tool and the tool's arguments. */
+export interface WorkerGather {
+  readonly sourceId: string;
+  readonly toolName: string;
+  readonly args: Readonly<Record<string, unknown>>;
+}
+
 /** What the program of one scenario does; the double recognises its own texts in the packets. */
 export interface ResearchScript {
-  /** What the worker collects with `gather`. */
+  /** What the worker collects with `gather` from `fixture`, again until a call returns a page. */
   read(): {
     readonly toolName: string;
     readonly args: Readonly<Record<string, unknown>>;
   };
+  /**
+   * When given, replaces {@link read}: the worker's gathers in order, the next one chosen by how many `gather` results its
+   * session holds, refused ones too. The worker then reads every page it got and points its claims at all of them.
+   */
+  gathers?(): readonly WorkerGather[];
   /** The claims the worker writes, in this order; none closes the investigation `inconclusive`. */
   claimTexts(): readonly string[];
   /** The checker's closed assessment of the packet (`<claim>`, `<data>`). */
@@ -269,7 +281,14 @@ function plannerTurn(view: AgentCallView): readonly ScriptedToolCall[] {
       tool: 'plan_write',
       args: {
         readinessCriteria: ['the cause is found or ruled out'],
-        branches: [{ question: 'What do the records show?', approach: 'read' }],
+        branches: [
+          {
+            question: 'What do the records show?',
+            approach: 'read',
+            sources: [FIXTURE_SOURCE_ID],
+            sourceReason: 'it holds the records',
+          },
+        ],
         reason: 'there is no plan yet',
       },
     },
@@ -281,19 +300,23 @@ interface NumberedRecord {
   readonly record?: { readonly traceId?: unknown };
 }
 
-/** The first record of the session's read of a page that carries a trace: the record the claims point at. */
-function tracedRecord(view: AgentCallView): {
+/** The records of each `investigation_read` of the session, in the order of the reads: read `i` is of page `i`. */
+const readRecords = (view: AgentCallView): readonly NumberedRecord[][] =>
+  view
+    .resultsOf('investigation_read')
+    .map((read) => (read.result as { items?: NumberedRecord[] }).items ?? []);
+
+/** The first record of the session's reads that carries a trace: the record the claims point at, and its read. */
+function tracedRecord(reads: readonly NumberedRecord[][]): {
+  readonly read: number;
   readonly number: number;
   readonly traceId: string;
 } {
-  const items = view
-    .resultsOf('investigation_read')
-    .flatMap(
-      (read) => (read.result as { items?: NumberedRecord[] }).items ?? [],
-    );
-  for (const { number, record } of items) {
-    if (typeof record?.traceId === 'string') {
-      return { number, traceId: record.traceId };
+  for (const [read, items] of reads.entries()) {
+    for (const { number, record } of items) {
+      if (typeof record?.traceId === 'string') {
+        return { read, number, traceId: record.traceId };
+      }
     }
   }
   throw new Error(
@@ -301,29 +324,59 @@ function tracedRecord(view: AgentCallView): {
   );
 }
 
+/** The worker's next gather; null once it has gathered what the script asks. */
+function nextGather(
+  view: AgentCallView,
+  script: ResearchScript,
+): WorkerGather | null {
+  if (script.gathers === undefined) {
+    return view.pages.length === 0
+      ? { sourceId: FIXTURE_SOURCE_ID, ...script.read() }
+      : null;
+  }
+  return script.gathers()[view.resultsOf('gather').length] ?? null;
+}
+
+/**
+ * The claims' pointer: the traced record on its page, and the first record of every other page read, so each page the
+ * worker got is evidence of the claims.
+ */
+function claimsPointer(view: AgentCallView): {
+  readonly traceId: string;
+  readonly pointer: readonly unknown[];
+} {
+  const reads = readRecords(view);
+  const traced = tracedRecord(reads);
+  const pointer = view.pages.flatMap((pageId, read) => {
+    if (read === traced.read) return [{ pageId, records: [traced.number] }];
+    const first = reads[read]?.[0];
+    return first === undefined ? [] : [{ pageId, records: [first.number] }];
+  });
+  return { traceId: traced.traceId, pointer };
+}
+
 function workerTurn(
   view: AgentCallView,
   script: ResearchScript,
 ): readonly ScriptedToolCall[] {
-  const page = view.pages[0];
-  if (page === undefined) {
+  const gather = nextGather(view, script);
+  if (gather !== null) {
+    const { sourceId, toolName, args } = gather;
     return [
       {
         tool: 'gather',
-        args: {
-          sourceId: FIXTURE_SOURCE_ID,
-          ...script.read(),
-          completeness: 'sample',
-        },
+        args: { sourceId, toolName, args, completeness: 'sample' },
       },
     ];
   }
   const texts = script.claimTexts();
   if (texts.length > 0 && view.resultsOf('claims_write').length === 0) {
-    if (view.resultsOf('investigation_read').length === 0) {
+    const read = view.resultsOf('investigation_read').length;
+    const page = view.pages[read];
+    if (page !== undefined) {
       return [{ tool: 'investigation_read', args: { view: 'records', page } }];
     }
-    const { number, traceId } = tracedRecord(view);
+    const { traceId, pointer } = claimsPointer(view);
     return [
       {
         tool: 'claims_write',
@@ -331,7 +384,7 @@ function workerTurn(
           claims: texts.map((text) => ({
             text,
             atoms: [{ kind: 'text', value: traceId }],
-            pointer: [{ pageId: page, records: [number] }],
+            pointer,
           })),
         },
       },

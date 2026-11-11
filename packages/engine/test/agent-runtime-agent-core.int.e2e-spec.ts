@@ -1655,10 +1655,11 @@ describe('agent-runtime / agent-core - integration (in-process runtime + engine 
   // Over the file's INT-1..INT-5 limit: the unit tables see neither `row.sources` of a real tree nor the closure over the
   // real source registry that `composeEngine` passes; each row names the defect only the assembled engine shows.
   describe('INT-6', () => {
-    const ALPHA_LINE =
-      '{"sourceId":"alpha","toolName":"search","argsSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"default":10,"type":"number"}},"required":["query"],"additionalProperties":false}}';
-    const BETA_LINE =
-      '{"sourceId":"beta","toolName":"search","argsSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"default":10,"type":"number"}},"required":["query"],"additionalProperties":false}}';
+    // One line per source with its description and tools (design-catalog-planning.md, KD-3), as `probeSources` declares them.
+    const lineOf = (sourceId: string) =>
+      `{"sourceId":"${sourceId}","description":"Probe source ${sourceId} of the {{sources}} cases.","tools":[{"toolName":"search","description":"Searches the probe source; never called.","argsSchema":{"type":"object","properties":{"query":{"type":"string"},"limit":{"default":10,"type":"number"}},"required":["query"],"additionalProperties":false}}]}`;
+    const ALPHA_LINE = lineOf('alpha');
+    const BETA_LINE = lineOf('beta');
     const NO_SOURCES = 'No data source is available to this run.';
     const READER = PROBE_READS_SOURCES_TOOL.name;
     const sourcesOptions = {

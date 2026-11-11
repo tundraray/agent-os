@@ -69,7 +69,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentProcessConfigSchema } from '../src/config/agent-config.schema.js';
 import { promptVersion } from '../src/model/prompt-version.js';
 import { readRunRecord } from '../src/runs/run-record.js';
-import { createDatabase } from '@agent-os/db';
+import { createDatabase, researchPlanRevisions } from '@agent-os/db';
 import { createRuntime, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
 import { COUNTING_SOURCE_ID, sourceCountGroup, sourceLogLine } from './support/countingSource.js';
 import { databaseUrl } from './support/database-url.js';
@@ -193,11 +193,14 @@ const VERDICTS: Readonly<Record<string, { readonly support: string; readonly rel
   [CLAIM_SUB_UNDECIDED]: { support: 'insufficient', relation: 'unrelated' },
 };
 
-/** The `gather` of one branch, with the pair taken from the `{{sources}}` lines of the worker's own system block (UC-13). */
+/**
+ * The `gather` of one branch, with the source and tool taken from the `{{sources}}` lines of the worker's own system block,
+ * one line per source with its tools (UC-13, KD-3).
+ */
 function gatherFromSystemBlock(view: AgentCallView, toolName: string, args: Readonly<Record<string, unknown>>): ScriptedToolCall {
-  const line = view.sourceLines.find((candidate) => candidate.toolName === toolName);
-  if (line === undefined) throw new Error(`no {{sources}} line for ${toolName} in the system block`);
-  return call('gather', { sourceId: line.sourceId, toolName: line.toolName, args, completeness: 'sample' });
+  const line = view.sourceLines.find((candidate) => candidate.tools.some((tool) => tool.toolName === toolName));
+  if (line === undefined) throw new Error(`no {{sources}} line with ${toolName} in the system block`);
+  return call('gather', { sourceId: line.sourceId, toolName, args, completeness: 'sample' });
 }
 
 const firstPage = (view: AgentCallView): string => {
@@ -340,7 +343,7 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
             return [
               call('plan_write', {
                 readinessCriteria: ['the cause of the timeouts is named'],
-                branches: [{ question: 'What did payment-api log?', approach: 'search its errors' }],
+                branches: [{ question: 'What did payment-api log?', approach: 'search its errors', sources: [COUNTING_SOURCE_ID], sourceReason: 'it holds the service logs' }],
                 reason: 'there is no plan yet',
               }),
             ];
@@ -497,13 +500,22 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
           { outcome: 'success', result: { claimId: idOf(CLAIM_A_REFUTED), status: 'refuted', group: null } },
         ]);
 
-        // UC-13: the pairs of the source come from the {{sources}} field of the worker alone; the former list is gone.
+        // UC-13, KD-3: the source and its tools come from the {{sources}} field of the worker alone, one line per source
+        // with the declared descriptions; the former list is gone.
         const workerSystem = h.model.callsOfAgent('worker')[0]?.system ?? '';
         const anyArgsSchema = { type: 'object', propertyNames: { type: 'string' }, additionalProperties: {} };
+        const toolLine = (toolName: string) => ({ toolName, description: expect.any(String) as unknown, argsSchema: anyArgsSchema });
         expect(lastTurnOfA?.sourceLines).toEqual([
-          { sourceId: 'fixture', toolName: 'aggregate_logs', argsSchema: anyArgsSchema },
-          { sourceId: 'fixture', toolName: 'get_trace', argsSchema: anyArgsSchema },
-          { sourceId: 'fixture', toolName: 'search_logs', argsSchema: anyArgsSchema },
+          {
+            sourceId: 'backoffice',
+            description: expect.any(String) as unknown,
+            tools: [toolLine('get_order'), toolLine('search_orders')],
+          },
+          {
+            sourceId: 'fixture',
+            description: expect.any(String) as unknown,
+            tools: [toolLine('aggregate_logs'), toolLine('get_trace'), toolLine('search_logs')],
+          },
         ]);
         for (const tool of ['search_logs', 'aggregate_logs', 'get_trace']) expect(workerSystem).not.toContain(`- ${tool}:`);
         expect(verifierViews).toHaveLength(4);
@@ -743,7 +755,7 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
     const scriptPlanner = (h: EngineHarness): void => {
       scriptTurns(h, 'planner', 2, (view) =>
         view.turn === 1
-          ? [call('plan_write', { readinessCriteria: ['the cause is named'], branches: [{ question: 'What did payment-api log?', approach: 'search its errors' }], reason: 'there is no plan yet' })]
+          ? [call('plan_write', { readinessCriteria: ['the cause is named'], branches: [{ question: 'What did payment-api log?', approach: 'search its errors', sources: [COUNTING_SOURCE_ID], sourceReason: 'it holds the service logs' }], reason: 'there is no plan yet' })]
           : [finishText('The plan is written')],
       );
     };
@@ -950,7 +962,11 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
         try {
           h.countingSource.answerWith(() => [sourceLogLine(), sourceLogLine({ spanSeq: 2 }), sourceLogLine({ spanSeq: 3 })]);
           const answersAfterTheStop = heldGate();
-          scriptTurns(h, 'controller', 1, () => [call('call_agent', { agent: 'worker', assignment: BRANCH_A })]);
+          // The plan comes first: `gather` refuses plan_missing until the investigation has a plan revision (DC-7).
+          scriptPlanner(h);
+          scriptTurns(h, 'controller', 2, (view) =>
+            view.turn === 1 ? [call('call_agent', { agent: 'planner', assignment: QUERY_A })] : [call('call_agent', { agent: 'worker', assignment: BRANCH_A })],
+          );
           scriptTurns(h, 'worker', 3, (view) => {
             if (view.turn === 1) return [gatherFromSystemBlock(view, 'search_logs', SEARCH_ARGS)];
             if (view.turn === 2) {
@@ -1163,6 +1179,21 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
       return harness;
     };
 
+    /** A plan revision of one branch, as `plan_write` stores it, written over a connection of the test's own. */
+    const writePlanRevision = async (investigationId: string): Promise<void> => {
+      const connection = createDatabase({ connectionString: databaseUrl(), poolMax: 1 });
+      try {
+        await connection.db.insert(researchPlanRevisions).values({
+          investigationId,
+          revision: 1,
+          plan: { goal: 'the plan of the row', readinessCriteria: ['the cause is named'], branches: [{ question: 'What did payment-api log?', approach: 'search its errors', sources: [COUNTING_SOURCE_ID], sourceReason: 'it holds the service logs' }] },
+          reason: 'there is no plan yet',
+        });
+      } finally {
+        await connection.close();
+      }
+    };
+
     afterEach(async () => {
       try {
         if (harness !== undefined) {
@@ -1256,7 +1287,16 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
         });
         scriptTurns(h, 'verifier', 2, checked((text) => VERDICTS[text]));
 
+        // The plan comes first (`gather` refuses plan_missing without one, DC-7). It is written before the first turn rather
+        // than by a planner run, so the budget arithmetic of this row holds no planner turns.
+        const planned = gate();
+        h.tokenCounter.interceptTurn = async () => {
+          await planned.wait;
+          return COUNTED_INPUT;
+        };
         const started = await startResearch(h, QUERY_A);
+        await writePlanRevision(started.investigationId);
+        planned.open();
         const answer = await expectCodeAnswer(h, started, {
           stopReason: 'budget_exhausted',
           outcome: 'partial',
@@ -1353,7 +1393,7 @@ describe('agent-runtime / research-flow - integration (in-process runtime + engi
         });
         scriptTurns(h, 'planner', 2, (view) =>
           view.turn === 1
-            ? [call('plan_write', { readinessCriteria: ['the cause is named'], branches: [{ question: 'What did payment-api log?', approach: 'search its errors' }], reason: 'there is no plan yet' })]
+            ? [call('plan_write', { readinessCriteria: ['the cause is named'], branches: [{ question: 'What did payment-api log?', approach: 'search its errors', sources: [COUNTING_SOURCE_ID], sourceReason: 'it holds the service logs' }], reason: 'there is no plan yet' })]
             : [finishText('The plan is written')],
         );
         scriptTurns(h, 'worker', 4, (view) => {

@@ -19,6 +19,11 @@ export interface ToolRegistryEntry {
   readonly resultMaxBytes: number;
   /** Allows `{{sources}}` in the prompt of a definition that has the tool (KD-9); the model does not see the mark. */
   readonly readsRunSources?: boolean;
+  /**
+   * Allows `{{catalog}}` in the prompt of a definition that has the tool: the tool checks the plan against the run's
+   * catalog (design-catalog-planning.md, KD-3). The model does not see the mark; the fingerprint does not take it.
+   */
+  readonly readsRunCatalog?: boolean;
 }
 
 /** The closed list of tools by name; a definition names tools only from it (ADR-0009). */

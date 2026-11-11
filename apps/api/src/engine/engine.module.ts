@@ -11,7 +11,6 @@ import {
   AnthropicTokenCounter,
   type AssessRequest,
   type AssessResult,
-  CONFIGURATION_ACCESS_POLICY,
   createEngine,
   deepResearchProcessV3,
   type Engine,
@@ -21,10 +20,15 @@ import {
   type ResolveModel,
   shippedGroupTables,
   type TokenCounter,
+  type ToolAccessPolicy,
   type TranscriptRetention,
 } from '@agent-os/engine';
 import type { Clock, Runtime, RuntimeConfig } from '@agent-os/runtime';
-import type { SourceAdapter, SourceRegistry } from '@agent-os/sources';
+import type {
+  SourceAdapter,
+  SourceDeclaration,
+  SourceRegistry,
+} from '@agent-os/sources';
 import { withFields } from '../common/log-fields.js';
 import {
   ResearchModule,
@@ -37,7 +41,12 @@ import {
 } from '../research/research.tokens.js';
 import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 import {
+  SOURCE_ACCESS_TABLE_VARIABLE,
+  SourceAccessTable,
+} from '../sources/source-access-table.js';
+import {
   SOURCE_ADAPTERS,
+  SOURCE_DECLARATION,
   SOURCE_REGISTRY,
   SourcesModule,
 } from '../sources/sources.module.js';
@@ -53,6 +62,7 @@ import {
   ENGINE_RESOLVE_MODEL,
   ENGINE_TOKEN_COUNTER,
   RESEARCH_ENGINE,
+  SOURCE_ACCESS_POLICY,
 } from './engine.tokens.js';
 import { createResolveModel } from './resolve-model.js';
 import {
@@ -185,8 +195,9 @@ class BoundEngine implements Engine {
  * handlers are registered before the first claim. A refused configuration or a missing group table stops the start
  * here (DC-14, DC-2): `app.init()` inside `listen` throws, so the port is never bound. So does an
  * `AGENT_DEADLINE_MARGIN_MS` less than `RUNTIME_LEASE_MS` plus `AGENT_TURN_MS` (design-agent-core.md, Runtime
- * Settings, DC-27), checked before `createEngine`; the agent settings, the runtime's `leaseMs` and the rights port
- * that allows what the process configuration allows go to `createEngine`.
+ * Settings, DC-27), checked before `createEngine`; the agent settings, the runtime's `leaseMs` and the rights port of
+ * `SOURCE_ACCESS_POLICY` (the `SourceAccessTable` of `SOURCE_ACCESS_TABLE`, read once here; an unparseable table or
+ * an undeclared source in it stops the start, DC-2) go to `createEngine`.
  *
  * `connectedSources` are the `sourceId` of the adapters `SourcesModule` built — neither the allowlist nor the
  * registry: without `@agent-os/mcp-fixture` the list is empty, the engine runs on model knowledge and writes one
@@ -226,6 +237,18 @@ class BoundEngine implements Engine {
         }),
       inject: [ENGINE_SETTINGS],
     },
+    {
+      provide: SOURCE_ACCESS_POLICY,
+      useFactory: (
+        config: ConfigService,
+        declaration: SourceDeclaration,
+      ): ToolAccessPolicy =>
+        new SourceAccessTable(
+          config.get<string>(SOURCE_ACCESS_TABLE_VARIABLE),
+          declaration,
+        ),
+      inject: [ConfigService, SOURCE_DECLARATION],
+    },
     { provide: ENGINE_PROCESSES, useValue: [deepResearchProcessV3] },
     { provide: ENGINE_GROUP_TABLES, useValue: shippedGroupTables },
     { provide: RESEARCH_ENGINE, useFactory: () => new BoundEngine() },
@@ -243,6 +266,8 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
     @Inject(SOURCE_ADAPTERS) private readonly adapters: SourceAdapter[],
     @Inject(ENGINE_RESOLVE_MODEL) private readonly resolveModel: ResolveModel,
     @Inject(ENGINE_TOKEN_COUNTER) private readonly tokenCounter: TokenCounter,
+    @Inject(SOURCE_ACCESS_POLICY)
+    private readonly accessPolicy: ToolAccessPolicy,
     @Inject(RESEARCH_ENGINE) private readonly engine: BoundEngine,
     @Inject(TRANSCRIPT_RETENTION)
     private readonly transcriptRetention: TranscriptRetention,
@@ -286,9 +311,8 @@ export class EngineModule implements OnModuleInit, BeforeApplicationShutdown {
       busyWaitMs: agent.busyWaitMs,
       leaseMs,
       memoryAdminRole: agent.memoryAdminRole,
-      // The rights port of agent tool calls (design-agent-core.md, «Порт прав»): the configuration's, until
-      // `access-control` brings an employee's rights to single sources.
-      toolAccessPolicy: CONFIGURATION_ACCESS_POLICY,
+      // The rights port of agent tool calls: the stub table of `SOURCE_ACCESS_TABLE` (design-catalog-planning.md, KD-6).
+      toolAccessPolicy: this.accessPolicy,
       logger,
     });
     // The created engine, not the provider: test assemblies replace the provider, and their start is checked too.

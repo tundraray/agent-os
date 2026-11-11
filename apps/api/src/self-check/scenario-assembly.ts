@@ -20,6 +20,8 @@ import {
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import {
+  BACKOFFICE_SOURCE_ID,
+  BackofficeSourceAdapter,
   createSources,
   FIXTURE_SOURCE_ID,
   FixtureSourceAdapter,
@@ -28,7 +30,8 @@ import {
   type SourcesEnv,
   type SourcesLogger,
 } from '@agent-os/sources';
-import { SOURCES_ALLOWLIST } from '../sources/sources.config.js';
+import { SourceAccessTable } from '../sources/source-access-table.js';
+import { SOURCES_DECLARATION } from '../sources/sources.config.js';
 import { SELF_CHECK_OWNER } from '../auth/system-owners.js';
 
 /**
@@ -98,6 +101,19 @@ const selfCheckThreads: ThreadOwnership = {
     return fn();
   },
 };
+
+/** The sources every scenario assembly connects: both fixture processes (KD-7). */
+const CONNECTED_SOURCES = [FIXTURE_SOURCE_ID, BACKOFFICE_SOURCE_ID];
+
+/**
+ * The rights port of the program (design-catalog-planning.md, «Порт прав и заглушка»): the same `SourceAccessTable` as
+ * the server's, built in code — its system owner may read every connected source.
+ */
+const selfCheckAccess = (): SourceAccessTable =>
+  new SourceAccessTable(
+    JSON.stringify({ [SELF_CHECK_OWNER]: CONNECTED_SOURCES }),
+    SOURCES_DECLARATION,
+  );
 
 const isDatasetVersion = (value: string): value is DatasetVersion =>
   DATASET_VERSIONS.some((version) => version === value);
@@ -187,16 +203,19 @@ export async function assembleScenario(
       ...fixtureVariables(input.scenario),
     });
     const sourcesLog = sourcesLogger(logger);
+    // Both fixture processes serve the same scenario or dataset (KD-7).
+    const adapterOptions = {
+      serverPath: fixtureServerPath,
+      settings,
+      logger: sourcesLog,
+    };
     sources = createSources({
       handlers: runtime.handlers,
       adapters: [
-        new FixtureSourceAdapter({
-          serverPath: fixtureServerPath,
-          settings,
-          logger: sourcesLog,
-        }),
+        new FixtureSourceAdapter(adapterOptions),
+        new BackofficeSourceAdapter(adapterOptions),
       ],
-      allowlist: SOURCES_ALLOWLIST,
+      declaration: SOURCES_DECLARATION,
       settings,
       clock,
       logger: sourcesLog,
@@ -211,7 +230,8 @@ export async function assembleScenario(
         investigations,
       },
       sourceRegistry: sources.registry,
-      connectedSources: [FIXTURE_SOURCE_ID],
+      connectedSources: CONNECTED_SOURCES,
+      toolAccessPolicy: selfCheckAccess(),
       processes: [input.processConfig],
       assessModels: assessModels(input.judgeModel, input.processConfig),
       memoryAdminRole: SELF_CHECK_MEMORY_ADMIN_ROLE,

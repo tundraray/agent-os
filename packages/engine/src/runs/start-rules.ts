@@ -71,8 +71,8 @@ export function rootAgentOf(
 /**
  * The root task of an investigation (design-agent-core.md, KD-1, KD-4, «Задачи запусков»): `agent.root`
  * version 1 with the question as its assignment, the share the investigation's whole budget, one tool call and no
- * retries, the root definition's deadline. Its sources are the root definition's (the process's without them), none in
- * the mode without sources. The spec depends only on the recorded run, so a repeated start proposes the same task and
+ * retries, the root definition's deadline. Its sources are the recorded catalog's, narrowed by the root definition's
+ * `sources` when it sets them (design-catalog-planning.md, KD-1); none in the mode without sources. The spec depends only on the recorded run, so a repeated start proposes the same task and
  * the runtime answers `subscribed`; `notAfter` of the input is the bound of the recorded start: its time plus the root's
  * deadline. The handler takes `AGENT_DEADLINE_MARGIN_MS` off it (DC-27); the margin is no part of the input, so a change
  * of it keeps the root task's `dedup_key`.
@@ -83,15 +83,18 @@ export function rootTaskSpec(run: {
   readonly tokenBudget: number;
   readonly query: string;
   readonly sourceMode: SourceMode;
+  /** The recorded catalog of the investigation, in its order. */
+  readonly catalog: readonly { readonly sourceId: string }[];
   readonly createdAt: Date;
 }): TaskSpec {
   const agentName = rootAgentOf(run.config, run.sourceMode);
   const definition = run.config.agents[agentName];
   if (definition === undefined) throw new Error(`root ${agentName} is not a definition of ${run.config.processId}`);
+  const narrowing = definition.sources === undefined ? undefined : new Set(definition.sources);
   const sources =
     run.sourceMode === 'model_knowledge'
       ? []
-      : (definition.sources ?? [...new Set(run.config.sources.map((source) => source.sourceId))]);
+      : run.catalog.map((source) => source.sourceId).filter((sourceId) => narrowing?.has(sourceId) ?? true);
   const input: AgentTaskInput = {
     agentName,
     assignment: run.query,

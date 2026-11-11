@@ -16,6 +16,7 @@ import type {
 import { readAnswerMessage, type ReadAnswerMessageResult } from './answer/answer-message.js';
 import type { Assess, AssessRequest, AssessResult } from './assess/assess.js';
 import type { ResultFormRegistry } from './agents/result-forms.js';
+import type { ToolAccessPolicy } from './agents/tool-access-policy.js';
 import type { ProcessSet } from './config/process-set.js';
 import type { SourceMode } from './config/source-check.js';
 import type { EngineLogger } from './ports.js';
@@ -32,8 +33,9 @@ import { usageRepository as usage } from './view/usage.repository.js';
 /** The research engine (design-engine.md, Contract Definitions). */
 export interface Engine {
   /**
-   * The mode every new investigation of this engine starts in (KD-8): set by `connectedSources` at creation and
-   * unchanged for the engine's lifetime, whatever the connected sources answer.
+   * The deployment's mode (KD-8): set by `connectedSources` at creation and unchanged for the engine's lifetime,
+   * whatever the connected sources answer. The proposal card decides its warning by it; an investigation's own mode is
+   * decided at its start by its catalog (design-catalog-planning.md, KD-1).
    */
   readonly sourceMode: SourceMode;
   startInvestigation(input: StartInvestigationInput): Promise<StartInvestigationResult>;
@@ -112,8 +114,12 @@ export interface EngineDeps {
   readonly forms: ResultFormRegistry;
   /** The definition memory over the loaded processes and the engine's result forms. */
   readonly definitionMemory: DefinitionMemory;
-  /** Serves the slice of each configured source the start records (KD-7). */
-  readonly sourceRegistry: Pick<SourceRegistry, 'currentSnapshot'>;
+  /** Describes the catalog sources of a start and serves the slices it records (KD-1, KD-7). */
+  readonly sourceRegistry: Pick<SourceRegistry, 'currentSnapshot' | 'describeSource' | 'resolveTool'>;
+  /** `sourceId` of the sources the deployment connected: the start's catalog is built from them. */
+  readonly connectedSources: readonly string[];
+  /** The rights port: a start asks it about the owner's right to each catalog candidate. */
+  readonly accessPolicy: ToolAccessPolicy;
   readonly clock: Clock;
   readonly logger: EngineLogger;
 }
@@ -129,11 +135,12 @@ export function buildEngine(deps: EngineDeps): Engine {
     checkCalibration: deps.checkCalibration,
     startInvestigation: startInvestigation({
       database,
-      sourceMode,
       processes: deps.processes,
       forms: deps.forms,
       ...deps.runtime,
       sources: deps.sourceRegistry,
+      connectedSources: deps.connectedSources,
+      accessPolicy: deps.accessPolicy,
       clock: deps.clock,
       logger: deps.logger,
     }),

@@ -37,6 +37,8 @@ import {
   type ThreadOwnership,
 } from '@agent-os/runtime';
 import {
+  BACKOFFICE_SOURCE_ID,
+  BackofficeSourceAdapter,
   createSources,
   FIXTURE_SOURCE_ID,
   FixtureSourceAdapter,
@@ -53,7 +55,8 @@ import { REPORT_FILE_NAME } from '../../src/self-check/result/report.js';
 import { RESULT_FILE_NAME } from '../../src/self-check/result/run-result.js';
 import type { ScenarioAssembly } from '../../src/self-check/scenario-assembly.js';
 import type { SelfCheckLogger } from '../../src/self-check/scenario-assembly.js';
-import { SOURCES_ALLOWLIST } from '../../src/sources/sources.config.js';
+import { SOURCES_DECLARATION } from '../../src/sources/sources.config.js';
+import { ALLOW_ALL_ACCESS } from './accessDoubles.js';
 import { researchFlowGroupTable } from './researchFlowConfig.js';
 import {
   createSelfCheckModels,
@@ -506,16 +509,18 @@ async function saveEmployeeInvestigation(
       ? { FIXTURE_SCENARIO: NO_SLICE_SCENARIO }
       : { FIXTURE_DATASET: request.dataset }),
   });
+  const adapterOptions = {
+    serverPath: fixtureServerPath,
+    settings,
+    logger: ports.logger,
+  };
   const sources = createSources({
     handlers: runtime.handlers,
     adapters: [
-      new FixtureSourceAdapter({
-        serverPath: fixtureServerPath,
-        settings,
-        logger: ports.logger,
-      }),
+      new FixtureSourceAdapter(adapterOptions),
+      new BackofficeSourceAdapter(adapterOptions),
     ],
-    allowlist: SOURCES_ALLOWLIST,
+    declaration: SOURCES_DECLARATION,
     settings,
     clock: ports.clock,
     logger: ports.logger,
@@ -531,7 +536,9 @@ async function saveEmployeeInvestigation(
         investigations,
       },
       sourceRegistry: sources.registry,
-      connectedSources: [FIXTURE_SOURCE_ID],
+      connectedSources: [FIXTURE_SOURCE_ID, BACKOFFICE_SOURCE_ID],
+      // The employee is a fresh `e2e-` owner no table names: without the double the catalog would be empty.
+      toolAccessPolicy: ALLOW_ALL_ACCESS,
       processes: [request.processConfig],
       ...(claimAssessmentAgent(request.processConfig) === null
         ? {}

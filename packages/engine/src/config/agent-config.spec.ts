@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { checkAgentDefinitions } from '../agents/definition-check.js';
 import { createResultFormRegistry, type ResultForm, TEXT_FORM } from '../agents/result-forms.js';
 import { BASE_TOOLS, createToolRegistry, type ToolRegistryEntry } from '../agents/tool-registry.js';
+import { buildCatalogField } from '../capabilities/catalog-field.js';
 import { buildSourcesField } from '../capabilities/sources-field.js';
 import { deepResearchProcessV3 } from '../processes/shipped-processes.js';
 import { RESEARCH_FORMS } from '../research-flow/research-forms.js';
@@ -217,27 +218,51 @@ const READS_SOURCES_TOOL: ToolRegistryEntry = {
   readsRunSources: true,
 };
 
+/** A tool with the mark that allows `{{catalog}}`, beside the base tools. */
+const READS_CATALOG_TOOL: ToolRegistryEntry = {
+  name: 'reads_catalog',
+  description: 'Checks the plan against the catalog of this run',
+  argsSchema: z.strictObject({}),
+  effect: 'write',
+  resultMaxBytes: 1_024,
+  readsRunCatalog: true,
+};
+
 /** Bytes of the `sources` value of the one pair of `agentsConfig` by the filler of its argument schema. */
 let schemaFiller = 0;
+/** Bytes of the `catalog` value of the one source of `agentsConfig` by the filler of its description. */
+let descriptionFiller = 0;
 const fixtureArgs = (): SourceSchema => z.strictObject({}).describe('x'.repeat(schemaFiller));
-const resolveFixture: SourceRegistry['resolveTool'] = () => ({ adapter: {}, tool: { argsSchema: fixtureArgs() } }) as ResolvedSourceTool;
+const resolveFixture: SourceRegistry['resolveTool'] = () =>
+  ({ adapter: {}, tool: { argsSchema: fixtureArgs() }, description: 'Searches the logs.' }) as ResolvedSourceTool;
+const describeFixture: SourceRegistry['describeSource'] = () => 'd'.repeat(descriptionFiller);
 
 const REGISTRIES = {
-  tools: createToolRegistry([...BASE_TOOLS, READS_SOURCES_TOOL]),
+  tools: createToolRegistry([...BASE_TOOLS, READS_SOURCES_TOOL, READS_CATALOG_TOOL]),
   forms: createResultFormRegistry([TEXT_FORM, PLACED_FORM, ONCE_FORM]),
   resolveTool: resolveFixture,
+  describeSource: describeFixture,
   buildSourcesField,
+  buildCatalogField,
+};
+
+const FIXTURE_FIELD_INPUT = {
+  configSources: [{ sourceId: 'fixture', toolName: 'search_logs' }],
+  runSources: ['fixture'],
+  resolveTool: resolveFixture,
+  describeSource: describeFixture,
 };
 
 /** The filler that makes the value of the one pair of `agentsConfig` exactly `bytes` long. */
 function setValueBytes(bytes: number): void {
   schemaFiller = 0;
-  const empty = buildSourcesField({
-    configSources: [{ sourceId: 'fixture', toolName: 'search_logs' }],
-    runSources: ['fixture'],
-    resolveTool: resolveFixture,
-  });
-  schemaFiller = bytes - Buffer.byteLength(empty, 'utf8');
+  schemaFiller = bytes - Buffer.byteLength(buildSourcesField(FIXTURE_FIELD_INPUT), 'utf8');
+}
+
+/** The filler that makes the `{{catalog}}` value of the one source of `agentsConfig` exactly `bytes` long. */
+function setCatalogBytes(bytes: number): void {
+  descriptionFiller = 0;
+  descriptionFiller = bytes - Buffer.byteLength(buildCatalogField(FIXTURE_FIELD_INPUT), 'utf8');
 }
 
 /** Loads `data` and checks it against the registries, as `createEngine` does. */
@@ -394,6 +419,9 @@ describe('agents-form configuration against the registries', () => {
         buildSourcesField: () => {
           throw new Error('the value must not be built');
         },
+        buildCatalogField: () => {
+          throw new Error('the value must not be built');
+        },
       };
       const loaded = loadProcessConfig(withAgent('helper', { tools: ['reads_sources'] }), TIMINGS);
       if (!loaded.ok) throw new Error('the fixture must load');
@@ -401,6 +429,76 @@ describe('agents-form configuration against the registries', () => {
       expect(checkAgentDefinitions(loaded.config, unbuildable)).toBeNull();
     });
 
+  });
+
+  // DC-4, AC-05.2 (the load rule), KD-3 (design-catalog-planning.md, «Поля шаблона»). Defects caught: `{{catalog}}`
+  // accepted on an agent without the tool that checks the plan against the catalog; the limit of the catalog not checked,
+  // so an oversized catalog reaches the plan agent; the least view estimated without the catalog; the loader not seeing
+  // the declared sources (the value built from nothing), or failing when no source is connected.
+  describe('the catalog field', () => {
+    const withCatalog = (patch: Record<string, unknown> = {}) =>
+      withAgent('helper', { prompt: 'Catalog: {{catalog}}', tools: ['reads_catalog'], ...patch });
+    const leastOf = (message: string | undefined) => Number(/takes up to (\d+) tokens/.exec(message ?? '')?.[1]);
+
+    afterEach(() => {
+      descriptionFiller = 0;
+    });
+
+    it('accepts the field on a definition with a tool marked as reading the run catalog, the value at its limit', () => {
+      setCatalogBytes(8_192);
+
+      expect(loadAgainstRegistries(withCatalog())).toBeNull();
+    });
+
+    it.each([
+      [
+        'on a definition without a tool marked readsRunCatalog',
+        () => withCatalog({ tools: ['reads_sources'] }),
+        ['agents', 'helper', 'prompt'],
+        'agent helper: {{catalog}} needs a tool that checks the plan against the catalog of the run',
+      ],
+      [
+        'with a longest value of 8193 bytes, even when the window would refuse it too',
+        () => {
+          setCatalogBytes(8_193);
+          return withCatalog(limitsWith({ windowTokens: 2_000 }));
+        },
+        ['agents', 'helper', 'prompt'],
+        'agent helper: the longest {{catalog}} value takes 8193 bytes, over 8192',
+      ],
+    ])('refuses {{catalog}} %s', (_case, data, path, message) => {
+      expect(loadAgainstRegistries(data())).toEqual({ code: 'process_config_rejected', path, message });
+    });
+
+    it('refuses {{catalog}} when the least view with its longest value does not fit the window', () => {
+      setCatalogBytes(8_192);
+      const leastWithout = leastOf(loadAgainstRegistries(withCatalog({ prompt: 'Catalog: ', ...limitsWith({ windowTokens: 2_000 }) }))?.message);
+      // Room for the view without the value and 1 000 tokens more: the value at its limit takes about 2 730.
+      const window = limitsWith({ windowTokens: leastWithout + 1_000 + 1_000 });
+
+      expect(loadAgainstRegistries(withCatalog({ prompt: 'Catalog: ', ...window }))).toBeNull();
+      expect(loadAgainstRegistries(withCatalog(window))?.path).toEqual(['agents', 'helper', 'limits', 'windowTokens']);
+    });
+
+    it('measures the value on the sources the definition names', () => {
+      setCatalogBytes(8_193);
+
+      expect(loadAgainstRegistries(withCatalog({ sources: [] }))).toBeNull();
+    });
+
+    it('loads with {{catalog}} when no source is connected', () => {
+      const unconnected = {
+        ...REGISTRIES,
+        resolveTool: () => null,
+        describeSource: (sourceId: string): string => {
+          throw new Error(`source ${sourceId} is not declared`);
+        },
+      };
+      const loaded = loadProcessConfig(withCatalog(), TIMINGS);
+      if (!loaded.ok) throw new Error('the fixture must load');
+
+      expect(checkAgentDefinitions(loaded.config, unconnected)).toBeNull();
+    });
   });
 
   it('refuses a tool registry entry whose result limit is over 16 KiB', () => {
@@ -422,7 +520,11 @@ describe('deep-research v3: the configuration is refused with the agent, the for
     tools: createToolRegistry([...BASE_TOOLS, ...RESEARCH_TOOLS]),
     forms: createResultFormRegistry([TEXT_FORM, ...RESEARCH_FORMS]),
     resolveTool: () => null,
+    describeSource: (sourceId: string): string => {
+      throw new Error(`source ${sourceId} is not declared`);
+    },
     buildSourcesField,
+    buildCatalogField,
   };
   const shipped = deepResearchProcessV3 as { agents: Record<string, Record<string, unknown>> };
   const v3With = (name: string, patch: Record<string, unknown>): Record<string, unknown> => ({

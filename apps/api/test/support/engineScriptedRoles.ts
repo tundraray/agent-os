@@ -1,6 +1,9 @@
 import type { ResolveModel, RoleModel, TokenCounter } from '@agent-os/engine';
+import { loadScenarioSet, scenarioKey } from '@agent-os/mcp-fixture';
+import { BACKOFFICE_SOURCE_ID, FIXTURE_SOURCE_ID } from '@agent-os/sources';
 import { MockLanguageModelV4 } from 'ai/test';
 import {
+  type AgentCallView,
   agentCallView,
   type AgentRecognizer,
   agentTurnCharacters,
@@ -8,13 +11,15 @@ import {
   researchAgentTurn,
   type ResearchScript,
   toolCallsAnswer,
+  type WorkerGather,
 } from './researchFlowAgents.js';
 import { agentPromptsOf } from './researchFlowConfig.js';
 
 /**
  * The agent models of the real engine in the chat-entry child's path `research-flow` (agent-runtime / research-flow
- * E2E-2), modelled on `selfCheckModels.ts`: one `MockLanguageModelV4` per model id behind `resolveModel`, playing one
- * fixed journey with the agents of the loaded configuration. `researchFlowAgents.ts` calls the planner and one worker,
+ * E2E-2, source-planning / catalog-planning E2E-1), modelled on `selfCheckModels.ts`: one `MockLanguageModelV4` per model
+ * id behind `resolveModel`, playing one fixed journey ({@link EngineJourneyName}) with the agents of the loaded
+ * configuration. The default journey: `researchFlowAgents.ts` calls the planner and one worker,
  * which reads one slice of the fixture logs (`search_logs`) and writes {@link ENGINE_JOURNEY}`.observation` and
  * `.causal`; a verifier per claim — a record with a trace supports the claim, the type is `causal` for the causal claim
  * and `observation` otherwise; and the answer agent, which answers with every input claim and chooses all of them for
@@ -38,6 +43,99 @@ export const ENGINE_JOURNEY = {
     'Посмотри графики задержек и очередь.',
     'Ответ ресерча выше: ошибки подтверждены записями.',
   ],
+} as const;
+
+/**
+ * Which journey the scripted agents and the chat model of the child play (`E2E_ENGINE_JOURNEY`):
+ *
+ * - `provider-adapter` (default) — {@link ENGINE_JOURNEY} on the fixture logs alone (agent-runtime / research-flow E2E-2);
+ * - `two-sources` — the question of {@link TWO_SOURCES_SCENARIO} (source-planning / catalog-planning E2E-1 S1, S3): the
+ *   planner names `fixture`, the worker gathers from `fixture` and then from `backoffice` and points its claim at both
+ *   pages; with an empty catalog the root `synthesis` answers from model knowledge;
+ * - `revocation-hold` / `revocation-resume` — the two processes of E2E-1 S2 on the same scenario: the worker gathers a
+ *   page from `backoffice`, and in `revocation-hold` its next turn waits until the process stops it; in
+ *   `revocation-resume` it asks `backoffice` twice more, then gathers from `fixture` and points its claim at both pages.
+ */
+export type EngineJourneyName =
+  'provider-adapter' | 'two-sources' | 'revocation-hold' | 'revocation-resume';
+
+/** The variable that carries the journey to the child; empty means `provider-adapter`. */
+export const ENGINE_JOURNEY_VARIABLE = 'E2E_ENGINE_JOURNEY';
+
+const JOURNEY_NAMES: readonly EngineJourneyName[] = [
+  'provider-adapter',
+  'two-sources',
+  'revocation-hold',
+  'revocation-resume',
+];
+
+/** The journey of the variable's value; an unknown value fails loudly. */
+export function engineJourneyOf(value: string | undefined): EngineJourneyName {
+  if (value === undefined || value === '') return 'provider-adapter';
+  const journey = JOURNEY_NAMES.find((name) => name === value);
+  if (journey === undefined) {
+    throw new Error(
+      `${ENGINE_JOURNEY_VARIABLE}=${value} is not one of ${JOURNEY_NAMES.join(', ')}`,
+    );
+  }
+  return journey;
+}
+
+/** The scenario of the two-source journeys: its cause is seen only in the logs and the back office together. */
+const TWO_SOURCES_SCENARIO = {
+  setName: 'two-sources',
+  scenarioId: 'method-declined-01',
+} as const;
+
+/** `FIXTURE_SCENARIO` of a journey's children: both fixture processes serve it; empty for the dataset of `provider-adapter`. */
+export function fixtureScenarioOf(journey: EngineJourneyName): string {
+  return journey === 'provider-adapter'
+    ? ''
+    : `${TWO_SOURCES_SCENARIO.setName}/${TWO_SOURCES_SCENARIO.scenarioId}`;
+}
+
+/** What the test and the child both need of {@link TWO_SOURCES_SCENARIO}: its recorded question and its change time. */
+export interface TwoSourcesFacts {
+  readonly question: string;
+  readonly changeAt: string;
+}
+
+/** The recorded question and change time of {@link TWO_SOURCES_SCENARIO}, from the scenario's key. */
+export function twoSourcesFacts(): TwoSourcesFacts {
+  const loaded = loadScenarioSet(TWO_SOURCES_SCENARIO.setName);
+  if (!loaded.ok) {
+    throw new Error(
+      `scenario set ${TWO_SOURCES_SCENARIO.setName} does not load: ${loaded.reason}: ${loaded.detail}`,
+    );
+  }
+  const scenario = loaded.set.scenarios.find(
+    ({ scenarioId }) => scenarioId === TWO_SOURCES_SCENARIO.scenarioId,
+  );
+  if (scenario === undefined) {
+    throw new Error(
+      `scenario set ${TWO_SOURCES_SCENARIO.setName} has no scenario ${TWO_SOURCES_SCENARIO.scenarioId}`,
+    );
+  }
+  const key = scenarioKey(scenario);
+  return { question: key.question, changeAt: key.facts.changeAt };
+}
+
+/** The goal the chat model passes to `deepResearch` in a journey. */
+export function journeyGoal(journey: EngineJourneyName): string {
+  return journey === 'provider-adapter'
+    ? ENGINE_JOURNEY.goal
+    : twoSourcesFacts().question;
+}
+
+/**
+ * The claim of the two-source journeys and the text the root `synthesis` writes when the catalog is empty (model
+ * knowledge): texts of this double, recognised by equality only.
+ */
+export const TWO_SOURCES_TEXTS = {
+  observation:
+    'ошибки оплаты выросли после изменения, записи логов и заказы бэк-офиса это показывают',
+  assumption:
+    'рост ошибок оплаты обычно связан с отказами одного способа оплаты',
 } as const;
 
 /**
@@ -122,14 +220,20 @@ function slot(user: string, tag: string): string {
 const jsonSlot = <T>(user: string, tag: string): T =>
   JSON.parse(slot(user, tag)) as T;
 
-/** The closed assessment: `<claim>` holds the claim JSON, `<data>` one JSON line per page and per numbered record. */
+/**
+ * The closed assessment: `<claim>` holds the claim JSON, `<data>` one JSON line per page and per numbered record. A log
+ * record with a trace and an order of the back office support the claim; the others are unrelated.
+ */
 function verifier(user: string): unknown {
   const { text } = jsonSlot<{ text: string }>(user, 'claim');
   const records = slot(user, 'data')
     .split('\n')
     .map(
       (line) =>
-        JSON.parse(line) as { number?: number; record?: { traceId?: unknown } },
+        JSON.parse(line) as {
+          number?: number;
+          record?: { traceId?: unknown; orderId?: unknown };
+        },
     )
     .flatMap(({ number, record }) =>
       number === undefined || record === undefined
@@ -138,7 +242,10 @@ function verifier(user: string): unknown {
             {
               record: number,
               relation:
-                typeof record.traceId === 'string' ? 'supports' : 'unrelated',
+                typeof record.traceId === 'string' ||
+                typeof record.orderId === 'string'
+                  ? 'supports'
+                  : 'unrelated',
             },
           ],
     );
@@ -157,11 +264,29 @@ interface SynthesisClaimOfInput {
   pointer: { pageId: string; records: number[] }[] | null;
 }
 
+/**
+ * The answer agent's draft. The root `synthesis` of an empty catalog (mode `model_knowledge`) is given a packet without
+ * claims: it answers with one new assumption, no atoms and no pointer.
+ */
 function synthesis(user: string): unknown {
   const { claims } = jsonSlot<{ claims: SynthesisClaimOfInput[] }>(
     user,
     'assignment',
   );
+  if (claims.length === 0) {
+    return {
+      outcome: 'answered',
+      summaryClaimIds: [],
+      claims: [
+        {
+          claimId: null,
+          text: TWO_SOURCES_TEXTS.assumption,
+          atoms: [],
+          pointer: [],
+        },
+      ],
+    };
+  }
   return {
     outcome: 'answered',
     summaryClaimIds: claims.map((claim) => claim.claimId),
@@ -188,11 +313,92 @@ const RESEARCH_FLOW_SCRIPT: ResearchScript = {
   workerAsksOutsideTool: () => false,
 };
 
-/** `config`: the configuration the child loads; its agents are recognised by their prompts. */
+const PAGE_SIZE = 10;
+const WINDOW_MS = 10 * 60_000;
+
+/** The slices of the two-source journeys: ten minutes from the scenario's change, in the logs and in the back office. */
+function twoSourcesGathers(changeAt: string): {
+  readonly logs: WorkerGather;
+  readonly orders: (pageSize: number) => WorkerGather;
+} {
+  const window = {
+    from: changeAt,
+    to: new Date(Date.parse(changeAt) + WINDOW_MS).toISOString(),
+  };
+  return {
+    logs: {
+      sourceId: FIXTURE_SOURCE_ID,
+      toolName: 'search_logs',
+      args: { ...window, pageSize: PAGE_SIZE },
+    },
+    orders: (pageSize) => ({
+      sourceId: BACKOFFICE_SOURCE_ID,
+      toolName: 'search_orders',
+      args: { ...window, pageSize },
+    }),
+  };
+}
+
+/**
+ * The worker's gathers of a two-source journey. S2 asks `backoffice` three times with different page sizes (the first
+ * before the restart, gets a page; the second is denied by the narrower table; the third is refused from the recorded
+ * denial), then `fixture`.
+ */
+function journeyGathers(
+  journey: Exclude<EngineJourneyName, 'provider-adapter'>,
+  changeAt: string,
+): readonly WorkerGather[] {
+  const { logs, orders } = twoSourcesGathers(changeAt);
+  return journey === 'two-sources'
+    ? [logs, orders(PAGE_SIZE)]
+    : [orders(PAGE_SIZE), orders(PAGE_SIZE - 1), orders(PAGE_SIZE - 2), logs];
+}
+
+function scriptOf(journey: EngineJourneyName): ResearchScript {
+  if (journey === 'provider-adapter') return RESEARCH_FLOW_SCRIPT;
+  const gathers = journeyGathers(journey, twoSourcesFacts().changeAt);
+  return {
+    read: () => {
+      throw new Error(`engineScriptedRoles: ${journey} reads by its gathers`);
+    },
+    gathers: () => gathers,
+    claimTexts: () => [TWO_SOURCES_TEXTS.observation],
+    assess: verifier,
+    draft: synthesis,
+    workerAsksOutsideTool: () => false,
+  };
+}
+
+/** Whether the turn waits for the process to stop it: the worker of `revocation-hold` once it has its first page. */
+const holdsTurn = (journey: EngineJourneyName, view: AgentCallView): boolean =>
+  journey === 'revocation-hold' &&
+  view.agent === 'worker' &&
+  view.resultsOf('gather').length >= 1;
+
+/** A turn that never answers: it rejects when the call is aborted (the runtime's shutdown returns the task to the queue). */
+function heldTurn(signal: AbortSignal | undefined): Promise<GenerateResult> {
+  return new Promise((_, reject) => {
+    const stopped = (): void =>
+      reject(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new Error('engineScriptedRoles: the held turn was aborted'),
+      );
+    if (signal?.aborted === true) stopped();
+    signal?.addEventListener('abort', stopped, { once: true });
+  });
+}
+
+/**
+ * `config`: the configuration the child loads; its agents are recognised by their prompts. `journey`: what the agents
+ * play ({@link EngineJourneyName}).
+ */
 export function createEngineScriptedRoles(
   config: unknown,
+  journey: EngineJourneyName = 'provider-adapter',
 ): EngineScriptedRoles {
   const agentOf: AgentRecognizer = recognizeAgents(agentPromptsOf(config));
+  const script = scriptOf(journey);
   const answer = (options: GenerateOptions): Promise<GenerateResult> => {
     const agent = agentOf(textOfRole(options, 'system'));
     if (agent === null) {
@@ -200,11 +406,10 @@ export function createEngineScriptedRoles(
         'engineScriptedRoles: a call of no agent of the configuration',
       );
     }
+    const view = agentCallView(options, agent);
+    if (holdsTurn(journey, view)) return heldTurn(options.abortSignal);
     return Promise.resolve(
-      toolCallsAnswer(
-        researchAgentTurn(agentCallView(options, agent), RESEARCH_FLOW_SCRIPT),
-        USAGE,
-      ),
+      toolCallsAnswer(researchAgentTurn(view, script), USAGE),
     );
   };
   const models = new Map<string, RoleModel>();

@@ -53,10 +53,6 @@ function sourceDouble(behaviours: Record<string, Behaviour>) {
 
 const logger: EngineLogger = { log: () => undefined, warn: () => undefined, error: () => undefined };
 
-function configOf(sourceIds: string[]) {
-  return { sources: sourceIds.map((sourceId) => ({ sourceId, toolName: 'search' })) };
-}
-
 describe('readSourceSnapshots', () => {
   it.each<{
     name: string;
@@ -105,7 +101,7 @@ describe('readSourceSnapshots', () => {
     const { sources, signals } = sourceDouble(behaviours);
     let settled: { snapshots: SourceSnapshots } | { error: unknown } | undefined;
 
-    readSourceSnapshots({ sources, clock, logger }, configOf(Object.keys(behaviours))).then(
+    readSourceSnapshots({ sources, clock, logger }, Object.keys(behaviours)).then(
       (snapshots) => (settled = { snapshots }),
       (error: unknown) => (settled = { error }),
     );

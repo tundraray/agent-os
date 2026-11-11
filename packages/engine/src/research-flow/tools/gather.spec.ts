@@ -13,12 +13,14 @@ import { gatherKeyFields } from '../../capabilities/gather-key.js';
 import { type AgentProcessConfig, AgentProcessConfigSchema } from '../../config/agent-config.schema.js';
 import { createGatherTool, GATHER_ENTRY, type GatherPage } from './gather.js';
 
-// DC-11, AC-17.2, UC-E4 (the rule), design-research-flow.md «Инструменты возможностей»: the `source.fetch` task of a
-// `gather`, its key, the `repeat` mark, the refusals and the result by the task's outcome.
+// DC-11, AC-17.2, UC-E4 (the rule), design-research-flow.md «Инструменты возможностей»; DC-7, DC-8 (the tool), UC-E4 of
+// design-catalog-planning.md: the `source.fetch` task of a `gather`, its key, the `repeat` mark, the refusals and the
+// result by the task's outcome.
 // Defects caught: a source called twice for one request (the key depends on key order); a repeat subscribed to a `failed`
 // task; `repeat` lost or put on the task's creator; `gather` taking a `maxChildren` slot; a task proposed with 1 s or less
-// left; a source reached after a refusal.
-// Boundary doubles: the call store, `propose`, the thread's task list, the source registry and the rights port.
+// left; a source reached after a refusal; a collection without a plan revision or by a tool outside the catalog.
+// Boundary doubles: the call store, `propose`, the thread's task list, the source registry, the plan revisions and the
+// rights port.
 
 const LIMITS = {
   maxTurns: 4,
@@ -38,6 +40,7 @@ const CONFIG: AgentProcessConfig = AgentProcessConfigSchema.parse({
   sources: [
     { sourceId: 'logs', toolName: 'search' },
     { sourceId: 'traces', toolName: 'search' },
+    { sourceId: 'traces', toolName: 'span_tree' },
     { sourceId: 'closed', toolName: 'search' },
   ],
   agents: {
@@ -105,6 +108,8 @@ interface Options {
   readonly msLeft?: number;
   readonly sources?: readonly string[];
   readonly allowlisted?: boolean;
+  /** Whether the investigation has a plan revision; it has one by default. */
+  readonly planned?: boolean;
 }
 
 function harness(options: Options = {}) {
@@ -127,6 +132,7 @@ function harness(options: Options = {}) {
         return options.snapshot ?? SNAPSHOT;
       },
     },
+    plans: { hasRevision: async () => options.planned ?? true },
     clock: CLOCK,
     logger: { warn: (...entry: unknown[]) => warnings.push(entry) } as never,
   });
@@ -156,6 +162,7 @@ function harness(options: Options = {}) {
         };
         return { outcome: 'written', call: current };
       },
+      sourceRevoked: async () => ({ outcome: 'read', revoked: false }),
     },
     tree: { occupiedTokens: async () => 0, childrenStarted: async () => 0 },
     scheduler: {
@@ -258,9 +265,11 @@ describe('gather: спецификация, повтор и результат �
   describe('refusals: nothing is proposed', () => {
     it.each<[string, Options, unknown, { readonly outcome: string; readonly reason: string; readonly snapshotReads: number }]>([
       ['the rights port refuses', { deny: true }, REQUEST, { outcome: 'access_denied', reason: 'access_denied', snapshotReads: 0 }],
-      ['the source is not among the run sources', { sources: ['traces'] }, REQUEST, { outcome: 'access_denied', reason: 'access_denied', snapshotReads: 0 }],
-      ['the tool is not a tool of the source', {}, { ...REQUEST, toolName: 'delete' }, { outcome: 'access_denied', reason: 'access_denied', snapshotReads: 0 }],
-      ['the allowlist does not hold the tool', { allowlisted: false }, REQUEST, { outcome: 'access_denied', reason: 'access_denied', snapshotReads: 0 }],
+      ['the source is not among the run sources: the executor refuses it', { sources: ['traces'] }, REQUEST, { outcome: 'rejected', reason: 'source_not_in_catalog', snapshotReads: 0 }],
+      ['refuses plan_missing without a plan revision (DC-7)', { planned: false }, REQUEST, { outcome: 'rejected', reason: 'plan_missing', snapshotReads: 0 }],
+      ['refuses tool_not_in_catalog: a tool of another source of the ceiling', {}, { ...REQUEST, toolName: 'span_tree' }, { outcome: 'rejected', reason: 'tool_not_in_catalog', snapshotReads: 0 }],
+      ['refuses tool_not_in_catalog: a tool outside the ceiling', {}, { ...REQUEST, toolName: 'delete' }, { outcome: 'rejected', reason: 'tool_not_in_catalog', snapshotReads: 0 }],
+      ['refuses tool_not_in_catalog: the registry does not resolve the pair', { allowlisted: false }, REQUEST, { outcome: 'rejected', reason: 'tool_not_in_catalog', snapshotReads: 0 }],
       ['the arguments break the tool schema', {}, { ...REQUEST, args: { query: 7 } }, { outcome: 'rejected', reason: 'invalid_arguments', snapshotReads: 0 }],
     ])('%s', async (_case, options, args, expected) => {
       const h = harness(options);
@@ -402,6 +411,7 @@ describe('gather: спецификация, повтор и результат �
     const toolOver = (pages: readonly GatherPage[]) =>
       createGatherTool({
         sources: { resolveTool: () => null, currentSnapshot: async () => SNAPSHOT },
+        plans: { hasRevision: async () => true },
         clock: CLOCK,
         logger: { warn: () => undefined } as never,
         pages: { read: async () => pages },
