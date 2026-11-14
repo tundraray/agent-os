@@ -29,7 +29,7 @@
 
 - **Dependency rule**: зависимость идёт только вниз и объявлена в `package.json`. Нижний слой никогда не импортирует верхний; цикл отвергает turbo, необъявленный импорт отмечает knip.
 - **`common`** не зависит ни от одного пакета workspace и ни от одного SDK. Его используют все пакеты и оба приложения.
-- **Mastra** объявляет только `agents` (и `apps/api`, пока беседа живёт на Mastra Memory до части `chat`). Пакеты `db`, `runtime`, `common` запрещают импорт `@mastra/*` в lint.
+- **Mastra** объявляет только `agents`; `apps/api` его не импортирует. Пакеты `db`, `runtime`, `common` запрещают импорт `@mastra/*` в lint.
 - Остальные правила пакетов — один вход `.`, закрытые подпути, отсутствие `@nestjs/*` в пакетах, настройки параметрами — действуют по [ADR-0004](../adr/ADR-0004-agent-framework-packages.md), Implementation Guidance.
 
 ## Module Boundaries
