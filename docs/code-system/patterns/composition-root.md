@@ -25,3 +25,4 @@
 ## Used In
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — `createRuntime`, модуль `RuntimeModule` в `apps/api`
+- [design-agents.md](../../features/agent-platform/design-agents.md) — `createAgents`, `parseAgentsConfig`, модуль `AgentsModule`

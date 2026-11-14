@@ -25,3 +25,4 @@
 ## Used In
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — `EventLog`, `OutboxRelay`, `events`, `eventConsumers`
+- [design-agents.md](../../features/agent-platform/design-agents.md) — событие `agents.history_appended`

@@ -28,3 +28,4 @@
 ## Used In
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — порт `TaskHandler`, Flow 1–4
+- [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentStepHandler`: шаг модели и шаг инструментов, намерение перед изменяющим вызовом
