@@ -28,3 +28,4 @@
 
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — KD-6, контракт логгера
 - [design-agents.md](../../features/agent-platform/design-agents.md) — шаг, вызов модели и вызов инструмента агента
+- [design-workflows.md](../../features/agent-platform/design-workflows.md) — разбор шаблонов и запуск workflow
