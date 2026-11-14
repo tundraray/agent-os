@@ -16,4 +16,6 @@ apps/api/self-check-reports/
 docs/features/*/*/*.md
 !docs/features/*/*/l1-browser-scenarios.md
 docs/features/*/*/*/*.md
+docs/**/task-*.md
+docs/**/_overview.md
 agent-memory
