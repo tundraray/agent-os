@@ -21,41 +21,42 @@ import {
   ToolGroupRoot,
   ToolGroupTrigger,
 } from "@/components/assistant-ui/elements/tool-group.aui";
+import { AgentReport } from "@/components/agents/agent-report";
+import { DecisionCard } from "@/components/agents/decision-card";
+import { EventLine } from "@/components/agents/event-line";
+import { InterruptButton } from "@/components/agents/interrupt-button";
+import { QueueTray } from "@/components/agents/queue-tray";
+import { RunCard } from "@/components/agents/run-card";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { regenerateAfterError } from "@/lib/config";
-import { focusAfterNewChat } from "@/lib/focus";
-import { ResearchLaunchLabel } from "@/components/research/research-launch-label";
-import { RESEARCH_MODE_COMPOSER_COPY } from "@/components/research/research-mode-toggle";
-import { ResearchAnswer } from "@/components/research/research-answer";
+import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import {
-  showResearchAnchor,
-  useReplyCarriesActiveResearch,
-  useResearchModeOn,
-  useTakeAnswerArrival,
-} from "@/components/research/research-thread";
-import { isHiddenMessageAt, isLastVisibleMessageAt } from "@/lib/threads/research-messages";
-import {
-  RESEARCH_METADATA_KEYS,
-  ResearchAnswerMetadataSchema,
-  type ResearchAnswerMetadata,
-} from "@agent-os/contracts";
+  controls,
+  FEED_PART,
+  trayEntries,
+  type DecisionPartData,
+  type EventPartData,
+  type OptimisticEntry,
+  type ReportPartData,
+  type RunCardPartData,
+} from "@/lib/feed/to-feed";
 import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
   AuiIf,
   type AssistantState,
   ComposerPrimitive,
+  type DataMessagePartComponent,
   groupPartByType,
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
-  useThreadViewport,
   type FileMessagePartComponent,
   type ImageMessagePartComponent,
   type TextMessagePartComponent,
   type ToolCallMessagePartComponent,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -68,7 +69,6 @@ import {
   PhoneIcon,
   SquareIcon,
   PlayIcon,
-  RotateCwIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
   TriangleAlertIcon,
@@ -128,8 +128,11 @@ const reasoningDuration = (timing: ThreadGroupPart["timing"]) =>
  * conversation and have no registered UI render through it instead of the
  * tool group; without it they render like any other tool call.
  * `ComposerExtra` renders at the start of the composer's action row.
- * `DeletedNotice`, when set, marks the thread as deleted elsewhere (E-8): the
- * composer is not rendered and a failed reply shows it instead of the error block.
+ * `DeletedNotice`, when set, marks the thread as deleted elsewhere (E-8): it
+ * renders after the feed in place of the tray and the composer.
+ * `FeedHeader` renders above the first message of the feed (the agent page's
+ * meta line and inherited history). `TaskBrief`, when set, replaces the task's
+ * text with the workflow brief under the caption «Бриф» (AV-03).
  */
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
@@ -144,6 +147,8 @@ export type ThreadComponents = {
   TaskGroup?: ComponentType<{ group: ThreadGroupPart }> | undefined;
   ComposerExtra?: ComponentType | undefined;
   DeletedNotice?: ComponentType | undefined;
+  FeedHeader?: ComponentType | undefined;
+  TaskBrief?: ComponentType | undefined;
 };
 
 const messageGroupBy = groupPartByType({
@@ -184,7 +189,11 @@ export type ThreadProps = {
    * skeleton, the composer stays docked and editable, sending is blocked until the history arrives.
    */
   historyPending?: boolean | undefined;
+  /** The composer's placeholder: the conversation's by default, MC-12 on an agent page. */
+  composerPlaceholder?: string | undefined;
 };
+
+const DEFAULT_PLACEHOLDER = "Спросите что-нибудь…";
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
@@ -231,6 +240,7 @@ export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
   autoFocus = true,
   historyPending = false,
+  composerPlaceholder = DEFAULT_PLACEHOLDER,
 }) => {
   const isNewChat = useAuiState(isNewChatView);
 
@@ -240,6 +250,7 @@ export const Thread: FC<ThreadProps> = ({
         isEmpty={isNewChat && !historyPending}
         autoFocus={autoFocus}
         historyPending={historyPending}
+        placeholder={composerPlaceholder}
       />
     </ThreadComponentsContext.Provider>
   );
@@ -249,8 +260,9 @@ const ThreadRoot: FC<{
   isEmpty: boolean;
   autoFocus: boolean;
   historyPending: boolean;
-}> = ({ isEmpty, autoFocus, historyPending }) => {
-  const { Welcome = ThreadWelcome, DeletedNotice } = useContext(ThreadComponentsContext);
+  placeholder: string;
+}> = ({ isEmpty, autoFocus, historyPending, placeholder }) => {
+  const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader } = useContext(ThreadComponentsContext);
 
   return (
     <ThreadPrimitive.Root
@@ -284,6 +296,12 @@ const ThreadRoot: FC<{
                 <ThreadHistorySkeleton />
               </AuiIf>
 
+              {FeedHeader && (
+                <div data-slot="aui_feed-header" className="mb-6 flex flex-col gap-y-3 px-2">
+                  <FeedHeader />
+                </div>
+              )}
+
               <ThreadLoadEarlier />
 
               <div
@@ -308,7 +326,18 @@ const ThreadRoot: FC<{
           >
             <ThreadScrollToBottom />
             {!historyPending && <ThreadFollowupSuggestions />}
-            {!DeletedNotice && <Composer autoFocus={autoFocus} sendBlocked={historyPending} />}
+            {DeletedNotice ? (
+              <DeletedNotice />
+            ) : (
+              <>
+                <FeedTray />
+                <Composer
+                  autoFocus={autoFocus}
+                  sendBlocked={historyPending}
+                  placeholder={placeholder}
+                />
+              </>
+            )}
             {!historyPending && (
               <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
                 <ThreadSuggestions />
@@ -326,26 +355,104 @@ const ThreadMessage: FC = () => {
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
-  const isHidden = useAuiState((s) => isHiddenMessageAt(s.thread.messages, s.message.index));
-  const isDecisionErrorStub = useAuiState(isFailedDecisionStub);
+  const isFeedPart = useAuiState((s) => feedKindOf(s) === "part");
 
-  if (isHidden || isDecisionErrorStub) return null;
   if (isSpoken) return <SpokenMessage />;
+  if (isFeedPart) return <FeedPartMessage />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessageComponent />;
 };
 
+/** `FeedMessageMeta.kind` of a feed message (lib/feed/to-feed.ts); undefined for any other runtime. */
+const feedKindOf = (s: AssistantState): unknown => s.message.metadata.custom["kind"];
+
 /**
- * KD-2: a decision turn that failed or was interrupted before its first chunk leaves the reply stub with the chat error
- * right after the hidden decision message; the card shows that error (MC-15, MC-29, MC-16), so the stub is not drawn.
- * Only the stub of this tab's turn is meant: an empty stored reply after a decision is complete, not incomplete.
+ * MC-9, MC-10: the caption above a message or an answer. On a conversation the task is the first
+ * message with no caption, an employee's message never has one; a message the employee did not write
+ * names its source, and on an agent page the answer that ended a turn is «Отчёт» (AV-04).
  */
-const isFailedDecisionStub = (s: AssistantState) =>
-  s.message.role === "assistant" &&
-  s.message.parts.length === 0 &&
-  s.message.status?.type === "incomplete" &&
-  s.thread.messages[s.message.index - 1]?.role === "user" &&
-  isHiddenMessageAt(s.thread.messages, s.message.index - 1);
+function sourceCaption(custom: Record<string, unknown>, onAgentPage: boolean): string | null {
+  switch (custom["kind"]) {
+    case "task":
+      return onAgentPage ? "Задание" : null;
+    case "parent": {
+      if (custom["fromConversation"] === true) return "От беседы";
+      const sender = custom["senderDescription"];
+      // The feed knows the sender's description only for an agent's parent; MC-10 has no other wording.
+      return typeof sender === "string" ? `От агента «${sender}»` : "От агента";
+    }
+    case "answer":
+      return custom["report"] === true ? "Отчёт" : null;
+    default:
+      return null;
+  }
+}
+
+const useSourceCaption = (): string | null => {
+  const onAgentPage = useFeedSelector((state) => state.view?.kind === "agent", false);
+  return useAuiState((s) => sourceCaption(s.message.metadata.custom, onAgentPage));
+};
+
+const SourceCaption: FC<{ text: string; className?: string }> = ({ text, className }) => (
+  <p
+    data-slot="aui_message-source"
+    className={cn("text-muted-foreground text-xs leading-4 font-medium", className)}
+  >
+    {text}
+  </p>
+);
+
+const RunCardPart: DataMessagePartComponent<RunCardPartData> = ({ data }) => (
+  <RunCard data={data} />
+);
+
+const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
+  const feed = useFeed();
+  // Decision parts come only from a feed; a screen without its store has nothing to decide with.
+  if (feed === null) return null;
+  return (
+    <DecisionCard
+      confirmation={data.confirmation}
+      byChat={data.byChat}
+      onDecide={(approve, args) => feed.decide(data.confirmation.decisionId, approve, args)}
+    />
+  );
+};
+
+const ReportPart: DataMessagePartComponent<ReportPartData> = ({ data }) => (
+  <AgentReport data={data} />
+);
+
+const EventPart: DataMessagePartComponent<EventPartData> = ({ data }) => (
+  <EventLine data={data} />
+);
+
+/** The feed's `data-*` parts by name (spike S-1, e): each renders its own component. */
+const FEED_PART_COMPONENTS = {
+  data: {
+    by_name: {
+      [FEED_PART.runCard]: RunCardPart,
+      [FEED_PART.decision]: DecisionPart,
+      [FEED_PART.report]: ReportPart,
+      [FEED_PART.event]: EventPart,
+    },
+  },
+};
+
+/**
+ * A card, a report or an event line of the feed (UXRD Screen 1, «Раскладка»): in the prose column with
+ * 16 px above and below. The feed spaces messages 24 px apart, so a block pulls 8 px in on each side;
+ * a block right after another drops its top pull, so two blocks also stand 16 px apart.
+ */
+const FeedPartMessage: FC = () => (
+  <MessagePrimitive.Root
+    data-slot="aui_feed-part"
+    data-feed-block=""
+    className="fade-in animate-in -my-2 duration-150 motion-reduce:animate-none [[data-feed-block]+&]:mt-0"
+  >
+    <MessagePrimitive.Parts components={FEED_PART_COMPONENTS} />
+  </MessagePrimitive.Root>
+);
 
 type VoiceRunPosition = "single" | "start" | "middle" | "end";
 
@@ -557,11 +664,50 @@ const ThreadSuggestionItem: FC = () => {
 const preventSubmit = (event: FormEvent<HTMLFormElement>) =>
   event.preventDefault();
 
-const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean }> = ({
+/** UXRD MC-27, verbatim. */
+const SEND_FAILED = "Не удалось отправить сообщение. Попробуйте ещё раз.";
+
+/** Failures whose text went back to the field: a remounted composer does not paste it again. */
+const returnedFailures = new WeakSet<object>();
+
+/**
+ * KD-4: the server did not take the message — the field gets its text back (the library cleared it
+ * before sending) and MC-27 stands under it until the next send. Text typed meanwhile stays after it.
+ */
+const useSendFailure = (): boolean => {
+  const aui = useAui();
+  const failure = useFeedSelector((state) => state.sendFailure, null);
+
+  useEffect(() => {
+    if (failure === null || returnedFailures.has(failure)) return;
+    returnedFailures.add(failure);
+    const typed = aui.composer.getState().text;
+    aui.composer.setText(typed === "" ? failure.text : `${failure.text}\n${typed}`);
+  }, [aui, failure]);
+
+  return failure !== null;
+};
+
+/** CV-04: the queue tray of the screen's feed above the composer; nothing without a feed. */
+const FeedTray: FC = () => (useFeed() === null ? null : <FeedQueueTray />);
+
+const NO_OPTIMISTIC: readonly OptimisticEntry[] = [];
+
+const FeedQueueTray: FC = () => {
+  const view = useFeedSelector((state) => state.view, null);
+  const optimistic = useFeedSelector((state) => state.optimistic, NO_OPTIMISTIC);
+  const tray = useMemo(() => trayEntries(view, optimistic), [view, optimistic]);
+  return <QueueTray tray={tray} />;
+};
+
+const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean; placeholder: string }> = ({
   autoFocus,
   sendBlocked,
+  placeholder,
 }) => {
-  const researchMode = useResearchModeOn();
+  const sendFailed = useSendFailure();
+  const failureId = useId();
+
   return (
     <ComposerPrimitive.Root
       className="aui-composer-root relative flex w-full flex-col"
@@ -574,32 +720,46 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean }> = ({
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder={researchMode ? RESEARCH_MODE_COMPOSER_COPY.placeholder : "Спросите что-нибудь…"}
+          placeholder={placeholder}
           className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
           rows={1}
           autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Сообщение"
+          aria-describedby={sendFailed ? failureId : undefined}
           name="message"
           addAttachmentOnPaste={false}
           data-shell-focus="composer"
         />
         <ComposerAction sendBlocked={sendBlocked} />
       </div>
+      {sendFailed && (
+        <p
+          id={failureId}
+          data-slot="aui_composer-send-failure"
+          className="text-destructive mt-1 px-2.5 text-xs leading-4 font-medium"
+        >
+          {SEND_FAILED}
+        </p>
+      )}
     </ComposerPrimitive.Root>
   );
 };
 
+/**
+ * KD-2 UXRD: «Прервать» next to «Отправить» while the agent works (`controls().interrupt`); a pending
+ * decision, an idle agent and a screen without a feed have none.
+ */
+const FeedInterrupt: FC = () => {
+  const feed = useFeed();
+  const canInterrupt = useFeedSelector((state) => controls(state.view).interrupt, false);
+  if (feed === null || !canInterrupt) return null;
+  return <InterruptButton onInterrupt={(text) => feed.interrupt(text)} />;
+};
+
+/** «Отправить» stays available while the agent works (FR-16); stopping the agent is «Прервать». */
 const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
   const { ComposerExtra } = useContext(ThreadComponentsContext);
-  // MC-3: in the deep research mode the send button says what it starts.
-  const sendLabel = useResearchModeOn() ? RESEARCH_MODE_COMPOSER_COPY.sendLabel : "Отправить";
-  // The stop control only cancels the send while no run it could stop is going.
-  const isSending = useAuiState(
-    (s) =>
-      s.composer.submission !== undefined &&
-      !(s.thread.isRunning && s.thread.capabilities.cancel),
-  );
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
@@ -615,90 +775,39 @@ const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
             <ComposerPrimitive.StopDictation render={<TooltipIconButton tooltip="Остановить диктовку" side="bottom" type="button" variant="ghost" size="icon" className="aui-composer-stop-dictation text-destructive size-7 rounded-full" aria-label="Остановить диктовку" />}><SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current motion-reduce:animate-none" /></ComposerPrimitive.StopDictation>
           </AuiIf>
         </AuiIf>
-        <AuiIf
-          condition={(s) =>
-            (!s.composer.canCancel ||
-              (s.thread.voice !== undefined &&
-                s.composer.submission === undefined)) &&
-            !shouldShowComposerResume(s)
-          }
-        >
-          <ComposerPrimitive.Send disabled={sendBlocked} render={<TooltipIconButton tooltip={sendLabel} side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label={sendLabel} />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+        <FeedInterrupt />
+        <AuiIf condition={(s) => !shouldShowComposerResume(s)}>
+          <ComposerPrimitive.Send disabled={sendBlocked} render={<TooltipIconButton tooltip="Отправить" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-7 rounded-full" aria-label="Отправить" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
         </AuiIf>
         <AuiIf condition={shouldShowComposerResume}>
           <ComposerPrimitive.Resume render={<TooltipIconButton tooltip="Продолжить генерацию" side="bottom" type="button" variant="default" size="icon" className="aui-composer-resume size-7 rounded-full" aria-label="Продолжить генерацию" />}><PlayIcon className="aui-composer-resume-icon size-4" /></ComposerPrimitive.Resume>
         </AuiIf>
-        <AuiIf
-          condition={(s) =>
-            s.composer.canCancel &&
-            (s.thread.voice === undefined ||
-              s.composer.submission !== undefined)
-          }
-        >
-          <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-7 rounded-full" aria-label={isSending ? "Отменить отправку" : "Остановить"} />}><SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" /></ComposerPrimitive.Cancel>
-        </AuiIf>
       </div>
     </div>
   );
 };
-
-const REGENERATE_CLASS =
-  "pointer-coarse:h-11 active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100";
 
 /**
- * TH-08 under a failed reply: fixed text only — never the server or model error. With the
- * `regenerateAfterError` switch on, the last reply gets «Перегенерировать» inside the block (D-14).
- * With the `DeletedNotice` slot set (E-8) the slot replaces the block.
+ * TH-08 under a failed reply: fixed text only — never the server or model error, and no
+ * regeneration (the server owns the run).
  */
-const MessageError: FC = () => {
-  const { DeletedNotice } = useContext(ThreadComponentsContext);
-  return (
-    <MessagePrimitive.Error>
-      {DeletedNotice ? <DeletedNotice /> : <ReplyErrorBlock />}
-    </MessagePrimitive.Error>
-  );
-};
+const MessageError: FC = () => (
+  <MessagePrimitive.Error>
+    <ReplyErrorBlock />
+  </MessagePrimitive.Error>
+);
 
-/** MC-21 (deep-research UXRD, KD-7): over «Перегенерировать» when the reply carries a research a regeneration would stop. */
-const RESEARCH_REGENERATE_WARNING = "Перегенерация остановит ресерч из этого ответа.";
-
-const ReplyErrorBlock: FC = () => {
-  const textId = useId();
-  const warningId = useId();
-  const stopsResearch = useReplyCarriesActiveResearch();
-  return (
-    <div
-      data-slot="message-error"
-      className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
-    >
-      <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-      <div className="flex min-w-0 flex-col items-start gap-2">
-        <p id={textId} role="alert" className="text-foreground line-clamp-2">
-          {regenerateAfterError
-            ? "Не удалось получить ответ. Попробуйте перегенерировать."
-            : "Не удалось получить ответ."}
-        </p>
-        {regenerateAfterError && (
-          <AuiIf condition={(s) => s.message.isLast}>
-            {stopsResearch && (
-              <p id={warningId} className="text-foreground">
-                {RESEARCH_REGENERATE_WARNING}
-              </p>
-            )}
-            <ActionBarPrimitive.Reload
-              aria-describedby={stopsResearch ? `${textId} ${warningId}` : textId}
-              onClick={focusAfterNewChat}
-              render={<Button variant="outline" size="sm" className={REGENERATE_CLASS} />}
-            >
-              <RotateCwIcon aria-hidden />
-              Перегенерировать
-            </ActionBarPrimitive.Reload>
-          </AuiIf>
-        )}
-      </div>
-    </div>
-  );
-};
+const ReplyErrorBlock: FC = () => (
+  <div
+    data-slot="message-error"
+    className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
+  >
+    <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
+    <p role="alert" className="text-foreground line-clamp-2 min-w-0">
+      Не удалось получить ответ.
+    </p>
+  </div>
+);
 
 const AssistantMessage: FC = () => {
   const {
@@ -709,8 +818,7 @@ const AssistantMessage: FC = () => {
   } = useContext(ThreadComponentsContext);
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
   const isBlank = useAuiState(isBlankReply);
-  const messageId = useAuiState((s) => s.message.id);
-  const researchAnswer = useResearchAnswerOf();
+  const caption = useSourceCaption();
 
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
@@ -718,7 +826,6 @@ const AssistantMessage: FC = () => {
 
   return (
     <MessagePrimitive.Root
-      id={messageId}
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       className={cn(
@@ -734,9 +841,7 @@ const AssistantMessage: FC = () => {
             data-slot="aui_assistant-message-content"
             className="text-foreground px-2 leading-relaxed wrap-break-word"
           >
-            {researchAnswer !== null ? (
-              <ResearchAnswerContent answer={researchAnswer} />
-            ) : (
+            {caption !== null && <SourceCaption text={caption} className="mb-1" />}
             <MessagePrimitive.GroupedParts groupBy={groupBy}>
               {({ part, children }) => {
                 switch (part.type) {
@@ -807,7 +912,6 @@ const AssistantMessage: FC = () => {
                 }
               }}
             </MessagePrimitive.GroupedParts>
-            )}
             <MessageError />
           </div>
 
@@ -823,47 +927,6 @@ const AssistantMessage: FC = () => {
   );
 };
 
-/**
- * DR-04: the research answer drawn from its `researchAnswer` metadata in place of the text, which stays for the model and
- * «Копировать» (design-chat-entry.md, KD-5). Metadata outside the contract leaves the message drawn as text.
- */
-const useResearchAnswerOf = (): ResearchAnswerMetadata | null => {
-  const raw = useAuiState((s) => s.message.metadata.custom[RESEARCH_METADATA_KEYS.researchAnswer]);
-  return useMemo(() => {
-    if (raw === undefined) return null;
-    const parsed = ResearchAnswerMetadataSchema.safeParse(raw);
-    if (!parsed.success) {
-      console.warn("[deep-research] research answer metadata outside the contract; drawn as text");
-      return null;
-    }
-    return parsed.data;
-  }, [raw]);
-};
-
-/**
- * UXRD KD-5: an answer this tab appended moves neither focus nor, unless the reader stands at the end of the feed with
- * nothing streaming, the reading position; then the feed shows the answer from its header.
- */
-const ResearchAnswerContent: FC<{ answer: ResearchAnswerMetadata }> = ({ answer }) => {
-  const messageId = useAuiState((s) => s.message.id);
-  const takeArrival = useTakeAnswerArrival();
-  const atEnd = useThreadViewport((s) => s.isAtBottom);
-  const streaming = useAuiState((s) => s.thread.isRunning);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  // On mount only: the position the reader had when the answer arrived decides, not a later scroll.
-  useEffect(() => {
-    if (takeArrival(messageId) && atEnd && !streaming) rootRef.current?.scrollIntoView({ block: "start" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div ref={rootRef} className="scroll-mt-4">
-      <ResearchAnswer answer={answer} onShowLaunch={showResearchAnchor} />
-    </div>
-  );
-};
-
 // A reply with no parts that is not being generated (e.g. the stub an error before the first token
 // leaves) shows no row: only its error block, if any.
 const isBlankReply = (s: AssistantState) =>
@@ -872,18 +935,18 @@ const isBlankReply = (s: AssistantState) =>
 const hasVisibleText = (s: AssistantState) =>
   s.message.parts.some((part) => part.type === "text" && part.text.trim() !== "");
 
+// The feed's draft is `complete` for the library (so «Отправить» stays open) and is still being written.
 const isGeneratingReply = (s: AssistantState) =>
-  s.message.status?.type === "running";
+  s.message.status?.type === "running" || feedKindOf(s) === "draft";
 
 /**
- * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last visible
- * message (KD-2: hidden decision pairs do not count)
+ * TH-10: the action bar stays rendered (and in Tab order) on every message. Only the last message
  * shows it at rest; earlier ones reveal it on hover or focus within the message, and a coarse
  * pointer always shows it. Hidden by opacity only — never display:none or visibility:hidden.
  */
 const useActionBarVisibility = () => {
-  const isLastVisible = useAuiState((s) => isLastVisibleMessageAt(s.thread.messages, s.message.index));
-  return isLastVisible
+  const isLast = useAuiState((s) => s.message.isLast);
+  return isLast
     ? undefined
     : "opacity-0 transition-opacity duration-150 group-hover/message:opacity-100 group-focus-within/message:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none";
 };
@@ -964,31 +1027,32 @@ const UserImagePart: ImageMessagePartComponent = (part) => (
 );
 
 const UserMessage: FC = () => {
-  const messageId = useAuiState((s) => s.message.id);
-  // DR-02: the message started a deep research by the user's choice (KD-1); the label is read before the text.
-  const startedResearch = useAuiState(
-    (s) => s.message.metadata.custom[RESEARCH_METADATA_KEYS.deepResearch] === true,
-  );
+  const { TaskBrief } = useContext(ThreadComponentsContext);
+  const isTask = useAuiState((s) => feedKindOf(s) === "task");
+  // AV-03: a workflow coordinator's task reads as its brief.
+  const Brief = isTask ? TaskBrief : undefined;
+  const sourceCaptionText = useSourceCaption();
+  const caption = Brief ? "Бриф" : sourceCaptionText;
   return (
     <MessagePrimitive.Root
-      id={messageId}
       data-slot="aui_user-message-root"
       className="group/message fade-in slide-in-from-bottom-1 animate-in motion-reduce:animate-none grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
-      <UserMessageAttachments />
-
-      {startedResearch && (
-        <div className="col-start-2 -mb-1">
-          <ResearchLaunchLabel />
-        </div>
+      {caption !== null && (
+        <SourceCaption text={caption} className="col-start-2 -mb-1 justify-self-end" />
       )}
+      <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
-          <MessagePrimitive.Parts
-            components={{ File: UserFilePart, Image: UserImagePart }}
-          />
+          {Brief ? (
+            <Brief />
+          ) : (
+            <MessagePrimitive.Parts
+              components={{ File: UserFilePart, Image: UserImagePart }}
+            />
+          )}
         </div>
         <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
           <UserActionBar />

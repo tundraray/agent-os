@@ -8,7 +8,5 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
-    // Self-check specs build synthetic datasets and calibration pairs; CI runners need more than the 5 s default.
-    testTimeout: 30_000,
   },
 });

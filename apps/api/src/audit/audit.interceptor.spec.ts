@@ -36,8 +36,8 @@ const intercept = async (request: FakeRequest) => {
 
 const user = { id: 'u-1', roles: [] };
 
-// Integration Point 4 (Design Doc): the audited thread id comes from the route for /threads/:threadId
-// and from the body only for /chat/:agentId; the body must never substitute the route id.
+// Integration Point 4 (Design Doc): the audited thread id comes only from the route (/threads/:threadId);
+// the body must never substitute the route id or name a thread.
 describe('AuditInterceptor threadId source', () => {
   it.each<{
     name: string;
@@ -74,71 +74,6 @@ describe('AuditInterceptor threadId source', () => {
         type: 'GET /api/threads/:threadId/messages',
         agentId: undefined,
         threadId: 't-route',
-      },
-    },
-    {
-      name: 'POST /chat/:agentId with body { threadId, id } → body.threadId',
-      request: {
-        method: 'POST',
-        path: '/api/chat/assistant',
-        route: { path: '/api/chat/:agentId' },
-        params: { agentId: 'assistant' },
-        body: { threadId: 't-chat', id: 't-other' },
-        user,
-      },
-      expected: {
-        type: 'POST /api/chat/:agentId',
-        agentId: 'assistant',
-        threadId: 't-chat',
-      },
-    },
-    {
-      name: 'POST /chat/:agentId with body { id } only → body.id',
-      request: {
-        method: 'POST',
-        path: '/api/chat/assistant',
-        route: { path: '/api/chat/:agentId' },
-        params: { agentId: 'assistant' },
-        body: { id: 't-chat-id' },
-        user,
-      },
-      expected: {
-        type: 'POST /api/chat/:agentId',
-        agentId: 'assistant',
-        threadId: 't-chat-id',
-      },
-    },
-    {
-      name: 'POST /chat/:agentId with a 255-character body.threadId → recorded',
-      request: {
-        method: 'POST',
-        path: '/api/chat/assistant',
-        route: { path: '/api/chat/:agentId' },
-        params: { agentId: 'assistant' },
-        body: { threadId: 't'.repeat(255) },
-        user,
-      },
-      expected: {
-        type: 'POST /api/chat/:agentId',
-        agentId: 'assistant',
-        threadId: 't'.repeat(255),
-      },
-    },
-    {
-      // Risk: the interceptor runs before validation, so an oversized raw id would reach audit_events.thread_id.
-      name: 'POST /chat/:agentId drops a body thread id longer than 255 characters',
-      request: {
-        method: 'POST',
-        path: '/api/chat/assistant',
-        route: { path: '/api/chat/:agentId' },
-        params: { agentId: 'assistant' },
-        body: { threadId: 't'.repeat(256), id: 'i'.repeat(256) },
-        user,
-      },
-      expected: {
-        type: 'POST /api/chat/:agentId',
-        agentId: 'assistant',
-        threadId: undefined,
       },
     },
     {

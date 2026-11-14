@@ -1,32 +1,32 @@
 export { type CancelTimer, type Clock, systemClock } from './clock.js';
-export { computeDedupKey, type DedupKeySource } from './dedup-key.js';
 export {
   createRuntime,
   type Runtime,
   type RuntimeOptions,
 } from './create-runtime.js';
-export {
-  type EventConsumer,
-  EventConsumerRegistry,
-} from './event-consumer.registry.js';
-export { EvidenceReader, type StoredEvidence } from './evidence.reader.js';
-export type { RuntimeTx } from './guarded-transition.js';
-export {
-  type AttemptGuardResult,
-  HandlerRegistry,
-  type HandlerResult,
-  type RegisterWaitResult,
-  type TaskContext,
-  type TaskHandler,
-  type UpstreamTask,
-} from './handler.registry.js';
-export { InvestigationService } from './investigation.service.js';
+export type { TreeDecision, ResolveOutcome } from './decisions.js';
+export { RuntimeError, type RuntimeErrorCode } from './errors.js';
+export type { EventConsumer } from './event-consumer.registry.js';
+export { RUNTIME_EVENTS_CHANNEL } from './event-log.js';
 export type {
-  RuntimeLogFields,
-  RuntimeLogger,
-  ThreadDeletionStop,
-  ThreadOwnership,
-  ThreadRef,
-} from './ports.js';
+  EnqueuedMessage,
+  EnqueueMessage,
+  GuardResult,
+  StepContext,
+  StepDecision,
+  StepEffects,
+  StepMessage,
+  StepResult,
+  StepSignalReason,
+  TaskHandler,
+} from './handler.registry.js';
+export type { NewMessage } from './inbox.js';
+export {
+  type CallUsage,
+  type ModelPrices,
+  parseModelPrices,
+} from './model-cost.js';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
-export { TaskScheduler } from './task-scheduler.js';
+export type { RuntimeTx } from './runtime-tx.js';
+export type { InterruptMessage, InterruptOutcome, Task } from './task-control.js';
+export type { ModelCallRecord, MonthSpend, RecordedCall } from './token-ledger.js';

@@ -20,6 +20,7 @@
     "test:verify": "pnpm build && pnpm build:child && vitest run --config ./vitest.config.verify.ts"
   },
   "dependencies": {
+    "@agent-os/common": "workspace:*",
     "@agent-os/contracts": "workspace:*",
     "@agent-os/db": "workspace:*",
     "drizzle-orm": "0.45.4",
@@ -28,7 +29,6 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
-    "fast-check": "^4.10.2",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^6.0.2",

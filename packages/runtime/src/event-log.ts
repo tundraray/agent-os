@@ -1,187 +1,210 @@
 import { randomUUID } from 'node:crypto';
 import {
-  RuntimeEventTypeSchema,
-  type EventEnvelope,
+  EVENT_PAYLOAD_MAX_BYTES,
   type RuntimeEventType,
 } from '@agent-os/contracts';
-import { and, desc, eq, inArray, or, type SQL, sql } from 'drizzle-orm';
-import { researchEventDeliveries, researchEvents } from '@agent-os/db';
-import { EventConsumerRegistry } from './event-consumer.registry.js';
-import type { RuntimeTx } from './guarded-transition.js';
-
-/** `LISTEN` channel of the runtime; the payload is the event type. A hint only (KD-4). */
-export const RUNTIME_NOTIFY_CHANNEL = 'research_runtime';
-/** `schemaVersion` of every runtime event type. */
-export const RUNTIME_EVENT_SCHEMA_VERSION = 1;
-
-/** An envelope as stored, with its insertion order. */
-export type StoredEvent = EventEnvelope & { seq: number };
-
-/** What the writer of an event decides; ids, correlation, version and time come from the log. */
-export interface NewEvent {
-  type: RuntimeEventType;
-  investigationId: string;
-  taskId: string | null;
-  causationId: string | null;
-  /** `state_version` of the task, or `revision` of the investigation. */
-  stateRevision: number;
-  payload: EventEnvelope['payload'];
-  payloadRef?: EventEnvelope['payloadRef'];
-}
-
-/** The event whose cause is looked up, per the causal chain of EventEnvelope. */
-export type CauseQuery =
-  | {
-      type: 'TaskStarted';
-      taskId: string;
-      dependencyTaskIds: readonly string[];
-    }
-  | {
-      type:
-        | 'ToolCallReserved'
-        | 'EvidenceStored'
-        | 'TaskSucceeded'
-        | 'TaskFailed'
-        | 'TaskCancelled';
-      taskId: string;
-    };
-
-const {
-  InvestigationCreated,
-  TaskQueued,
-  TaskStarted,
-  ToolCallReserved,
-  EvidenceStored,
-  TaskSucceeded,
-} = RuntimeEventTypeSchema.enum;
-
-/** Cause of a task's own event: its latest earlier event of these types. */
-const OWN_CAUSE_TYPES = {
-  ToolCallReserved: [TaskStarted],
-  EvidenceStored: [ToolCallReserved],
-  TaskSucceeded: [EvidenceStored, TaskStarted],
-  TaskFailed: [EvidenceStored, TaskStarted],
-  TaskCancelled: [EvidenceStored, TaskStarted],
-} as const satisfies Record<string, readonly RuntimeEventType[]>;
-
-const ofTask = (
-  taskId: string,
-  types: readonly RuntimeEventType[],
-): SQL | undefined =>
-  and(
-    eq(researchEvents.taskId, taskId),
-    inArray(researchEvents.type, [...types]),
-  );
+import {
+  type Database,
+  runtimeEventDeliveries,
+  runtimeEvents,
+  runtimeTasks,
+} from '@agent-os/db';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import type { EventConsumerRegistry } from './event-consumer.registry.js';
+import type { TaskRow } from './guarded-transition.js';
+import type { RuntimeTx } from './runtime-tx.js';
 
 /**
- * Transactional outbox (KD-4): the event, one delivery row per registered consumer of its type
- * and a `NOTIFY` — all in the caller's transaction, so the notification goes out at its commit
- * and nothing is written when it rolls back. The event insert takes FOR KEY SHARE on the
- * investigation through its FK, compatible with the investigation's FOR NO KEY UPDATE.
+ * `LISTEN` channel of the runtime. The payload is JSON `{"rootId","taskId","type"}`: the dispatcher
+ * ticks on any event and cuts its step off on `task.interrupted`/`task.stopped`; an observer of a
+ * tree filters by `rootId`. A hint only: the log is read with `listAfter`.
+ */
+export const RUNTIME_EVENTS_CHANNEL = 'runtime_events';
+/** `schemaVersion` of every event written by this runtime. */
+const RUNTIME_EVENT_SCHEMA_VERSION = 1;
+/** Upper bound of `listAfter`'s `limit`. */
+const LIST_AFTER_MAX_LIMIT = 500;
+
+/** Prefixes of the runtime's own event types; an upper-layer event never carries them. */
+const RESERVED_EVENT_PREFIXES = ['task.', 'inbox.', 'decision.'] as const;
+/** An upper-layer type: its package prefix, a dot, a name (`agents.history_appended`). */
+const UPPER_EVENT_TYPE_FORMAT = /^[a-z][a-z0-9-]*\.[a-z0-9_.-]+$/;
+
+/** An event as stored, with its insertion order. */
+export interface StoredEvent {
+  eventId: string;
+  /** Insertion order in the log; events of a tree are read by it. */
+  seq: number;
+  type: string;
+  schemaVersion: number;
+  rootId: string;
+  taskId: string | null;
+  causationId: string | null;
+  /** `step_no` of the task when the event was written. */
+  stateRevision: number;
+  payloadRef: string | null;
+  payload: unknown;
+  createdAt: Date;
+}
+
+/** An event of a tree as `listAfter` returns it. */
+export type TreeEvent = Pick<
+  StoredEvent,
+  'seq' | 'type' | 'taskId' | 'createdAt' | 'payload'
+>;
+
+/** The task an event is about: it gives the tree, the task and the revision. */
+export type EventTask = Pick<TaskRow, 'taskId' | 'rootId' | 'stepNo'>;
+
+/** What the writer of an event decides; ids, version and time come from the log. */
+export interface NewEvent<Type extends string = RuntimeEventType> {
+  type: Type;
+  task: EventTask;
+  payload: unknown;
+  causationId?: string | null;
+}
+
+/**
+ * Size of a payload as Postgres counts it in the CHECK of `runtime_events`
+ * (`octet_length(payload::text)`): the JSON text with a space after every `:` and `,`.
+ */
+function jsonbTextBytes(value: unknown): number {
+  const json = JSON.stringify(value) ?? 'null';
+  let separators = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of json) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === ':' || char === ',') separators += 1;
+  }
+  return Buffer.byteLength(json, 'utf8') + separators;
+}
+
+/**
+ * Why an upper-layer event (`effects.emit`) cannot be written, or `undefined` when it can: its type
+ * needs a package prefix other than `task.`, `inbox.` and `decision.`; its payload is at most 8 KiB.
+ */
+export function upperEventProblem(
+  type: string,
+  payload: unknown,
+): string | undefined {
+  if (RESERVED_EVENT_PREFIXES.some((prefix) => type.startsWith(prefix))) {
+    return `event type "${type}" uses a prefix reserved by the runtime`;
+  }
+  if (!UPPER_EVENT_TYPE_FORMAT.test(type)) {
+    return `event type "${type}" has no package prefix`;
+  }
+  const bytes = jsonbTextBytes(payload);
+  if (bytes > EVENT_PAYLOAD_MAX_BYTES) {
+    return `payload of event "${type}" is ${bytes} bytes, over ${EVENT_PAYLOAD_MAX_BYTES}`;
+  }
+  return undefined;
+}
+
+/**
+ * Transactional outbox: the event, one delivery row per registered consumer of its type and a
+ * `NOTIFY` — all in the caller's transaction, so the notification goes out at its commit and
+ * nothing is written when it rolls back (ADR-0001).
  */
 export class EventLog {
-  constructor(private readonly consumers: EventConsumerRegistry) {}
+  constructor(
+    private readonly db: Database,
+    private readonly consumers: EventConsumerRegistry,
+  ) {}
 
-  async append(tx: RuntimeTx, event: NewEvent): Promise<StoredEvent> {
+  /** Writes an event of the runtime itself. */
+  append(tx: RuntimeTx, event: NewEvent): Promise<StoredEvent> {
+    return this.write(tx, event);
+  }
+
+  /** Writes an upper-layer event; throws when {@link upperEventProblem} finds one. */
+  appendUpper(tx: RuntimeTx, event: NewEvent<string>): Promise<StoredEvent> {
+    const problem = upperEventProblem(event.type, event.payload);
+    if (problem !== undefined) throw new Error(problem);
+    return this.write(tx, event);
+  }
+
+  /**
+   * Events of the owner's tree with `seq > afterSeq`, by `seq`, at most `limit` (capped at 500).
+   * Another owner's or a missing tree gives `[]`.
+   */
+  async listAfter(
+    rootId: string,
+    ownerId: string,
+    afterSeq: number,
+    limit: number,
+  ): Promise<TreeEvent[]> {
+    const cappedLimit = Math.min(Math.max(Math.trunc(limit), 0), LIST_AFTER_MAX_LIMIT);
+    if (cappedLimit === 0) return [];
+    return this.db
+      .select({
+        seq: runtimeEvents.seq,
+        type: runtimeEvents.type,
+        taskId: runtimeEvents.taskId,
+        createdAt: runtimeEvents.createdAt,
+        payload: runtimeEvents.payload,
+      })
+      .from(runtimeEvents)
+      .innerJoin(
+        runtimeTasks,
+        and(
+          eq(runtimeTasks.taskId, runtimeEvents.rootId),
+          eq(runtimeTasks.ownerId, ownerId),
+        ),
+      )
+      .where(and(eq(runtimeEvents.rootId, rootId), gt(runtimeEvents.seq, afterSeq)))
+      .orderBy(asc(runtimeEvents.seq))
+      .limit(cappedLimit);
+  }
+
+  /** The one way an event, its deliveries and its NOTIFY are written. */
+  private async write(
+    tx: RuntimeTx,
+    event: NewEvent<string>,
+  ): Promise<StoredEvent> {
     const eventId = randomUUID();
-    const correlationId =
-      event.type === InvestigationCreated
-        ? eventId
-        : await this.correlationOf(tx, event.investigationId);
-    const payloadRef = event.payloadRef ?? null;
+    const { taskId, rootId, stepNo } = event.task;
+    const causationId = event.causationId ?? null;
     const [row] = await tx
-      .insert(researchEvents)
+      .insert(runtimeEvents)
       .values({
         eventId,
         type: event.type,
         schemaVersion: RUNTIME_EVENT_SCHEMA_VERSION,
-        investigationId: event.investigationId,
-        taskId: event.taskId,
-        causationId: event.causationId,
-        correlationId,
-        stateRevision: event.stateRevision,
-        payloadRef,
+        rootId,
+        taskId,
+        causationId,
+        stateRevision: stepNo,
+        payloadRef: null,
         payload: event.payload,
       })
-      .returning({
-        seq: researchEvents.seq,
-        createdAt: researchEvents.createdAt,
-      });
+      .returning({ seq: runtimeEvents.seq, createdAt: runtimeEvents.createdAt });
 
     const consumerNames = this.consumers.consumerNamesFor(event.type);
     if (consumerNames.length > 0) {
       await tx
-        .insert(researchEventDeliveries)
+        .insert(runtimeEventDeliveries)
         .values(consumerNames.map((consumer) => ({ eventId, consumer })));
     }
-    await tx.execute(
-      sql`select pg_notify(${RUNTIME_NOTIFY_CHANNEL}, ${event.type})`,
-    );
+    const notice = JSON.stringify({ rootId, taskId, type: event.type });
+    await tx.execute(sql`select pg_notify(${RUNTIME_EVENTS_CHANNEL}, ${notice})`);
 
     return {
       eventId,
       seq: row.seq,
       type: event.type,
       schemaVersion: RUNTIME_EVENT_SCHEMA_VERSION,
-      investigationId: event.investigationId,
-      taskId: event.taskId,
-      causationId: event.causationId,
-      correlationId,
-      stateRevision: event.stateRevision,
-      payloadRef,
+      rootId,
+      taskId,
+      causationId,
+      stateRevision: stepNo,
+      payloadRef: null,
       payload: event.payload,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: row.createdAt,
     };
-  }
-
-  /**
-   * `eventId` of the cause of the event about to be written (EventEnvelope causal chain):
-   * `TaskStarted` ← latest `TaskSucceeded` of a dependency or `TaskQueued` of the task;
-   * `ToolCallReserved` ← `TaskStarted`; `EvidenceStored` ← latest `ToolCallReserved`;
-   * outcome ← latest `EvidenceStored` or `TaskStarted`. `null` when there is none.
-   */
-  async causeOf(tx: RuntimeTx, query: CauseQuery): Promise<string | null> {
-    const condition =
-      query.type === TaskStarted
-        ? or(
-            ofTask(query.taskId, [TaskQueued]),
-            query.dependencyTaskIds.length > 0
-              ? and(
-                  inArray(researchEvents.taskId, [...query.dependencyTaskIds]),
-                  eq(researchEvents.type, TaskSucceeded),
-                )
-              : undefined,
-          )
-        : ofTask(query.taskId, OWN_CAUSE_TYPES[query.type]);
-    const [cause] = await tx
-      .select({ eventId: researchEvents.eventId })
-      .from(researchEvents)
-      .where(condition)
-      .orderBy(desc(researchEvents.seq))
-      .limit(1);
-    return cause?.eventId ?? null;
-  }
-
-  /** `correlationId` of the investigation: the `eventId` of its `InvestigationCreated`. */
-  private async correlationOf(
-    tx: RuntimeTx,
-    investigationId: string,
-  ): Promise<string> {
-    const [created] = await tx
-      .select({ eventId: researchEvents.eventId })
-      .from(researchEvents)
-      .where(
-        and(
-          eq(researchEvents.investigationId, investigationId),
-          eq(researchEvents.type, InvestigationCreated),
-        ),
-      )
-      .limit(1);
-    if (!created) {
-      throw new Error(
-        `Investigation ${investigationId} has no InvestigationCreated event to correlate with`,
-      );
-    }
-    return created.eventId;
   }
 }

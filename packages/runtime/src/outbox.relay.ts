@@ -1,25 +1,20 @@
-import {
-  DeliveryStatusSchema,
-  type EventEnvelope,
-  EventEnvelopeSchema,
-  RuntimeEventTypeSchema,
-} from '@agent-os/contracts';
-import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
-import type { RuntimeLogger } from './ports.js';
-import type { RuntimeConfig } from './runtime-config.js';
+import type { Logger } from '@agent-os/common';
+import { DeliveryStatusSchema } from '@agent-os/contracts';
 import {
   type Database,
-  researchEventDeliveries,
-  researchEvents,
+  runtimeEventDeliveries,
+  runtimeEvents,
 } from '@agent-os/db';
+import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
 import type { CancelTimer, Clock } from './clock.js';
-import { CrashPoints } from './crash-points.js';
-import {
-  type EventConsumer,
+import type {
+  EventConsumer,
   EventConsumerRegistry,
 } from './event-consumer.registry.js';
-import type { RuntimeTx } from './guarded-transition.js';
-import { TaskRepository } from './task.repository.js';
+import type { StoredEvent } from './event-log.js';
+import type { RuntimeConfig } from './runtime-config.js';
+import type { RuntimeTx } from './runtime-tx.js';
+import type { TaskRepository } from './task.repository.js';
 
 const { pending, done, needs_attention } = DeliveryStatusSchema.enum;
 
@@ -27,13 +22,10 @@ const { pending, done, needs_attention } = DeliveryStatusSchema.enum;
 const MAX_LOOP_BACKOFF_DOUBLINGS = 4;
 /** Deliveries taken by one pass of the relay. */
 const DELIVERY_BATCH = 50;
-/** Backoff of a failed delivery: 1 s, doubling up to 60 s, with jitter (Runtime Settings). */
+/** Backoff of a failed delivery: 1 s, doubling up to 60 s, with jitter. */
 const DELIVERY_BACKOFF_BASE_MS = 1_000;
 const DELIVERY_BACKOFF_MAX_MS = 60_000;
 const LAST_ERROR_MAX = 500;
-
-const errorName = (error: unknown): string =>
-  error instanceof Error ? error.name : 'Unknown';
 
 const errorText = (error: unknown): string =>
   (error instanceof Error
@@ -61,15 +53,15 @@ export interface WorkerLoopOptions {
   /** `RUNTIME_POLL_MS`: the first delay after a failed pass. */
   pollMs: number;
   clock: Clock;
-  logger: RuntimeLogger;
+  logger: Logger;
   /** One pass; resolves `true` when work may remain, and the next pass runs at once. */
   pass: () => Promise<boolean>;
 }
 
 /**
- * A periodic worker of the runtime (relay, reaper). A failed pass — the database is unreachable —
+ * A periodic worker of the runtime (relay, sweeper). A failed pass — the database is unreachable —
  * is logged and retried with backoff doubling from `RUNTIME_POLL_MS` up to 16 × `RUNTIME_POLL_MS`;
- * the state is not changed (Error Handling).
+ * the state is not changed.
  */
 export class WorkerLoop {
   private running = false;
@@ -113,9 +105,7 @@ export class WorkerLoop {
       this.failures += 1;
       delay =
         pollMs * 2 ** Math.min(this.failures - 1, MAX_LOOP_BACKOFF_DOUBLINGS);
-      logger.error(
-        `${name} pass failed error=${errorName(error)} retryInMs=${delay}`,
-      );
+      logger.error('worker pass failed', { worker: name, error, retryInMs: delay });
     }
     if (this.running) this.schedule(delay);
   }
@@ -130,41 +120,41 @@ export interface DeliveryKey {
 /**
  * What one delivery did: the consumer ran and the delivery is `done`; it failed and waits for its
  * next try; it is parked as `needs_attention`; or there was nothing to deliver (not `pending`, not
- * due, locked by another relay, its investigation deleted, its consumer not registered here).
+ * due, locked by another relay, its tree deleted, its consumer not registered here).
  */
 export type DeliveryOutcome = 'done' | 'retry' | 'needs_attention' | 'skipped';
 
-type EventRow = typeof researchEvents.$inferSelect;
-type DeliveryRow = typeof researchEventDeliveries.$inferSelect;
+type EventRow = typeof runtimeEvents.$inferSelect;
+type DeliveryRow = typeof runtimeEventDeliveries.$inferSelect;
+
+export interface OutboxRelayDeps {
+  db: Database;
+  config: RuntimeConfig;
+  clock: Clock;
+  logger: Logger;
+  consumers: EventConsumerRegistry;
+  tasks: TaskRepository;
+}
 
 /**
- * Delivery of outbox events to their consumers (Flow 3, KD-4). Every `RUNTIME_POLL_MS` it takes
- * the due `pending` deliveries of the consumers registered in this process and delivers each in
- * its own transaction: the event's `investigation_id` is read without a lock, the investigation is
- * locked FOR NO KEY UPDATE, then the delivery FOR UPDATE SKIP LOCKED, still `pending`; the
- * consumer runs in a savepoint and the delivery is marked `done` in the same transaction. A
- * failing consumer is rolled back to the savepoint while its counters are written; after
- * `RUNTIME_DELIVERY_MAX_ATTEMPTS` — or at once for an unknown `schemaVersion` — the delivery is
- * parked as `needs_attention` and the others go on.
+ * Delivery of outbox events to their consumers. Every `RUNTIME_POLL_MS` it takes the due `pending`
+ * deliveries of the consumers registered in this process and delivers each in its own
+ * transaction: the event's root is locked FOR KEY SHARE (the tree cannot be deleted meanwhile),
+ * then the delivery FOR UPDATE SKIP LOCKED, still `pending`; the consumer runs in a savepoint and
+ * the delivery is marked `done` in the same transaction. A failing consumer is rolled back to the
+ * savepoint while its counters are written; after `RUNTIME_DELIVERY_MAX_ATTEMPTS` — or at once for
+ * an unknown `schemaVersion` — the delivery is parked as `needs_attention` and the others go on.
  */
 export class OutboxRelay {
   private readonly loop: WorkerLoop;
 
-  constructor(
-    private readonly db: Database,
-    private readonly config: RuntimeConfig,
-    private readonly clock: Clock,
-    private readonly logger: RuntimeLogger,
-    private readonly consumers: EventConsumerRegistry,
-    private readonly tasks: TaskRepository,
-    private readonly crashPoints: CrashPoints,
-  ) {
+  constructor(private readonly deps: OutboxRelayDeps) {
     this.loop = new WorkerLoop({
       name: 'relay',
-      periodMs: config.pollMs,
-      pollMs: config.pollMs,
-      clock,
-      logger: this.logger,
+      periodMs: deps.config.pollMs,
+      pollMs: deps.config.pollMs,
+      clock: deps.clock,
+      logger: deps.logger,
       pass: () => this.deliverDue(),
     });
   }
@@ -179,57 +169,41 @@ export class OutboxRelay {
 
   /** Delivers one delivery in its own transaction; a delivery that is not due is `skipped`. */
   async deliver(key: DeliveryKey): Promise<DeliveryOutcome> {
-    const consumer = this.consumers.get(key.consumer);
+    const consumer = this.deps.consumers.get(key.consumer);
     if (!consumer) return 'skipped';
-    const outcome = await this.db.transaction((tx) =>
-      this.deliverIn(tx, key, consumer),
-    );
-    if (outcome === 'done') this.crashPoints.hit('relay.after-done');
-    return outcome;
+    return this.deps.db.transaction((tx) => this.deliverIn(tx, key, consumer));
   }
 
   /** One pass: the oldest due deliveries of the local consumers; `true` when the batch was full. */
   private async deliverDue(): Promise<boolean> {
-    const names = this.localConsumerNames();
+    const names = this.deps.consumers.names();
     if (names.length === 0) return false;
-    const due = await this.db
+    const due = await this.deps.db
       .select({
-        eventId: researchEventDeliveries.eventId,
-        consumer: researchEventDeliveries.consumer,
+        eventId: runtimeEventDeliveries.eventId,
+        consumer: runtimeEventDeliveries.consumer,
       })
-      .from(researchEventDeliveries)
+      .from(runtimeEventDeliveries)
       .innerJoin(
-        researchEvents,
-        eq(researchEvents.eventId, researchEventDeliveries.eventId),
+        runtimeEvents,
+        eq(runtimeEvents.eventId, runtimeEventDeliveries.eventId),
       )
       .where(
         and(
-          eq(researchEventDeliveries.status, pending),
-          lte(researchEventDeliveries.nextAttemptAt, this.clock.now()),
-          inArray(researchEventDeliveries.consumer, names),
+          eq(runtimeEventDeliveries.status, pending),
+          lte(runtimeEventDeliveries.nextAttemptAt, this.deps.clock.now()),
+          inArray(runtimeEventDeliveries.consumer, names),
         ),
       )
       .orderBy(
-        asc(researchEventDeliveries.nextAttemptAt),
-        asc(researchEvents.seq),
-        // Only for determinism: the deliveries of one event share `next_attempt_at` and `seq`, so the
-        // consumer name fixes their order (`runtime.scheduler` before `engine.lifecycle`).
-        desc(researchEventDeliveries.consumer),
+        asc(runtimeEventDeliveries.nextAttemptAt),
+        asc(runtimeEvents.seq),
+        // Only for determinism: the deliveries of one event share `next_attempt_at` and `seq`.
+        desc(runtimeEventDeliveries.consumer),
       )
       .limit(DELIVERY_BATCH);
     for (const key of due) await this.deliver(key);
     return due.length === DELIVERY_BATCH;
-  }
-
-  /** Consumers registered in this process: another process's consumer is never delivered here. */
-  private localConsumerNames(): string[] {
-    return [
-      ...new Set(
-        RuntimeEventTypeSchema.options.flatMap((type) =>
-          this.consumers.consumerNamesFor(type),
-        ),
-      ),
-    ];
   }
 
   private async deliverIn(
@@ -237,28 +211,26 @@ export class OutboxRelay {
     key: DeliveryKey,
     consumer: EventConsumer,
   ): Promise<DeliveryOutcome> {
-    const now = this.clock.now();
+    const now = this.deps.clock.now();
     const [event] = await tx
       .select()
-      .from(researchEvents)
-      .where(eq(researchEvents.eventId, key.eventId));
+      .from(runtimeEvents)
+      .where(eq(runtimeEvents.eventId, key.eventId));
     if (!event) return 'skipped';
-    // Lock order: the investigation, then the delivery (System Invariants).
-    const investigation = await this.tasks.lockInvestigation(
-      tx,
-      event.investigationId,
-    );
-    if (!investigation) return 'skipped';
+    // Lock order: the root task, then the delivery.
+    if (!(await this.deps.tasks.lockAgainstDelete(tx, event.rootId))) {
+      return 'skipped';
+    }
     const [delivery] = await tx
       .select()
-      .from(researchEventDeliveries)
+      .from(runtimeEventDeliveries)
       .where(
         and(
-          eq(researchEventDeliveries.eventId, key.eventId),
-          eq(researchEventDeliveries.consumer, key.consumer),
-          // Checked again under the lock: a done delivery is never applied twice (AC-08.3).
-          eq(researchEventDeliveries.status, pending),
-          lte(researchEventDeliveries.nextAttemptAt, now),
+          eq(runtimeEventDeliveries.eventId, key.eventId),
+          eq(runtimeEventDeliveries.consumer, key.consumer),
+          // Checked again under the lock: a done delivery is never applied twice.
+          eq(runtimeEventDeliveries.status, pending),
+          lte(runtimeEventDeliveries.nextAttemptAt, now),
         ),
       )
       .for('update', { skipLocked: true });
@@ -271,7 +243,6 @@ export class OutboxRelay {
     if (failure !== undefined) {
       return this.recordFailure(tx, delivery, failure, now);
     }
-    this.crashPoints.hit('relay.before-done');
     await this.updateDelivery(tx, delivery, {
       status: done,
       attempts: delivery.attempts + 1,
@@ -291,7 +262,7 @@ export class OutboxRelay {
   ): Promise<{ error: unknown } | undefined> {
     try {
       await tx.transaction((savepoint) =>
-        consumer.handle(savepoint, toEnvelope(event)),
+        consumer.handle(savepoint, toStoredEvent(event)),
       );
       return undefined;
     } catch (error) {
@@ -306,27 +277,32 @@ export class OutboxRelay {
     now: Date,
   ): Promise<DeliveryOutcome> {
     const attempts = delivery.attempts + 1;
-    const context = `eventId=${delivery.eventId} consumer=${delivery.consumer} attempts=${attempts} error=${errorName(failure.error)}`;
-    if (attempts >= this.config.deliveryMaxAttempts) {
+    const fields = {
+      eventId: delivery.eventId,
+      consumer: delivery.consumer,
+      attempts,
+      error: failure.error,
+    };
+    if (attempts >= this.deps.config.deliveryMaxAttempts) {
       await this.updateDelivery(tx, delivery, {
         status: needs_attention,
         attempts,
         lastError: errorText(failure.error),
       });
-      this.logger.error(`delivery needs_attention ${context}`);
+      this.deps.logger.error('delivery needs attention', fields);
       return 'needs_attention';
     }
-    const delayMs = deliveryBackoffMs(attempts, this.clock.random());
+    const retryInMs = deliveryBackoffMs(attempts, this.deps.clock.random());
     await this.updateDelivery(tx, delivery, {
       attempts,
       lastError: errorText(failure.error),
-      nextAttemptAt: new Date(now.getTime() + delayMs),
+      nextAttemptAt: new Date(now.getTime() + retryInMs),
     });
-    this.logger.warn(`delivery failed ${context} retryInMs=${delayMs}`);
+    this.deps.logger.warn('delivery failed', { ...fields, retryInMs });
     return 'retry';
   }
 
-  /** An event of a `schemaVersion` the consumer does not know: parked without calling it (AC-09.2). */
+  /** An event of a `schemaVersion` the consumer does not know: parked without calling it. */
   private async parkUnknownVersion(
     tx: RuntimeTx,
     delivery: DeliveryRow,
@@ -336,9 +312,11 @@ export class OutboxRelay {
       status: needs_attention,
       lastError: `Unknown schemaVersion ${event.schemaVersion} of ${event.type}`,
     });
-    this.logger.error(
-      `delivery needs_attention eventId=${delivery.eventId} consumer=${delivery.consumer} schemaVersion=${event.schemaVersion}`,
-    );
+    this.deps.logger.error('delivery needs attention', {
+      eventId: delivery.eventId,
+      consumer: delivery.consumer,
+      schemaVersion: event.schemaVersion,
+    });
     return 'needs_attention';
   }
 
@@ -350,30 +328,29 @@ export class OutboxRelay {
     >,
   ): Promise<void> {
     await tx
-      .update(researchEventDeliveries)
+      .update(runtimeEventDeliveries)
       .set(fields)
       .where(
         and(
-          eq(researchEventDeliveries.eventId, delivery.eventId),
-          eq(researchEventDeliveries.consumer, delivery.consumer),
+          eq(runtimeEventDeliveries.eventId, delivery.eventId),
+          eq(runtimeEventDeliveries.consumer, delivery.consumer),
         ),
       );
   }
 }
 
-/** The stored event as its consumer sees it; a malformed row fails the delivery like a consumer. */
-function toEnvelope(event: EventRow): EventEnvelope {
-  return EventEnvelopeSchema.parse({
+function toStoredEvent(event: EventRow): StoredEvent {
+  return {
     eventId: event.eventId,
+    seq: event.seq,
     type: event.type,
     schemaVersion: event.schemaVersion,
-    investigationId: event.investigationId,
+    rootId: event.rootId,
     taskId: event.taskId,
     causationId: event.causationId,
-    correlationId: event.correlationId,
     stateRevision: event.stateRevision,
     payloadRef: event.payloadRef,
     payload: event.payload,
-    createdAt: event.createdAt.toISOString(),
-  });
+    createdAt: event.createdAt,
+  };
 }

@@ -1,27 +1,20 @@
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { CallLog } from './call-log.js';
-import { createLogDataset, type LogDataset } from './dataset.js';
+import { createLogDataset } from './dataset.js';
 import { FaultSchedule } from './fault-schedule.js';
 import { FaultTransport } from './fault-transport.js';
 import { FixtureServer, FixtureSourceSchema } from './fixture-server.js';
-import { createScenarioDataset } from './scenarios/scenario-dataset.js';
-import { loadScenarioSet } from './scenarios/scenario-sets.js';
 import { DatasetVersionSchema } from './versions.js';
 
 /**
- * Process entry: serves the scenario named by `FIXTURE_SCENARIO` (`<set>/<scenario>`) or, when it is empty, the
- * dataset named by `FIXTURE_DATASET` (default `v1`) over stdio, and exits when stdin closes, so a client that dies
- * leaves no orphan process. A scenario value that names no scenario is a startup error with its reason.
+ * Process entry: serves the dataset named by `FIXTURE_DATASET` (default `v1`) over stdio, and exits when stdin
+ * closes, so a client that dies leaves no orphan process.
  * `FIXTURE_SOURCE` picks what is served: `logs` (default) or `backoffice`, the orders of the same dataset.
  * With `FIXTURE_CALL_LOG` every `tools/call` is logged and `FIXTURE_FAULTS` rules apply; rules without a log are a
  * startup error. Under `NODE_ENV=production` the rules file is never read.
  */
 const source = FixtureSourceSchema.default('logs').parse(nonEmpty(process.env.FIXTURE_SOURCE));
-const scenarioName = nonEmpty(process.env.FIXTURE_SCENARIO);
-const dataset =
-  scenarioName === undefined
-    ? createLogDataset(DatasetVersionSchema.default('v1').parse(process.env.FIXTURE_DATASET))
-    : scenarioDataset(scenarioName);
+const dataset = createLogDataset(DatasetVersionSchema.default('v1').parse(nonEmpty(process.env.FIXTURE_DATASET)));
 const exit = (): never => process.exit(0);
 
 const callLogPath = nonEmpty(process.env.FIXTURE_CALL_LOG);
@@ -45,21 +38,4 @@ if (callLogPath === undefined) {
 
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
-}
-
-/** The dataset of `<set>/<scenario>`; throws with the reason when the value names no scenario. */
-function scenarioDataset(value: string): LogDataset {
-  const [setName, scenarioId, ...extra] = value.split('/');
-  if (scenarioId === undefined || extra.length > 0) {
-    throw new Error(`FIXTURE_SCENARIO ${JSON.stringify(value)} is not <set>/<scenario>`);
-  }
-  const loaded = loadScenarioSet(setName);
-  if (!loaded.ok) {
-    throw new Error(`FIXTURE_SCENARIO ${JSON.stringify(value)}: ${loaded.reason}: ${loaded.detail}`);
-  }
-  const scenario = loaded.set.scenarios.find((candidate) => candidate.scenarioId === scenarioId);
-  if (scenario === undefined) {
-    throw new Error(`FIXTURE_SCENARIO ${JSON.stringify(value)}: set ${setName} has no scenario ${scenarioId}`);
-  }
-  return createScenarioDataset(scenario);
 }

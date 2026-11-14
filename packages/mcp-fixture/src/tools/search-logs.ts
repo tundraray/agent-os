@@ -8,8 +8,8 @@ const SEARCH_PAGE_SIZE_MAX = 500;
 const SearchLogsArgsSchema = z
   .strictObject({
     ...LogQueryShape,
-    pageSize: z.int().min(1).max(SEARCH_PAGE_SIZE_MAX).default(SEARCH_PAGE_SIZE_MAX),
-    cursor: z.string().min(1).max(1024).optional(),
+    pageSize: z.int().min(1).max(SEARCH_PAGE_SIZE_MAX).default(SEARCH_PAGE_SIZE_MAX).meta({ title: 'Размер страницы' }),
+    cursor: z.string().min(1).max(1024).optional().meta({ title: 'Курсор' }),
   })
   .refine(windowIsOrdered, { message: WINDOW_ORDER_MESSAGE, path: ['to'] });
 
@@ -19,9 +19,11 @@ const SearchLogsArgsSchema = z
  */
 export const searchLogsTool = defineTool({
   name: 'search_logs',
+  title: 'Найти записи в логах платежей',
   description:
     'Search payment logs in [from, to) with optional service, level, event and status filters. ' +
     'Returns up to pageSize records in time order; pass nextCursor back as cursor for the next page.',
+  readOnly: true,
   argsSchema: SearchLogsArgsSchema,
   run(args, dataset) {
     const matched = matchingRecords(dataset, args);

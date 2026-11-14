@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "typescript/no-floating-promises": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: workflows build on @agent-os/agents; Mastra stays inside agents."
+          },
+          {
+            "group": ["@nestjs/*", "@nestjs/**"],
+            "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
+          },
+          {
+            "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
+            "message": "ADR-0004: a package is imported only through its single entry `.`."
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "node": true
+  }
+}

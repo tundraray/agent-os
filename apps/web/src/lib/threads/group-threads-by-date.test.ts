@@ -17,7 +17,6 @@ function entry(id: string, activityAt: Date | number): ThreadListEntry {
     remoteId: id,
     title: `Беседа ${id}`,
     activityAt: typeof activityAt === 'number' ? activityAt : activityAt.getTime(),
-    isRunning: false,
   };
 }
 

@@ -1,0 +1,1 @@
+DROP TABLE "app"."chat_thread_runs" CASCADE;

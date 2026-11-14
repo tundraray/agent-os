@@ -163,40 +163,6 @@ describe('Message action bar — only «Копировать», always reachable
   });
 });
 
-/** Whether the action bar holding the button shows at rest; earlier messages hide it by opacity only (TH-10). */
-function showsAtRest(button: HTMLElement): boolean {
-  const bar = button.closest('[class*="action-bar-root"]');
-  return bar !== null && !bar.classList.contains('opacity-0');
-}
-
-describe('Message action bar — the last visible message (web-shell KD-2; design-chat-entry DC-7)', () => {
-  it('a reply followed only by a hidden decision pair keeps «Копировать» visible at rest; the pair is not drawn', () => {
-    const { container } = renderThread([
-      { id: 'u1', role: 'user', content: 'Первый вопрос' },
-      { id: 'a1', role: 'assistant', content: 'Первый ответ' },
-      {
-        id: 'u2',
-        role: 'user',
-        content: 'Запустить',
-        metadata: { custom: { researchDecision: { action: 'confirm', launchKey: 'call-1' } } },
-      },
-      {
-        id: 'a2',
-        role: 'assistant',
-        content: 'Реплика решения',
-        metadata: { custom: { researchDecisionReply: { launchKey: 'call-1' } } },
-      },
-    ]);
-
-    const roots = messageRoots(container);
-    expect(roots.map((root) => root.dataset.role)).toEqual(['user', 'assistant']);
-    expect(screen.queryByText('Запустить')).toBeNull();
-    expect(screen.queryByText('Реплика решения')).toBeNull();
-    expect(showsAtRest(within(roots[1]).getByRole('button', { name: COPY }))).toBe(true);
-    expect(showsAtRest(within(roots[0]).getByRole('button', { name: COPY }))).toBe(false);
-  });
-});
-
 describe('Message action bar — replies without text (TH-10 «Ответ без текста», «Пустой ответ»)', () => {
   it('a reply with only a tool call renders the call but has no «Копировать»', () => {
     const { container } = renderThread([

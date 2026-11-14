@@ -153,9 +153,8 @@ function paymentOf(drawn: PaymentOrder): BackOfficePayment {
 
 /**
  * The method is read off the random trace id rather than drawn from the block's generator, so adding it leaves every
- * log record, and with them the pinned snapshots and ground truth, unchanged. A scenario mechanism reads it the same
- * way to decline the payments of one method; no log record names the method.
+ * log record, and with them the pinned snapshots, unchanged; no log record names the method.
  */
-export function paymentMethodOf(traceId: string): PaymentMethod {
+function paymentMethodOf(traceId: string): PaymentMethod {
   return PAYMENT_METHODS[Number.parseInt(traceId.slice(0, 2), 16) % PAYMENT_METHODS.length];
 }

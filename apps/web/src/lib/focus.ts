@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+
 /** Where focus lands after a shell transition (UXRD 7.4). */
 export type FocusTarget = 'composer' | 'page-title';
 
@@ -19,7 +21,7 @@ export function focusShellTarget(target: FocusTarget): void {
       return;
     }
     if (framesLeft === 0) {
-      console.warn('[web-shell] focus target is not rendered', { target });
+      logger.warn('[web-shell] focus target is not rendered', { target });
       return;
     }
     requestAnimationFrame(() => attempt(framesLeft - 1));
