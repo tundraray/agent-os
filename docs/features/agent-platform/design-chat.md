@@ -738,9 +738,9 @@ sequenceDiagram
 - `decisions` — `Confirmation` всего дерева, все статусы.
 - `agents` — `AgentNode` детей корня.
 
-**AgentPageView** — `agent` (`AgentView` с `threadId` и `threadTitle`), `entries` и `nextAfterSeq` по тем же правилам, `pending` этого агента, `decisions` только этого агента, `children` — его поддерево `AgentNode`.
+**AgentPageView** — `agent` (`AgentView` с `threadId`, `threadTitle`, `template` по правилу `AgentNode` и `parentDescription` — описанием родителя из `agents.sessions.get`; у ребёнка корня беседы `parentDescription` нет), `entries` и `nextAfterSeq` по тем же правилам, `pending` этого агента, `decisions` только этого агента, `children` — его поддерево `AgentNode`.
 
-**AgentNode** — `AgentView` ([design-agents.md](./design-agents.md#contract-definitions)) и `children`. В `AgentListPage` у верхних узлов ещё `threadId` и `threadTitle`.
+**AgentNode** — `AgentView` ([design-agents.md](./design-agents.md#contract-definitions)) и `children`. У координатора workflow ещё `template` с `name` и `title` шаблона: API берёт их из заголовков `templates.list`, потому что `definition` координатора равно `name` шаблона ([design-workflows.md](./design-workflows.md#contract-definitions)); у остальных агентов поля нет. В `AgentListPage` у верхних узлов ещё `threadId` и `threadTitle`.
 
 **Confirmation** — запрос решения: `decisionId`, `agentId`, описание агента, вид (`agents.tool_confirmation` или `workflows.brief`), инструмент, сервер, аргументы, `status` (`open`, `resolved`, `cancelled`), решение и итоговые аргументы при `resolved`, время создания и решения; у брифа ещё `templateTitle` из `templates.list`.
 
@@ -884,6 +884,7 @@ stateDiagram-v2
 - **Части текста фоновых агентов создают лишний поток NOTIFY** — низкое влияние, средняя вероятность. Склейка за 100 мс; хаб отбрасывает части агентов, за которыми никто не следит, до разбора в потоки.
 - **`GET /agents` и счётчик NV-01 делают по запросу на беседу** — низкое влияние, средняя вероятность при сотнях бесед. Счётчик веб перечитывает не чаще раза в секунду; операция «все агенты владельца» в `agents` уберёт перебор, когда понадобится.
 - **Haiku выбирает не ту ветку правила FR-15** — высокое влияние, средняя вероятность. Правило словами в промпте, каталог в описаниях инструментов, ручной прогон после части (PRD, Assumptions); модель чата меняется полем определения (KD-5).
+- **Удаление беседы не шлёт заметку `tree`, и другие вкладки владельца видят беседу до следующего чтения** — низкое влияние, высокая вероятность при нескольких вкладках. Хаб находит владельца по строке беседы, а Flow 6 её удаляет; вкладка узнаёт об удалении по 404 при следующем чтении или после `ready`. Одной строкой заметку не добавить: экземпляров `api` может быть несколько, и сигнал об удалении должен дойти до хаба каждого — для этого нужен свой канал NOTIFY с владельцем и беседой и третий `LISTEN` хаба. Своя вкладка перечитывает дерево и экран сама ([design-web.md](./design-web.md#risks-and-mitigation)).
 
 ## Appendix: Fact Disposition
 
@@ -912,3 +913,4 @@ stateDiagram-v2
 |---------|------|--------|
 | 1.0 | 2026-11-14 | Initial version |
 | 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Правки контрактов `runtime` и `agents` (`decisions.listTree`, `confirmations`, `onTextDelta` с `Agent.stream`, `completeText`) эта часть делает сама первой работой, удаляя прежние операции и переводя их вызовы в `packages/workflows` и тестах; дизайны и планы нижних частей не меняются (KD-6, Part). В Risks — базовая линия NFR-03. |
+| 1.2 | 2026-11-14 | По допущениям A-1 и A-2 части `web`: у `AgentNode` и `AgentPageView.agent` координатора workflow — `template` с `name` и `title` из `templates.list` (те же поля, что `WorkflowRunView.template`); у `AgentPageView.agent` — `parentDescription`, если родитель не корень беседы. Заметка `tree` при удалении беседы не добавлена: ей нужен свой канал NOTIFY между экземплярами `api`; записано в Risks. |
