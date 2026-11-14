@@ -1,142 +1,60 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# api
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS server of Agent OS: the chat API (`/api/threads`, `/api/agents`, `/api/decisions`, `/api/spend`), the live stream (`GET /api/events`, SSE) and the runtime workers that run the agents. Agents come from `packages/agents` on top of `packages/runtime`; the fixture MCP servers come from `packages/mcp-fixture`.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## How to run locally
 
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+Run from the repository root, in this order:
 
 ```bash
-$ pnpm install
+pnpm install
+pnpm db:up                                   # Postgres 16 from infra/docker-compose.yml
+cp apps/api/.env.example apps/api/.env       # then set ANTHROPIC_API_KEY in apps/api/.env
+pnpm turbo build --filter=api...             # api and every package it uses, the MCP fixture included
+pnpm --filter api db:migrate                 # applies the migrations; the app only checks them
+pnpm --filter api start:dev                  # http://localhost:4000/api
 ```
 
-## Compile and run the project
+What `apps/api/.env` needs:
+
+- `DATABASE_URL` — required; the example matches `infra/docker-compose.yml`. If host port 5432 is taken, run `POSTGRES_PORT=5433 pnpm db:up` and use port 5433 here.
+- `ANTHROPIC_API_KEY` — the server starts without it, but every model call is refused.
+- Everything else has a working default in `.env.example`: `AGENT_DEFAULT_MODEL=anthropic/claude-haiku-5-5` (the chat's model; it must be in `config/model-prices.json`), `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` (files in `config/`, relative to `apps/api`; a missing or invalid file stops the start), `MCP_ACCESS_TABLE` (grants `dev-user` the fixture servers `logs` and `backoffice`; empty gives nobody any server), `SENTRY_DSN` (optional), `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `MCP_CALL_TIMEOUT_MS`. An invalid value stops the start naming the variable.
+
+The fixture servers are started by the api itself (`node ../../packages/mcp-fixture/dist/server.js`), so `packages/mcp-fixture` must be built: the `pnpm turbo build --filter=api...` step does it (`pnpm --filter @agent-os/mcp-fixture build` builds it alone).
+
+There is no login yet: outside `NODE_ENV=production` every request runs as `dev-user`; the `x-user-id` header names another employee (not one starting with `system:`).
+
+### Check with curl
 
 ```bash
-# development
-$ pnpm run start
+# 1. A new conversation; the answer carries its id
+curl -s -X POST http://localhost:4000/api/threads
 
-# watch mode
-$ pnpm run start:dev
+# 2. In a second terminal: the live stream of that conversation
+curl -N "http://localhost:4000/api/events?watch=thread:<id>"
 
-# production mode
-$ pnpm run start:prod
+# 3. A message: 202, then the stream shows `ready`, `delta` (the answer's text parts) and `tree`
+curl -s -X POST http://localhost:4000/api/threads/<id>/messages \
+  -H 'Content-Type: application/json' -d '{"text":"Hello"}'
+
+# 4. The stored history
+curl -s http://localhost:4000/api/threads/<id>/history
 ```
 
-## Run tests
+Each message is a paid model call on `ANTHROPIC_API_KEY`.
 
-```bash
-# unit tests
-$ pnpm run test
+The web app (`apps/web`) does not work with this API until the `web` part of agent-platform is built.
 
-# e2e tests (Postgres)
-$ pnpm run test:e2e
-
-# research runtime wiring e2e only (builds the app first)
-$ pnpm run test:e2e:runtime
-
-# test coverage
-$ pnpm run test:cov
-```
+Tests: `pnpm --filter api test` (unit) and `pnpm --filter api test:e2e` (needs Postgres up and the build above).
 
 ### e2e tests and the database
 
 - The e2e suites run against the Postgres in `DATABASE_URL` (process environment first, otherwise `apps/api/.env`). The app refuses to start on pending migrations, so the suite's global setup (`test/support/migrate.global-setup.ts`) applies them once before any test file boots the app, through the same `applyMigrations` from `@agent-os/db` as `pnpm db:migrate`.
-- The harness defaults to `RUNTIME_WORKERS=off`, so chat and threads tests never start runtime workers. Tests that need workers boot the app through `test/support/runtimeApp.ts`, which sets the runtime variables explicitly.
-- Only the wiring of the runtime into the app is tested here (`research-runtime-boot`, `research-runtime-wiring`). The runtime's own integration tests, the process-kill matrix and the on-demand timing checks live in `packages/runtime` (`pnpm --filter @agent-os/runtime test:e2e`, `test:verify`); migration tests live in `packages/db`.
+- The suites replace the model client with the test double and set their own `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS`; they make no paid calls.
+- Migration tests live in `packages/db`.
 - Run Postgres suites one at a time, never in parallel against the same database: runtime workers (relay, reaper) touch rows of other tests.
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
 
 ## Observability
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
-
-```bash
-$ npx @nestjs/observe link
-```
-
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
-
-Or do it by hand:
-
-```bash
-$ pnpm install @nestjs/observe
-```
-
-Then follow the [setup guide](https://docs.nestjs.com/observability/sdk) - it takes a single import and an app key.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Logs go through the logger of `@agent-os/common` to the console and, when `SENTRY_DSN` is set, to Sentry (`src/instrument.ts`, `src/logging/app-logger.ts`). `LOG_LEVEL` sets the lowest level. Secrets — `ANTHROPIC_API_KEY`, `SENTRY_DSN`, the database password and the MCP servers' environment values — are redacted.

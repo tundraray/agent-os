@@ -1,22 +1,18 @@
 {
   "name": "@agent-os/mcp-fixture",
   "version": "1.0.0",
-  "description": "Fixture MCP server with synthetic payment logs and the research scenario ground truth",
+  "description": "Fixture MCP server with synthetic payment logs and back office, a call log and fault rules for tests",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "ground-truth",
-    "scenario-sets"
+    "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "oxlint --deny-warnings src/",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
-    "generate": "tsc -p tsconfig.build.json && node dist/generate-ground-truth.js"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
@@ -24,9 +20,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "oxlint": "^1.90.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.2"
+    "oxlint": "^1.58.0",
+    "typescript": "^6.0.2"
   },
   "exports": {
     ".": {

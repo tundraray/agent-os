@@ -1,16 +1,25 @@
 'use client';
 
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import Link from 'next/link';
 import { SquarePenIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { AGENTS_PATH } from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
 
-export type ThreadNoticeProps = {
-  variant: 'not-found' | 'load-error' | 'deleted';
-  /** «Повторить»; shown for `load-error` only. */
-  onRetry?: () => void;
-  onNewChat: () => void;
-};
+export type ThreadNoticeProps =
+  | {
+      variant: 'not-found' | 'load-error' | 'deleted';
+      /** «Повторить»; shown for `load-error` only. */
+      onRetry?: () => void;
+      onNewChat: () => void;
+    }
+  /** MC-15: the agent page of a foreign, deleted or missing agent. */
+  | { variant: 'agent-not-found' }
+  /** MC-16: the agent page could not be read. */
+  | { variant: 'agent-load-error'; onRetry: () => void };
+
+type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
 const COPY = {
   'not-found': {
@@ -25,22 +34,62 @@ const COPY = {
     title: 'Беседа удалена',
     description: 'Её удалили в другой вкладке или окне.',
   },
+  'agent-not-found': {
+    title: 'Агент не найден',
+    description: 'Возможно, его удалили вместе с беседой или ссылка указана неверно.',
+  },
+  'agent-load-error': {
+    title: 'Не удалось загрузить агента',
+    description: 'Проверьте подключение и попробуйте ещё раз.',
+  },
 } as const satisfies Record<ThreadNoticeProps['variant'], { title: string; description: string }>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
+ * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3).
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
-export function ThreadNotice({ variant, onRetry, onNewChat }: ThreadNoticeProps) {
-  if (variant === 'deleted') return <DeletedInlineNotice onNewChat={onNewChat} />;
-  return <ThreadNoticeScreen variant={variant} onRetry={onRetry} onNewChat={onNewChat} />;
+export function ThreadNotice(props: ThreadNoticeProps) {
+  switch (props.variant) {
+    case 'deleted':
+      return <DeletedInlineNotice onNewChat={props.onNewChat} />;
+    case 'agent-not-found':
+      return (
+        <NoticeScreen variant={props.variant}>
+          <Link href={AGENTS_PATH} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+            К списку агентов
+          </Link>
+        </NoticeScreen>
+      );
+    case 'agent-load-error':
+      return (
+        <NoticeScreen variant={props.variant}>
+          <Button className="pointer-coarse:h-11" onClick={props.onRetry}>
+            Повторить
+          </Button>
+        </NoticeScreen>
+      );
+    case 'not-found':
+    case 'load-error': {
+      const canRetry = props.variant === 'load-error' && props.onRetry !== undefined;
+      return (
+        <NoticeScreen variant={props.variant}>
+          {canRetry && <Button onClick={props.onRetry}>Повторить</Button>}
+          <Button variant={canRetry ? 'outline' : 'default'} onClick={props.onNewChat}>
+            <SquarePenIcon aria-hidden />
+            Новый чат
+          </Button>
+        </NoticeScreen>
+      );
+    }
+  }
 }
 
-function ThreadNoticeScreen({ variant, onRetry, onNewChat }: ThreadNoticeProps & { variant: 'not-found' | 'load-error' }) {
+/** The full-area notice: its h1 takes focus (tabIndex −1), its actions sit under the reason. */
+function NoticeScreen({ variant, children }: { variant: ScreenVariant; children: ReactNode }) {
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const { title, description } = COPY[variant];
-  const canRetry = variant === 'load-error' && onRetry !== undefined;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -55,13 +104,7 @@ function ThreadNoticeScreen({ variant, onRetry, onNewChat }: ThreadNoticeProps &
         {title}
       </h1>
       <p className="text-muted-foreground text-sm">{description}</p>
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {canRetry && <Button onClick={onRetry}>Повторить</Button>}
-        <Button variant={canRetry ? 'outline' : 'default'} onClick={onNewChat}>
-          <SquarePenIcon aria-hidden />
-          Новый чат
-        </Button>
-      </div>
+      <div className="mt-4 flex flex-wrap justify-center gap-2">{children}</div>
     </section>
   );
 }

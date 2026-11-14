@@ -1,5 +1,7 @@
 // UXRD 10.2 / DD «Локализация»: key screens rendered in the shell carry no English scaffold strings —
 // neither in visible text nor in what a screen reader announces (aria-label, title, placeholder, alt, aria-valuetext).
+// First: registers the next/navigation mock before any other module loads the real one.
+import { renderWithRuntime } from '@/test/render-with-runtime';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -9,14 +11,16 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { http, HttpResponse } from 'msw';
+import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { ReasoningRoot, ReasoningTrigger } from '@/components/assistant-ui/elements/reasoning';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
+import { ShellServicesContext } from '@/components/shell/shell-actions';
+import { createShellServices } from '@/lib/threads/shell-services';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
-import { renderWithRuntime } from '@/test/render-with-runtime';
 
 const API = 'http://api.test';
 
@@ -67,7 +71,7 @@ const TOOL_CONVERSATION: readonly ThreadMessageLike[] = [
     role: 'assistant',
     content: [
       { type: 'reasoning', text: 'Сначала найду отчёт.' },
-      { type: 'tool-call', toolCallId: 'call-1', toolName: 'search', args: { q: 'отчёт' }, result: { found: 1 } },
+      { type: 'tool-call', toolCallId: 'call-1', toolName: 'search', args: { q: 'отчёт' }, result: { found: 1 }, artifact: { state: 'done', outcome: 'success' } },
       {
         type: 'tool-call',
         toolCallId: 'call-2',
@@ -75,6 +79,7 @@ const TOOL_CONVERSATION: readonly ThreadMessageLike[] = [
         args: { column: 'итог' },
         result: { message: 'internal failure' },
         isError: true,
+        artifact: { state: 'done', outcome: 'tool_error' },
       },
       { type: 'text', text: 'Итог — 42.' },
       { type: 'file', data: AUDIO_BASE64, mimeType: 'audio/wav' },
@@ -92,12 +97,15 @@ function createGate(): Gate {
 
 function ThreadHarness({ adapter, messages }: { adapter: ChatModelAdapter; messages: readonly ThreadMessageLike[] }) {
   const runtime = useLocalRuntime(adapter, { initialMessages: messages });
+  const [services] = useState(() => createShellServices());
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <TooltipProvider>
-        <Thread autoFocus={false} />
-      </TooltipProvider>
-    </AssistantRuntimeProvider>
+    <ShellServicesContext.Provider value={services}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <TooltipProvider>
+          <Thread autoFocus={false} />
+        </TooltipProvider>
+      </AssistantRuntimeProvider>
+    </ShellServicesContext.Provider>
   );
 }
 
@@ -150,12 +158,12 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
     expect(englishLeaks()).toEqual([]);
 
     await user.click(within(reply).getByRole('button', { name: '2 вызова инструментов' }));
-    await user.click(await within(reply).findByRole('button', { name: 'Сбой инструмента: sum' }));
-    expect(await within(reply).findByText('Не удалось выполнить инструмент.')).toBeInTheDocument();
+    await user.click(await within(reply).findByRole('button', { name: /^sum: ошибка инструмента/ }));
+    expect(await within(reply).findByRole('region', { name: 'Аргументы' })).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
     await user.type(screen.getByRole('textbox', { name: 'Сообщение' }), 'Ещё раз{Enter}');
-    expect(await screen.findByRole('button', { name: 'Остановить' })).toBeInTheDocument();
+    expect(await screen.findByText('Ещё раз')).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
 
     gate.open();

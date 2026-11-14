@@ -3,6 +3,7 @@ import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.
 import { vi, type Mock } from 'vitest';
 import { ChatShell } from '@/components/shell/chat-shell';
 import { Toaster } from '@/components/ui/sonner';
+import { createTestLiveSource, type TestLiveSource } from './live-source';
 import { setTestMedia, type TestMedia } from './setup';
 
 type RouterMethod = 'back' | 'forward' | 'refresh' | 'push' | 'replace' | 'prefetch';
@@ -68,6 +69,8 @@ export type RenderWithRuntimeOptions = {
   media?: TestMedia['queries'];
   /** Sidebar state the layout would read from the `sidebar_state` cookie; default true. */
   defaultSidebarOpen?: boolean;
+  /** The event source `LiveStore` opens; default a new test source (jsdom has no `EventSource`). */
+  liveSource?: TestLiveSource;
 };
 
 export type RenderWithRuntimeResult = RenderResult & {
@@ -75,11 +78,14 @@ export type RenderWithRuntimeResult = RenderResult & {
   router: RouterSpy;
   /** Emulates the navigation Next would perform: `usePathname()` returns the new value. */
   setPathname: (pathname: string) => void;
+  /** The live stream's source: what the shell opened, and the frames the test pushes through it. */
+  live: TestLiveSource;
 };
 
 /**
  * Mounts the shell as the `(chat)` layout does — ChatShell with its ChatRuntimeProvider — plus the app-wide
- * `<Toaster />`, against the MSW server. Only the network (MSW) and `next/navigation` are emulated.
+ * `<Toaster />`, against the MSW server. Only the network (MSW), the live event source and `next/navigation`
+ * are emulated.
  */
 export function renderWithRuntime({
   pathname,
@@ -88,6 +94,7 @@ export function renderWithRuntime({
   colorScheme = 'light',
   media = {},
   defaultSidebarOpen = true,
+  liveSource = createTestLiveSource(),
 }: RenderWithRuntimeOptions): RenderWithRuntimeResult {
   setTestMedia({ pointer, width, colorScheme, queries: media });
   const router = createRouterSpy();
@@ -96,7 +103,9 @@ export function renderWithRuntime({
 
   const result = render(
     <>
-      <ChatShell defaultSidebarOpen={defaultSidebarOpen}>{null}</ChatShell>
+      <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open}>
+        {null}
+      </ChatShell>
       <Toaster />
     </>,
   );
@@ -104,6 +113,7 @@ export function renderWithRuntime({
   return {
     ...result,
     router,
+    live: liveSource,
     setPathname: (next) => {
       act(() => {
         navigation.setPathname(next);

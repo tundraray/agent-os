@@ -1,20 +1,18 @@
-// research-runtime / runtime: migrations of schema `app` against real Postgres (E2E-2, migration rows).
-// Design Doc: docs/features/research-runtime/design-runtime.md (Migration Strategy, KD-2).
-// Moved from apps/api/test/research-runtime-runtime.e2e-spec.ts; the rows that boot the api stay with apps/api.
+// Migrations of schema `app` against real Postgres (E2E-2, migration rows).
+// Design Doc: docs/features/agent-platform/design-runtime.md (Data Model, KD-7; Invariants 3, 7, 8 — schema constraints).
 // The migrator is called directly (`applyMigrations`); the exit code of `pnpm db:migrate` is proven by the
 // operational verification of the deploy, not here.
 //
 // Covers:
 // AC-10.1: "Given пустая база из infra/docker-compose.yml, When применяются миграции, Then схема создана; повторное применение ничего не меняет."
 // AC-10.2: "Given база, где Mastra уже создал свои таблицы и лежат беседы, When применяются миграции, Then беседы и их сообщения читаются без изменений."
-// AC-RT-8: "Домены CHECK статусов, классов и типов в схеме app совпадают со значениями enum в packages/contracts."
-// design-engine.md, Data Model: the engine tables and their CHECK domains (literals; the engine contract is not in packages/contracts).
-// design-chat-entry.md, Data Model and State Transitions: `research_chat_launches` and its CHECK domains (literals; the row
-// states are not a contract enum).
-// agent-quality/design-self-check.md, Data Model and Contract Definitions (`Transcript`): `research_llm_transcripts` and its
-// CHECK domains (literals).
-// agent-runtime/design-agent-core.md, Data Model (KD-2): the agent tables, their CHECK domains and the role `agent` of the
-// ledger and transcript role checks (literals); migration 0008: no definition memory record with an empty user id.
+// AC-RT-8: "Домены CHECK статусов в схеме app совпадают со значениями enum в packages/contracts" — the `runtime_*` tables
+// (task status, wait reason, message status, decision status, delivery status from packages/contracts/src/runtime.ts).
+// Migration 0010 drops the research tables, 0011 creates the six `runtime_*` tables, 0012 the three `agent_*`
+// tables (design-agents.md, Data Model), 0014 `chat_conversations` (design-chat.md, Data Model) and 0015 drops
+// `chat_thread_runs`: after them, only these are in `app`.
+// The `agent_*` CHECK domains (history kind, tool call state, outcome, refusal reason) come from
+// packages/contracts/src/agents.ts.
 //
 // Primary failure mode: the migrator applies twice or partially, touches `public`, or a CHECK domain drifts from the contract enums.
 // Isolation: the row runs in its own scratch database, created with CREATE DATABASE and dropped afterwards.
@@ -22,11 +20,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  DecisionStatusSchema,
   DeliveryStatusSchema,
-  InvestigationStatusSchema,
-  KnowledgeStatusSchema,
-  TaskEdgeKindSchema,
+  HistoryEntryKindSchema,
+  MessageStatusSchema,
   TaskStatusSchema,
+  ToolCallStateSchema,
+  ToolOutcomeSchema,
+  ToolRefusalReasonSchema,
+  WaitReasonSchema,
 } from '@agent-os/contracts';
 import type pg from 'pg';
 import { z } from 'zod';
@@ -36,32 +38,19 @@ import { ScratchDatabases, withDatabase } from './support/scratch-db.js';
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;
 
-/** Tables of the Data Models (design-runtime.md, design-engine.md, design-chat-entry.md, design-self-check.md, design-lifecycle.md, design-agent-core.md) plus the migration journal. */
+/** Tables of the Data Models (agent-platform/design-runtime.md, design-agents.md, design-chat.md, agent-quality/design-lifecycle.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
-  'agent_definition_memory',
-  'agent_tool_audit',
-  'chat_thread_runs',
-  'research_agent_memory',
-  'research_agent_messages',
-  'research_agent_runs',
-  'research_agent_tool_calls',
-  'research_chat_launches',
-  'research_claims',
-  'research_decisions',
-  'research_engine_runs',
-  'research_event_deliveries',
-  'research_events',
-  'research_evidence',
-  'research_evidence_contents',
-  'research_investigations',
-  'research_llm_calls',
-  'research_llm_transcripts',
-  'research_plan_revisions',
-  'research_signals',
-  'research_task_dependencies',
-  'research_task_subscribers',
-  'research_tasks',
+  'agent_messages',
+  'agent_sessions',
+  'agent_tool_calls',
+  'chat_conversations',
+  'runtime_decisions',
+  'runtime_event_deliveries',
+  'runtime_events',
+  'runtime_inbox',
+  'runtime_model_calls',
+  'runtime_tasks',
 ];
 
 /** Stand-in for chat data: a `public` table named like Mastra's, with known rows. */
@@ -214,136 +203,20 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
       const sorted = (values: readonly string[]) => [...values].sort();
 
       expect(domains).toEqual({
-        research_event_deliveries_status_check: sorted(
+        runtime_tasks_status_check: sorted(TaskStatusSchema.options),
+        runtime_tasks_wait_reason_check: sorted(WaitReasonSchema.options),
+        runtime_inbox_status_check: sorted(MessageStatusSchema.options),
+        runtime_decisions_status_check: sorted(DecisionStatusSchema.options),
+        runtime_event_deliveries_status_check: sorted(
           DeliveryStatusSchema.options,
         ),
-        research_evidence_knowledge_status_check: sorted(
-          KnowledgeStatusSchema.options,
+        agent_messages_kind_check: sorted(HistoryEntryKindSchema.options),
+        agent_tool_calls_state_check: sorted(ToolCallStateSchema.options),
+        agent_tool_calls_outcome_check: sorted(ToolOutcomeSchema.options),
+        agent_tool_calls_refusal_reason_check: sorted(
+          ToolRefusalReasonSchema.options,
         ),
-        research_investigations_status_check: sorted(
-          InvestigationStatusSchema.options,
-        ),
-        research_task_dependencies_kind_check: sorted(
-          TaskEdgeKindSchema.options,
-        ),
-        research_tasks_status_check: sorted(TaskStatusSchema.options),
-        // Engine domains (design-engine.md, Data Model): the engine contract is not in
-        // packages/contracts, so the expected values are literals.
-        research_claims_status_check: [
-          'causal',
-          'insufficient',
-          'refuted',
-          'supported',
-          'unverified',
-        ],
-        research_decisions_decided_by_check: ['code', 'model'],
-        research_decisions_kind_check: [
-          'concludeInconclusive',
-          'proposeAnswer',
-          'replan',
-          'requestAnalysis',
-          'requestEvidence',
-          'requestVerification',
-          'wait',
-        ],
-        research_decisions_status_check: ['accepted', 'rejected'],
-        research_engine_runs_source_mode_check: ['model_knowledge', 'sources'],
-        research_llm_calls_role_check: [
-          'agent',
-          'controller',
-          'plan',
-          'synthesis',
-          'verifier',
-          'worker',
-        ],
-        research_llm_calls_status_check: [
-          'abandoned',
-          'failed',
-          'reserved',
-          'settled',
-        ],
-        // Transcript domains (agent-quality/design-self-check.md, Contract Definitions, `Transcript`): the
-        // five process roles and `agent` plus `judge`; only closed outcomes are stored — `open` is a row
-        // without one, `abandoned` is read from the journal row.
-        research_llm_transcripts_role_check: [
-          'agent',
-          'controller',
-          'judge',
-          'plan',
-          'synthesis',
-          'verifier',
-          'worker',
-        ],
-        research_llm_transcripts_outcome_check: [
-          'answered',
-          'invalid_output',
-          'provider_error',
-        ],
-        // Chat entry domains (design-chat-entry.md, Data Model, State Transitions).
-        research_chat_launches_mode_check: ['explicit', 'proposal'],
-        research_chat_launches_source_mode_check: ['model_knowledge', 'sources'],
-        research_chat_launches_state_check: [
-          'answer_pending',
-          'answer_reappend',
-          'answered',
-          'declined',
-          'discarded',
-          'failed',
-          'launching',
-          'proposed',
-          'running',
-          'stopped',
-          'superseded',
-        ],
-        // States that require a started investigation and its controller task (invariant 1).
-        research_chat_launches_started_check: [
-          'answer_pending',
-          'answer_reappend',
-          'answered',
-          'running',
-        ],
-        // Agent domains (design-agent-core.md, Data Model, «Как исполняется вызов инструмента»,
-        // Contract `memory_write`, definition memory scopes).
-        research_agent_tool_calls_state_check: [
-          'done',
-          'rejected',
-          'requested',
-          'starting',
-          'waiting',
-        ],
-        research_agent_memory_kind_check: [
-          'dead_end',
-          'finding',
-          'note',
-          'tried',
-        ],
-        agent_definition_memory_scope_check: ['deployment', 'user'],
       });
-    });
-
-    // Fix cycle 1 (security), design-agent-core.md Data Model, «Правила доступа к памяти определения»: a definition
-    // memory record never has an empty user id — a `user` record is some user's. Catches: a `user` record with an
-    // empty user id stored (migration 0008).
-    it('definition memory: a user record with an empty user id is refused, one with a user accepted', async () => {
-      const outcomes = await withDatabase(url, async (client) => {
-        const insert = (id: string, userId: string): Promise<string> =>
-          client
-            .query(
-              `INSERT INTO app.agent_definition_memory (id, process_id, agent_name, scope, user_id, text, written_by)
-               VALUES ($1, 'agent-probe', 'lead', 'user', $2, 'note', 'writer')`,
-              [id, userId],
-            )
-            .then(
-              () => 'accepted',
-              (error: { code?: string; constraint?: string }) => `${error.code}:${error.constraint}`,
-            );
-        return {
-          empty: await insert('00000000-0000-4000-8000-000000000031', ''),
-          user: await insert('00000000-0000-4000-8000-000000000032', 'user-1'),
-        };
-      });
-
-      expect(outcomes).toEqual({ empty: '23514:agent_definition_memory_values_check', user: 'accepted' });
     });
   });
 });

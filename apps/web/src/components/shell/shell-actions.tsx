@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { useAui, type AssistantClient } from '@assistant-ui/react';
+import { useAui } from '@assistant-ui/react';
 import { useStore } from 'zustand';
 import { focusAfterNewChat, focusShellTarget, isFinePointer } from '@/lib/focus';
 import type { ShellServices } from '@/lib/threads/shell-services';
@@ -17,19 +17,11 @@ export type ShellActions = {
   retryHistory: (remoteId: string) => void;
   /** «Повторить» for a failed switch to a thread opened by URL. */
   retrySwitch: (threadId: string) => void;
-  /**
-   * Deletes a thread; a run in progress on it (open or background) is cancelled first so its
-   * request closes before the thread body is released. Delete failures follow the list adapter
-   * contract (notify.deleteFailed + rollback).
-   */
-  deleteThread: (threadId: string) => Promise<void>;
 };
 
-/** Upper bound for a cancelled run to settle before the delete proceeds anyway. */
-const CANCEL_SETTLE_TIMEOUT_MS = 2000;
-
 const ShellActionsContext = createContext<ShellActions | null>(null);
-const ShellStatusContext = createContext<ShellStatusStore | null>(null);
+/** Exported for tests that render a bare `Thread`, which announces through the shell's announcer. */
+export const ShellServicesContext = createContext<ShellServices | null>(null);
 
 type ShellActionsProviderProps = {
   services: ShellServices;
@@ -67,66 +59,17 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
         focusOnRoot.current = true;
         router.push('/');
       },
-      retryHistory: (remoteId) => services.history.retry(remoteId),
+      retryHistory: (remoteId) => void services.feeds.forThread(remoteId).load(),
       retrySwitch: (threadId) => aui.threads.switchToThread(threadId),
-      deleteThread: async (threadId) => {
-        await cancelThreadRun(aui, threadId);
-        aui.threads.item({ id: threadId }).delete();
-      },
     }),
     [aui, pathname, router, services],
   );
 
   return (
-    <ShellStatusContext.Provider value={services.status}>
+    <ShellServicesContext.Provider value={services}>
       <ShellActionsContext.Provider value={actions}>{children}</ShellActionsContext.Provider>
-    </ShellStatusContext.Provider>
+    </ShellServicesContext.Provider>
   );
-}
-
-/**
- * Cancels the run of a thread (open or background) and waits until its list item reports not running.
- * The `threads` scope installed by AssistantRuntimeProvider is the runtime-backed ThreadListClient:
- * it has no per-thread body accessor, so the open thread is cancelled through `aui.threads.thread("main")` and a
- * background thread through the AssistantRuntime (`threads.getById`), which resolves the same
- * per-thread runtime whose state feeds the item's `isRunning`.
- */
-async function cancelThreadRun(aui: AssistantClient, threadId: string): Promise<void> {
-  const item = aui.threads.item({ id: threadId });
-  const isRunning = () => item.getState().isRunning;
-  if (!isRunning()) return;
-  if (aui.threads.getState().mainThreadId === item.getState().id) {
-    aui.threads.thread("main").cancelRun();
-  } else {
-    const runtime = aui.threads.__internal_getAssistantRuntime?.();
-    if (runtime === undefined) {
-      console.warn('[web-shell] background run has no reachable runtime; deleting without cancel', {
-        threadId,
-      });
-      return;
-    }
-    runtime.threads.getById(threadId).cancelRun();
-  }
-  const settled = await waitUntil(aui, () => !isRunning(), CANCEL_SETTLE_TIMEOUT_MS);
-  if (!settled) {
-    console.warn('[web-shell] run still active after cancel; deleting anyway', { threadId });
-  }
-}
-
-/** Resolves true once `isDone()` holds, false after `timeoutMs`. */
-function waitUntil(aui: AssistantClient, isDone: () => boolean, timeoutMs: number): Promise<boolean> {
-  if (isDone()) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const finish = (result: boolean) => {
-      unsubscribe();
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const unsubscribe = aui.subscribe(() => {
-      if (isDone()) finish(true);
-    });
-    const timer = setTimeout(() => finish(isDone()), timeoutMs);
-  });
 }
 
 export function useShellActions(): ShellActions {
@@ -141,7 +84,12 @@ export function useShellStatus<T>(selector: (state: ShellStatusState) => T): T {
 }
 
 function useShellStatusStore(): ShellStatusStore {
-  const store = useContext(ShellStatusContext);
-  if (store === null) throw new Error('useShellStatus must be used inside ShellActionsProvider');
-  return store;
+  return useShellServices().status;
+}
+
+/** The shell's live stream, announcer, feed stores and API client for the screens' components. */
+export function useShellServices(): ShellServices {
+  const services = useContext(ShellServicesContext);
+  if (services === null) throw new Error('useShellServices must be used inside ShellActionsProvider');
+  return services;
 }

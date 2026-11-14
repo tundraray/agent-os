@@ -1,16 +1,15 @@
 'use client';
 
+import { useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
+import { AgentScreen } from '@/components/agents/agent-screen';
+import { AgentsScreen } from '@/components/agents/agents-screen';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
-import {
-  ComposerResearchModeToggle,
-  ThreadResearchProvider,
-  useDeepResearchToolUI,
-} from '@/components/research/research-thread';
+import { FeedProvider } from '@/lib/feed/feed-context';
 import { resolveMainView, type MainView as MainViewKind } from '@/lib/threads/resolve-main-view';
-import { parseRouteThreadId } from '@/lib/threads/route-thread-id';
-import { useShellActions, useShellStatus } from './shell-actions';
+import { parseShellRoute } from '@/lib/shell-route';
+import { useShellActions, useShellServices, useShellStatus } from './shell-actions';
 import { ShellWelcome } from './shell-welcome';
 import { DeletedNotice, ThreadNotice } from './thread-notice';
 
@@ -22,7 +21,8 @@ export type MainViewState = {
 
 /** Inputs of `resolveMainView` read from the route, the runtime and ShellStatus; shared by MainView and HD-03. */
 export function useMainViewState(): MainViewState {
-  const routeThreadId = parseRouteThreadId(usePathname());
+  const route = parseShellRoute(usePathname());
+  const routeThreadId = route.kind === 'chat' ? route.threadId : undefined;
   const mainRemoteId = useAuiState(
     (s) =>
       s.threads.threadItems.find(
@@ -39,21 +39,37 @@ export function useMainViewState(): MainViewState {
   };
 }
 
-const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, ComposerExtra: ComposerResearchModeToggle };
-/** E-8: the open thread was deleted elsewhere — the feed stays, the composer goes, the notice replaces the TH-08 block. */
-const DELETED_THREAD_COMPONENTS: ThreadComponents = {
-  Welcome: ShellWelcome,
-  DeletedNotice,
-  ComposerExtra: ComposerResearchModeToggle,
-};
+const THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome };
+/** E-8: the open thread was deleted elsewhere — the feed stays, the notice takes the composer's place. */
+const DELETED_THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, DeletedNotice };
 
-/** The main area: the feed (its skeleton with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07. */
+/**
+ * The main area by route: `/agents` — the agent tree (Screen 2); `/agents/<id>` — the agent page (Screen 3)
+ * under the shell's `AgentFeedProvider`; a conversation — the feed (its skeleton with a send-blocked
+ * composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07.
+ */
 export function MainView() {
+  const route = parseShellRoute(usePathname());
+  const services = useShellServices();
+
+  if (route.kind === 'agents') return <AgentsScreen store={services.agentList} />;
+  if (route.kind === 'agent') return <AgentScreen />;
+  return <ConversationView />;
+}
+
+function ConversationView() {
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
-  useDeepResearchToolUI();
   const { newChat, retrySwitch, retryHistory } = useShellActions();
-  // The history adapter reports 'ready' before the runtime has put the messages into the thread:
-  // until they land, a URL thread keeps the skeleton (no welcome flash while the list is still loading).
+  const { feeds } = useShellServices();
+  // The list item that lifts in the list on activity; the store keeps the one it was created with.
+  const mainItemId = useAuiState((s) => s.threadListItem.id);
+  // The conversation's store, the same one its runtime reads; none on `/` before the first message.
+  const feed = useMemo(
+    () => (mainRemoteId === undefined ? null : feeds.forThread(mainRemoteId, mainItemId)),
+    [feeds, mainRemoteId, mainItemId],
+  );
+  // Until the runtime has put the first read into the thread, a URL thread keeps the skeleton
+  // (no welcome flash while the list is still loading).
   const bodyLoading = useAuiState((s) => s.thread.isLoading && s.thread.messages.length === 0);
   const onNewChat = () => newChat('notice');
 
@@ -62,13 +78,13 @@ export function MainView() {
     case 'thread':
     case 'switching':
       return (
-        <ThreadResearchProvider threadId={mainRemoteId ?? null}>
+        <FeedProvider feed={feed}>
           <Thread
             autoFocus={false}
             components={view.kind === 'thread' && view.deleted ? DELETED_THREAD_COMPONENTS : THREAD_COMPONENTS}
             historyPending={view.kind === 'switching' || (routeThreadId !== undefined && bodyLoading)}
           />
-        </ThreadResearchProvider>
+        </FeedProvider>
       );
     case 'not-found':
       return <ThreadNotice variant="not-found" onNewChat={onNewChat} />;

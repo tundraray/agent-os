@@ -1,0 +1,14 @@
+[
+  {
+    "id": "logs",
+    "command": "node",
+    "args": ["../../packages/mcp-fixture/dist/server.js"],
+    "env": { "FIXTURE_SOURCE": "logs" }
+  },
+  {
+    "id": "backoffice",
+    "command": "node",
+    "args": ["../../packages/mcp-fixture/dist/server.js"],
+    "env": { "FIXTURE_SOURCE": "backoffice" }
+  }
+]

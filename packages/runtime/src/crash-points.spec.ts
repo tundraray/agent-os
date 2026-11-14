@@ -1,7 +1,7 @@
 import { CrashPoints } from './crash-points.js';
 
-const POINT = 'dispatch.after-claim';
-const OTHER_POINT = 'relay.before-done';
+const POINT = 'step.after-claim';
+const OTHER_POINT = 'inbox.before-wake';
 const PASSES = 5;
 
 /** Passes (1-based) of {@link POINT} on which the injected exit was called, with code 137. */
@@ -50,7 +50,7 @@ describe('CrashPoints — RUNTIME_CRASH_AT parse and production switch', () => {
   });
 
   it.each([
-    { name: 'an unknown point', crashAt: 'dispatch.after-nothing' },
+    { name: 'an unknown point', crashAt: 'step.after-nothing' },
     { name: 'pass 0', crashAt: `${POINT}:0` },
   ])('rejects $name naming the value', ({ crashAt }) => {
     expect(

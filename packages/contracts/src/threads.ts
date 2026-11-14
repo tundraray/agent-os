@@ -39,47 +39,17 @@ export const RenameThreadRequestSchema = z.object({
 });
 export type RenameThreadRequest = z.infer<typeof RenameThreadRequestSchema>;
 
-/**
- * One part of an AI SDK v7 UIMessage. Validated structurally only (`type` is required);
- * the full part shape is owned by the `ai` package (use its validateUIMessages for deep checks).
- */
-export const HistoryMessagePartSchema = z.looseObject({
-  type: z.string().min(1),
-});
-
-/** An AI SDK v7 UIMessage restored from thread history (same shape as the live v7 stream). */
-export const HistoryMessageSchema = z.looseObject({
-  id: z.string().min(1),
-  role: z.enum(['system', 'user', 'assistant']),
-  metadata: z.unknown().optional(),
-  parts: z.array(HistoryMessagePartSchema),
-});
-export type HistoryMessage = z.infer<typeof HistoryMessageSchema>;
-
-/** Response of GET /api/threads/:threadId/messages: every message, oldest first, one linear branch. */
-export const ThreadMessagesResponseSchema = z.object({
-  messages: z.array(HistoryMessageSchema),
-});
-export type ThreadMessagesResponse = z.infer<
-  typeof ThreadMessagesResponseSchema
->;
-
-/**
- * Structural reference to an element of `body.messages` of POST /api/chat/:agentId:
- * only `id` and `role` are read (AC-14.6 "discard the tail"); the full UIMessage
- * shape is validated by Mastra.
- */
-export const ChatMessageRefSchema = z.looseObject({
-  id: z.string().min(1),
-  role: z.string(),
-});
-export type ChatMessageRef = z.infer<typeof ChatMessageRefSchema>;
-
 /** Machine-readable error codes of the threads API. */
 export const ThreadsErrorCodeSchema = z.enum([
   'THREAD_NOT_FOUND',
   'VALIDATION_FAILED',
   'INVALID_CURSOR',
+  'AGENT_NOT_FOUND',
+  'RUN_NOT_FOUND',
+  'DECISION_NOT_FOUND',
+  'INVALID_ARGUMENTS',
+  'NOT_FINISHED',
+  'PARENT_FINISHED',
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
 

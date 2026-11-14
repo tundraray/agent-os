@@ -2,7 +2,8 @@
 
 import { useRef, type MouseEvent } from 'react';
 import Link from 'next/link';
-import { DiamondIcon, SquarePenIcon, XIcon } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { BotIcon, DiamondIcon, HandIcon, SquarePenIcon, XIcon } from 'lucide-react';
 import { pressable } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,6 +19,9 @@ import {
 } from '@/components/ui/sidebar';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { useAwaitingCount } from '@/lib/agents/awaiting-count';
+import { focusShellTarget } from '@/lib/focus';
+import { AGENTS_PATH, parseShellRoute } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { useShellActions } from './shell-actions';
 import { THREAD_LINK_ATTRIBUTE } from './thread-history-item';
@@ -113,6 +117,12 @@ export function AppSidebar() {
               )}
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <AgentsNavItem
+            onMobilePick={() => {
+              actionOwnsFocus.current = true;
+              setOpenMobile(false);
+            }}
+          />
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
@@ -127,5 +137,60 @@ export function AppSidebar() {
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+  );
+}
+
+/** MC-1: the item's name and its strip tooltip. */
+const agentsLabel = (awaiting: number): string => (awaiting > 0 ? `Агенты, ждут решения: ${awaiting}` : 'Агенты');
+
+/**
+ * NV-01: «Агенты» under SB-03, selected on `/agents` and `/agents/<id>` like the active thread (SB-06).
+ * With decisions waiting: `Hand` and the number in `--approval` on the right, in the strip a 6 px dot;
+ * the number swaps without animation.
+ */
+function AgentsNavItem({ onMobilePick }: { onMobilePick: () => void }) {
+  const { isMobile, state } = useSidebar();
+  const route = parseShellRoute(usePathname());
+  const awaiting = useAwaitingCount();
+  const isStrip = !isMobile && state === 'collapsed';
+  const isActive = route.kind === 'agents' || route.kind === 'agent';
+  const label = agentsLabel(awaiting);
+
+  // As a thread link (UXRD 7.4): a tap or a pick from the drawer focuses the page h1; a fine pointer leaves focus be.
+  const onClick = (): void => {
+    if (!isMobile) return;
+    onMobilePick();
+    focusShellTarget('page-title');
+  };
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={isActive}
+        tooltip={isMobile ? undefined : label}
+        aria-label={awaiting > 0 ? label : undefined}
+        className={cn(
+          'pointer-coarse:h-11',
+          isMobile ? 'h-11' : 'h-9',
+          // Selected marker as on SB-06: the --sidebar-accent background alone is below 3:1.
+          'relative data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-0.75 data-active:before:rounded-full data-active:before:bg-sidebar-primary',
+        )}
+        render={<Link href={AGENTS_PATH} aria-current={isActive ? 'page' : undefined} onClick={onClick} />}
+      >
+        <span aria-hidden className="relative flex shrink-0">
+          <BotIcon />
+          {isStrip && awaiting > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-approval" />
+          )}
+        </span>
+        <span className="flex-1 truncate">Агенты</span>
+        {!isStrip && awaiting > 0 && (
+          <span aria-hidden className="flex shrink-0 items-center gap-1 text-approval tabular-nums">
+            <HandIcon />
+            {awaiting}
+          </span>
+        )}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }

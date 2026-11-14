@@ -1,0 +1,21 @@
+{
+  "anthropic/claude-haiku-5-5": {
+    "inputUsdPerMTok": 0.1,
+    "outputUsdPerMTok": 0.5,
+    "cacheWriteUsdPerMTok": 0.125,
+    "cacheReadUsdPerMTok": 0.01,
+    "above": {
+      "inputTokens": 100000,
+      "inputUsdPerMTok": 0.5,
+      "outputUsdPerMTok": 2.5,
+      "cacheWriteUsdPerMTok": 0.625,
+      "cacheReadUsdPerMTok": 0.05
+    }
+  },
+  "anthropic/claude-sonnet-5-5": {
+    "inputUsdPerMTok": 2,
+    "outputUsdPerMTok": 10,
+    "cacheWriteUsdPerMTok": 2.5,
+    "cacheReadUsdPerMTok": 0.1
+  }
+}

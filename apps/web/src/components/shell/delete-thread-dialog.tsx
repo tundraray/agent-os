@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { logger } from '@/lib/logger';
+import { threadsApiClient } from '@/lib/threads/threads-api-client';
+import { describeThreadsError } from '@/lib/threads/threads-api-error';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,34 +14,65 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { threadsApiClient } from '@/lib/threads/threads-api-client';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
 
 export type DeleteThreadDialogProps = {
   open: boolean;
+  /**
+   * Server id of the thread: its agents decide the MC-26 paragraph. Undefined for a thread promoted at
+   * the first send that has no server id yet — it has no agents to read.
+   */
+  threadId: string | undefined;
   /** Title as the list shows it, «Новая беседа» for an untitled thread. */
   threadTitle: string;
-  /** Server id of the thread; a thread not saved yet has no launches to read. */
-  threadId: string | undefined;
-  /** A reply is generating in the thread: the dialog says it will be stopped (A-4). */
-  isRunning: boolean;
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
   /** Element focused once the dialog closes; an empty ref leaves focus to the caller (e.g. the route change). */
   finalFocus: RefObject<HTMLElement | null>;
 };
 
-/** DLG-01: confirms deleting a thread; «Отмена» is the default action, Esc and a click outside cancel. */
+/** MC-26. */
+const AGENTS_PARAGRAPH = 'Агенты и запуски workflow этой беседы тоже будут удалены, работающие — остановлены.';
+
+/**
+ * Whether the thread has agents, read each time the dialog opens. Until the answer arrives, and after a
+ * failed read, the dialog shows no MC-26 paragraph.
+ */
+function useThreadHasAgents(threadId: string | undefined, open: boolean): boolean {
+  const [answer, setAnswer] = useState<{ threadId: string; hasAgents: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!open || threadId === undefined) return;
+    let current = true;
+    threadsApiClient.getThreadAgents(threadId).then(
+      (agents) => {
+        if (current) setAnswer({ threadId, hasAgents: agents.length > 0 });
+      },
+      (error: unknown) => {
+        logger.warn('thread agents read failed', { ...describeThreadsError(error), threadId });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [open, threadId]);
+
+  return answer !== null && answer.threadId === threadId && answer.hasAgents;
+}
+
+/**
+ * DLG-01: confirms deleting a thread; «Отмена» is the default action, Esc and a click outside cancel.
+ * A thread with agents adds the MC-26 paragraph.
+ */
 export function DeleteThreadDialog({
   open,
-  threadTitle,
   threadId,
-  isRunning,
+  threadTitle,
   onConfirm,
   onOpenChange,
   finalFocus,
 }: DeleteThreadDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const hasAgents = useThreadHasAgents(threadId, open);
   return (
     <AlertDialog open={open} onOpenChange={(next) => onOpenChange(next)}>
       <AlertDialogContent
@@ -50,8 +84,7 @@ export function DeleteThreadDialog({
           <AlertDialogTitle>Удалить беседу?</AlertDialogTitle>
           <AlertDialogDescription render={<div />} className="flex flex-col gap-2 wrap-break-word">
             <p>Беседа «{threadTitle}» и все её сообщения будут удалены. Это действие нельзя отменить.</p>
-            {isRunning && <p>Ответ ассистента в этой беседе ещё генерируется — он будет остановлен.</p>}
-            {threadId !== undefined && <RunningResearchNotice threadId={threadId} />}
+            {hasAgents && <p>{AGENTS_PARAGRAPH}</p>}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -69,38 +102,4 @@ export function DeleteThreadDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
-}
-
-/** MC-22 (deep-research UXRD, KD-7) by the number of running launches; one form for one, the other for several. */
-const RUNNING_RESEARCH_NOTICE = {
-  one: 'В беседе идёт ресерч — он будет остановлен, ответа не будет.',
-  several: 'В беседе идут ресерчи — они будут остановлены, ответов не будет.',
-} as const;
-
-/**
- * DC-6: mounted with the open dialog, reads the thread's launches once and names the running ones. Nothing is shown
- * while the read is pending or when it fails: the dialog does not wait for the warning.
- */
-function RunningResearchNotice({ threadId }: { threadId: string }) {
-  const [running, setRunning] = useState(0);
-  useEffect(() => {
-    let current = true;
-    threadsApiClient.getThreadResearch(threadId).then(
-      ({ launches }) => {
-        if (current) setRunning(launches.filter((launch) => launch.state === 'running').length);
-      },
-      (error: unknown) => {
-        console.warn('[deep-research] research read for the delete dialog failed', {
-          threadId,
-          ...describeThreadsError(error),
-        });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [threadId]);
-
-  if (running === 0) return null;
-  return <p>{running === 1 ? RUNNING_RESEARCH_NOTICE.one : RUNNING_RESEARCH_NOTICE.several}</p>;
 }

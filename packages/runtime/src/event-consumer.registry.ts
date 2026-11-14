@@ -1,18 +1,18 @@
-import type { EventEnvelope, RuntimeEventType } from '@agent-os/contracts';
-import type { RuntimeTx } from './guarded-transition.js';
+import type { StoredEvent } from './event-log.js';
+import type { RuntimeTx } from './runtime-tx.js';
 
 /**
- * A consumer of outbox events. `handle` only makes database transitions inside the given
- * transaction (the relay's delivery transaction, in a savepoint); it calls no handler or
- * external system.
+ * A consumer of outbox events. `handle` only makes database writes inside the given transaction
+ * (the relay's delivery transaction, in a savepoint); it calls no handler or external system.
  */
 export interface EventConsumer {
-  /** Unique name, stored as `research_event_deliveries.consumer`. */
+  /** Unique name, stored as `runtime_event_deliveries.consumer`. */
   readonly name: string;
-  readonly eventTypes: readonly RuntimeEventType[];
+  /** Runtime event types and upper-layer types (with their package prefix) it receives. */
+  readonly eventTypes: readonly string[];
   /** `schemaVersion`s it understands; any other version is parked as `needs_attention`. */
   readonly schemaVersions: readonly number[];
-  handle(tx: RuntimeTx, event: EventEnvelope): Promise<void>;
+  handle(tx: RuntimeTx, event: StoredEvent): Promise<void>;
 }
 
 /**
@@ -25,21 +25,24 @@ export class EventConsumerRegistry {
   /** Throws on a second consumer with the same name, which stops the start. */
   register(consumer: EventConsumer): void {
     if (this.consumers.has(consumer.name)) {
-      throw new Error(
-        `Event consumer "${consumer.name}" is already registered`,
-      );
+      throw new Error(`Event consumer "${consumer.name}" is already registered`);
     }
     this.consumers.set(consumer.name, consumer);
   }
 
   /** Names of the consumers subscribed to `type`, whatever their schema versions. */
-  consumerNamesFor(type: RuntimeEventType): string[] {
+  consumerNamesFor(type: string): string[] {
     return [...this.consumers.values()]
       .filter((consumer) => consumer.eventTypes.includes(type))
       .map((consumer) => consumer.name);
   }
 
-  /** The consumer of a delivery row; `undefined` when no longer registered. */
+  /** Names of every consumer registered in this process. */
+  names(): string[] {
+    return [...this.consumers.keys()];
+  }
+
+  /** The consumer of a delivery row; `undefined` when not registered in this process. */
   get(name: string): EventConsumer | undefined {
     return this.consumers.get(name);
   }

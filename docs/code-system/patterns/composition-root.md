@@ -1,0 +1,30 @@
+# Функция сборки пакета
+
+## Problem
+
+Пакет должен работать без NestJS (в тестах, в CLI) и всё равно запускаться и останавливаться вместе с сервером. Признак: пакет нуждается в настройках, базе, логгере или часах и имеет фоновые воркеры.
+
+## Shape
+
+- **Функция сборки** `createX(options)` живёт в корне пакета. Она принимает настройки уже разобранными, порты (логгер из `common`, часы, база) и отдаёт объект с сервисами пакета, а при фоновых воркерах — `start()` и `stop()`. Окружение она не читает.
+- **Разбор настроек** `parseXConfig(variables)` живёт в пакете и проверяет значения. Переменные окружения ему передаёт приложение.
+- **Модуль Nest** в `apps/api/src/<пакет>/` вызывает функцию сборки, кладёт результат в провайдер и привязывает `start` к `onApplicationBootstrap`, а `stop` — к `beforeApplicationShutdown`. Только этот модуль знает и про Nest, и про пакет.
+- Регистрация обработчиков и потребителей событий верхних пакетов идёт до `start()`, в модуле Nest верхнего пакета.
+
+## Reference
+
+- `packages/runtime/src/create-runtime.ts`
+
+## Not For
+
+| Looks like | Use instead |
+|---|---|
+| сервис внутри одного пакета, которому нужен другой сервис того же пакета | обычный параметр конструктора внутри функции сборки |
+| код `apps/api`, который никто вне приложения не использует | обычный провайдер Nest |
+
+## Used In
+
+- [design-runtime.md](../../features/agent-platform/design-runtime.md) — `createRuntime`, модуль `RuntimeModule` в `apps/api`
+- [design-agents.md](../../features/agent-platform/design-agents.md) — `createAgents`, `parseAgentsConfig`, модуль `AgentsModule`
+- [design-workflows.md](../../features/agent-platform/design-workflows.md) — `createWorkflows`, модуль `WorkflowsModule`
+- [design-chat.md](../../features/agent-platform/design-chat.md) — порядок сборки в `AppModule`, регистрация определения `chat` в фабрике провайдера

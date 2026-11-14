@@ -1,32 +1,41 @@
-import { AssistantChatTransport } from '@assistant-ui/ai-sdk';
-import { ApiErrorSchema } from '@agent-os/contracts';
-import { AuiConfig, type AssistantClient } from '@assistant-ui/react';
-import { APICallError, type UIMessage } from 'ai';
+import { AuiConfig } from '@assistant-ui/react';
 import { toast } from 'sonner';
-import { apiBaseUrl } from '@/lib/config';
+import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-list-store';
+import { createFeedStore, type FeedStore } from '@/lib/feed/feed-store';
+import { createAnnouncerStore, type AnnouncerStore } from '@/lib/live/announcer-store';
+import { createLiveStore, type LiveStore, type OpenEventSource } from '@/lib/live/live-store';
+import { logger } from '@/lib/logger';
 import { createShellStatusStore, type ShellStatusStore } from './shell-status-store';
-import { createHistoryAdapterFactory, type HistoryAdapterFactory } from './thread-history-adapter';
 import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
 import { threadsApiClient, type ThreadsApiClient } from './threads-api-client';
 
-/** The only agent the shell talks to: `POST /api/chat/:agentId`. */
-const ASSISTANT_AGENT_ID = 'assistant';
-
-export type ChatErrorContext = {
-  error: Error;
-  /** Client of the thread body whose request failed. */
-  aui: AssistantClient;
+/** One feed store per conversation opened in this tab. */
+export type ThreadFeeds = {
+  /**
+   * The conversation's store, created and loaded on first use. `itemId` is the thread list item the
+   * store lifts in the list when a message is accepted; it defaults to `remoteId`, which is the id of
+   * every item loaded from the list.
+   */
+  forThread: (remoteId: string, itemId?: string) => FeedStore;
+  /** The conversation was deleted: its store stops reading and is dropped. */
+  forget: (remoteId: string) => void;
 };
 
 export type ShellServices = {
   apiClient: ThreadsApiClient;
   status: ShellStatusStore;
+  live: LiveStore;
+  announcer: AnnouncerStore;
+  feeds: ThreadFeeds;
+  /** The «Агенты» screen's store, one per shell; created on first read, so pages and expansion outlive a visit. */
+  readonly agentList: AgentListStore;
   listAdapter: ReturnType<typeof createThreadListAdapter>;
-  history: HistoryAdapterFactory;
-  transport: AssistantChatTransport<UIMessage>;
-  notify: OperationNotifier;
   auiConfig: AuiConfig;
-  handleChatError: (context: ChatErrorContext) => void;
+};
+
+export type CreateShellServicesOptions = {
+  /** Opens the live stream; a test passes its own source (jsdom has no `EventSource`). */
+  openEventSource?: OpenEventSource;
 };
 
 const notify: OperationNotifier = {
@@ -41,68 +50,83 @@ const notify: OperationNotifier = {
   },
 };
 
-const remoteIdOf = (aui: AssistantClient): string | undefined =>
-  aui.threadListItem.source ? aui.threadListItem.getState().remoteId : undefined;
-
-/** Log-safe description of a chat failure: never the response body or message text. */
-const describeChatError = (error: Error): { name: string; statusCode: number | undefined } => ({
-  name: error.name,
-  statusCode: APICallError.isInstance(error) ? error.statusCode : undefined,
-});
-
-/** The JSON value of a response body; undefined when the body is absent or not JSON. */
-const parseJsonBody = (body: string | undefined): unknown => {
-  if (body === undefined) return undefined;
-  try {
-    return JSON.parse(body);
-  } catch {
-    // A non-JSON body (proxy page, empty text) is not the API error contract: the failure stays a generic TH-08 error.
-    return undefined;
-  }
+type ThreadFeedsDeps = {
+  api: ThreadsApiClient;
+  status: ShellStatusStore;
+  live: LiveStore;
+  announcer: AnnouncerStore;
 };
 
 /**
- * E-8: the chat endpoint answers 404 THREAD_NOT_FOUND before SSE when the thread was deleted elsewhere.
- * Only that error code counts — any other 404 (or status) stays a generic reply error.
+ * Each store follows the live stream (design-web.md, KD-2): a `tree` note with its own `threadId`
+ * re-reads it; `ready` and the answer's text parts reach it only while the stream watches it,
+ * because a `thread:` stream carries the parts of that conversation's root alone.
  */
-const isThreadNotFound = (error: Error): boolean => {
-  if (!APICallError.isInstance(error) || error.statusCode !== 404) return false;
-  const body = ApiErrorSchema.safeParse(parseJsonBody(error.responseBody));
-  return body.success && body.data.errorCode === 'THREAD_NOT_FOUND';
-};
+function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): ThreadFeeds {
+  const feeds = new Map<string, { store: FeedStore; release: () => void }>();
+  const watches = (remoteId: string): boolean => live.getState().target === `thread:${remoteId}`;
 
-export type ChatErrorReport = {
-  error: Error;
-  /** Remote id of the thread whose request failed; undefined before the thread exists on the server. */
-  remoteId: string | undefined;
-  status: ShellStatusStore;
-};
-
-/** Logs a chat failure without its body and marks the thread `deleted` on 404 THREAD_NOT_FOUND (E-8). */
-export function reportChatError({ error, remoteId, status }: ChatErrorReport): void {
-  console.error('[web-shell] chat request failed', { remoteId, ...describeChatError(error) });
-  if (remoteId !== undefined && isThreadNotFound(error)) status.getState().setHistory(remoteId, 'deleted');
+  return {
+    forThread: (remoteId, itemId = remoteId) => {
+      const known = feeds.get(remoteId);
+      if (known !== undefined) return known.store;
+      const store = createFeedStore({
+        source: { kind: 'thread', threadId: remoteId },
+        api,
+        status,
+        announcer,
+        logger,
+        onActivity: () => status.getState().bumpActivity(itemId, Date.now()),
+      });
+      const unsubscribers = [
+        live.onTree((threadId) => {
+          if (threadId === remoteId) void store.refresh();
+        }),
+        live.onReady(() => {
+          if (watches(remoteId)) void store.refresh();
+        }),
+        live.onDelta((delta) => {
+          if (watches(remoteId)) store.applyDelta(delta);
+        }),
+      ];
+      feeds.set(remoteId, {
+        store,
+        release: () => {
+          for (const unsubscribe of unsubscribers) unsubscribe();
+          store.dispose();
+        },
+      });
+      void store.load();
+      return store;
+    },
+    forget: (remoteId) => {
+      feeds.get(remoteId)?.release();
+      feeds.delete(remoteId);
+    },
+  };
 }
 
 /** Builds the shell's dependencies once per provider mount. Pure wiring, no React. */
-export function createShellServices(): ShellServices {
+export function createShellServices({ openEventSource }: CreateShellServicesOptions = {}): ShellServices {
   const apiClient = threadsApiClient;
   const status = createShellStatusStore();
-  const history = createHistoryAdapterFactory({ api: apiClient, status });
-  const listAdapter = createThreadListAdapter({ api: apiClient, status, notify, history });
-  const transport = new AssistantChatTransport({
-    api: `${apiBaseUrl}/api/chat/${ASSISTANT_AGENT_ID}`,
-    credentials: 'include',
-  });
+  const announcer = createAnnouncerStore();
+  const live = createLiveStore({ openEventSource, announcer, logger });
+  const feeds = createThreadFeeds({ api: apiClient, status, live, announcer });
+  const listAdapter = createThreadListAdapter({ api: apiClient, status, notify, feeds });
+  let agentList: AgentListStore | undefined;
 
   return {
     apiClient,
     status,
+    live,
+    announcer,
+    feeds,
+    get agentList() {
+      agentList ??= createAgentListStore({ api: apiClient, live, logger });
+      return agentList;
+    },
     listAdapter,
-    history,
-    transport,
-    notify,
     auiConfig: AuiConfig({}),
-    handleChatError: ({ error, aui }) => reportChatError({ error, remoteId: remoteIdOf(aui), status }),
   };
 }

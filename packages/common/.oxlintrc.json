@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "typescript/no-floating-promises": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@agent-os/*", "@agent-os/**"],
+            "message": "ADR-0004: common is the bottom package and imports no workspace package."
+          },
+          {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: common must not depend on Mastra."
+          },
+          {
+            "group": ["@sentry/*", "@sentry/**"],
+            "message": "KD-6: the application passes the Sentry SDK into sentrySink; common does not depend on it."
+          },
+          {
+            "group": ["@nestjs/*", "@nestjs/**"],
+            "message": "ADR-0004: packages take settings and ports as parameters; Nest stays in apps/api."
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "browser": true,
+    "node": true
+  }
+}

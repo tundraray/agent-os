@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { logger } from '@/lib/logger';
 
 type ShellErrorProps = {
   error: unknown;
@@ -18,7 +19,7 @@ const digestOf = (error: unknown): string | undefined =>
  */
 export default function ShellError({ error }: ShellErrorProps) {
   useEffect(() => {
-    console.error('chat shell: render failed', { digest: digestOf(error) });
+    logger.error('chat shell: render failed', { digest: digestOf(error) });
   }, [error]);
 
   return (

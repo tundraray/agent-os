@@ -1,23 +1,25 @@
-// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.9)
+// chat-shell / web-shell Integration Test — Design Doc: docs/features/chat-shell/design-web-shell.md (v1.9);
+//   routes and stream: docs/features/agent-platform/design-web.md (v1.1, KD-1)
 // File: shell.open-thread.int.test.tsx — Test Strategy, "Integration Tests (I)"
 // Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
 // Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
-// Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
+// Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime over the feed store)
 //
 // Harness (src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
-//   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy).
+//   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy) and a test
+//   event source for LiveStore.
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'
-//   (built from @agent-os/contracts types, pass ThreadSummarySchema / ThreadMessagesResponseSchema).
+//   (built from @agent-os/contracts types, pass ThreadSummarySchema / ConversationViewSchema).
 //   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
 //   deferred(): controllable promise used to hold an MSW response (design: "управляемый deferred").
-// Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
-//   ShellStatus, components — real. Do NOT mock lib/threads/* or @assistant-ui/*.
+// Mock boundary: network only (MSW) + the live event source + next/navigation (framework boundary). Runtime, stores,
+//   adapters, ShellStatus, components — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/* or @assistant-ui/*.
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { deferred, historyMessages, threadList, threadSummary } from '@/test/fixtures';
+import { conversationWithTurns, deferred, threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 
@@ -55,7 +57,7 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
         );
       }),
     );
-    // No handler for GET /api/threads/x/messages or any POST: such a request fails the test (onUnhandledRequest: 'error').
+    // No handler for GET /api/threads/x/history or any POST: such a request fails the test (onUnhandledRequest: 'error').
     const requests: string[] = [];
     const recordRequest = ({ request }: { request: Request }) => {
       requests.push(`${request.method} ${new URL(request.url).pathname}`);
@@ -108,16 +110,16 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
 
   // AC-02.2 rule 4 (F5 case; also backs AC-04.2): list slower than history — welcome must never flash.
   // ROI: 5.9 | Business Value: 7 | Frequency: 8 (every F5 on a thread) | Legal: false | Defect Detection: 9 (race from review I001)
-  // Behavior: pathname /chat/x, x is in page 1; GET /api/threads held by a deferred; GET /api/threads/x/messages held until
+  // Behavior: pathname /chat/x, x is in page 1; GET /api/threads held by a deferred; GET /api/threads/x/history held until
   //   the history load is observed (skeleton on screen), then released before the list. A response sent at once settles in
   //   the same task as the switch and would leave no frame to observe. MutationObserver records any appearance of
   //   «Чем могу помочь?» → record stays empty; the skeleton stays until the messages render.
-  // Fails when: the main area leaves the skeleton before the URL thread's messages are in the runtime — the history
-  //   adapter reports 'ready' one task before the messages land (MainView loading guard). Rule 4 of resolveMainView
+  // Fails when: the main area leaves the skeleton before the URL thread's messages are in the runtime — the feed store
+  //   reports 'ready' to ShellStatus before the runtime has the messages (MainView loading guard). Rule 4 of resolveMainView
   //   is proven by its rows in resolve-main-view.test.ts; here the loading guard also covers it, so removing rule 4
   //   alone leaves this case green.
   // @category: edge-case
-  // @dependency: resolveMainView (rule 4), ShellStatus.history, ThreadHistoryAdapter, MSW
+  // @dependency: resolveMainView (rule 4), ShellStatus.history, FeedStore, useFeedRuntime, MSW
   // @complexity: high
   it('AC-02.2 (F5): the welcome never appears when the list resolves after the history', async () => {
     // Arrange
@@ -130,15 +132,10 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
         return HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]));
       }),
       http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
-      http.get(`${API}/api/threads/x/messages`, async () => {
+      http.get(`${API}/api/threads/x/history`, async () => {
         messagesStarted.resolve();
         await messagesGate.promise;
-        return HttpResponse.json({
-          messages: historyMessages([
-            { role: 'user', text: 'Вопрос' },
-            { role: 'assistant', text: 'Ответ' },
-          ]),
-        });
+        return HttpResponse.json(conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), ['Вопрос', 'Ответ']));
       }),
     );
     const seenWelcome: string[] = [];
@@ -172,14 +169,14 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
     await waitFor(() => expect(link).toHaveAttribute('aria-current', 'page'));
   });
 
-  // AC-02.5: "If ответ GET /api/threads/:id/messages не проходит ThreadMessagesResponseSchema или safeValidateUIMessages,
+  // AC-02.5: "If ответ GET /api/threads/:id/history не проходит ConversationViewSchema,
   //   then the system shall показать TH-07 с «Повторить» и «Новый чат», а сайдбар и шапка останутся работоспособны."
   // EARS: If-then (invalid branch → retry → valid branch)
   // ROI: 2.4 | Business Value: 8 | Frequency: 2 | Legal: false | Defect Detection: 10 (library swallows history errors; only ShellStatus surfaces them)
-  // Behavior: /messages call 1 → 200 invalid body → TH-07; click «Повторить» → call 2 → valid → messages rendered
+  // Behavior: /history call 1 → 200 invalid body → TH-07; click «Повторить» → call 2 → valid → messages rendered
   // Fails when: invalid history renders the welcome (swallowed error), «Повторить» does not re-request, or the sidebar breaks
   // @category: core-functionality
-  // @dependency: ThreadHistoryAdapter, RetryGate, ShellStatus, ThreadNotice, ShellActions.retryHistory, MSW
+  // @dependency: FeedStore (load error), ShellStatus, ThreadNotice, ShellActions.retryHistory, MSW
   // @complexity: high
   it('AC-02.5: invalid history shows «Не удалось загрузить беседу»; «Повторить» loads the messages', async () => {
     // Arrange
@@ -188,15 +185,10 @@ describe('Shell: opening a thread by URL (FR-02, FR-04, AC-02.2 / AC-02.5 / AC-0
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([threadSummary({ id: 'x', title: 'Отчёт' })]))),
       // The runtime resolves the URL thread before page 1 arrives.
       http.get(`${API}/api/threads/x`, () => HttpResponse.json(threadSummary({ id: 'x', title: 'Отчёт' }))),
-      http.get(`${API}/api/threads/x/messages`, () => {
+      http.get(`${API}/api/threads/x/history`, () => {
         messageCalls += 1;
-        if (messageCalls === 1) return HttpResponse.json({ messages: [{ id: 'm1', role: 'robot', parts: [] }] });
-        return HttpResponse.json({
-          messages: historyMessages([
-            { role: 'user', text: 'Вопрос' },
-            { role: 'assistant', text: 'Ответ' },
-          ]),
-        });
+        if (messageCalls === 1) return HttpResponse.json({ thread: { id: 'x' }, entries: [{ seq: 1, kind: 'robot' }] });
+        return HttpResponse.json(conversationWithTurns(threadSummary({ id: 'x', title: 'Отчёт' }), ['Вопрос', 'Ответ']));
       }),
     );
     const user = userEvent.setup();

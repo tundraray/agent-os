@@ -3,21 +3,23 @@
 // Generated: 2026-10-30 | Budget Used: 10 skeletons in 7 files (design-mandated: Test Strategy lists 7 integration files; over the 3/5 per-part limit, see generation report), 0/2 E2E (L1 checklist instead)
 // Budget after the plan merges: 10 tests in 7 files, all implemented — no it.todo left (plan «Решение по бюджету интеграционных тестов»).
 // ROI = (Business Value x Frequency + Legal x 10 + Defect Detection) / 11 (integration cost total, integration-e2e-testing skill)
-// Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime)
+// Test Type: Integration (Vitest + RTL + MSW 2, jsdom, real assistant-ui runtime over the feed store)
 //
 // Harness (src/test/): renderWithRuntime(options) from '@/test/render-with-runtime'
-//   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy).
+//   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy) and a test
+//   event source for LiveStore.
 //   options.pointer: 'fine' | 'coarse' drives the matchMedia('(pointer: fine)') polyfill from src/test/setup.ts.
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'.
 //   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
-// Mock boundary: network only (MSW) + next/navigation (framework boundary). Runtime, adapters,
-//   ShellStatus, url-sync, components, sonner Toaster — real. Do NOT mock lib/threads/* or @assistant-ui/*.
+// Mock boundary: network only (MSW) + the live event source + next/navigation (framework boundary). Runtime, stores,
+//   adapters, ShellStatus, url-sync, components, sonner Toaster — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/*
+//   or @assistant-ui/*.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it } from 'vitest';
-import { historyMessages, threadList, threadSummary } from '@/test/fixtures';
+import { conversationWithTurns, threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { renderWithRuntime } from '@/test/render-with-runtime';
 import type { TestMedia } from '@/test/setup';
@@ -63,13 +65,8 @@ describe('Shell: deleting the open thread (FR-06, AC-06.2)', () => {
           ),
         ),
         http.get(`${API}/api/threads/a`, () => HttpResponse.json(threadSummary({ id: 'a', title: 'Беседа A' }))),
-        http.get(`${API}/api/threads/a/messages`, () =>
-          HttpResponse.json({
-            messages: historyMessages([
-              { role: 'user', text: 'Вопрос' },
-              { role: 'assistant', text: 'Ответ' },
-            ]),
-          }),
+        http.get(`${API}/api/threads/a/history`, () =>
+          HttpResponse.json(conversationWithTurns(threadSummary({ id: 'a', title: 'Беседа A' }), ['Вопрос', 'Ответ'])),
         ),
         http.delete(`${API}/api/threads/:id`, ({ params }) => {
           deleteCalls.push(String(params.id));

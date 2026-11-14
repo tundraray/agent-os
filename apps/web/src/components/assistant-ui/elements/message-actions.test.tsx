@@ -8,7 +8,9 @@ import {
 } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
+import { ShellServicesContext } from '@/components/shell/shell-actions';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { createShellServices, type ShellServices } from '@/lib/threads/shell-services';
 
 const COPY = 'Копировать';
 
@@ -28,22 +30,27 @@ const IDLE_ADAPTER: ChatModelAdapter = {
 function Harness({
   adapter,
   initialMessages,
+  services,
 }: {
   adapter: ChatModelAdapter;
   initialMessages: readonly ThreadMessageLike[];
+  services: ShellServices;
 }) {
   const runtime = useLocalRuntime(adapter, { initialMessages });
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <TooltipProvider>
-        <Thread autoFocus={false} />
-      </TooltipProvider>
-    </AssistantRuntimeProvider>
+    <ShellServicesContext.Provider value={services}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <TooltipProvider>
+          <Thread autoFocus={false} />
+        </TooltipProvider>
+      </AssistantRuntimeProvider>
+    </ShellServicesContext.Provider>
   );
 }
 
 function renderThread(initialMessages: readonly ThreadMessageLike[], adapter: ChatModelAdapter = IDLE_ADAPTER) {
-  return render(<Harness adapter={adapter} initialMessages={initialMessages} />);
+  const services = createShellServices();
+  return { ...render(<Harness adapter={adapter} initialMessages={initialMessages} services={services} />), services };
 }
 
 /** Message roots of the feed in document order. */
@@ -147,53 +154,20 @@ describe('Message action bar — only «Копировать», always reachable
   it.each([
     { name: 'reply', index: 1, text: 'Первый ответ' },
     { name: 'user message', index: 0, text: 'Первый вопрос' },
-  ])('«Копировать» writes the $name text to the clipboard and announces «Скопировано»', async ({ index, text }) => {
+  ])('«Копировать» writes the $name text to the clipboard and announces «Скопировано» through the shell announcer', async ({ index, text }) => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
-    const { container } = renderThread(TWO_EXCHANGES);
+    const { container, services } = renderThread(TWO_EXCHANGES);
     const message = messageRoots(container)[index];
 
-    const status = within(message).getByRole('status');
-    expect(status).toHaveTextContent('');
+    // UXRD «Объявления»: one live region per page — the message itself holds none.
+    expect(within(message).queryByRole('status')).toBeNull();
+    expect(services.announcer.getState().text).toBe('');
 
     await user.click(within(message).getByRole('button', { name: COPY }));
 
     expect(writeText).toHaveBeenCalledWith(text);
-    await waitFor(() => expect(status).toHaveTextContent('Скопировано'));
-  });
-});
-
-/** Whether the action bar holding the button shows at rest; earlier messages hide it by opacity only (TH-10). */
-function showsAtRest(button: HTMLElement): boolean {
-  const bar = button.closest('[class*="action-bar-root"]');
-  return bar !== null && !bar.classList.contains('opacity-0');
-}
-
-describe('Message action bar — the last visible message (web-shell KD-2; design-chat-entry DC-7)', () => {
-  it('a reply followed only by a hidden decision pair keeps «Копировать» visible at rest; the pair is not drawn', () => {
-    const { container } = renderThread([
-      { id: 'u1', role: 'user', content: 'Первый вопрос' },
-      { id: 'a1', role: 'assistant', content: 'Первый ответ' },
-      {
-        id: 'u2',
-        role: 'user',
-        content: 'Запустить',
-        metadata: { custom: { researchDecision: { action: 'confirm', launchKey: 'call-1' } } },
-      },
-      {
-        id: 'a2',
-        role: 'assistant',
-        content: 'Реплика решения',
-        metadata: { custom: { researchDecisionReply: { launchKey: 'call-1' } } },
-      },
-    ]);
-
-    const roots = messageRoots(container);
-    expect(roots.map((root) => root.dataset.role)).toEqual(['user', 'assistant']);
-    expect(screen.queryByText('Запустить')).toBeNull();
-    expect(screen.queryByText('Реплика решения')).toBeNull();
-    expect(showsAtRest(within(roots[1]).getByRole('button', { name: COPY }))).toBe(true);
-    expect(showsAtRest(within(roots[0]).getByRole('button', { name: COPY }))).toBe(false);
+    await waitFor(() => expect(services.announcer.getState().text).toBe('Скопировано'));
   });
 });
 

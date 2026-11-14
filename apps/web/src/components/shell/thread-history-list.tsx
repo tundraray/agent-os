@@ -20,13 +20,14 @@ import { SidebarGroup, SidebarGroupLabel, SidebarMenu } from '@/components/ui/si
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
 import { focusAfterNewChat } from '@/lib/focus';
+import { logger } from '@/lib/logger';
+import { describeThreadsError, isThreadsApiError } from '@/lib/threads/threads-api-error';
 import {
   entryActivityAt,
   groupThreadsByDate,
   type ThreadGroup,
   type ThreadListEntry,
 } from '@/lib/threads/group-threads-by-date';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
 import { DeleteThreadDialog } from './delete-thread-dialog';
 import {
   THREAD_ACTIONS_ATTRIBUTE,
@@ -35,7 +36,7 @@ import {
   ThreadHistoryItem,
   UNTITLED_THREAD_TITLE,
 } from './thread-history-item';
-import { useShellActions, useShellStatus } from './shell-actions';
+import { useShellServices, useShellStatus } from './shell-actions';
 
 export type ThreadHistoryListState =
   | { kind: 'loading' }
@@ -227,9 +228,8 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
       {liveDeleteEntry !== null && (
         <DeleteThreadDialog
           open={deleteOpen}
-          threadTitle={liveDeleteEntry.title ?? UNTITLED_THREAD_TITLE}
           threadId={liveDeleteEntry.remoteId}
-          isRunning={liveDeleteEntry.isRunning}
+          threadTitle={liveDeleteEntry.title ?? UNTITLED_THREAD_TITLE}
           onConfirm={confirmDelete}
           onOpenChange={setDeleteOpen}
           finalFocus={deleteFinalFocus}
@@ -331,7 +331,7 @@ function ListSkeleton() {
 /** Reads the runtime's thread list and ShellStatus, groups the threads by date and renders ThreadHistoryListView. */
 export function ThreadHistoryList() {
   const aui = useAui();
-  const { deleteThread } = useShellActions();
+  const services = useShellServices();
   const pathname = usePathname();
   // Deleting the open thread: the runtime leaves it, url-sync replaces the route with `/`, then focus follows
   // the «Новый чат» pointer rule (UXRD 7.4).
@@ -356,7 +356,6 @@ export function ThreadHistoryList() {
             id: item.id,
             remoteId: item.remoteId,
             title: item.title,
-            isRunning: item.isRunning,
             activityAt: entryActivityAt({ lastMessageAt: item.lastMessageAt, activityAt: activityAt[item.id] }, now),
           }),
         ),
@@ -407,20 +406,31 @@ export function ThreadHistoryList() {
       openThreadId={mainThreadId}
       onDelete={(entry) => {
         if (entry.id === mainThreadId) focusOnRoot.current = true;
-        // A failed DELETE is reported by the list adapter (toast + rollback); a rejection here is a defect.
-        deleteThread(entry.id).catch((error: unknown) => {
-          console.error('[web-shell] thread deletion failed', {
-            threadId: entry.id,
-            ...describeThreadsError(error),
-          });
-        });
+        // The store-level `delete()` returns nothing; the item runtime's promise tells a finished deletion.
+        const item = aui.threads.item({ id: entry.id }).__internal_getRuntime?.();
+        if (item === undefined) {
+          logger.error('[web-shell] thread delete unavailable: no item runtime', { threadId: entry.id });
+          return;
+        }
+        item.delete().then(
+          // design-web.md, Risks: the tree, the counter and an open agent page of this thread re-read.
+          () => {
+            if (entry.remoteId !== undefined) services.live.emitLocalTree(entry.remoteId);
+          },
+          (error: unknown) => {
+            // A failed DELETE is already reported by the list adapter (toast, rollback, log).
+            if (!isThreadsApiError(error)) {
+              logger.error('[web-shell] thread delete failed', { threadId: entry.id, ...describeThreadsError(error) });
+            }
+          },
+        );
       }}
       renderItem={(entry, onRequestDelete) => (
         <ThreadHistoryItem
           key={entry.id}
           entry={entry}
           isActive={entry.id === mainThreadId}
-          titlePending={entry.isRunning || (entry.remoteId !== undefined && titleWaiting[entry.remoteId] === true)}
+          titlePending={entry.remoteId !== undefined && titleWaiting[entry.remoteId] === true}
           // A failed PATCH: the list adapter shows the toast, the runtime rolls the title back and logs the rejection.
           onRename={(title) => aui.threads.item({ id: entry.id }).rename(title)}
           onRequestDelete={onRequestDelete}

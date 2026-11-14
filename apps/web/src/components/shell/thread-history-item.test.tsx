@@ -14,7 +14,6 @@ const entry = (title: string | undefined): ThreadListEntry => ({
   remoteId: 'a',
   title,
   activityAt: 0,
-  isRunning: false,
 });
 
 function Wrapper({ children }: { children: ReactNode }) {

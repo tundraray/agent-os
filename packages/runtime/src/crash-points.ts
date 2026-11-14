@@ -1,21 +1,24 @@
 import type { RuntimeConfig } from './runtime-config.js';
 
 /**
- * Test crash points of `RUNTIME_CRASH_AT` (design-runtime.md, Verification Strategy). The kill
+ * Test crash points of `RUNTIME_CRASH_AT` (design-runtime.md, Runtime settings). The kill
  * matrix stops the process at one of them to prove recovery.
  */
 export const CRASH_POINTS = [
-  'admission.after-commit',
-  'dispatch.after-claim',
-  'handler.after-evidence',
-  'dispatch.before-terminal',
-  /** Events written, not delivered yet. */
-  'dispatch.after-terminal',
-  /** Inside the delivery transaction. */
-  'relay.before-done',
-  'relay.after-done',
-  'reaper.after-requeue',
-  'cancel.after-commit',
+  /** After the claim transaction of a step. */
+  'step.after-claim',
+  /** After a `guard` transaction of the handler. */
+  'step.after-guard',
+  /** Before the commit transaction of a step. */
+  'step.before-commit',
+  /** Inside the commit transaction, after the handler's writes, before delivery marks. */
+  'step.inside-commit',
+  /** After the commit, before the outbox delivers its events. */
+  'step.after-commit',
+  /** Inside the message transaction, after the insert, before the wake-up. */
+  'inbox.before-wake',
+  /** After the sweeper's requeue transaction. */
+  'sweeper.after-requeue',
 ] as const;
 export type CrashPoint = (typeof CRASH_POINTS)[number];
 
