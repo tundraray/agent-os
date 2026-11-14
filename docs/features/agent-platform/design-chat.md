@@ -1,12 +1,13 @@
 # Платформа агентов — Design Document — chat
 
-**Status:** Draft · **Date:** 2026-11-14 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-agents.md](./design-agents.md#contract-definitions), [design-workflows.md](./design-workflows.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-14 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-agents.md](./design-agents.md#contract-definitions), [design-workflows.md](./design-workflows.md#contract-definitions)
 
 ## Snapshot
 
 **Overview.** Эта часть переводит беседу на слой агентов и даёт вебу API для работы с агентами. Беседа — строка нашей таблицы с заголовком и ссылкой на корневую сессию главного чата; первое сообщение сотрудника создаёт эту сессию, а каждое следующее ложится в её очередь. Отвечает чат в воркерах runtime, а не внутри HTTP-запроса, поэтому команды веба — обычные короткие запросы, а живые изменения веб получает одним потоком SSE на вкладку. Поток несёт только заметки «в этой беседе что-то изменилось» и части текста ответа, а сами данные веб перечитывает обычными запросами. Mastra Memory, поток Mastra, замок беседы и реестр ответов уходят из `apps/api` вместе с прежними беседами.
 
 - **Не меняется**: маршруты и формы списка, создания, переименования и удаления бесед; бюджеты производительности списка (NFR-03).
+- **Первая работа плана**: правки контрактов в `packages/runtime`, `packages/agents` и `packages/workflows` (KD-6).
 - **Biggest risk**: время до первого токена растёт на путь через очередь и воркер ([Risks and Mitigation](#risks-and-mitigation)).
 - **Open questions**: нет.
 
@@ -32,9 +33,15 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 
 Чат регистрирует в каталоге агентов определение `chat`: встроенные `start_agent`, `message_agent`, `list_agents`, `stop_agent`, инструмент `start_workflow` части `workflows`, `mcpServers` `*` (доступ сотрудника режет таблица доступа агентов), каталог `agents` — только `general-purpose`, без модели, `maxTurns` 20. Заголовки каталога и шаблонов модель видит в описаниях `start_agent` и `start_workflow` по контракту нижних частей, а промпт чата словами задаёт правило FR-15 по порядку веток. Модель — `AGENT_DEFAULT_MODEL` (Haiku); `ASSISTANT_MODEL` и отдельной настройки модели чата нет: модель меняется полем определения.
 
-#### KD-6: Три небольших расширения нижних пакетов вместо обходов в `apps/api`
+#### KD-6: Часть сама меняет контракты `runtime` и `agents` первой работой, а не обходит их в `apps/api`
 
-Контрактов `agents` и `runtime` не хватает в трёх местах, и часть дописывает их в самих пакетах. Первое — хук `onTextDelta` в `createAgents` (KD-3). Второе — `agents.completeText` для заголовка: разовый вызов модели без задачи, который пишет строку журнала токенов без `taskId` (так журнал уже допускает), поэтому Mastra не остаётся в `apps/api`. Третье — `agents.sessions.confirmations(rootId, ownerId)` вместо `pendingConfirmations`: запросы дерева со статусом `open`, `resolved` или `cancelled` и решением, на основе `decisions.listTree` runtime вместо `listOpen`. Без третьего беседа после перезагрузки теряла бы решённые копии запросов фоновых агентов (AC-14.2).
+Контрактов `agents` и `runtime` не хватает в трёх местах. Дизайны и уже разбитые планы `runtime`, `agents` и `workflows` не меняются, потому что их сборка идёт; вместо этого эта часть первой работой правит сами пакеты:
+
+- в `packages/agents` — хук `createAgents({ onTextDelta })`, ради которого `ModelClient` переходит с `generate` на `Agent.stream` с `maxSteps: 1` (KD-3);
+- в `packages/agents` — `agents.completeText` для заголовка: разовый вызов модели без задачи, который пишет строку журнала токенов без `taskId` (так журнал уже допускает), поэтому Mastra не остаётся в `apps/api`;
+- в `packages/runtime` — `decisions.listTree` вместо `decisions.listOpen`, а в `packages/agents` на нём — `agents.sessions.confirmations(rootId, ownerId)` вместо `pendingConfirmations`: запросы дерева со статусом `open`, `resolved` или `cancelled` и решением. Без этого беседа после перезагрузки теряла бы решённые копии запросов фоновых агентов (AC-14.2).
+
+Прежние `listOpen`, `pendingConfirmations` и вызов `generate` удаляются, а не живут рядом с новыми (CLAUDE.md). Их вызовы, в том числе в пакете `workflows` и тестах всех трёх пакетов, переходят на новые операции в той же работе. Не взято: обходы в `apps/api` (свой вызов Mastra, чтение таблиц `agents` и `runtime`) — они нарушают правила пакетов [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md).
 
 #### KD-7: Список агентов сотрудника собирается по его беседам
 
@@ -55,6 +62,7 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 - **Depends on**: [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `createAgents`, `definitions.register`, операции агентов `start`, `send`, `interrupt`, `stop`, `restart`, `get`, `list`, `history`, `resolveConfirmation`, `AgentView`, `HistoryEntry`, событие `agents.history_appended`. Операции агентов — сервис `agents.sessions` (`agents.sessions.start` и так далее); `start()` и `stop()` жизненного цикла — на `Agents`; [design-workflows.md, Contract Definitions](./design-workflows.md#contract-definitions) — `createWorkflows`, `templates.list`, `runs.get`, `WorkflowRunView`, `start_workflow`; [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `tasks.get`, `tasks.deleteTree`, `inbox.listPending`, канал `runtime_events`, `ledger.monthSpend`, логгер `common`.
 - **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (состояние только в Postgres), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) (правила пакетов).
 - **Sibling parts**: `runtime`, `agents`, `workflows` — контракты выше; `web` — экраны поверх этого API.
+- **Правки в пакетах нижних частей**: эта часть сама меняет `packages/runtime`, `packages/agents` и `packages/workflows` по KD-6, и план работ ставит эти правки первыми; дизайны и планы нижних частей не меняются.
 
 **Out of scope**
 
@@ -314,6 +322,7 @@ flowchart TB
 - из `apps/api/src/threads`: `thread-memory.provider.ts`, `thread-write-lock.ts`, `thread-lock.pool.ts`, `thread-run-registry.ts`, `thread-deletion-hooks.ts`, `thread-title.agent.ts`, `thread.mapper.ts` и их тесты; остальное переезжает в `apps/api/src/chat`;
 - `apps/api/src/common/stream-error-text.ts`; из контрактов — `ChatRequestSchema`, `HistoryMessage*`, `ThreadMessagesResponseSchema`, `ChatMessageRefSchema`;
 - таблица `chat_thread_runs`; зависимости `@mastra/*` и `ai` в `apps/api`; переменные из Runtime settings;
+- `decisions.listOpen` в `packages/runtime`, `pendingConfirmations` и вызов `generate` в `ModelClient` в `packages/agents` (KD-6); их вызовы в `packages/workflows` и тестах трёх пакетов переходят на `decisions.listTree`, `confirmations` и поток;
 - e2e `chat-threads`, `app` (неизвестный агент), опора обвязки на Memory: `seed`, `countMessages`, `rawMessageContents`, `createTestMastra`, `mockModels`; `threads.e2e-spec` и `threads.perf.e2e-spec` переписываются на данные через API.
 
 ### Runtime Flows
@@ -735,7 +744,7 @@ sequenceDiagram
 
 **Confirmation** — запрос решения: `decisionId`, `agentId`, описание агента, вид (`agents.tool_confirmation` или `workflows.brief`), инструмент, сервер, аргументы, `status` (`open`, `resolved`, `cancelled`), решение и итоговые аргументы при `resolved`, время создания и решения; у брифа ещё `templateTitle` из `templates.list`.
 
-**Расширения нижних пакетов** (KD-6, пишет эта часть)
+**Расширения нижних пакетов** (KD-6, пишет эта часть первой работой; прежние операции удаляются)
 
 - **`createAgents({ ..., onTextDelta })`** — `ModelClient` вызывает хук на каждую часть текста с `ownerId`, `rootId`, `agentId`, `offset`, `text`; ошибка хука логируется и не ломает шаг.
 - **`agents.completeText({ ownerId, system, prompt, maxOutputTokens, signal })`** — один вызов модели `AGENT_DEFAULT_MODEL` вне задачи; пишет строку журнала без `taskId`; возвращает текст.
@@ -871,6 +880,7 @@ stateDiagram-v2
 ## Risks and Mitigation
 
 - **Время до первого токена превышает бюджет NFR-03 (нынешний чат + 50 мс)** — среднее влияние, средняя вероятность: добавились захват шага, чтение сессии и два NOTIFY. Первая часть текста уходит без склейки, воркер будит NOTIFY runtime, а не опрос; замер делается ручным прогоном после части, и при промахе склейка уменьшается.
+- **Базовая линия NFR-03**: время до первого токена нынешнего чата замеряется ручным прогоном до того, как часть удалит прежний путь, если есть ключ модели; без ключа критерий проверяется только по абсолютной цели.
 - **Части текста фоновых агентов создают лишний поток NOTIFY** — низкое влияние, средняя вероятность. Склейка за 100 мс; хаб отбрасывает части агентов, за которыми никто не следит, до разбора в потоки.
 - **`GET /agents` и счётчик NV-01 делают по запросу на беседу** — низкое влияние, средняя вероятность при сотнях бесед. Счётчик веб перечитывает не чаще раза в секунду; операция «все агенты владельца» в `agents` уберёт перебор, когда понадобится.
 - **Haiku выбирает не ту ветку правила FR-15** — высокое влияние, средняя вероятность. Правило словами в промпте, каталог в описаниях инструментов, ручной прогон после части (PRD, Assumptions); модель чата меняется полем определения (KD-5).
@@ -901,3 +911,4 @@ stateDiagram-v2
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-14 | Initial version |
+| 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Правки контрактов `runtime` и `agents` (`decisions.listTree`, `confirmations`, `onTextDelta` с `Agent.stream`, `completeText`) эта часть делает сама первой работой, удаляя прежние операции и переводя их вызовы в `packages/workflows` и тестах; дизайны и планы нижних частей не меняются (KD-6, Part). В Risks — базовая линия NFR-03. |
