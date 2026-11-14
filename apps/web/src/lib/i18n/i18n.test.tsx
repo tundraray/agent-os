@@ -11,9 +11,12 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { http, HttpResponse } from 'msw';
+import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { ReasoningRoot, ReasoningTrigger } from '@/components/assistant-ui/elements/reasoning';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
+import { ShellServicesContext } from '@/components/shell/shell-actions';
+import { createShellServices } from '@/lib/threads/shell-services';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { threadList, threadSummary } from '@/test/fixtures';
@@ -94,12 +97,15 @@ function createGate(): Gate {
 
 function ThreadHarness({ adapter, messages }: { adapter: ChatModelAdapter; messages: readonly ThreadMessageLike[] }) {
   const runtime = useLocalRuntime(adapter, { initialMessages: messages });
+  const [services] = useState(() => createShellServices());
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <TooltipProvider>
-        <Thread autoFocus={false} />
-      </TooltipProvider>
-    </AssistantRuntimeProvider>
+    <ShellServicesContext.Provider value={services}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <TooltipProvider>
+          <Thread autoFocus={false} />
+        </TooltipProvider>
+      </AssistantRuntimeProvider>
+    </ShellServicesContext.Provider>
   );
 }
 

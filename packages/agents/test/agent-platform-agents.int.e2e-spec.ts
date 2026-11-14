@@ -62,6 +62,7 @@
 // - AC-04.1..AC-04.3, DC-2: unit model table (+ INT-1 row A wiring)
 // - AC-05.1..AC-05.3, AC-06.1, AC-06.2, AC-10.1, DC-3: INT-1 row A; AC-06.3: INT-2 row B (stopped) and INT-1 row C (failed with a reason)
 // - AC-07.1..AC-07.3: INT-1 row B; AC-09.1, AC-09.2: INT-1 row C; DC-4: INT-1 row D
+// - AC-09.1 (a revive message during the last step, Flow 6): INT-1 row F (the task finishes, the parent is notified once, the task is requeued with that message)
 // - AC-08.1, AC-08.2: INT-2 row A; AC-08.3, AC-08.4: INT-2 row B; NFR-01 (status inside the command): INT-2 rows A, B
 // - AC-10.3: unit gate table (+ the refused start creates no task: INT-1 row D); AC-11.1: INT-3 row A; AC-11.2: INT-3 row F
 // - AC-12.1, AC-12.2, NFR-07: INT-3 row B; AC-12.3, AC-12.5: INT-3 row C; AC-12.4: INT-3 row D; DC-5: INT-3 row E; DC-6: unit gate table + INT-3 row A

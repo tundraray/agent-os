@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import type { FeedStore } from "@/lib/feed/feed-store";
 import type { FeedView } from "@/lib/feed/to-feed";
-import { focusShellTarget } from "@/lib/focus";
+import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
 import { agentPath } from "@/lib/shell-route";
 
 type AgentView = Extract<FeedView, { kind: "agent" }>["agent"];
@@ -87,10 +87,16 @@ export function AgentHeader() {
   const busy = useRef(false);
 
   const agentId = agent?.agentId ?? null;
+  // UXRD «Порядок фокуса»: an opened agent page takes focus like an opened conversation (composer with a
+  // fine pointer, `h1` with a coarse one); the agent a «Запустить с нуля» opened always focuses its `h1`.
   useEffect(() => {
-    if (agentId === null || agentId !== focusOnAgent) return;
-    focusOnAgent = null;
-    focusShellTarget("page-title");
+    if (agentId === null) return;
+    if (agentId === focusOnAgent) {
+      focusOnAgent = null;
+      focusShellTarget("page-title");
+      return;
+    }
+    focusAfterNewChat();
   }, [agentId]);
 
   const control = agent === null ? null : CONTROL_BY_STATUS[agent.status];

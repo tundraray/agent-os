@@ -30,6 +30,7 @@ import { RunCard } from "@/components/agents/run-card";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useShellServices } from "@/components/shell/shell-actions";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import {
   controls,
@@ -568,6 +569,7 @@ const nextFocusable = (start: Element) => {
 };
 
 const ThreadLoadEarlier: FC = () => {
+  const { announcer } = useShellServices();
   const visible = useAuiState(
     (s) => s.thread.hasEarlier || s.thread.isLoadingEarlier,
   );
@@ -587,6 +589,10 @@ const ThreadLoadEarlier: FC = () => {
     nextFocusable(slot)?.focus();
   }, [visible]);
 
+  useEffect(() => {
+    if (loading) announcer.getState().announce("Загружаем предыдущие сообщения…");
+  }, [loading, announcer]);
+
   return (
     <div
       ref={slotRef}
@@ -595,9 +601,6 @@ const ThreadLoadEarlier: FC = () => {
         focusedRef.current = event.target;
       }}
     >
-      <span role="status" className="sr-only">
-        {loading ? "Загружаем предыдущие сообщения…" : ""}
-      </span>
       {visible && (
         <ThreadPrimitive.LoadEarlier render={<Button variant="ghost" size="sm" data-slot="aui_thread-load-earlier" className="aui-thread-load-earlier text-muted-foreground mb-6 self-center rounded-full" />}><span
                             className={cn(loading && "shimmer motion-reduce:animate-none")}
@@ -969,14 +972,14 @@ const MessageCopy: FC<{ className?: string }> = ({ className }) => (
   </>
 );
 
-/** Live region mounted before the copy so screen readers announce «Скопировано» reliably. */
+/** «Скопировано» goes to the shell's only live region (UXRD, «Объявления»). */
 const CopiedStatus: FC = () => {
+  const { announcer } = useShellServices();
   const isCopied = useAuiState((s) => s.message.isCopied);
-  return (
-    <span role="status" className="sr-only">
-      {isCopied ? "Скопировано" : ""}
-    </span>
-  );
+  useEffect(() => {
+    if (isCopied) announcer.getState().announce("Скопировано");
+  }, [isCopied, announcer]);
+  return null;
 };
 
 const AssistantActionBar: FC = () => {

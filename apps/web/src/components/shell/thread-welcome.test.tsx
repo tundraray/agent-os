@@ -8,9 +8,12 @@ import {
   type ChatModelAdapter,
   type ChatModelRunOptions,
 } from '@assistant-ui/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { createShellServices } from '@/lib/threads/shell-services';
+import { ShellServicesContext } from './shell-actions';
 import { WELCOME_SUGGESTIONS } from '@/lib/welcome-suggestions';
 import { ShellWelcome } from './shell-welcome';
 
@@ -18,12 +21,15 @@ const config = AuiConfig({ suggestions: Suggestions(WELCOME_SUGGESTIONS) });
 
 function WelcomeHarness({ adapter }: { adapter: ChatModelAdapter }) {
   const runtime = useLocalRuntime(adapter);
+  const [services] = useState(() => createShellServices());
   return (
-    <AssistantRuntimeProvider runtime={runtime} config={config}>
-      <TooltipProvider>
-        <Thread autoFocus={false} components={{ Welcome: ShellWelcome }} />
-      </TooltipProvider>
-    </AssistantRuntimeProvider>
+    <ShellServicesContext.Provider value={services}>
+      <AssistantRuntimeProvider runtime={runtime} config={config}>
+        <TooltipProvider>
+          <Thread autoFocus={false} components={{ Welcome: ShellWelcome }} />
+        </TooltipProvider>
+      </AssistantRuntimeProvider>
+    </ShellServicesContext.Provider>
   );
 }
 

@@ -20,7 +20,8 @@ export type ShellActions = {
 };
 
 const ShellActionsContext = createContext<ShellActions | null>(null);
-const ShellServicesContext = createContext<ShellServices | null>(null);
+/** Exported for tests that render a bare `Thread`, which announces through the shell's announcer. */
+export const ShellServicesContext = createContext<ShellServices | null>(null);
 
 type ShellActionsProviderProps = {
   services: ShellServices;

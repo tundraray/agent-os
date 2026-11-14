@@ -8,7 +8,9 @@ import {
 } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
+import { ShellServicesContext } from '@/components/shell/shell-actions';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { createShellServices, type ShellServices } from '@/lib/threads/shell-services';
 
 const COPY = 'Копировать';
 
@@ -28,22 +30,27 @@ const IDLE_ADAPTER: ChatModelAdapter = {
 function Harness({
   adapter,
   initialMessages,
+  services,
 }: {
   adapter: ChatModelAdapter;
   initialMessages: readonly ThreadMessageLike[];
+  services: ShellServices;
 }) {
   const runtime = useLocalRuntime(adapter, { initialMessages });
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <TooltipProvider>
-        <Thread autoFocus={false} />
-      </TooltipProvider>
-    </AssistantRuntimeProvider>
+    <ShellServicesContext.Provider value={services}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <TooltipProvider>
+          <Thread autoFocus={false} />
+        </TooltipProvider>
+      </AssistantRuntimeProvider>
+    </ShellServicesContext.Provider>
   );
 }
 
 function renderThread(initialMessages: readonly ThreadMessageLike[], adapter: ChatModelAdapter = IDLE_ADAPTER) {
-  return render(<Harness adapter={adapter} initialMessages={initialMessages} />);
+  const services = createShellServices();
+  return { ...render(<Harness adapter={adapter} initialMessages={initialMessages} services={services} />), services };
 }
 
 /** Message roots of the feed in document order. */
@@ -147,19 +154,20 @@ describe('Message action bar — only «Копировать», always reachable
   it.each([
     { name: 'reply', index: 1, text: 'Первый ответ' },
     { name: 'user message', index: 0, text: 'Первый вопрос' },
-  ])('«Копировать» writes the $name text to the clipboard and announces «Скопировано»', async ({ index, text }) => {
+  ])('«Копировать» writes the $name text to the clipboard and announces «Скопировано» through the shell announcer', async ({ index, text }) => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
-    const { container } = renderThread(TWO_EXCHANGES);
+    const { container, services } = renderThread(TWO_EXCHANGES);
     const message = messageRoots(container)[index];
 
-    const status = within(message).getByRole('status');
-    expect(status).toHaveTextContent('');
+    // UXRD «Объявления»: one live region per page — the message itself holds none.
+    expect(within(message).queryByRole('status')).toBeNull();
+    expect(services.announcer.getState().text).toBe('');
 
     await user.click(within(message).getByRole('button', { name: COPY }));
 
     expect(writeText).toHaveBeenCalledWith(text);
-    await waitFor(() => expect(status).toHaveTextContent('Скопировано'));
+    await waitFor(() => expect(services.announcer.getState().text).toBe('Скопировано'));
   });
 });
 

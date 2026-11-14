@@ -33,12 +33,16 @@ describe('lib/focus — pointer rule (AC-03.1, UXRD 7.4)', () => {
     await waitFor(() => expect(expected).toHaveFocus());
   });
 
-  it('focuses a target that appears only after the transition has rendered the new view', async () => {
+  // L1-7: from an agent page the outgoing view's h1 takes focus first, then the route replaces it.
+  it('focuses the target the transition renders after replacing the outgoing view', async () => {
+    const { pageTitle: outgoing } = mountTargets();
     const pageTitle = document.createElement('h1');
     pageTitle.tabIndex = -1;
     pageTitle.dataset.shellFocus = 'page-title';
 
     focusShellTarget('page-title');
+    await waitFor(() => expect(outgoing).toHaveFocus());
+    outgoing.remove();
     await new Promise((resolve) => requestAnimationFrame(resolve));
     document.body.append(pageTitle);
 
