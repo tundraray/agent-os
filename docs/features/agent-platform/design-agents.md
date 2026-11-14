@@ -1,6 +1,6 @@
 # Платформа агентов — Design Document — agents
 
-**Status:** На утверждении · **Date:** 2026-11-14 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-runtime.md](./design-runtime.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-14 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-runtime.md](./design-runtime.md#contract-definitions)
 
 ## Snapshot
 
@@ -8,7 +8,7 @@
 
 - **Не меняется**: контракты runtime — часть их только потребляет. Чат остаётся на Mastra Memory до части `chat`.
 - **Biggest risk**: Haiku не удерживает цикл агента и плохо делегирует ([Risks and Mitigation](#risks-and-mitigation)).
-- **Open questions**: одно — замечание к `runtime` о сообщении, которое пришло во время последнего шага ([Open Questions](#open-questions)).
+- **Open questions**: нет.
 
 ### Key Decisions
 
@@ -24,7 +24,7 @@
 
 #### KD-3: Прерывание всегда приходит агенту сообщением `interrupt`
 
-Операция прерывания вызывает `tasks.interrupt` runtime всегда с сообщением вида `interrupt`, в котором есть текст сотрудника или его нет. Шаг, который получил такое сообщение, закрывает все открытые вызовы с исходом «прервано» (вызов в `sending` — «исход неизвестен»), затем ставит текст в историю и вызывает модель, а без текста ставит сессии отметку «прерван» и ждёт. Только так шаг отличает прерывание от рестарта: после рестарта открытые читающие вызовы исполняются заново, а после прерывания — нет. Статус «Прерван» виден сразу после команды: пока шаг не взял сообщение, его выводят из ждущего сообщения `interrupt` без текста, а потом — из отметки. Отметку снимает первый шаг, который доставил сообщение другого вида.
+Операция прерывания вызывает `tasks.interrupt` runtime всегда с сообщением вида `interrupt`, в котором есть текст сотрудника или его нет. По контракту runtime `tasks.interrupt` принимает необязательное сообщение с теми же полями, что `inbox.enqueue` ([design-runtime.md](./design-runtime.md#contract-definitions)). Шаг, который получил такое сообщение, закрывает все открытые вызовы с исходом «прервано» (вызов в `sending` — «исход неизвестен»), затем ставит текст в историю и вызывает модель, а без текста ставит сессии отметку «прерван» и ждёт. Только так шаг отличает прерывание от рестарта: после рестарта открытые читающие вызовы исполняются заново, а после прерывания — нет. Статус «Прерван» виден сразу после команды: пока шаг не взял сообщение, его выводят из ждущего сообщения `interrupt` без текста, а потом — из отметки. Отметку снимает первый шаг, который доставил сообщение другого вида.
 
 Не взято: прерывание runtime без сообщения — следующий шаг видит только признак потерянной попытки и не знает, что это было.
 
@@ -60,7 +60,7 @@ MCP-инструмент читающий, только если сервер в
 
 - **Part**: `agents` — вторая часть Delivery Parts в PRD.
 - **Covers**: FR-03–FR-13, FR-25, FR-27; NFR-01 и NFR-04 в доле агента; NFR-06 и NFR-07.
-- **Depends on**: [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `createRuntime`, `TaskHandler`, `StepContext`, `StepResult`, `tasks`, `inbox`, `decisions`, `events`, `ledger`, логгер `packages/common`.
+- **Depends on**: [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `createRuntime`, `TaskHandler`, `StepContext`, `StepResult`, `tasks`, `inbox`, `decisions`, `events`, `eventConsumers`, `ledger`, логгер `packages/common`.
 - **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (Postgres — единственный владелец состояния, Mastra без durability), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) в части правил пакетов. ADR-0009 и ADR-0010 описывают удалённый движок и не применяются.
 - **Sibling parts**: `workflows` (шаблоны, координатор, бриф, инструмент запуска workflow), `chat` (беседа как корневая сессия, определение главного чата, стриминг, API для веба), `web`.
 
@@ -437,6 +437,7 @@ sequenceDiagram
 - Модель без цены → отказ `unknown_model` (DC-2).
 - Родитель занят → уведомление ждёт в его очереди и доставляется в начале следующего шага (AC-06.2); родитель ждёт решения → уведомление доставляется после решения.
 - Ребёнок упал или остановлен → уведомление runtime со статусом и причиной; агент отображает его родителю той же записью отчёта без текста (AC-06.3).
+- Агент упал, а его дети ещё работают → потребитель событий `agents` на `task.failed` агента вызывает для каждого незаконченного ребёнка тот же `tasks.stop`, что в Flow 7, и поддерево останавливается.
 
 #### Flow 3: Сообщение занятому агенту
 
@@ -544,7 +545,7 @@ sequenceDiagram
 
 **Failure handling:**
 
-- Агент закончен или ждёт подтверждения → `NOT_ACTIVE`, ничего не меняется; подтверждение решают кнопки запроса.
+- Агент закончен или ждёт подтверждения → `not_active`, ничего не меняется; подтверждение решают кнопки запроса.
 - Отсечённый шаг успел записать намерение изменяющего вызова → при закрытии такой вызов получает исход «исход неизвестен», а не «прервано».
 - Отсечённый шаг модели успел зафиксироваться раньше прерывания → его новые вызовы открыты, и шаг с `interrupt` закрывает их исходом «прервано».
 
@@ -613,7 +614,7 @@ sequenceDiagram
 - Шаг потерян после намерения → повторный шаг видит признак потери и намерение без результата и закрывает вызов исходом «исход неизвестен» без повтора (AC-01.2).
 - `guard` ответил `fenced` (агента прервали или остановили) → вызов не отправляется.
 - Агента остановили, пока запрос открыт → runtime отменяет запрос, вызов закрыт исходом «прервано» (Flow 7).
-- Повторное решение → `ALREADY_RESOLVED`.
+- Повторное решение → `already_resolved`.
 
 #### Flow 6: Продолжение законченного агента
 
@@ -665,7 +666,7 @@ sequenceDiagram
 
 **Failure handling:**
 
-- Сообщение пришло, пока агент делал последний шаг и завершался → поведение зависит от runtime ([Open Questions](#open-questions)).
+- Сообщение с `revive` пришло, пока агент делал последний шаг → по контракту runtime итог `complete` или `fail` всё равно заканчивает задачу: конечный статус, одно уведомление родителю. Затем задача возвращается в `queued` с этим сообщением, с тем же id и историей ([design-runtime.md](./design-runtime.md#contract-definitions)).
 
 #### Flow 7: Остановка с потомками
 
@@ -761,16 +762,16 @@ sequenceDiagram
 
 **Операции агентов**
 
-- **`start({ ownerId, parentId?, definition, prompt, description, model?, limits? })`** — создаёт агента через `tasks.create`; без `parentId` — корневую сессию, например беседу. Модель: `model`, иначе модель определения, иначе `AGENT_DEFAULT_MODEL`. Возвращает `agentId`. Ошибки: `UNKNOWN_DEFINITION`, `UNKNOWN_MODEL`, `DEPTH_LIMIT`, `AGENT_NOT_FOUND` для родителя, `PARENT_FINISHED`.
+- **`start({ ownerId, parentId?, definition, prompt, description, model?, limits? })`** — создаёт агента через `tasks.create`; без `parentId` — корневую сессию, например беседу. Модель: `model`, иначе модель определения, иначе `AGENT_DEFAULT_MODEL`; модель без цены в файле цен развёртывания (`ledger.pricedModels()`) отклоняется `UNKNOWN_MODEL` до `tasks.create`. Возвращает `agentId`. Ошибки: `UNKNOWN_DEFINITION`, `UNKNOWN_MODEL`, `DEPTH_LIMIT`, `AGENT_NOT_FOUND` для родителя, `PARENT_FINISHED`.
 - **`send({ agentId, ownerId, text })`** — сообщение сотрудника, вид `user_message`, с `revive`. Возвращает `messageId`. Ошибки: `AGENT_NOT_FOUND`, `PAYLOAD_TOO_LARGE`.
-- **`interrupt({ agentId, ownerId, text? })`** — прерывание по KD-3. Возвращает `interrupted` или `NOT_ACTIVE`.
+- **`interrupt({ agentId, ownerId, text? })`** — прерывание по KD-3. Возвращает `interrupted` или `not_active`.
 - **`stop({ agentId, ownerId })`** — `tasks.stop` и ничего больше. Возвращает список остановленных `agentId`, пустой для законченного агента. Закрытые вызовы и событие остановки показывает `history` (Flow 7).
 - **`restart({ agentId, ownerId })`** — запуск с нуля законченного агента: новый агент с тем же определением, заданием, моделью, ограничениями и родителем (AC-09.2). Возвращает новый `agentId`. Ошибки: `AGENT_NOT_FOUND`, `NOT_FINISHED`, `PARENT_FINISHED`.
 - **`get(agentId, ownerId)`** — `AgentView`.
 - **`list(rootId, ownerId)`** — все агенты дерева как `AgentView` в порядке создания; корень дерева тоже в списке.
 - **`history({ agentId, ownerId, afterSeq?, limit })`** — записи истории с номером больше `afterSeq` по порядку, не больше `limit` (до 500); у остановленного агента — с выведенными записями остановки (Flow 7).
 - **`pendingConfirmations(rootId, ownerId)`** — открытые запросы подтверждения дерева: `decisionId`, `agentId`, описание агента, вид запроса, инструмент, сервер, аргументы, время. Строится из `decisions.listOpen`.
-- **`resolveConfirmation({ decisionId, ownerId, approve, args? })`** — решение сотрудника. `args` принимаются, только если инструмент разрешает правку. Возвращает `resolved` или `ALREADY_RESOLVED`; ошибки `DECISION_NOT_FOUND`, `INVALID_ARGUMENTS`.
+- **`resolveConfirmation({ decisionId, ownerId, approve, args? })`** — решение сотрудника. `args` принимаются, только если инструмент разрешает правку. Возвращает `resolved` или `already_resolved`; ошибки `DECISION_NOT_FOUND`, `INVALID_ARGUMENTS`.
 
 **SessionLimits** — ограничения вызывающего, задаются при `start`.
 
@@ -808,7 +809,7 @@ sequenceDiagram
 - `AGENT_NOT_FOUND` — агента нет или он чужой.
 - `UNKNOWN_DEFINITION`, `UNKNOWN_MODEL` — нет определения или цены модели.
 - `DEPTH_LIMIT` — глубина нового агента больше `AGENT_MAX_DEPTH`.
-- `NOT_ACTIVE` — прерывание законченного агента или агента, который ждёт подтверждения.
+- `not_active` — исход runtime: прерывание законченного агента или агента, который ждёт подтверждения.
 - `NOT_FINISHED` — запуск с нуля работающего агента.
 - `PARENT_FINISHED`, `PAYLOAD_TOO_LARGE`, `DECISION_NOT_FOUND` — из runtime без изменений.
 - Причины отказа в результате вызова: `tool_not_in_definition`, `no_access`, `not_allowed`, `depth_limit`, `unknown_model`, `unknown_agent`, `invalid_arguments`.
@@ -997,7 +998,7 @@ stateDiagram-v2
 
 ## Open Questions
 
-- **Замечание к `design-runtime.md`.** Runtime не говорит, что делает итог `complete` или `fail`, если во время шага в очередь пришло сообщение с `revive`: оживление по `revive` описано только для сообщения законченной задаче (DC-4 runtime), а Flow 3 runtime решает этот случай только для итога `wait`. Агенту нужно, чтобы такая задача закончилась (уведомление родителю ушло) и сразу стала `queued` с этим сообщением; иначе сообщение сотрудника, отправленное в последний шаг агента, ждёт до следующего сообщения (AC-09.1, AC-07.3). Там же не задан вид сообщения у `tasks.interrupt`; эта часть передаёт его в форме `inbox.enqueue` (KD-3). Блокирует Flow 6 и KD-3; решает владелец через правку `design-runtime.md`.
+Нет.
 
 ## Appendix: Fact Disposition
 
@@ -1028,3 +1029,4 @@ stateDiagram-v2
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-14 | Первая версия |
+| 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Закрыт вопрос к `runtime`: сообщение с `revive`, пришедшее во время последнего шага, оживляет задачу после её конца (Flow 6), а `tasks.interrupt` принимает сообщение в форме `inbox.enqueue` (KD-3). Исходы runtime записаны как в `design-runtime.md`: `not_active`, `already_resolved`. Упавший агент останавливает незаконченных детей (Flow 2); `start` отклоняет модель без цены `UNKNOWN_MODEL`. |
