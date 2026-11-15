@@ -21,7 +21,7 @@
 //
 // NOT here on purpose: the 401/closed-by-default proof of every new route (identity INT-1's route walk reads the router's own list, so the new
 //   controllers are covered there); `@AdminOnly` refusal and its `access_denied` audit row (identity INT-1 row 3); the SecretBox seal table and
-//   audit redaction table (identity unit tests); the outbound-URL rule table and the error-to-outcome map (agents unit tests, see the
+//   audit redaction table (identity unit tests); the address-scheme check and the error-to-outcome map (agents unit tests, see the
 //   agents file header); the Zod shape of admin bodies (name kebab 1-32, token <= 4096, mode) - a unit table next to the controller schema,
 //   `provenAt: unit`; the call-time behaviour (tokens, refresh, sets) - agents INT-1 / INT-2.
 
@@ -35,7 +35,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //   сервера с пометками"; AC-12.2 "адрес недоступен или учётные данные не подходят, администратор сохраняет сервер: сохранение
   //   возвращает причину, а сервер не включается"; AC-13.4 "администратор регистрирует сервер с личным OAuth и подключает свой аккаунт:
   //   платформа получает список инструментов, и сервер появляется в реестре"; AC-13.5 "администратор сохранил общую учётную запись
-  //   сервера, сервер читают снова: значения нет, только пометка «задан»". Design: DC-6, DC-7, DC-12 (wiring), KD-4; UC-1 (registration half),
+  //   сервера, сервер читают снова: значения нет, только пометка «задан»". Design: DC-6, DC-7, KD-4; UC-1 (registration half),
   //   UC-2 (before and after the admin account), UC-E1.
   // Behavior: admin HTTP calls on `/api/admin/mcp-servers` -> the server is checked over HTTP before anything is saved -> the stored view,
   //   status, audit row and (for oauth) the registered OAuth client.
@@ -45,10 +45,9 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //      of any response holds the token; audit holds `admin_change` with `objectType: mcp_server`, before/after and `secret_changed`
   //      and no value. `PATCH` to a wrong token -> 422 `MCP_SERVER_CHECK_FAILED` reason `unauthorized`, the stored token still works.
   //   2. rejections (UC-E1): an address nobody answers -> 422 `unreachable`; `logs` with a wrong shared token -> `unauthorized`; a fixture
-  //      source without `registration_endpoint` registered as oauth -> `oauth_not_supported`; an address of `169.254.169.254` and a
-  //      fixture whose authorization-server metadata names a link-local token endpoint -> `insecure_url` (the one outbound-rule case that
-  //      holds in every `NODE_ENV`: the proof that the fetch the registry uses is the guarded one, DC-12); the name `logs` again -> 409
-  //      `MCP_SERVER_NAME_TAKEN` and the fixture journal and authorization log show no request for it.
+  //      source without `registration_endpoint` registered as oauth -> `oauth_not_supported`; the name `logs` again -> 409
+  //      `MCP_SERVER_NAME_TAKEN` and the fixture journal and authorization log show no request for it. (No `insecure_url` row: the
+  //      test app runs in `test`, where `http` is allowed, and the scheme check is a unit table, see the agents file header.)
   //   3. DC-7 / AC-13.4: `POST` `backoffice` with mode `oauth` -> 201, status `awaiting_admin_account`, a `client_id` stored; `PATCH
   //      enabled:true` -> 409 `MCP_SERVER_INCOMPLETE`; Аня's `GET /api/mcp/connections` does not list it. The admin's
   //      `GET /api/admin/mcp-servers/backoffice/connect` -> 302 to the fixture authorization URL; the browser returns with the admin's
@@ -57,11 +56,10 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //      200 with `added` and `removed` after the fixture's tool set changed.
   //   4. `DELETE /api/admin/mcp-servers/logs` -> 204; its `agent_tool_calls` history rows remain with the name as text; its accounts are gone.
   // Catches: a server saved without being checked (the owner learns at the first employee call); a shared token echoed in a response, the
-  //   audit or the log; a half-registered oauth server offered to employees or to agents; platform fetches steered to an internal host by
-  //   server metadata; a rejected registration that still leaves a row; a missing second administrator's account being treated as the
-  //   first's.
+  //   audit or the log; a half-registered oauth server offered to employees or to agents; a rejected registration that still leaves a
+  //   row; a missing second administrator's account being treated as the first's.
   // @category: core-functionality
-  // @dependency: AdminMcpServersController, McpRegistry, McpAccounts, guarded fetch, SecretBox, AuditLog, MCP fixture process + authorization server, Postgres
+  // @dependency: AdminMcpServersController, McpRegistry, McpAccounts, SecretBox, AuditLog, MCP fixture process + authorization server, Postgres
   // @complexity: high
   it.todo('INT-3: a server is verified before it is saved, no shared token appears in any response, and an oauth server stays invisible until the administrator\'s account has brought its tool list');
 

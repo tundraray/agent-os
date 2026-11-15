@@ -32,12 +32,11 @@
 //   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; `checkCatalog` keeps only the name-form rows.
 //   - stdio transport, `createMcpClients` cache, `McpStartupError`, `fixtureServersFile` and their tests are deleted with the code.
 //
-// `provenAt: unit` (small tables next to the code, not skeletons): the outbound-URL rule (DC-12, UC-E6: `http` public host, `https` to 127.0.0.1 /
-//   10.0.0.5 / 169.254.169.254 / [fe80::1], a name resolving to 192.168.1.10, a redirect from public to private, `https` public; production vs
-//   development; link-local closed in both) in `packages/agents/src/mcp/outbound-fetch.spec.ts`; the error-to-outcome map of `McpClient`/`mcp-failure`
-//   (`UnauthorizedError` and `ClientHttpAuthentication` -> `auth_required` for oauth and `transport_failure`/`unauthorized` for shared; fetch
-//   failure -> `connection_lost`; request timeout or step signal -> `timeout`; unreadable reply -> `protocol_error`; rule refusal -> `insecure_url`)
-//   in `packages/agents/src/mcp/mcp-failure.spec.ts`; `toMcpTool` / `readOnlyHint` stays in `mcp-outcome.spec.ts`.
+// `provenAt: unit` (small tables next to the code, not skeletons): the scheme check of a server or authorization-server address (`MCP_SERVER_CHECK_FAILED`
+//   reason `insecure_url`: `http` refused outside `development`/`test`, `https` always allowed; a table in the registry's verification unit test);
+//   the error-to-outcome map of `McpClient`/`mcp-failure` (`UnauthorizedError` and `ClientHttpAuthentication` -> `auth_required` for oauth and
+//   `transport_failure`/`unauthorized` for shared; fetch failure -> `connection_lost`; request timeout or step signal -> `timeout`; unreadable
+//   reply -> `protocol_error`) in `packages/agents/src/mcp/mcp-failure.spec.ts`; `toMcpTool` / `readOnlyHint` stays in `mcp-outcome.spec.ts`.
 
 import { describe, it } from 'vitest';
 
