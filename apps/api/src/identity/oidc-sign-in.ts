@@ -1,22 +1,24 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import { ProviderTypeSchema, type ProviderType } from '@agent-os/contracts';
 import {
-  identityLoginRequests,
-  identityProviders,
-  type Database,
-  type DatabaseConnection,
-} from '@agent-os/db';
-import { eq } from 'drizzle-orm';
+  isHttpsOrLocalhost,
+  type ProviderType,
+  type SignInError,
+} from '@agent-os/contracts';
+import type { Database, DatabaseConnection } from '@agent-os/db';
 import * as client from 'openid-client';
-import { z } from 'zod';
+import { isUuid } from '../common/is-uuid.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { IdentitySettings } from './identity-settings.js';
 import { GOOGLE_ISSUER_URL } from './identity.tokens.js';
-import type { AddressedRequest } from './public-url.js';
-import type { Executor } from './users.repository.js';
-import { isUuid } from './users.service.js';
+import { isComplete } from './provider-options.js';
+import {
+  consumeLoginRequest,
+  deleteExpiredLoginRequests,
+  findProvider,
+  insertLoginRequest,
+} from './providers.repository.js';
 
 /** How long a sign-in request and its `aos_login` cookie live (Runtime settings). */
 export const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;
@@ -30,13 +32,8 @@ const ISSUER_TIMEOUT_SECONDS = 10;
 /** The provider's error when the employee cancels at the provider (RFC 6749 §4.1.2.1). */
 const ACCESS_DENIED = 'access_denied';
 
-/** Why a provider sign-in was refused, as the web shows it (Contract «Вход и сеанс», `uxrd.md` MC-3). */
-export type ProviderRejection =
-  | 'cancelled'
-  | 'failed'
-  | 'no_email'
-  | 'account_disabled'
-  | 'provider_unavailable';
+/** The refusals the provider half decides; `no_email` and `account_disabled` are `SignInService`'s. */
+type ProviderRefusal = Exclude<SignInError, 'no_email' | 'account_disabled'>;
 
 export type StartedSignIn =
   | { ok: true; authorizationUrl: URL; state: string; loginRequestId: string }
@@ -54,7 +51,7 @@ export type FinishedSignIn =
   | {
       ok: false;
       loginRequestId: string | undefined;
-      reason: Exclude<ProviderRejection, 'no_email' | 'account_disabled'>;
+      reason: ProviderRefusal;
       /** The real cause, for the log only. */
       detail: string;
     };
@@ -66,15 +63,7 @@ export interface ReturnFromProvider {
   query: URLSearchParams;
   /** The `aos_login` cookie: the `state` this browser started with. */
   loginState: string | undefined;
-  request: AddressedRequest;
 }
-
-/** `identity_providers.options` as stored; the table accepts any JSON, so it is read through a schema. */
-export const StoredOptionsSchema = z.object({
-  issuer: z.string().optional(),
-  clientId: z.string().optional(),
-  clientSecret: z.string().optional(),
-});
 
 /** An enabled provider with complete settings, as the sign-in uses it. */
 interface SignInProvider {
@@ -86,56 +75,29 @@ interface SignInProvider {
   clientSecret: string;
 }
 
-type LoginRequestRow = typeof identityLoginRequests.$inferSelect;
-
-// ---------- Repository over `identity_providers` and `identity_login_requests` (repository-over-transaction) ----------
-
-/** The provider when it exists, is enabled and has its client settings; otherwise undefined. */
-async function findEnabledProvider(
-  executor: Executor,
+/** The provider when it exists, is enabled and has its settings complete (`isComplete`); otherwise undefined. */
+async function findSignInProvider(
+  db: Database,
   providerId: string,
 ): Promise<SignInProvider | undefined> {
-  const [row] = await executor
-    .select()
-    .from(identityProviders)
-    .where(eq(identityProviders.id, providerId));
-  if (row === undefined || !row.enabled) return undefined;
-  const options = StoredOptionsSchema.parse(row.options);
-  if (options.clientId === undefined || options.clientSecret === undefined)
+  const provider = isUuid(providerId)
+    ? await findProvider(db, providerId)
+    : undefined;
+  if (
+    provider === undefined ||
+    !provider.enabled ||
+    !isComplete(provider.type, provider.options)
+  )
     return undefined;
+  const { id, type, version, options } = provider;
   return {
-    id: row.id,
-    type: ProviderTypeSchema.parse(row.type),
-    version: row.version,
+    id,
+    type,
+    version,
     issuer: options.issuer,
     clientId: options.clientId,
     clientSecret: options.clientSecret,
   };
-}
-
-async function insertLoginRequest(
-  executor: Executor,
-  values: Omit<typeof identityLoginRequests.$inferInsert, 'id' | 'createdAt'>,
-): Promise<string> {
-  const [row] = await executor
-    .insert(identityLoginRequests)
-    .values(values)
-    .returning({ id: identityLoginRequests.id });
-  if (row === undefined)
-    throw new Error('identity_login_requests insert returned no row');
-  return row.id;
-}
-
-/** Deletes the request of this `state` and returns it: a second return finds nothing (DC-4). */
-async function consumeLoginRequest(
-  executor: Executor,
-  state: string,
-): Promise<LoginRequestRow | undefined> {
-  const [row] = await executor
-    .delete(identityLoginRequests)
-    .where(eq(identityLoginRequests.state, state))
-    .returning();
-  return row;
 }
 
 // ---------- OIDC ----------
@@ -145,9 +107,9 @@ export function redirectUriOf(publicUrl: string, providerId: string): string {
   return `${publicUrl}/api/auth/oauth/${providerId}/callback`;
 }
 
-/** `http` is allowed only for a development issuer on `localhost`, as the settings check allows it. */
+/** `http` is allowed only where the settings check allows it: a development issuer on `localhost`. */
 function isLocalHttp(issuer: URL): boolean {
-  return issuer.protocol === 'http:' && issuer.hostname === 'localhost';
+  return issuer.protocol === 'http:' && isHttpsOrLocalhost(issuer);
 }
 
 /** The library's error without anything the provider sent: its class, code and own message. */
@@ -186,20 +148,25 @@ export class OidcSignIn {
     this.logger = logger.child({ service: 'identity.oidc' });
   }
 
-  /** Stores a sign-in request and builds the provider's authorization URL. */
-  async start(
-    providerId: string,
-    next: string,
-    request: AddressedRequest,
-  ): Promise<StartedSignIn> {
-    const provider = isUuid(providerId)
-      ? await findEnabledProvider(this.db, providerId)
-      : undefined;
+  /**
+   * Stores a sign-in request and builds the provider's authorization URL; the expired requests go
+   * first. The return address is the saved public address only: without one the provider is
+   * unavailable, never an address taken from this anonymous request.
+   */
+  async start(providerId: string, next: string): Promise<StartedSignIn> {
+    const provider = await findSignInProvider(this.db, providerId);
     if (provider === undefined)
       return {
         ok: false,
         reason: 'provider_unavailable',
         detail: 'not_enabled',
+      };
+    const publicUrl = await this.settings.savedPublicUrl();
+    if (publicUrl === null)
+      return {
+        ok: false,
+        reason: 'provider_unavailable',
+        detail: 'public_url_unset',
       };
     const config = await this.configOf(provider);
     if (config === undefined)
@@ -211,6 +178,11 @@ export class OidcSignIn {
     const state = client.randomState();
     const nonce = client.randomNonce();
     const codeVerifier = client.randomPKCECodeVerifier();
+    const expired = await deleteExpiredLoginRequests(this.db);
+    if (expired > 0)
+      this.logger.debug('expired sign-in requests deleted', {
+        count: expired,
+      });
     const loginRequestId = await insertLoginRequest(this.db, {
       state,
       providerId,
@@ -220,10 +192,7 @@ export class OidcSignIn {
       expiresAt: new Date(Date.now() + LOGIN_REQUEST_TTL_MS),
     });
     const authorizationUrl = client.buildAuthorizationUrl(config, {
-      redirect_uri: redirectUriOf(
-        await this.settings.publicUrl(request),
-        providerId,
-      ),
+      redirect_uri: redirectUriOf(publicUrl, providerId),
       scope: SIGN_IN_SCOPES,
       code_challenge: await client.calculatePKCECodeChallenge(codeVerifier),
       code_challenge_method: 'S256',
@@ -242,7 +211,7 @@ export class OidcSignIn {
     const loginRequest =
       state === null ? undefined : await consumeLoginRequest(this.db, state);
     const refuse = (
-      reason: Exclude<ProviderRejection, 'no_email' | 'account_disabled'>,
+      reason: ProviderRefusal,
       detail: string,
     ): FinishedSignIn => ({
       ok: false,
@@ -258,10 +227,7 @@ export class OidcSignIn {
       return refuse('failed', 'state_mismatch');
     if (loginRequest.expiresAt.getTime() <= Date.now())
       return refuse('failed', 'request_expired');
-    const provider = await findEnabledProvider(
-      this.db,
-      loginRequest.providerId,
-    );
+    const provider = await findSignInProvider(this.db, loginRequest.providerId);
     if (provider === undefined)
       return refuse('provider_unavailable', 'not_enabled');
     const providerError = callback.query.get('error');
@@ -269,15 +235,13 @@ export class OidcSignIn {
       return providerError === ACCESS_DENIED
         ? refuse('cancelled', 'access_denied')
         : refuse('failed', 'provider_error');
+    const publicUrl = await this.settings.savedPublicUrl();
+    if (publicUrl === null)
+      return refuse('provider_unavailable', 'public_url_unset');
     const config = await this.configOf(provider);
     if (config === undefined)
       return refuse('provider_unavailable', 'discovery_failed');
-    const currentUrl = new URL(
-      redirectUriOf(
-        await this.settings.publicUrl(callback.request),
-        provider.id,
-      ),
-    );
+    const currentUrl = new URL(redirectUriOf(publicUrl, provider.id));
     currentUrl.search = callback.query.toString();
     let claims: client.IDToken | undefined;
     try {

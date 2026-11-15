@@ -1,10 +1,10 @@
-import { choosePublicUrl } from './public-url.js';
+import { publicUrlOf } from './public-url.js';
 
-// AC-03.4: redirectUri is built from the public address; a path or `/api` in it would break the callback.
-describe('public URL from the request: scheme and host only, saved value wins', () => {
+// AC-03.4: redirectUri is built from the public address; a path or `/api` in it would break the callback,
+// and an address that is not `https` (or `http://localhost`) must never be saved from a request.
+describe('public URL from the request: scheme and host only, and only a valid public address', () => {
   it.each([
     {
-      saved: null,
       request: {
         protocol: 'http',
         headers: { host: 'localhost:5173' },
@@ -13,7 +13,6 @@ describe('public URL from the request: scheme and host only, saved value wins', 
       expected: 'http://localhost:5173',
     },
     {
-      saved: null,
       request: {
         protocol: 'https',
         headers: { host: 'aos.example.com' },
@@ -22,24 +21,19 @@ describe('public URL from the request: scheme and host only, saved value wins', 
       expected: 'https://aos.example.com',
     },
     {
-      saved: 'https://aos.example.com',
-      request: {
-        protocol: 'http',
-        headers: { host: 'localhost:3000' },
-        originalUrl: '/api/admin/providers',
-      },
-      expected: 'https://aos.example.com',
+      // `http` behind a TLS proxy that does not pass the scheme on
+      request: { protocol: 'http', headers: { host: 'aos.example.com' } },
+      expected: undefined,
     },
+    {
+      request: { protocol: 'https', headers: { host: 'user@aos.example.com' } },
+      expected: undefined,
+    },
+    { request: { protocol: 'http', headers: {} }, expected: undefined },
   ])(
-    'saved $saved, request $request.protocol://$request.headers.host -> $expected',
-    ({ saved, request, expected }) => {
-      expect(choosePublicUrl(saved, request)).toBe(expected);
+    '$request.protocol://$request.headers.host -> $expected',
+    ({ request, expected }) => {
+      expect(publicUrlOf(request)).toBe(expected);
     },
   );
-
-  it('fails without a Host header instead of building an address from nothing', () => {
-    expect(() =>
-      choosePublicUrl(null, { protocol: 'http', headers: {} }),
-    ).toThrow('request has no Host header');
-  });
 });

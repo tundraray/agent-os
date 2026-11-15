@@ -18,6 +18,15 @@ export interface AuditEntry {
   reason?: string;
 }
 
+/** Audit actor of a change no employee made (operator command, rejected sign-in of an unknown login). */
+export const SYSTEM_ACTOR = 'system';
+
+/**
+ * Stands in for the password in `before`/`after` of an audit entry: the field name makes `AuditLog`
+ * write `password_changed`, and the value never is the password.
+ */
+export const PASSWORD_SET = 'set';
+
 const PASSWORD_CHANGED = 'password_changed';
 const SECRET_CHANGED = 'secret_changed';
 

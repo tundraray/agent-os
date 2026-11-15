@@ -167,17 +167,16 @@ async function expectRefusal(
   expect((await expectError(response, status)).errorCode).toBe(errorCode);
 }
 
-/** A request under `/api` with the session cookie and the given `Origin` (`undefined` = no header). */
+/** A request under `/api` with the session cookie (or none) and the given `Origin` (`undefined` = no header). */
 function requestWithOrigin(
-  session: Session,
+  session: Session | null,
   method: Method,
   path: string,
   origin: string | undefined,
   body: object,
 ): Promise<Response> {
-  const test = request(apiOrigin(harness.app))
-    [method](`/api${path}`)
-    .set('cookie', session.cookie);
+  const test = request(apiOrigin(harness.app))[method](`/api${path}`);
+  if (session !== null) test.set('cookie', session.cookie);
   if (origin !== undefined) test.set('origin', origin);
   return test.send(body);
 }
@@ -491,7 +490,8 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   //      his next request to the same admin route -> 200 with the same cookie, and the audit holds `admin_change` with the administrator, the
   //      time, the employee and his roles before and after (AC-11.1); the administrator removes the assignment -> his next request is 403
   //      ADMIN_REQUIRED again (AC-08.2)
-  //   4. mutating request with a valid cookie and a foreign `Origin`, and with an empty `Origin` -> 403 ORIGIN_REJECTED, nothing changed
+  //   4. mutating request with a valid cookie and a foreign `Origin`, and with an empty `Origin` -> 403 ORIGIN_REJECTED, nothing changed;
+  //      a cookie-less `POST /api/auth/password` with valid credentials and a foreign `Origin` -> 403 ORIGIN_REJECTED, no session opened
   //   5. `POST /api/auth/sign-out`, then the old cookie on `GET /api/auth/me` -> 401 AUTH_REQUIRED; sign-out without a session -> 204
   //   6. default limits: a session row created more than 1440 min ago, and another idle for more than 480 min (timestamps moved in the
   //      row; limits come from `identity_settings`) -> 401 AUTH_REQUIRED
@@ -706,6 +706,28 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         RoleListSchema,
       );
       expect(roles.map((listed) => listed.name)).not.toContain(refusedRole);
+
+      // Row 4 (DC-3, login CSRF) - Given: no cookie and valid credentials; When: a foreign page posts them to
+      // the open sign-in; Then: 403 ORIGIN_REJECTED and no session is opened
+      const credentials = {
+        login: `e2e-csrf-${randomUUID()}`,
+        password: 'e2e-password-12',
+      };
+      const target = await createEmployee(app, admin, credentials);
+      const forged = await requestWithOrigin(
+        null,
+        'post',
+        '/auth/password',
+        'https://evil.example',
+        credentials,
+      );
+      await expectRefusal(forged, 403, 'ORIGIN_REJECTED');
+      expect(forged.headers['set-cookie']).toBeUndefined();
+      const { rows: targetSessions } = await pool.query(
+        'SELECT 1 FROM app.identity_sessions WHERE user_id = $1',
+        [target.id],
+      );
+      expect(targetSessions).toHaveLength(1);
 
       // Row 5 (AC-07.1) - Given: a signed-in employee; When: he signs out; Then: his old cookie gets 401
       // AUTH_REQUIRED; a sign-out without a session is still 204

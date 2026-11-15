@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { nextPath } from './next-path.js';
 
 // AC-04.5 (next): the redirect after sign-in goes to `{FRONTEND_ORIGIN}{next}`, so anything but a web

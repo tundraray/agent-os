@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CircleX, Eye, EyeOff, Info, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
-import { IdentityErrorCode, type ProviderButtonList } from "@agent-os/contracts";
+import { IdentityErrorCode, nextPath, type ProviderButtonList } from "@agent-os/contracts";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -12,12 +12,10 @@ import { authApi } from "@/lib/auth/auth-api";
 import {
   LOGIN_TEXT,
   loginReasonOf,
-  safeNextPath,
   signInErrorNamesProvider,
   signInFailedText,
   type LoginReasonView,
 } from "@/lib/auth/login-reason";
-import { apiBaseUrl } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 export type LoginFormProps = {
@@ -34,7 +32,7 @@ type FieldErrors = { login?: string; password?: string };
 
 /** LG-01..LG-03 of uxrd Screen 1: the reason, the login and password form and the provider buttons. */
 export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
-  const nextPath = safeNextPath(next);
+  const returnPath = nextPath(next);
   const [providers, setProviders] = useState<ProviderButtonList | null>(null);
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
@@ -89,7 +87,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
     try {
       await authApi.signInWithPassword({ login: login.trim(), password });
       logger.info("login: password sign-in succeeded");
-      window.location.assign(nextPath);
+      window.location.assign(returnPath);
     } catch (cause) {
       const refused =
         isApiRequestError(cause) &&
@@ -175,7 +173,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
             return (
               <a
                 key={item.id}
-                href={`${apiBaseUrl}/api/auth/sign-in/${encodeURIComponent(item.id)}?${new URLSearchParams({ next: nextPath }).toString()}`}
+                href={authApi.providerSignInUrl(item.id, returnPath)}
                 aria-disabled={busy || undefined}
                 tabIndex={busy ? -1 : undefined}
                 className={cn(

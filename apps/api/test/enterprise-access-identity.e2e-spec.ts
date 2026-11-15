@@ -30,7 +30,7 @@ import {
   type RoleSummary,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SYSTEM_ACTOR } from '../src/identity/users.service.js';
+import { SYSTEM_ACTOR } from '../src/audit/audit-log.js';
 import { expectBody, expectError } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
@@ -358,6 +358,15 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
           },
         ]);
         expect(repaired.stdout).toContain('Super-administrator repaired');
+        // The repair ends the account's sessions, as a password reset does.
+        expect(
+          (
+            await harness.pool.query(
+              'SELECT 1 FROM app.identity_sessions WHERE user_id = $1',
+              [account.id],
+            )
+          ).rowCount,
+        ).toBe(0);
         expectNoSecretsIn(repaired, [
           newPassword,
           repairedRows[0]?.passwordHash ?? '',

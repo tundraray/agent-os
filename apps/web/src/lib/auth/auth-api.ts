@@ -7,6 +7,7 @@ import {
   type ProviderButtonList,
 } from "@agent-os/contracts";
 import { apiRequest } from "@/lib/api/api-request";
+import { apiBaseUrl } from "@/lib/config";
 
 async function me(): Promise<CurrentUser> {
   return apiRequest({ path: "/api/auth/me", schema: CurrentUserSchema });
@@ -31,4 +32,10 @@ async function changePassword(body: PasswordChangeBody): Promise<void> {
   await apiRequest({ path: "/api/auth/password/change", method: "POST", body });
 }
 
-export const authApi = { me, signOut, providers, signInWithPassword, changePassword };
+/** The provider sign-in answers 302 to the provider, so the tab goes to this address instead of a request. */
+function providerSignInUrl(providerId: string, next: string): string {
+  const query = new URLSearchParams({ next }).toString();
+  return `${apiBaseUrl}/api/auth/sign-in/${encodeURIComponent(providerId)}?${query}`;
+}
+
+export const authApi = { me, signOut, providers, signInWithPassword, changePassword, providerSignInUrl };

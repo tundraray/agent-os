@@ -24,13 +24,13 @@ What `apps/api/.env` needs:
 
 The fixture servers are started by the api itself (`node ../../packages/mcp-fixture/dist/server.js`), so `packages/mcp-fixture` must be built: the `pnpm turbo build --filter=api...` step does it (`pnpm --filter @agent-os/mcp-fixture build` builds it alone).
 
-Every request except sign-in and `GET /api/health` needs a session: an employee signs in by login and password (`POST /api/auth/password`, 204 and the `aos_session` cookie) or through a sign-in provider the administrator set up. The first account is the super-administrator, made by the operator command `identity:super-admin` above: it takes `--login`, `--name` and `--email` and reads the password (12 characters or more) from standard input, never from the arguments. Run again with the same login, it sets the new password, turns the account on and gives it the administrator role back. A request that changes something and carries the cookie must also carry `Origin: <FRONTEND_ORIGIN>` (`http://localhost:3000` by default).
+Every request except sign-in and `GET /api/health` needs a session: an employee signs in by login and password (`POST /api/auth/password`, 204 and the `aos_session` cookie) or through a sign-in provider the administrator set up. The first account is the super-administrator, made by the operator command `identity:super-admin` above: it takes `--login`, `--name` and `--email` and reads the password (12 characters or more) from standard input, never from the arguments. Run again with the same login, it sets the new password, turns the account on, ends its sessions and gives it the administrator role back. Every request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`), the sign-in included, must carry `Origin: <FRONTEND_ORIGIN>` (`http://localhost:3000` by default). With `FRONTEND_ORIGIN` on `https` the cookies are `Secure`.
 
 ### Check with curl
 
 ```bash
 # 0. Sign in; the session cookie goes to cookies.txt and every later call sends it with -b
-curl -s -c cookies.txt -X POST http://localhost:4000/api/auth/password \
+curl -s -c cookies.txt -H 'Origin: http://localhost:3000' -X POST http://localhost:4000/api/auth/password \
   -H 'Content-Type: application/json' -d '{"login":"admin","password":"<password>"}'
 
 # 1. A new conversation; the answer carries its id

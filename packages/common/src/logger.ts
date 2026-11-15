@@ -110,10 +110,27 @@ function expandErrorField(fields: LogFields): LogFields {
   return { ...fields, error: expandError(fields.error, new Set()) };
 }
 
+/**
+ * A failed database query (Drizzle's `DrizzleQueryError`: `query`, `params` and the message
+ * `Failed query: …\nparams: …`) carries the bound values — password and token hashes, client secrets.
+ * Returns an error with the query text only, the same stack frames and the same cause (the driver
+ * error); any other value as it is. Every logged error passes here.
+ */
+export function withoutQueryParams<T>(error: T): T | Error {
+  if (!(error instanceof Error) || !('params' in error) || !('query' in error)) return error;
+  const header = `${error.name}: ${error.message}`;
+  const frames = error.stack?.startsWith(header) ? error.stack.slice(header.length) : '';
+  const safe = new Error(`Failed query: ${String(error.query)}`, { cause: error.cause });
+  safe.name = error.name;
+  safe.stack = `${safe.name}: ${safe.message}${frames}`;
+  return safe;
+}
+
 /** Expands any thrown value into `{ name, message, stack, cause }`, following the cause chain. */
-function expandError(value: unknown, seen: Set<unknown>): LogFields {
+function expandError(thrown: unknown, seen: Set<unknown>): LogFields {
+  const value = withoutQueryParams(thrown);
   if (!(value instanceof Error)) return { message: String(value) };
-  seen.add(value);
+  seen.add(thrown).add(value);
   const expanded: LogFields = { name: value.name, message: value.message, stack: value.stack };
   if (value.cause !== undefined && !seen.has(value.cause)) {
     expanded.cause = expandError(value.cause, seen);

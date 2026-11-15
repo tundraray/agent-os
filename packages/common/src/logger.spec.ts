@@ -118,6 +118,41 @@ describe('logger redacts, expands and truncates before both sinks', () => {
     expect((captured as Error).message).toBe('token [redacted] rejected');
   });
 
+  // Security: a failed query's parameters (password hashes, tokens, client secrets) never reach a sink.
+  it('logs a failed query (DrizzleQueryError shape) with its query text and cause, without its params', () => {
+    const { memory, sentry, logger } = setup();
+    class QueryError extends Error {
+      constructor(
+        readonly query: string,
+        readonly params: unknown[],
+        cause: Error,
+      ) {
+        super(
+          `Failed query: ${query}
+params: ${params.join(',')}`,
+          { cause },
+        );
+      }
+    }
+    const param = 'client-secret-value-42';
+    const query = 'update "identity_providers" set "options" = $1';
+
+    logger.error('provider update failed', {
+      error: new QueryError(query, [param, 7], new Error('deadlock detected')),
+    });
+
+    const { fields } = only(memory);
+    expect(JSON.stringify(fields)).not.toContain(param);
+    expect(fields.error).toMatchObject({
+      name: 'Error',
+      message: `Failed query: ${query}`,
+      cause: { message: 'deadlock detected' },
+    });
+    expect((fields.error as { stack: string }).stack).toContain('logger.spec.ts');
+    const [captured] = sentry.captureException.mock.calls[0]!;
+    expect(String((captured as Error).stack)).not.toContain(param);
+  });
+
   it('expands a non-Error thrown value into a message', () => {
     const { memory, logger } = setup();
 

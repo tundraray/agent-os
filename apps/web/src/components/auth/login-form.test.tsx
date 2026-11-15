@@ -35,6 +35,8 @@ describe("login page: form only without providers, divider and buttons with them
     { next: "/chat/abc?x=1", expectedNext: "/chat/abc?x=1" },
     { next: "//evil.example", expectedNext: "/" },
     { next: "https://evil.example", expectedNext: "/" },
+    { next: "/\t/evil.example", expectedNext: "/" },
+    { next: "/\n/evil.example", expectedNext: "/" },
   ])("adds the divider and one button per provider in answer order, next $next → $expectedNext", async ({ next, expectedNext }) => {
     serveProviders(PROVIDERS);
     render(<LoginForm next={next} />);

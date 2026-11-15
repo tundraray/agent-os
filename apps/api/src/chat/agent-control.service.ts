@@ -23,6 +23,7 @@ import {
 import type { Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
 import { AGENTS } from '../agents/agents.tokens.js';
+import { isUuid } from '../common/is-uuid.js';
 import { RUNTIME } from '../runtime/runtime.tokens.js';
 import { WORKFLOWS } from '../workflows/workflows.tokens.js';
 import { httpError } from './chat.errors.js';
@@ -38,7 +39,7 @@ import {
   toPending,
 } from './conversation-view.js';
 import { type Conversation, ConversationsRepository } from './conversations.repository.js';
-import { decodeRowCursor, isUuid, toThreadSummary } from './conversations.service.js';
+import { decodeRowCursor, toThreadSummary } from './conversations.service.js';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor.js';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');

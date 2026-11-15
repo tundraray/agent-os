@@ -11,10 +11,13 @@ import {
 } from '@agent-os/db';
 import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
+import type { Executor } from '../common/executor.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { readSessionLimits, sessionLimitColumns } from './identity-settings.js';
 import { isSessionExpired, needsTouch } from './session-lifetime.js';
-import type { Executor } from './users.repository.js';
+import {
+  readSessionLimits,
+  sessionLimitColumns,
+} from './settings.repository.js';
 
 /** `ended_reason` of a session ended by a block (KD-4, DC-9). */
 export const ENDED_BY_BLOCK = 'account_disabled';
@@ -61,10 +64,69 @@ const IS_ADMIN = sql<boolean>`(${identityUsers.isAdmin} or exists (
   where ${identityRoleMembers.userId} = ${identityUsers.id} and ${identityRoles.isAdmin}
 ))`;
 
+// ---------- Writes in the caller's transaction (repository-over-transaction.md: executor first) ----------
+
+/** Opens a session of the employee and deletes his rows older than the absolute limit. */
+export async function openSession(
+  executor: Executor,
+  userId: string,
+): Promise<OpenedSession> {
+  const limits = await readSessionLimits(executor);
+  await executor
+    .delete(identitySessions)
+    .where(
+      and(
+        eq(identitySessions.userId, userId),
+        lt(
+          identitySessions.createdAt,
+          sql`now() - make_interval(mins => ${limits.absoluteMinutes})`,
+        ),
+      ),
+    );
+  const token = randomBytes(TOKEN_BYTES).toString('base64url');
+  const [row] = await executor
+    .insert(identitySessions)
+    .values({ tokenHash: hashToken(token), userId })
+    .returning({ id: identitySessions.id });
+  if (row === undefined)
+    throw new Error('identity_sessions insert returned no row');
+  return { sessionId: row.id, token };
+}
+
+/**
+ * Ends every live session of the employee with the block's reason (KD-4): the rows stay, so a
+ * request with such a cookie can answer ACCOUNT_DISABLED instead of AUTH_REQUIRED (DC-9).
+ */
+export async function endSessionsByBlock(
+  executor: Executor,
+  userId: string,
+): Promise<void> {
+  await executor
+    .update(identitySessions)
+    .set({ endedReason: ENDED_BY_BLOCK })
+    .where(
+      and(
+        eq(identitySessions.userId, userId),
+        isNull(identitySessions.endedReason),
+      ),
+    );
+}
+
+/** Deletes every session of the employee (a password reset, a repair by the operator command). */
+export async function deleteSessionsOf(
+  executor: Executor,
+  userId: string,
+): Promise<void> {
+  await executor
+    .delete(identitySessions)
+    .where(eq(identitySessions.userId, userId));
+}
+
 /**
  * Sessions as rows of `identity_sessions` (KD-2, ADR-0001): the browser holds 32 random bytes in
  * base64url, the database their SHA-256. Limits are not stored in the row: they are read from
- * `identity_settings` with the session, so a new value applies from the next request.
+ * `identity_settings` with the session, so a new value applies from the next request. The request
+ * path's own reads and writes, on the pool.
  */
 @Injectable()
 export class SessionStore {
@@ -72,33 +134,6 @@ export class SessionStore {
 
   constructor(@Inject(RUNTIME_DATABASE) database: DatabaseConnection) {
     this.db = database.db;
-  }
-
-  /** Opens a session of the employee and deletes his rows older than the absolute limit. */
-  async open(
-    userId: string,
-    executor: Executor = this.db,
-  ): Promise<OpenedSession> {
-    const limits = await readSessionLimits(executor);
-    await executor
-      .delete(identitySessions)
-      .where(
-        and(
-          eq(identitySessions.userId, userId),
-          lt(
-            identitySessions.createdAt,
-            sql`now() - make_interval(mins => ${limits.absoluteMinutes})`,
-          ),
-        ),
-      );
-    const token = randomBytes(TOKEN_BYTES).toString('base64url');
-    const [row] = await executor
-      .insert(identitySessions)
-      .values({ tokenHash: hashToken(token), userId })
-      .returning({ id: identitySessions.id });
-    if (row === undefined)
-      throw new Error('identity_sessions insert returned no row');
-    return { sessionId: row.id, token };
   }
 
   /** The session of the token with its employee, admin right and expiry, or undefined when there is none. */
@@ -169,31 +204,5 @@ export class SessionStore {
     await this.db
       .delete(identitySessions)
       .where(eq(identitySessions.id, sessionId));
-  }
-
-  /**
-   * Ends every live session of the employee with the block's reason (KD-4): the rows stay, so a
-   * request with such a cookie can answer ACCOUNT_DISABLED instead of AUTH_REQUIRED (DC-9).
-   */
-  async endAllByBlock(
-    userId: string,
-    executor: Executor = this.db,
-  ): Promise<void> {
-    await executor
-      .update(identitySessions)
-      .set({ endedReason: ENDED_BY_BLOCK })
-      .where(
-        and(
-          eq(identitySessions.userId, userId),
-          isNull(identitySessions.endedReason),
-        ),
-      );
-  }
-
-  /** Deletes every session of the employee. */
-  async endAllOf(userId: string, executor: Executor = this.db): Promise<void> {
-    await executor
-      .delete(identitySessions)
-      .where(eq(identitySessions.userId, userId));
   }
 }

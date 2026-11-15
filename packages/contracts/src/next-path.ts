@@ -7,6 +7,7 @@ function isAmbiguous(character: string): boolean {
 /**
  * The web path to return to after sign-in (Contract «Вход и сеанс»): a path that starts with exactly
  * one `/`; anything else, a missing value included, becomes `/`, so the redirect never leaves the web.
+ * The one definition for the API and the web.
  */
 export function nextPath(next: unknown): string {
   if (

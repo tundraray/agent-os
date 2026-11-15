@@ -35,16 +35,6 @@ async function readPassword(): Promise<string> {
 }
 
 /**
- * A failed Drizzle query carries the bound parameters — the password hash among them — in its message
- * and `params`; only its cause (the driver error) is logged.
- */
-function withoutQueryParams(error: unknown): unknown {
-  return error instanceof Error && 'params' in error
-    ? (error.cause ?? new Error('Query failed'))
-    : error;
-}
-
-/**
  * Entry of `pnpm --filter api identity:super-admin` (KD-6, FR-32; run from `dist`, `apps/api/.env`
  * loaded by `--env-file-if-exists`): creates the super-administrator or repairs it by login.
  */
@@ -86,9 +76,8 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch (error) {
-  // The whole error: a connection failure is an AggregateError with an empty message.
-  logger.error('Super-administrator command failed', {
-    error: withoutQueryParams(error),
-  });
+  // The whole error: a connection failure is an AggregateError with an empty message. A failed query's
+  // parameters (the password hash) are dropped by the logger (`withoutQueryParams`).
+  logger.error('Super-administrator command failed', { error });
   process.exitCode = 1;
 }

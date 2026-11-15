@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
+import { isUuid } from '../common/is-uuid.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { findUserById, rolesOfUsers } from './users.repository.js';
-import { isUuid } from './users.service.js';
 
 /**
  * The employee for `access` and the owner check (design-identity.md, Contract «Сотрудник для

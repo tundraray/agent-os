@@ -9,6 +9,8 @@ export interface AuthUser {
   name: string;
   /** The personal mark or a role with the admin right, as of this request. */
   isAdmin: boolean;
+  /** A local account: it has a password (`CurrentUser.hasPassword`). */
+  hasPassword: boolean;
   sessionId: string;
 }
 

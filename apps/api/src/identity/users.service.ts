@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  type HttpException,
-  Inject,
-  Injectable,
-} from '@nestjs/common';
+import { type HttpException, Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
   ADMIN_USER_PAGE_SIZE,
@@ -19,13 +14,14 @@ import {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { z } from 'zod';
-import { AuditLog } from '../audit/audit-log.js';
+import { AuditLog, PASSWORD_SET } from '../audit/audit-log.js';
+import { isUuid } from '../common/is-uuid.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { identityError, validationFailed } from './identity.errors.js';
 import { normalizeIdentifier } from './identity-input.js';
 import { checkNewPassword, hashPassword, verifyPassword } from './password.js';
-import { SessionStore } from './session.store.js';
+import { deleteSessionsOf, endSessionsByBlock } from './session.store.js';
 import {
   findUserById,
   insertLocalUser,
@@ -39,15 +35,6 @@ import {
   type UserListPosition,
   type UserRow,
 } from './users.repository.js';
-
-/** Audit actor of a change no employee made (operator command, rejected sign-in of an unknown login). */
-export const SYSTEM_ACTOR = 'system';
-
-/**
- * Stands in for the password in `before`/`after` of an audit entry: the field name makes `AuditLog`
- * write `password_changed`, and the value never is the password.
- */
-export const PASSWORD_SET = 'set';
 
 /** The admin view of an employee; roles are passed by the caller. */
 function toAdminUserSummary(
@@ -65,16 +52,6 @@ function toAdminUserSummary(
   };
 }
 
-const IdSchema = z.uuid();
-
-/**
- * The one check of an employee or role id from outside: anything that is not a UUID can name no row,
- * so callers treat it as missing instead of letting Postgres fail with 22P02.
- */
-export function isUuid(id: string): boolean {
-  return IdSchema.safeParse(id).success;
-}
-
 /** An employee id from a route that is not a UUID answers 404 USER_NOT_FOUND like a missing one. */
 export function checkUserId(userId: string): void {
   if (!isUuid(userId)) throw identityError('USER_NOT_FOUND');
@@ -89,7 +66,7 @@ function encodeUserCursor(user: UserListPosition): string {
   );
 }
 
-/** A cursor of `encodeUserCursor`; anything else is 400 VALIDATION_FAILED. */
+/** A cursor of `encodeUserCursor`; anything else is 400 VALIDATION_FAILED with `invalid_cursor`. */
 function decodeUserCursor(cursor: string): UserListPosition {
   let json: unknown;
   try {
@@ -98,14 +75,8 @@ function decodeUserCursor(cursor: string): UserListPosition {
     json = undefined;
   }
   const parsed = UserCursorSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new BadRequestException({
-      statusCode: 400,
-      error: 'Bad Request',
-      errorCode: 'VALIDATION_FAILED',
-      message: ['cursor: Invalid cursor'],
-    });
-  }
+  if (!parsed.success)
+    throw validationFailed(IdentityValidationReason.INVALID_CURSOR);
   return { name: parsed.data.n, id: parsed.data.i };
 }
 
@@ -117,7 +88,6 @@ export class UsersService {
   constructor(
     @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
     private readonly auditLog: AuditLog,
-    private readonly sessions: SessionStore,
     @Inject(APP_LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
@@ -234,7 +204,7 @@ export class UsersService {
     const passwordHash = await hashPassword(password);
     await this.db.transaction(async (tx) => {
       await setPasswordHash(tx, user.id, passwordHash);
-      await this.sessions.endAllOf(user.id, tx);
+      await deleteSessionsOf(tx, user.id);
       const target = {
         actor: actorId,
         objectType: 'user',
@@ -312,7 +282,7 @@ export class UsersService {
     const disabling = status === UserStatusSchema.enum.disabled;
     await this.db.transaction(async (tx) => {
       await setUserStatus(tx, user.id, status);
-      if (disabling) await this.sessions.endAllByBlock(user.id, tx);
+      if (disabling) await endSessionsByBlock(tx, user.id);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

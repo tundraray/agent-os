@@ -4,59 +4,22 @@ import type {
   SignInSettings,
   UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
-import {
-  identitySettings,
-  type Database,
-  type DatabaseConnection,
-} from '@agent-os/db';
-import { isNull } from 'drizzle-orm';
+import type { Database, DatabaseConnection } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { choosePublicUrl, type AddressedRequest } from './public-url.js';
-import type { SessionLimits } from './session-lifetime.js';
-import type { Executor } from './users.repository.js';
-
-/** The session limit columns of the single `identity_settings` row, for a select or a join. */
-export const sessionLimitColumns = {
-  idleMinutes: identitySettings.idleMinutes,
-  absoluteMinutes: identitySettings.absoluteMinutes,
-};
-
-const signInSettingsColumns = {
-  ...sessionLimitColumns,
-  publicUrl: identitySettings.publicUrl,
-  updatedAt: identitySettings.updatedAt,
-};
-
-type SettingsRow = {
-  publicUrl: string | null;
-  idleMinutes: number;
-  absoluteMinutes: number;
-  updatedAt: Date | null;
-};
+import { identityError } from './identity.errors.js';
+import { publicUrlOf, type AddressedRequest } from './public-url.js';
+import {
+  readSettings,
+  savePublicUrlIfUnset,
+  writeSettings,
+  type SettingsChange,
+  type SettingsRow,
+} from './settings.repository.js';
 
 /** The audit object of the sign-in settings (FR-11). */
 const SETTINGS_OBJECT_TYPE = 'sign_in_settings';
-
-/** The current session limits (KD-2); the migration creates the row, so its absence is a fault. */
-export async function readSessionLimits(
-  executor: Executor,
-): Promise<SessionLimits> {
-  const [row] = await executor
-    .select(sessionLimitColumns)
-    .from(identitySettings);
-  if (row === undefined) throw new Error('identity_settings row is missing');
-  return row;
-}
-
-async function readSettings(executor: Executor): Promise<SettingsRow> {
-  const [row] = await executor
-    .select(signInSettingsColumns)
-    .from(identitySettings);
-  if (row === undefined) throw new Error('identity_settings row is missing');
-  return row;
-}
 
 function toSignInSettings(row: SettingsRow): SignInSettings {
   return {
@@ -71,7 +34,7 @@ const auditState = ({
   publicUrl,
   idleMinutes,
   absoluteMinutes,
-}: SettingsRow | UpdateSignInSettingsBody) => ({
+}: SettingsChange): SettingsChange => ({
   publicUrl,
   idleMinutes,
   absoluteMinutes,
@@ -93,26 +56,37 @@ export class IdentitySettings {
     this.db = database.db;
   }
 
+  /** The saved public address, or null: the sign-in reads only this, never the request's address. */
+  async savedPublicUrl(): Promise<string | null> {
+    return (await readSettings(this.db)).publicUrl;
+  }
+
   /**
-   * The public address for return URLs (AC-03.4): the saved one, otherwise the address the browser
-   * reached the API at, which is saved then. A concurrent first save keeps whichever came first.
+   * The public address for an administrator's provider view or change (AC-03.4): the saved one,
+   * otherwise the address this administrator reached the API at, which is saved then (a concurrent
+   * first save keeps whichever came first). 409 PUBLIC_URL_REQUIRED when that address is no valid
+   * public address (e.g. `http` behind a TLS proxy): the administrator sets it in the sign-in settings.
    */
-  async publicUrl(request: AddressedRequest): Promise<string> {
-    const { publicUrl: saved } = await readSettings(this.db);
+  async publicUrlFor(request: AddressedRequest): Promise<string> {
+    const saved = await this.savedPublicUrl();
     if (saved !== null) return saved;
-    const fromRequest = choosePublicUrl(null, request);
-    const [stored] = await this.db
-      .update(identitySettings)
-      .set({ publicUrl: fromRequest })
-      .where(isNull(identitySettings.publicUrl))
-      .returning({ publicUrl: identitySettings.publicUrl });
-    if (stored === undefined)
-      return choosePublicUrl((await readSettings(this.db)).publicUrl, request);
+    const derived = publicUrlOf(request);
+    if (derived === undefined) {
+      this.logger.info('public url not derivable from request', {
+        protocol: request.protocol,
+        host: request.headers.host ?? null,
+        outcome: 'rejected',
+        reason: 'public_url_required',
+      });
+      throw identityError('PUBLIC_URL_REQUIRED');
+    }
+    if (!(await savePublicUrlIfUnset(this.db, derived)))
+      return (await this.savedPublicUrl()) ?? derived;
     this.logger.info('public url saved from request', {
-      publicUrl: fromRequest,
+      publicUrl: derived,
       outcome: 'ok',
     });
-    return fromRequest;
+    return derived;
   }
 
   /** GET /api/admin/settings/sign-in (FR-26). */
@@ -131,12 +105,7 @@ export class IdentitySettings {
     const startedAt = Date.now();
     const { before, after } = await this.db.transaction(async (tx) => {
       const previous = await readSettings(tx);
-      const [updated] = await tx
-        .update(identitySettings)
-        .set({ ...auditState(body), updatedAt: new Date(), updatedBy: actorId })
-        .returning(signInSettingsColumns);
-      if (updated === undefined)
-        throw new Error('identity_settings row is missing');
+      const updated = await writeSettings(tx, auditState(body), actorId);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

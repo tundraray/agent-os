@@ -1,26 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import { UserStatusSchema } from '@agent-os/contracts';
+import { UserStatusSchema, type SignInError } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.js';
+import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { normalizeIdentifier } from './identity-input.js';
 import { identityError } from './identity.errors.js';
-import {
-  OidcSignIn,
-  type ProviderRejection,
-  type ReturnFromProvider,
-} from './oidc-sign-in.js';
+import { OidcSignIn, type ReturnFromProvider } from './oidc-sign-in.js';
 import { PasswordSignIn } from './password-sign-in.js';
-import type { AddressedRequest } from './public-url.js';
-import { SessionStore, type OpenedSession } from './session.store.js';
+import { openSession, type OpenedSession } from './session.store.js';
 import {
   markSignedIn,
   upsertProviderUser,
   type UserRow,
 } from './users.repository.js';
-import { SYSTEM_ACTOR } from './users.service.js';
 
 /** How the employee signed in; written to the audit and the log. */
 type SignInMethod = 'password' | 'provider';
@@ -49,7 +43,7 @@ export type ProviderStart =
 
 export type ProviderSignIn =
   | { ok: true; token: string; next: string }
-  | { ok: false; reason: ProviderRejection };
+  | { ok: false; reason: SignInError };
 
 /**
  * Where every way of signing in meets (C3 api): refuses a disabled provider, a provider answer
@@ -65,7 +59,6 @@ export class SignInService {
     @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
     private readonly passwordSignIn: PasswordSignIn,
     private readonly oidcSignIn: OidcSignIn,
-    private readonly sessions: SessionStore,
     private readonly auditLog: AuditLog,
     @Inject(APP_LOGGER) private readonly logger: Logger,
   ) {
@@ -95,14 +88,13 @@ export class SignInService {
   async startWithProvider(
     providerId: string,
     next: string,
-    request: AddressedRequest,
   ): Promise<ProviderStart> {
     const attempt: Attempt = {
       method: 'provider',
       startedAt: Date.now(),
       providerId,
     };
-    const started = await this.oidcSignIn.start(providerId, next, request);
+    const started = await this.oidcSignIn.start(providerId, next);
     if (!started.ok) {
       await this.reject({
         attempt,
@@ -173,7 +165,7 @@ export class SignInService {
       return undefined;
     }
     const opened = await this.db.transaction(async (tx) => {
-      const session = await this.sessions.open(user.id, tx);
+      const session = await openSession(tx, user.id);
       await markSignedIn(tx, user.id);
       await this.auditLog.record(tx, {
         kind: 'sign_in',

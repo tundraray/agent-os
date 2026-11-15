@@ -1,12 +1,8 @@
 import type { CurrentUser } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { describeApiError } from "@/lib/api/api-request";
+import { loginPath } from "@/lib/auth/login-reason";
 import type { logger as appLogger } from "@/lib/logger";
-
-/** «Мой доступ» (UXRD Screen 3). */
-export const ACCOUNT_PATH = "/account";
-/** Where «Выйти» lands (design-identity.md, Contract «Вход и сеанс»). */
-const SIGNED_OUT_LOGIN_URL = "/login?reason=signed_out";
 
 /** `user` is `null` while the employee is not read yet. */
 export type CurrentUserState = { user: CurrentUser | null };
@@ -43,7 +39,7 @@ export function createCurrentUserStore({ read, endSession, location, logger }: C
     },
     signOut: async (): Promise<void> => {
       await endSession();
-      (location ?? window.location).assign(SIGNED_OUT_LOGIN_URL);
+      (location ?? window.location).assign(loginPath({ reason: "signed_out" }));
     },
   });
 }

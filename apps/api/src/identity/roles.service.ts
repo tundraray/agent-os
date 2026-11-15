@@ -11,6 +11,8 @@ import type {
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { AuditLog } from '../audit/audit-log.js';
+import type { Executor } from '../common/executor.js';
+import { isUuid } from '../common/is-uuid.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { identityError } from './identity.errors.js';
@@ -18,18 +20,15 @@ import {
   addRoleMember,
   deleteRole,
   findRoleById,
-  findUserById,
   insertRole,
   removeRoleMember,
   roleMembers,
   roleSummaries,
-  rolesOfUsers,
-  takenField,
   updateRole,
-  type Executor,
   type RoleRow,
-} from './users.repository.js';
-import { checkUserId, isUuid, UsersService } from './users.service.js';
+} from './roles.repository.js';
+import { findUserById, rolesOfUsers, takenField } from './users.repository.js';
+import { checkUserId, UsersService } from './users.service.js';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
 const roleState = (role: Pick<RoleRow, 'name' | 'isAdmin'>) => ({

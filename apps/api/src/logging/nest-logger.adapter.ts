@@ -1,5 +1,9 @@
 import { Inject, Injectable, type LoggerService } from '@nestjs/common';
-import type { LogFields, Logger } from '@agent-os/common';
+import {
+  withoutQueryParams,
+  type LogFields,
+  type Logger,
+} from '@agent-os/common';
 import { APP_LOGGER } from './app-logger.js';
 
 /**
@@ -87,10 +91,13 @@ function extraField(rest: unknown[]): LogFields {
   return rest.length === 0 ? {} : { params: rest };
 }
 
-/** A string is the message; an `Error` goes whole into `error`; anything else into `value`. */
+/**
+ * A string is the message; an `Error` goes whole into `error` (the logger expands it) and its message,
+ * without a failed query's parameters, is the record's message; anything else into `value`.
+ */
 function toRecord(message: unknown, fields: LogFields): [string, LogFields] {
   if (typeof message === 'string') return [message, fields];
   if (message instanceof Error)
-    return [message.message, { ...fields, error: message }];
+    return [withoutQueryParams(message).message, { ...fields, error: message }];
   return ['', { ...fields, value: message }];
 }

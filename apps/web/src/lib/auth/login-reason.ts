@@ -31,11 +31,23 @@ const SIGN_IN_ERROR_VIEW: Record<SignInError, (providerName: string | undefined)
   provider_unavailable: (name) => ({ text: signInFailedText(name), tone: "error" }),
 };
 
-const QUERY_REASON_VIEW: Readonly<Record<string, LoginReasonView>> = {
+/** `reason` of /login: the 401 handler sets `expired` or `disabled`, «Выйти» sets `signed_out`. */
+export type LoginReason = "expired" | "disabled" | "signed_out";
+
+/** The only way the /login address is built (design-identity.md, Contract «Вход и сеанс»). */
+export function loginPath({ reason, next }: { reason: LoginReason; next?: string }): string {
+  const query = new URLSearchParams({ reason });
+  if (next !== undefined) query.set("next", next);
+  return `/login?${query.toString()}`;
+}
+
+const QUERY_REASON_VIEW: Readonly<Record<LoginReason, LoginReasonView>> = {
   expired: { text: LOGIN_TEXT.sessionExpired, tone: "neutral" },
   signed_out: { text: LOGIN_TEXT.signedOut, tone: "neutral" },
   disabled: { text: LOGIN_TEXT.accountDisabled, tone: "error" },
 };
+
+const isLoginReason = (value: string): value is LoginReason => Object.hasOwn(QUERY_REASON_VIEW, value);
 
 /** Whether the reason of `error` names the provider, so the page waits for the provider list before showing it. */
 export const signInErrorNamesProvider = (error: string | undefined): boolean =>
@@ -56,14 +68,6 @@ export function loginReasonOf({
 }): LoginReasonView | null {
   const signInError = SignInErrorSchema.safeParse(error);
   if (signInError.success) return SIGN_IN_ERROR_VIEW[signInError.data](providerName);
-  if (reason !== undefined && Object.hasOwn(QUERY_REASON_VIEW, reason)) return QUERY_REASON_VIEW[reason];
+  if (reason !== undefined && isLoginReason(reason)) return QUERY_REASON_VIEW[reason];
   return null;
-}
-
-/** `next` is a web path that starts with exactly one `/`; anything else becomes `/` (Contract «Вход и сеанс»). */
-export function safeNextPath(next: string | undefined): string {
-  if (next === undefined || !next.startsWith("/")) return "/";
-  // `//host` and `/\host` leave the origin in a browser.
-  if (next.startsWith("//") || next.startsWith("/\\")) return "/";
-  return next;
 }

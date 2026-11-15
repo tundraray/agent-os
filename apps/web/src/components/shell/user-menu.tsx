@@ -28,8 +28,9 @@ import {
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { describeApiError } from '@/lib/api/api-request';
-import { ACCOUNT_PATH, displayName, initialsOf } from '@/lib/auth/current-user';
+import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
+import { ACCOUNT_PATH } from '@/lib/shell-route';
 import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';

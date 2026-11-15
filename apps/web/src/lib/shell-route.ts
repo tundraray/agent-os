@@ -1,7 +1,7 @@
-import { ACCOUNT_PATH } from "@/lib/auth/current-user";
-
 export const CHAT_PATH_PREFIX = "/chat/";
 export const AGENTS_PATH = "/agents";
+/** «Мой доступ» (UXRD Screen 3). */
+export const ACCOUNT_PATH = "/account";
 
 const AGENT_PATH_PREFIX = `${AGENTS_PATH}/`;
 

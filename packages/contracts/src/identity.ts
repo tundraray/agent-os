@@ -24,6 +24,7 @@ export const IdentityErrorCode = {
   PROVIDER_NOT_FOUND: 'PROVIDER_NOT_FOUND',
   PROVIDER_INCOMPLETE: 'PROVIDER_INCOMPLETE',
   PROVIDER_CHECK_FAILED: 'PROVIDER_CHECK_FAILED',
+  PUBLIC_URL_REQUIRED: 'PUBLIC_URL_REQUIRED',
 } as const;
 export type IdentityErrorCode = (typeof IdentityErrorCode)[keyof typeof IdentityErrorCode];
 
@@ -33,6 +34,7 @@ export const IdentityValidationReason = {
   WEAK_PASSWORD: 'weak_password',
   NOT_LOCAL_ACCOUNT: 'not_local_account',
   UNKNOWN_TYPE: 'unknown_type',
+  INVALID_CURSOR: 'invalid_cursor',
 } as const;
 export type IdentityValidationReason =
   (typeof IdentityValidationReason)[keyof typeof IdentityValidationReason];
@@ -271,17 +273,16 @@ export const PublicUrlSchema = z.string().refine(isPublicUrl, {
   message: 'publicUrl must be https:// or http://localhost, without a path',
 });
 
+/** `https`, or `http` only on `localhost` (development): the rule for the public address and an issuer. */
+export function isHttpsOrLocalhost(url: URL): boolean {
+  return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+}
+
 function isPublicUrl(value: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  const allowedOrigin =
-    url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
   const noPath = url.pathname === '/' && !value.endsWith('/') && !url.search && !url.hash;
-  return allowedOrigin && noPath && !url.username && !url.password;
+  return isHttpsOrLocalhost(url) && noPath && !url.username && !url.password;
 }
 
 const sessionLimitsFields = {

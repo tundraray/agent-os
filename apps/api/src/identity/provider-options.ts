@@ -1,19 +1,31 @@
 import {
   IdentityValidationReason,
+  isHttpsOrLocalhost,
   ProviderCheckFailure,
   ProviderTypeSchema,
   type CreateProviderBody,
   type ProviderOptionsView,
   type ProviderType,
 } from '@agent-os/contracts';
+import { z } from 'zod';
 import { identityError, validationFailed } from './identity.errors.js';
 
-/** Settings of a provider as `identity_providers.options` stores them, the client secret as is (KD-7). */
-export interface ProviderOptions {
-  issuer?: string;
-  clientId?: string;
-  clientSecret?: string;
-}
+/**
+ * Settings of a provider as `identity_providers.options` stores them, the client secret as is (KD-7);
+ * the column accepts any JSON, so a row is read through this schema.
+ */
+export const ProviderOptionsSchema = z.object({
+  issuer: z.string().optional(),
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(),
+});
+export type ProviderOptions = z.infer<typeof ProviderOptionsSchema>;
+
+/** Settings with the client of every type set: what `isComplete` guarantees to the sign-in. */
+type CompleteOptions = ProviderOptions & {
+  clientId: string;
+  clientSecret: string;
+};
 
 /** Settings as an admin sends them: a field that is absent keeps its stored value. */
 export type ProviderOptionsInput = NonNullable<CreateProviderBody['options']>;
@@ -43,7 +55,7 @@ export function parseProviderType(type: string): ProviderType {
 export function isComplete(
   type: ProviderType,
   options: ProviderOptions,
-): boolean {
+): options is CompleteOptions {
   return REQUIRED_FIELDS[type].every((field) => options[field] !== undefined);
 }
 
@@ -83,7 +95,7 @@ export async function resolveProviderOptions(params: {
 
 /** Discovery of the issuer: a secure address that answers with the OIDC document of this very issuer. */
 async function checkIssuer(issuer: string, fetch: FetchFn): Promise<void> {
-  if (!isSecureIssuer(issuer))
+  if (!URL.canParse(issuer) || !isHttpsOrLocalhost(new URL(issuer)))
     throw checkFailed(ProviderCheckFailure.INSECURE_URL);
   let response: Response;
   try {
@@ -98,16 +110,6 @@ async function checkIssuer(issuer: string, fetch: FetchFn): Promise<void> {
   const document: unknown = await response.json().catch(() => null);
   if (!isDiscoveryOf(issuer, document))
     throw checkFailed(ProviderCheckFailure.INVALID_DOCUMENT);
-}
-
-/** `https`, or `http` only on `localhost` (a development issuer). */
-function isSecureIssuer(issuer: string): boolean {
-  if (!URL.canParse(issuer)) return false;
-  const url = new URL(issuer);
-  return (
-    url.protocol === 'https:' ||
-    (url.protocol === 'http:' && url.hostname === 'localhost')
-  );
 }
 
 /** An OIDC discovery document names its issuer exactly and the endpoints the sign-in uses. */

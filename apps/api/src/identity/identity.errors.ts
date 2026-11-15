@@ -26,6 +26,10 @@ const ANSWERS: Record<IdentityErrorCode, { status: number; message: string }> =
       message: 'Provider settings are incomplete',
     },
     PROVIDER_CHECK_FAILED: { status: 422, message: 'Provider check failed' },
+    PUBLIC_URL_REQUIRED: {
+      status: 409,
+      message: 'Set the public address in the sign-in settings',
+    },
   };
 
 const STATUS_NAMES: Record<number, string> = {

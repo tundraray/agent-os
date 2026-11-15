@@ -1,6 +1,5 @@
 import { IdentityErrorCode } from "@agent-os/contracts";
-
-export type LoginReason = "expired" | "disabled";
+import { loginPath } from "@/lib/auth/login-reason";
 
 type PageLocation = Pick<Location, "pathname" | "search" | "assign">;
 
@@ -9,7 +8,6 @@ type PageLocation = Pick<Location, "pathname" | "search" | "assign">;
  * A full page load drops every in-memory store of the signed-out session.
  */
 export function redirectToLogin(code: string | undefined, location: PageLocation = window.location): void {
-  const reason: LoginReason = code === IdentityErrorCode.ACCOUNT_DISABLED ? "disabled" : "expired";
-  const query = new URLSearchParams({ reason, next: `${location.pathname}${location.search}` });
-  location.assign(`/login?${query.toString()}`);
+  const reason = code === IdentityErrorCode.ACCOUNT_DISABLED ? "disabled" : "expired";
+  location.assign(loginPath({ reason, next: `${location.pathname}${location.search}` }));
 }

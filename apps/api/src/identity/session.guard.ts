@@ -21,12 +21,15 @@ import {
   SessionStore,
 } from './session.store.js';
 
-/** Methods that change state: with the session cookie they must come from the web's origin (DC-3). */
+/**
+ * Methods that change state: they must come from the web's origin (DC-3), with or without the cookie —
+ * a cross-site form posting to the open sign-in would otherwise sign the victim into another account.
+ */
 const CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
- * The one global check of the API (KD-3, ADR-0012, Flow 3): a changing request with the cookie
- * needs the web's `Origin`; a route without `@Public()` needs a live session, whose employee goes
+ * The one global check of the API (KD-3, ADR-0012, Flow 3): every changing request needs the web's
+ * `Origin`, open routes included; a route without `@Public()` needs a live session, whose employee goes
  * to `req.user`; a route with `@AdminOnly()` needs the admin right. Only the cookie names the employee.
  */
 @Injectable()
@@ -45,10 +48,8 @@ export class SessionGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<AuthedRequest>();
-    const token = readSessionToken(req);
     const route = routeOf(req);
     if (
-      token !== undefined &&
       CHANGING_METHODS.has(req.method) &&
       req.headers.origin !== this.allowedOrigin
     ) {
@@ -61,7 +62,7 @@ export class SessionGuard implements CanActivate {
     }
     if (this.marked(context, IS_PUBLIC)) return true;
 
-    req.user = await this.userOf(token, route);
+    req.user = await this.userOf(readSessionToken(req), route);
     if (this.marked(context, IS_ADMIN_ONLY) && !req.user.isAdmin) {
       await this.auditLog.record(null, {
         kind: 'access_denied',
@@ -101,8 +102,15 @@ export class SessionGuard implements CanActivate {
       );
     }
     await this.sessions.touch(session);
-    const { id, email, name, isAdmin } = session.user;
-    return { id, email, name, isAdmin, sessionId: session.sessionId };
+    const { id, email, name, isAdmin, hasPassword } = session.user;
+    return {
+      id,
+      email,
+      name,
+      isAdmin,
+      hasPassword,
+      sessionId: session.sessionId,
+    };
   }
 
   private marked(context: ExecutionContext, key: string): boolean {

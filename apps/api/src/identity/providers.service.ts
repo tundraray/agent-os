@@ -1,118 +1,37 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import {
-  ProviderTypeSchema,
-  type CreateProviderBody,
-  type ProviderList,
-  type ProviderType,
-  type ProviderView,
-  type UpdateProviderBody,
+import type {
+  CreateProviderBody,
+  ProviderButtonList,
+  ProviderList,
+  ProviderView,
+  UpdateProviderBody,
 } from '@agent-os/contracts';
-import {
-  identityProviders,
-  type Database,
-  type DatabaseConnection,
-} from '@agent-os/db';
+import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { asc, eq, sql } from 'drizzle-orm';
 import { AuditLog } from '../audit/audit-log.js';
+import { isUuid } from '../common/is-uuid.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { identityError } from './identity.errors.js';
 import { IdentitySettings } from './identity-settings.js';
-import {
-  redirectUriOf,
-  SIGN_IN_SCOPES,
-  StoredOptionsSchema,
-} from './oidc-sign-in.js';
+import { redirectUriOf, SIGN_IN_SCOPES } from './oidc-sign-in.js';
 import {
   isComplete,
   parseProviderType,
   resolveProviderOptions,
   toOptionsView,
-  type ProviderOptions,
   type ProviderOptionsInput,
 } from './provider-options.js';
+import {
+  findProvider,
+  insertProvider,
+  listProviderButtons,
+  listProviders,
+  updateProvider,
+  type Provider,
+} from './providers.repository.js';
 import type { AddressedRequest } from './public-url.js';
-import type { Executor } from './users.repository.js';
-import { isUuid } from './users.service.js';
-
-type ProviderRow = typeof identityProviders.$inferSelect;
-
-/** A provider row with its type and settings read. */
-interface Provider {
-  id: string;
-  type: ProviderType;
-  name: string;
-  enabled: boolean;
-  options: ProviderOptions;
-}
-
-function toProvider(row: ProviderRow): Provider {
-  return {
-    id: row.id,
-    type: ProviderTypeSchema.parse(row.type),
-    name: row.name,
-    enabled: row.enabled,
-    options: StoredOptionsSchema.parse(row.options),
-  };
-}
-
-// ---------- Repository over `identity_providers` (repository-over-transaction) ----------
-
-/** The providers in creation order (`created_at`, then `id`). */
-function listProviders(executor: Executor): Promise<ProviderList> {
-  return executor
-    .select({
-      id: identityProviders.id,
-      type: identityProviders.type,
-      name: identityProviders.name,
-      enabled: identityProviders.enabled,
-    })
-    .from(identityProviders)
-    .orderBy(asc(identityProviders.createdAt), asc(identityProviders.id))
-    .then((rows) =>
-      rows.map((row) => ({ ...row, type: ProviderTypeSchema.parse(row.type) })),
-    );
-}
-
-async function findProvider(
-  executor: Executor,
-  id: string,
-): Promise<Provider | undefined> {
-  const [row] = await executor
-    .select()
-    .from(identityProviders)
-    .where(eq(identityProviders.id, id));
-  return row === undefined ? undefined : toProvider(row);
-}
-
-async function insertProvider(
-  executor: Executor,
-  values: Pick<Provider, 'type' | 'name' | 'options'>,
-): Promise<Provider> {
-  const [row] = await executor
-    .insert(identityProviders)
-    .values({ ...values, enabled: false })
-    .returning();
-  if (row === undefined)
-    throw new Error('identity_providers insert returned no row');
-  return toProvider(row);
-}
-
-/** Writes the change and raises `version`, so the sign-in rebuilds its client config (AC-03.3). */
-async function updateProvider(
-  executor: Executor,
-  id: string,
-  values: Pick<Provider, 'name' | 'enabled' | 'options'>,
-): Promise<void> {
-  await executor
-    .update(identityProviders)
-    .set({ ...values, version: sql`${identityProviders.version} + 1` })
-    .where(eq(identityProviders.id, id));
-}
-
-// ---------- Service ----------
 
 /**
  * The provider fields an audit entry keeps. The secret appears only when the admin sent a new one,
@@ -166,15 +85,21 @@ export class ProvidersService {
     return listProviders(this.db);
   }
 
+  /** The enabled providers in creation order: the buttons of the sign-in page. */
+  buttons(): Promise<ProviderButtonList> {
+    return listProviderButtons(this.db);
+  }
+
   /** One provider with the data for its registration at the provider. 404 PROVIDER_NOT_FOUND. */
   async detail(
     providerId: string,
     request: AddressedRequest,
   ): Promise<ProviderView> {
-    return this.toView(await this.findOr404(providerId), request);
+    const provider = await this.findOr404(providerId);
+    return this.toView(provider, await this.settings.publicUrlFor(request));
   }
 
-  /** A disabled provider. 400 `unknown_type`, 422 PROVIDER_CHECK_FAILED. */
+  /** A disabled provider. 400 `unknown_type`, 409 PUBLIC_URL_REQUIRED, 422 PROVIDER_CHECK_FAILED. */
   async create(
     actorId: string,
     body: CreateProviderBody,
@@ -188,6 +113,7 @@ export class ProvidersService {
       input: body.options,
       fetch: globalThis.fetch,
     });
+    const publicUrl = await this.settings.publicUrlFor(request);
     const provider = await this.db.transaction(async (tx) => {
       const created = await insertProvider(tx, {
         type,
@@ -212,12 +138,13 @@ export class ProvidersService {
       outcome: 'ok',
       durationMs: Date.now() - startedAt,
     });
-    return this.toView(provider, request);
+    return this.toView(provider, publicUrl);
   }
 
   /**
    * Changes the name, the enabled mark and the settings; the type never changes and the secret is
-   * replaced only when sent. 404 PROVIDER_NOT_FOUND, 409 PROVIDER_INCOMPLETE, 422 PROVIDER_CHECK_FAILED.
+   * replaced only when sent. 404 PROVIDER_NOT_FOUND, 409 PROVIDER_INCOMPLETE or PUBLIC_URL_REQUIRED,
+   * 422 PROVIDER_CHECK_FAILED.
    */
   async update(
     actorId: string,
@@ -248,6 +175,7 @@ export class ProvidersService {
       });
       throw identityError('PROVIDER_INCOMPLETE');
     }
+    const publicUrl = await this.settings.publicUrlFor(request);
     await this.db.transaction(async (tx) => {
       await updateProvider(tx, providerId, after);
       await this.recordChange(
@@ -268,14 +196,10 @@ export class ProvidersService {
       outcome: 'ok',
       durationMs: Date.now() - startedAt,
     });
-    return this.toView(after, request);
+    return this.toView(after, publicUrl);
   }
 
-  private async toView(
-    provider: Provider,
-    request: AddressedRequest,
-  ): Promise<ProviderView> {
-    const publicUrl = await this.settings.publicUrl(request);
+  private toView(provider: Provider, publicUrl: string): ProviderView {
     return {
       id: provider.id,
       type: provider.type,
