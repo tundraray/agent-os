@@ -27,5 +27,5 @@
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — таблицы `runtime_*`, запись обработчика в итоге шага
 - [design-agents.md](../../features/agent-platform/design-agents.md) — таблицы `agent_*` в транзакции итога шага
 - [design-chat.md](../../features/agent-platform/design-chat.md) — таблица `chat_conversations` в `apps/api`
-- [design-identity.md](../../features/enterprise-access/design-identity.md) — таблицы `identity_*` и `audit_events` в `apps/api`; запись аудита в транзакции изменения
+- [design-identity.md](../../features/enterprise-access/design-identity.md) — таблицы `identity_*` и `audit_events` в `apps/api`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — таблицы `agent_mcp_*`; внешний вызов вне транзакции (KD-1)
