@@ -1,5 +1,5 @@
 // enterprise-access / identity - E2E skeletons (whole API process against real Postgres, workers on, scripted model)
-// Design Doc: docs/features/enterprise-access/design-identity.md (v1.0), Test Strategy UC-3, UC-6, UC-E7; PRD FR-05, FR-07, FR-09, FR-03 (key).
+// Design Doc: docs/features/enterprise-access/design-identity.md (v1.1), Test Strategy UC-3, UC-6, UC-E7; PRD FR-05, FR-07, FR-09, FR-03 (key).
 // Generated: 2026-11-15 | Budget Used: 2/2 E2E for the part (integration skeletons: enterprise-access-identity.int.e2e-spec.ts and
 //   the web one). Implementation timing: after the whole part is built (final phase).
 // Test Type: End-to-End. Every case is `it.todo` - skeletons only.

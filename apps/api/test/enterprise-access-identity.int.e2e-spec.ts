@@ -1,6 +1,8 @@
 // enterprise-access / identity - integration skeletons (real AppModule + real Postgres + in-process test IdP)
-// Design Doc: docs/features/enterprise-access/design-identity.md (v1.0), Test Strategy UC-1, UC-2, UC-4, UC-5, UC-7, UC-8 (isolation half),
-//   UC-E1..UC-E6; PRD: docs/features/enterprise-access/prd.md FR-01..FR-11, NFR-01..NFR-03.
+// Design Doc: docs/features/enterprise-access/design-identity.md (v1.1), Test Strategy UC-1, UC-2, UC-4, UC-5, UC-7, UC-8 (isolation half),
+//   UC-E1..UC-E6, UC-E8; PRD: docs/features/enterprise-access/prd.md (v1.3) FR-01..FR-11, NFR-01..NFR-03.
+// Session lifetimes are administrator settings in `identity_settings` (defaults 480 / 1440 min), not code constants; the clock is
+//   never faked, session age is set by moving the session row's timestamps.
 // Generated: 2026-11-15 | Budget Used: 4 API integration skeletons here + 1 web integration skeleton
 //   (apps/web/src/components/shell/enterprise-access-identity.int.test.tsx) = 5/5 for the part (over the 3-test default,
 //   at the 5-test ceiling: each skeleton names a defect no other test catches, see "Catches"), 2 E2E in
@@ -41,7 +43,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   //   AC-07.1 (API half) "после выхода следующий запрос получает страницу входа"; AC-08.1 "без права администратора ... отказ,
   //   в аудите «отказ по правам»"; AC-10.1/10.2/10.3 (dev sign-in works as a normal employee in test, 404 in production, a lone
   //   `x-user-id` is refused in any mode); NFR-03 "без сеанса открыты только вход, SCIM со своим токеном и проверка здоровья".
-  //   Design: DC-1, DC-2, DC-3, DC-11.
+  //   AC-07.5 "администратор поменял срок жизни сеанса без активности или общий: запрос с сеансом старше нового срока получает
+  //   отказ «нужен вход», и сотрудник снова входит через IdP".
+  //   Design: DC-1, DC-2, DC-3, DC-11; UC-E6, UC-E8.
   // Behavior: request with some credential -> global SessionGuard / Origin check / @AdminOnly / SCIM bearer -> status + errorCode
   //   (and, for the admin refusal, an `access_denied` audit row).
   // Rows (one request each, literal expected status and errorCode):
@@ -53,11 +57,18 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   //   3. employee without the right calls an `@AdminOnly` route -> 403 ADMIN_REQUIRED, audit row `access_denied` with employee and route
   //   4. mutating request with a valid cookie and a foreign `Origin`, and with an empty `Origin` -> 403 ORIGIN_REJECTED, nothing changed
   //   5. `POST /api/auth/sign-out`, then the old cookie on `GET /api/auth/me` -> 401 AUTH_REQUIRED; sign-out without a session -> 204
-  //   6. session row older than 24 h since creation, and another idle for more than 8 h (timestamps moved in the row) -> 401 AUTH_REQUIRED
+  //   6. session row older than the stored absolute limit (default 1440 min) since creation, and another idle for longer than the
+  //      stored idle limit (default 480 min) - timestamps moved in the row; the limits are read from `identity_settings`, not constants
+  //      -> 401 AUTH_REQUIRED
   //   7. SCIM `GET /Users` with no token, a revoked (first of two) token -> 401 and no rows changed; the current token -> 200
+  //   8. UC-E8 (AC-07.5): Аня's session was opened 2 h ago, last request 1 h ago (rows moved); an administrator `PUT
+  //      /api/admin/settings/sessions` with `absoluteMinutes: 61` -> 200, `SessionSettings` echoes it, audit `admin_change` on
+  //      `session_settings` with old and new limits; Аня's next request with the same cookie -> 401 AUTH_REQUIRED (no restart, no
+  //      new sign-in of hers); then `PUT` with `idleMinutes: 2000` -> 400 VALIDATION_FAILED and `GET` shows the limits unchanged
   // Catches: a new controller left open by default (the forgotten @Public mark), the old `x-user-id` header still honoured,
   //   a cross-site POST riding the cookie, a non-admin reaching an admin operation, a signed-out or expired session still alive,
-  //   a rotated-out SCIM token still accepted, dev sign-in reachable in production.
+  //   a rotated-out SCIM token still accepted, dev sign-in reachable in production, a shortened session lifetime that does not
+  //   reach sessions already open (limits cached at boot or stamped into the session row), an out-of-bounds limit saved.
   // @category: core-functionality
   // @dependency: SessionGuard, Origin check, AdminOnly, ScimController, AuditLog, Postgres
   // @complexity: high

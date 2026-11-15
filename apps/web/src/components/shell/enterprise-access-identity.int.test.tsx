@@ -1,5 +1,5 @@
 // enterprise-access / identity (web) - integration skeleton
-// Design Doc: docs/features/enterprise-access/design-identity.md (v1.0), C3 · web, Test Strategy UC-9; UXRD: docs/features/enterprise-access/uxrd.md
+// Design Doc: docs/features/enterprise-access/design-identity.md (v1.1), C3 · web, Test Strategy UC-9; UXRD: docs/features/enterprise-access/uxrd.md
 //   Screen 1 (LG-01..LG-03), Screen 2 (UM-01), MC-3, MC-6.
 // Generated: 2026-11-15 | Budget Used: 1 web integration skeleton (the part's 5th and last: 4 API ones in
 //   apps/api/test/enterprise-access-identity.int.e2e-spec.ts), 0 web E2E (no browser tool in the repo; L1 browser checklist covers the rest).
