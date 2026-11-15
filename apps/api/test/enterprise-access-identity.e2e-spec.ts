@@ -1,13 +1,13 @@
 // enterprise-access / identity - E2E skeleton (the operator command as a separate process against real Postgres)
-// Design Doc: docs/features/enterprise-access/design-identity.md (v2.1 on disk, owner's v2.2 cuts applied), Test Strategy UC-6; PRD: docs/features/enterprise-access/prd.md (v2.3) FR-32.
+// Design Doc: docs/features/enterprise-access/design-identity.md (v2.2, Approved), Test Strategy UC-5; PRD: docs/features/enterprise-access/prd.md (v2.4) FR-32.
 // Generated: 2026-11-15 | Budget Used: 1/2 E2E for the part (3 integration skeletons in enterprise-access-identity.int.e2e-spec.ts).
 //   Implementation timing: after the whole part is built (final phase).
 // Test Type: End-to-End. The case is `it.todo` - skeleton only.
 //
 // Why this one: it is the way back into a deployment nobody can sign in to, and it is the only thing in the part that is a separate
 //   process with the password on standard input - an integration skeleton cannot hold that. The block journey that was an E2E in v2.0 is
-//   now INT-2 row 5 (one process, no second instance, no `stopOwner`: the agent stops itself at its next check, so integration is the
-//   lowest level that catches it). The owner allows one more E2E; none is needed. There is no browser E2E tool
+//   now INT-2 row 5 / UC-4 (one process, no second instance, no `stopOwner`: the agent's task ends `failed` with `owner_disabled` at its next
+//   check, so integration is the lowest level that catches it). The owner allows one more E2E; none is needed. There is no browser E2E tool
 //   in the repo (no Playwright); the browser journey is the part's manual L1 checklist.
 //
 // Harness: `createTestApp()` of the integration file's support (support/session.ts: `signInWithPassword`, the cookie helper); the app runs
@@ -27,8 +27,9 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
   //   he signs in as an administrator again.
   // AC: AC-32.1 "в базе нет ни одного сотрудника: оператор заводит локальную учётную запись с логином, паролем и ролью «Супер-администратор»,
   //   её владелец входит и получает доступ к операциям администратора"; AC-32.2 "ни один администратор не может войти: оператор прописывает роль
-  //   локальной учётной записи, владелец после входа получает доступ". Design: DC-15; UC-6. (AC-32.3, no sign-up path, is proven by the
-  //   INT-1 route walk.)
+  //   локальной учётной записи, владелец после входа получает доступ". Design: DC-15; UC-5. (AC-32.3, no sign-up path, is proven by the
+  //   INT-1 route walk; AC-08.2 and AC-11.1 of UC-5 - an assigned admin role gives access and is audited - are asserted in INT-1 row 3, the
+  //   lowest level; here Игорь only needs to assign and unassign a role to show the built-in one is not special for other employees.)
   // Verification items:
   //   - the command runs as a separate process with `DATABASE_URL` and the password only on standard input; exit code 0; neither the password
   //     nor its hash appears in the process arguments, its output or the log
