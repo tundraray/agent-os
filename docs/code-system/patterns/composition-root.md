@@ -30,4 +30,4 @@
 - [design-chat.md](../../features/agent-platform/design-chat.md) — порядок сборки в `AppModule`, регистрация определения `chat` в фабрике провайдера
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — порт `OwnerGate` в параметрах `createAgents`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — `parseAgentsConfig` без файла серверов; адрес возврата OAuth — параметр операций подключения, а не настройка
-- [design-access.md](../../features/enterprise-access/design-access.md) — порт `AccessGate` вместо `OwnerGate` и хук `audit` в параметрах `createAgents`
+- [design-access.md](../../features/enterprise-access/design-access.md) — порт `AccessGate` и хук `audit` в параметрах `createAgents`
