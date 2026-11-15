@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
-import { parseShellRoute } from '@/lib/shell-route';
+import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
@@ -162,8 +162,8 @@ type ChatHeaderProps = {
 
 /**
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
- * `/agents` → «Агенты» (MC-4); an agent page → `AgentHeader` (AV-01), which needs `AgentFeedProvider`
- * above; neither has the workspace button.
+ * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
+ * which needs `AgentFeedProvider` above; none of them has the workspace button.
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();
@@ -173,7 +173,7 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
 
   return (
     <ChatHeaderView
-      title={route.kind === 'agents' ? AGENTS_TITLE : title}
+      title={ROUTE_TITLES[route.kind] ?? title}
       heading={route.kind === 'agent' ? <AgentHeader /> : undefined}
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
@@ -184,8 +184,11 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
   );
 }
 
-/** MC-4: the «Агенты» page heading. */
-const AGENTS_TITLE: HeaderTitle = { kind: 'text', text: 'Агенты', pending: false };
+/** Fixed page headings: «Агенты» (agent-platform MC-4), «Мой доступ» (enterprise-access MC-7). */
+const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
+  agents: { kind: 'text', text: 'Агенты', pending: false },
+  account: { kind: 'text', text: 'Мой доступ', pending: false },
+};
 
 /**
  * `/` → hidden. `/chat/<id>` → empty on TH-06 / TH-07; loading while the main view is switching or until

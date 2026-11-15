@@ -1,0 +1,33 @@
+"use client";
+
+import { useEffect } from "react";
+import { useStore } from "zustand";
+import type { CurrentUserStore } from "@/lib/auth/current-user";
+import { focusShellTarget } from "@/lib/focus";
+import { PasswordSection } from "./password-section";
+
+/**
+ * Screen 3 «Мой доступ» (UXRD): sections one under another in the feed column (chat-shell UXRD, D-01);
+ * the title is the shell header's `h1`. The parts `mcp-connect` and `access` add MA-01 and MA-02 above
+ * MA-03. The store comes from the shell: one read of the employee per page load.
+ */
+export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }) {
+  const user = useStore(currentUser, (state) => state.user);
+
+  useEffect(() => {
+    currentUser.load();
+  }, [currentUser]);
+
+  // UXRD «Порядок фокуса»: after the move to the page, focus lands on its title.
+  useEffect(() => {
+    focusShellTarget("page-title");
+  }, []);
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-col gap-6 px-4 py-4 md:py-6">
+        <PasswordSection hasPassword={user?.hasPassword === true} />
+      </div>
+    </div>
+  );
+}

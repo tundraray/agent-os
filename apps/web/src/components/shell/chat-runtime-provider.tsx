@@ -67,8 +67,8 @@ export function ChatRuntimeProvider({ openEventSource, children }: ChatRuntimePr
 
 /**
  * The stream follows the screen (design-web.md, KD-2): `thread:<id>` once `/chat/<id>` has its item
- * open, `agent:<id>` on an agent page, no target on `/` and `/agents`. While the URL thread is still
- * opening the current stream stays, except on the first mount, which opens the stream at once.
+ * open, `agent:<id>` on an agent page, no target on `/`, `/agents` and `/account`. While the URL thread
+ * is still opening the current stream stays, except on the first mount, which opens the stream at once.
  * `watch` closes the previous source before opening the next one (Invariant 1).
  */
 function useLiveWatch(live: LiveStore): void {
@@ -77,7 +77,7 @@ function useLiveWatch(live: LiveStore): void {
     (s) => selectMainItem(s)?.remoteId);
   const target = ((): LiveTarget | null | undefined => {
     if (route.kind === 'agent') return `agent:${route.agentId}`;
-    if (route.kind === 'agents' || route.threadId === undefined) return null;
+    if (route.kind !== 'chat' || route.threadId === undefined) return null;
     return mainRemoteId === route.threadId ? `thread:${route.threadId}` : undefined;
   })();
   const started = useRef(false);

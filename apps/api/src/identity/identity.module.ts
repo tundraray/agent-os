@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { RuntimeModule } from '../runtime/runtime.module.js';
+import { AdminRolesController } from './admin-roles.controller.js';
 import { AdminUsersController } from './admin-users.controller.js';
 import { AuthController } from './auth.controller.js';
 import { HealthController } from './health.controller.js';
+import { IdentityDirectory } from './identity-directory.js';
 import { PasswordSignIn } from './password-sign-in.js';
+import { RolesService } from './roles.service.js';
 import { SessionStore } from './session.store.js';
 import { SessionGuard } from './session.guard.js';
 import { SignInService } from './sign-in.service.js';
@@ -16,13 +19,21 @@ import { UsersService } from './users.service.js';
  */
 @Module({
   imports: [RuntimeModule],
-  controllers: [AuthController, HealthController, AdminUsersController],
+  controllers: [
+    AuthController,
+    HealthController,
+    AdminUsersController,
+    AdminRolesController,
+  ],
   providers: [
+    IdentityDirectory,
     PasswordSignIn,
+    RolesService,
     SessionStore,
     SignInService,
     UsersService,
     { provide: APP_GUARD, useClass: SessionGuard },
   ],
+  exports: [IdentityDirectory],
 })
 export class IdentityModule {}

@@ -1,3 +1,5 @@
+import { ACCOUNT_PATH } from "@/lib/auth/current-user";
+
 export const CHAT_PATH_PREFIX = "/chat/";
 export const AGENTS_PATH = "/agents";
 
@@ -7,7 +9,8 @@ const AGENT_PATH_PREFIX = `${AGENTS_PATH}/`;
 export type ShellRoute =
   | { kind: "chat"; threadId?: string }
   | { kind: "agents" }
-  | { kind: "agent"; agentId: string };
+  | { kind: "agent"; agentId: string }
+  | { kind: "account" };
 
 /** The only way a thread path is built: Link href, replaceState, pathname comparison. */
 export const threadPath = (threadId: string): string =>
@@ -33,6 +36,7 @@ function singleSegment(pathname: string, prefix: string): string | undefined {
 export function parseShellRoute(pathname: string | null): ShellRoute {
   if (pathname === null) return { kind: "chat" };
   if (pathname === AGENTS_PATH) return { kind: "agents" };
+  if (pathname === ACCOUNT_PATH) return { kind: "account" };
   const agentId = singleSegment(pathname, AGENT_PATH_PREFIX);
   if (agentId !== undefined) return { kind: "agent", agentId };
   const threadId = singleSegment(pathname, CHAT_PATH_PREFIX);

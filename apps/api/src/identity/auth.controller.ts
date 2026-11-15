@@ -10,9 +10,11 @@ import {
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
+  PasswordChangeBodySchema,
   PasswordSignInBodySchema,
   ProviderTypeSchema,
   type CurrentUser,
+  type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
 } from '@agent-os/contracts';
@@ -37,6 +39,7 @@ import {
 } from './session-cookie.js';
 import { SessionStore } from './session.store.js';
 import { SignInService } from './sign-in.service.js';
+import { UsersService } from './users.service.js';
 
 /** Sign-in and session routes for the web (design-identity.md, Contract «Вход и сеанс»). */
 @Controller('auth')
@@ -48,6 +51,7 @@ export class AuthController {
     @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
     private readonly signIn: SignInService,
     private readonly sessions: SessionStore,
+    private readonly users: UsersService,
     private readonly auditLog: AuditLog,
     @Inject(APP_LOGGER) logger: Logger,
   ) {
@@ -100,6 +104,17 @@ export class AuthController {
       .from(identityUsers)
       .where(eq(identityUsers.id, id));
     return { id, email, name, isAdmin, hasPassword: row?.hasPassword === true };
+  }
+
+  /** 204; the employee's other sessions stay (KD-5). 400 VALIDATION_FAILED with `reason`. */
+  @Post('password/change')
+  @HttpCode(204)
+  changePassword(
+    @Body(new ZodValidationPipe(PasswordChangeBodySchema))
+    body: PasswordChangeBody,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    return this.users.changeOwnPassword(req.user.id, body);
   }
 
   /** 204 always; a live cookie's session row is deleted and `sign_out` written to the audit. */

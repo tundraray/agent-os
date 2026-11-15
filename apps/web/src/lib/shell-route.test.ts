@@ -17,7 +17,9 @@ describe('lib/shell-route', () => {
     { pathname: '/agents/a1/x', expected: { kind: 'chat' } },
     { pathname: '/agents/a/b', expected: { kind: 'chat' } },
     { pathname: '/agents/', expected: { kind: 'chat' } },
-  ])('shell routes parse into chat, agents list and agent pages: $pathname', ({ pathname, expected }) => {
+    { pathname: '/account', expected: { kind: 'account' } },
+    { pathname: '/account/x', expected: { kind: 'chat' } },
+  ])('shell routes parse into chat, agents list, agent pages and «Мой доступ»: $pathname', ({ pathname, expected }) => {
     expect(parseShellRoute(pathname)).toEqual(expected);
   });
 
