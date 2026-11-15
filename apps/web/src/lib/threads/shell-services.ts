@@ -1,6 +1,8 @@
 import { AuiConfig } from '@assistant-ui/react';
 import { toast } from 'sonner';
 import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-list-store';
+import { authApi } from '@/lib/auth/auth-api';
+import { createCurrentUserStore, type CurrentUserStore } from '@/lib/auth/current-user';
 import { createFeedStore, type FeedStore } from '@/lib/feed/feed-store';
 import { createAnnouncerStore, type AnnouncerStore } from '@/lib/live/announcer-store';
 import { createLiveStore, type LiveStore, type OpenEventSource } from '@/lib/live/live-store';
@@ -27,6 +29,8 @@ export type ShellServices = {
   live: LiveStore;
   announcer: AnnouncerStore;
   feeds: ThreadFeeds;
+  /** The signed-in employee, read once per shell mount by the user block. */
+  currentUser: CurrentUserStore;
   /** The «Агенты» screen's store, one per shell; created on first read, so pages and expansion outlive a visit. */
   readonly agentList: AgentListStore;
   listAdapter: ReturnType<typeof createThreadListAdapter>;
@@ -36,6 +40,8 @@ export type ShellServices = {
 export type CreateShellServicesOptions = {
   /** Opens the live stream; a test passes its own source (jsdom has no `EventSource`). */
   openEventSource?: OpenEventSource;
+  /** The page navigation «Выйти» uses; a test passes its own (jsdom does not navigate). */
+  location?: Pick<Location, 'assign'>;
 };
 
 const notify: OperationNotifier = {
@@ -107,8 +113,9 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
 }
 
 /** Builds the shell's dependencies once per provider mount. Pure wiring, no React. */
-export function createShellServices({ openEventSource }: CreateShellServicesOptions = {}): ShellServices {
+export function createShellServices({ openEventSource, location }: CreateShellServicesOptions = {}): ShellServices {
   const apiClient = threadsApiClient;
+  const currentUser = createCurrentUserStore({ read: authApi.me, endSession: authApi.signOut, location, logger });
   const status = createShellStatusStore();
   const announcer = createAnnouncerStore();
   const live = createLiveStore({ openEventSource, announcer, logger });
@@ -122,6 +129,7 @@ export function createShellServices({ openEventSource }: CreateShellServicesOpti
     live,
     announcer,
     feeds,
+    currentUser,
     get agentList() {
       agentList ??= createAgentListStore({ api: apiClient, live, logger });
       return agentList;

@@ -8,6 +8,8 @@ import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { setUnauthorizedHandler } from '@/lib/api/api-request';
+import { redirectToLogin } from '@/lib/auth/session-redirect';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { Announcer } from './announcer';
@@ -38,6 +40,13 @@ type ChatShellProps = {
 
 /** SH-01: sidebar (built-in or drawer) and the main area, on the full height of the dynamic viewport. */
 export function ChatShell({ defaultSidebarOpen, openEventSource, children }: ChatShellProps) {
+  // Every 401 inside the shell leaves for /login (DC-13). The handler is checked when a response
+  // arrives, so the requests children start in their own effects are covered too.
+  useEffect(() => {
+    setUnauthorizedHandler((code) => redirectToLogin(code));
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   return (
     <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
       <ChatRuntimeProvider openEventSource={openEventSource}>

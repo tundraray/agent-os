@@ -1,6 +1,7 @@
 import { LiveEventSchema, type LiveEvent } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import { apiRequest, describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { apiBaseUrl } from "@/lib/config";
 import type { logger as appLogger } from "@/lib/logger";
 
@@ -66,6 +67,22 @@ function eventsUrl(target: LiveTarget | null): string {
   return target === null ? base : `${base}?watch=${encodeURIComponent(target)}`;
 }
 
+/**
+ * A closed stream shows no status code, so `GET /api/auth/me` tells whether the session is gone
+ * (design-identity.md, C3 web; DC-13). A 401 has already reached the unauthorized handler, which
+ * leaves the page; any other answer keeps reconnecting as before.
+ */
+async function sessionAlive(logger: LiveLogger): Promise<boolean> {
+  try {
+    await apiRequest({ path: "/api/auth/me" });
+    return true;
+  } catch (error) {
+    if (isApiRequestError(error) && error.status === 401) return false;
+    logger.warn("live session probe failed; reopening", describeApiError(error));
+    return true;
+  }
+}
+
 function frameData(event: Event): unknown {
   return "data" in event ? event.data : undefined;
 }
@@ -98,11 +115,14 @@ export function createLiveStore({
 
   let source: LiveEventSource | null = null;
   let reopenTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The session probe in flight after the source closed; a newer open or `dispose` drops its answer. */
+  let probe: object | null = null;
   const readyWaiters = new Set<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }>();
 
   function closeSource(): void {
     if (reopenTimer !== null) clearTimeout(reopenTimer);
     reopenTimer = null;
+    probe = null;
     source?.close();
     source = null;
   }
@@ -175,14 +195,25 @@ export function createLiveStore({
       state.setState({ connection: "lost" });
       announcer.getState().announce(ANNOUNCE_LOST);
     }
-    // A CONNECTING source retries by itself; a CLOSED one never comes back, so the store reopens it.
+    // A CONNECTING source retries by itself; a CLOSED one never comes back, so the store reopens it
+    // once the session is known to be alive.
     if (failed.readyState === READY_STATE_CLOSED) {
       closeSource();
-      reopenTimer = setTimeout(() => {
-        reopenTimer = null;
-        open();
-      }, REOPEN_DELAY_MS);
+      const current = {};
+      probe = current;
+      void sessionAlive(logger).then((alive) => {
+        if (probe !== current) return;
+        probe = null;
+        if (alive) scheduleReopen();
+      });
     }
+  }
+
+  function scheduleReopen(): void {
+    reopenTimer = setTimeout(() => {
+      reopenTimer = null;
+      open();
+    }, REOPEN_DELAY_MS);
   }
 
   function open(): void {
@@ -202,7 +233,7 @@ export function createLiveStore({
     });
   }
 
-  const isAlive = (): boolean => source !== null || reopenTimer !== null;
+  const isAlive = (): boolean => source !== null || reopenTimer !== null || probe !== null;
 
   return Object.assign(state, {
     watch: (target: LiveTarget | null): Promise<void> => {

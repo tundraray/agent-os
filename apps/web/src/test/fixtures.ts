@@ -6,6 +6,7 @@ import {
   AgentViewSchema,
   ConfirmationSchema,
   ConversationViewSchema,
+  CurrentUserSchema,
   HistoryEntrySchema,
   PendingMessageSchema,
   ThreadListResponseSchema,
@@ -17,6 +18,7 @@ import {
   type AgentView,
   type Confirmation,
   type ConversationView,
+  type CurrentUser,
   type HistoryEntry,
   type PendingMessage,
   type ThreadListResponse,
@@ -38,6 +40,18 @@ export function threadSummary(overrides: Partial<ThreadSummary> & Pick<ThreadSum
 /** Body of GET /api/threads; validated by ThreadListResponseSchema. */
 export function threadList(threads: ThreadSummary[], nextCursor: string | null = null): ThreadListResponse {
   return ThreadListResponseSchema.parse({ threads, nextCursor });
+}
+
+/** Body of GET /api/auth/me: an employee with a local password, not an administrator. */
+export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
+  return CurrentUserSchema.parse({
+    id: '00000000-0000-4000-8000-000000000001',
+    email: 'anya@corp.example',
+    name: 'Аня Смирнова',
+    isAdmin: false,
+    hasPassword: true,
+    ...overrides,
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------

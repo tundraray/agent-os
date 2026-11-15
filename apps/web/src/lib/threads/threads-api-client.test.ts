@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { threadsApiClient } from './threads-api-client';
-import { ThreadsApiError } from './threads-api-error';
+import { ApiRequestError } from '@/lib/api/api-request';
 
 const API = 'http://api.test';
 
@@ -11,7 +11,7 @@ type Case = {
   name: string;
   handler: Parameters<typeof server.use>[0];
   call: () => Promise<unknown>;
-  expected: { kind: ThreadsApiError['kind']; status: number | undefined };
+  expected: { kind: ApiRequestError['kind']; status: number | undefined };
 };
 
 const cases: Case[] = [
@@ -79,8 +79,8 @@ describe('threadsApiClient: error classification', () => {
       (reason: unknown) => reason,
     );
 
-    expect(error).toBeInstanceOf(ThreadsApiError);
-    expect(error).toMatchObject({ name: 'ThreadsApiError', ...expected });
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error).toMatchObject({ name: 'ApiRequestError', ...expected });
   });
 });
 

@@ -2,7 +2,7 @@ import type { ThreadMessage } from "@assistant-ui/react";
 import { createAssistantStream, type AssistantStream } from "assistant-stream";
 import { logger } from "@/lib/logger";
 import type { ThreadsApiClient } from "./threads-api-client";
-import { describeThreadsError, isThreadsApiError } from "./threads-api-error";
+import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import type { ShellStatusStore } from "./shell-status-store";
 
 /** At most one GET /api/threads/:id per interval. */
@@ -53,10 +53,10 @@ export function createTitlePollStream({
             return;
           }
         } catch (error) {
-          if (isThreadsApiError(error) && error.kind === "not_found") return;
+          if (isApiRequestError(error) && error.kind === "not_found") return;
           logger.warn("[web-shell] title poll request failed", {
             remoteId,
-            ...describeThreadsError(error),
+            ...describeApiError(error),
           });
         }
         const nextAt = startedAt + TITLE_POLL_INTERVAL_MS;

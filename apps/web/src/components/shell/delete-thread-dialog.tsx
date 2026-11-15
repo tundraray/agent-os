@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { logger } from '@/lib/logger';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
+import { describeApiError } from '@/lib/api/api-request';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,7 +48,7 @@ function useThreadHasAgents(threadId: string | undefined, open: boolean): boolea
         if (current) setAnswer({ threadId, hasAgents: agents.length > 0 });
       },
       (error: unknown) => {
-        logger.warn('thread agents read failed', { ...describeThreadsError(error), threadId });
+        logger.warn('thread agents read failed', { ...describeApiError(error), threadId });
       },
     );
     return () => {

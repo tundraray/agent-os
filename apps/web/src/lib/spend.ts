@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import type { SpendResponse } from '@agent-os/contracts';
 import { logger } from '@/lib/logger';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
+import { describeApiError } from '@/lib/api/api-request';
 
 /** SP-01 as the user block shows it. */
 export type SpendState = { kind: 'loading' } | { kind: 'ready'; text: string } | { kind: 'error' };
@@ -52,7 +52,7 @@ function readSpendOnce(): Promise<SpendState> {
   spendRead = threadsApiClient.getSpend().then(
     (spend): SpendState => ({ kind: 'ready', text: formatSpend(spend) }),
     (error: unknown): SpendState => {
-      logger.warn('spend read failed', describeThreadsError(error));
+      logger.warn('spend read failed', describeApiError(error));
       return { kind: 'error' };
     },
   );

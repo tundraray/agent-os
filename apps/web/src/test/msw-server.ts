@@ -2,13 +2,15 @@ import type { AgentNode, AwaitingCount, SpendResponse } from '@agent-os/contract
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { apiBaseUrl } from '@/lib/config';
+import { currentUser } from './fixtures';
 
 /**
- * Reads the shell makes on every mount whatever the test is about: the «Агенты» counter (NV-01), the
- * month's spend (SP-01) and the agents of a thread in the delete dialog (MC-26). A test that cares
- * overrides them with `server.use(...)`.
+ * Reads the shell makes on every mount whatever the test is about: the signed-in employee (UM-01, also
+ * the probe of a closed live stream), the «Агенты» counter (NV-01), the month's spend (SP-01) and the
+ * agents of a thread in the delete dialog (MC-26). A test that cares overrides them with `server.use(...)`.
  */
 const shellDefaults = [
+  http.get(`${apiBaseUrl}/api/auth/me`, () => HttpResponse.json(currentUser())),
   http.get(`${apiBaseUrl}/api/agents/awaiting`, () => HttpResponse.json({ count: 0 } satisfies AwaitingCount)),
   http.get(`${apiBaseUrl}/api/spend`, () =>
     HttpResponse.json({ month: '2026-11', costUsd: 0 } satisfies SpendResponse),

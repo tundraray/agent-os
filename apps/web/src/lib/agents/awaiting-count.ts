@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { createCoalescedRunner } from '@/lib/live/coalesced-runner';
 import { logger } from '@/lib/logger';
-import { describeThreadsError } from '@/lib/threads/threads-api-error';
+import { describeApiError } from '@/lib/api/api-request';
 
 /** design-web.md, «Сайдбар»: the counter re-reads by `tree` notes no more than once a second. */
 const REREAD_INTERVAL_MS = 1000;
@@ -26,7 +26,7 @@ export function useAwaitingCount(): number {
           const awaiting = await apiClient.getAwaitingCount();
           if (mounted) setCount(awaiting.count);
         } catch (error) {
-          logger.warn('awaiting count read failed', describeThreadsError(error));
+          logger.warn('awaiting count read failed', describeApiError(error));
         }
       },
       { minIntervalMs: REREAD_INTERVAL_MS },

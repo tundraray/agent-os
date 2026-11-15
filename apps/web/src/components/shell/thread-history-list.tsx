@@ -21,7 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useNow } from '@/hooks/use-now';
 import { focusAfterNewChat } from '@/lib/focus';
 import { logger } from '@/lib/logger';
-import { describeThreadsError, isThreadsApiError } from '@/lib/threads/threads-api-error';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import {
   entryActivityAt,
   groupThreadsByDate,
@@ -419,8 +419,8 @@ export function ThreadHistoryList() {
           },
           (error: unknown) => {
             // A failed DELETE is already reported by the list adapter (toast, rollback, log).
-            if (!isThreadsApiError(error)) {
-              logger.error('[web-shell] thread delete failed', { threadId: entry.id, ...describeThreadsError(error) });
+            if (!isApiRequestError(error)) {
+              logger.error('[web-shell] thread delete failed', { threadId: entry.id, ...describeApiError(error) });
             }
           },
         );

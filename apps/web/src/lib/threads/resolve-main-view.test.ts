@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveMainView, type MainView, type MainViewInput } from './resolve-main-view';
-import { ThreadsApiError } from './threads-api-error';
+import { ApiRequestError } from '@/lib/api/api-request';
 
 const base: MainViewInput = {
   routeThreadId: undefined,
@@ -13,16 +13,16 @@ describe('resolveMainView', () => {
   it.each<{ name: string; input: Partial<MainViewInput>; expected: MainView }>([
     {
       name: 'rule 1: a not_found switch error for the route thread → not-found',
-      input: { routeThreadId: 'x', switchError: { threadId: 'x', error: new ThreadsApiError('not_found', 404) } },
+      input: { routeThreadId: 'x', switchError: { threadId: 'x', error: new ApiRequestError({ kind: 'not_found', method: 'GET', path: '/api/threads/x', status: 404 }) } },
       expected: { kind: 'not-found' },
     },
     {
       name: 'rule 1: any other switch error for the route thread → load-error / switch',
-      input: { routeThreadId: 'x', switchError: { threadId: 'x', error: new ThreadsApiError('network') } },
+      input: { routeThreadId: 'x', switchError: { threadId: 'x', error: new ApiRequestError({ kind: 'network', method: 'GET', path: '/api/threads/x' }) } },
       expected: { kind: 'load-error', retry: 'switch' },
     },
     {
-      name: 'rule 1: a switch error that is not a ThreadsApiError → load-error / switch',
+      name: 'rule 1: a switch error that is not a ApiRequestError → load-error / switch',
       input: { routeThreadId: 'x', switchError: { threadId: 'x', error: new Error('boom') } },
       expected: { kind: 'load-error', retry: 'switch' },
     },
@@ -32,13 +32,13 @@ describe('resolveMainView', () => {
         routeThreadId: 'x',
         mainRemoteId: 'x',
         historyStatus: 'ready',
-        switchError: { threadId: 'x', error: new ThreadsApiError('not_found', 404) },
+        switchError: { threadId: 'x', error: new ApiRequestError({ kind: 'not_found', method: 'GET', path: '/api/threads/x', status: 404 }) },
       },
       expected: { kind: 'not-found' },
     },
     {
       name: 'rule 2: a switch error of another thread is ignored; the main thread is not the route thread → switching',
-      input: { routeThreadId: 'x', mainRemoteId: 'y', switchError: { threadId: 'y', error: new ThreadsApiError('http', 500) } },
+      input: { routeThreadId: 'x', mainRemoteId: 'y', switchError: { threadId: 'y', error: new ApiRequestError({ kind: 'http', method: 'GET', path: '/api/threads/x', status: 500 }) } },
       expected: { kind: 'switching' },
     },
     {
@@ -88,7 +88,7 @@ describe('resolveMainView', () => {
     },
     {
       name: 'rule 5: a new chat on `/` ignores a switch error of a thread it no longer shows',
-      input: { routeThreadId: undefined, switchError: { threadId: 'x', error: new ThreadsApiError('not_found', 404) } },
+      input: { routeThreadId: undefined, switchError: { threadId: 'x', error: new ApiRequestError({ kind: 'not_found', method: 'GET', path: '/api/threads/x', status: 404 }) } },
       expected: { kind: 'thread', deleted: false },
     },
     {

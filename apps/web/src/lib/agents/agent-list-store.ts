@@ -5,7 +5,7 @@ import { createCoalescedRunner } from "@/lib/live/coalesced-runner";
 import type { LiveStore } from "@/lib/live/live-store";
 import type { logger as appLogger } from "@/lib/logger";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
-import { describeThreadsError } from "@/lib/threads/threads-api-error";
+import { describeApiError } from "@/lib/api/api-request";
 
 export type AgentListStatus = "idle" | "loading" | "ready" | "error";
 
@@ -109,7 +109,7 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         expanded: expandedWith(page.agents),
       });
     } catch (error) {
-      logger.warn("agent list load failed", describeThreadsError(error));
+      logger.warn("agent list load failed", describeApiError(error));
       set({ status: "error" });
     }
   }
@@ -129,7 +129,7 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         expanded: expandedWith(page.agents),
       }));
     } catch (error) {
-      logger.warn("agent list load more failed", describeThreadsError(error));
+      logger.warn("agent list load more failed", describeApiError(error));
       set({ loadingMore: false, loadMoreFailed: true });
     }
   }
@@ -159,7 +159,7 @@ export function createAgentListStore({ api, live, logger }: CreateAgentListStore
         cursor = nextCursor;
       }
     } catch (error) {
-      logger.warn("agent list refresh failed", describeThreadsError(error));
+      logger.warn("agent list refresh failed", describeApiError(error));
       return;
     }
 

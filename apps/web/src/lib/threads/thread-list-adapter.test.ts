@@ -5,7 +5,7 @@ import { server } from '@/test/msw-server';
 import { createShellStatusStore } from './shell-status-store';
 import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
 import { threadsApiClient } from './threads-api-client';
-import { ThreadsApiError } from './threads-api-error';
+import { ApiRequestError } from '@/lib/api/api-request';
 
 const API = 'http://api.test';
 const FIXTURE_DATE = new Date('2026-10-28T10:00:00.000Z');
@@ -81,7 +81,7 @@ describe('thread list adapter', () => {
       server.use(http.get(`${API}/api/threads`, () => HttpResponse.json({}, { status: 500 })));
       const { adapter, status } = setup();
 
-      await expect(adapter.list()).rejects.toBeInstanceOf(ThreadsApiError);
+      await expect(adapter.list()).rejects.toBeInstanceOf(ApiRequestError);
       expect(status.getState().loadMoreFailed).toBe(false);
     });
   });

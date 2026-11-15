@@ -7,7 +7,7 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { inheritedHistoryCaption } from "@/lib/agents/format";
 import { logger } from "@/lib/logger";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
-import { describeThreadsError } from "@/lib/threads/threads-api-error";
+import { describeApiError } from "@/lib/api/api-request";
 import { cn } from "@/lib/utils";
 
 /** A message of the parent's history as the block shows it. */
@@ -71,7 +71,7 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
     readInherited(apiClient, agentId).then(
       (messages) => setRead({ status: "ready", messages }),
       (error: unknown) => {
-        logger.warn("inherited history read failed", { ...describeThreadsError(error), agentId });
+        logger.warn("inherited history read failed", { ...describeApiError(error), agentId });
         setRead({ status: "failed" });
       },
     );

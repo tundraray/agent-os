@@ -13,7 +13,7 @@ import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import { selectAgent } from "@/lib/feed/to-feed";
 import { useFeedRuntime } from "@/lib/feed/use-feed-runtime";
 import { logger } from "@/lib/logger";
-import { describeThreadsError } from "@/lib/threads/threads-api-error";
+import { describeApiError } from "@/lib/api/api-request";
 
 type Brief = WorkflowRunBrief["brief"];
 
@@ -69,7 +69,7 @@ function useCoordinatorBrief(agentId: string | null, coordinator: boolean): Brie
     apiClient.getRun(agentId).then(
       (run) => setBrief(run.brief),
       (error: unknown) => {
-        logger.warn("workflow run read failed", { ...describeThreadsError(error), agentId });
+        logger.warn("workflow run read failed", { ...describeApiError(error), agentId });
       },
     );
   }, [apiClient, agentId, coordinator]);

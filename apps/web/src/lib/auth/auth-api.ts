@@ -1,0 +1,34 @@
+import {
+  CurrentUserSchema,
+  ProviderButtonListSchema,
+  type CurrentUser,
+  type PasswordChangeBody,
+  type PasswordSignInBody,
+  type ProviderButtonList,
+} from "@agent-os/contracts";
+import { apiRequest } from "@/lib/api/api-request";
+
+async function me(): Promise<CurrentUser> {
+  return apiRequest({ path: "/api/auth/me", schema: CurrentUserSchema });
+}
+
+/** 204 also without a session. */
+async function signOut(): Promise<void> {
+  await apiRequest({ path: "/api/auth/sign-out", method: "POST" });
+}
+
+async function providers(): Promise<ProviderButtonList> {
+  return apiRequest({ path: "/api/auth/providers", schema: ProviderButtonListSchema });
+}
+
+/** 204 and the session cookie; 401 `INVALID_CREDENTIALS` or `ACCOUNT_DISABLED` surfaces as `http`. */
+async function signInWithPassword(body: PasswordSignInBody): Promise<void> {
+  await apiRequest({ path: "/api/auth/password", method: "POST", body });
+}
+
+/** 204; 400 `VALIDATION_FAILED` carries `reason` (`wrong_current_password`, `weak_password`, `not_local_account`). */
+async function changePassword(body: PasswordChangeBody): Promise<void> {
+  await apiRequest({ path: "/api/auth/password/change", method: "POST", body });
+}
+
+export const authApi = { me, signOut, providers, signInWithPassword, changePassword };
