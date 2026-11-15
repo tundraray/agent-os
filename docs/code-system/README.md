@@ -6,7 +6,7 @@
 |---|---|---|
 | Выведено из кода | `packages/runtime`, `packages/db`, `packages/contracts`, `apps/api`, `apps/web`, прочитаны 2026-11-14 | функция сборки пакета, репозиторий над транзакцией, outbox, правила пакетов |
 | Решения владельца | [agent-platform/prd.md](../features/agent-platform/prd.md), Constraints; [CLAUDE.md](../../CLAUDE.md), Code rules и Logging | слои `runtime ← agents ← workflows ← приложения`, общий пакет `common`, логирование |
-| Определено здесь | [design-runtime.md](../features/agent-platform/design-runtime.md), [design-code-execution.md](../features/code-execution/design-code-execution.md), [design-identity.md](../features/enterprise-access/design-identity.md) | шаг задачи как единица durable-работы; слой исполнителя кода; граница аутентификации API и запечатанные секреты |
+| Определено здесь | [design-runtime.md](../features/agent-platform/design-runtime.md), [design-code-execution.md](../features/code-execution/design-code-execution.md), [design-identity.md](../features/enterprise-access/design-identity.md), [design-mcp-connect.md](../features/enterprise-access/design-mcp-connect.md) | шаг задачи как единица durable-работы; слой исполнителя кода; граница аутентификации API и запечатанные секреты; реестр MCP-серверов и аккаунты сотрудников в пакете `agents` |
 | [ADR-0001](../adr/ADR-0001-durable-runtime-owner.md), [ADR-0003](../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../adr/ADR-0004-agent-framework-packages.md) | `docs/adr/` | владелец состояния задач, схема `app` и миграции, правила приватных пакетов |
 
 ## Style
@@ -21,7 +21,7 @@
 |---|---|---|---|
 | Приложения | HTTP, аутентификация, чтение окружения, сборка пакетов в модули Nest; экраны | `apps/api`, `apps/web` | любой пакет ниже; `apps/web` — только `contracts` и `common` |
 | Workflows | шаблоны, координатор, бриф | `packages/workflows` | agents и всё ниже |
-| Agents | агент, его сессия, инструменты, обёртка вызова модели над Mastra | `packages/agents` | runtime, code-runner и всё ниже |
+| Agents | агент, его сессия, инструменты, обёртка вызова модели над Mastra; реестр MCP-серверов, аккаунты сотрудников и вызов MCP по HTTP | `packages/agents` | runtime, code-runner и всё ниже |
 | Исполнитель кода | процесс на один скрипт с QuickJS внутри, мост с процессом API, пределы и убийство процесса; ничего не знает об агентах, таблиц нет | `packages/code-runner` | common |
 | Runtime | задачи и их шаги, очередь сообщений, запросы решений, журнал событий, журнал токенов, восстановление | `packages/runtime` | db, contracts, common |
 | Данные | пул `pg`, клиент Drizzle, модель схемы `app`, миграции | `packages/db` | contracts |
@@ -42,6 +42,7 @@
 | `db` | модель схемы `app` всех пакетов и историю миграций | пул, клиент, тип транзакции, функции миграций | все пакеты с таблицами |
 | `common` | логгер; шифрование секретов | `createLogger`, приёмники и `createSecretMasker` — маскировка секретов логгера для текста вне лога; `SecretBox` ([sealed-secret.md](./patterns/sealed-secret.md)) | все |
 | `identity` в `apps/api` | таблицы `identity_*`: сотрудники, группы IdP, роли, подключения входа, запросы входа, сеансы; таблица `audit_events` модуля аудита | `SessionGuard` и `req.user` ([auth-boundary.md](./patterns/auth-boundary.md)), `IdentityDirectory`, `AuditLog`, реализация порта `OwnerGate` | модули `apps/api`; пакеты получают только строку владельца и порт `OwnerGate` ([design-identity.md](../features/enterprise-access/design-identity.md)) |
+| MCP в `agents` | таблицы `agent_mcp_*`: серверы реестра с их инструментами, запечатанные токены сотрудников, запросы подключения | операции `Agents.mcp`; запись принимает хук `onChange(tx, change)`, через который `apps/api` пишет аудит в той же транзакции | `apps/api` (контроллеры реестра, подключения и возврата из OAuth); `SecretBox` и адрес возврата приходят параметрами `createAgents`; токен не выходит из пакета, кроме как в заголовке запроса к серверу ([design-mcp-connect.md](../features/enterprise-access/design-mcp-connect.md), KD-1) |
 | `code-runner` | процесс исполнителя кода и его вход; процесс запускается только с флагами модели разрешений Node и читает только собранный вход пакета и QuickJS из каталогов, где ни одна ссылка не ведёт наружу | функция сборки `createCodeRunner` и операция `CodeRunner.run` | только `agents`; правила вызовов держит вызывающий, а не пакет ([design-code-execution.md](../features/code-execution/design-code-execution.md), KD-1, KD-2; [ADR-0011](../adr/ADR-0011-code-runner-quickjs-process.md)) |
 
 Пакет пишет и читает только таблицы со своим префиксом. Данные другого пакета он получает через операции этого пакета. Транзакция пересекает границу только в одну сторону: runtime открывает транзакцию шага и даёт её обработчику верхнего слоя для его собственных записей.

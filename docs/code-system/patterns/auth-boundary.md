@@ -32,3 +32,4 @@
 
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — KD-3, `SessionGuard`, `@Public()`, `@AdminOnly()`, SCIM
 - [design-chat.md](../../features/agent-platform/design-chat.md) — владелец в обработчиках бесед и агентов
+- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — подключение аккаунта и возврат из OAuth под сеансом без `@Public()`; реестр под `@AdminOnly()` (KD-6)

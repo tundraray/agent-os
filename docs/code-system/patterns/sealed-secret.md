@@ -31,3 +31,4 @@
 ## Used In
 
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — секрет клиента OIDC в `identity_connections`
+- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — общий токен MCP-сервера, секрет клиента OAuth и токены сотрудников в `agent_mcp_*`; токены перезапечатываются при каждом обновлении (KD-5)

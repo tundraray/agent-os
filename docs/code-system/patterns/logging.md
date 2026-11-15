@@ -31,3 +31,4 @@
 - [design-workflows.md](../../features/agent-platform/design-workflows.md) — разбор шаблонов и запуск workflow
 - [design-chat.md](../../features/agent-platform/design-chat.md) — команды API, поток SSE, генерация заголовка
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — вход, SCIM, отключение; новые имена секретных полей
+- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — реестр, подключение аккаунта и вызов MCP; имена `refreshToken`, `sharedToken`, `tokens`

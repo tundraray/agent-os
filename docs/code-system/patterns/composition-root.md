@@ -29,3 +29,4 @@
 - [design-workflows.md](../../features/agent-platform/design-workflows.md) — `createWorkflows`, модуль `WorkflowsModule`
 - [design-chat.md](../../features/agent-platform/design-chat.md) — порядок сборки в `AppModule`, регистрация определения `chat` в фабрике провайдера
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — порт `OwnerGate` в параметрах `createAgents`; `readIdentitySettings`
+- [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — `SecretBox` и адрес возврата OAuth в параметрах `createAgents`; `parseAgentsConfig` без файла серверов
