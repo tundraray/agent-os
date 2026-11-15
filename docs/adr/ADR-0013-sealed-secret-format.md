@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-11-15).
+Deprecated (2026-11-15). Решение владельца: секреты хранятся в базе без шифрования, ключа вне базы нет ([design-identity.md](../features/enterprise-access/design-identity.md), KD-7).
 
 ## Decision
 

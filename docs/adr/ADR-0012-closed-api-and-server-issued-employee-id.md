@@ -73,14 +73,14 @@ API должен знать, какой сотрудник прислал зап
 
 - Новый маршрут любой части закрыт сеансом, пока его не пометили `@Public()`
 - Сотрудник остаётся одной учётной записью при смене почты и при входе через OIDC и SAML
-- Ни один путь создания сотрудника — JIT, SCIM, вход для разработки, bootstrap — не даёт идентификатор с префиксом `system:`
+- Ни один путь создания сотрудника — локальная учётная запись, JIT, SCIM, команда оператора — не даёт идентификатор с префиксом `system:`
 - Обработчики вида `const ownerId = req.user.id` и поиск «чужое = нет» работают как прежде
 
 ### Negative Consequences
 
 - База не проверяет, что владелец существует; строки прежних владельцев вроде `dev-user` остаются без сотрудника, и их работу останавливает порт `OwnerGate`, который неизвестного владельца считает отключённым
 - Служебному владельцу без строки `identity_users`, если такой появится, понадобится, чтобы `OwnerGate` его признавал
-- Заголовок `x-user-id` удалён, поэтому e2e-тесты и разработчик входят через вход для разработки и несут cookie сеанса
+- Заголовок `x-user-id` удалён, поэтому e2e-тесты и разработчик входят по логину и паролю и несут cookie сеанса
 - Каждый запрос стоит одного чтения сеанса и сотрудника из базы
 
 ### Consequences for the next parts
@@ -101,7 +101,7 @@ API должен знать, какой сотрудник прислал зап
 ## Related Information
 
 - [design-identity.md](../features/enterprise-access/design-identity.md) — KD-3, KD-4, Contract Definitions
-- [prd.md](../features/enterprise-access/prd.md) — FR-04, FR-10, NFR-03
+- [prd.md](../features/enterprise-access/prd.md) — FR-01, FR-04, NFR-03
 - [auth-boundary.md](../code-system/patterns/auth-boundary.md)
 - [Code System](../code-system/README.md) — Layer Map
 - [ADR-0001](ADR-0001-durable-runtime-owner.md)
