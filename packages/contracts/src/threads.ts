@@ -53,11 +53,15 @@ export const ThreadsErrorCodeSchema = z.enum([
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
 
-/** Error body produced by NestJS HttpException (errorCode is set by the threads API). */
+/**
+ * Error body produced by NestJS HttpException. `errorCode` is set by the API;
+ * `reason` is the machine-readable cause where an operation names one.
+ */
 export const ApiErrorSchema = z.object({
   statusCode: z.number().int(),
   message: z.union([z.string(), z.array(z.string())]),
   error: z.string().optional(),
   errorCode: z.string().optional(),
+  reason: z.string().optional(),
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;

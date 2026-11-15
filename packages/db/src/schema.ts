@@ -1,13 +1,21 @@
 import {
+  ABSOLUTE_MINUTES_DEFAULT,
+  ABSOLUTE_MINUTES_MAX,
+  ABSOLUTE_MINUTES_MIN,
   DecisionStatusSchema,
   DeliveryStatusSchema,
   EVENT_PAYLOAD_MAX_BYTES,
   HistoryEntryKindSchema,
+  IDLE_MINUTES_DEFAULT,
+  IDLE_MINUTES_MAX,
+  IDLE_MINUTES_MIN,
   MessageStatusSchema,
+  ProviderTypeSchema,
   TaskStatusSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  UserStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import { type SQL, sql } from 'drizzle-orm';
@@ -51,6 +59,10 @@ const literal = (value: string): SQL =>
 /** `column IN (...)` over the values of a contract enum. */
 const isOneOf = (column: AnyPgColumn, values: readonly string[]): SQL =>
   sql`${column} in (${sql.join(values.map(literal), sql`, `)})`;
+
+/** `column BETWEEN min AND max` over code constants. */
+const isWithin = (column: AnyPgColumn, min: number, max: number): SQL =>
+  sql`${column} between ${sql.raw(String(min))} and ${sql.raw(String(max))}`;
 
 // ---------------------------------------------------------------------------------------------
 // Runtime tables (agent-platform/design-runtime.md, Data Model).
@@ -469,3 +481,170 @@ export const chatConversations = app.table(
     ),
   ],
 );
+
+// ---------------------------------------------------------------------------------------------
+// Identity (enterprise-access/design-identity.md, Data Model). Read only by the `identity` module
+// of `apps/api`. Email and login are stored normalized (trimmed, lower case), so a plain unique
+// index makes them unique regardless of case. Owner columns of `runtime` and `agents` stay text
+// without FK (ADR-0012).
+// ---------------------------------------------------------------------------------------------
+
+export const identityUsers = app.table(
+  'identity_users',
+  {
+    /** Issued by the server, never taken from a provider (Invariant 3). */
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    /** Empty string when there is no name. */
+    name: text('name').notNull().default(''),
+    /** Login of a local account; null for provider-only accounts. */
+    login: text('login'),
+    /** argon2id hash with its parameters; null for provider-only accounts. */
+    passwordHash: text('password_hash'),
+    status: text('status').notNull().default(UserStatusSchema.enum.active),
+    /** Personal admin right, besides admin roles. */
+    isAdmin: boolean('is_admin').notNull().default(false),
+    lastSignInAt: timestamp('last_sign_in_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('identity_users_email_idx').on(t.email),
+    uniqueIndex('identity_users_login_idx').on(t.login),
+    check('identity_users_status_check', isOneOf(t.status, UserStatusSchema.options)),
+  ],
+);
+
+export const identityRoles = app.table(
+  'identity_roles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    isAdmin: boolean('is_admin').notNull().default(false),
+    /** The built-in «Супер-администратор»: created by the migration, never changed (KD-6). */
+    builtin: boolean('builtin').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('identity_roles_name_idx').on(sql`lower(${t.name})`)],
+);
+
+export const identityRoleMembers = app.table(
+  'identity_role_members',
+  {
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.roleId, t.userId] }),
+    index('identity_role_members_user_idx').on(t.userId),
+  ],
+);
+
+export const identityProviders = app.table(
+  'identity_providers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Never changes after creation. */
+    type: text('type').notNull(),
+    name: text('name').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    /** Grows with every change of the provider. */
+    version: integer('version').notNull().default(1),
+    /** Settings of the type, the client secret included as is (KD-7). */
+    options: jsonb('options').notNull().default({}),
+    /** Orders the providers. */
+    createdAt: createdAt(),
+  },
+  (t) => [check('identity_providers_type_check', isOneOf(t.type, ProviderTypeSchema.options))],
+);
+
+/** One-time sign-in request; the row is deleted at the first return from the provider. */
+export const identityLoginRequests = app.table('identity_login_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  state: text('state').notNull().unique('identity_login_requests_state_key'),
+  providerId: uuid('provider_id')
+    .notNull()
+    .references(() => identityProviders.id, { onDelete: 'cascade' }),
+  nonce: text('nonce').notNull(),
+  /** PKCE verifier. */
+  codeVerifier: text('code_verifier').notNull(),
+  /** Web path to return to after sign-in. */
+  next: text('next').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+});
+
+/** Session of an employee; its limits are computed from the settings, not stored (KD-2). */
+export const identitySessions = app.table(
+  'identity_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** SHA-256 of the session token; the token itself is never stored. */
+    tokenHash: text('token_hash').notNull().unique('identity_sessions_token_hash_key'),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Why the session was ended (`account_disabled`, DC-9); null while it is live. */
+    endedReason: text('ended_reason'),
+  },
+  (t) => [index('identity_sessions_user_idx').on(t.userId)],
+);
+
+/** The single row of the part's settings (SignInSettings); the migration creates it. */
+export const identitySettings = app.table(
+  'identity_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** Public address without `/api`; null until saved. */
+    publicUrl: text('public_url'),
+    idleMinutes: integer('idle_minutes').notNull().default(IDLE_MINUTES_DEFAULT),
+    absoluteMinutes: integer('absolute_minutes').notNull().default(ABSOLUTE_MINUTES_DEFAULT),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id or `system`; null while the defaults stand. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    check('identity_settings_single_row_check', sql`${t.id}`),
+    check(
+      'identity_settings_idle_minutes_check',
+      isWithin(t.idleMinutes, IDLE_MINUTES_MIN, IDLE_MINUTES_MAX),
+    ),
+    check(
+      'identity_settings_absolute_minutes_check',
+      isWithin(t.absoluteMinutes, ABSOLUTE_MINUTES_MIN, ABSOLUTE_MINUTES_MAX),
+    ),
+    check(
+      'identity_settings_idle_not_above_absolute_check',
+      sql`${t.idleMinutes} <= ${t.absoluteMinutes}`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Audit (enterprise-access/design-identity.md, KD-7). Written only by `AuditLog` of `apps/api`;
+// kinds are open: every part adds its own.
+// ---------------------------------------------------------------------------------------------
+
+export const auditEvents = app.table('audit_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(),
+  /** Employee id or `system`. */
+  actor: text('actor').notNull(),
+  objectType: text('object_type'),
+  objectId: text('object_id'),
+  /** Secrets and passwords are already masked by `AuditLog`. */
+  before: jsonb('before'),
+  after: jsonb('after'),
+  outcome: text('outcome').notNull(),
+  reason: text('reason'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+});

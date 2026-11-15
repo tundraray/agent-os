@@ -1,6 +1,7 @@
 export {
   createLogger,
   createSecretMasker,
+  isSecretFieldName,
   type LogFields,
   type LogLevel,
   type LogRecord,

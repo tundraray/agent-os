@@ -45,7 +45,18 @@ const SECRET_FIELD_NAMES = new Set([
   'authorization',
   'cookie',
   'dsn',
+  'clientsecret',
+  'idtoken',
+  'codeverifier',
+  'sessiontoken',
+  'currentpassword',
+  'newpassword',
 ]);
+
+/** Whether a field of this name holds a secret (case-insensitive); the logger and the audit log redact it. */
+export function isSecretFieldName(name: string): boolean {
+  return SECRET_FIELD_NAMES.has(name.toLowerCase());
+}
 
 /**
  * The logger's redaction by value outside the log: replaces every occurrence of a secret at least
@@ -122,7 +133,7 @@ function cleanValue(value: unknown, mask: Mask, seen: WeakSet<object>): unknown 
   if (Array.isArray(value)) return value.map((item) => cleanValue(item, mask, seen));
   const cleaned: LogFields = {};
   for (const [key, item] of Object.entries(value)) {
-    cleaned[key] = SECRET_FIELD_NAMES.has(key.toLowerCase()) ? REDACTED : cleanValue(item, mask, seen);
+    cleaned[key] = isSecretFieldName(key) ? REDACTED : cleanValue(item, mask, seen);
   }
   return cleaned;
 }
