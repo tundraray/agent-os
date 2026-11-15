@@ -24,7 +24,7 @@ https://agent-os.corp/auth/oidc/7/callback  [⧉]  5 значение для к�
 3. **Подсказка** — Caption, `--muted-foreground`, под полем.
 4. **Группа** — заголовок Heading и поля под ним; группы разделяет 24 px.
 5. **Значение для копирования** — значение Mono 13 / 20 на `--muted`, радиус md, и иконочная кнопка `Copy` справа; значение не редактируется.
-6. **Ошибка формы** — блок с подложкой `--destructive-subtle`, рамкой `--destructive-border`, иконкой `CircleX` `--destructive` и текстом `--foreground` над действиями.
+6. **Ошибка формы** — блок с подложкой `--destructive-subtle`, рамкой `--destructive-border`, иконкой `CircleX` `--destructive` и текстом `--foreground` над действиями. **Предупреждение** о последствиях настройки устроено так же, но с подложкой `--warning-subtle`, рамкой `--warning-border` и иконкой `TriangleAlert` `--warning`; оно стоит у поля или переключателя, к которому относится, и не мешает сохранению.
 7. **Действия** — основная кнопка (одна на форму) и `outline` «Отмена» слева направо, под формой.
 
 Поля идут одной колонкой, промежуток между полями 16 px. Форма в диалоге — те же правила внутри диалога, действия — в его подвале.
@@ -71,4 +71,4 @@ https://agent-os.corp/auth/oidc/7/callback  [⧉]  5 значение для к�
 
 ## Used In
 
-- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — формы и диалоги панели администратора, вход для разработки.
+- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — форма входа, смена пароля, формы и диалоги панели администратора.

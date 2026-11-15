@@ -80,4 +80,4 @@ Client secret
 
 ## Used In
 
-- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — подключения входа, токен SCIM, регистрация MCP-сервера.
+- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — провайдеры входа, токен SCIM, регистрация MCP-сервера.
