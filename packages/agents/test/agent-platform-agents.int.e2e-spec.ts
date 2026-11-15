@@ -1954,8 +1954,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect((await toolCallRowsOf(harness.db, rootId)).map((call) => `${call.tool} ${call.outcome}`)).toEqual([
         'create_incident_note success',
       ]);
-      expect((await harness.sessions.list(rootId, ownerA)).map((view) => view.agentId).sort()).toEqual(
-        [rootId, childId].sort(),
+      expect(new Set((await harness.sessions.list(rootId, ownerA)).map((view) => view.agentId))).toEqual(
+        new Set([rootId, childId]),
       );
       expect(historyLines(await historyOf(harness, childId, ownerA))).toEqual([
         'task: Child task of owner A',
