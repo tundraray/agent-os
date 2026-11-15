@@ -19,11 +19,11 @@ interface Run {
   output: string[];
 }
 
-async function run(script: string): Promise<Run> {
+async function run(script: string, limits: RunLimits = LIMITS): Promise<Run> {
   const output: string[] = [];
   const end = await runScript({
     script,
-    limits: LIMITS,
+    limits,
     quickJs,
     bridge: {
       request: (request) => {
@@ -100,7 +100,14 @@ describe('a script reaches nothing outside the QuickJS sandbox', () => {
 
 describe('a script stops at every limit with its reason', () => {
   // AC-07.1, AC-07.2, AC-07.3, DC-3, DC-14 (UC-E2, sandbox half); limits: 0.3 s, 8 MB, 1024 bytes.
-  it.each<{ name: string; script: string; end: ScriptEnd; lastOutput?: string; outputAtLeast: number }>([
+  it.each<{
+    name: string;
+    script: string;
+    end: ScriptEnd;
+    lastOutput?: string;
+    outputAtLeast: number;
+    timeoutMs?: number;
+  }>([
     {
       name: 'an endless loop',
       script: 'while (true) {}',
@@ -128,6 +135,8 @@ describe('a script stops at every limit with its reason', () => {
     {
       name: 'growing memory',
       script: 'const items = [];\nfor (;;) items.push({ n: items.length });',
+      // Filling 8 MB took longer than 0.3 s on a loaded CI machine, and the run ended as a timeout.
+      timeoutMs: 10_000,
       end: { op: 'error', reason: 'memory', text: null, line: 2 },
       outputAtLeast: 0,
     },
@@ -156,8 +165,8 @@ describe('a script stops at every limit with its reason', () => {
       end: { op: 'error', reason: 'result_not_json', text: null, line: null },
       outputAtLeast: 0,
     },
-  ])('$name', async ({ script, end, lastOutput, outputAtLeast }) => {
-    const result = await run(script);
+  ])('$name', async ({ script, end, lastOutput, outputAtLeast, timeoutMs = LIMITS.timeoutMs }) => {
+    const result = await run(script, { ...LIMITS, timeoutMs });
 
     expect(result.end).toEqual(end);
     expect(result.output.at(-1)).toBe(lastOutput);
