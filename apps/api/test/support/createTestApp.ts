@@ -1,5 +1,6 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Agents } from '@agent-os/agents';
@@ -20,6 +21,7 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
+import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
 import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
 
 export interface TestAppOptions {
@@ -40,6 +42,10 @@ export interface TestAppOptions {
    * the same name later gives the same latch through `fixtureLog.latch(name)`).
    */
   faults?: (files: FixtureFiles) => readonly FixtureFaultRule[];
+  /** Issuers of the provider types fixed in code: `google` points at this issuer (the test issuer). */
+  providerEndpoints?: { google: string };
+  /** Keeps every console line the process writes while the app lives in `TestApp.log` (the secrets scan). */
+  captureLog?: boolean;
 }
 
 export interface TestApp {
@@ -54,6 +60,8 @@ export interface TestApp {
   runtime: Runtime;
   /** The app's pool (`RUNTIME_DATABASE`): rows the plan's tests name and `pg_terminate_backend`. */
   pool: DatabaseConnection['pool'];
+  /** With `captureLog`: the console lines (logger records are JSON lines) from the boot until `close`; else empty. */
+  log: readonly string[];
   /** Closes the app and removes the fixture files. */
   close(): Promise<void>;
 }
@@ -63,7 +71,8 @@ export interface TestApp {
  * `AGENT_TURN_CLIENT` replaced by the scripted double of `@agent-os/agents/testing` — no network,
  * no provider keys. The MCP servers are the fixture processes (`logs`, `backoffice`) writing into
  * this app's call log. `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS` are set for the
- * boot only and restored once the app is initialised.
+ * boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
+ * helpers reach it as `http://localhost:<port>` (session.ts `apiOrigin`).
  */
 export async function createTestApp(
   options: TestAppOptions = {},
@@ -88,6 +97,7 @@ export async function createTestApp(
     MCP_ACCESS_TABLE: JSON.stringify(options.mcpAccess ?? {}),
     ...(options.workers ? { RUNTIME_WORKERS: 'on' } : {}),
   });
+  const log = options.captureLog ? captureConsole() : undefined;
   let app: INestApplication<App>;
   try {
     let builder = Test.createTestingModule({ imports: [AppModule] })
@@ -98,10 +108,19 @@ export async function createTestApp(
         .overrideProvider(AGENT_LIST_PAGE_SIZE)
         .useValue(options.agentPageSize);
     }
+    if (options.providerEndpoints !== undefined) {
+      builder = builder
+        .overrideProvider(GOOGLE_ISSUER_URL)
+        .useValue(options.providerEndpoints.google);
+    }
     const moduleRef = await builder.compile();
     app = moduleRef.createNestApplication<INestApplication<App>>();
     configureApp(app);
     await app.init();
+    await app.listen(0, '127.0.0.1');
+  } catch (error) {
+    log?.restore();
+    throw error;
   } finally {
     restoreEnv();
   }
@@ -113,9 +132,43 @@ export async function createTestApp(
     agents: app.get<Agents>(AGENTS),
     runtime: app.get<Runtime>(RUNTIME),
     pool: app.get<DatabaseConnection>(RUNTIME_DATABASE).pool,
+    log: log?.lines ?? [],
     close: async () => {
-      await app.close();
-      rmSync(fixtureLog.dir, { recursive: true, force: true });
+      try {
+        await app.close();
+      } finally {
+        log?.restore();
+        rmSync(fixtureLog.dir, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+const CONSOLE_METHODS = ['debug', 'info', 'log', 'warn', 'error'] as const;
+
+/**
+ * Records every line written through `console` (the logger's console sink, Nest's own output) and still
+ * prints it; `restore` puts the original methods back.
+ */
+function captureConsole(): { lines: string[]; restore(): void } {
+  const lines: string[] = [];
+  const originals = CONSOLE_METHODS.map(
+    (method) => [method, console[method]] as const,
+  );
+  for (const [method, original] of originals) {
+    console[method] = (...args: unknown[]) => {
+      lines.push(
+        args
+          .map((arg) => (typeof arg === 'string' ? arg : inspect(arg)))
+          .join(' '),
+      );
+      original.apply(console, args);
+    };
+  }
+  return {
+    lines,
+    restore: () => {
+      for (const [method, original] of originals) console[method] = original;
     },
   };
 }

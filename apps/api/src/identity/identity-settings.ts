@@ -1,4 +1,19 @@
-import { identitySettings } from '@agent-os/db';
+import { Inject, Injectable } from '@nestjs/common';
+import type { Logger } from '@agent-os/common';
+import type {
+  SignInSettings,
+  UpdateSignInSettingsBody,
+} from '@agent-os/contracts';
+import {
+  identitySettings,
+  type Database,
+  type DatabaseConnection,
+} from '@agent-os/db';
+import { isNull } from 'drizzle-orm';
+import { AuditLog } from '../audit/audit-log.js';
+import { APP_LOGGER } from '../logging/app-logger.js';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
+import { choosePublicUrl, type AddressedRequest } from './public-url.js';
 import type { SessionLimits } from './session-lifetime.js';
 import type { Executor } from './users.repository.js';
 
@@ -8,9 +23,138 @@ export const sessionLimitColumns = {
   absoluteMinutes: identitySettings.absoluteMinutes,
 };
 
+const signInSettingsColumns = {
+  ...sessionLimitColumns,
+  publicUrl: identitySettings.publicUrl,
+  updatedAt: identitySettings.updatedAt,
+};
+
+type SettingsRow = {
+  publicUrl: string | null;
+  idleMinutes: number;
+  absoluteMinutes: number;
+  updatedAt: Date | null;
+};
+
+/** The audit object of the sign-in settings (FR-11). */
+const SETTINGS_OBJECT_TYPE = 'sign_in_settings';
+
 /** The current session limits (KD-2); the migration creates the row, so its absence is a fault. */
-export async function readSessionLimits(executor: Executor): Promise<SessionLimits> {
-  const [row] = await executor.select(sessionLimitColumns).from(identitySettings);
+export async function readSessionLimits(
+  executor: Executor,
+): Promise<SessionLimits> {
+  const [row] = await executor
+    .select(sessionLimitColumns)
+    .from(identitySettings);
   if (row === undefined) throw new Error('identity_settings row is missing');
   return row;
+}
+
+async function readSettings(executor: Executor): Promise<SettingsRow> {
+  const [row] = await executor
+    .select(signInSettingsColumns)
+    .from(identitySettings);
+  if (row === undefined) throw new Error('identity_settings row is missing');
+  return row;
+}
+
+function toSignInSettings(row: SettingsRow): SignInSettings {
+  return {
+    publicUrl: row.publicUrl,
+    idleMinutes: row.idleMinutes,
+    absoluteMinutes: row.absoluteMinutes,
+    updatedAt: row.updatedAt?.toISOString() ?? null,
+  };
+}
+
+const auditState = ({
+  publicUrl,
+  idleMinutes,
+  absoluteMinutes,
+}: SettingsRow | UpdateSignInSettingsBody) => ({
+  publicUrl,
+  idleMinutes,
+  absoluteMinutes,
+});
+
+/**
+ * The sign-in settings of the part in the single `identity_settings` row (KD-2): session limits,
+ * which the session check reads on every request, and the public address for return URLs.
+ */
+@Injectable()
+export class IdentitySettings {
+  private readonly db: Database;
+
+  constructor(
+    @Inject(RUNTIME_DATABASE) database: DatabaseConnection,
+    private readonly auditLog: AuditLog,
+    @Inject(APP_LOGGER) private readonly logger: Logger,
+  ) {
+    this.db = database.db;
+  }
+
+  /**
+   * The public address for return URLs (AC-03.4): the saved one, otherwise the address the browser
+   * reached the API at, which is saved then. A concurrent first save keeps whichever came first.
+   */
+  async publicUrl(request: AddressedRequest): Promise<string> {
+    const { publicUrl: saved } = await readSettings(this.db);
+    if (saved !== null) return saved;
+    const fromRequest = choosePublicUrl(null, request);
+    const [stored] = await this.db
+      .update(identitySettings)
+      .set({ publicUrl: fromRequest })
+      .where(isNull(identitySettings.publicUrl))
+      .returning({ publicUrl: identitySettings.publicUrl });
+    if (stored === undefined)
+      return choosePublicUrl((await readSettings(this.db)).publicUrl, request);
+    this.logger.info('public url saved from request', {
+      publicUrl: fromRequest,
+      outcome: 'ok',
+    });
+    return fromRequest;
+  }
+
+  /** GET /api/admin/settings/sign-in (FR-26). */
+  async get(): Promise<SignInSettings> {
+    return toSignInSettings(await readSettings(this.db));
+  }
+
+  /**
+   * PUT /api/admin/settings/sign-in: the body is already checked against the bounds; new limits act
+   * from the next request of every session (AC-07.5). Writes `admin_change` on `sign_in_settings`.
+   */
+  async update(
+    actorId: string,
+    body: UpdateSignInSettingsBody,
+  ): Promise<SignInSettings> {
+    const startedAt = Date.now();
+    const { before, after } = await this.db.transaction(async (tx) => {
+      const previous = await readSettings(tx);
+      const [updated] = await tx
+        .update(identitySettings)
+        .set({ ...auditState(body), updatedAt: new Date(), updatedBy: actorId })
+        .returning(signInSettingsColumns);
+      if (updated === undefined)
+        throw new Error('identity_settings row is missing');
+      await this.auditLog.record(tx, {
+        kind: 'admin_change',
+        actor: actorId,
+        objectType: SETTINGS_OBJECT_TYPE,
+        before: auditState(previous),
+        after: auditState(updated),
+        outcome: 'ok',
+      });
+      return { before: previous, after: updated };
+    });
+    this.logger.info('sign-in settings updated', {
+      actorId,
+      objectType: SETTINGS_OBJECT_TYPE,
+      before: auditState(before),
+      after: auditState(after),
+      outcome: 'ok',
+      durationMs: Date.now() - startedAt,
+    });
+    return toSignInSettings(after);
+  }
 }

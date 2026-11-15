@@ -1,8 +1,7 @@
-import { request as httpRequest, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { request as httpRequest } from 'node:http';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
-import { type Session, sessionHeaders } from './session.js';
+import { portOf, type Session, sessionHeaders } from './session.js';
 
 /**
  * A small SSE client for `GET /api/events` (EventSource is a browser API): a raw HTTP request with
@@ -32,7 +31,11 @@ export interface SseStream {
    */
   next(type: string, timeoutMs?: number): Promise<SseEvent>;
   /** Resolves once `done` holds for the received events; fails after `timeoutMs`. */
-  until(done: (events: readonly SseEvent[]) => boolean, what: string, timeoutMs?: number): Promise<void>;
+  until(
+    done: (events: readonly SseEvent[]) => boolean,
+    what: string,
+    timeoutMs?: number,
+  ): Promise<void>;
   /** Closes the connection from the client side. */
   close(): void;
 }
@@ -62,15 +65,6 @@ function parseBlock(block: string, receivedAt: number): SseEvent | null {
   return { type: type ?? 'message', data, retry, receivedAt };
 }
 
-/** The port the app listens on; the test makes it listen (`app.listen(0, '127.0.0.1')`) before streams open. */
-function portOf(app: INestApplication<App>): number {
-  const address = (app.getHttpServer() as Server).address();
-  if (address === null || typeof address === 'string') {
-    throw new Error('The app does not listen on a TCP port: call app.listen(0, "127.0.0.1") first');
-  }
-  return (address as AddressInfo).port;
-}
-
 /**
  * Opens `GET /api/events` as `session` (with `watch` when given) and resolves once the response
  * headers arrived with status 200.
@@ -89,7 +83,11 @@ export function openStream(
     for (const listener of Array.from(listeners)) listener();
   };
 
-  function waitUntil<T>(check: () => T | undefined, what: string, timeoutMs: number): Promise<T> {
+  function waitUntil<T>(
+    check: () => T | undefined,
+    what: string,
+    timeoutMs: number,
+  ): Promise<T> {
     const found = check();
     if (found !== undefined) return Promise.resolve(found);
     return new Promise<T>((resolve, reject) => {
@@ -116,7 +114,10 @@ export function openStream(
     });
   }
 
-  const path = watch === undefined ? '/api/events' : `/api/events?watch=${encodeURIComponent(watch)}`;
+  const path =
+    watch === undefined
+      ? '/api/events'
+      : `/api/events?watch=${encodeURIComponent(watch)}`;
   return new Promise<SseStream>((resolve, reject) => {
     const req = httpRequest(
       {
@@ -159,7 +160,11 @@ export function openStream(
           next(type, timeoutMs = DEFAULT_WAIT_MS) {
             return waitUntil(
               () => {
-                for (let index = cursors.get(type) ?? 0; index < events.length; index += 1) {
+                for (
+                  let index = cursors.get(type) ?? 0;
+                  index < events.length;
+                  index += 1
+                ) {
                   const event = events[index];
                   if (event?.type === type) {
                     cursors.set(type, index + 1);
@@ -173,7 +178,11 @@ export function openStream(
             );
           },
           until(done, what, timeoutMs = DEFAULT_WAIT_MS) {
-            return waitUntil(() => (done(events) ? true : undefined), what, timeoutMs).then(() => undefined);
+            return waitUntil(
+              () => (done(events) ? true : undefined),
+              what,
+              timeoutMs,
+            ).then(() => undefined);
           },
           close() {
             req.destroy();

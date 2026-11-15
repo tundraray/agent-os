@@ -57,6 +57,29 @@ export async function insertLocalUser(
   return row;
 }
 
+/**
+ * The employee of a provider sign-in (AC-04.1, AC-04.2): the one with this normalized email, or a new
+ * one without roles (JIT). The name from the ID token replaces the stored one when the token has it;
+ * the status, roles, login and password stay as they are.
+ */
+export async function upsertProviderUser(
+  executor: Executor,
+  user: { email: string; name: string | undefined },
+): Promise<UserRow> {
+  const [row] = await executor
+    .insert(identityUsers)
+    .values({ email: user.email, name: user.name ?? '' })
+    .onConflictDoUpdate({
+      target: identityUsers.email,
+      set:
+        user.name === undefined ? { email: user.email } : { name: user.name },
+    })
+    .returning();
+  if (row === undefined)
+    throw new Error('identity_users upsert returned no row');
+  return row;
+}
+
 export async function findUserById(
   executor: Executor,
   userId: string,

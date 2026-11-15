@@ -17,7 +17,7 @@ export function frontendOrigin(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** A cookie value from the `Cookie` header, or undefined when it is absent or empty. */
-function readCookie(req: Request, name: string): string | undefined {
+export function readCookie(req: Request, name: string): string | undefined {
   const header = req.headers.cookie;
   if (header === undefined) return undefined;
   for (const pair of header.split(';')) {

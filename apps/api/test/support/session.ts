@@ -1,11 +1,16 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import request, { type Test } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { AuditLog } from '../../src/audit/audit-log.js';
-import { SESSION_COOKIE, frontendOrigin } from '../../src/identity/session-cookie.js';
+import {
+  SESSION_COOKIE,
+  frontendOrigin,
+} from '../../src/identity/session-cookie.js';
 import { seedSuperAdmin as seedSuperAdminRow } from '../../src/identity/super-admin.js';
 import { RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
 
@@ -31,6 +36,25 @@ export function sessionHeaders(session: Session): Record<string, string> {
   return { cookie: session.cookie, origin: frontendOrigin() };
 }
 
+/** The port the app listens on (`createTestApp` makes it listen). */
+export function portOf(app: INestApplication<App>): number {
+  const address = (app.getHttpServer() as Server).address();
+  if (address === null || typeof address === 'string') {
+    throw new Error(
+      'The app does not listen on a TCP port: boot it with createTestApp',
+    );
+  }
+  return (address as AddressInfo).port;
+}
+
+/**
+ * `http://localhost:<port>` of the app: the address a browser uses, so the API derives its public URL
+ * (AC-03.4) and the provider redirect URI from `localhost`, not from `127.0.0.1`.
+ */
+export function apiOrigin(app: INestApplication<App>): string {
+  return `http://localhost:${portOf(app)}`;
+}
+
 /** A supertest request under `/api` with the session cookie (or none); the body, when given, is sent as JSON. */
 export function apiRequest(
   app: INestApplication<App>,
@@ -39,16 +63,22 @@ export function apiRequest(
   path: string,
   body?: object,
 ): Test {
-  const test = request(app.getHttpServer())[method](`/api${path}`).set('origin', frontendOrigin());
+  const test = request(apiOrigin(app))
+    [method](`/api${path}`)
+    .set('origin', frontendOrigin());
   if (session !== null) test.set('cookie', session.cookie);
   return body === undefined ? test : test.send(body);
 }
 
 /** `aos_session=<token>` from the `Set-Cookie` headers of a sign-in. */
 function sessionCookieOf(setCookie: string | string[] | undefined): string {
-  const headers = typeof setCookie === 'string' ? [setCookie] : (setCookie ?? []);
-  const found = headers.find((header) => header.startsWith(`${SESSION_COOKIE}=`));
-  if (found === undefined) throw new Error(`The sign-in set no ${SESSION_COOKIE} cookie`);
+  const headers =
+    typeof setCookie === 'string' ? [setCookie] : (setCookie ?? []);
+  const found = headers.find((header) =>
+    header.startsWith(`${SESSION_COOKIE}=`),
+  );
+  if (found === undefined)
+    throw new Error(`The sign-in set no ${SESSION_COOKIE} cookie`);
   return found.split(';')[0] ?? found;
 }
 
@@ -58,13 +88,21 @@ async function signInWithPassword(
   login: string,
   password: string,
 ): Promise<Session> {
-  const signedIn = await apiRequest(app, null, 'post', '/auth/password', { login, password });
+  const signedIn = await apiRequest(app, null, 'post', '/auth/password', {
+    login,
+    password,
+  });
   if (signedIn.status !== 204) {
-    throw new Error(`Sign-in of ${login} answered ${signedIn.status}: ${JSON.stringify(signedIn.body)}`);
+    throw new Error(
+      `Sign-in of ${login} answered ${signedIn.status}: ${JSON.stringify(signedIn.body)}`,
+    );
   }
   const cookie = sessionCookieOf(signedIn.headers['set-cookie']);
   const me = await apiRequest(app, { cookie }, 'get', '/auth/me');
-  if (me.status !== 200) throw new Error(`GET /auth/me answered ${me.status}: ${JSON.stringify(me.body)}`);
+  if (me.status !== 200)
+    throw new Error(
+      `GET /auth/me answered ${me.status}: ${JSON.stringify(me.body)}`,
+    );
   return { id: CurrentUserSchema.parse(me.body).id, cookie };
 }
 
@@ -85,6 +123,39 @@ export async function seedSuperAdmin(
     password,
   });
   return signInWithPassword(app, login, password);
+}
+
+/** How long ago a session was opened and last used. */
+export interface SessionAge {
+  createdMinutesAgo: number;
+  lastSeenMinutesAgo: number;
+}
+
+/**
+ * Moves the timestamps of the session behind `cookie` into the past (the clock is never faked); the row
+ * is found by the SHA-256 of the cookie's token, as the API stores it.
+ */
+export async function ageSession(
+  pool: DatabaseConnection['pool'],
+  cookie: string,
+  age: SessionAge,
+): Promise<void> {
+  const token = cookie.slice(`${SESSION_COOKIE}=`.length);
+  const moved = await pool.query(
+    `UPDATE app.identity_sessions
+        SET created_at = now() - make_interval(mins => $2),
+            last_seen_at = now() - make_interval(mins => $3)
+      WHERE token_hash = $1`,
+    [
+      createHash('sha256').update(token).digest('hex'),
+      age.createdMinutesAgo,
+      age.lastSeenMinutesAgo,
+    ],
+  );
+  if (moved.rowCount !== 1)
+    throw new Error(
+      `No session row for the cookie (${moved.rowCount} rows moved)`,
+    );
 }
 
 export interface NewEmployee {
@@ -112,7 +183,9 @@ export async function createEmployee(
     password,
   });
   if (created.status !== 201) {
-    throw new Error(`POST /admin/users answered ${created.status}: ${JSON.stringify(created.body)}`);
+    throw new Error(
+      `POST /admin/users answered ${created.status}: ${JSON.stringify(created.body)}`,
+    );
   }
   AdminUserSummarySchema.parse(created.body);
   return signInWithPassword(app, login, password);

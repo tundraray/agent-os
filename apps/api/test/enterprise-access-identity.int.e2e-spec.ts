@@ -60,9 +60,185 @@
 //     one «Неверный логин или пароль.», password cleared), UserMenu (name, email, «Выйти», no «Режим разработки»), and the «Пароль»
 //     section following `hasPassword`. The real-browser journey is the part's manual L1 checklist.
 
-import { describe, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import {
+  AdminUserDetailSchema,
+  CurrentUserSchema,
+  RoleListSchema,
+  RoleSummarySchema,
+  SignInSettingsSchema,
+  type SignInSettings,
+} from '@agent-os/contracts';
+import request, { type Response } from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { frontendOrigin } from '../src/identity/session-cookie.js';
+import { expectBody, expectError } from './support/api.js';
+import { createTestApp, type TestApp } from './support/createTestApp.js';
+import {
+  ageSession,
+  apiOrigin,
+  apiRequest,
+  createEmployee,
+  seedSuperAdmin,
+  type Method,
+  type Session,
+} from './support/session.js';
+import {
+  startTestProvider,
+  type TestProvider,
+} from './support/test-provider.js';
+
+/** Bound of one test; the requests settle far sooner. */
+const TEST_TIMEOUT_MS = 120_000;
+
+/** The default session limits (`SignInSettings`), which every test that changes them puts back. */
+const DEFAULT_LIMITS = { idleMinutes: 480, absoluteMinutes: 1440 } as const;
+
+/** NFR-03: the only routes open without a session, as `METHOD /path` of the router. */
+const PUBLIC_ROUTES = [
+  'GET /api/health',
+  'GET /api/auth/providers',
+  'POST /api/auth/password',
+  'GET /api/auth/sign-in/:providerId',
+  'GET /api/auth/oauth/:providerId/callback',
+  'POST /api/auth/sign-out',
+] as const;
+
+/** The admin route rows 2 and 3 call as the employee. */
+const ADMIN_ROUTE = '/admin/settings/sign-in';
+
+/** The one app, issuer and administrator of the file (INT-1..INT-3). */
+let harness: TestApp;
+let provider: TestProvider;
+let admin: Session;
+
+/** One route as the router holds it. */
+interface RegisteredRoute {
+  method: Method;
+  /** With the `/api` prefix and the `:param` names, e.g. `/api/admin/users/:id`. */
+  path: string;
+}
+
+/** A layer of the Express 5 router; only route layers carry `route`. */
+interface RouterLayer {
+  route?: { path: string; methods: Record<string, boolean> };
+}
+
+const METHODS = new Set<string>(['get', 'post', 'patch', 'put', 'delete']);
+
+function isMethod(method: string): method is Method {
+  return METHODS.has(method);
+}
+
+/** Every route the app registered, read from its Express router. */
+function registeredRoutes(): RegisteredRoute[] {
+  const express = harness.app.getHttpAdapter().getInstance() as {
+    router: { stack: RouterLayer[] };
+  };
+  return express.router.stack.flatMap(({ route }) =>
+    route === undefined
+      ? []
+      : Object.keys(route.methods).map((method) => {
+          if (!isMethod(method))
+            throw new Error(
+              `Route ${route.path} has method ${method} the walk does not know`,
+            );
+          return { method, path: route.path };
+        }),
+  );
+}
+
+function routeKey(route: RegisteredRoute): string {
+  return `${route.method.toUpperCase()} ${route.path}`;
+}
+
+/** The route's path under `/api` with every path parameter replaced by a random UUID. */
+function concretePath(route: RegisteredRoute): string {
+  return route.path.replace(/^\/api/, '').replace(/:\w+/g, () => randomUUID());
+}
+
+/** Fails unless the response is `status` with `errorCode`. */
+async function expectRefusal(
+  response: Promise<Response> | Response,
+  status: number,
+  errorCode: string,
+): Promise<void> {
+  expect((await expectError(response, status)).errorCode).toBe(errorCode);
+}
+
+/** A request under `/api` with the session cookie and the given `Origin` (`undefined` = no header). */
+function requestWithOrigin(
+  session: Session,
+  method: Method,
+  path: string,
+  origin: string | undefined,
+  body: object,
+): Promise<Response> {
+  const test = request(apiOrigin(harness.app))
+    [method](`/api${path}`)
+    .set('cookie', session.cookie);
+  if (origin !== undefined) test.set('origin', origin);
+  return test.send(body);
+}
+
+async function countUsers(): Promise<number> {
+  const { rows } = await harness.pool.query<{ count: string }>(
+    'SELECT count(*) FROM app.identity_users',
+  );
+  return Number(rows[0]?.count);
+}
+
+/** One `app.audit_events` row as the assertions read it. */
+interface AuditRow {
+  kind: string;
+  actor: string;
+  objectType: string | null;
+  objectId: string | null;
+  before: unknown;
+  after: unknown;
+  outcome: string;
+  reason: string | null;
+  at: Date;
+}
+
+/** The audit rows of `kind` written by `actor`, oldest first. */
+async function auditRows(kind: string, actor: string): Promise<AuditRow[]> {
+  const { rows } = await harness.pool.query<AuditRow>(
+    `SELECT kind, actor, object_type AS "objectType", object_id AS "objectId", before, after, outcome, reason, at
+       FROM app.audit_events WHERE kind = $1 AND actor = $2 ORDER BY at, id`,
+    [kind, actor],
+  );
+  return rows;
+}
+
+function getSettings(): Promise<SignInSettings> {
+  return expectBody(
+    apiRequest(harness.app, admin, 'get', ADMIN_ROUTE),
+    200,
+    SignInSettingsSchema,
+  );
+}
+
+function putSettings(body: object): Promise<Response> {
+  return apiRequest(harness.app, admin, 'put', ADMIN_ROUTE, body);
+}
 
 describe('enterprise-access / identity - integration (real AppModule + real Postgres + in-process OIDC issuer)', () => {
+  beforeAll(async () => {
+    provider = await startTestProvider();
+    harness = await createTestApp({
+      workers: true,
+      providerEndpoints: { google: provider.issuer },
+      captureLog: true,
+    });
+    admin = await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`);
+  }, TEST_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await harness?.close();
+    await provider?.close();
+  }, TEST_TIMEOUT_MS);
+
   // ---------------------------------------------------------------------------------------------------------------
   // INT-1: the session boundary - who may call what (table-driven)
   // ---------------------------------------------------------------------------------------------------------------
@@ -99,7 +275,315 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // @category: core-functionality
   // @dependency: SessionGuard, Origin check, AdminOnly, AdminRolesController, SignInSettings controller, AuditLog, Postgres
   // @complexity: high
-  it.todo('INT-1: every route is closed without a valid session, Origin or right, the open ones are exactly the documented ones, an assigned admin role takes effect at once, and shortened session limits reach open sessions');
+  it(
+    'INT-1: every route is closed without a valid session, Origin or right, the open ones are exactly the documented ones, an assigned admin role takes effect at once, and shortened session limits reach open sessions',
+    async () => {
+      const { app, pool } = harness;
+
+      // Row 1 - Given: the router's own route list; When: each closed route is called with no cookie and with
+      // only `x-user-id`; Then: 401 AUTH_REQUIRED, and the open ones are exactly the six (NFR-03, AC-01.4, AC-01.6)
+      const routes = registeredRoutes();
+      const publicKeys: readonly string[] = PUBLIC_ROUTES;
+      expect(
+        routes
+          .map(routeKey)
+          .filter((key) => publicKeys.includes(key))
+          .sort(),
+      ).toEqual([...PUBLIC_ROUTES].sort());
+      const closedRoutes = routes.filter(
+        (route) => !publicKeys.includes(routeKey(route)),
+      );
+      expect(closedRoutes.map(routeKey)).toEqual(
+        expect.arrayContaining([
+          'GET /api/auth/me',
+          'GET /api/threads',
+          'PUT /api/admin/settings/sign-in',
+        ]),
+      );
+      const leaks: string[] = [];
+      for (const route of closedRoutes) {
+        const path = concretePath(route);
+        const answers = [
+          await apiRequest(app, null, route.method, path),
+          await apiRequest(app, null, route.method, path).set(
+            'x-user-id',
+            admin.id,
+          ),
+        ];
+        for (const answer of answers) {
+          const errorCode = (answer.body as { errorCode?: unknown }).errorCode;
+          if (answer.status !== 401 || errorCode !== 'AUTH_REQUIRED') {
+            leaks.push(
+              `${routeKey(route)} -> ${answer.status} ${String(errorCode)}`,
+            );
+          }
+        }
+      }
+      expect(leaks).toEqual([]);
+
+      // Row 1 (AC-32.3) - the open routes answer without a session, and none of them creates an account
+      const usersBefore = await countUsers();
+      expect((await apiRequest(app, null, 'get', '/health')).status).toBe(200);
+      expect(
+        (await apiRequest(app, null, 'get', '/auth/providers')).status,
+      ).toBe(200);
+      await expectRefusal(
+        apiRequest(app, null, 'post', '/auth/password', {
+          login: `e2e-nobody-${randomUUID()}`,
+          password: 'e2e-password-12',
+        }),
+        401,
+        'INVALID_CREDENTIALS',
+      );
+      const unknownProvider = randomUUID();
+      const started = await apiRequest(
+        app,
+        null,
+        'get',
+        `/auth/sign-in/${unknownProvider}`,
+      );
+      expect(started.status).toBe(302);
+      expect(started.headers.location).toBe(
+        `${frontendOrigin()}/login?error=provider_unavailable&provider=${unknownProvider}`,
+      );
+      const returned = await apiRequest(
+        app,
+        null,
+        'get',
+        `/auth/oauth/${unknownProvider}/callback?code=c&state=s`,
+      );
+      expect(returned.status).toBe(302);
+      expect(returned.headers.location).toBe(
+        `${frontendOrigin()}/login?error=failed&provider=${unknownProvider}`,
+      );
+      expect(await countUsers()).toBe(usersBefore);
+
+      // Row 2 (AC-08.1) - Given: an employee without the right; When: he calls an @AdminOnly route;
+      // Then: 403 ADMIN_REQUIRED and an `access_denied` audit row with him and the route
+      const employee = await createEmployee(app, admin);
+      await expectRefusal(
+        apiRequest(app, employee, 'get', ADMIN_ROUTE),
+        403,
+        'ADMIN_REQUIRED',
+      );
+      expect(await auditRows('access_denied', employee.id)).toEqual([
+        expect.objectContaining({
+          objectType: 'route',
+          objectId: `GET /api${ADMIN_ROUTE}`,
+          outcome: 'rejected',
+          reason: 'admin_required',
+        }),
+      ]);
+
+      // Row 3 (AC-08.2, AC-11.1) - Given: a role with the admin right; When: the administrator assigns it and
+      // then takes it away; Then: the same cookie gets 200, then 403 again, and each change is audited
+      const role = await expectBody(
+        apiRequest(app, admin, 'post', '/admin/roles', {
+          name: `e2e-admins-${randomUUID()}`,
+        }),
+        201,
+        RoleSummarySchema,
+      );
+      const roleRef = { id: role.id, name: role.name };
+      try {
+        await expectBody(
+          apiRequest(app, admin, 'patch', `/admin/roles/${role.id}`, {
+            isAdmin: true,
+          }),
+          200,
+          RoleSummarySchema,
+        );
+        const assigned = await expectBody(
+          apiRequest(
+            app,
+            admin,
+            'put',
+            `/admin/users/${employee.id}/roles/${role.id}`,
+          ),
+          200,
+          AdminUserDetailSchema,
+        );
+        expect(assigned.adminRight).toEqual({
+          personal: false,
+          roles: [roleRef],
+        });
+        await expectBody(
+          apiRequest(app, employee, 'get', ADMIN_ROUTE),
+          200,
+          SignInSettingsSchema,
+        );
+
+        await expectBody(
+          apiRequest(
+            app,
+            admin,
+            'delete',
+            `/admin/users/${employee.id}/roles/${role.id}`,
+          ),
+          200,
+          AdminUserDetailSchema,
+        );
+        await expectRefusal(
+          apiRequest(app, employee, 'get', ADMIN_ROUTE),
+          403,
+          'ADMIN_REQUIRED',
+        );
+
+        // The employee's creation is an `admin_change` on him too, with no `before`.
+        const roleChanges = (await auditRows('admin_change', admin.id)).filter(
+          (row) =>
+            row.objectType === 'user' &&
+            row.objectId === employee.id &&
+            row.before !== null,
+        );
+        expect(roleChanges).toEqual([
+          expect.objectContaining({
+            before: { roles: [] },
+            after: { roles: [roleRef] },
+            outcome: 'ok',
+            at: expect.any(Date),
+          }),
+          expect.objectContaining({
+            before: { roles: [roleRef] },
+            after: { roles: [] },
+            outcome: 'ok',
+            at: expect.any(Date),
+          }),
+        ]);
+      } finally {
+        expect(
+          (await apiRequest(app, admin, 'delete', `/admin/roles/${role.id}`))
+            .status,
+        ).toBe(204);
+      }
+
+      // Row 4 (DC-3) - Given: a valid cookie; When: a changing request comes with a foreign, an empty or no
+      // `Origin`; Then: 403 ORIGIN_REJECTED and nothing is created
+      const refusedRole = `e2e-cross-site-${randomUUID()}`;
+      for (const origin of ['https://evil.example', '', undefined]) {
+        await expectRefusal(
+          requestWithOrigin(admin, 'post', '/admin/roles', origin, {
+            name: refusedRole,
+          }),
+          403,
+          'ORIGIN_REJECTED',
+        );
+      }
+      const roles = await expectBody(
+        apiRequest(app, admin, 'get', '/admin/roles'),
+        200,
+        RoleListSchema,
+      );
+      expect(roles.map((listed) => listed.name)).not.toContain(refusedRole);
+
+      // Row 5 (AC-07.1) - Given: a signed-in employee; When: he signs out; Then: his old cookie gets 401
+      // AUTH_REQUIRED; a sign-out without a session is still 204
+      const leaving = await createEmployee(app, admin);
+      expect(
+        (await apiRequest(app, leaving, 'post', '/auth/sign-out')).status,
+      ).toBe(204);
+      await expectRefusal(
+        apiRequest(app, leaving, 'get', '/auth/me'),
+        401,
+        'AUTH_REQUIRED',
+      );
+      expect(
+        (await apiRequest(app, null, 'post', '/auth/sign-out')).status,
+      ).toBe(204);
+
+      // Row 6 - Given: the default limits and sessions moved past each of them; Then: 401 AUTH_REQUIRED, while
+      // a session within both limits still works
+      expect(await getSettings()).toMatchObject(DEFAULT_LIMITS);
+      const pastAbsolute = await createEmployee(app, admin);
+      const pastIdle = await createEmployee(app, admin);
+      const withinLimits = await createEmployee(app, admin);
+      await ageSession(pool, pastAbsolute.cookie, {
+        createdMinutesAgo: 1441,
+        lastSeenMinutesAgo: 1,
+      });
+      await ageSession(pool, pastIdle.cookie, {
+        createdMinutesAgo: 600,
+        lastSeenMinutesAgo: 481,
+      });
+      await ageSession(pool, withinLimits.cookie, {
+        createdMinutesAgo: 1430,
+        lastSeenMinutesAgo: 470,
+      });
+      await expectRefusal(
+        apiRequest(app, pastAbsolute, 'get', '/auth/me'),
+        401,
+        'AUTH_REQUIRED',
+      );
+      await expectRefusal(
+        apiRequest(app, pastIdle, 'get', '/auth/me'),
+        401,
+        'AUTH_REQUIRED',
+      );
+      await expectBody(
+        apiRequest(app, withinLimits, 'get', '/auth/me'),
+        200,
+        CurrentUserSchema,
+      );
+
+      // Row 7 (UC-1, AC-07.5) - Given: Аня's session opened 2 h ago, last request 1 h ago; When: the
+      // administrator shortens the limits to 30 / 61 min; Then: her next request is refused without a restart
+      const previous = await getSettings();
+      const anya = await createEmployee(app, admin, { name: 'Аня' });
+      const anyaAge = { createdMinutesAgo: 120, lastSeenMinutesAgo: 60 };
+      await ageSession(pool, anya.cookie, anyaAge);
+      await expectBody(
+        apiRequest(app, anya, 'get', '/auth/me'),
+        200,
+        CurrentUserSchema,
+      );
+      // The check above recorded a fresh request time: move it back.
+      await ageSession(pool, anya.cookie, anyaAge);
+      try {
+        const shortened = {
+          publicUrl: previous.publicUrl,
+          idleMinutes: 30,
+          absoluteMinutes: 61,
+        };
+        const saved = await expectBody(
+          putSettings(shortened),
+          200,
+          SignInSettingsSchema,
+        );
+        expect(saved).toMatchObject(shortened);
+        const settingsChanges = (
+          await auditRows('admin_change', admin.id)
+        ).filter((row) => row.objectType === 'sign_in_settings');
+        expect(settingsChanges.at(-1)).toMatchObject({
+          before: { publicUrl: previous.publicUrl, ...DEFAULT_LIMITS },
+          after: shortened,
+          outcome: 'ok',
+        });
+        await expectRefusal(
+          apiRequest(app, anya, 'get', '/auth/me'),
+          401,
+          'AUTH_REQUIRED',
+        );
+
+        await expectRefusal(
+          putSettings({ ...shortened, idleMinutes: 2000 }),
+          400,
+          'VALIDATION_FAILED',
+        );
+        expect(await getSettings()).toMatchObject({
+          idleMinutes: 30,
+          absoluteMinutes: 61,
+        });
+      } finally {
+        // Rule 11 of the plan: the developer's database keeps its own settings.
+        await expectBody(
+          putSettings({ publicUrl: previous.publicUrl, ...DEFAULT_LIMITS }),
+          200,
+          SignInSettingsSchema,
+        );
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2: password sign-in and local accounts under the administrator - create, reset, block, unblock
@@ -146,7 +630,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // @category: core-functionality
   // @dependency: PasswordSignIn, AdminUsersController, UsersService.disable, OwnerGate (base-agent check), SessionStore, AuditLog, scripted model, runtime workers, Postgres
   // @complexity: high
-  it.todo('INT-2: the administrator creates, resets and blocks an employee and each takes effect at once - one error for every bad credential, no model call after the agent\'s next check once blocked, no password left anywhere');
+  it.todo(
+    "INT-2: the administrator creates, resets and blocks an employee and each takes effect at once - one error for every bad credential, no model call after the agent's next check once blocked, no password left anywhere",
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3: OIDC provider sign-in - what the administrator sets is what the employee gets (table-driven over `google` and `oidc`)
@@ -199,5 +685,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // @category: core-functionality
   // @dependency: AuthController, OAuthSignIn, SignInService, AdminProvidersController, SessionStore, AuditLog, logger, test OIDC issuer, Postgres
   // @complexity: high
-  it.todo('INT-3: a valid ID token from `google` or `oidc` opens one session on the one account of that email and leaves its roles alone, every replayed, foreign, expired, email-less or disabled attempt opens none and is audited, and no provider secret leaks');
+  it.todo(
+    'INT-3: a valid ID token from `google` or `oidc` opens one session on the one account of that email and leaves its roles alone, every replayed, foreign, expired, email-less or disabled attempt opens none and is audited, and no provider secret leaks',
+  );
 });
