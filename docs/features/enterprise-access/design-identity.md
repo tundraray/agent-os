@@ -169,7 +169,7 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 
 - From the PRD: AC-03.1, AC-03.2, AC-03.3
 - OIDC-вход принимает только почту с `email_verified`, равным `true`; иначе вход отклонён с причиной `failed` и записью в аудит (DC-5).
-- Подключение создаётся выключенным по протоколу и названию, и его «Данные для IdP» известны сразу после создания. Сохранение данных IdP проверяет их: discovery издателя OIDC или метаданные SAML по адресу. Если проверка не прошла, данные не сохраняются, а ответ — 422 `CONNECTION_CHECK_FAILED` с причиной. Включить подключение без проверенных данных IdP нельзя: 409 `CONNECTION_INCOMPLETE` (DC-6).
+- Подключение создаётся выключенным по протоколу и названию, и его «Данные для IdP» известны сразу после создания. Сохранение данных IdP проверяет их: discovery издателя OIDC или метаданные SAML по адресу. Если проверка не прошла, данные не сохраняются, а ответ — 422 `CONNECTION_CHECK_FAILED` с причиной в поле `reason` тела (Contract Definitions). Включить подключение без проверенных данных IdP нельзя: 409 `CONNECTION_INCOMPLETE` (DC-6).
 - Если номер ключа в `SECRETS_KEY` не совпадает с записанным, сервер не стартует, а лог называет причину и оба номера; `secrets:reset` стирает зашифрованные значения и выключает подключения (DC-7).
 
 ### FR-04: Учётная запись сотрудника
@@ -708,7 +708,7 @@ sequenceDiagram
 
 ### Contract Definitions
 
-Все маршруты — под глобальным префиксом `/api`. Тело ошибки — `ApiErrorSchema` (`statusCode`, `message`, `error`, `errorCode`). Изменяющий запрос с cookie сеанса проверяется по `Origin` (DC-3).
+Все маршруты — под глобальным префиксом `/api`. Тело ошибки — `ApiErrorSchema` (`statusCode`, `message`, `error`, `errorCode` и необязательный `reason` — машинная причина отказа там, где операция её называет). Изменяющий запрос с cookie сеанса проверяется по `Origin` (DC-3).
 
 #### Вход и сеанс — для веба
 
@@ -757,7 +757,7 @@ sequenceDiagram
 - **`DELETE /api/admin/roles/:id`** — удаляет роль; её сопоставления, назначения и строки других частей, которые ссылаются на роль внешним ключом, уходят каскадом. 409 `LAST_ADMIN`.
 - **`PUT /api/admin/roles/:id/groups/:group`**, **`DELETE` тот же путь** — сопоставляет имя группы IdP с ролью или снимает сопоставление. Имя — 1–256 знаков, как его пишет IdP, сравнение без учёта регистра. 409 `LAST_ADMIN` при снятии.
 - **`GET /api/admin/connections`** — подключения в порядке создания: `id`, `name`, `protocol`, `enabled`.
-- **`POST /api/admin/connections`** — создаёт выключенное подключение по `protocol` и `name` (1–60 знаков); данные IdP можно передать сразу или позже. Returns `ConnectionView` с `idpData`, которые администратор переносит в IdP до того, как IdP выдаст свои данные. 422 `CONNECTION_CHECK_FAILED`, если переданные данные IdP не прошли проверку (DC-6).
+- **`POST /api/admin/connections`** — создаёт выключенное подключение по `protocol` и `name` (1–60 знаков); данные IdP можно передать сразу или позже. Returns `ConnectionView` с `idpData`, которые администратор переносит в IdP до того, как IdP выдаст свои данные. 422 `CONNECTION_CHECK_FAILED`, если переданные данные IdP не прошли проверку (DC-6); поле `reason` тела — одно из трёх значений: `insecure_url` — адрес издателя OIDC или метаданных SAML не `https` вне режима `development` или `test`; `unreachable` — адрес не ответил или ответил не успехом; `invalid_document` — ответ не документ discovery OIDC этого издателя или не метаданные IdP SAML с адресом входа и ключом подписи.
 - **`GET /api/admin/connections/:id`** — `ConnectionView`. 404 `CONNECTION_NOT_FOUND`.
 - **`PATCH /api/admin/connections/:id`** — меняет `name`, `enabled` и данные IdP: у OIDC `issuer`, `clientId`, `clientSecret` (заменяется, только когда передан), у SAML `metadataUrl`. Новые данные IdP проверяются (DC-6), смена протокола запрещена. 409 `CONNECTION_INCOMPLETE` при включении подключения без проверенных данных IdP.
 - **`GET /api/admin/settings/sessions`** — сроки сеанса для экрана настроек входа (FR-26, AC-26.3). Returns `SessionSettings`.
@@ -989,3 +989,4 @@ stateDiagram-v2
 |---------|------|--------|
 | 1.0 | 2026-11-15 | Первая версия |
 | 1.1 | 2026-11-15 | Сроки сеанса стали настройкой администратора в `identity_settings` с операциями `/api/admin/settings/sessions`; ссылки на ADR-0012 и ADR-0013; вопросы владельцу о сроках сеанса закрыты |
+| 1.2 | 2026-11-15 | В `ApiErrorSchema` необязательное поле `reason`; у `CONNECTION_CHECK_FAILED` закрытый список причин |
