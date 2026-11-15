@@ -21,7 +21,7 @@ import type { RuntimeTx } from './runtime-tx.js';
  */
 export const RUNTIME_EVENTS_CHANNEL = 'runtime_events';
 /** `schemaVersion` of every event written by this runtime. */
-const RUNTIME_EVENT_SCHEMA_VERSION = 1;
+export const RUNTIME_EVENT_SCHEMA_VERSION = 1;
 /** Upper bound of `listAfter`'s `limit`. */
 const LIST_AFTER_MAX_LIMIT = 500;
 

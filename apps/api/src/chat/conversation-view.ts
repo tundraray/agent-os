@@ -7,6 +7,7 @@ import {
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
   ConfirmationKindSchema,
+  HISTORY_PAGE_SIZE,
   type AgentNode,
   type AgentView,
   type Confirmation,
@@ -14,7 +15,7 @@ import {
   type PendingMessage,
 } from '@agent-os/contracts';
 import type { StepMessage } from '@agent-os/runtime';
-import { BRIEF_CONFIRMATION_KIND, type WorkflowTemplateHeader } from '@agent-os/workflows';
+import type { Workflows } from '@agent-os/workflows';
 import { z } from 'zod';
 
 /**
@@ -27,8 +28,9 @@ import { z } from 'zod';
 /** Workflow template titles by template name: a coordinator's definition name is its template's name. */
 export type TemplateTitles = ReadonlyMap<string, string>;
 
-export function templateTitles(templates: readonly WorkflowTemplateHeader[]): TemplateTitles {
-  return new Map(templates.map((template) => [template.name, template.title]));
+/** One read of the template catalog per answer: it decides `template` of coordinators. */
+export function templateTitles(workflows: Workflows): TemplateTitles {
+  return new Map(workflows.templates.list().map((template) => [template.name, template.title]));
 }
 
 const iso = (date: Date): string => date.toISOString();
@@ -56,11 +58,15 @@ export function toAgentView(view: AgentsAgentView, templates: TemplateTitles): A
 
 /**
  * The subtree under `parentId` (that agent itself not included): its children with their subtrees,
- * each level in the order of `views`, which the agents' `list` returns in creation order.
+ * each level in the order of `agents`, which the agents' `list` returns in creation order.
  */
-export function toAgentTree(views: readonly AgentView[], parentId: string): AgentNode[] {
+export function toAgentTree(
+  agents: readonly AgentsAgentView[],
+  templates: TemplateTitles,
+  parentId: string,
+): AgentNode[] {
   const byParent = new Map<string, AgentView[]>();
-  for (const view of views) {
+  for (const view of agents.map((agent) => toAgentView(agent, templates))) {
     if (view.parentId === null) continue;
     const siblings = byParent.get(view.parentId) ?? [];
     siblings.push(view);
@@ -90,21 +96,17 @@ export function toHistoryEntry(entry: AgentHistoryEntry): HistoryEntry {
   }
 }
 
-const BriefArgsSchema = z.object({ template: z.string() });
+/** The next `afterSeq` of a history page: the last seq of a full page, `null` when everything is read. */
+export const nextAfterSeqOf = (entries: readonly AgentHistoryEntry[]): number | null =>
+  entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null;
 
-/** A decision request in any status; a brief also carries its template's title. */
-export function toConfirmation(
-  confirmation: AgentConfirmation,
-  templates: TemplateTitles,
-): Confirmation {
-  const kind = ConfirmationKindSchema.parse(confirmation.kind);
-  const brief = kind === BRIEF_CONFIRMATION_KIND ? BriefArgsSchema.safeParse(confirmation.args) : undefined;
-  const templateTitle = brief?.success === true ? templates.get(brief.data.template) : undefined;
+/** A decision request in any status. */
+export function toConfirmation(confirmation: AgentConfirmation): Confirmation {
   return {
     decisionId: confirmation.decisionId,
     agentId: confirmation.agentId,
     description: confirmation.description,
-    kind,
+    kind: ConfirmationKindSchema.parse(confirmation.kind),
     tool: confirmation.tool,
     server: confirmation.server,
     args: confirmation.args,
@@ -116,7 +118,6 @@ export function toConfirmation(
         : { approve: confirmation.resolution.approve, args: confirmation.resolution.args },
     createdAt: iso(confirmation.createdAt),
     resolvedAt: isoOrNull(confirmation.resolvedAt),
-    ...(templateTitle === undefined ? {} : { templateTitle }),
     ...(confirmation.toolTitle === undefined ? {} : { toolTitle: confirmation.toolTitle }),
     ...(confirmation.argLabels === undefined ? {} : { argLabels: confirmation.argLabels }),
   };

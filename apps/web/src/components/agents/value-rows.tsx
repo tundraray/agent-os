@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { ChevronRightIcon } from "lucide-react";
+import { ScriptToggle } from "@/components/agents/script-toggle";
 import type { ValueRow } from "@/lib/agents/value-rows";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,8 @@ export type ValueRowsProps = {
   /** Whether the rows carry the «Показать как JSON» disclosure: the arguments do, a result does not. */
   disclosure: boolean;
   density: keyof typeof VALUE_TEXT;
+  /** A code run's script: the last row, behind «Показать скрипт» (code-execution UXRD, KD-1, KD-2). */
+  script?: { label: string; text: string };
 };
 
 /**
@@ -47,7 +50,7 @@ export type ValueRowsProps = {
  * rows «label — value» as a description list and, for the arguments, a collapsed disclosure that opens
  * the exact JSON under the rows. Shared by the tool-call block and the decision card.
  */
-export function ValueRows({ label, rows, raw, disclosure, density }: ValueRowsProps) {
+export function ValueRows({ label, rows, raw, disclosure, density, script }: ValueRowsProps) {
   const [rawOpen, setRawOpen] = useState(false);
   const rawId = useId();
 
@@ -63,7 +66,7 @@ export function ValueRows({ label, rows, raw, disclosure, density }: ValueRowsPr
   return (
     <div data-slot="value-rows" role="region" aria-label={label} className="flex flex-col gap-1">
       <p className={CAPTION}>{label}</p>
-      {rows.length > 0 && (
+      {(rows.length > 0 || script !== undefined) && (
         <dl className="grid grid-cols-[fit-content(33.333%)_minmax(0,1fr)] gap-x-3 gap-y-1">
           {rows.map((row) => (
             <div key={row.key} className="contents">
@@ -78,6 +81,12 @@ export function ValueRows({ label, rows, raw, disclosure, density }: ValueRowsPr
               </dd>
             </div>
           ))}
+          {script !== undefined && (
+            <div className="contents">
+              <dt className={cn(CAPTION, "pt-0.5 break-words")}>{script.label}</dt>
+              <ScriptToggle script={script.text} density={density} />
+            </div>
+          )}
         </dl>
       )}
       {disclosure && (

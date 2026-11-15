@@ -300,7 +300,6 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       server: null,
       args: briefArgs,
       content: { title: 'Исследование', question: briefArgs.question, boundaries: briefArgs.boundaries, result: briefArgs.result },
-      templateTitle: 'Исследование',
       status: 'resolved',
       resolution: { approve: true, args: briefArgs },
       createdAt: fixtureTime(4),
@@ -600,7 +599,6 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       server: null,
       args: briefArgs,
       content: { title: 'Исследование', question: briefArgs.question, boundaries: briefArgs.boundaries, result: briefArgs.result },
-      templateTitle: 'Исследование',
       createdAt: fixtureTime(3),
     });
     const ticket = confirmation({

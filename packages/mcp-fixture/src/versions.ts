@@ -25,17 +25,27 @@ export interface DatasetParams {
   providerTimeoutMs: { beforeRelease: number; afterRelease: number };
 }
 
-/** The two-day window of `v1`. */
+/** The week of logs `v1` serves; the tracker's tickets are created inside it too. */
+export const LOG_WEEK = { start: '2026-09-14T00:00:00.000Z', end: '2026-09-21T00:00:00.000Z' } as const;
+
+/** The first two days, dense; records 0–119 999 keep their content whatever is appended after them. */
 const BASE_SEGMENT: Readonly<TimeSegment> = {
-  start: '2026-09-14T00:00:00.000Z',
+  start: LOG_WEEK.start,
   end: '2026-09-16T00:00:00.000Z',
   records: 120_000,
 };
-const HOUR_AFTER_WINDOW: TimeSegment = {
-  start: '2026-09-16T00:00:00.000Z',
-  end: '2026-09-16T01:00:00.000Z',
+/** The rest of the week at about 4 000 records a day. */
+const REST_OF_WEEK: Readonly<TimeSegment> = {
+  start: BASE_SEGMENT.end,
+  end: LOG_WEEK.end,
+  records: 20_000,
+};
+const HOUR_AFTER_WINDOW: Readonly<TimeSegment> = {
+  start: LOG_WEEK.end,
+  end: '2026-09-21T01:00:00.000Z',
   records: 2_000,
 };
+const WEEK_SEGMENTS: readonly Readonly<TimeSegment>[] = [BASE_SEGMENT, REST_OF_WEEK];
 const SHARED = {
   seed: 0x20260915,
   recordsPerBlock: 8,
@@ -44,14 +54,18 @@ const SHARED = {
 } as const;
 
 export const DATASET_PARAMS: Readonly<Record<DatasetVersion, DatasetParams>> = {
-  v1: { version: 'v1', ...SHARED, providerTimeoutMs: { ...SHARED.providerTimeoutMs }, segments: [{ ...BASE_SEGMENT }] },
+  v1: { version: 'v1', ...SHARED, providerTimeoutMs: { ...SHARED.providerTimeoutMs }, segments: copied(WEEK_SEGMENTS) },
   v2: {
     version: 'v2',
     ...SHARED,
     providerTimeoutMs: { ...SHARED.providerTimeoutMs },
-    segments: [{ ...BASE_SEGMENT }, HOUR_AFTER_WINDOW],
+    segments: copied([...WEEK_SEGMENTS, HOUR_AFTER_WINDOW]),
   },
 };
+
+function copied(segments: readonly Readonly<TimeSegment>[]): TimeSegment[] {
+  return segments.map((segment) => ({ ...segment }));
+}
 
 /** Snapshot id: `fx-<version>-<first 8 hex of sha256 of the canonical generator parameters>`. */
 export function snapshotOf(params: DatasetParams): string {

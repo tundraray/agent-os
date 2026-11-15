@@ -4,7 +4,7 @@ export type RowValue = { text: string; json: boolean };
 const EMPTY = "—";
 
 /** One value of an arguments or result object, as the employee reads it. */
-export function formatValue(value: unknown): RowValue {
+function formatValue(value: unknown): RowValue {
   if (value === null || value === undefined || value === "") return { text: EMPTY, json: false };
   if (typeof value === "boolean") return { text: value ? "да" : "нет", json: false };
   if (typeof value === "object") return { text: JSON.stringify(value), json: true };

@@ -35,6 +35,11 @@ describe('agents configuration and catalog refuse to start naming the variable o
   it.each<[string, () => unknown, RegExp]>([
     ['AGENT_MAX_DEPTH=0', () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }, SERVERS), /AGENT_MAX_DEPTH/],
     [
+      'CODE_RUN_MAX_CONCURRENT_PER_USER=0',
+      () => parseAgentsConfig({ CODE_RUN_MAX_CONCURRENT_PER_USER: '0' }, SERVERS),
+      /CODE_RUN_MAX_CONCURRENT_PER_USER/,
+    ],
+    [
       'an access row names a server the servers file does not hold',
       () => parseAgentsConfig({ MCP_ACCESS_TABLE: '{"emp-1":["logs","crm"]}' }, SERVERS),
       /MCP_ACCESS_TABLE.*emp-1.*crm/,
@@ -58,6 +63,12 @@ describe('agents configuration and catalog refuse to start naming the variable o
       'an unknown tool',
       () => checkWith([{ ...RESEARCHER, tools: ['send_email'] }]),
       /researcher.*send_email/,
+    ],
+    [
+      // code-execution DC-1: `run_code` is in every session, so a definition must not name it
+      'a definition naming run_code',
+      () => checkWith([{ ...RESEARCHER, tools: ['start_agent', 'run_code'] }]),
+      /researcher: names run_code in tools, which every session has/,
     ],
     [
       'an unknown agent',
@@ -90,6 +101,13 @@ describe('agents configuration and catalog refuse to start naming the variable o
       mcpCallTimeoutMs: 60_000,
       mcpServers: SERVERS,
       mcpAccess: new Map(),
+      codeRun: {
+        timeoutMs: 30_000,
+        memoryMb: 512,
+        maxToolCalls: 50,
+        maxConcurrent: 4,
+        maxConcurrentPerUser: 2,
+      },
     };
 
     const config = parseAgentsConfig({ AGENT_MAX_DEPTH: '', MCP_ACCESS_TABLE: '' }, SERVERS);

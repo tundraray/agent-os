@@ -7,6 +7,7 @@ import { AgentScreen } from '@/components/agents/agent-screen';
 import { AgentsScreen } from '@/components/agents/agents-screen';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
 import { FeedProvider } from '@/lib/feed/feed-context';
+import { selectMainItem } from '@/lib/threads/main-thread';
 import { resolveMainView, type MainView as MainViewKind } from '@/lib/threads/resolve-main-view';
 import { parseShellRoute } from '@/lib/shell-route';
 import { useShellActions, useShellServices, useShellStatus } from './shell-actions';
@@ -24,11 +25,7 @@ export function useMainViewState(): MainViewState {
   const route = parseShellRoute(usePathname());
   const routeThreadId = route.kind === 'chat' ? route.threadId : undefined;
   const mainRemoteId = useAuiState(
-    (s) =>
-      s.threads.threadItems.find(
-        (item) => item.id === s.threads.mainThreadId || item.remoteId === s.threads.mainThreadId,
-      )?.remoteId,
-  );
+    (s) => selectMainItem(s)?.remoteId);
   const switchError = useAuiState((s) => s.threads.switchError);
   const historyStatus = useShellStatus((s) => (mainRemoteId === undefined ? undefined : s.history[mainRemoteId]));
 
@@ -71,7 +68,6 @@ function ConversationView() {
   // Until the runtime has put the first read into the thread, a URL thread keeps the skeleton
   // (no welcome flash while the list is still loading).
   const bodyLoading = useAuiState((s) => s.thread.isLoading && s.thread.messages.length === 0);
-  const onNewChat = () => newChat('notice');
 
   switch (view.kind) {
     // One element for both kinds: the composer is not remounted when the history arrives.
@@ -80,20 +76,19 @@ function ConversationView() {
       return (
         <FeedProvider feed={feed}>
           <Thread
-            autoFocus={false}
             components={view.kind === 'thread' && view.deleted ? DELETED_THREAD_COMPONENTS : THREAD_COMPONENTS}
             historyPending={view.kind === 'switching' || (routeThreadId !== undefined && bodyLoading)}
           />
         </FeedProvider>
       );
     case 'not-found':
-      return <ThreadNotice variant="not-found" onNewChat={onNewChat} />;
+      return <ThreadNotice variant="not-found" onNewChat={newChat} />;
     case 'load-error': {
       const onRetry = () => {
         if (view.retry === 'switch' && routeThreadId !== undefined) retrySwitch(routeThreadId);
         if (view.retry === 'history' && mainRemoteId !== undefined) retryHistory(mainRemoteId);
       };
-      return <ThreadNotice variant="load-error" onRetry={onRetry} onNewChat={onNewChat} />;
+      return <ThreadNotice variant="load-error" onRetry={onRetry} onNewChat={newChat} />;
     }
   }
 }

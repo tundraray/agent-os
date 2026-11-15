@@ -13,6 +13,11 @@ const AGENTS_VARIABLES = [
   'AGENT_COMPACT_AT_TOKENS',
   'MCP_ACCESS_TABLE',
   'MCP_CALL_TIMEOUT_MS',
+  'CODE_RUN_TIMEOUT_MS',
+  'CODE_RUN_MEMORY_MB',
+  'CODE_RUN_MAX_TOOL_CALLS',
+  'CODE_RUN_MAX_CONCURRENT',
+  'CODE_RUN_MAX_CONCURRENT_PER_USER',
 ] as const;
 
 /** `MCP_SERVERS_FILE` default, relative to the working directory of `apps/api`. */
@@ -34,11 +39,6 @@ export function readAgentsSettings(
     variables,
     readMcpServersFile(read('MCP_SERVERS_FILE')),
   );
-}
-
-/** The values of the servers' environment, for the logger (it skips the ones too short to redact by value). */
-export function mcpServerSecrets(config: AgentsConfig): string[] {
-  return config.mcpServers.flatMap((server) => Object.values(server.env));
 }
 
 function readMcpServersFile(file: string | undefined): unknown {

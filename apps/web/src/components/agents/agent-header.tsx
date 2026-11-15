@@ -11,13 +11,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import type { FeedStore } from "@/lib/feed/feed-store";
-import type { FeedView } from "@/lib/feed/to-feed";
+import { selectAgent } from "@/lib/feed/to-feed";
 import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
 import { agentPath } from "@/lib/shell-route";
-
-type AgentView = Extract<FeedView, { kind: "agent" }>["agent"];
-
-const selectAgent = (view: FeedView | null): AgentView | null => (view?.kind === "agent" ? view.agent : null);
 
 /** MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»). */
 type Control = {
@@ -66,7 +62,7 @@ async function runControl(feed: FeedStore, control: Control, run: () => Promise<
     await run();
   } catch {
     toast.error(control.failure);
-    await feed.refresh();
+    await feed.load();
   }
 }
 

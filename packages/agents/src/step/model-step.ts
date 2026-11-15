@@ -1,21 +1,16 @@
-import {
-  AGENTS_HISTORY_APPENDED,
-  CHILD_FINISHED_KIND,
-  HistoryEventSchema,
-  TaskStatusSchema,
-} from '@agent-os/contracts';
+import { AGENTS_HISTORY_APPENDED, CHILD_FINISHED_KIND, HistoryEventSchema } from '@agent-os/contracts';
 import { agentToolCalls, type Database } from '@agent-os/db';
-import type {
-  Runtime,
-  RuntimeTx,
-  StepContext,
-  StepEffects,
-  StepResult,
+import {
+  isFinished,
+  type Runtime,
+  type RuntimeTx,
+  type StepContext,
+  type StepEffects,
+  type StepResult,
 } from '@agent-os/runtime';
 import { eq } from 'drizzle-orm';
 
-import type { DefinitionCatalog } from '../definitions/catalog.js';
-import type { AgentDefinition } from '../definitions/definition.js';
+import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
 import { mcpToolName } from '../mcp/mcp-clients.js';
 import type { ModelAnswer, ModelClient, ModelError } from '../model/model-client.js';
@@ -28,9 +23,9 @@ import {
   type StoreReader,
 } from '../store/sessions.repository.js';
 import { type NewToolCall, toolCalls } from '../store/tool-calls.repository.js';
-import { callTarget, type SessionTool, type ToolRegistry } from '../tools/tool-registry.js';
+import { callTargetOf, type SessionTool, type ToolRegistry } from '../tools/tool-registry.js';
 import { entriesOf, rootTurnReset } from './deliver.js';
-import { endOfTurn, type FinalAgentReport, nextTurns, turnLimitReached } from './turn-rules.js';
+import { endOfTurn, type FinalAgentReport } from './turn-rules.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
@@ -40,12 +35,6 @@ const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
 export const FAILURE_REASONS = { turnLimit: 'turn_limit', modelError: 'model_error' } as const;
-
-const FINISHED_STATUSES: ReadonlySet<string> = new Set([
-  TaskStatusSchema.enum.completed,
-  TaskStatusSchema.enum.failed,
-  TaskStatusSchema.enum.stopped,
-]);
 
 /**
  * What the handler (T4.4) writes before the step's own entries — a continuation (Flow 6, Flow 7) or
@@ -70,10 +59,12 @@ export interface SessionHistory {
   readonly lastSeq: number;
 }
 
-/**
- * The calls of an agent as the provider messages need them. The model called an MCP tool by its
- * model name, so a call kept as its server and raw name gets `mcp__<server>__<tool>` back.
- */
+/** The name the model called: `agent_tool_calls` keeps an MCP tool as its server and raw name. */
+export function requestedName(call: { readonly tool: string; readonly server: string | null }): string {
+  return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
+}
+
+/** The calls of an agent as the provider messages need them, under the names the model called. */
 async function callRecords(reader: StoreReader, taskId: string): Promise<ToolCallRecord[]> {
   // Read here, not in the repository: only the history view needs every call of a session.
   const rows = await reader
@@ -91,7 +82,7 @@ async function callRecords(reader: StoreReader, taskId: string): Promise<ToolCal
     callId: row.callId,
     answerSeq: row.answerSeq,
     position: row.position,
-    tool: row.server === null ? row.tool : mcpToolName(row.server, row.tool),
+    tool: requestedName(row),
     args: row.args,
   }));
 }
@@ -152,17 +143,6 @@ function failedEvent(reason: string): NewHistoryEntry {
   return { kind: 'event', content: { event: HistoryEventSchema.enum.failed, reason } };
 }
 
-/** The definition of the session's agent; a session whose definition left the catalog is a defect. */
-export function definitionOf(catalog: DefinitionCatalog, ctx: StepContext, session: Session): AgentDefinition {
-  const definition = catalog.get(session.definition);
-  if (definition === undefined) {
-    throw new Error(
-      `Agent ${ctx.taskId} has definition ${session.definition}, which is not in the catalog`,
-    );
-  }
-  return definition;
-}
-
 /** The message of a `model_error` failure: the provider status, never the request. */
 export function modelErrorMessage(model: string, result: ModelError): string {
   const status = result.error.statusCode === null ? 'no status' : `status ${result.error.statusCode}`;
@@ -192,7 +172,7 @@ export function failResult(input: {
       await appendWithEvent(tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
       await sessions.update(tx, ctx.taskId, {
         ...input.patch,
-        turns: nextTurns(0, { kind: 'failed' }),
+        turns: 0,
         closed: true,
       });
     },
@@ -266,11 +246,9 @@ function newToolCalls(
   answerSeq: number,
   sessionTools: readonly SessionTool[],
 ): NewToolCall[] {
-  const byName = new Map(sessionTools.map((tool) => [tool.name, tool]));
   return answer.toolCalls.map((call, position) => {
-    const tool = byName.get(call.toolName);
     // An unknown name is refused by the tool step (`tool_not_in_definition`); it stays as the model wrote it.
-    const target = tool === undefined ? { tool: call.toolName, server: null } : callTarget(tool);
+    const target = callTargetOf(sessionTools, call.toolName);
     return {
       taskId: ctx.taskId,
       callId: call.toolCallId,
@@ -325,7 +303,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
   async function childrenInFlight(ctx: StepContext): Promise<{ unfinished: number; pending: number }> {
     const tree = await deps.tasks.listTree(ctx.rootId, ctx.ownerId);
     const unfinished = tree.filter(
-      (task) => task.parentId === ctx.taskId && !FINISHED_STATUSES.has(task.status),
+      (task) => task.parentId === ctx.taskId && !isFinished(task.status),
     ).length;
     const delivered = new Set(ctx.messages.map((message) => message.messageId));
     const pendingMessages = await deps.inbox.listPending(ctx.taskId, ctx.ownerId);
@@ -337,7 +315,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
   return async function modelStep(ctx, session, prelude) {
     const startedAt = Date.now();
-    const definition = definitionOf(catalog, ctx, session);
+    const definition = definitionOf(catalog, session);
     const isRoot = ctx.parentId === null;
     const turns = rootTurnReset({
       turns: prelude?.patch.turns ?? session.turns,
@@ -351,7 +329,8 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     ];
     const basePatch: SessionPatch = { ...prelude?.patch };
 
-    if (turnLimitReached(turns, definition.maxTurns)) {
+    // The definition's `maxTurns` is spent: the step fails instead of calling the model.
+    if (turns >= definition.maxTurns) {
       logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turnLimit, turns });
       return failResult({
         ctx,
@@ -404,7 +383,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       });
     }
 
-    const counted = nextTurns(turns, { kind: 'model_call' });
+    const counted = turns + 1;
     const answerEntry: NewHistoryEntry = {
       kind: 'model_answer',
       content: { text: result.text },
@@ -477,11 +456,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
           outcome: 'complete',
           result: { report: ending.report },
           commit: (tx, effects) =>
-            writeAnswer(tx, effects, [], {
-              ...callPatch,
-              turns: nextTurns(counted, { kind: 'report' }),
-              closed: true,
-            }),
+            writeAnswer(tx, effects, [], { ...callPatch, turns: 0, closed: true }),
         };
     }
   };

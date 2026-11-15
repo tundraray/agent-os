@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatValue } from './value-rows';
+import { valueRows } from './value-rows';
 
-describe('formatValue', () => {
+describe('valueRows value formatting', () => {
   it.each([
     { name: 'a string stays plain text', value: 'Сбой выгрузки', text: 'Сбой выгрузки', json: false },
     { name: 'a number reads as text', value: 42.5, text: '42.5', json: false },
@@ -14,6 +14,6 @@ describe('formatValue', () => {
     { name: 'a nested object is compact JSON', value: { id: 1, tags: ['a'] }, text: '{"id":1,"tags":["a"]}', json: true },
     { name: 'an array is compact JSON', value: ['a', 2], text: '["a",2]', json: true },
   ])('$name', ({ value, text, json }) => {
-    expect(formatValue(value)).toEqual({ text, json });
+    expect(valueRows({ key: value })?.[0]?.value).toEqual({ text, json });
   });
 });

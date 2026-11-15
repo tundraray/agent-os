@@ -7,7 +7,7 @@ import { type SessionInput, sessions } from '../../store/sessions.repository.js'
 import type { StartChild, StartChildRequest } from '../tool.js';
 import type { StartChildScope } from '../tool-runner.js';
 
-/** What the spawn helper needs besides the transaction, the effects and the caller. */
+/** What a start needs to check its request and choose the model. */
 export interface StartChildDeps {
   readonly catalog: DefinitionCatalog;
   /** `AGENT_MAX_DEPTH`. */
@@ -20,34 +20,40 @@ export interface StartChildDeps {
 
 /**
  * The only start of a child agent inside a step's commit transaction (overview, Common Processing
- * Points): the same fields and refusals as the `start` operation — `UNKNOWN_DEFINITION`, `DEPTH_LIMIT`,
- * `UNKNOWN_MODEL` — then `effects.spawn` of an `agent` task and the child's session with its `task`
+ * Points): the same fields and refusals as the `start` operation (`sessionInputOf`), then
+ * `effects.spawn` of an `agent` task and the child's session with its `task`
  * entry in the same transaction (plan Notes 11), so the caller gets the `agentId` at once. Owner and
  * parent are the caller's. Bound to one call's scope by the tool runner (`startChildFor`).
  */
 export function createStartChild(deps: StartChildDeps): (scope: StartChildScope) => StartChild {
   return ({ tx, effects, caller }) =>
     async (request) => {
-      const input = childInput(deps, caller.depth, request);
+      const input = sessionInputOf(deps, caller.depth, request);
       const agentId = await effects.spawn({ type: AGENT_TASK_TYPE, input });
       await sessions.ensureSession(tx, agentId, input, caller.ownerId);
       return { agentId };
     };
 }
 
-function childInput(
+/**
+ * The session input of a new agent, for the `start` operation and the spawn helper alike: the
+ * definition is in the catalog (`UNKNOWN_DEFINITION`), a child is not deeper than `AGENT_MAX_DEPTH`
+ * (`DEPTH_LIMIT`) and the chosen model has a price (`UNKNOWN_MODEL`). `parentDepth` — `null` for a
+ * root session.
+ */
+export function sessionInputOf(
   deps: StartChildDeps,
-  callerDepth: number,
+  parentDepth: number | null,
   request: StartChildRequest,
 ): SessionInput {
   const definition = deps.catalog.get(request.definition);
   if (definition === undefined) {
     throw new AgentsError('UNKNOWN_DEFINITION', `No definition ${request.definition} in the catalog`);
   }
-  if (callerDepth + 1 > deps.maxDepth) {
+  if (parentDepth !== null && parentDepth + 1 > deps.maxDepth) {
     throw new AgentsError(
       'DEPTH_LIMIT',
-      `A child of an agent at depth ${callerDepth} is deeper than AGENT_MAX_DEPTH ${deps.maxDepth}`,
+      `A child of an agent at depth ${parentDepth} is deeper than AGENT_MAX_DEPTH ${deps.maxDepth}`,
     );
   }
   const choice = chooseModel({

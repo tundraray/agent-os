@@ -80,10 +80,10 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
       });
       const unsubscribers = [
         live.onTree((threadId) => {
-          if (threadId === remoteId) void store.refresh();
+          if (threadId === remoteId) void store.load();
         }),
         live.onReady(() => {
-          if (watches(remoteId)) void store.refresh();
+          if (watches(remoteId)) void store.load();
         }),
         live.onDelta((delta) => {
           if (watches(remoteId)) store.applyDelta(delta);

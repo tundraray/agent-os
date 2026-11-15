@@ -10,5 +10,11 @@
     "command": "node",
     "args": ["../../packages/mcp-fixture/dist/server.js"],
     "env": { "FIXTURE_SOURCE": "backoffice" }
+  },
+  {
+    "id": "tracker",
+    "command": "node",
+    "args": ["../../packages/mcp-fixture/dist/server.js"],
+    "env": { "FIXTURE_SOURCE": "tracker" }
   }
 ]

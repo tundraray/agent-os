@@ -10,7 +10,8 @@
     "apps/api": {
       "entry": [
         "src/main.ts",
-        "src/runtime/migrate-cli.ts"
+        "src/runtime/migrate-cli.ts",
+        "test/verify/**/*.verify.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
     },
@@ -18,7 +19,17 @@
       "entry": [
         "src/index.ts",
         "src/testing.ts",
-        "test/**/*.e2e-spec.ts"
+        "test/**/*.e2e-spec.ts",
+        "test/verify/**/*.verify.ts",
+        "test/support/codeRunChildMain.ts"
+      ]
+    },
+    "packages/code-runner": {
+      "entry": [
+        "src/index.ts",
+        "src/executor-main.ts",
+        "test/**/*.e2e-spec.ts",
+        "test/support/*-entry.ts"
       ]
     },
     "packages/mcp-fixture": {

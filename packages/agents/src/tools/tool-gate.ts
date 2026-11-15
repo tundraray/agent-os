@@ -1,45 +1,8 @@
 import type { ToolRefusalReason } from '@agent-os/contracts';
-import type { z } from 'zod';
 import type { ModelChoice } from '../model/model-choice.js';
 import { FORK_AGENT, type SessionLimits } from './tool.js';
 
 type Refused<Reason extends ToolRefusalReason> = { readonly kind: 'refused'; readonly reason: Reason };
-
-export interface CallGateInput {
-  /** The name the model called. */
-  readonly toolName: string;
-  /** Names of the tools the session offers: built-in, registered and MCP ones. */
-  readonly sessionTools: readonly string[];
-  /** The MCP server of the tool; `null` for a built-in or registered tool. */
-  readonly serverId: string | null;
-  /** `serverAllowed` for the owner and `serverId`, asked by the caller; read only for an MCP tool. */
-  readonly ownerAllowed: boolean;
-  readonly args: unknown;
-  /** Arguments schema of a built-in or registered tool; an MCP server checks its own arguments. */
-  readonly argsSchema?: z.ZodType;
-}
-
-export type CallGate =
-  | { readonly kind: 'allowed'; readonly args: unknown }
-  | Refused<'tool_not_in_definition' | 'no_access' | 'invalid_arguments'>;
-
-/**
- * Whether a tool call may run (Flow 1, Failure handling; DC-6): a refused call never reaches the
- * server, and its outcome is `refused` with the reason. Allowed arguments are the parsed ones.
- */
-export function gateCall(input: CallGateInput): CallGate {
-  if (!input.sessionTools.includes(input.toolName)) {
-    return { kind: 'refused', reason: 'tool_not_in_definition' };
-  }
-  if (input.serverId !== null && !input.ownerAllowed) {
-    return { kind: 'refused', reason: 'no_access' };
-  }
-  if (input.argsSchema === undefined) return { kind: 'allowed', args: input.args };
-  const parsed = input.argsSchema.safeParse(input.args);
-  return parsed.success
-    ? { kind: 'allowed', args: parsed.data }
-    : { kind: 'refused', reason: 'invalid_arguments' };
-}
 
 export interface StartGateInput {
   /** The definition name `start_agent` named, or `fork`. */
@@ -84,11 +47,4 @@ function startAllowed(input: StartGateInput): boolean {
     );
   }
   return input.agent === FORK_AGENT || input.definitionAgents.includes(input.agent);
-}
-
-export type TargetGate = { readonly kind: 'allowed' } | Refused<'unknown_agent'>;
-
-/** The target of `message_agent` and `stop_agent` is only a descendant of the caller. */
-export function gateTarget(input: { readonly isDescendant: boolean }): TargetGate {
-  return input.isDescendant ? { kind: 'allowed' } : { kind: 'refused', reason: 'unknown_agent' };
 }

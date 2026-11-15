@@ -5,9 +5,12 @@ import { KEBAB_CASE_PATTERN, MODEL_ID_PATTERN } from '../config.js';
 /** `mcpServers` value that gives a definition every server of the deployment. */
 export const ALL_SERVERS = '*';
 
+/** The built-in tool that starts an agent; its description lists the definitions the session may start. */
+export const START_AGENT_TOOL = 'start_agent';
+
 /** Names of the package's built-in tools as the model sees them (Contract Definitions, «Инструменты»). */
 const BUILTIN_TOOL_NAMES = [
-  'start_agent',
+  START_AGENT_TOOL,
   'message_agent',
   'list_agents',
   'stop_agent',
@@ -37,7 +40,7 @@ export const AgentDefinitionSchema = z.object({
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
-/** Header of a definition: what `list()` and the description of `start_agent` show. */
+/** Header of a definition: what the description of `start_agent` shows. */
 export interface DefinitionHeader {
   readonly name: string;
   readonly description: string;

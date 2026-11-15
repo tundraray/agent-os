@@ -3,7 +3,6 @@ import { z } from 'zod';
 
 import { messagePayload } from '../../step/continuation.js';
 import type { InCommitAgentTool } from '../tool.js';
-import { gateTarget } from '../tool-gate.js';
 import { type BuiltinTasks, descendantsOf } from './list-agents.js';
 
 const MessageAgentArgsSchema = z.object({
@@ -31,10 +30,7 @@ export function createMessageAgentTool(deps: {
     async execute({ args, caller, effects }) {
       const tree = await deps.tasks.listTree(caller.rootId, caller.ownerId);
       const target = descendantsOf(tree, caller.agentId).find((task) => task.taskId === args.agentId);
-      const gate = gateTarget({ isDescendant: target !== undefined });
-      if (gate.kind === 'refused' || target === undefined) {
-        return { kind: 'refused', reason: 'unknown_agent' };
-      }
+      if (target === undefined) return { kind: 'refused', reason: 'unknown_agent' };
       const targetParent = tree.find((task) => task.taskId === target.parentId) ?? null;
       await effects.enqueue({
         recipientId: target.taskId,

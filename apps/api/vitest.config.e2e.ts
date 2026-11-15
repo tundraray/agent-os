@@ -13,5 +13,8 @@ export default defineConfig({
     globalSetup: ['./test/support/migrate.global-setup.ts'],
     // Harness default: no runtime workers (chat e2e); a test that needs them turns them on itself.
     env: { RUNTIME_WORKERS: process.env.RUNTIME_WORKERS ?? 'off' },
+    // The worker is the API process: `process._debugProcess` from an executor process targets it,
+    // and the flag protects only the process it is given to (design-code-execution.md, Constraints).
+    execArgv: ['--disable-sigusr1'],
   },
 });

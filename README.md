@@ -41,7 +41,7 @@ agent-os/
 
 | Инструмент | Установка | Инструкция |
 |---|---|---|
-| Node.js 22+ | скачать установщик или через менеджер версий | [nodejs.org/en/download](https://nodejs.org/en/download) |
+| Node.js 26 | скачать установщик или через менеджер версий | [nodejs.org/en/download](https://nodejs.org/en/download) |
 | pnpm 9+ | `corepack enable && corepack prepare pnpm@latest --activate` | [pnpm.io/installation](https://pnpm.io/installation) |
 | Docker + Compose | Docker Desktop или пакет дистрибутива | [docs.docker.com/compose/install](https://docs.docker.com/compose/install/) |
 

@@ -129,10 +129,12 @@ export function createFixtureFiles(label = 'mcp-fixture'): FixtureFiles {
   };
 }
 
-/** One server of a servers file the fixture serves: its id and what it serves. */
+/** One server of a servers file the fixture serves: its id, what it serves and extra process variables. */
 export interface FixtureServerSpec {
   readonly id: string;
   readonly source: FixtureSource;
+  /** Extra variables of the server process (a credential the script must not see); the fixture ones win. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** An entry of the deployment's servers file (`MCP_SERVERS_FILE`): a stdio command. */
@@ -156,10 +158,10 @@ export function fixtureServersFile(
       `MCP fixture is not built (${fixtureServerPath}): run pnpm --filter @agent-os/mcp-fixture build`,
     );
   }
-  return servers.map(({ id, source }) => ({
+  return servers.map(({ id, source, env }) => ({
     id,
     command: process.execPath,
     args: [fixtureServerPath],
-    env: { FIXTURE_SOURCE: source, FIXTURE_CALL_LOG: files.callLog, FIXTURE_FAULTS: files.faults },
+    env: { ...env, FIXTURE_SOURCE: source, FIXTURE_CALL_LOG: files.callLog, FIXTURE_FAULTS: files.faults },
   }));
 }

@@ -19,9 +19,12 @@
     "lint": "oxlint --type-aware --deny-warnings src/ test/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "pnpm --filter @agent-os/mcp-fixture build && pnpm build && vitest run --config ./vitest.config.e2e.ts"
+    "build:child": "tsc -p tsconfig.child.json",
+    "test:e2e": "pnpm --filter @agent-os/mcp-fixture --filter @agent-os/code-runner build && pnpm build && pnpm build:child && vitest run --config ./vitest.config.e2e.ts",
+    "test:verify": "pnpm --filter @agent-os/mcp-fixture --filter @agent-os/code-runner build && pnpm build && vitest run --config ./vitest.config.verify.ts"
   },
   "dependencies": {
+    "@agent-os/code-runner": "workspace:*",
     "@agent-os/common": "workspace:*",
     "@agent-os/contracts": "workspace:*",
     "@agent-os/db": "workspace:*",
@@ -34,7 +37,7 @@
   },
   "devDependencies": {
     "@agent-os/mcp-fixture": "workspace:*",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "fast-check": "^4.10.2",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",

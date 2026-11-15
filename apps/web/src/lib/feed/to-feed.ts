@@ -149,6 +149,8 @@ export type ToolCallArtifact = {
   toolTitle?: AnswerToolCall["toolTitle"];
   argLabels?: AnswerToolCall["argLabels"];
   refusalReason: ToolRefusalReason | null;
+  /** What a code run's script printed; null for other tools and for a failed run. */
+  output: string | null;
   startedAt: string | null;
   finishedAt: string | null;
 };
@@ -202,6 +204,7 @@ function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined): Too
     toolTitle: call.toolTitle,
     argLabels: call.argLabels,
     refusalReason: result?.refusalReason ?? null,
+    output: result?.output ?? null,
     startedAt: result?.startedAt ?? null,
     finishedAt: result?.finishedAt ?? null,
   };
@@ -424,45 +427,21 @@ export function drawsPending(entry: OptimisticEntry, pending: PendingMessage): b
   return entry.interrupt && pending.interrupt && pending.text === entry.text;
 }
 
+/** The agent of an agent page's view; null for a conversation and before the first read. */
+export const selectAgent = (view: FeedView | null) => (view?.kind === "agent" ? view.agent : null);
+
+/** The status the controls follow: a conversation's `chat.status`, an agent's own; null before the first read. */
+const statusOf = (view: FeedView | null): ChatStatus | AgentStatus | null =>
+  view === null ? null : view.kind === "thread" ? view.chat.status : view.agent.status;
+
+/** «Прервать» / «Прервать и отправить» next to «Отправить»: the agent works. */
+export const canInterrupt = (view: FeedView | null): boolean => statusOf(view) === "working";
+
+/** The tray's hint «Ждём вашего решения…» with «К запросу». */
+const awaitsDecision = (view: FeedView | null): boolean => statusOf(view) === "awaiting_confirmation";
+
 /** The agent works or waits for a decision: a new message goes to the tray (KD-4). */
-export function isBusy(view: FeedView | null): boolean {
-  if (view === null) return false;
-  const status: ChatStatus | AgentStatus = view.kind === "thread" ? view.chat.status : view.agent.status;
-  return status === "working" || status === "awaiting_confirmation";
-}
-
-export type FeedControls = {
-  /** The header button of an agent page (UXRD Screen 3); a conversation has none. */
-  header: "stop" | "restart" | null;
-  /** «Прервать» / «Прервать и отправить» next to «Отправить». */
-  interrupt: boolean;
-  /** The tray's hint «Ждём вашего решения…» with «К запросу». */
-  awaitingDecision: boolean;
-  /** «Отправить» puts the message in the tray. */
-  queues: boolean;
-};
-
-/**
- * Controls by status: a conversation by `chat.status` (design-web.md, State Transitions), an agent by
- * UXRD Screen 3, «Управление по статусу».
- */
-export function controls(view: FeedView | null): FeedControls {
-  const queues = isBusy(view);
-  if (view === null) return { header: null, interrupt: false, awaitingDecision: false, queues };
-  const status: ChatStatus | AgentStatus = view.kind === "thread" ? view.chat.status : view.agent.status;
-  const header =
-    view.kind === "thread"
-      ? null
-      : status === "completed" || status === "failed" || status === "stopped"
-        ? "restart"
-        : "stop";
-  return {
-    header,
-    interrupt: status === "working",
-    awaitingDecision: status === "awaiting_confirmation",
-    queues,
-  };
-}
+export const isBusy = (view: FeedView | null): boolean => canInterrupt(view) || awaitsDecision(view);
 
 export type TrayEntry = {
   /** `messageId` of a queued message or `local-*` of an optimistic one. */
@@ -504,7 +483,7 @@ export function trayEntries(view: FeedView | null, optimistic: readonly Optimist
   const open = view.decisions.find((d) => d.status === "open" && d.agentId === ownerId);
   return {
     entries: [...queued, ...local],
-    blocked: controls(view).awaitingDecision,
+    blocked: awaitsDecision(view),
     decisionId: open?.decisionId ?? null,
   };
 }

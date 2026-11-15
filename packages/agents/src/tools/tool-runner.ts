@@ -1,6 +1,8 @@
 import type { Logger } from '@agent-os/common';
 import {
   AGENTS_TOOL_CONFIRMATION,
+  RUN_CODE_TOOL,
+  type RunCodeArgs,
   type ToolOutcome,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
@@ -10,13 +12,12 @@ import { z } from 'zod';
 import type { McpAccessTable } from '../config.js';
 import type { McpClients } from '../mcp/mcp-clients.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
-import { toOutcome } from '../mcp/mcp-outcome.js';
+import { scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
 import type { Session } from '../store/sessions.repository.js';
 import { toolCalls } from '../store/tool-calls.repository.js';
-import type { StartChild, ToolCaller, ToolRunResult } from './tool.js';
+import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
 import { serverAllowed } from './tool-access.js';
-import { gateCall } from './tool-gate.js';
-import { callTarget, type SessionTool } from './tool-registry.js';
+import { callTarget, callTargetOf, type SessionTool } from './tool-registry.js';
 
 /** One tool call of a model answer, as the model wrote it. */
 export interface RequestedCall {
@@ -34,6 +35,15 @@ export interface ResolvedCall {
   readonly caller: ToolCaller;
 }
 
+/** A call of a tool that runs in the commit transaction of the step. */
+export type InCommitCall = ResolvedCall & {
+  readonly tool: { readonly kind: 'agent'; readonly tool: InCommitAgentTool<unknown> };
+};
+
+export function isInCommit(call: ResolvedCall): call is InCommitCall {
+  return call.tool.kind === 'agent' && call.tool.tool.mode === 'in_commit';
+}
+
 export type CallCheck =
   | { readonly kind: 'allowed'; readonly call: ResolvedCall }
   | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
@@ -46,6 +56,13 @@ export type ToolExecution =
       readonly text: string;
       /** Why an MCP call got no answer; only with `transport_failure`. */
       readonly failureReason?: McpFailureReason;
+      /** Script output of a `run_code` run: text of a successful run, `null` of a failed one. */
+      readonly output?: string | null;
+      /**
+       * The full result of a direct MCP call with `success` or `empty`, as a script reads it; the step's
+       * commit stores it with the closing (code-execution KD-5, DC-8).
+       */
+      readonly fullResult?: { readonly value: unknown };
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
@@ -108,35 +125,101 @@ export interface ToolRunnerOptions {
   readonly startChildFor: (scope: StartChildScope) => StartChild;
 }
 
-/** The step context the runner needs for an outside call. */
-export type OutsideContext = Pick<StepContext, 'signal' | 'logger'>;
+/** A script's request to call a tool: the name from the model's tool list and the arguments. */
+export interface CodeCallRequest {
+  readonly name: string;
+  readonly args: unknown;
+}
+
+/** What a call from code is checked against (code-execution KD-2, KD-8, KD-10). */
+export interface CodeCallScope {
+  /** The calling agent of the run; the call goes out on behalf of its owner. */
+  readonly caller: ToolCaller;
+  /** `definitionMcpTools` of the agent's definition, taken when the run started. */
+  readonly snapshot: readonly SessionTool[];
+  readonly runClass: RunCodeArgs['class'];
+  /** The names of the confirmed «Может вызвать» list; a `write` run always has it. */
+  readonly confirmedNames?: readonly string[];
+  /** Names of the built-in and registered tools (`ToolRegistry.toolNames`): a script never calls them (DC-5). */
+  readonly agentToolNames: readonly string[];
+  /** `callId` of the `run_code` call: the run the request belongs to. */
+  readonly callId: string;
+  readonly signal: AbortSignal;
+  readonly logger: Logger;
+}
+
+/** A refused call from code: the text names the tool, the reason and the run class. */
+export interface CodeCallRefusal {
+  readonly kind: 'refused';
+  readonly reason: ToolRefusalReason;
+  readonly text: string;
+}
+
+/**
+ * How a call from code ended: a refusal, the step's signal, or the MCP outcome; `fullResult` holds the
+ * whole value of `success`/`empty`; a `tool_error` or `transport_failure` has an empty text (the
+ * server's text is only in the run log).
+ */
+export type CodeCallExecution =
+  | Extract<ToolExecution, { kind: 'done' }>
+  | CodeCallRefusal
+  | AbortedExecution;
+
+/** The step context the runner needs for an outside call; the tool gets it in its input. */
+export type OutsideContext = Pick<StepContext, 'signal' | 'logger' | 'guard'>;
 
 /** The step context of a confirmed call: the intent goes through `guard`. */
 export type ConfirmContext = Pick<StepContext, 'taskId' | 'signal' | 'logger' | 'guard'>;
 
 export interface ToolRunner {
   /**
-   * Checks a call (C3): the tool is in the session's set, the owner may use its server — `serverAllowed`,
-   * as when the set was built — and the arguments of a built-in or registered tool fit its schema.
+   * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's set, the owner may
+   * use its server — `serverAllowed`, as when the set was built — and the arguments of a built-in or
+   * registered tool fit its schema. A refused call never reaches the server; allowed arguments are the
+   * parsed ones.
    */
   check(
     requested: RequestedCall,
     scope: { readonly sessionTools: readonly SessionTool[]; readonly caller: ToolCaller },
   ): CallCheck;
-  /** A changing MCP tool (not `readOnlyHint`) or a tool that declares `confirmation` (KD-4). */
+  /**
+   * A changing MCP tool (not `readOnlyHint`), or a tool with `confirmation` whose `required(args)` is
+   * true or not set (KD-4; code-execution KD-4).
+   */
   needsConfirmation(call: ResolvedCall): boolean;
-  /** The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. */
-  confirmationRequest(call: ResolvedCall, session: Pick<Session, 'description'>): ConfirmationRequest;
+  /**
+   * The `await_decision` request of the call; `agents.tool_confirmation` for an MCP tool. `tools` — the
+   * session's tool set, passed to the tool's `content` (code-execution KD-10).
+   */
+  confirmationRequest(
+    call: ResolvedCall,
+    session: Pick<Session, 'description'>,
+    tools: readonly SessionTool[],
+  ): ConfirmationRequest;
   /** Runs an MCP tool or an `outside` tool, outside any transaction, under the step's signal. */
   runOutside(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution>;
+  /**
+   * Checks and runs a script's call (code-execution «Проверка вызова из кода»; KD-2, KD-8, DC-5, DC-6):
+   * a built-in or registered tool or `run_code` — `not_callable_from_code`; a `write` run and a name
+   * outside the confirmed list — `not_in_confirmed_script`; then `check` against the snapshot; a `read`
+   * run and a tool without `McpTool.readOnly` — `changing_in_read_run`. An allowed call goes to its
+   * server on behalf of the caller's owner; a value is not cut, a server's error text is not returned.
+   */
+  callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution>;
   /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper. */
-  planInCommit(call: ResolvedCall, logger: Logger): InCommitPlan;
+  planInCommit(call: InCommitCall, logger: Logger): InCommitPlan;
   /**
    * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
-   * employee edited; they replace the call's.
+   * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
+   * an `outside` tool in its input (code-execution KD-10).
    */
-  sendConfirmed(call: ResolvedCall, ctx: ConfirmContext, editedArgs?: unknown): Promise<ConfirmedSend>;
+  sendConfirmed(
+    call: ResolvedCall,
+    ctx: ConfirmContext,
+    editedArgs?: unknown,
+    confirmed?: unknown,
+  ): Promise<ConfirmedSend>;
 }
 
 /** An MCP server checks its own arguments; the runner only needs an object to send. */
@@ -153,32 +236,46 @@ export function callerOf(ctx: StepContext): ToolCaller {
   };
 }
 
-function fromRunResult(result: ToolRunResult): ToolExecution {
-  return result.kind === 'refused'
-    ? result
-    : {
-        kind: 'done',
-        outcome: result.outcome,
-        text: result.text,
-        ...(result.childAgentId === undefined ? {} : { childAgentId: result.childAgentId }),
-      };
+/**
+ * The text of a refused call from code: it names the tool, the reason and the run class
+ * (code-execution «Error handling», AC-05.5, AC-03.7).
+ */
+function codeRefusalText(
+  tool: string,
+  reason: ToolRefusalReason,
+  runClass: RunCodeArgs['class'],
+): string {
+  const run = `запуск ${runClass}`;
+  switch (reason) {
+    case 'not_in_confirmed_script':
+      return `${tool}: инструмента нет в подтверждённом коде (${reason}, ${run})`;
+    case 'changing_in_read_run':
+      return `${tool}: инструмент не помечен читающим, а ${run} только читает (${reason})`;
+    default:
+      return `${tool}: отказ ${reason} (${run})`;
+  }
+}
+
+/** What a log record of a call names: its id, tool, server and arguments. */
+interface LoggedCall {
+  readonly callId: string;
+  readonly tool: string;
+  readonly server: string | null;
+  readonly args: unknown;
+}
+
+function loggedCall(call: ResolvedCall): LoggedCall {
+  return { callId: call.callId, ...callTarget(call.tool), args: call.args };
 }
 
 /** Logs one tool call the runner ran (rule 9 of the plan): ids, tool, server, arguments, outcome, reason, duration. */
 function logCall(
   logger: Logger,
-  call: ResolvedCall,
-  execution: ToolExecution | AbortedExecution | NotSent,
+  call: LoggedCall,
+  execution: ToolExecution | AbortedExecution | NotSent | CodeCallRefusal,
   startedAt: number,
 ): void {
-  const { tool, server } = callTarget(call.tool);
-  const fields = {
-    callId: call.callId,
-    tool,
-    server,
-    args: call.args,
-    durationMs: Date.now() - startedAt,
-  };
+  const fields = { ...call, durationMs: Date.now() - startedAt };
   switch (execution.kind) {
     case 'done':
       logger.info('tool call finished', {
@@ -199,6 +296,30 @@ function logCall(
   }
 }
 
+/**
+ * A call from code the server did not answer with a value: the script gets the outcome and reason
+ * only, never the server's text, which may carry a secret; the full response goes to the run log as
+ * one warning, where the logger masks the known secrets.
+ */
+function withoutServerText(
+  execution: CodeCallExecution,
+  call: LoggedCall,
+  logger: Logger,
+): CodeCallExecution {
+  if (execution.kind !== 'done' || execution.outcome === 'success' || execution.outcome === 'empty') {
+    return execution;
+  }
+  logger.warn('tool call from code failed; its response is hidden from the script', {
+    callId: call.callId,
+    tool: call.tool,
+    server: call.server,
+    outcome: execution.outcome,
+    reason: execution.failureReason ?? null,
+    response: execution.text,
+  });
+  return { ...execution, text: '' };
+}
+
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
   const { mcpClients, access, toolResultMaxBytes } = options;
@@ -206,18 +327,22 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
   async function callMcp(
     call: ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> },
     signal: AbortSignal,
-  ): Promise<ToolExecution | AbortedExecution> {
+    maxBytes: number,
+  ): Promise<Extract<ToolExecution, { kind: 'done' }> | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
     try {
       const response = await mcpClients.call(call.tool.mcp.server, call.tool.mcp.tool, args, signal);
       if (signal.aborted) return { kind: 'aborted' };
-      const result = toOutcome(response, toolResultMaxBytes);
+      const result = toOutcome(response, maxBytes, call.callId);
+      const hasValue =
+        response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
       return {
         kind: 'done',
         outcome: result.outcome,
         text: result.text,
         ...(result.reason === undefined ? {} : { failureReason: result.reason }),
+        ...(hasValue ? { fullResult: { value: scriptValueOf(response.result) } } : {}),
       };
     } catch (error) {
       if (signal.aborted) return { kind: 'aborted' };
@@ -225,33 +350,31 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     }
   }
 
-  async function execute(call: ResolvedCall, ctx: OutsideContext): Promise<ToolExecution | AbortedExecution> {
+  async function execute(
+    call: ResolvedCall,
+    ctx: OutsideContext,
+    confirmed?: unknown,
+  ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
-    if (tool.kind === 'mcp') return callMcp({ ...call, tool }, ctx.signal);
+    if (tool.kind === 'mcp') return callMcp({ ...call, tool }, ctx.signal, toolResultMaxBytes);
     if (tool.tool.mode !== 'outside') {
       throw new Error(`Tool ${tool.name} runs in the commit transaction, not outside it`);
     }
     if (ctx.signal.aborted) return { kind: 'aborted' };
     const result = await tool.tool.execute({
-      callId: call.callId,
       args: call.args,
       caller: call.caller,
+      callId: call.callId,
       signal: ctx.signal,
       logger: ctx.logger,
+      guard: (work) => ctx.guard(work),
+      ...(confirmed === undefined ? {} : { confirmed }),
     });
-    return ctx.signal.aborted ? { kind: 'aborted' } : fromRunResult(result);
+    return ctx.signal.aborted ? { kind: 'aborted' } : result;
   }
 
-  async function runInCommit(
-    call: ResolvedCall,
-    tx: RuntimeTx,
-    effects: StepEffects,
-  ): Promise<ToolExecution> {
-    const { tool } = call;
-    if (tool.kind !== 'agent' || tool.tool.mode !== 'in_commit') {
-      throw new Error(`Tool ${tool.name} runs outside the commit transaction`);
-    }
-    const result = await tool.tool.execute({
+  function runInCommit(call: InCommitCall, tx: RuntimeTx, effects: StepEffects): Promise<ToolExecution> {
+    return call.tool.tool.execute({
       callId: call.callId,
       args: call.args,
       caller: call.caller,
@@ -259,44 +382,67 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       effects,
       startChild: options.startChildFor({ tx, effects, caller: call.caller }),
     });
-    return fromRunResult(result);
   }
 
-  function isInCommit(call: ResolvedCall): boolean {
-    return call.tool.kind === 'agent' && call.tool.tool.mode === 'in_commit';
+  const check: ToolRunner['check'] = (requested, { sessionTools, caller }) => {
+    const tool = sessionTools.find((candidate) => candidate.name === requested.toolName);
+    if (tool === undefined) return { kind: 'refused', reason: 'tool_not_in_definition' };
+    if (tool.kind === 'mcp' && !serverAllowed(access, caller.ownerId, tool.mcp.server)) {
+      return { kind: 'refused', reason: 'no_access' };
+    }
+    const schema = tool.kind === 'agent' ? tool.inputSchema : MCP_ARGS_SCHEMA;
+    const parsed = schema.safeParse(requested.args);
+    return parsed.success
+      ? { kind: 'allowed', call: { callId: requested.callId, tool, args: parsed.data, caller } }
+      : { kind: 'refused', reason: 'invalid_arguments' };
+  };
+
+  /** The filters of «Проверка вызова из кода» in their order, then the MCP call itself. */
+  async function checkAndCallFromCode(
+    request: CodeCallRequest,
+    scope: CodeCallScope,
+  ): Promise<CodeCallExecution> {
+    const { name } = request;
+    const refuse = (reason: ToolRefusalReason): CodeCallRefusal => ({
+      kind: 'refused',
+      reason,
+      text: codeRefusalText(name, reason, scope.runClass),
+    });
+    if (name === RUN_CODE_TOOL || scope.agentToolNames.includes(name)) {
+      return refuse('not_callable_from_code');
+    }
+    if (scope.runClass === 'write' && !(scope.confirmedNames ?? []).includes(name)) {
+      return refuse('not_in_confirmed_script');
+    }
+    const checked = check(
+      { callId: scope.callId, toolName: name, args: request.args },
+      { sessionTools: scope.snapshot, caller: scope.caller },
+    );
+    if (checked.kind === 'refused') return refuse(checked.reason);
+    const { call } = checked;
+    if (call.tool.kind !== 'mcp') {
+      // The snapshot holds MCP tools only; an agent tool here is a wrong snapshot, not a script's error.
+      throw new Error(`Tool ${name} of a run's snapshot is not an MCP tool`);
+    }
+    if (scope.runClass === 'read' && !call.tool.mcp.readOnly) {
+      return refuse('changing_in_read_run');
+    }
+    return callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
   }
 
   return {
-    check(requested, { sessionTools, caller }) {
-      const tool = sessionTools.find((candidate) => candidate.name === requested.toolName);
-      const serverId = tool?.kind === 'mcp' ? tool.mcp.server : null;
-      const gate = gateCall({
-        toolName: requested.toolName,
-        sessionTools: sessionTools.map((candidate) => candidate.name),
-        serverId,
-        ownerAllowed: serverId !== null && serverAllowed(access, caller.ownerId, serverId),
-        args: requested.args,
-        argsSchema: tool?.kind === 'agent' ? tool.inputSchema : MCP_ARGS_SCHEMA,
-      });
-      if (gate.kind === 'refused') return gate;
-      if (tool === undefined) {
-        throw new Error(`Tool ${requested.toolName} passed the gate without being in the session`);
-      }
-      return { kind: 'allowed', call: { callId: requested.callId, tool, args: gate.args, caller } };
-    },
+    check,
 
     needsConfirmation(call) {
-      return call.tool.kind === 'mcp'
-        ? !call.tool.mcp.readOnly
-        : call.tool.tool.confirmation !== undefined;
+      if (call.tool.kind === 'mcp') return !call.tool.mcp.readOnly;
+      const { confirmation } = call.tool.tool;
+      if (confirmation === undefined) return false;
+      return confirmation.required === undefined || confirmation.required(call.args);
     },
 
-    confirmationRequest(call, session) {
+    confirmationRequest(call, session, tools) {
       const { tool, server } = callTarget(call.tool);
       const confirmation = call.tool.kind === 'agent' ? call.tool.tool.confirmation : undefined;
-      if (call.tool.kind === 'agent' && confirmation === undefined) {
-        throw new Error(`Tool ${call.tool.name} declares no confirmation`);
-      }
       return {
         kind: confirmation?.kind ?? AGENTS_TOOL_CONFIRMATION,
         payload: {
@@ -309,7 +455,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
           content:
             confirmation === undefined
               ? { toolDescription: call.tool.description }
-              : confirmation.content(call.args),
+              : confirmation.content(call.args, tools),
         },
       };
     },
@@ -317,20 +463,32 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     async runOutside(call, ctx) {
       const startedAt = Date.now();
       const execution = await execute(call, ctx);
-      logCall(ctx.logger, call, execution, startedAt);
+      logCall(ctx.logger, loggedCall(call), execution, startedAt);
       return execution;
+    },
+
+    async callFromCode(request, scope) {
+      const startedAt = Date.now();
+      const logged: LoggedCall = {
+        callId: scope.callId,
+        ...callTargetOf(scope.snapshot, request.name),
+        args: request.args,
+      };
+      const execution = await checkAndCallFromCode(request, scope);
+      logCall(scope.logger, logged, execution, startedAt);
+      return withoutServerText(execution, logged, scope.logger);
     },
 
     planInCommit(call, logger) {
       return async (tx, effects) => {
         const startedAt = Date.now();
         const execution = await runInCommit(call, tx, effects);
-        logCall(logger, call, execution, startedAt);
+        logCall(logger, loggedCall(call), execution, startedAt);
         return execution;
       };
     },
 
-    async sendConfirmed(call, ctx, editedArgs) {
+    async sendConfirmed(call, ctx, editedArgs, confirmed) {
       const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
       const key = {
         taskId: ctx.taskId,
@@ -346,8 +504,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
             const execution: ToolExecution | NotSent =
               intent === undefined
                 ? { kind: 'not_sent', reason: 'not_awaiting' }
-                : await runInCommit(sent, tx, effects);
-            logCall(ctx.logger, sent, execution, startedAt);
+                : await runInCommit({ ...call, args: sent.args }, tx, effects);
+            logCall(ctx.logger, loggedCall(sent), execution, startedAt);
             return execution;
           },
         };
@@ -359,11 +517,11 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
           kind: 'not_sent',
           reason: intent.outcome === 'fenced' ? 'fenced' : 'not_awaiting',
         };
-        logCall(ctx.logger, sent, notSent, startedAt);
+        logCall(ctx.logger, loggedCall(sent), notSent, startedAt);
         return notSent;
       }
-      const execution = await execute(sent, ctx);
-      logCall(ctx.logger, sent, execution, startedAt);
+      const execution = await execute(sent, ctx, confirmed);
+      logCall(ctx.logger, loggedCall(sent), execution, startedAt);
       return { kind: 'sent', execution };
     },
   };

@@ -1,9 +1,4 @@
-import {
-  AGENT_TASK_TYPE,
-  AgentMessageKindSchema,
-  HistoryEventSchema,
-  ToolCallStateSchema,
-} from '@agent-os/contracts';
+import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { z } from 'zod';
@@ -13,11 +8,10 @@ import { type Session, type SessionInput, type SessionPatch, sessions } from '..
 import { type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { SessionLimitsSchema } from '../tools/tool.js';
 import { compactionDue, type CompactionStep } from './compaction-step.js';
-import { type Continuation, continuationEntries, continuationOf } from './continuation.js';
-import { closeOpen, entriesOf, interruptedOutcome, interruptText, toolResultEntry } from './deliver.js';
+import { type Continuation, continuationOf, stopRecords } from './continuation.js';
+import { closedView, closeOpen, entriesOf, interruptText, toolResultEntry } from './deliver.js';
 import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step.js';
 import type { ToolStep } from './tool-step.js';
-import { nextTurns } from './turn-rules.js';
 
 /** The input of an `agent` task (plan Notes 3): the model is chosen already; the first step makes the session from it. */
 const AgentTaskInputSchema = z.object({
@@ -33,8 +27,13 @@ const AgentTaskInputSchema = z.object({
 
 const { interrupt } = AgentMessageKindSchema.enum;
 
-/** The session fields a continuation sets (`continuationEntries`): the turn counter from zero, `closed` cleared. */
+/** The session fields a continuation sets (Flow 6): the turn counter from zero, `closed` cleared. */
 const CONTINUATION_PATCH: SessionPatch = { turns: 0, closed: false };
+
+const CONTINUED_EVENT: NewHistoryEntry = {
+  kind: 'event',
+  content: { event: HistoryEventSchema.enum.continued, reason: null },
+};
 
 const INTERRUPTED_EVENT: NewHistoryEntry = {
   kind: 'event',
@@ -64,48 +63,42 @@ interface StepPlan {
   readonly open: readonly ToolCallRow[];
 }
 
-/** An open call as the commit will close it (`closeOpen`), so the model sees its result in this call. */
-function closedPreview(call: ToolCallRow): NewHistoryEntry {
-  return toolResultEntry({
-    ...call,
-    state: ToolCallStateSchema.enum.done,
-    outcome: interruptedOutcome(call) ?? null,
-    finishedAt: new Date(),
-  });
+/** A stop or an interrupt closes the open calls in the prelude: they are never run. */
+function closesOpen(plan: StepPlan): boolean {
+  return plan.interrupted || (plan.continuation?.stop ?? null) !== null;
+}
+
+/**
+ * The entries of the prelude over the calls it closes (Flow 6, Flow 7, KD-3): for a stopped agent its
+ * stop records — the ones `history` showed derived until now — then `continued`; on an `interrupt`
+ * the closed calls, unless the stop records hold them, and the `interrupted` event.
+ */
+function preludeEntries(plan: StepPlan, closed: readonly ToolCallRow[]): NewHistoryEntry[] {
+  const stop = plan.continuation?.stop ?? null;
+  const entries: NewHistoryEntry[] = [];
+  if (stop !== null) entries.push(...stopRecords(closed, stop.withParent));
+  if (plan.continuation !== undefined) entries.push(CONTINUED_EVENT);
+  if (plan.interrupted) {
+    if (stop === null) entries.push(...closed.map(toolResultEntry));
+    entries.push(INTERRUPTED_EVENT);
+  }
+  return entries;
 }
 
 /**
  * What the handler writes ahead of the chosen step (Flow 6, Flow 7, KD-3): the continuation entries of a
  * finished agent, then on an `interrupt` the open calls closed and the `interrupted` event; the
- * `interrupted` mark cleared by a message of another kind. `undefined` when there is nothing to write.
+ * `interrupted` mark cleared by a message of another kind. The model sees the open calls as the commit
+ * will close them. `undefined` when there is nothing to write.
  */
 function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrelude | undefined {
-  const { continuation, interrupted } = plan;
-  const stopClosesOpen = continuation !== undefined && continuation.stop !== null;
-
-  const entries: NewHistoryEntry[] = [];
-  if (continuation !== undefined) {
-    if (continuation.stop !== null) {
-      entries.push(...plan.open.map(closedPreview), {
-        kind: 'event',
-        content: {
-          event: continuation.stop.withParent
-            ? HistoryEventSchema.enum.stopped_with_parent
-            : HistoryEventSchema.enum.stopped,
-          reason: null,
-        },
-      });
-    }
-    entries.push({ kind: 'event', content: { event: HistoryEventSchema.enum.continued, reason: null } });
-  }
-  if (interrupted) {
-    if (!stopClosesOpen) entries.push(...plan.open.map(closedPreview));
-    entries.push(INTERRUPTED_EVENT);
-  }
+  const closes = closesOpen(plan);
+  const now = new Date();
+  const entries = preludeEntries(plan, closes ? plan.open.map((call) => closedView(call, now)) : []);
 
   const clearsMark = session.interrupted && (plan.otherMessages || plan.interruptWithText);
   const patch: SessionPatch = {
-    ...(continuation === undefined ? {} : CONTINUATION_PATCH),
+    ...(plan.continuation === undefined ? {} : CONTINUATION_PATCH),
     ...(clearsMark ? { interrupted: false } : {}),
   };
   if (entries.length === 0 && Object.keys(patch).length === 0) return undefined;
@@ -113,15 +106,7 @@ function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrel
   return {
     entries,
     patch,
-    write: async (tx) => {
-      const written: NewHistoryEntry[] = [];
-      const continued = await continuationEntries(tx, { session, messages: ctx.messages });
-      if (continued !== undefined) written.push(...continued.entries);
-      if (interrupted) {
-        written.push(...(await closeOpen(tx, ctx.taskId)), INTERRUPTED_EVENT);
-      }
-      return written;
-    },
+    write: async (tx) => preludeEntries(plan, closes ? await closeOpen(tx, ctx.taskId) : []),
   };
 }
 
@@ -156,7 +141,7 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
       await sessions.update(tx, ctx.taskId, {
         ...prelude.patch,
         interrupted: true,
-        turns: nextTurns(0, { kind: 'interrupted_without_text' }),
+        turns: 0,
       });
     },
   };
@@ -218,10 +203,7 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
       if (!plan.otherMessages && prelude !== undefined) return interruptWait(ctx, prelude, startedAt);
     }
 
-    // A stop or an interrupt closes the open calls in the prelude: they are never run.
-    const closedByPrelude =
-      plan.interrupted || (plan.continuation !== undefined && plan.continuation.stop !== null);
-    const openCalls = closedByPrelude ? [] : plan.open;
+    const openCalls = closesOpen(plan) ? [] : plan.open;
     if (openCalls.length > 0) {
       return withPrelude(ctx, await deps.toolStep(ctx, session, openCalls), prelude);
     }

@@ -26,7 +26,7 @@ function WelcomeHarness({ adapter }: { adapter: ChatModelAdapter }) {
     <ShellServicesContext.Provider value={services}>
       <AssistantRuntimeProvider runtime={runtime} config={config}>
         <TooltipProvider>
-          <Thread autoFocus={false} components={{ Welcome: ShellWelcome }} />
+          <Thread components={{ Welcome: ShellWelcome }} />
         </TooltipProvider>
       </AssistantRuntimeProvider>
     </ShellServicesContext.Provider>

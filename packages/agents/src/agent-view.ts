@@ -1,6 +1,8 @@
 import type { AgentStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
 import type { Task } from '@agent-os/runtime';
 
+import type { Session } from './store/sessions.repository.js';
+
 export interface AgentStatusInput {
   readonly taskStatus: TaskStatus;
   readonly waitReason: WaitReason | null;
@@ -24,25 +26,10 @@ export function agentStatus(input: AgentStatusInput): AgentStatus {
     case 'running':
       return input.pendingInterruptWithoutText ? 'interrupted' : 'working';
     case 'waiting':
-      return waitingStatus(input);
+      // Agents always interrupt with a message (KD-3), so the runtime's own `interrupted` reason never occurs.
+      if (input.waitReason === 'decision') return 'awaiting_confirmation';
+      return input.sessionInterrupted ? 'interrupted' : 'working';
   }
-}
-
-function waitingStatus(input: AgentStatusInput): AgentStatus {
-  if (input.waitReason === 'decision') return 'awaiting_confirmation';
-  // Agents always interrupt with a message (KD-3); the runtime's own reason is shown the same way.
-  if (input.waitReason === 'interrupted') return 'interrupted';
-  return input.sessionInterrupted ? 'interrupted' : 'working';
-}
-
-/** The fields of an agent's session the view reads; the `agent_sessions` row has them. */
-export interface AgentViewSession {
-  readonly definition: string;
-  readonly description: string;
-  readonly model: string;
-  readonly interrupted: boolean;
-  readonly forkedFromTaskId: string | null;
-  readonly forkedThroughSeq: number | null;
 }
 
 /** An agent as the operations return it (design-agents.md, AgentView); no tokens and no cost. */
@@ -66,7 +53,7 @@ export interface AgentView {
 /** The view of an agent from its runtime task and its session. */
 export function toAgentView(
   task: Task,
-  session: AgentViewSession,
+  session: Session,
   pendingInterruptWithoutText: boolean,
 ): AgentView {
   const status = agentStatus({

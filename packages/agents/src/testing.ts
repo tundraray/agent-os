@@ -1,10 +1,11 @@
+import type { CallUsage } from '@agent-os/runtime';
+
 import type {
   AgentToolCall,
   AgentTurnCall,
   AgentTurnGeneration,
   AgentTurnMessage,
   AgentTurnModelClient,
-  ReportedUsage,
   StreamTurnOptions,
 } from './model/mastra-turn.js';
 
@@ -21,11 +22,11 @@ import type {
  */
 
 /** Usage of an answer that names none: below any compaction threshold of the tests. */
-export const DEFAULT_USAGE: ReportedUsage = {
+export const DEFAULT_USAGE: CallUsage = {
   inputTokens: 1_000,
   outputTokens: 100,
-  cachedInputTokens: 0,
-  cacheCreationInputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
 };
 
 /** The status of a scripted provider error unless named: retryable, so `ModelClient` retries it. */
@@ -105,7 +106,7 @@ export interface ScriptedAnswer {
   readonly text?: string | readonly string[];
   readonly calls?: readonly ScriptedToolCall[];
   /** Over {@link DEFAULT_USAGE}. */
-  readonly usage?: Partial<ReportedUsage>;
+  readonly usage?: Partial<CallUsage>;
   readonly latch?: Latch;
 }
 

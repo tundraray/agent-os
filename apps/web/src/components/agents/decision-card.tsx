@@ -2,14 +2,20 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { WORKFLOWS_BRIEF_CONFIRMATION, type Confirmation } from "@agent-os/contracts";
+import {
+  RunCodeConfirmationContentSchema,
+  WORKFLOWS_BRIEF_CONFIRMATION,
+  type Confirmation,
+  type RunCodeConfirmationContent,
+} from "@agent-os/contracts";
 import { CircleCheckIcon, CircleMinusIcon, CircleStopIcon, CircleXIcon, LoaderCircleIcon, type LucideIcon } from "lucide-react";
 import { z } from "zod";
 import { AgentStatus, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
 import { ValueRows } from "@/components/agents/value-rows";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { formatTime } from "@/lib/agents/format";
+import { BRIEF_PARTS, formatTime } from "@/lib/agents/format";
+import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
 import { logger } from "@/lib/logger";
 import { agentPath } from "@/lib/shell-route";
@@ -26,9 +32,6 @@ const TEXT = {
   cancelled: "Не понадобилось: агент остановлен",
   sendFailed: "Не удалось отправить решение. Попробуйте ещё раз.",
   briefTitle: "Бриф",
-  question: "Вопрос",
-  boundaries: "Границы",
-  result: "Результат",
   launch: "Запустить",
   edit: "Исправить",
   launchEdited: "Запустить с правками",
@@ -38,16 +41,66 @@ const TEXT = {
   briefRejected: "Бриф отклонён",
 } as const;
 
-/** The brief's three fields, in card order (MC-20). */
-const BRIEF_FIELDS = ["question", "boundaries", "result"] as const;
-type BriefField = (typeof BRIEF_FIELDS)[number];
-type BriefText = Record<BriefField, string>;
+/** code-execution UXRD, MC-6–MC-9, verbatim. */
+const CAN_CALL_TEXT = {
+  title: "Может вызвать",
+  changes: "меняет",
+  reads: "читает",
+  note: "Составила платформа по тексту скрипта: других инструментов запуск не вызовет",
+  none: "Ни одного инструмента: запуск не обратится к внешним системам",
+} as const;
 
-const BRIEF_FIELD_LABEL: Record<BriefField, string> = {
-  question: TEXT.question,
-  boundaries: TEXT.boundaries,
-  result: TEXT.result,
-};
+type CanCall = RunCodeConfirmationContent["canCall"];
+
+/**
+ * The «Может вызвать» list of a code run's request, in the order the platform gave it (KD-6); null for
+ * any other request and for content outside the contract — such a run does not start (DC-16).
+ */
+function canCallOf(confirmation: Confirmation): CanCall | null {
+  if (!isRunCode(confirmation.tool, confirmation.server)) return null;
+  const content = RunCodeConfirmationContentSchema.safeParse(confirmation.content);
+  if (!content.success) {
+    logger.warn("[web-feed] code run confirmation outside the contract", { decisionId: confirmation.decisionId });
+    return null;
+  }
+  return content.data.canCall;
+}
+
+/**
+ * Part 8 of decision-card.md: the tools a code run can call, one phrase per line «{имя} — меняет» or
+ * «— читает»; the mark is a word, weight only helps. The same in every state of the card (KD-7).
+ */
+function CanCallList({ items }: { items: CanCall }) {
+  const titleId = useId();
+  return (
+    <div data-slot="can-call" className="flex flex-col gap-1">
+      <p id={titleId} className="text-muted-foreground text-xs leading-4 font-medium">
+        {CAN_CALL_TEXT.title}
+      </p>
+      {items.length === 0 ? (
+        <p className="text-muted-foreground text-sm leading-5">{CAN_CALL_TEXT.none}</p>
+      ) : (
+        <>
+          <ul aria-labelledby={titleId} className="flex flex-col gap-0.5">
+            {items.map(({ name, changes }) => (
+              <li key={name} className="text-sm leading-5">
+                <span className="text-foreground font-mono text-[13px] leading-5 break-all">{name}</span>
+                {" — "}
+                <span className={changes ? "text-foreground font-medium" : "text-muted-foreground"}>
+                  {changes ? CAN_CALL_TEXT.changes : CAN_CALL_TEXT.reads}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-muted-foreground text-xs leading-4 font-medium">{CAN_CALL_TEXT.note}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+type BriefField = (typeof BRIEF_PARTS)[number]["key"];
+type BriefText = Record<BriefField, string>;
 
 /**
  * `start_workflow` arguments as the confirmation carries them: the template name travels inside `args`
@@ -96,7 +149,7 @@ function briefOf(confirmation: Confirmation): Brief | null {
     confirmation.resolution?.approve === true ? BriefArgsSchema.safeParse(confirmation.resolution.args) : null;
   return {
     template: args.data.template,
-    title: confirmation.templateTitle ?? content.data.title,
+    title: content.data.title,
     text: pickText(ran?.success === true ? ran.data : content.data),
   };
 }
@@ -277,6 +330,8 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   const { tool, server, args, toolTitle } = confirmation;
   /** The tool's human title when its server gives one; the technical name otherwise. */
   const toolName = toolTitle ?? tool;
+  const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, confirmation.argLabels) : null;
+  const canCall = canCallOf(confirmation);
   const groupName = brief !== null ? `${TEXT.briefTitle}: ${brief.text.question}` : `Нужно решение: ${toolName}`;
 
   const header =
@@ -337,19 +392,20 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
               <span className="text-muted-foreground shrink-0 text-xs leading-4 font-medium">· {server}</span>
             )}
           </p>
-          {toolTitle !== undefined && (
-            <p className="text-muted-foreground text-xs leading-4 font-medium break-words">
-              {server === null ? tool : `${tool} · ${server}`}
-            </p>
+          {/* A built-in tool's title stands alone, without the technical line (decision-card.md, part 4). */}
+          {toolTitle !== undefined && server !== null && (
+            <p className="text-muted-foreground text-xs leading-4 font-medium break-words">{`${tool} · ${server}`}</p>
           )}
         </div>
         <ValueRows
           label={TEXT.args}
-          rows={valueRows(args, confirmation.argLabels)}
+          rows={runCode?.rows ?? valueRows(args, confirmation.argLabels)}
+          script={runCode?.script}
           raw={typeof args === "string" ? args : JSON.stringify(args, null, 2)}
           disclosure
           density="ui"
         />
+        {canCall !== null && <CanCallList items={canCall} />}
       </>
     );
     if (outcome === null) {
@@ -379,13 +435,13 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <h3 className="text-base leading-6 font-semibold break-words">{`${TEXT.briefTitle} · ${brief.title}`}</h3>
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
-          {BRIEF_FIELDS.map((field) => {
+          {BRIEF_PARTS.map(({ key: field, label }) => {
             const id = `${fieldId}-${field}`;
             const invalid = field === "question" && edit.emptyQuestion;
             return (
               <div key={field} className="flex flex-col gap-1">
                 <label htmlFor={id} className="text-muted-foreground text-xs leading-4 font-medium">
-                  {BRIEF_FIELD_LABEL[field]}
+                  {label}
                 </label>
                 <Textarea
                   id={id}
@@ -425,9 +481,9 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <h3 className="text-base leading-6 font-semibold break-words">{`${TEXT.briefTitle} · ${brief.title}`}</h3>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-          {BRIEF_FIELDS.map((field) => (
+          {BRIEF_PARTS.map(({ key: field, label }) => (
             <div key={field} className="contents">
-              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{BRIEF_FIELD_LABEL[field]}</dt>
+              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{label}</dt>
               <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">{brief.text[field]}</dd>
             </div>
           ))}

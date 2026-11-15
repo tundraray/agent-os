@@ -9,7 +9,13 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import { agentToolCalls, type Database } from '@agent-os/db';
-import { type Runtime, RuntimeError, type ResolveOutcome, type Task } from '@agent-os/runtime';
+import {
+  isFinished,
+  type Runtime,
+  RuntimeError,
+  type ResolveOutcome,
+  type Task,
+} from '@agent-os/runtime';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -18,22 +24,17 @@ import type { AgentsConfig } from '../config.js';
 import type { DefinitionCatalog } from '../definitions/catalog.js';
 import { AgentsError } from '../errors.js';
 import type { HistoryEntry } from '../history/history.js';
-import { chooseModel } from '../model/model-choice.js';
 import { messagePayload } from '../step/continuation.js';
 import { interruptText } from '../step/deliver.js';
+import { ConfirmationResolutionSchema } from '../step/tool-step.js';
 import { history } from '../store/history.repository.js';
 import { type Session, type SessionInput, sessions } from '../store/sessions.repository.js';
-import { toolCalls } from '../store/tool-calls.repository.js';
+import { sessionInputOf, type StartChildDeps } from '../tools/builtin/start-child.js';
 import type { SessionLimits, ToolDisplay } from '../tools/tool.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { stopEntries } from './stop-entries.js';
 
-/** The largest page of `history` (design-agents.md, «Операции агентов»). */
-const HISTORY_LIMIT_MAX = 500;
-
-const { stopped } = TaskStatusSchema.enum;
-const { queued, running, waiting } = TaskStatusSchema.enum;
-const FINISHED: ReadonlySet<string> = new Set(['completed', 'failed', 'stopped']);
+const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
 
 export interface StartRequest {
@@ -64,7 +65,7 @@ export interface InterruptRequest extends AgentRef {
 export interface HistoryRequest extends AgentRef {
   /** Entries with a greater `seq`; 0 by default. */
   readonly afterSeq?: number;
-  /** At most this many entries, up to {@link HISTORY_LIMIT_MAX}. */
+  /** At most this many entries. */
   readonly limit: number;
 }
 
@@ -154,11 +155,6 @@ const ConfirmationPayloadSchema = z.object({
   content: z.unknown(),
 });
 
-/** The resolution `resolveConfirmation` writes: `{ approve, args? }`. */
-const ConfirmationResolutionSchema = z.object({ approve: z.boolean(), args: z.unknown().optional() });
-
-const isFinished = (task: Task): boolean => FINISHED.has(task.status);
-
 /** `TASK_NOT_FOUND` of the runtime is `AGENT_NOT_FOUND` here; other runtime codes pass unchanged (Notes 2). */
 async function asAgent<T>(work: Promise<T>): Promise<T> {
   try {
@@ -184,6 +180,12 @@ function agentNotFound(id: string): AgentsError {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const { database, runtime, catalog, registry, config } = deps;
   const logger = deps.logger.child({ service: 'agents.sessions' });
+  const startDeps: StartChildDeps = {
+    catalog,
+    maxDepth: config.maxDepth,
+    defaultModel: config.defaultModel,
+    pricedModels: () => runtime.ledger.pricedModels(),
+  };
 
   async function logged<T>(
     operation: string,
@@ -212,11 +214,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     }
   }
 
-  /** The owner's agent; `AGENT_NOT_FOUND` for a missing, another owner's or a non-agent task. */
-  async function agentTask(agentId: string, ownerId: string): Promise<Task> {
-    const task = await asAgent(runtime.tasks.get(agentId, ownerId));
-    if (task.type !== AGENT_TASK_TYPE) throw agentNotFound(agentId);
-    return task;
+  /** The owner's agent; `AGENT_NOT_FOUND` for a missing or another owner's one. */
+  function agentTask(agentId: string, ownerId: string): Promise<Task> {
+    return asAgent(runtime.tasks.get(agentId, ownerId));
   }
 
   /** The parent of a task; `null` for a root. */
@@ -294,31 +294,6 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return byAnswer;
   }
 
-  /** Finds the open request among the trees of the owner's agents with a call awaiting confirmation (Notes 7). */
-  async function openConfirmation(
-    decisionId: string,
-    ownerId: string,
-  ): Promise<z.infer<typeof ConfirmationPayloadSchema> | undefined> {
-    const roots = new Set<string>();
-    for (const sessionId of await toolCalls.awaitingSessions(database)) {
-      try {
-        roots.add((await runtime.tasks.get(sessionId, ownerId)).rootId);
-      } catch (error) {
-        // Another owner's agent is dropped.
-        if (error instanceof RuntimeError && error.code === 'TASK_NOT_FOUND') continue;
-        throw error;
-      }
-    }
-    for (const rootId of roots) {
-      const decisions = await runtime.decisions.listTree(rootId, ownerId);
-      const decision = decisions.find(
-        (candidate) => candidate.decisionId === decisionId && candidate.status === 'open',
-      );
-      if (decision !== undefined) return ConfirmationPayloadSchema.parse(decision.payload);
-    }
-    return undefined;
-  }
-
   /** The edited arguments parsed by the tool's schema; `INVALID_ARGUMENTS` unless the tool allows the edit. */
   function editedArgs(payload: z.infer<typeof ConfirmationPayloadSchema>, args: unknown): unknown {
     // An MCP tool never allows an edit; nor does any tool of this part.
@@ -342,37 +317,9 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'start',
         { ownerId, parentId, definition: request.definition },
         async () => {
-          const definition = catalog.get(request.definition);
-          if (definition === undefined) {
-            throw new AgentsError('UNKNOWN_DEFINITION', `No definition ${request.definition} in the catalog`);
-          }
           const parent = parentId === undefined ? null : await agentTask(parentId, ownerId);
-          const depth = parent === null ? 0 : parent.depth + 1;
-          if (depth > config.maxDepth) {
-            throw new AgentsError(
-              'DEPTH_LIMIT',
-              `A child of an agent at depth ${depth - 1} is deeper than AGENT_MAX_DEPTH ${config.maxDepth}`,
-            );
-          }
-          const choice = chooseModel({
-            launchModel: request.model ?? null,
-            definitionModel: definition.model ?? null,
-            defaultModel: config.defaultModel,
-            pricedModels: runtime.ledger.pricedModels(),
-          });
-          if (choice.kind === 'refused') {
-            throw new AgentsError(
-              'UNKNOWN_MODEL',
-              `Model ${request.model ?? definition.model ?? config.defaultModel} has no price in the prices file`,
-            );
-          }
-          return createAgent(ownerId, parent?.taskId ?? null, {
-            definition: definition.name,
-            description: request.description,
-            prompt: request.prompt,
-            model: choice.model,
-            ...(request.limits === undefined ? {} : { limits: request.limits }),
-          });
+          const input = sessionInputOf(startDeps, parent?.depth ?? null, request);
+          return createAgent(ownerId, parent?.taskId ?? null, input);
         },
         ({ agentId }) => ({ agentId }),
       );
@@ -444,7 +391,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { agentId, ownerId },
         async () => {
           const task = await agentTask(agentId, ownerId);
-          if (!isFinished(task)) {
+          if (!isFinished(task.status)) {
             throw new AgentsError('NOT_FINISHED', `Agent ${agentId} is ${task.status}, not finished`);
           }
           const session = await sessions.get(database, agentId);
@@ -482,7 +429,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'list',
         { rootId, ownerId },
         async () => {
-          const agents = (await tree(rootId, ownerId)).filter((task) => task.type === AGENT_TASK_TYPE);
+          const agents = await tree(rootId, ownerId);
           const found = await sessions.getMany(
             database,
             agents.map((task) => task.taskId),
@@ -503,16 +450,12 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'history',
         { agentId, ownerId, afterSeq, limit },
         async () => {
-          if (!Number.isInteger(limit) || limit < 1) {
-            throw new RangeError(`history limit must be a positive integer, got ${limit}`);
-          }
-          const pageSize = Math.min(limit, HISTORY_LIMIT_MAX);
           const task = await agentTask(agentId, ownerId);
           const isStopped = task.status === stopped;
           const derived = isStopped
             ? await stopEntries(database, { task, parent: await parentOf(task, ownerId) })
             : [];
-          const stored = await history.list(database, agentId, afterSeq, pageSize);
+          const stored = await history.list(database, agentId, afterSeq, limit);
           const answers = stored.filter((entry) => entry.kind === 'model_answer').map((entry) => entry.seq);
           const calls = await callsOf(agentId, answers, isStopped);
           const page: AgentHistoryEntry[] = stored.map((entry) =>
@@ -521,7 +464,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
               : entry,
           );
           page.push(...derived.filter((entry) => entry.seq > afterSeq));
-          return page.slice(0, pageSize);
+          return page.slice(0, limit);
         },
         (entries) => ({ entries: entries.length }),
       );
@@ -532,15 +475,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'confirmations',
         { rootId, ownerId },
         async () => {
-          const agentIds = new Set(
-            (await tree(rootId, ownerId))
-              .filter((task) => task.type === AGENT_TASK_TYPE)
-              .map((task) => task.taskId),
-          );
+          // `AGENT_NOT_FOUND` for another owner's or no tree.
+          await tree(rootId, ownerId);
           const decisions = await runtime.decisions.listTree(rootId, ownerId);
-          return decisions
-            .filter((decision) => agentIds.has(decision.taskId))
-            .map((decision): AgentConfirmation => {
+          return decisions.map((decision): AgentConfirmation => {
               const payload = ConfirmationPayloadSchema.parse(decision.payload);
               const resolved =
                 decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
@@ -573,22 +511,17 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         'resolveConfirmation',
         { decisionId, ownerId, approve, withArgs: args !== undefined },
         async () => {
-          if (args === undefined) {
-            return runtime.decisions.resolve(decisionId, ownerId, { approve });
-          }
-          const payload = await openConfirmation(decisionId, ownerId);
-          if (payload === undefined) {
-            // Not open for this owner: `decisions.resolve` answers `already_resolved` for a resolved or
-            // cancelled request and `DECISION_NOT_FOUND` for a missing or another owner's one, and
-            // writes nothing (an open request always has its call awaiting confirmation: one commit
-            // writes both).
-            return runtime.decisions.resolve(decisionId, ownerId, { approve });
-          }
+          // The edit is checked only against an open request of this owner. For any other one
+          // `decisions.resolve` answers `already_resolved` (resolved or cancelled) or
+          // `DECISION_NOT_FOUND` (missing or another owner's) and writes nothing.
+          const decision =
+            args === undefined ? undefined : await runtime.decisions.get(decisionId, ownerId);
+          const edited =
+            decision?.status === 'open'
+              ? { args: editedArgs(ConfirmationPayloadSchema.parse(decision.payload), args) }
+              : {};
           // The tool step reads `{ approve, args? }` and the call id from the request's payload.
-          return runtime.decisions.resolve(decisionId, ownerId, {
-            approve,
-            args: editedArgs(payload, args),
-          });
+          return runtime.decisions.resolve(decisionId, ownerId, { approve, ...edited });
         },
         (outcome) => ({ outcome }),
       );

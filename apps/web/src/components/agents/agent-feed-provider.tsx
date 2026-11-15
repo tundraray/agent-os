@@ -25,11 +25,11 @@ export function AgentFeedProvider({ agentId, children }: { agentId: string; chil
         const { view, loadError } = feed.getState();
         // Before the first read the agent's conversation is unknown; that read shows the note's change.
         if (view === null || loadError !== null) return;
-        if (view.kind === "agent" && view.agent.threadId === threadId) void feed.refresh();
+        if (view.kind === "agent" && view.agent.threadId === threadId) void feed.load();
       }),
       live.onReady(() => {
         // A missing agent stays missing; a failed first read gets another try with the stream back.
-        if (feed.getState().loadError !== "not_found") void feed.refresh();
+        if (feed.getState().loadError !== "not_found") void feed.load();
       }),
       live.onDelta((delta) => {
         if (delta.agentId === agentId) feed.applyDelta(delta);

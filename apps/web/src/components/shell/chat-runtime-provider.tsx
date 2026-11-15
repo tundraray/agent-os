@@ -12,6 +12,7 @@ import {
 import { useThreadFeedRuntime } from '@/lib/feed/use-feed-runtime';
 import type { LiveStore, LiveTarget, OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute } from '@/lib/shell-route';
+import { selectMainItem } from '@/lib/threads/main-thread';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { syncUrlWithThread } from '@/lib/threads/url-sync';
 import { WELCOME_SUGGESTIONS } from '@/lib/welcome-suggestions';
@@ -73,11 +74,7 @@ export function ChatRuntimeProvider({ openEventSource, children }: ChatRuntimePr
 function useLiveWatch(live: LiveStore): void {
   const route = parseShellRoute(usePathname());
   const mainRemoteId = useAuiState(
-    (s) =>
-      s.threads.threadItems.find(
-        (item) => item.id === s.threads.mainThreadId || item.remoteId === s.threads.mainThreadId,
-      )?.remoteId,
-  );
+    (s) => selectMainItem(s)?.remoteId);
   const target = ((): LiveTarget | null | undefined => {
     if (route.kind === 'agent') return `agent:${route.agentId}`;
     if (route.kind === 'agents' || route.threadId === undefined) return null;

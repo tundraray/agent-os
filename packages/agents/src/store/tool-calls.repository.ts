@@ -1,4 +1,5 @@
 import {
+  RUN_CODE_TOOL,
   type ToolOutcome,
   ToolOutcomeSchema,
   type ToolRefusalReason,
@@ -6,8 +7,10 @@ import {
 } from '@agent-os/contracts';
 import { agentToolCalls } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, asc, count, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, count, eq, lt, ne, sql } from 'drizzle-orm';
 
+import { START_AGENT_TOOL } from '../definitions/definition.js';
+import { codeCalls, interruptedRunOutcome } from './code-calls.repository.js';
 import type { StoreReader } from './sessions.repository.js';
 
 export type ToolCallRow = typeof agentToolCalls.$inferSelect;
@@ -37,6 +40,8 @@ export interface ToolCallEnding {
   readonly outcome: ToolOutcome;
   readonly refusalReason?: ToolRefusalReason;
   readonly resultText?: string;
+  /** Script output of a successful `run_code` run (DC-14). */
+  readonly output?: string;
   /** Agent started by `start_agent`. */
   readonly childTaskId?: string;
   /** When the call went to its tool; kept when the row already has it (`sending`). */
@@ -44,13 +49,18 @@ export interface ToolCallEnding {
   readonly finishedAt?: Date;
 }
 
-/** Name of the built-in tool whose successful calls count toward `limits.agents`. */
-const START_AGENT_TOOL = 'start_agent';
-
 const { requested, awaiting_confirmation: awaiting, sending, done } = ToolCallStateSchema.enum;
+
+/** A read run starts at most twice: once, and once more after a lost step (KD-7, Invariant 5). */
+const MAX_RUN_ATTEMPTS = 2;
 
 function byKey(call: ToolCallKey) {
   return and(eq(agentToolCalls.taskId, call.taskId), eq(agentToolCalls.callId, call.callId));
+}
+
+/** A `run_code` call: the built-in tool, not an MCP tool of the same name. */
+export function isRunCodeCall(call: Pick<ToolCallRow, 'tool' | 'server'>): boolean {
+  return call.tool === RUN_CODE_TOOL && call.server === null;
 }
 
 /**
@@ -60,16 +70,9 @@ function byKey(call: ToolCallKey) {
  * opens a transaction.
  */
 export const toolCalls = {
-  /** Writes the calls of one answer as `requested`. */
-  async insertRequested(
-    tx: RuntimeTx,
-    calls: readonly NewToolCall[],
-  ): Promise<ToolCallRow[]> {
-    if (calls.length === 0) return [];
-    return tx
-      .insert(agentToolCalls)
-      .values(calls.map((call) => ({ ...call, state: requested })))
-      .returning();
+  /** Writes the calls of one answer, at least one, as `requested`. */
+  async insertRequested(tx: RuntimeTx, calls: readonly NewToolCall[]): Promise<void> {
+    await tx.insert(agentToolCalls).values(calls.map((call) => ({ ...call, state: requested })));
   },
 
   /** The calls of the agent that are not `done`, by answer and position. */
@@ -114,7 +117,8 @@ export const toolCalls = {
 
   /**
    * Closes the call with its outcome, from any state but `done` (Invariant 1). A second `close` of the
-   * same call changes nothing and returns `undefined`.
+   * same call changes nothing and returns `undefined`. Closing a `run_code` row also closes its open
+   * calls from code, by the run's class (code-execution Invariant 4).
    */
   async close(
     tx: RuntimeTx,
@@ -128,13 +132,33 @@ export const toolCalls = {
         outcome: ending.outcome,
         refusalReason: ending.refusalReason ?? null,
         resultText: ending.resultText ?? null,
+        output: ending.output ?? null,
         childTaskId: ending.childTaskId ?? null,
         startedAt: sql`coalesce(${agentToolCalls.startedAt}, ${ending.startedAt ?? sql`now()`})`,
         finishedAt: ending.finishedAt ?? sql`now()`,
       })
       .where(and(byKey(call), ne(agentToolCalls.state, done)))
       .returning();
+    if (closed !== undefined && isRunCodeCall(closed)) {
+      await codeCalls.closeOpenOfRun(tx, call, interruptedRunOutcome(closed.args));
+    }
     return closed;
+  },
+
+  /**
+   * Counts the start of a read run's attempt (KD-7): the new count, or `null` when the run already
+   * started twice — then it must not start again. Open calls from code of the earlier attempt get
+   * their outcome by the run's class (Invariant 4).
+   */
+  async bumpAttempts(tx: RuntimeTx, call: ToolCallKey): Promise<number | null> {
+    const [bumped] = await tx
+      .update(agentToolCalls)
+      .set({ attempts: sql`${agentToolCalls.attempts} + 1` })
+      .where(and(byKey(call), lt(agentToolCalls.attempts, MAX_RUN_ATTEMPTS)))
+      .returning({ attempts: agentToolCalls.attempts, args: agentToolCalls.args });
+    if (bumped === undefined) return null;
+    await codeCalls.closeOpenOfRun(tx, call, interruptedRunOutcome(bumped.args));
+    return bumped.attempts;
   },
 
   /** How many children of the given definition the agent's `start_agent` calls started. */
@@ -160,14 +184,5 @@ export const toolCalls = {
       .from(agentToolCalls)
       .where(eq(agentToolCalls.taskId, taskId));
     return row?.calls ?? 0;
-  },
-
-  /** The agents with a call awaiting confirmation (plan Notes 7). */
-  async awaitingSessions(reader: StoreReader): Promise<string[]> {
-    const rows = await reader
-      .selectDistinct({ taskId: agentToolCalls.taskId })
-      .from(agentToolCalls)
-      .where(eq(agentToolCalls.state, awaiting));
-    return rows.map((row) => row.taskId);
   },
 };

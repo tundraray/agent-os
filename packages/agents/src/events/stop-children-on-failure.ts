@@ -1,17 +1,13 @@
 import type { Logger } from '@agent-os/common';
-import { RuntimeEventTypeSchema, TaskStatusSchema } from '@agent-os/contracts';
-import type { EventConsumer, Runtime } from '@agent-os/runtime';
+import { RuntimeEventTypeSchema } from '@agent-os/contracts';
+import {
+  type EventConsumer,
+  isFinished,
+  type Runtime,
+  RUNTIME_EVENT_SCHEMA_VERSION,
+} from '@agent-os/runtime';
 
 import { sessions } from '../store/sessions.repository.js';
-
-/** `schemaVersion` of the runtime's events (`RUNTIME_EVENT_SCHEMA_VERSION` in `packages/runtime/src/event-log.ts`). */
-const RUNTIME_EVENT_SCHEMA_VERSION = 1;
-
-const FINISHED_STATUSES: ReadonlySet<string> = new Set([
-  TaskStatusSchema.enum.completed,
-  TaskStatusSchema.enum.failed,
-  TaskStatusSchema.enum.stopped,
-]);
 
 export interface StopChildrenOnFailureDeps {
   readonly tasks: Pick<Runtime['tasks'], 'listTree' | 'stop'>;
@@ -39,7 +35,7 @@ export function createStopChildrenOnFailure(deps: StopChildrenOnFailureDeps): Ev
 
       const tree = await deps.tasks.listTree(event.rootId, session.ownerId);
       const children = tree.filter(
-        (task) => task.parentId === agentId && !FINISHED_STATUSES.has(task.status),
+        (task) => task.parentId === agentId && !isFinished(task.status),
       );
       const stopped: string[] = [];
       for (const child of children) {

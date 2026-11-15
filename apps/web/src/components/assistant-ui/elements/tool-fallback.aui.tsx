@@ -25,6 +25,7 @@ import { z } from "zod";
 import { agentStatusGlyph, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
 import { ValueRows } from "@/components/agents/value-rows";
 import { formatTime } from "@/lib/agents/format";
+import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
@@ -142,19 +143,29 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const server = textField(artifact, "server");
   const toolTitle = textField(artifact, "toolTitle");
   const toolLabel = toolTitle ?? toolName;
-  /** The second header line of a titled MCP tool; without a title the server stands in the first line. */
-  const technical = toolTitle !== null && server !== null ? `${toolName} · ${server}` : null;
   const argLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
+  const labels = argLabels.success ? argLabels.data : undefined;
+  const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
+  /**
+   * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a
+   * titled MCP tool; without a title the server stands in the first line.
+   */
+  const secondLine =
+    runCode?.description ?? (toolTitle !== null && server !== null ? `${toolName} · ${server}` : null);
   const at =
     textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
   const time = formatTime(at);
   const refusal = outcome === "refused" ? refusalOf(artifact) : null;
+  /** A code run that returned nothing shows «—» in place of its end (KD-5). */
+  const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =
-    look.showsResult && result !== undefined
-      ? typeof result === "string"
-        ? result
-        : JSON.stringify(result, null, 2)
+    look.showsResult && shownResult !== undefined
+      ? typeof shownResult === "string"
+        ? shownResult
+        : JSON.stringify(shownResult, null, 2)
       : null;
+  /** A successful code run's printed lines under its end (KD-3); absent when the script printed nothing. */
+  const output = runCode !== null && look.showsResult ? textField(artifact, "output") : null;
 
   return (
     <Collapsible
@@ -180,7 +191,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           <span className="text-foreground min-w-0 truncate" title={toolLabel}>
             {toolLabel}
           </span>
-          {server !== null && technical === null ? (
+          {server !== null && secondLine === null ? (
             <span className="text-muted-foreground min-w-0 truncate text-xs">{server}</span>
           ) : null}
           <span className={cn("ms-auto shrink-0 text-xs whitespace-nowrap", look.tone)}>{look.label}</span>
@@ -188,13 +199,13 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
             {time}
           </time>
         </span>
-        {technical !== null ? (
+        {secondLine !== null ? (
           <span
-            data-slot="tool-fallback-technical"
-            title={technical}
+            data-slot="tool-fallback-second-line"
+            title={secondLine}
             className="text-muted-foreground block h-4 w-full truncate ps-12 text-xs leading-4"
           >
-            {technical}
+            {secondLine}
           </span>
         ) : null}
       </CollapsibleTrigger>
@@ -217,7 +228,8 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
         <div className="flex flex-col gap-2 px-2 pt-1 pb-2">
           <ValueRows
             label="Аргументы"
-            rows={valueRows(args, argLabels.success ? argLabels.data : undefined)}
+            rows={runCode?.rows ?? valueRows(args, labels)}
+            script={runCode?.script}
             raw={argsText}
             disclosure
             density="data"
@@ -225,11 +237,14 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           {resultText !== null ? (
             <ValueRows
               label="Результат"
-              rows={flatRows(parsedResult(result))}
+              rows={flatRows(parsedResult(shownResult))}
               raw={resultText}
               disclosure={false}
               density="data"
             />
+          ) : null}
+          {output !== null && output !== "" ? (
+            <ValueRows label={SCRIPT_OUTPUT_LABEL} rows={null} raw={output} disclosure={false} density="data" />
           ) : null}
         </div>
       </CollapsibleContent>

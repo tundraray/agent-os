@@ -15,7 +15,7 @@ import {
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunViewSchema,
+  WorkflowRunBriefSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -34,7 +34,7 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunView,
+  type WorkflowRunBrief,
 } from "@agent-os/contracts";
 import { apiBaseUrl } from "@/lib/config";
 import { ThreadsApiError } from "./threads-api-error";
@@ -43,16 +43,9 @@ type RequestInput = {
   path: string;
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
-  /** 400 on a `:threadId` route means the id is outside ThreadIdSchema: no such thread for the user. */
-  treatBadRequestAsNotFound?: boolean;
 };
 
-async function send({
-  path,
-  method = "GET",
-  body,
-  treatBadRequestAsNotFound = false,
-}: RequestInput): Promise<Response> {
+async function send({ path, method = "GET", body }: RequestInput): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}${path}`, {
@@ -66,10 +59,7 @@ async function send({
   }
   if (response.ok) return response;
   const code = await errorCodeOf(response);
-  if (response.status === 404 || (treatBadRequestAsNotFound && response.status === 400)) {
-    throw new ThreadsApiError("not_found", response.status, code);
-  }
-  throw new ThreadsApiError("http", response.status, code);
+  throw new ThreadsApiError(response.status === 404 ? "not_found" : "http", response.status, code);
 }
 
 /** `errorCode` of an ApiError body; a body that is not JSON or not an ApiError has no code. */
@@ -104,10 +94,7 @@ async function listThreads(cursor?: string): Promise<ThreadListResponse> {
 }
 
 async function getThread(threadId: string): Promise<ThreadSummary> {
-  return parse(
-    await send({ path: threadRoute(threadId), treatBadRequestAsNotFound: true }),
-    ThreadSummarySchema,
-  );
+  return parse(await send({ path: threadRoute(threadId) }), ThreadSummarySchema);
 }
 
 async function createThread(): Promise<ThreadSummary> {
@@ -188,8 +175,8 @@ async function getInherited(agentId: string, afterSeq: number): Promise<Inherite
   );
 }
 
-async function getRun(agentId: string): Promise<WorkflowRunView> {
-  return parse(await send({ path: `${agentRoute(agentId)}/run` }), WorkflowRunViewSchema);
+async function getRun(agentId: string): Promise<WorkflowRunBrief> {
+  return parse(await send({ path: `${agentRoute(agentId)}/run` }), WorkflowRunBriefSchema);
 }
 
 async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {

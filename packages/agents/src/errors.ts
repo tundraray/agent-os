@@ -1,19 +1,17 @@
 /** Error codes of agents operations (design-agents.md, Error handling). */
-export const AGENTS_ERROR_CODES = [
+export type AgentsErrorCode =
   /** The agent does not exist or belongs to another owner. */
-  'AGENT_NOT_FOUND',
+  | 'AGENT_NOT_FOUND'
   /** No definition with this name is in the catalog. */
-  'UNKNOWN_DEFINITION',
+  | 'UNKNOWN_DEFINITION'
   /** The chosen model has no price in the deployment's prices file. */
-  'UNKNOWN_MODEL',
+  | 'UNKNOWN_MODEL'
   /** The new agent would be deeper than `AGENT_MAX_DEPTH`. */
-  'DEPTH_LIMIT',
+  | 'DEPTH_LIMIT'
   /** A restart from scratch of an agent that is still working. */
-  'NOT_FINISHED',
+  | 'NOT_FINISHED'
   /** Edited arguments of a confirmation the tool does not allow, or that fail its schema. */
-  'INVALID_ARGUMENTS',
-] as const;
-export type AgentsErrorCode = (typeof AGENTS_ERROR_CODES)[number];
+  | 'INVALID_ARGUMENTS';
 
 /**
  * An expected refusal of an agents operation; the caller maps `code` to its own answer. Codes of

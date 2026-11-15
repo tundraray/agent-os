@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AgentsError,
-  type AgentHistoryEntry,
   type Agents,
   type AgentView as AgentsAgentView,
 } from '@agent-os/agents';
@@ -19,7 +18,7 @@ import {
   type RestartResponse,
   type SpendResponse,
   type StopResponse,
-  type WorkflowRunView,
+  type WorkflowRunBrief,
 } from '@agent-os/contracts';
 import type { Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
@@ -29,6 +28,7 @@ import { WORKFLOWS } from '../workflows/workflows.tokens.js';
 import { httpError } from './chat.errors.js';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens.js';
 import {
+  nextAfterSeqOf,
   type TemplateTitles,
   templateTitles,
   toAgentTree,
@@ -38,8 +38,8 @@ import {
   toPending,
 } from './conversation-view.js';
 import { type Conversation, ConversationsRepository } from './conversations.repository.js';
-import { isUuid, toThreadSummary } from './conversations.service.js';
-import { decodeThreadCursor, selectThreadPage, sortThreadsForList } from './thread-cursor.js';
+import { decodeRowCursor, isUuid, toThreadSummary } from './conversations.service.js';
+import { selectThreadPage, sortThreadsForList } from './thread-cursor.js';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');
 
@@ -48,13 +48,6 @@ type ListedAgent = { readonly updatedAt: Date; readonly id: string; readonly nod
 
 /** The current month `YYYY-MM` by UTC. */
 const utcMonth = (now: Date): string => now.toISOString().slice(0, 7);
-
-/**
- * The next `afterSeq` of a history page: the last seq of a full page, `null` when everything is read
- * (the rule of the conversation view).
- */
-const nextAfterSeqOf = (entries: readonly AgentHistoryEntry[]): number | null =>
-  entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null;
 
 /**
  * The agent routes, decisions and spend (design-chat.md, Contract «Агенты», «Решения и расход», KD-7,
@@ -78,9 +71,8 @@ export class AgentControlService {
    * (`createdAt` DESC, then `agentId` DESC), with their subtrees and conversation.
    */
   async page(ownerId: string, cursor?: string): Promise<AgentListPage> {
-    const position = cursor === undefined ? undefined : decodeThreadCursor(cursor);
-    if (position !== undefined && !isUuid(position.i)) throw httpError('INVALID_CURSOR');
-    const templates = this.templateTitles();
+    const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
+    const templates = templateTitles(this.workflows);
     const rows = await this.conversations.listWithRoot(ownerId);
     const perConversation = await Promise.all(
       rows.map(async (row) => this.topAgentsOf(row, ownerId, templates)),
@@ -119,7 +111,7 @@ export class AgentControlService {
       this.runtime.inbox.listPending(agentId, ownerId),
       this.agents.sessions.confirmations(view.rootId, ownerId),
     ]);
-    const templates = this.templateTitles();
+    const templates = templateTitles(this.workflows);
     // design v1.2 (A-2): the parent's description, unless the parent is the conversation's root.
     const parent = views.find((candidate) => candidate.agentId === view.parentId);
     const parentDescription =
@@ -136,11 +128,8 @@ export class AgentControlService {
       pending: toPending(messages, views),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)
-        .map((confirmation) => toConfirmation(confirmation, templates)),
-      children: toAgentTree(
-        views.map((agent) => toAgentView(agent, templates)),
-        agentId,
-      ),
+        .map(toConfirmation),
+      children: toAgentTree(views, templates, agentId),
     };
   }
 
@@ -163,18 +152,11 @@ export class AgentControlService {
     return { entries, nextAfterSeq: more ? last.seq : null };
   }
 
-  /** The workflow run of a coordinator; any other agent is `RUN_NOT_FOUND` (from `workflows`). */
-  async run(agentId: string, ownerId: string): Promise<WorkflowRunView> {
+  /** The brief of a coordinator's workflow run; any other agent is `RUN_NOT_FOUND` (from `workflows`). */
+  async run(agentId: string, ownerId: string): Promise<WorkflowRunBrief> {
     await this.agent(agentId, ownerId);
-    const run = await this.workflows.runs.get(agentId, ownerId);
-    const templates = this.templateTitles();
-    return {
-      agentId: run.agentId,
-      template: { name: run.template.name, title: run.template.title },
-      brief: { ...run.brief },
-      coordinator: toAgentView(run.coordinator, templates),
-      steps: run.steps.map((step) => toAgentView(step, templates)),
-    };
+    const { brief } = await this.workflows.runs.get(agentId, ownerId);
+    return { brief: { ...brief } };
   }
 
   /** A message to the agent; to a finished agent it continues with its history. */
@@ -250,19 +232,11 @@ export class AgentControlService {
     if (row.rootId === null) return [];
     const views = await unlessDeleted(this.agents.sessions.list(row.rootId, ownerId));
     const threadTitle = toThreadSummary(row).title;
-    return toAgentTree(
-      views.map((view) => toAgentView(view, templates)),
-      row.rootId,
-    ).map((node) => ({
+    return toAgentTree(views, templates, row.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),
       id: node.agentId,
       node: { ...node, threadId: row.id, threadTitle },
     }));
-  }
-
-  /** One read of the template catalog per answer: it decides `template` and `templateTitle`. */
-  private templateTitles(): TemplateTitles {
-    return templateTitles(this.workflows.templates.list());
   }
 }
 

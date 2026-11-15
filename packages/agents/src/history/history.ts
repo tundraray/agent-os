@@ -45,6 +45,8 @@ export const HistoryContentSchemas = {
     outcome: ToolOutcomeSchema,
     refusalReason: ToolRefusalReasonSchema.nullable(),
     text: z.string().nullable(),
+    /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
+    output: z.string().nullable().optional(),
     startedAt: z.iso.datetime().nullable(),
     finishedAt: z.iso.datetime().nullable(),
   }),

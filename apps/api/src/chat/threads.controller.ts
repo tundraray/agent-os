@@ -15,7 +15,6 @@ import {
 import type { Logger } from '@agent-os/common';
 import {
   HistoryQuerySchema,
-  InterruptRequestSchema,
   RenameThreadRequestSchema,
   SendMessageRequestSchema,
   ThreadListQuerySchema,
@@ -36,9 +35,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { type Command, runCommand } from './chat.errors.js';
 import { ConversationsService } from './conversations.service.js';
-
-/** The body of an interrupt may be absent: no text is the same as `{}`. */
-const interruptBody = new ZodValidationPipe(InterruptRequestSchema);
+import { interruptTextOf } from './interrupt-body.js';
 
 /**
  * The conversation routes (design-chat.md, Contract «Беседы»): the former list, create, read, rename
@@ -169,7 +166,7 @@ export class ThreadsController {
     @Req() req: AuthedRequest,
   ): Promise<InterruptResponse> {
     const ownerId = req.user.id;
-    const { text } = interruptBody.transform(body ?? {}, { type: 'body' });
+    const text = interruptTextOf(body);
     return this.run({
       route: 'POST /threads/:threadId/interrupt',
       fields: { ownerId, threadId },

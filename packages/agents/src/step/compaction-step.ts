@@ -2,7 +2,7 @@ import { HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
-import type { DefinitionCatalog } from '../definitions/catalog.js';
+import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { ModelClient } from '../model/model-client.js';
 import { buildProviderMessages } from '../model/provider-messages.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
@@ -12,7 +12,6 @@ import { entriesOf, rootTurnReset } from './deliver.js';
 import {
   appendWithEvent,
   callUnlessAborted,
-  definitionOf,
   FAILURE_REASONS,
   failResult,
   logStep,
@@ -21,7 +20,6 @@ import {
   readSessionHistory,
   type StepPrelude,
 } from './model-step.js';
-import { nextTurns } from './turn-rules.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'compaction';
@@ -68,7 +66,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
 
   return async function compactionStep(ctx, session, prelude) {
     const startedAt = Date.now();
-    const definition = definitionOf(catalog, ctx, session);
+    const definition = definitionOf(catalog, session);
     const delivered = await entriesOf(database, ctx.messages);
     const view = await readSessionHistory(database, session);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
@@ -105,14 +103,12 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     );
     if (result === undefined) return { outcome: 'continue' };
 
-    const turns = nextTurns(
-      rootTurnReset({
-        turns: prelude?.patch.turns ?? session.turns,
-        isRoot: ctx.parentId === null,
-        messages: ctx.messages,
-      }),
-      { kind: 'compaction_call' },
-    );
+    // The compaction call is not a turn (DC-1).
+    const turns = rootTurnReset({
+      turns: prelude?.patch.turns ?? session.turns,
+      isRoot: ctx.parentId === null,
+      messages: ctx.messages,
+    });
     const writePrelude = async (tx: RuntimeTx): Promise<readonly NewHistoryEntry[]> =>
       prelude === undefined ? [] : prelude.write(tx);
 

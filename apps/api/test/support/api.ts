@@ -16,7 +16,7 @@ import {
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunViewSchema,
+  WorkflowRunBriefSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -33,7 +33,7 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunView,
+  type WorkflowRunBrief,
 } from '@agent-os/contracts';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -95,7 +95,7 @@ export interface ChatApi {
   awaiting(): Promise<AwaitingCount>;
   agentPage(agentId: string, afterSeq?: number): Promise<AgentPageView>;
   inherited(agentId: string, afterSeq?: number): Promise<InheritedHistory>;
-  run(agentId: string): Promise<WorkflowRunView>;
+  run(agentId: string): Promise<WorkflowRunBrief>;
   sendToAgent(agentId: string, text: string): Promise<SendMessageResponse>;
   interruptAgent(agentId: string, text?: string): Promise<InterruptResponse>;
   stopAgent(agentId: string): Promise<StopResponse>;
@@ -156,7 +156,7 @@ export function chatApi(app: INestApplication<App>, ownerId: string): ChatApi {
       ok(200, AgentPageViewSchema, 'get', `/agents/${agentId}/history${afterSeqQuery(afterSeq)}`),
     inherited: (agentId, afterSeq) =>
       ok(200, InheritedHistorySchema, 'get', `/agents/${agentId}/inherited${afterSeqQuery(afterSeq)}`),
-    run: (agentId) => ok(200, WorkflowRunViewSchema, 'get', `/agents/${agentId}/run`),
+    run: (agentId) => ok(200, WorkflowRunBriefSchema, 'get', `/agents/${agentId}/run`),
     sendToAgent: (agentId, text) =>
       ok(202, SendMessageResponseSchema, 'post', `/agents/${agentId}/messages`, { text }),
     interruptAgent: (agentId, text) =>

@@ -1,24 +1,22 @@
-import type { Logger } from '@agent-os/common';
+import { type CodeRunner, createCodeRunner } from '@agent-os/code-runner';
+import { createSecretMasker, type Logger } from '@agent-os/common';
 import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
-import type { AgentsConfig } from './config.js';
+import { type AgentsConfig, secretValuesOf } from './config.js';
 import { checkCatalog, createCatalog, type DefinitionCatalog } from './definitions/catalog.js';
 import { GENERAL_PURPOSE } from './definitions/definition.js';
 import { createStopChildrenOnFailure } from './events/stop-children-on-failure.js';
 import { createMcpClients } from './mcp/mcp-clients.js';
-import {
-  type AgentTurnModelClient,
-  createMastraTurnClient,
-  createResolveModel,
-} from './model/mastra-turn.js';
+import type { AgentTurnModelClient } from './model/mastra-turn.js';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
 import { createAgentStepHandler } from './step/agent-step.handler.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
-import { createBuiltinTools, createStartChild, describeStartAgent } from './tools/builtin/index.js';
+import { createBuiltinTools, createStartChild } from './tools/builtin/index.js';
+import { createRunCodeTool } from './tools/builtin/run-code.js';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry.js';
 import { createToolRunner } from './tools/tool-runner.js';
 
@@ -28,19 +26,24 @@ export interface AgentsOptions {
   readonly logger: Logger;
   /** Parsed by `parseAgentsConfig`: the package reads no environment (ADR-0004). */
   readonly config: AgentsConfig;
-  /** The seam of the model; Mastra over Anthropic by default, a scripted double in tests (plan Notes 9). */
-  readonly turnClient?: AgentTurnModelClient;
+  /** The seam of the model: Mastra over Anthropic in production, a scripted double in tests (plan Notes 9). */
+  readonly turnClient: AgentTurnModelClient;
   /**
    * Gets every text part of an agent's answer with `ownerId`, `rootId`, `agentId`, `offset` (KD-3);
    * none by default. A failure of the hook is logged and does not break the step.
    */
   readonly onTextDelta?: OnTextDelta;
+  /**
+   * The seam of the code executor: a double in tests; by default the real one,
+   * `createCodeRunner` with `CODE_RUN_MAX_CONCURRENT`.
+   */
+  readonly codeRunner?: CodeRunner;
 }
 
 /** The agents package (design-agents.md, Contract «Сборка»). */
 export interface Agents {
   /** The catalog of definitions; upper parts register theirs before `start()`. */
-  readonly definitions: Pick<DefinitionCatalog, 'register' | 'list'>;
+  readonly definitions: Pick<DefinitionCatalog, 'register'>;
   /** Tools of upper parts, registered before `start()`. */
   readonly tools: Pick<ToolRegistry, 'register'>;
   /** The agent operations. */
@@ -52,7 +55,7 @@ export interface Agents {
    */
   completeText(request: CompleteTextRequest): Promise<string>;
   /**
-   * Registers `general-purpose` unless present, closes registration, checks the catalog against the
+   * Registers `general-purpose`, closes registration, checks the catalog against the
    * tools, the servers and `ledger.pricedModels()`, then starts the MCP servers. Called before the
    * runtime workers start.
    */
@@ -84,22 +87,39 @@ export function createAgents(options: AgentsOptions): Agents {
     defaultModel: config.defaultModel,
     pricedModels: () => runtime.ledger.pricedModels(),
   };
-  const registry = createToolRegistry({
-    builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks, database }),
-    describeStartAgent,
-    mcpClients,
-    catalog,
-    access: config.mcpAccess,
-    serverIds,
-  });
   const runner = createToolRunner({
     mcpClients,
     access: config.mcpAccess,
     toolResultMaxBytes: config.toolResultMaxBytes,
     startChildFor: createStartChild(startChildDeps),
   });
+  const codeRunner =
+    options.codeRunner ??
+    createCodeRunner({
+      maxConcurrent: config.codeRun.maxConcurrent,
+      logger: logger.child({ service: 'agents.code-runner' }),
+    });
+  const runCode = createRunCodeTool({
+    codeRunner,
+    database,
+    catalog,
+    // `run_code` is in the registry, so it reads the registry lazily (no build cycle).
+    registry: () => registry,
+    runner,
+    codeRun: config.codeRun,
+    toolResultMaxBytes: config.toolResultMaxBytes,
+    maskSecrets: createSecretMasker(secretValuesOf(config)),
+  });
+  const registry: ToolRegistry = createToolRegistry({
+    builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks, database }),
+    runCode,
+    mcpClients,
+    catalog,
+    access: config.mcpAccess,
+    serverIds,
+  });
   const modelClient = createModelClient({
-    turnClient: options.turnClient ?? createMastraTurnClient(createResolveModel(config)),
+    turnClient: options.turnClient,
     ledger: runtime.ledger,
     config,
     logger: logger.child({ service: 'agents.model' }),
@@ -134,13 +154,13 @@ export function createAgents(options: AgentsOptions): Agents {
   });
 
   return {
-    definitions: { register: (definition) => catalog.register(definition), list: () => catalog.list() },
+    definitions: { register: (definition) => catalog.register(definition) },
     tools: { register: (tool) => registry.register(tool) },
     sessions,
     completeText: (request) => modelClient.completeText(request),
     async start() {
       const startedAt = Date.now();
-      if (catalog.get(GENERAL_PURPOSE.name) === undefined) catalog.register(GENERAL_PURPOSE);
+      catalog.register(GENERAL_PURPOSE);
       catalog.seal();
       registry.seal();
       checkCatalog({
@@ -152,7 +172,7 @@ export function createAgents(options: AgentsOptions): Agents {
       });
       await mcpClients.start();
       logger.info('agents started', {
-        definitions: catalog.list().map((header) => header.name),
+        definitions: catalog.all().map((definition) => definition.name),
         tools: registry.toolNames(),
         servers: serverIds,
         durationMs: Date.now() - startedAt,

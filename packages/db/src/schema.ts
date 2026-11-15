@@ -16,6 +16,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -353,6 +354,10 @@ export const agentToolCalls = app.table(
     childTaskId: uuid('child_task_id'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /** How many times a `run_code` read run has started (code-execution KD-7). */
+    attempts: integer('attempts').notNull().default(0),
+    /** Script output of a successful `run_code` run. */
+    output: text('output'),
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.callId] }),
@@ -377,6 +382,62 @@ export const agentToolCalls = app.table(
       .where(
         sql`${t.state} = ${literal(ToolCallStateSchema.enum.awaiting_confirmation)}`,
       ),
+  ],
+);
+
+/** Full result of a successful direct MCP call, as a value for scripts (code-execution KD-5). */
+export const agentToolResults = app.table(
+  'agent_tool_results',
+  {
+    taskId: uuid('task_id').notNull(),
+    callId: text('call_id').notNull(),
+    value: jsonb('value').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.callId] }),
+    foreignKey({
+      name: 'agent_tool_results_call_fk',
+      columns: [t.taskId, t.callId],
+      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
+    }).onDelete('cascade'),
+  ],
+);
+
+/** Audit of the tool calls a `run_code` script made; the result is seen only by the script (code-execution KD-6). */
+export const agentCodeCalls = app.table(
+  'agent_code_calls',
+  {
+    taskId: uuid('task_id').notNull(),
+    /** `callId` of the `run_code` row. */
+    runCallId: text('run_call_id').notNull(),
+    attempt: integer('attempt').notNull(),
+    /** Number of the call within its attempt. */
+    seq: integer('seq').notNull(),
+    tool: text('tool').notNull(),
+    /** MCP server id; null for built-in and registered tools. */
+    server: text('server'),
+    args: jsonb('args').notNull(),
+    outcome: text('outcome'),
+    refusalReason: text('refusal_reason'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.runCallId, t.attempt, t.seq] }),
+    foreignKey({
+      name: 'agent_code_calls_run_call_fk',
+      columns: [t.taskId, t.runCallId],
+      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
+    }).onDelete('cascade'),
+    check(
+      'agent_code_calls_outcome_check',
+      isOneOf(t.outcome, ToolOutcomeSchema.options),
+    ),
+    check(
+      'agent_code_calls_refusal_reason_check',
+      isOneOf(t.refusalReason, ToolRefusalReasonSchema.options),
+    ),
   ],
 );
 

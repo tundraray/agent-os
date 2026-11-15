@@ -19,10 +19,9 @@ import { CHAT_DEFINITION } from './chat-definition.js';
 import { chatStatus } from './chat-status.js';
 import { httpError, threadNotFound } from './chat.errors.js';
 import {
-  type TemplateTitles,
+  nextAfterSeqOf,
   templateTitles,
   toAgentTree,
-  toAgentView,
   toConfirmation,
   toHistoryEntry,
   toPending,
@@ -38,6 +37,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Whether `id` can be a row id; anything else answers as a missing conversation (plan rule 11). */
 export const isUuid = (id: string): boolean => UUID.test(id);
+
+/** A cursor of a previous page; a well-formed cursor must still name a row id (`INVALID_CURSOR`). */
+export function decodeRowCursor(cursor: string): ThreadCursor {
+  const position = decodeThreadCursor(cursor);
+  if (!isUuid(position.i)) throw httpError('INVALID_CURSOR');
+  return position;
+}
 
 /** A row as the API shows it: an empty title is `null` («Новая беседа»). */
 export function toThreadSummary(row: Conversation): ThreadSummary {
@@ -67,7 +73,7 @@ export class ConversationsService {
 
   /** A page of the owner's conversations, last changed first (`THREAD_PAGE_SIZE`, `nextCursor`). */
   async list(ownerId: string, cursor?: string): Promise<ThreadListResponse> {
-    const position = cursor === undefined ? undefined : this.decodeCursor(cursor);
+    const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
     const rows = await this.conversations.page(ownerId, position, THREAD_PAGE_SIZE);
     const page = rows.slice(0, THREAD_PAGE_SIZE);
     const last = page.at(-1);
@@ -200,18 +206,14 @@ export class ConversationsService {
     ]);
     const root = views.find((view) => view.agentId === rootId);
     if (root === undefined) throw new Error(`Root ${rootId} of conversation ${threadId} has no view`);
-    const templates = this.templateTitles();
     return {
       thread,
       chat: { ...chatStatus({ root, task }), rootAgentId: rootId, model: root.model },
       entries: entries.map(toHistoryEntry),
-      nextAfterSeq: entries.length === HISTORY_PAGE_SIZE ? (entries.at(-1)?.seq ?? null) : null,
+      nextAfterSeq: nextAfterSeqOf(entries),
       pending: toPending(messages, views),
-      decisions: confirmations.map((confirmation) => toConfirmation(confirmation, templates)),
-      agents: toAgentTree(
-        views.map((view) => toAgentView(view, templates)),
-        rootId,
-      ),
+      decisions: confirmations.map(toConfirmation),
+      agents: toAgentTree(views, templateTitles(this.workflows), rootId),
     };
   }
 
@@ -219,12 +221,8 @@ export class ConversationsService {
   async agentsTree(threadId: string, ownerId: string): Promise<AgentNode[]> {
     const { rootId } = await this.owned(threadId, ownerId);
     if (rootId === null) return [];
-    const templates = this.templateTitles();
     const views = await this.agents.sessions.list(rootId, ownerId);
-    return toAgentTree(
-      views.map((view) => toAgentView(view, templates)),
-      rootId,
-    );
+    return toAgentTree(views, templateTitles(this.workflows), rootId);
   }
 
   /** The owner's conversation; a malformed, missing or foreign id is `THREAD_NOT_FOUND`. */
@@ -232,17 +230,5 @@ export class ConversationsService {
     const row = isUuid(threadId) ? await this.conversations.get(threadId, ownerId) : undefined;
     if (row === undefined) throw threadNotFound();
     return row;
-  }
-
-  /** One read of the template catalog per view: it decides `template` of coordinators and `templateTitle` of briefs. */
-  private templateTitles(): TemplateTitles {
-    return templateTitles(this.workflows.templates.list());
-  }
-
-  /** A cursor of a previous page; a well-formed cursor must still name a row id. */
-  private decodeCursor(cursor: string): ThreadCursor {
-    const position = decodeThreadCursor(cursor);
-    if (!isUuid(position.i)) throw httpError('INVALID_CURSOR');
-    return position;
   }
 }

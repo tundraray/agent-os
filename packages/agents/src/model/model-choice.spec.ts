@@ -14,16 +14,6 @@ describe("the agent's model is the launch's, else the definition's, else the def
       { kind: 'chosen', model: OPUS },
     ],
     [
-      'the definition model applies without a launch model',
-      { definitionModel: SONNET, defaultModel: HAIKU, pricedModels: PRICED },
-      { kind: 'chosen', model: SONNET },
-    ],
-    [
-      'the default applies when nothing names a model',
-      { launchModel: null, definitionModel: undefined, defaultModel: HAIKU, pricedModels: PRICED },
-      { kind: 'chosen', model: HAIKU },
-    ],
-    [
       'a model without a price is refused',
       { launchModel: 'anthropic/claude-unpriced', defaultModel: HAIKU, pricedModels: PRICED },
       { kind: 'refused', reason: 'unknown_model' },

@@ -33,7 +33,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import {
-  controls,
+  canInterrupt,
   FEED_PART,
   trayEntries,
   type DecisionPartData,
@@ -184,7 +184,6 @@ const taskAwareGroupBy = (
 
 export type ThreadProps = {
   components?: ThreadComponents | undefined;
-  autoFocus?: boolean | undefined;
   /**
    * The thread the page shows is still resolving or loading its history: the feed is only the
    * skeleton, the composer stays docked and editable, sending is blocked until the history arrives.
@@ -239,7 +238,6 @@ const ThreadHistorySkeleton: FC = () => (
 
 export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
-  autoFocus = true,
   historyPending = false,
   composerPlaceholder = DEFAULT_PLACEHOLDER,
 }) => {
@@ -249,7 +247,6 @@ export const Thread: FC<ThreadProps> = ({
     <ThreadComponentsContext.Provider value={components}>
       <ThreadRoot
         isEmpty={isNewChat && !historyPending}
-        autoFocus={autoFocus}
         historyPending={historyPending}
         placeholder={composerPlaceholder}
       />
@@ -259,10 +256,9 @@ export const Thread: FC<ThreadProps> = ({
 
 const ThreadRoot: FC<{
   isEmpty: boolean;
-  autoFocus: boolean;
   historyPending: boolean;
   placeholder: string;
-}> = ({ isEmpty, autoFocus, historyPending, placeholder }) => {
+}> = ({ isEmpty, historyPending, placeholder }) => {
   const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader } = useContext(ThreadComponentsContext);
 
   return (
@@ -332,11 +328,7 @@ const ThreadRoot: FC<{
             ) : (
               <>
                 <FeedTray />
-                <Composer
-                  autoFocus={autoFocus}
-                  sendBlocked={historyPending}
-                  placeholder={placeholder}
-                />
+                <Composer sendBlocked={historyPending} placeholder={placeholder} />
               </>
             )}
             {!historyPending && (
@@ -703,11 +695,7 @@ const FeedQueueTray: FC = () => {
   return <QueueTray tray={tray} />;
 };
 
-const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean; placeholder: string }> = ({
-  autoFocus,
-  sendBlocked,
-  placeholder,
-}) => {
+const Composer: FC<{ sendBlocked: boolean; placeholder: string }> = ({ sendBlocked, placeholder }) => {
   const sendFailed = useSendFailure();
   const failureId = useId();
 
@@ -726,7 +714,7 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean; placeholder: stri
           placeholder={placeholder}
           className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
           rows={1}
-          autoFocus={autoFocus}
+          autoFocus={false}
           enterKeyHint="send"
           aria-label="Сообщение"
           aria-describedby={sendFailed ? failureId : undefined}
@@ -750,13 +738,13 @@ const Composer: FC<{ autoFocus: boolean; sendBlocked: boolean; placeholder: stri
 };
 
 /**
- * KD-2 UXRD: «Прервать» next to «Отправить» while the agent works (`controls().interrupt`); a pending
+ * KD-2 UXRD: «Прервать» next to «Отправить» while the agent works (`canInterrupt`); a pending
  * decision, an idle agent and a screen without a feed have none.
  */
 const FeedInterrupt: FC = () => {
   const feed = useFeed();
-  const canInterrupt = useFeedSelector((state) => controls(state.view).interrupt, false);
-  if (feed === null || !canInterrupt) return null;
+  const interruptible = useFeedSelector((state) => canInterrupt(state.view), false);
+  if (feed === null || !interruptible) return null;
   return <InterruptButton onInterrupt={(text) => feed.interrupt(text)} />;
 };
 

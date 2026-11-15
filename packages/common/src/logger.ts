@@ -47,8 +47,23 @@ const SECRET_FIELD_NAMES = new Set([
   'dsn',
 ]);
 
+/**
+ * The logger's redaction by value outside the log: replaces every occurrence of a secret at least
+ * `MIN_SECRET_VALUE_LENGTH` long with `[redacted]`. Does not truncate.
+ */
+export function createSecretMasker(secrets: readonly string[]): (text: string) => string {
+  const kept = secrets.filter((secret) => secret.length >= MIN_SECRET_VALUE_LENGTH);
+  return (text) => {
+    let masked = text;
+    for (const secret of kept) masked = masked.replaceAll(secret, REDACTED);
+    return masked;
+  };
+}
+
+type Mask = (text: string) => string;
+
 export function createLogger(options: LoggerOptions): Logger {
-  const secrets = options.secrets.filter((secret) => secret.length >= MIN_SECRET_VALUE_LENGTH);
+  const mask = createSecretMasker(options.secrets);
   const minOrder = LEVEL_ORDER[options.minLevel];
 
   function emit(level: LogLevel, message: string, fields: LogFields): void {
@@ -56,8 +71,8 @@ export function createLogger(options: LoggerOptions): Logger {
     const record: LogRecord = {
       time: new Date().toISOString(),
       level,
-      message: cleanString(message, secrets),
-      fields: cleanFields(expandErrorField(fields), secrets),
+      message: cleanString(message, mask),
+      fields: cleanFields(expandErrorField(fields), mask),
     };
     for (const sink of options.sinks) sink.write(record);
   }
@@ -95,27 +110,25 @@ function expandError(value: unknown, seen: Set<unknown>): LogFields {
   return expanded;
 }
 
-function cleanFields(fields: LogFields, secrets: string[]): LogFields {
-  return cleanValue(fields, secrets, new WeakSet()) as LogFields;
+function cleanFields(fields: LogFields, mask: Mask): LogFields {
+  return cleanValue(fields, mask, new WeakSet()) as LogFields;
 }
 
-function cleanValue(value: unknown, secrets: string[], seen: WeakSet<object>): unknown {
-  if (typeof value === 'string') return cleanString(value, secrets);
+function cleanValue(value: unknown, mask: Mask, seen: WeakSet<object>): unknown {
+  if (typeof value === 'string') return cleanString(value, mask);
   if (value === null || typeof value !== 'object') return value;
   if (seen.has(value)) return '[circular]';
   seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => cleanValue(item, secrets, seen));
+  if (Array.isArray(value)) return value.map((item) => cleanValue(item, mask, seen));
   const cleaned: LogFields = {};
   for (const [key, item] of Object.entries(value)) {
-    cleaned[key] = SECRET_FIELD_NAMES.has(key.toLowerCase()) ? REDACTED : cleanValue(item, secrets, seen);
+    cleaned[key] = SECRET_FIELD_NAMES.has(key.toLowerCase()) ? REDACTED : cleanValue(item, mask, seen);
   }
   return cleaned;
 }
 
-function cleanString(text: string, secrets: string[]): string {
-  let redacted = text;
-  for (const secret of secrets) redacted = redacted.replaceAll(secret, REDACTED);
-  return truncate(redacted);
+function cleanString(text: string, mask: Mask): string {
+  return truncate(mask(text));
 }
 
 function truncate(text: string): string {

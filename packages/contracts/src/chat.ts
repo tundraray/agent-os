@@ -222,6 +222,8 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       outcome: ToolOutcomeSchema,
       refusalReason: ToolRefusalReasonSchema.nullable(),
       text: z.string().nullable(),
+      /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
+      output: z.string().nullable().optional(),
       startedAt: z.iso.datetime().nullable(),
       finishedAt: z.iso.datetime().nullable(),
     }),
@@ -262,7 +264,7 @@ export const ConfirmationKindSchema = z.enum([
 ]);
 export type ConfirmationKind = z.infer<typeof ConfirmationKindSchema>;
 
-/** A decision request in any status; `templateTitle` only for a brief. */
+/** A decision request in any status. */
 export const ConfirmationSchema = z.object({
   decisionId: z.string().min(1),
   agentId: z.string().min(1),
@@ -280,7 +282,6 @@ export const ConfirmationSchema = z.object({
   resolution: z.object({ approve: z.boolean(), args: z.unknown() }).nullable(),
   createdAt: z.iso.datetime(),
   resolvedAt: z.iso.datetime().nullable(),
-  templateTitle: z.string().min(1).optional(),
   ...ToolDisplayShape,
 });
 export type Confirmation = z.infer<typeof ConfirmationSchema>;
@@ -344,15 +345,11 @@ export const InheritedHistorySchema = z.object({
 });
 export type InheritedHistory = z.infer<typeof InheritedHistorySchema>;
 
-/** GET /agents/:agentId/run (design-workflows.md, WorkflowRunView). */
-export const WorkflowRunViewSchema = z.object({
-  agentId: z.string().min(1),
-  template: AgentTemplateSchema,
+/** GET /agents/:agentId/run: the brief a workflow run was started with. */
+export const WorkflowRunBriefSchema = z.object({
   brief: z.object({ question: z.string().min(1), boundaries: z.string(), result: z.string() }),
-  coordinator: AgentViewSchema,
-  steps: z.array(AgentViewSchema),
 });
-export type WorkflowRunView = z.infer<typeof WorkflowRunViewSchema>;
+export type WorkflowRunBrief = z.infer<typeof WorkflowRunBriefSchema>;
 
 // ---------------------------------------------------------------------------------------------------
 // Live stream

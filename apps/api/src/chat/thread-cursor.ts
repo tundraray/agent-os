@@ -1,6 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
-import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
 import { z } from 'zod';
+import { httpError } from './chat.errors.js';
 
 /** Position of the last thread of a page: `updatedAt` in ms and `id`. */
 export type ThreadCursor = { u: number; i: string };
@@ -24,7 +23,7 @@ type SelectThreadPageInput<T extends ListedThread> = {
   sorted: T[];
   /** Decoded `nextCursor` of the previous page; absent for the first page. */
   cursor?: ThreadCursor;
-  size?: number;
+  size: number;
 };
 
 const toPosition = (thread: ListedThread): ThreadCursor => ({
@@ -40,14 +39,9 @@ const compareIds = (a: string, b: string): number =>
 const isAfter = (t: ThreadCursor, c: ThreadCursor): boolean =>
   t.u < c.u || (t.u === c.u && t.i < c.i);
 
-const invalidCursor = (): BadRequestException =>
-  new BadRequestException('Invalid cursor', { errorCode: 'INVALID_CURSOR' });
-
 /** Opaque cursor: base64url(`JSON.stringify({ u: updatedAt ms, i: id })`). */
 export const encodeThreadCursor = (thread: ListedThread): string =>
-  Buffer.from(
-    JSON.stringify({ u: thread.updatedAt.getTime(), i: thread.id }),
-  ).toString('base64url');
+  Buffer.from(JSON.stringify(toPosition(thread))).toString('base64url');
 
 /** Parses a cursor of `encodeThreadCursor`; anything else → 400 `INVALID_CURSOR`. */
 export const decodeThreadCursor = (cursor: string): ThreadCursor => {
@@ -55,10 +49,10 @@ export const decodeThreadCursor = (cursor: string): ThreadCursor => {
   try {
     json = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
   } catch {
-    throw invalidCursor();
+    throw httpError('INVALID_CURSOR');
   }
   const parsed = ThreadCursorSchema.safeParse(json);
-  if (!parsed.success) throw invalidCursor();
+  if (!parsed.success) throw httpError('INVALID_CURSOR');
   return parsed.data;
 };
 
@@ -78,7 +72,7 @@ export const sortThreadsForList = <T extends ListedThread>(threads: T[]): T[] =>
 export const selectThreadPage = <T extends ListedThread>({
   sorted,
   cursor,
-  size = THREAD_PAGE_SIZE,
+  size,
 }: SelectThreadPageInput<T>): ThreadPage<T> => {
   const start =
     cursor === undefined

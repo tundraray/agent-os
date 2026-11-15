@@ -151,12 +151,27 @@ export class Decisions {
     }
   }
 
+  /** The owner's request in any status; `undefined` for a missing or another owner's one. */
+  async get(decisionId: string, ownerId: string): Promise<TreeDecision | undefined> {
+    const [row] = await this.selectDecisions().where(
+      and(eq(runtimeDecisions.decisionId, decisionId), eq(runtimeDecisions.ownerId, ownerId)),
+    );
+    return row === undefined ? undefined : toTreeDecision(row);
+  }
+
   /**
    * All requests of the owner's tree in any status, in creation order; `[]` for another owner's
    * or no tree.
    */
   async listTree(rootId: string, ownerId: string): Promise<TreeDecision[]> {
-    const rows = await this.deps.db
+    const rows = await this.selectDecisions()
+      .where(and(eq(runtimeDecisions.rootId, rootId), eq(runtimeDecisions.ownerId, ownerId)))
+      .orderBy(asc(runtimeDecisions.createdAt), asc(runtimeDecisions.decisionId));
+    return rows.map(toTreeDecision);
+  }
+
+  private selectDecisions() {
+    return this.deps.db
       .select({
         decisionId: runtimeDecisions.decisionId,
         taskId: runtimeDecisions.taskId,
@@ -168,10 +183,7 @@ export class Decisions {
         createdAt: runtimeDecisions.createdAt,
         resolvedAt: runtimeDecisions.resolvedAt,
       })
-      .from(runtimeDecisions)
-      .where(and(eq(runtimeDecisions.rootId, rootId), eq(runtimeDecisions.ownerId, ownerId)))
-      .orderBy(asc(runtimeDecisions.createdAt), asc(runtimeDecisions.decisionId));
-    return rows.map((row) => ({ ...row, status: DecisionStatusSchema.parse(row.status) }));
+      .from(runtimeDecisions);
   }
 
   private async resolveIn(
@@ -233,4 +245,8 @@ export class Decisions {
     });
     return { outcome: 'resolved', taskId: task.taskId, rootId: task.rootId };
   }
+}
+
+function toTreeDecision(row: Omit<TreeDecision, 'status'> & { status: string }): TreeDecision {
+  return { ...row, status: DecisionStatusSchema.parse(row.status) };
 }

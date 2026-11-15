@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import type { OutsideAgentTool } from '../tool.js';
-import { gateTarget } from '../tool-gate.js';
 import { type BuiltinTasks, descendantsOf } from './list-agents.js';
 
 const StopAgentArgsSchema = z.object({
@@ -28,8 +27,7 @@ export function createStopAgentTool(deps: {
       const isDescendant = descendantsOf(tree, caller.agentId).some(
         (task) => task.taskId === args.agentId,
       );
-      const gate = gateTarget({ isDescendant });
-      if (gate.kind === 'refused') return gate;
+      if (!isDescendant) return { kind: 'refused', reason: 'unknown_agent' };
       const stopped = await deps.tasks.stop(args.agentId, caller.ownerId);
       return {
         kind: 'done',

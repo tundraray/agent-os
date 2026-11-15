@@ -4,11 +4,10 @@ import {
   SdkError,
   SdkErrorCode,
   type CallToolResult,
-  type ToolAnnotations,
+  type Tool,
 } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { McpServerConfig } from '../config.js';
-import type { JsonSchemaObject } from '../model/mastra-turn.js';
 import { type McpFailureReason, McpStartupError, mcpFailureReason } from './mcp-failure.js';
 
 /** Read buffer of the stdio transport: the limit of one response line. */
@@ -32,26 +31,12 @@ export type McpCallResponse =
   | { readonly kind: 'result'; readonly result: CallToolResult }
   | { readonly kind: 'failure'; readonly reason: McpFailureReason };
 
-/** One tool of the server's `tools/list`, as the server listed it. */
-export interface McpListedTool {
-  readonly name: string;
-  /** The tool's human name: its `title`, or `annotations.title` when it has only that. */
-  readonly title?: string;
-  readonly description: string;
-  readonly inputSchema: JsonSchemaObject;
-  readonly annotations?: ToolAnnotations;
-}
-
 export interface McpClientOptions {
   /** Command, arguments and environment of the server process, from the servers file. */
   readonly server: McpServerConfig;
   readonly logger: Logger;
   /** Called when the connection drops; the next request starts a new process. */
-  readonly onDisconnect?: () => void;
-}
-
-interface Connection {
-  readonly client: Client;
+  readonly onDisconnect: () => void;
 }
 
 /** A handshake that outlived its timeout: a slow start stays a `timeout`, not a startup failure. */
@@ -93,29 +78,20 @@ function remaining(options: McpRequestOptions, startedAt: number): number {
  * the next request starts a new process; concurrent requests share that single start.
  */
 export class McpClient {
-  private connection: Promise<Connection> | null = null;
+  private connection: Promise<Client> | null = null;
   private closed = false;
 
   constructor(private readonly options: McpClientOptions) {}
 
-  /** Lists the server's tools; any failure is an exception. */
-  async listTools(options: McpRequestOptions): Promise<McpListedTool[]> {
+  /** Lists the server's tools as the server listed them; any failure is an exception. */
+  async listTools(options: McpRequestOptions): Promise<Tool[]> {
     const startedAt = performance.now();
-    const { client } = await untilAborted(this.connect(options), options.signal);
+    const client = await untilAborted(this.connect(options), options.signal);
     const { tools } = await client.listTools(undefined, {
       timeout: remaining(options, startedAt),
       signal: options.signal,
     });
-    return tools.map((tool) => {
-      const title = tool.title ?? tool.annotations?.title;
-      return {
-        name: tool.name,
-        ...(title === undefined ? {} : { title }),
-        description: tool.description ?? '',
-        inputSchema: { ...tool.inputSchema, type: 'object' },
-        ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
-      };
-    });
+    return tools;
   }
 
   /**
@@ -125,7 +101,7 @@ export class McpClient {
   async callTool(request: McpToolRequest, options: McpRequestOptions): Promise<McpCallResponse> {
     const startedAt = performance.now();
     try {
-      const { client } = await untilAborted(this.connect(options), options.signal);
+      const client = await untilAborted(this.connect(options), options.signal);
       const result = await client.callTool(
         { name: request.name, arguments: { ...request.arguments } },
         { timeout: remaining(options, startedAt), signal: options.signal },
@@ -144,10 +120,10 @@ export class McpClient {
       return;
     }
     const opened = await connection.catch(() => null);
-    await opened?.client.close();
+    await opened?.close();
   }
 
-  private connect(options: McpRequestOptions): Promise<Connection> {
+  private connect(options: McpRequestOptions): Promise<Client> {
     if (this.closed) {
       return Promise.reject(new Error(`McpClient of server ${this.options.server.id} is closed`));
     }
@@ -155,10 +131,10 @@ export class McpClient {
     return this.connection;
   }
 
-  private open(timeoutMs: number): Promise<Connection> {
-    const opening: Promise<Connection> = this.start(timeoutMs, () => {
+  private open(timeoutMs: number): Promise<Client> {
+    const opening: Promise<Client> = this.start(timeoutMs, () => {
       this.forget(opening);
-      this.options.onDisconnect?.();
+      this.options.onDisconnect();
     }).catch((error: unknown) => {
       this.forget(opening);
       throw isStartTimeout(error) ? error : new McpStartupError(error);
@@ -166,7 +142,7 @@ export class McpClient {
     return opening;
   }
 
-  private async start(timeoutMs: number, onClose: () => void): Promise<Connection> {
+  private async start(timeoutMs: number, onClose: () => void): Promise<Client> {
     const { server, logger } = this.options;
     const transport = new StdioClientTransport({
       command: server.command,
@@ -192,10 +168,10 @@ export class McpClient {
       });
       throw error;
     }
-    return { client };
+    return client;
   }
 
-  private forget(connection: Promise<Connection>): void {
+  private forget(connection: Promise<Client>): void {
     if (this.connection === connection) {
       this.connection = null;
     }

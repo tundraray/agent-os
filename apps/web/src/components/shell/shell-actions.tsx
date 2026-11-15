@@ -8,11 +8,8 @@ import { focusAfterNewChat, focusShellTarget, isFinePointer } from '@/lib/focus'
 import type { ShellServices } from '@/lib/threads/shell-services';
 import type { ShellStatusState, ShellStatusStore } from '@/lib/threads/shell-status-store';
 
-/** Where «Новый чат» was invoked from. */
-export type NewChatSource = 'button' | 'shortcut' | 'notice';
-
 export type ShellActions = {
-  newChat: (source: NewChatSource) => void;
+  newChat: () => void;
   /** «Повторить» for a failed history load of the thread body. */
   retryHistory: (remoteId: string) => void;
   /** «Повторить» for a failed switch to a thread opened by URL. */

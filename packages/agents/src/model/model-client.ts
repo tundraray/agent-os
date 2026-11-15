@@ -8,10 +8,22 @@ import type {
   AgentTurnGeneration,
   AgentTurnMessage,
   AgentTurnModelClient,
-  ReportedUsage,
 } from './mastra-turn.js';
 import { DATA_PREAMBLE } from './provider-messages.js';
 import { classifyRejection, PROVIDER_RETRIES, type ProviderError, providerRetryDelayMs } from './retry-policy.js';
+
+/**
+ * When to reach for `run_code` (code-execution PRD FR-01, AC-01.3): appended after the data preamble
+ * to the instructions of every model call of an agent.
+ */
+const CODE_RULE = [
+  'Use run_code when a direct tool result came back cut, when you need to count, aggregate or match data,',
+  'or when the work is a chain of more than three or four tool calls. Otherwise call tools directly.',
+  'In a script, call tools with callTool under the same names as in your tool list (mcp__<server>__<tool>)',
+  'and with the same arguments their schemas describe.',
+  "When a tool called from a script fails with a tool error, the script gets only the outcome, without the server's",
+  'message; to see the message, call that tool directly.',
+].join('\n');
 
 /**
  * One text part of an agent's model call (KD-3): `offset` — where the part starts in the text of this
@@ -26,7 +38,7 @@ export interface TextDelta {
 }
 
 /** The receiver of text parts given to `createAgents`; its failure is logged and never breaks the step. */
-export type OnTextDelta = (delta: TextDelta) => void | Promise<void>;
+export type OnTextDelta = (delta: TextDelta) => void;
 
 export interface ModelClientDeps {
   /** The seam of the model: Mastra in production, a scripted double in tests (plan Notes 9). */
@@ -52,7 +64,7 @@ export interface ModelCallRequest {
   readonly agentName: string;
   /** The session's model (`anthropic/…`), a key of the prices file (Invariant 6). */
   readonly model: string;
-  /** The definition's prompt; the data preamble is appended here. */
+  /** The definition's prompt; the data preamble and the code rule are appended here. */
   readonly instructions: string;
   readonly messages: readonly AgentTurnMessage[];
   readonly tools: readonly AgentToolDefinition[];
@@ -183,7 +195,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
           purpose: 'agent_turn',
           agentName: request.agentName,
           model: request.model,
-          instructions: `${request.instructions}\n\n${DATA_PREAMBLE}`,
+          instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
           messages: request.messages,
           tools: request.tools,
           maxOutputTokens: config.maxOutputTokens,
@@ -194,7 +206,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
       });
       if (result.kind === 'model_error') return result;
       const { generation, durationMs } = result;
-      const usage = ledgerUsage(generation.usage);
+      const { usage } = generation;
       const { callId } = await ledger.record({
         ownerId: request.ownerId,
         taskId: request.taskId,
@@ -239,7 +251,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         const status = result.error.statusCode === null ? 'no status' : `status ${result.error.statusCode}`;
         throw new Error(`Model ${model} kept failing on completeText (${status})`);
       }
-      const usage = ledgerUsage(result.generation.usage);
+      const { usage } = result.generation;
       const { callId } = await ledger.record({ ownerId: request.ownerId, model, usage });
       logger.info('model text completed', {
         model,
@@ -252,32 +264,16 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
   };
 }
 
-/** Gives a part to the hook; a failure of the hook, thrown or rejected, is a `warn` and nothing more. */
+/** Gives a part to the hook; a failure of the hook is a `warn` and nothing more. */
 function deliver(onTextDelta: OnTextDelta, delta: TextDelta, logger: Logger): void {
-  const warn = (error: unknown) =>
+  try {
+    onTextDelta(delta);
+  } catch (error) {
     logger.warn('text delta hook failed', {
       agentId: delta.agentId,
       error: error instanceof Error ? error.message : String(error),
     });
-  try {
-    const delivered = onTextDelta(delta);
-    if (delivered instanceof Promise) delivered.catch(warn);
-  } catch (error) {
-    warn(error);
   }
-}
-
-/**
- * Usage as the ledger takes it, mapped as the engine's gateway did: Mastra's `inputTokens` is the
- * whole input, the cached parts included. A field the provider did not report counts as zero.
- */
-function ledgerUsage(reported: ReportedUsage): CallUsage {
-  return {
-    inputTokens: reported.inputTokens ?? 0,
-    outputTokens: reported.outputTokens ?? 0,
-    cacheReadTokens: reported.cachedInputTokens ?? 0,
-    cacheWriteTokens: reported.cacheCreationInputTokens ?? 0,
-  };
 }
 
 /** Waits on the clock; a cancel ends the wait with the signal's reason. */

@@ -9,6 +9,7 @@ import {
   createAgents,
   createMastraTurnClient,
   createResolveModel,
+  secretValuesOf,
   type Agents,
   type AgentsConfig,
   type AgentTurnModelClient,
@@ -23,7 +24,7 @@ import {
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
 } from '../runtime/runtime.tokens.js';
-import { mcpServerSecrets, readAgentsSettings } from './agents-settings.js';
+import { readAgentsSettings } from './agents-settings.js';
 import {
   AGENT_TURN_CLIENT,
   AGENTS,
@@ -95,9 +96,9 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
         createAgents({
           database: database.db,
           runtime,
-          // The application logger plus the servers' environment values; the provider key is among
-          // the application's secrets already.
-          logger: createAppLogger(process.env, mcpServerSecrets(settings)),
+          // The application logger plus the agents settings' secrets (the provider key, the servers'
+          // environment values) — the same list `run_code` masks in a run's output and result.
+          logger: createAppLogger(process.env, secretValuesOf(settings)),
           config: settings,
           turnClient,
           onTextDelta: (delta) => deltaPublisher.publish(delta),

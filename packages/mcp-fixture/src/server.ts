@@ -9,7 +9,7 @@ import { DatasetVersionSchema } from './versions.js';
 /**
  * Process entry: serves the dataset named by `FIXTURE_DATASET` (default `v1`) over stdio, and exits when stdin
  * closes, so a client that dies leaves no orphan process.
- * `FIXTURE_SOURCE` picks what is served: `logs` (default) or `backoffice`, the orders of the same dataset.
+ * `FIXTURE_SOURCE` picks what is served: `logs` (default), `backoffice` (the orders of the same dataset) or `tracker` (its tickets).
  * With `FIXTURE_CALL_LOG` every `tools/call` is logged and `FIXTURE_FAULTS` rules apply; rules without a log are a
  * startup error. Under `NODE_ENV=production` the rules file is never read.
  */

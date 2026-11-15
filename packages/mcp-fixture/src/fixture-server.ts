@@ -21,6 +21,8 @@ import { getOrderTool } from './tools/get-order.js';
 import { getTraceTool } from './tools/get-trace.js';
 import { searchLogsTool } from './tools/search-logs.js';
 import { searchOrdersTool } from './tools/search-orders.js';
+import { searchTicketsTool } from './tools/search-tickets.js';
+import { trackerTickets } from './tracker.js';
 import type { DatasetVersion } from './versions.js';
 
 const SOURCE_INFO_URI = 'fixture://source-info';
@@ -32,23 +34,27 @@ const WAIT_FOR_FILE_LIMIT_MS = 60_000;
 
 const SERVER_INFO = { name: 'agent-os-mcp-fixture', version: '1.0.0' };
 
-/** What a fixture process serves (`FIXTURE_SOURCE`): the payment logs or the back office of the same dataset. */
-export const FixtureSourceSchema = z.enum(['logs', 'backoffice']);
+/**
+ * What a fixture process serves (`FIXTURE_SOURCE`): the payment logs, the back office of the same dataset, or the
+ * tracker's tickets.
+ */
+export const FixtureSourceSchema = z.enum(['logs', 'backoffice', 'tracker']);
 export type FixtureSource = z.infer<typeof FixtureSourceSchema>;
 
 const TOOLS: Readonly<Record<FixtureSource, readonly FixtureTool[]>> = {
   logs: [searchLogsTool, aggregateLogsTool, getTraceTool],
   backoffice: [searchOrdersTool, getOrderTool, createIncidentNoteTool],
+  tracker: [searchTicketsTool],
 };
 
 /** Result fault of the `tools/call` request with this `id`, if a fault rule matched it. */
 export type ResultFaultLookup = (requestId: RequestId) => ResultFaultRule | undefined;
 
 /**
- * MCP server over one synthetic dataset, serving its logs or its back office, built on the low-level `Server` so the
+ * MCP server over one synthetic dataset, serving its logs, its back office or the tracker, built on the low-level `Server` so the
  * fixture controls every result byte: tools have no `outputSchema`, results are canonical JSON. Reading tools are
- * listed with `readOnlyHint: true`; the changing `create_incident_note` has no annotations (KD-4). Both sources
- * report the dataset's snapshot.
+ * listed with `readOnlyHint: true`; the changing `create_incident_note` has no annotations (KD-4). Every source
+ * reports the dataset's snapshot.
  */
 export class FixtureServer {
   private readonly server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
@@ -82,10 +88,22 @@ export class FixtureServer {
       const info = {
         snapshot: this.dataset.snapshot,
         datasetVersion: this.dataset.version,
-        recordCount: this.source === 'logs' ? this.dataset.recordCount : backOfficeOf(this.dataset).orderCount,
+        recordCount: this.recordCount(),
       };
       return { contents: [{ uri: SOURCE_INFO_URI, mimeType: 'application/json', text: canonicalJson(info) }] };
     });
+  }
+
+  /** Items the source serves: log records, distinct orders or tickets. */
+  private recordCount(): number {
+    switch (this.source) {
+      case 'logs':
+        return this.dataset.recordCount;
+      case 'backoffice':
+        return backOfficeOf(this.dataset).orderCount;
+      case 'tracker':
+        return trackerTickets().length;
+    }
   }
 
   /** Closing the transport (stdin end-of-file on stdio) fires `onClose`. */
@@ -159,8 +177,8 @@ function jsonResult(result: Record<string, unknown>): CallToolResult {
   return { structuredContent, content };
 }
 
-/** Result fields that hold the page's list (`records`, `buckets` or `orders`). */
-const LIST_KEYS = ['records', 'buckets', 'orders'] as const;
+/** Result fields that hold the page's list (`records`, `buckets`, `orders` or `tickets`). */
+const LIST_KEYS = ['records', 'buckets', 'orders', 'tickets'] as const;
 const PAD_CHARACTER = 'x';
 
 /**

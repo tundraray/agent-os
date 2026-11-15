@@ -29,7 +29,7 @@ type Page = { ids: string[]; nextCursor: string | null };
 const page = (
   threads: ListedThread[],
   cursor: string | null,
-  size?: number,
+  size = 20,
 ): Page => {
   const result = selectThreadPage({
     sorted: sortThreadsForList(threads),
@@ -121,7 +121,7 @@ describe('selectThreadPage', () => {
 
   // Empty input (Failure Mode Checklist).
   it('returns { threads: [], nextCursor: null } for a user without threads', () => {
-    expect(selectThreadPage({ sorted: [] })).toEqual({
+    expect(selectThreadPage({ sorted: [], size: 20 })).toEqual({
       threads: [],
       nextCursor: null,
     });

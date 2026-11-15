@@ -1,11 +1,11 @@
 import type { Logger } from '@agent-os/common';
+import type { Tool } from '@modelcontextprotocol/client';
 import type { McpServerConfig } from '../config.js';
 import { z } from 'zod';
 import type { JsonSchemaObject } from '../model/mastra-turn.js';
 import type { ToolDisplay } from '../tools/tool.js';
-import { type McpCallResponse, McpClient, type McpListedTool } from './mcp-client.js';
+import { type McpCallResponse, McpClient } from './mcp-client.js';
 import { mcpFailureReason } from './mcp-failure.js';
-import { isReadOnly } from './mcp-outcome.js';
 
 /** A schema property that carries a human title. */
 const TitledSchema = z.object({ title: z.string().min(1) });
@@ -17,7 +17,10 @@ export interface McpTool {
   readonly tool: string;
   readonly description: string;
   readonly inputSchema: JsonSchemaObject;
-  /** True only when the server listed the tool with `readOnlyHint: true` (KD-4). */
+  /**
+   * True only when the server listed the tool with `readOnlyHint: true`; anything else, the hint
+   * missing included, changes something (KD-4).
+   */
   readonly readOnly: boolean;
   /** The server's title of the tool and of its arguments, for the employee. */
   readonly display: ToolDisplay;
@@ -59,17 +62,20 @@ interface ServerEntry {
   stale: boolean;
 }
 
-function toMcpTool(serverId: string, listed: McpListedTool): McpTool {
+/** A tool as the server listed it; its human name is its `title`, or `annotations.title` when it has only that. */
+function toMcpTool(serverId: string, listed: Tool): McpTool {
+  const title = listed.title ?? listed.annotations?.title;
+  const inputSchema: JsonSchemaObject = { ...listed.inputSchema, type: 'object' };
   return {
     name: mcpToolName(serverId, listed.name),
     server: serverId,
     tool: listed.name,
-    description: listed.description,
-    inputSchema: listed.inputSchema,
-    readOnly: isReadOnly(listed.annotations),
+    description: listed.description ?? '',
+    inputSchema,
+    readOnly: listed.annotations?.readOnlyHint === true,
     display: {
-      ...(listed.title === undefined ? {} : { toolTitle: listed.title }),
-      ...argLabelsOf(listed.inputSchema),
+      ...(title === undefined ? {} : { toolTitle: title }),
+      ...argLabelsOf(inputSchema),
     },
   };
 }

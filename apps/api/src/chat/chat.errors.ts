@@ -93,10 +93,7 @@ function codeOf(error: unknown, notFound: NotFoundCode): ThreadsErrorCode | unde
  * with a constant message, anything else into a bare 500 with neither text nor stack (the caller logs
  * the original error in the field `error`).
  */
-function toHttpError(
-  error: unknown,
-  notFound: NotFoundCode = 'AGENT_NOT_FOUND',
-): HttpException {
+function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   if (error instanceof HttpException) return error;
   const code = codeOf(error, notFound);
   return code === undefined

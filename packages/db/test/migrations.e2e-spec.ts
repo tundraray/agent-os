@@ -10,7 +10,8 @@
 // (task status, wait reason, message status, decision status, delivery status from packages/contracts/src/runtime.ts).
 // Migration 0010 drops the research tables, 0011 creates the six `runtime_*` tables, 0012 the three `agent_*`
 // tables (design-agents.md, Data Model), 0014 `chat_conversations` (design-chat.md, Data Model) and 0015 drops
-// `chat_thread_runs`: after them, only these are in `app`.
+// `chat_thread_runs`, 0016 adds `agent_tool_results` and `agent_code_calls` (code-execution/design-code-execution.md,
+// Data Model): after them, only these are in `app`.
 // The `agent_*` CHECK domains (history kind, tool call state, outcome, refusal reason) come from
 // packages/contracts/src/agents.ts.
 //
@@ -41,9 +42,11 @@ const ROW_TIMEOUT_MS = 120_000;
 /** Tables of the Data Models (agent-platform/design-runtime.md, design-agents.md, design-chat.md, agent-quality/design-lifecycle.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
+  'agent_code_calls',
   'agent_messages',
   'agent_sessions',
   'agent_tool_calls',
+  'agent_tool_results',
   'chat_conversations',
   'runtime_decisions',
   'runtime_event_deliveries',
@@ -214,6 +217,10 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         agent_tool_calls_state_check: sorted(ToolCallStateSchema.options),
         agent_tool_calls_outcome_check: sorted(ToolOutcomeSchema.options),
         agent_tool_calls_refusal_reason_check: sorted(
+          ToolRefusalReasonSchema.options,
+        ),
+        agent_code_calls_outcome_check: sorted(ToolOutcomeSchema.options),
+        agent_code_calls_refusal_reason_check: sorted(
           ToolRefusalReasonSchema.options,
         ),
       });

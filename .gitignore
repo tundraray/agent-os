@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Test-only executor entries of the code runner, kept out of its `dist` read path
+packages/code-runner/build/
 .next/
 .turbo/
 .env

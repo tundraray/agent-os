@@ -1,5 +1,5 @@
 import type { ToolOutcome } from '@agent-os/contracts';
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import type { McpCallResponse } from './mcp-client.js';
 import type { McpFailureReason } from './mcp-failure.js';
 
@@ -14,14 +14,6 @@ export interface McpOutcomeResult {
   readonly reason?: McpFailureReason;
 }
 
-/**
- * A tool is read-only only when its server listed it with `readOnlyHint: true`; anything else, the hint
- * missing included, changes something (KD-4).
- */
-export function isReadOnly(annotations: ToolAnnotations | undefined): boolean {
-  return annotations?.readOnlyHint === true;
-}
-
 function resultText(result: CallToolResult): string {
   if (result.content.length === 0) {
     return result.structuredContent === undefined ? '' : JSON.stringify(result.structuredContent);
@@ -33,8 +25,17 @@ function isEmpty(result: CallToolResult): boolean {
   return result.content.length === 0 && result.structuredContent === undefined;
 }
 
-/** Cuts a text to `maxBytes` of UTF-8 on a character boundary, noting how many bytes were cut. */
-function truncate(text: string, maxBytes: number): string {
+/**
+ * The note that ends a cut text (DC-7). With `callId` it names how a script reads the full result;
+ * without it — a tool error, which keeps no full result (DC-8) — it only says how much was cut.
+ */
+function cutNote(cutBytes: number, callId: string | undefined): string {
+  const note = `результат обрезан на ${cutBytes} байт`;
+  return callId === undefined ? note : `${note}; полный — \`readResult("${callId}")\` в \`run_code\``;
+}
+
+/** Cuts a text to `maxBytes` of UTF-8 on a character boundary and ends it with the cut note. */
+function truncate(text: string, maxBytes: number, callId: string | undefined): string {
   const bytes = Buffer.from(text, 'utf8');
   if (bytes.length <= maxBytes) {
     return text;
@@ -44,20 +45,36 @@ function truncate(text: string, maxBytes: number): string {
   while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) {
     cut -= 1;
   }
-  return `${bytes.subarray(0, cut).toString('utf8')}\n[truncated ${bytes.length - cut} bytes]`;
+  return `${bytes.subarray(0, cut).toString('utf8')}\n${cutNote(bytes.length - cut, callId)}`;
 }
 
 /** Turns an MCP response into exactly one outcome of the call (design-agents.md, Flow 1, Failure handling). */
-export function toOutcome(response: McpCallResponse, maxBytes: number): McpOutcomeResult {
+export function toOutcome(response: McpCallResponse, maxBytes: number, callId: string): McpOutcomeResult {
   if (response.kind === 'failure') {
     return { outcome: 'transport_failure', text: '', reason: response.reason };
   }
   const { result } = response;
   if (result.isError === true) {
-    return { outcome: 'tool_error', text: truncate(resultText(result), maxBytes) };
+    return { outcome: 'tool_error', text: truncate(resultText(result), maxBytes, undefined) };
   }
   if (isEmpty(result)) {
     return { outcome: 'empty', text: '' };
   }
-  return { outcome: 'success', text: truncate(resultText(result), maxBytes) };
+  return { outcome: 'success', text: truncate(resultText(result), maxBytes, callId) };
+}
+
+/**
+ * The value a script gets for an MCP result (design-code-execution.md, «API скрипта»):
+ * `structuredContent` when present, else the text parsed as JSON, else the text itself.
+ */
+export function scriptValueOf(result: CallToolResult): unknown {
+  if (result.structuredContent !== undefined) {
+    return result.structuredContent;
+  }
+  const text = resultText(result);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
 }

@@ -43,7 +43,7 @@ export interface Runtime {
   /** Task queues: messages from employees and other tasks. */
   readonly inbox: Pick<Inbox, 'enqueue' | 'listPending'>;
   /** Decision requests of steps and their resolution. */
-  readonly decisions: Pick<Decisions, 'resolve' | 'listTree'>;
+  readonly decisions: Pick<Decisions, 'resolve' | 'get' | 'listTree'>;
   /** The event log of a tree. */
   readonly events: Pick<EventLog, 'listAfter'>;
   /** Consumers of outbox events. */

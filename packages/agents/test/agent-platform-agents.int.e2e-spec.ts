@@ -1417,6 +1417,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
 
       // Then: U1's model was offered the `logs` tools and its read reached the server once
       expect(allowed.calls[0]?.toolNames).toEqual([
+        'run_code',
         'mcp__logs__search_logs',
         'mcp__logs__aggregate_logs',
         'mcp__logs__get_trace',
@@ -1434,9 +1435,10 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'model_answer: report of the allowed owner []',
       ]);
 
-      // Then: U2's model was offered no server tool; its forced call was refused, is in its history, and
-      // nothing of it reached a server (the name is not in its session: `tool_not_in_definition`)
-      expect(denied.calls[0]?.toolNames).toEqual([]);
+      // Then: U2's model was offered no server tool (only `run_code`, which every session has); its forced
+      // call was refused, is in its history, and nothing of it reached a server (the name is not in its
+      // session: `tool_not_in_definition`)
+      expect(denied.calls[0]?.toolNames).toEqual(['run_code']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
         'mcp__logs__get_trace done refused tool_not_in_definition timed',

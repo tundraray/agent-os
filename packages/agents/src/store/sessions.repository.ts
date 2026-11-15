@@ -62,14 +62,14 @@ export const sessions = {
   /**
    * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11):
    * both the `start` operation and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps
-   * their race safe. `true` when this call created the session.
+   * their race safe.
    */
   async ensureSession(
     tx: RuntimeTx,
     taskId: string,
     input: SessionInput,
     ownerId: string,
-  ): Promise<boolean> {
+  ): Promise<void> {
     const created = await tx
       .insert(agentSessions)
       .values({
@@ -85,17 +85,13 @@ export const sessions = {
       })
       .onConflictDoNothing({ target: agentSessions.taskId })
       .returning({ taskId: agentSessions.taskId });
-    if (created.length === 0) return false;
-    await tx
-      .insert(agentMessages)
-      .values({
-        taskId,
-        seq: TASK_ENTRY_SEQ,
-        kind: 'task',
-        content: HistoryContentSchemas.task.parse({ text: input.prompt }),
-      })
-      .onConflictDoNothing();
-    return true;
+    if (created.length === 0) return;
+    await tx.insert(agentMessages).values({
+      taskId,
+      seq: TASK_ENTRY_SEQ,
+      kind: 'task',
+      content: HistoryContentSchemas.task.parse({ text: input.prompt }),
+    });
   },
 
   /** The session of the agent; `undefined` when it has none yet. */

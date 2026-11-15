@@ -1,7 +1,6 @@
 import type { AgentConfirmation, AgentHistoryEntry, AgentView as AgentsAgentView } from '@agent-os/agents';
 import type { StepMessage } from '@agent-os/runtime';
 import {
-  templateTitles,
   toAgentTree,
   toAgentView,
   toConfirmation,
@@ -11,9 +10,7 @@ import {
 
 const CREATED = new Date('2026-11-14T10:00:00.000Z');
 const RESOLVED = new Date('2026-11-14T10:05:00.000Z');
-const TEMPLATES = templateTitles([
-  { name: 'deep-research', title: 'Глубокий ресерч', description: 'Research a question in depth' },
-]);
+const TEMPLATES = new Map([['deep-research', 'Глубокий ресерч']]);
 
 function agent(agentId: string, parentId: string | null, definition = 'general-purpose'): AgentsAgentView {
   return {
@@ -99,7 +96,7 @@ describe('conversation view maps confirmations, the agent tree and the pending q
       },
     },
     {
-      name: 'a brief with its template title',
+      name: 'a brief',
       input: confirmation({
         kind: 'workflows.brief',
         tool: 'start_workflow',
@@ -120,11 +117,10 @@ describe('conversation view maps confirmations, the agent tree and the pending q
         resolution: null,
         createdAt: '2026-11-14T10:00:00.000Z',
         resolvedAt: null,
-        templateTitle: 'Глубокий ресерч',
       },
     },
   ])('confirmation: $name', ({ input, expected }) => {
-    expect(toConfirmation(input, TEMPLATES)).toEqual(expected);
+    expect(toConfirmation(input)).toEqual(expected);
   });
 
   it('agent: a workflow coordinator carries its template, an ordinary agent has no such field; dates are ISO', () => {
@@ -155,11 +151,11 @@ describe('conversation view maps confirmations, the agent tree and the pending q
       agent('b', 'root'),
       agent('a1', 'a'),
       agent('c', 'root'),
-    ].map((view) => toAgentView(view, TEMPLATES));
+    ];
 
     const ids = (nodes: ReturnType<typeof toAgentTree>): unknown =>
       nodes.map((node) => ({ id: node.agentId, children: ids(node.children) }));
-    expect(ids(toAgentTree(views, 'root'))).toEqual([
+    expect(ids(toAgentTree(views, TEMPLATES, 'root'))).toEqual([
       { id: 'a', children: [{ id: 'a1', children: [] }] },
       { id: 'b', children: [] },
       { id: 'c', children: [] },

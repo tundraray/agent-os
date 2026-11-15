@@ -1,9 +1,10 @@
 import { HistoryEventSchema, TaskStatusSchema } from '@agent-os/contracts';
-import type { RuntimeTx, StepMessage, Task } from '@agent-os/runtime';
+import type { StepMessage, Task } from '@agent-os/runtime';
 
 import type { NewHistoryEntry } from '../store/history.repository.js';
-import type { Session, SessionPatch } from '../store/sessions.repository.js';
-import { closeOpen, type ResumeMark, resumeMarkOf } from './deliver.js';
+import type { Session } from '../store/sessions.repository.js';
+import type { ToolCallRow } from '../store/tool-calls.repository.js';
+import { type ResumeMark, resumeMarkOf, toolResultEntry } from './deliver.js';
 
 const { stopped } = TaskStatusSchema.enum;
 
@@ -30,7 +31,8 @@ export function messagePayload(
   return { text, resume: { stopped: true, withParent: stoppedTogether(target, targetParent) } };
 }
 
-function stoppedTogether(target: Task, parent: Task | null | undefined): boolean {
+/** Whether the command that stopped `target` stopped its `parent` too. */
+export function stoppedTogether(target: Task, parent: Task | null | undefined): boolean {
   if (parent?.status !== stopped) return false;
   return (
     parent.finishedAt !== null &&
@@ -63,38 +65,17 @@ export function continuationOf(input: ContinuationInput): Continuation | undefin
   return undefined;
 }
 
-/** What a continuation writes: the entries to append before the delivered messages, and the session patch. */
-export interface ContinuationWrite {
-  readonly entries: NewHistoryEntry[];
-  readonly patch: SessionPatch;
-}
-
 /**
- * The entries of a continuation inside the step's commit transaction (Flow 6, Flow 7): for a stopped
- * agent its open calls closed («interrupted», `sending` → «unknown») and the `stopped` or
- * `stopped_with_parent` event — the records `history` showed derived until now — then the
- * `continued` event; the turn counter starts from zero and `closed` is cleared. `undefined` when the
- * step does not continue a finished agent.
+ * The stop records of an agent the runtime stopped (Flow 7): its open calls closed, then the `stopped`
+ * event, or `stopped_with_parent` when the same command stopped its parent. `closed` — the calls as the
+ * stop closes them: `closeOpen` in the commit, `closedView` for a preview or the derived view of `history`.
  */
-export async function continuationEntries(
-  tx: RuntimeTx,
-  input: ContinuationInput,
-): Promise<ContinuationWrite | undefined> {
-  const continuation = continuationOf(input);
-  if (continuation === undefined) return undefined;
-
-  const entries: NewHistoryEntry[] = [];
-  if (continuation.stop !== null) {
-    entries.push(...(await closeOpen(tx, input.session.taskId)));
-    const event = continuation.stop.withParent
-      ? HistoryEventSchema.enum.stopped_with_parent
-      : HistoryEventSchema.enum.stopped;
-    entries.push({ kind: 'event', content: { event, reason: null } });
-  }
-  entries.push({
-    kind: 'event',
-    content: { event: HistoryEventSchema.enum.continued, reason: null },
-  });
-  // Flow 6: the continued assignment counts its turns from zero.
-  return { entries, patch: { turns: 0, closed: false } };
+export function stopRecords(
+  closed: readonly ToolCallRow[],
+  withParent: boolean,
+): Extract<NewHistoryEntry, { kind: 'tool_result' | 'event' }>[] {
+  const event = withParent
+    ? HistoryEventSchema.enum.stopped_with_parent
+    : HistoryEventSchema.enum.stopped;
+  return [...closed.map(toolResultEntry), { kind: 'event', content: { event, reason: null } }];
 }

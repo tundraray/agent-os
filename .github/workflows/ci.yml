@@ -23,7 +23,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - if: github.event_name == 'pull_request'
@@ -85,11 +85,13 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Contracts, then db, then runtime, then apps/api, whose dist holds the migration CLI.
       - run: pnpm turbo build --filter=api...
+      # E2E-2: the executor process under the permission model on Linux (Windows runs it locally); no database needed.
+      - run: pnpm --filter @agent-os/code-runner test:e2e
       - run: pnpm --filter api db:migrate
       - run: pnpm --filter @agent-os/db test:e2e
       - run: pnpm --filter @agent-os/runtime test:e2e

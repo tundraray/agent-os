@@ -102,7 +102,7 @@ function ThreadHarness({ adapter, messages }: { adapter: ChatModelAdapter; messa
     <ShellServicesContext.Provider value={services}>
       <AssistantRuntimeProvider runtime={runtime}>
         <TooltipProvider>
-          <Thread autoFocus={false} />
+          <Thread />
         </TooltipProvider>
       </AssistantRuntimeProvider>
     </ShellServicesContext.Provider>

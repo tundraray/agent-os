@@ -1,3 +1,4 @@
+import type { CallUsage } from '@agent-os/runtime';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
@@ -13,14 +14,6 @@ export type TurnModel = Extract<MastraModelConfig, { doGenerate: unknown }>;
 
 /** By a catalog model id (`anthropic/…`) returns the model instance; touches no network. */
 export type ResolveModel = (modelId: string) => TurnModel;
-
-/** Usage fields of a result as Mastra reports them; a field the provider did not report is null. */
-export interface ReportedUsage {
-  readonly inputTokens: number | null;
-  readonly outputTokens: number | null;
-  readonly cachedInputTokens: number | null;
-  readonly cacheCreationInputTokens: number | null;
-}
 
 /** The provider options of the message the cache mark ends at: an `ephemeral` cache breakpoint (KD-6). */
 const CACHE_MARK = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const;
@@ -83,12 +76,12 @@ export interface AgentTurnCall {
   readonly maxOutputTokens: number;
 }
 
-/** A resolved turn: its finish reason, text, the tool calls not yet run, and usage. */
+/** A resolved turn: its finish reason, text, the tool calls not yet run, and usage as the ledger takes it. */
 export interface AgentTurnGeneration {
   readonly finishReason: string | undefined;
   readonly text: string;
   readonly toolCalls: readonly AgentToolCall[];
-  readonly usage: ReportedUsage;
+  readonly usage: CallUsage;
 }
 
 /** How a streamed turn is watched: its cancel and the receiver of each text part, in order (KD-3). */
@@ -105,47 +98,21 @@ export interface AgentTurnModelClient {
   streamTurn(call: AgentTurnCall, options: StreamTurnOptions): Promise<AgentTurnGeneration>;
 }
 
-/** What one request agent needs: who it is, its system block and model, and the tools the model may call. */
-interface RequestAgentConfig {
-  readonly id: string;
-  readonly name: string;
-  readonly instructions: SystemBlock;
-  readonly model: TurnModel;
-  readonly tools: Record<string, ReturnType<typeof createTool>>;
-}
-
-/** A system block that carries the cache mark. */
-interface SystemBlock {
-  readonly role: 'system';
-  readonly content: string;
-  readonly providerOptions: typeof CACHE_MARK;
-}
-
 /**
- * The agent of one model request (ADR-0001, KD-6): a plain Mastra `Agent` without a `Mastra`
- * instance, memory or storage. `errorProcessorDefaults: false` drops Mastra's default error
- * processors, which retry a provider error on their own — so one `stream` is one request and only
- * `ModelClient` retries. `noopLogger` silences Mastra's console line on a provider error, which
- * carries the request body with the prompt.
+ * Usage as the ledger takes it: Mastra's `inputTokens` is the whole input, the cached parts included.
+ * A field the provider did not report counts as zero.
  */
-function createRequestAgent(config: RequestAgentConfig): Agent {
-  const agent = new Agent({ ...config, errorProcessorDefaults: false });
-  agent.__setLogger(noopLogger);
-  return agent;
-}
-
-/** The usage of a result, each field the provider did not report as null. */
-function reportedUsage(usage: {
+function callUsage(usage: {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
-}): ReportedUsage {
+}): CallUsage {
   return {
-    inputTokens: usage.inputTokens ?? null,
-    outputTokens: usage.outputTokens ?? null,
-    cachedInputTokens: usage.cachedInputTokens ?? null,
-    cacheCreationInputTokens: usage.cacheCreationInputTokens ?? null,
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cacheReadTokens: usage.cachedInputTokens ?? 0,
+    cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
   };
 }
 
@@ -210,17 +177,6 @@ function turnTools(tools: readonly AgentToolDefinition[]): Record<string, Return
   );
 }
 
-/** The request agent of one turn: its system block with the cache mark, its model and its tools. */
-function turnAgent(call: AgentTurnCall, model: TurnModel): Agent {
-  return createRequestAgent({
-    id: `agent-${call.agentName}`,
-    name: `Agent ${call.agentName}`,
-    instructions: { role: 'system', content: call.instructions, providerOptions: CACHE_MARK },
-    model,
-    tools: turnTools(call.tools),
-  });
-}
-
 /** Hands every non-empty part of the text stream to `onText`, in order, until the stream ends. */
 async function readTextParts(textStream: AsyncIterable<string>, onText: (text: string) => void): Promise<void> {
   for await (const part of textStream) {
@@ -229,17 +185,29 @@ async function readTextParts(textStream: AsyncIterable<string>, onText: (text: s
 }
 
 /**
- * The production turn client: a new request agent per turn, `Agent.stream` with `maxSteps: 1`, so one
- * stream is one request and its tool calls come back as data (ADR-0001, KD-3, KD-6). Each part of
- * `textStream` goes to `onText`; the text, tool calls and usage come from the output's promises. A
- * provider error ends `textStream` without an exception: Mastra keeps it as the output's `error` (what
- * `generate` throws after reading the whole stream), so it is thrown here and `ModelClient` retries it.
- * The system block carries the cache mark, so the tools and instructions before it are cached.
+ * The production turn client: a new request agent per turn — a plain Mastra `Agent` without a `Mastra`
+ * instance, memory or storage — and `Agent.stream` with `maxSteps: 1`, so one stream is one request and
+ * its tool calls come back as data (ADR-0001, KD-3, KD-6). `errorProcessorDefaults: false` drops
+ * Mastra's default error processors, which retry a provider error on their own, so only `ModelClient`
+ * retries. `noopLogger` silences Mastra's console line on a provider error, which carries the request
+ * body with the prompt. Each part of `textStream` goes to `onText`; the text, tool calls and usage come
+ * from the output's promises. A provider error ends `textStream` without an exception: Mastra keeps it
+ * as the output's `error` (what `generate` throws after reading the whole stream), so it is thrown here
+ * and `ModelClient` retries it. The system block carries the cache mark, so the tools and instructions
+ * before it are cached.
  */
 export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnModelClient {
   return {
     async streamTurn(call, { signal, onText }) {
-      const agent = turnAgent(call, resolveModel(call.model));
+      const agent = new Agent({
+        id: `agent-${call.agentName}`,
+        name: `Agent ${call.agentName}`,
+        instructions: { role: 'system', content: call.instructions, providerOptions: CACHE_MARK },
+        model: resolveModel(call.model),
+        tools: turnTools(call.tools),
+        errorProcessorDefaults: false,
+      });
+      agent.__setLogger(noopLogger);
       const output = await agent.stream(turnMessages(call.messages), {
         maxSteps: 1,
         modelSettings: { maxOutputTokens: call.maxOutputTokens },
@@ -261,7 +229,7 @@ export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnMod
           toolName: payload.toolName,
           args: payload.args,
         })),
-        usage: reportedUsage(usage),
+        usage: callUsage(usage),
       };
     },
   };

@@ -6,9 +6,6 @@ const unsetWhenEmpty = (value: unknown) => (value === '' ? undefined : value);
 const positiveInteger = (fallback: number) =>
   z.preprocess(unsetWhenEmpty, z.coerce.number().int().min(1).default(fallback));
 
-const text = (fallback: string) =>
-  z.preprocess(unsetWhenEmpty, z.string().min(1).default(fallback));
-
 /** A model id the package resolves: only Anthropic models (`createResolveModel`). */
 export const MODEL_ID_PATTERN = /^anthropic\/[^/\s]+$/;
 
@@ -26,13 +23,19 @@ const AgentsEnvSchema = z.object({
   ),
   // May stay empty: a deployment without a key starts, and the provider refuses its calls.
   ANTHROPIC_API_KEY: z.preprocess(unsetWhenEmpty, z.string().default('')),
-  AGENTS_ANTHROPIC_BASE_URL: text('https://api.anthropic.com'),
+  AGENTS_ANTHROPIC_BASE_URL: z.preprocess(unsetWhenEmpty, z.string().default('https://api.anthropic.com')),
   AGENT_MAX_OUTPUT_TOKENS: positiveInteger(16_000),
   AGENT_MAX_DEPTH: positiveInteger(3),
   AGENT_TOOL_RESULT_MAX_BYTES: positiveInteger(16_384),
   AGENT_COMPACT_AT_TOKENS: positiveInteger(200_000),
   MCP_ACCESS_TABLE: z.preprocess(unsetWhenEmpty, z.string().optional()),
   MCP_CALL_TIMEOUT_MS: positiveInteger(60_000),
+  // design-code-execution.md, Runtime settings.
+  CODE_RUN_TIMEOUT_MS: positiveInteger(30_000),
+  CODE_RUN_MEMORY_MB: positiveInteger(512),
+  CODE_RUN_MAX_TOOL_CALLS: positiveInteger(50),
+  CODE_RUN_MAX_CONCURRENT: positiveInteger(4),
+  CODE_RUN_MAX_CONCURRENT_PER_USER: positiveInteger(2),
 });
 
 /** One MCP server of the deployment's servers file (`MCP_SERVERS_FILE`); stdio only (KD-5). */
@@ -87,6 +90,32 @@ export interface AgentsConfig {
   readonly mcpServers: readonly McpServerConfig[];
   /** `MCP_ACCESS_TABLE`. */
   readonly mcpAccess: McpAccessTable;
+  /** `CODE_RUN_*`; a run's result limit is `toolResultMaxBytes`. */
+  readonly codeRun: CodeRunConfig;
+}
+
+/** `CODE_RUN_*` (design-code-execution.md, Runtime settings). */
+export interface CodeRunConfig {
+  /** `CODE_RUN_TIMEOUT_MS`. */
+  readonly timeoutMs: number;
+  /** `CODE_RUN_MEMORY_MB`. */
+  readonly memoryMb: number;
+  /** `CODE_RUN_MAX_TOOL_CALLS`. */
+  readonly maxToolCalls: number;
+  /** `CODE_RUN_MAX_CONCURRENT`: runs at once in one API process (DC-13). */
+  readonly maxConcurrent: number;
+  /** `CODE_RUN_MAX_CONCURRENT_PER_USER`: runs of one employee at once in one API process (KD-11). */
+  readonly maxConcurrentPerUser: number;
+}
+
+/**
+ * The secret values of the settings (FR-11): the provider key and every value of the servers'
+ * environment. The logger redacts them, and `run_code` masks them in a run's output and result.
+ */
+export function secretValuesOf(config: AgentsConfig): string[] {
+  return [config.anthropicApiKey, ...config.mcpServers.flatMap((server) => Object.values(server.env))].filter(
+    (secret) => secret !== '',
+  );
 }
 
 /**
@@ -120,6 +149,13 @@ export function parseAgentsConfig(
       env.MCP_ACCESS_TABLE,
       new Set(servers.map((server) => server.id)),
     ),
+    codeRun: {
+      timeoutMs: env.CODE_RUN_TIMEOUT_MS,
+      memoryMb: env.CODE_RUN_MEMORY_MB,
+      maxToolCalls: env.CODE_RUN_MAX_TOOL_CALLS,
+      maxConcurrent: env.CODE_RUN_MAX_CONCURRENT,
+      maxConcurrentPerUser: env.CODE_RUN_MAX_CONCURRENT_PER_USER,
+    },
   };
 }
 

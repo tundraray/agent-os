@@ -7,7 +7,8 @@ export {
 export type { TreeDecision, ResolveOutcome } from './decisions.js';
 export { RuntimeError, type RuntimeErrorCode } from './errors.js';
 export type { EventConsumer } from './event-consumer.registry.js';
-export { RUNTIME_EVENTS_CHANNEL } from './event-log.js';
+export { RUNTIME_EVENT_SCHEMA_VERSION, RUNTIME_EVENTS_CHANNEL } from './event-log.js';
+export { isFinished } from './guarded-transition.js';
 export type {
   EnqueuedMessage,
   EnqueueMessage,

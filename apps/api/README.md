@@ -19,7 +19,7 @@ What `apps/api/.env` needs:
 
 - `DATABASE_URL` — required; the example matches `infra/docker-compose.yml`. If host port 5432 is taken, run `POSTGRES_PORT=5433 pnpm db:up` and use port 5433 here.
 - `ANTHROPIC_API_KEY` — the server starts without it, but every model call is refused.
-- Everything else has a working default in `.env.example`: `AGENT_DEFAULT_MODEL=anthropic/claude-haiku-5-5` (the chat's model; it must be in `config/model-prices.json`), `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` (files in `config/`, relative to `apps/api`; a missing or invalid file stops the start), `MCP_ACCESS_TABLE` (grants `dev-user` the fixture servers `logs` and `backoffice`; empty gives nobody any server), `SENTRY_DSN` (optional), `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `MCP_CALL_TIMEOUT_MS`. An invalid value stops the start naming the variable.
+- Everything else has a working default in `.env.example`: `AGENT_DEFAULT_MODEL=anthropic/claude-haiku-5-5` (the chat's model; it must be in `config/model-prices.json`), `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` (files in `config/`, relative to `apps/api`; a missing or invalid file stops the start), `MCP_ACCESS_TABLE` (grants `dev-user` the fixture servers `logs`, `backoffice` and `tracker`; empty gives nobody any server), `SENTRY_DSN` (optional), `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `MCP_CALL_TIMEOUT_MS`, and the `run_code` limits `CODE_RUN_TIMEOUT_MS` (30000), `CODE_RUN_MEMORY_MB` (512), `CODE_RUN_MAX_TOOL_CALLS` (50), `CODE_RUN_MAX_CONCURRENT` (4, per API process) and `CODE_RUN_MAX_CONCURRENT_PER_USER` (2, per employee and API process). An invalid value stops the start naming the variable.
 
 The fixture servers are started by the api itself (`node ../../packages/mcp-fixture/dist/server.js`), so `packages/mcp-fixture` must be built: the `pnpm turbo build --filter=api...` step does it (`pnpm --filter @agent-os/mcp-fixture build` builds it alone).
 
@@ -54,6 +54,30 @@ Tests: `pnpm --filter api test` (unit) and `pnpm --filter api test:e2e` (needs P
 - The suites replace the model client with the test double and set their own `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS`; they make no paid calls.
 - Migration tests live in `packages/db`.
 - Run Postgres suites one at a time, never in parallel against the same database: runtime workers (relay, reaper) touch rows of other tests.
+
+## Docker image
+
+The image holds the API only, built from `apps/api/Dockerfile` with the repository root as the build context. `.dockerignore` keeps every `.env` out of it.
+
+```bash
+docker build -f apps/api/Dockerfile -t agent-os-api:local .
+
+# Migrations: the same command as `pnpm db:migrate`; the server only checks them and refuses to start on pending ones
+docker run --rm -e DATABASE_URL=postgres://<user>:<password>@<host>:5432/<db> \
+  agent-os-api:local node dist/runtime/migrate-cli.js
+
+# The server, on port 4000
+docker run -p 4000:4000 \
+  -e DATABASE_URL=postgres://<user>:<password>@<host>:5432/<db> \
+  -e ANTHROPIC_API_KEY=<key> \
+  -e FRONTEND_ORIGIN=http://localhost:3000 \
+  agent-os-api:local
+```
+
+- `DATABASE_URL` is required. `ANTHROPIC_API_KEY` is passed at run time and never baked into the image; without it the server starts, but every model call is refused. The other variables of `.env.example` (`FRONTEND_ORIGIN`, `PORT`, `SENTRY_DSN`, `LOG_LEVEL`, `MCP_ACCESS_TABLE`, `RUNTIME_*`, `AGENT_*`, `CODE_RUN_*`) are optional and passed the same way. The image carries `config/` and the fixture MCP servers, so `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` keep their defaults.
+- The image sets `NODE_ENV=development`, because there is no login yet: every request runs as `dev-user`, and the `x-user-id` header names another employee. Anyone who can reach the port can act as any employee, so do not expose it outside a trusted network. With `-e NODE_ENV=production` every request is answered 401 `Authentication is not configured`.
+- The server runs as the user `node` under `tini` (the image's entrypoint), which passes signals to Node and reaps the child processes of code runs and MCP servers. No `--init` is needed.
+- CI (`.github/workflows/docker.yml`) builds the image on every push to `main` and pushes it to `ghcr.io/<owner>/<repo>-api` with the tags `latest` and `sha-<short sha>`.
 
 ## Observability
 

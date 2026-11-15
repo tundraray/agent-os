@@ -5,12 +5,16 @@ import {
   type AgentHistoryEntry,
   type Agents,
   type AgentSessions,
+  type AgentTurnMessage,
   createAgents,
   parseAgentsConfig,
+  secretValuesOf,
 } from '@agent-os/agents';
+import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
 import {
+  agentCodeCalls,
   agentToolCalls,
   createDatabase,
   type Database,
@@ -75,12 +79,21 @@ const SETTLE_POLL_MS = 25;
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
 
+/** Extra process variables per server id (a credential the script must not see). */
+export type ServerEnv = Readonly<Record<string, Readonly<Record<string, string>>>>;
+
 /** The servers file of a harness: both fixture servers, logging into the test's call log. */
-function fixtureServers(files: FixtureFiles): unknown {
-  return fixtureServersFile(files, [
-    { id: LOGS_SERVER, source: 'logs' },
-    { id: BACKOFFICE_SERVER, source: 'backoffice' },
-  ]);
+function fixtureServers(files: FixtureFiles, serverEnv: ServerEnv): unknown {
+  return fixtureServersFile(
+    files,
+    [
+      { id: LOGS_SERVER, source: 'logs' as const },
+      { id: BACKOFFICE_SERVER, source: 'backoffice' as const },
+    ].map((server) => {
+      const env = serverEnv[server.id];
+      return env === undefined ? server : { ...server, env };
+    }),
+  );
 }
 
 /** A definition name unique to one test: catalogs of other tests never meet it. */
@@ -113,8 +126,12 @@ export interface AgentsHarnessOptions {
   readonly definitions?: readonly AgentDefinition[];
   /** Shared with a second instance; a fresh directory by default. */
   readonly fixture?: FixtureFiles;
-  /** `AGENT_*` / `MCP_*` variables over the harness defaults. */
+  /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` / `ANTHROPIC_API_KEY` variables over the harness defaults. */
   readonly variables?: Readonly<Record<string, string>>;
+  /** Extra process variables of the fixture servers, by server id; the logger hides their values. */
+  readonly serverEnv?: ServerEnv;
+  /** The code executor; the real one (`createCodeRunner`) by default. */
+  readonly codeRunner?: CodeRunner;
   /** Runtime settings over the harness defaults (workers on, 6 slots, short polls and lease). */
   readonly runtimeConfig?: Partial<RuntimeConfig>;
   /** A zombie instance: its heartbeat never renews the lease, so `expireLease` hands its step to another instance. */
@@ -156,10 +173,10 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       MCP_CALL_TIMEOUT_MS: '90000',
       ...options.variables,
     },
-    fixtureServers(fixture),
+    fixtureServers(fixture, options.serverEnv ?? {}),
   );
   const sink = memorySink();
-  const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
+  const logger = createLogger({ sinks: [sink], secrets: secretValuesOf(agentsConfig), minLevel: 'debug' });
   const database = createDatabase({
     connectionString: databaseUrl(),
     poolMax: runtimeConfig.dbPoolMax,
@@ -177,6 +194,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
+    ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
   for (const definition of options.definitions ?? []) agents.definitions.register(definition);
 
@@ -364,6 +382,32 @@ export function toolCallRowsOf(db: Database, agentId: string) {
     .from(agentToolCalls)
     .where(eq(agentToolCalls.taskId, agentId))
     .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
+}
+
+/** The audit rows of the tool calls one `run_code` run's script made, by attempt and number. */
+export function codeCallRowsOf(db: Database, agentId: string, runCallId: string) {
+  return db
+    .select()
+    .from(agentCodeCalls)
+    .where(and(eq(agentCodeCalls.taskId, agentId), eq(agentCodeCalls.runCallId, runCallId)))
+    .orderBy(asc(agentCodeCalls.attempt), asc(agentCodeCalls.seq));
+}
+
+/** Every log record of one `run_code` run (its `runId` is the run's `callId`), in order. */
+export function runLogsOf(harness: AgentsHarness, runId: string): LogRecord[] {
+  return harness.logs.filter((record) => record.fields.runId === runId);
+}
+
+/** What the model got as the result of one of its earlier tool calls, as text. */
+export function toolOutputOf(messages: readonly AgentTurnMessage[], toolCallId: string | undefined): string {
+  for (const message of messages) {
+    if (message.role !== 'tool') continue;
+    const result = message.results.find((candidate) => candidate.toolCallId === toolCallId);
+    if (result !== undefined) {
+      return typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+    }
+  }
+  throw new Error(`The model input holds no result of call ${String(toolCallId)}`);
 }
 
 /**

@@ -1,15 +1,13 @@
 import type { RuntimeTx } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { DefinitionHeader } from '../../definitions/definition.js';
+import { type DefinitionHeader, START_AGENT_TOOL } from '../../definitions/definition.js';
 import { chooseModel, type ModelChoice } from '../../model/model-choice.js';
 import { type Session, sessions } from '../../store/sessions.repository.js';
 import { toolCalls } from '../../store/tool-calls.repository.js';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool.js';
 import { gateStart } from '../tool-gate.js';
 import type { StartChildDeps } from './start-child.js';
-
-const START_AGENT_TOOL = 'start_agent';
 
 /**
  * How an agent waits for what it started (KD-2): the model reads it in the description and in every

@@ -11,8 +11,7 @@ import { z } from 'zod';
 
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import { sessions, type StoreReader } from '../store/sessions.repository.js';
-import { type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
-import { nextTurns } from './turn-rules.js';
+import { isRunCodeCall, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 
 /**
  * Marks a message to an agent that the runtime stopped (plan Notes 5): the first step that delivers
@@ -144,24 +143,34 @@ export function rootTurnReset(input: {
       message.kind === userMessage ||
       (message.kind === interrupt && interruptText(message) !== undefined),
   );
-  if (!employeeMessage) return input.turns;
-  return nextTurns(input.turns, { kind: 'user_message_delivered', isRoot: input.isRoot });
+  return employeeMessage && input.isRoot ? 0 : input.turns;
 }
-
-/** The outcome an open call gets when it is closed; `undefined` leaves it open. */
-export type OutcomeFor = (call: ToolCallRow) => ToolOutcome | undefined;
 
 /**
  * Closing on an interrupt or a stop (KD-3, Flow 7): «interrupted», but a call in `sending` may have
  * reached its server — «unknown».
  */
-export const interruptedOutcome: OutcomeFor = (call) =>
-  call.state === ToolCallStateSchema.enum.sending
+function interruptedOutcome(call: ToolCallRow): ToolOutcome {
+  return call.state === ToolCallStateSchema.enum.sending
     ? ToolOutcomeSchema.enum.unknown
     : ToolOutcomeSchema.enum.interrupted;
+}
 
-/** The `tool_result` entry of a closed call row. */
-export function toolResultEntry(call: ToolCallRow): NewHistoryEntry {
+/** An open call as an interrupt or a stop closes it at `finishedAt`, before the write or without one. */
+export function closedView(call: ToolCallRow, finishedAt: Date): ToolCallRow {
+  return {
+    ...call,
+    state: ToolCallStateSchema.enum.done,
+    outcome: interruptedOutcome(call),
+    finishedAt,
+  };
+}
+
+/**
+ * The `tool_result` entry of a closed call row; a `run_code` row also carries its script output (DC-14),
+ * other tools have no `output` field.
+ */
+export function toolResultEntry(call: ToolCallRow): Extract<NewHistoryEntry, { kind: 'tool_result' }> {
   return {
     kind: 'tool_result',
     content: {
@@ -172,6 +181,7 @@ export function toolResultEntry(call: ToolCallRow): NewHistoryEntry {
       outcome: ToolOutcomeSchema.parse(call.outcome),
       refusalReason: ToolRefusalReasonSchema.nullable().parse(call.refusalReason),
       text: call.resultText,
+      ...(isRunCodeCall(call) ? { output: call.output } : {}),
       startedAt: call.startedAt?.toISOString() ?? null,
       finishedAt: call.finishedAt?.toISOString() ?? null,
     },
@@ -179,22 +189,20 @@ export function toolResultEntry(call: ToolCallRow): NewHistoryEntry {
 }
 
 /**
- * Closes the agent's open calls in answer and position order with `outcomeFor` (by default
- * {@link interruptedOutcome}) and returns their `tool_result` entries, for the caller to append. The
- * only closing of open calls (overview, Common Processing Points); a call already closed by a racing
- * write is skipped.
+ * Closes the agent's open calls in answer and position order as an interrupt or a stop does and
+ * returns the closed rows. The only closing of open calls (overview, Common Processing Points); a
+ * call already closed by a racing write is skipped. `toolCalls.close` also closes the open calls from
+ * code of a closed `run_code` row (code-execution Invariant 4).
  */
-export async function closeOpen(
-  tx: RuntimeTx,
-  taskId: string,
-  outcomeFor: OutcomeFor = interruptedOutcome,
-): Promise<NewHistoryEntry[]> {
-  const entries: NewHistoryEntry[] = [];
+export async function closeOpen(tx: RuntimeTx, taskId: string): Promise<ToolCallRow[]> {
+  const closed: ToolCallRow[] = [];
   for (const call of await toolCalls.open(tx, taskId)) {
-    const outcome = outcomeFor(call);
-    if (outcome === undefined) continue;
-    const closed = await toolCalls.close(tx, { taskId, callId: call.callId }, { outcome });
-    if (closed !== undefined) entries.push(toolResultEntry(closed));
+    const row = await toolCalls.close(
+      tx,
+      { taskId, callId: call.callId },
+      { outcome: interruptedOutcome(call) },
+    );
+    if (row !== undefined) closed.push(row);
   }
-  return entries;
+  return closed;
 }

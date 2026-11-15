@@ -4,13 +4,13 @@ import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { useFeedSelector } from '@/lib/feed/feed-context';
+import { selectAgent } from '@/lib/feed/to-feed';
 import { parseShellRoute } from '@/lib/shell-route';
+import { selectMainItem } from '@/lib/threads/main-thread';
 import { useMainViewState } from './main-view';
+import { UNTITLED_THREAD_TITLE } from './thread-history-item';
 
 const APP_NAME = 'Agent OS';
-
-/** Placeholder for a thread without a title (D-06). */
-const UNTITLED = 'Новая беседа';
 
 /**
  * UX-04: the browser tab title, which the Next route announcer reads. `/` → «Новый чат — Agent OS»;
@@ -24,15 +24,8 @@ export function DocumentTitle() {
   const route = parseShellRoute(usePathname());
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
   const mainTitle = useAuiState(
-    (s) =>
-      s.threads.threadItems.find(
-        (item) => item.id === s.threads.mainThreadId || item.remoteId === s.threads.mainThreadId,
-      )?.title,
-  );
-  const agentName = useFeedSelector(
-    (state) => (state.view?.kind === 'agent' ? state.view.agent.description : undefined),
-    undefined,
-  );
+    (s) => selectMainItem(s)?.title);
+  const agentName = useFeedSelector((state) => selectAgent(state.view)?.description, undefined);
   const agentLoadError = useFeedSelector((state) => state.loadError, null);
 
   const title = ((): string | undefined => {
@@ -47,7 +40,7 @@ export function DocumentTitle() {
     if (view.kind === 'load-error') return APP_NAME;
     if (view.kind === 'switching' || mainRemoteId !== routeThreadId) return undefined;
     const text = mainTitle?.trim() ?? '';
-    return `${text === '' ? UNTITLED : text} — ${APP_NAME}`;
+    return `${text === '' ? UNTITLED_THREAD_TITLE : text} — ${APP_NAME}`;
   })();
 
   useEffect(() => {

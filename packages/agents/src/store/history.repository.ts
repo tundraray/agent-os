@@ -1,7 +1,7 @@
 import { type HistoryEntryKind, HistoryEntryKindSchema } from '@agent-os/contracts';
 import { agentMessages } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, asc, desc, eq, gt, lte, max } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, max } from 'drizzle-orm';
 
 import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history.js';
 import type { StoreReader } from './sessions.repository.js';
@@ -14,8 +14,6 @@ export type NewHistoryEntry = {
     readonly modelCallId?: string;
   };
 }[HistoryEntryKind];
-
-export type ModelAnswerEntry = Extract<HistoryEntry, { kind: 'model_answer' }>;
 
 type MessageRow = typeof agentMessages.$inferSelect;
 
@@ -92,26 +90,5 @@ export const history = {
       .where(and(eq(agentMessages.taskId, taskId), lte(agentMessages.seq, throughSeq)))
       .orderBy(asc(agentMessages.seq));
     return rows.map(toEntry);
-  },
-
-  /** The newest `model_answer` of the session; `undefined` when the model has not answered yet. */
-  async lastAnswer(
-    reader: StoreReader,
-    taskId: string,
-  ): Promise<ModelAnswerEntry | undefined> {
-    const kind = HistoryEntryKindSchema.enum.model_answer;
-    const [row] = await reader
-      .select()
-      .from(agentMessages)
-      .where(and(eq(agentMessages.taskId, taskId), eq(agentMessages.kind, kind)))
-      .orderBy(desc(agentMessages.seq))
-      .limit(1);
-    if (row === undefined) return undefined;
-    return {
-      seq: row.seq,
-      kind,
-      createdAt: row.createdAt,
-      content: HistoryContentSchemas.model_answer.parse(row.content),
-    };
   },
 };

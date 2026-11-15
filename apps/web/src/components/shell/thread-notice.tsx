@@ -146,5 +146,5 @@ function DeletedInlineNotice({ onNewChat }: { onNewChat: () => void }) {
 /** Slot `ThreadComponents.DeletedNotice`: the E-8 notice wired to the shell's «Новый чат». */
 export function DeletedNotice() {
   const { newChat } = useShellActions();
-  return <ThreadNotice variant="deleted" onNewChat={() => newChat('notice')} />;
+  return <ThreadNotice variant="deleted" onNewChat={newChat} />;
 }

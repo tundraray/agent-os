@@ -13,7 +13,6 @@ interface PortAttempt {
   readonly failWith?: number;
 }
 
-const USAGE = { inputTokens: 10, outputTokens: 2, cachedInputTokens: null, cacheCreationInputTokens: null };
 const LEDGER_USAGE = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
 function portDouble(attempts: readonly PortAttempt[]): AgentTurnModelClient {
@@ -29,7 +28,7 @@ function portDouble(attempts: readonly PortAttempt[]): AgentTurnModelClient {
         error.name = 'AI_APICallError';
         throw Object.assign(error, { statusCode: attempt.failWith });
       }
-      return { finishReason: 'stop', text: attempt.parts.join(''), toolCalls: [], usage: USAGE };
+      return { finishReason: 'stop', text: attempt.parts.join(''), toolCalls: [], usage: LEDGER_USAGE };
     },
   };
 }
@@ -189,5 +188,46 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
     for (const [, fields] of hookWarnings) {
       expect(fields).toEqual({ agentId: 'agent-1', error: 'notify is down' });
     }
+  });
+});
+
+// code-execution AC-01.3, UC-3: the rule of when to write code reaches the model with every agent call.
+describe('ModelClient instructions', () => {
+  it("every model call's instructions carry the code rule", async () => {
+    const sent: string[] = [];
+    const logger = loggerDouble();
+    const client = createModelClient({
+      turnClient: {
+        async streamTurn(call) {
+          sent.push(call.instructions);
+          return { finishReason: 'stop', text: 'ok', toolCalls: [], usage: LEDGER_USAGE };
+        },
+      },
+      ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
+      config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
+      logger,
+    });
+
+    await client.call({
+      ownerId: 'owner-1',
+      rootId: 'root-1',
+      taskId: 'agent-1',
+      agentName: 'chat',
+      model: 'anthropic/claude-turn',
+      instructions: 'You are a chat.',
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [],
+      streamsText: false,
+      signal: new AbortController().signal,
+      logger,
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^You are a chat\./);
+    expect(sent[0]).toContain('Use run_code when a direct tool result came back cut');
+    expect(sent[0]).toContain('count, aggregate or match data');
+    expect(sent[0]).toContain('more than three or four tool calls');
+    expect(sent[0]).toContain('callTool under the same names as in your tool list (mcp__<server>__<tool>)');
+    expect(sent[0]).toContain('to see the message, call that tool directly');
   });
 });

@@ -50,10 +50,11 @@ export type FeedState = {
 };
 
 export type FeedStore = StoreApi<FeedState> & {
-  /** Reads the view from `afterSeq` 0 to the end; a failure is the screen's load error. */
+  /**
+   * The first read takes the view from `afterSeq` 0 to the end, and its failure is the screen's load
+   * error; a later one reads on from `lastSeq`, and its failure keeps the view (design-web.md, Error handling).
+   */
   load: () => Promise<void>;
-  /** Reads on from `lastSeq`; a failure keeps the view (design-web.md, Error handling). */
-  refresh: () => Promise<void>;
   applyDelta: (part: DraftPart) => void;
   /** Rejects when the server did not accept the message. */
   send: (text: string) => Promise<void>;
@@ -290,7 +291,6 @@ export function createFeedStore({
 
   return Object.assign(store, {
     load: () => reads.request(),
-    refresh: () => reads.request(),
     applyDelta: (part: DraftPart) => {
       const draft = applyDraftPart(get().draft, part);
       if (draft !== get().draft) set({ draft });

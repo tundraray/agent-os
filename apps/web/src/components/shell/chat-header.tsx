@@ -12,10 +12,12 @@ import { useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { parseShellRoute } from '@/lib/shell-route';
+import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
 import { useMainViewState } from './main-view';
 import { useShellActions, useShellStatus } from './shell-actions';
+import { UNTITLED_THREAD_TITLE } from './thread-history-item';
 import { WORKSPACE_ID } from './workspace-panel';
 
 /**
@@ -40,9 +42,6 @@ export type ChatHeaderViewProps = {
   /** HD-04 «Рабочая область»; agent routes have no workspace (UXRD KD-1). */
   showWorkspaceToggle?: boolean;
 };
-
-/** Placeholder for a thread without a title (D-06). */
-const UNTITLED = 'Новая беседа';
 
 const THREAD_VIEWPORT_SELECTOR = '[data-slot="aui_thread-viewport"]';
 
@@ -179,7 +178,7 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}
-      onNewChat={() => newChat('button')}
+      onNewChat={newChat}
       scrolled={scrolled}
     />
   );
@@ -195,11 +194,7 @@ const AGENTS_TITLE: HeaderTitle = { kind: 'text', text: 'Агенты', pending:
  */
 function useHeaderTitle(): HeaderTitle {
   const { view, routeThreadId } = useMainViewState();
-  const mainItem = useAuiState((s) =>
-    s.threads.threadItems.find(
-      (item) => item.id === s.threads.mainThreadId || item.remoteId === s.threads.mainThreadId,
-    ),
-  );
+  const mainItem = useAuiState(selectMainItem);
   const remoteId = mainItem?.remoteId;
   const titleWaiting = useShellStatus((s) => remoteId !== undefined && s.titleWaiting[remoteId] === true);
 
@@ -208,7 +203,7 @@ function useHeaderTitle(): HeaderTitle {
   if (view.kind === 'switching' || mainItem === undefined || remoteId !== routeThreadId) return { kind: 'loading' };
   const text = mainItem.title?.trim() ?? '';
   if (text !== '') return { kind: 'text', text, pending: false };
-  return { kind: 'text', text: UNTITLED, pending: titleWaiting };
+  return { kind: 'text', text: UNTITLED_THREAD_TITLE, pending: titleWaiting };
 }
 
 /** Whether the thread feed is scrolled away from its top; the viewport is owned by `Thread`. */

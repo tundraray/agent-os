@@ -105,7 +105,7 @@ export function AppSidebar() {
                   actionOwnsFocus.current = true;
                   setOpenMobile(false);
                 }
-                newChat('button');
+                newChat();
               }}
             >
               <SquarePenIcon aria-hidden />

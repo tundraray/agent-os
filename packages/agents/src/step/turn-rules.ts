@@ -1,39 +1,3 @@
-/**
- * What changes the turn counter (DC-1): a model call counts, except the compaction call; a finished
- * turn resets it — a report, a failure, a stop, an interrupt without text — and in a root session so
- * does every delivered message of the employee.
- */
-export type TurnEvent =
-  | { readonly kind: 'model_call' }
-  | { readonly kind: 'compaction_call' }
-  | { readonly kind: 'report' }
-  | { readonly kind: 'failed' }
-  | { readonly kind: 'stopped' }
-  | { readonly kind: 'interrupted_without_text' }
-  | { readonly kind: 'user_message_delivered'; readonly isRoot: boolean };
-
-/** The turn counter after `event` (DC-1). */
-export function nextTurns(turns: number, event: TurnEvent): number {
-  switch (event.kind) {
-    case 'model_call':
-      return turns + 1;
-    case 'compaction_call':
-      return turns;
-    case 'report':
-    case 'failed':
-    case 'stopped':
-    case 'interrupted_without_text':
-      return 0;
-    case 'user_message_delivered':
-      return event.isRoot ? 0 : turns;
-  }
-}
-
-/** The definition's `maxTurns` is spent: the step fails with `turn_limit` instead of calling the model. */
-export function turnLimitReached(turns: number, maxTurns: number): boolean {
-  return turns >= maxTurns;
-}
-
 /** The last report of the final agent the session has received. */
 export interface FinalAgentReport {
   readonly status: 'completed' | 'failed' | 'stopped';

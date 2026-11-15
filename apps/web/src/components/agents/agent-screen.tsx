@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import type { WorkflowRunView } from "@agent-os/contracts";
+import type { WorkflowRunBrief } from "@agent-os/contracts";
 import { AgentMeta } from "@/components/agents/agent-meta";
 import { InheritedHistory } from "@/components/agents/inherited-history";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
@@ -10,15 +10,12 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { ThreadNotice } from "@/components/shell/thread-notice";
 import { agentComposerPlaceholder, BRIEF_PARTS } from "@/lib/agents/format";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
-import type { FeedView } from "@/lib/feed/to-feed";
+import { selectAgent } from "@/lib/feed/to-feed";
 import { useFeedRuntime } from "@/lib/feed/use-feed-runtime";
 import { logger } from "@/lib/logger";
 import { describeThreadsError } from "@/lib/threads/threads-api-error";
 
-type AgentView = Extract<FeedView, { kind: "agent" }>["agent"];
-type Brief = WorkflowRunView["brief"];
-
-const selectAgent = (view: FeedView | null): AgentView | null => (view?.kind === "agent" ? view.agent : null);
+type Brief = WorkflowRunBrief["brief"];
 
 /** The page has no welcome: an agent always starts with its task. */
 const NoWelcome = () => null;
@@ -110,7 +107,6 @@ export function AgentScreen() {
     <AssistantRuntimeProvider runtime={runtime}>
       <BriefContext.Provider value={brief}>
         <Thread
-          autoFocus={false}
           components={brief === null ? COMPONENTS : BRIEF_COMPONENTS}
           historyPending={retrying || !loaded}
           composerPlaceholder={agentComposerPlaceholder(agent?.status ?? "working")}

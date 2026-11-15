@@ -1,7 +1,9 @@
 import type { Logger } from '@agent-os/common';
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
-import type { RuntimeTx, StepEffects } from '@agent-os/runtime';
+import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
 import { z } from 'zod';
+
+import type { SessionTool } from './tool-registry.js';
 
 /** Agent name of `start_agent` that starts a fork of the caller (KD-7). */
 export const FORK_AGENT = 'fork';
@@ -49,6 +51,8 @@ export type ToolRunResult =
       readonly kind: 'done';
       readonly outcome: Extract<ToolOutcome, 'success' | 'empty' | 'tool_error'>;
       readonly text: string;
+      /** Script output of a `run_code` run: text of a successful run, `null` of a failed one (DC-14). */
+      readonly output?: string | null;
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
@@ -66,20 +70,27 @@ export interface InCommitToolInput<Args> {
 
 /** Input of a tool executed outside a transaction: it may call an external system. */
 export interface OutsideToolInput<Args> {
-  readonly callId: string;
   readonly args: Args;
   readonly caller: ToolCaller;
-  /** The step's signal: aborted on interrupt, stop, shutdown or a lost lease. */
+  /** The call's id. */
+  readonly callId: string;
+  /** The step's signal: the call ends when it aborts. */
   readonly signal: AbortSignal;
   readonly logger: Logger;
+  /** The step's `guard`: the tool writes its rows only from the current attempt (code-execution KD-6). */
+  readonly guard: StepContext['guard'];
+  /** `content` of the resolved request when the call runs on confirmation; absent otherwise (KD-10). */
+  readonly confirmed?: unknown;
 }
 
 /** A tool that waits for the employee's decision before it runs (KD-4). */
 export interface ToolConfirmation<Args> {
   /** Decision kind of the request. */
   readonly kind: string;
-  /** What the employee is shown; JSON. */
-  content(args: Args): unknown;
+  /** Whether this call needs the decision; without it every call does (code-execution KD-4). */
+  required?(args: Args): boolean;
+  /** What the employee is shown; JSON. `tools` is the session's tool set (code-execution KD-10). */
+  content(args: Args, tools: readonly SessionTool[]): unknown;
   /** Whether the employee may edit the arguments when confirming. */
   readonly editableArgs: boolean;
 }
@@ -111,7 +122,7 @@ export interface InCommitAgentTool<Args> extends AgentToolBase<Args> {
   execute(input: InCommitToolInput<Args>): Promise<ToolRunResult>;
 }
 
-/** Runs outside a transaction and gets the step's signal. */
+/** Runs outside a transaction. */
 export interface OutsideAgentTool<Args> extends AgentToolBase<Args> {
   readonly mode: 'outside';
   execute(input: OutsideToolInput<Args>): Promise<ToolRunResult>;

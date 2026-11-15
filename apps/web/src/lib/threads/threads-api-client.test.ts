@@ -34,12 +34,6 @@ const cases: Case[] = [
     expected: { kind: 'not_found', status: 404 },
   },
   {
-    name: 'getThread: 400 on :threadId → not_found',
-    handler: http.get(`${API}/api/threads/a`, () => HttpResponse.json({}, { status: 400 })),
-    call: () => threadsApiClient.getThread('a'),
-    expected: { kind: 'not_found', status: 400 },
-  },
-  {
     name: 'getConversation: 404 THREAD_NOT_FOUND → not_found',
     handler: http.get(`${API}/api/threads/a/history`, () =>
       HttpResponse.json(

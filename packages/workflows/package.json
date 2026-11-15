@@ -26,7 +26,7 @@
     "@agent-os/db": "workspace:*",
     "@agent-os/mcp-fixture": "workspace:*",
     "@agent-os/runtime": "workspace:*",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^6.0.2",
