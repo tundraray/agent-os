@@ -35,20 +35,22 @@ import {
   type ThreadSummary,
   type WorkflowRunBrief,
 } from '@agent-os/contracts';
-import request, { type Response } from 'supertest';
+import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
+import { apiRequest, type Method, type Session } from './session.js';
+
+export type { Method } from './session.js';
 
 /**
  * Typed helpers over supertest for the chat API (design-chat.md, Contract Definitions): every request
- * carries the employee as `x-user-id` (SessionGuard is real), every success body is parsed with its
- * `packages/contracts` schema (time fields are ISO strings), and an unexpected status fails with the body.
+ * carries the employee's session cookie and the web's `Origin` (session.ts; the session check is real),
+ * every success body is parsed with its `packages/contracts` schema (time fields are ISO strings), and an
+ * unexpected status fails with the body.
  */
 
 /** Poll interval of {@link waitFor}. */
 const POLL_MS = 50;
-
-export type Method = 'get' | 'post' | 'patch' | 'delete';
 
 /** Fails unless the response has `status`; returns the body parsed with `schema`. */
 export async function expectBody<T>(
@@ -75,7 +77,6 @@ export function expectError(
 
 /** The API as one employee sees it. */
 export interface ChatApi {
-  readonly ownerId: string;
   /** A request under `/api` as this employee; the body, when given, is sent as JSON. */
   raw(method: Method, path: string, body?: object): Promise<Response>;
 
@@ -117,16 +118,13 @@ function cursorQuery(cursor: string | undefined): string {
   return cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
 }
 
-export function chatApi(app: INestApplication<App>, ownerId: string): ChatApi {
-  const raw = (method: Method, path: string, body?: object): Promise<Response> => {
-    const test = request(app.getHttpServer())[method](`/api${path}`).set('x-user-id', ownerId);
-    return body === undefined ? test : test.send(body);
-  };
+export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
+  const raw = (method: Method, path: string, body?: object): Promise<Response> =>
+    apiRequest(app, session, method, path, body);
   const ok = <T>(status: number, schema: z.ZodType<T>, method: Method, path: string, body?: object) =>
     expectBody(raw(method, path, body), status, schema);
 
   return {
-    ownerId,
     raw,
     listThreads: (cursor) => ok(200, ThreadListResponseSchema, 'get', `/threads${cursorQuery(cursor)}`),
     createThread: () => ok(201, ThreadSummarySchema, 'post', '/threads'),

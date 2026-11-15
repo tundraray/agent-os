@@ -1,0 +1,119 @@
+import { randomUUID } from 'node:crypto';
+import type { INestApplication } from '@nestjs/common';
+import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
+import type { DatabaseConnection } from '@agent-os/db';
+import request, { type Test } from 'supertest';
+import type { App } from 'supertest/types.js';
+import { AuditLog } from '../../src/audit/audit-log.js';
+import { SESSION_COOKIE, frontendOrigin } from '../../src/identity/session-cookie.js';
+import { seedSuperAdmin as seedSuperAdminRow } from '../../src/identity/super-admin.js';
+import { RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
+
+/**
+ * Sign-in for the e2e suites (design-identity.md, Contract «Вход в тестах»): an employee signs in through
+ * `POST /api/auth/password` and the test carries the session cookie; the employee id comes from
+ * `GET /api/auth/me`. Every request of the helpers sends the web's `Origin` (DC-3).
+ */
+
+/** A signed-in employee: the server's id and the `Cookie` header value (`aos_session=<token>`). */
+export interface Session {
+  readonly id: string;
+  readonly cookie: string;
+}
+
+export type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
+
+/** A password every helper account gets unless the test names one. */
+const DEFAULT_PASSWORD = 'e2e-password-12';
+
+/** The headers of a request as `session`: the cookie and the web's origin. */
+export function sessionHeaders(session: Session): Record<string, string> {
+  return { cookie: session.cookie, origin: frontendOrigin() };
+}
+
+/** A supertest request under `/api` with the session cookie (or none); the body, when given, is sent as JSON. */
+export function apiRequest(
+  app: INestApplication<App>,
+  session: Pick<Session, 'cookie'> | null,
+  method: Method,
+  path: string,
+  body?: object,
+): Test {
+  const test = request(app.getHttpServer())[method](`/api${path}`).set('origin', frontendOrigin());
+  if (session !== null) test.set('cookie', session.cookie);
+  return body === undefined ? test : test.send(body);
+}
+
+/** `aos_session=<token>` from the `Set-Cookie` headers of a sign-in. */
+function sessionCookieOf(setCookie: string | string[] | undefined): string {
+  const headers = typeof setCookie === 'string' ? [setCookie] : (setCookie ?? []);
+  const found = headers.find((header) => header.startsWith(`${SESSION_COOKIE}=`));
+  if (found === undefined) throw new Error(`The sign-in set no ${SESSION_COOKIE} cookie`);
+  return found.split(';')[0] ?? found;
+}
+
+/** Signs in with a login and a password (204 + cookie) and reads the employee id from `GET /api/auth/me`. */
+async function signInWithPassword(
+  app: INestApplication<App>,
+  login: string,
+  password: string,
+): Promise<Session> {
+  const signedIn = await apiRequest(app, null, 'post', '/auth/password', { login, password });
+  if (signedIn.status !== 204) {
+    throw new Error(`Sign-in of ${login} answered ${signedIn.status}: ${JSON.stringify(signedIn.body)}`);
+  }
+  const cookie = sessionCookieOf(signedIn.headers['set-cookie']);
+  const me = await apiRequest(app, { cookie }, 'get', '/auth/me');
+  if (me.status !== 200) throw new Error(`GET /auth/me answered ${me.status}: ${JSON.stringify(me.body)}`);
+  return { id: CurrentUserSchema.parse(me.body).id, cookie };
+}
+
+/**
+ * The first administrator: the operator command's function (`seedSuperAdmin` of T2.1) over the app's
+ * database, without the process; then signs in as it.
+ */
+export async function seedSuperAdmin(
+  app: INestApplication<App>,
+  login: string,
+  password = DEFAULT_PASSWORD,
+): Promise<Session> {
+  const { db } = app.get<DatabaseConnection>(RUNTIME_DATABASE);
+  await seedSuperAdminRow(db, app.get(AuditLog), {
+    login,
+    name: login,
+    email: `${login}@example.test`,
+    password,
+  });
+  return signInWithPassword(app, login, password);
+}
+
+export interface NewEmployee {
+  login?: string;
+  name?: string;
+  email?: string;
+  password?: string;
+}
+
+/**
+ * A local employee created by `admin` through `POST /api/admin/users` (test-unique login and email by
+ * default), signed in.
+ */
+export async function createEmployee(
+  app: INestApplication<App>,
+  admin: Session,
+  employee: NewEmployee = {},
+): Promise<Session> {
+  const login = employee.login ?? `e2e-${randomUUID()}`;
+  const password = employee.password ?? DEFAULT_PASSWORD;
+  const created = await apiRequest(app, admin, 'post', '/admin/users', {
+    login,
+    name: employee.name ?? login,
+    email: employee.email ?? `${login}@example.test`,
+    password,
+  });
+  if (created.status !== 201) {
+    throw new Error(`POST /admin/users answered ${created.status}: ${JSON.stringify(created.body)}`);
+  }
+  AdminUserSummarySchema.parse(created.body);
+  return signInWithPassword(app, login, password);
+}

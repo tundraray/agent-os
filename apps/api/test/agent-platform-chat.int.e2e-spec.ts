@@ -15,8 +15,8 @@
 // - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup. The real `AppModule` boots in the process (`createTestApp`, rewritten for this part: no Mastra override), `RUNTIME_WORKERS` on, so the chat answers in the runtime workers, not in the HTTP request. No mock of Postgres, the runtime, agents, workflows, `LiveHub` or the controllers.
 // - The model is the only double: a scripted `ModelClient` at the boundary the agents package defines ("модель подменяется сценарием на границе `ModelClient`"), keyed by agent description. A scenario is a list of answers per agent: text parts (so `onTextDelta` is exercised with three parts) and/or tool calls plus `usage`; answers can be gated on a latch to hold a step with its model call in flight. The same double answers `agents.completeText` for the title (answers, fails, or waits per scenario).
 // - MCP is the real `packages/mcp-fixture` stdio process through `MCP_SERVERS_FILE` (`logs` read-only with a delayed read; `backoffice` with the mutating `create_incident_note`), `FIXTURE_CALL_LOG` is the evidence of what reached a server; `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
-// - The SSE client is a small helper over a raw HTTP request to `GET /api/events` (EventSource is a browser API; the helper parses `event:`/`data:` lines and exposes "wait for the next event of type X" and the received list with arrival times). Requests are made with supertest; the user is the `x-user-id` header, as in the existing e2e specs, and SessionGuard is real.
-// - Isolation (project convention, no truncate): a unique owner `newUser()` per test, a unique conversation per test; each test reads only its own data. `fileParallelism: false`. No sleeps for ordering and no latency assertions: tests synchronise on the double's latches, the fixture's latches, SSE events and rows. NFR-02 (a report in the open conversation within 2 s) is asserted as "the `tree` note arrives after the report row and before the test's own wait ends"; the p95 figure belongs to an on-demand script, not to this suite.
+// - The SSE client is a small helper over a raw HTTP request to `GET /api/events` (EventSource is a browser API; the helper parses `event:`/`data:` lines and exposes "wait for the next event of type X" and the received list with arrival times). Requests are made with supertest; the user is a signed-in employee whose session cookie and the web's `Origin` go with every request (test/support/session.ts), and the session check is real.
+// - Isolation (project convention, no truncate): a unique employee per test (created through `POST /api/admin/users` by the file's administrator after the boot), a unique conversation per test; each test reads only its own data. `fileParallelism: false`. No sleeps for ordering and no latency assertions: tests synchronise on the double's latches, the fixture's latches, SSE events and rows. NFR-02 (a report in the open conversation within 2 s) is asserted as "the `tree` note arrives after the report row and before the test's own wait ends"; the p95 figure belongs to an on-demand script, not to this suite.
 // - Support to write alongside (test/support): createTestApp.ts (rewritten: `AppModule` with the scripted `ModelClient` and the fixture config), scriptedModel.ts (scenarios, latches, recorded inputs, title scenarios), sseClient.ts (parse, wait, record), fixtureLog.ts (read and filter the call log), api.ts (typed helpers over supertest validating bodies with the `packages/contracts` schemas: ConversationView, AgentPageView, AgentListPage, ApiErrorSchema).
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
@@ -64,7 +64,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub.js';
 import { type ChatApi, chatApi, expectError, type Method, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { newUser } from './support/new-user.js';
+import { createEmployee, seedSuperAdmin, type Session } from './support/session.js';
 import { openStream, type SseEvent, type SseStream } from './support/sseClient.js';
 
 /** Bound of one test; the rows and notes settle far sooner. */
@@ -90,38 +90,11 @@ const GENERATED_TITLE = 'Conversation title';
 /** The `retry:` hint of the stream's first event (EventsController). */
 const STREAM_RETRY_MS = 2000;
 
-/**
- * The employees of the file: one per test row. They exist before the app boots, because the access
- * table (`MCP_ACCESS_TABLE`) is read once at the start.
- */
-const INT1 = {
-  a: newUser(),
-  b: newUser(),
-  c: newUser(),
-  d: newUser(),
-  e: newUser(),
-  f: newUser(),
-} as const;
-const INT2 = {
-  a: newUser(),
-  b: newUser(),
-  c: newUser(),
-  d: newUser(),
-  e: newUser(),
-  /** Another owner whose model calls must not reach the spend of `e`. */
-  eOther: newUser(),
-} as const;
-const INT3 = {
-  a: newUser(),
-  b: newUser(),
-  c: newUser(),
-} as const;
-const INT4 = {
-  /** The owner of the data. */
-  a: newUser(),
-  /** The other employee who calls every route with A's ids. */
-  b: newUser(),
-} as const;
+/** The employees of the file, one per test row: created by the file's administrator after the boot. */
+let INT1: Record<'a' | 'b' | 'c' | 'd' | 'e' | 'f', Session>;
+let INT2: Record<'a' | 'b' | 'c' | 'd' | 'e' | 'eOther', Session>;
+let INT3: Record<'a' | 'b' | 'c', Session>;
+let INT4: Record<'a' | 'b', Session>;
 
 /** `get_trace` arguments, one per held or plain read call of the file (the fixture counts calls per arguments). */
 const TRACE_B = { traceId: 'b1'.repeat(16) };
@@ -432,12 +405,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     harness = await createTestApp({
       workers: true,
       agentPageSize: 2,
-      mcpAccess: Object.fromEntries(
-        [...Object.values(INT1), ...Object.values(INT2), ...Object.values(INT3), ...Object.values(INT4)].map((ownerId) => [
-          ownerId,
-          [LOGS_SERVER, BACKOFFICE_SERVER],
-        ]),
-      ),
+      mcpAccess: { '*': [LOGS_SERVER, BACKOFFICE_SERVER] },
       faults: (files) => [
         holdCall('get_trace', TRACE_C, files.latch(FIXTURE_LATCHES.c)),
         holdCall('get_trace', TRACE_D1, files.latch(FIXTURE_LATCHES.d1)),
@@ -452,6 +420,29 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     harness.model.completeText({ text: GENERATED_TITLE });
     // The SSE client speaks raw HTTP: the app listens on a port of its own.
     await harness.app.listen(0, '127.0.0.1');
+    // One administrator per file creates the employees; each signs in with a cookie of its own.
+    const admin = await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`);
+    const employee = () => createEmployee(harness.app, admin);
+    INT1 = {
+      a: await employee(),
+      b: await employee(),
+      c: await employee(),
+      d: await employee(),
+      e: await employee(),
+      f: await employee(),
+    };
+    // `eOther`: another owner whose model calls must not reach the spend of `e`.
+    INT2 = {
+      a: await employee(),
+      b: await employee(),
+      c: await employee(),
+      d: await employee(),
+      e: await employee(),
+      eOther: await employee(),
+    };
+    INT3 = { a: await employee(), b: await employee(), c: await employee() };
+    // A: the owner of the data; B: the other employee who calls every route with A's ids.
+    INT4 = { a: await employee(), b: await employee() };
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -988,7 +979,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     expect(await api.threadAgents(thread.id)).toEqual([]);
     const { rows } = await harness.pool.query<{ count: number }>(
       "SELECT count(*)::int AS count FROM app.agent_sessions WHERE owner_id = $1 AND definition = 'chat'",
-      [INT1.f],
+      [INT1.f.id],
     );
     expect(rows).toEqual([{ count: 1 }]);
   }, TEST_TIMEOUT_MS);
@@ -1622,7 +1613,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       `INSERT INTO app.runtime_model_calls
          (call_id, owner_id, task_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, called_at)
        VALUES ($1, $2, NULL, $3, 1000000, 1000000, 0, 0, 0.6, $4)`,
-      [randomUUID(), INT2.e, DEFAULT_MODEL, lastSecondOfPreviousMonth],
+      [randomUUID(), INT2.e.id, DEFAULT_MODEL, lastSecondOfPreviousMonth],
     );
     const month = now.toISOString().slice(0, 7);
 
@@ -1717,7 +1708,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       // Then: the title is written, and its call is a ledger row without a task beside the chat's own row
       await waitFor(() => api.getThread(titled.id), (summary) => summary.title === 'Trace error review', 'the title');
       await untilIdle(api, titled.id, (view) => view.entries.length === 2, 'the first answer');
-      expect(await ledgerCalls(harness, INT3.b)).toEqual({ agentCalls: 1, withoutTask: 1 });
+      expect(await ledgerCalls(harness, INT3.b.id)).toEqual({ agentCalls: 1, withoutTask: 1 });
 
       // Case 2 - Given: the title model fails on every attempt; When: the first message is sent
       const callsBeforeFailure = titles.calls.length;
@@ -1730,7 +1721,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       await titles.called(callsBeforeFailure + 3);
       await untilIdle(api, failing.id, (view) => view.entries.length === 2, 'the answer despite the failed title');
       expect((await api.getThread(failing.id)).title).toBeNull();
-      expect(await ledgerCalls(harness, INT3.b)).toEqual({ agentCalls: 2, withoutTask: 1 });
+      expect(await ledgerCalls(harness, INT3.b.id)).toEqual({ agentCalls: 2, withoutTask: 1 });
 
       // Case 3 - Given: the title model answers again; When: the next message is sent
       harness.model.completeText({ text: 'Failed then retried' });
@@ -1739,7 +1730,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       // Then: the send retries the generation and the title is written
       await waitFor(() => api.getThread(failing.id), (summary) => summary.title === 'Failed then retried', 'the retried title');
       await untilIdle(api, failing.id, (view) => view.entries.length === 4, 'the answer to the second message');
-      expect(await ledgerCalls(harness, INT3.b)).toEqual({ agentCalls: 3, withoutTask: 2 });
+      expect(await ledgerCalls(harness, INT3.b.id)).toEqual({ agentCalls: 3, withoutTask: 2 });
 
       // Case 4 - Given: the title call is held; When: the first message is sent
       harness.model.completeText({ text: 'Generated while renamed', latch: titleHeld });
@@ -1757,12 +1748,12 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       // Then: the generated title does not overwrite the employee's (Invariant 2); its call is still a ledger row
       await untilIdle(api, renamed.id, (view) => view.entries.length === 2, 'the answer in the renamed conversation');
       await waitFor(
-        () => ledgerCalls(harness, INT3.b),
+        () => ledgerCalls(harness, INT3.b.id),
         (counts) => counts.withoutTask === 3,
         'the ledger row of the held title call',
       );
       expect((await api.getThread(renamed.id)).title).toBe(manualTitle);
-      expect(await ledgerCalls(harness, INT3.b)).toEqual({ agentCalls: 4, withoutTask: 3 });
+      expect(await ledgerCalls(harness, INT3.b.id)).toEqual({ agentCalls: 4, withoutTask: 3 });
 
       // Then: every title call was made from the conversation's first message, the retry included (Notes 5(в))
       expect(titles.calls.filter((call) => call.prompt.includes('INT-3 B')).map((call) => call.prompt)).toEqual([
@@ -1858,7 +1849,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       );
       // Then: the list lost the conversation and no chat root outlived its conversation
       expect((await api.listThreads()).threads.map((summary) => summary.id)).toEqual([control.id]);
-      expect(await orphanChatRoots(harness, INT3.c)).toBe(0);
+      expect(await orphanChatRoots(harness, INT3.c.id)).toBe(0);
     } finally {
       held.release();
     }

@@ -8,7 +8,6 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
@@ -28,9 +27,8 @@ import {
   type StopResponse,
   type WorkflowRunBrief,
 } from '@agent-os/contracts';
-import type { AuthedRequest } from '../auth/auth.types.js';
-import { SessionGuard } from '../auth/session.guard.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
+import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { AgentControlService } from './agent-control.service.js';
 import { type Command, runCommand } from './chat.errors.js';
@@ -42,7 +40,6 @@ import { interruptTextOf } from './interrupt-body.js';
  * with its route, ids, outcome and duration. `awaiting` is declared before the `:agentId` routes.
  */
 @Controller('agents')
-@UseGuards(SessionGuard)
 export class AgentsController {
   private readonly logger: Logger;
 

@@ -26,7 +26,8 @@
     "test:verify": "pnpm --filter \"api^...\" build && vitest run --config ./vitest.config.verify.ts",
     "dev": "nest start --watch --exec \"node --disable-sigusr1\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:migrate": "node --env-file-if-exists=.env dist/runtime/migrate-cli.js"
+    "db:migrate": "node --env-file-if-exists=.env dist/runtime/migrate-cli.js",
+    "identity:super-admin": "node --env-file-if-exists=.env dist/identity/super-admin-cli.js"
   },
   "dependencies": {
     "@agent-os/agents": "workspace:*",

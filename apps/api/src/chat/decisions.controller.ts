@@ -1,13 +1,12 @@
-import { Body, Controller, HttpCode, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Inject, Param, Post, Req } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
   DecisionRequestSchema,
   type DecisionRequest,
   type DecisionResponse,
 } from '@agent-os/contracts';
-import type { AuthedRequest } from '../auth/auth.types.js';
-import { SessionGuard } from '../auth/session.guard.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
+import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { AgentControlService } from './agent-control.service.js';
 import { runCommand } from './chat.errors.js';
@@ -18,7 +17,6 @@ import { runCommand } from './chat.errors.js';
  * stays open; a malformed, missing or foreign id answers 404 `DECISION_NOT_FOUND`.
  */
 @Controller('decisions')
-@UseGuards(SessionGuard)
 export class DecisionsController {
   private readonly logger: Logger;
 

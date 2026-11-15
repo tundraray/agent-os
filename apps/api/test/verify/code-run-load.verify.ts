@@ -9,6 +9,7 @@
 // two runs at their limits — an endless loop (held until the 30 s time limit) and a growing heap (up to the memory
 // limit, asked again after each failure) — while employee B reads the conversation list and writes to the chat.
 
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import type { ConversationView } from '@agent-os/contracts';
 import { consoleSink, createLogger } from '@agent-os/common';
@@ -16,7 +17,7 @@ import type { Response } from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { chatApi, type ChatApi, waitFor } from '../support/api.js';
 import { createTestApp } from '../support/createTestApp.js';
-import { newUser } from '../support/new-user.js';
+import { createEmployee, seedSuperAdmin } from '../support/session.js';
 
 /** «Performance Requirements»: the conversation list, p95. */
 const LIST_P95_BUDGET_MS = 300;
@@ -101,8 +102,9 @@ describe('UC-N3: the server answers in its budgets while another employee\'s run
         });
         harness.model.script({ task: chatTask }, [], { thereafter: { text: 'Принято.' } });
 
-        const employeeA = chatApi(harness.app, newUser());
-        const employeeB = chatApi(harness.app, newUser());
+        const admin = await seedSuperAdmin(harness.app, `verify-admin-${randomUUID()}`);
+        const employeeA = chatApi(harness.app, await createEmployee(harness.app, admin));
+        const employeeB = chatApi(harness.app, await createEmployee(harness.app, admin));
         for (let index = 1; index < CONVERSATIONS; index += 1) await employeeB.createThread();
         const chat = await employeeB.createThread();
         await employeeB.send(chat.id, chatTask);

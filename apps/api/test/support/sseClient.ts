@@ -2,10 +2,11 @@ import { request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
+import { type Session, sessionHeaders } from './session.js';
 
 /**
  * A small SSE client for `GET /api/events` (EventSource is a browser API): a raw HTTP request with
- * `x-user-id`, the `event:` / `data:` / `retry:` lines parsed into events, every event recorded with its
+ * the session cookie, the `event:` / `data:` / `retry:` lines parsed into events, every event recorded with its
  * arrival time, and waits for "the next event of type X" with a bound. The test closes it.
  */
 
@@ -71,12 +72,12 @@ function portOf(app: INestApplication<App>): number {
 }
 
 /**
- * Opens `GET /api/events` as `ownerId` (with `watch` when given) and resolves once the response
+ * Opens `GET /api/events` as `session` (with `watch` when given) and resolves once the response
  * headers arrived with status 200.
  */
 export function openStream(
   app: INestApplication<App>,
-  ownerId: string,
+  session: Session,
   watch?: string,
 ): Promise<SseStream> {
   const events: SseEvent[] = [];
@@ -123,7 +124,7 @@ export function openStream(
         port: portOf(app),
         path,
         method: 'GET',
-        headers: { 'x-user-id': ownerId, accept: 'text/event-stream' },
+        headers: { ...sessionHeaders(session), accept: 'text/event-stream' },
       },
       (response) => {
         if (response.statusCode !== 200) {

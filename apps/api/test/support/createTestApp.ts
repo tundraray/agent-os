@@ -25,7 +25,10 @@ import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
   model?: ScriptedModel;
-  /** `MCP_ACCESS_TABLE`: employee id → MCP server ids; default — nobody has servers. */
+  /**
+   * `MCP_ACCESS_TABLE`: employee id (or `*` for every employee) → MCP server ids; default — nobody has
+   * servers. Employees sign in after the boot, so a suite names `*` rather than their ids.
+   */
   mcpAccess?: Readonly<Record<string, readonly string[]>>;
   /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
   workers?: boolean;

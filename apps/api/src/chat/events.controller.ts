@@ -4,15 +4,13 @@ import {
   Query,
   Req,
   Sse,
-  UseGuards,
   type MessageEvent,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import { EventsQuerySchema, type EventsQuery } from '@agent-os/contracts';
 import { defer, finalize, map, type Observable } from 'rxjs';
-import type { AuthedRequest } from '../auth/auth.types.js';
-import { SessionGuard } from '../auth/session.guard.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
+import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { parseWatch } from './live-filter.js';
 import { LiveHub } from './live-hub.js';
@@ -26,7 +24,6 @@ const RETRY_MS = 2000;
  * stream just carries no parts. Connecting and disconnecting are logged with `ownerId` and `watch`.
  */
 @Controller('events')
-@UseGuards(SessionGuard)
 export class EventsController {
   private readonly logger: Logger;
 
