@@ -6,7 +6,7 @@
 |---|---|---|
 | Выведено из кода | `packages/runtime`, `packages/db`, `packages/contracts`, `apps/api`, `apps/web`, прочитаны 2026-11-14 | функция сборки пакета, репозиторий над транзакцией, outbox, правила пакетов |
 | Решения владельца | [agent-platform/prd.md](../features/agent-platform/prd.md), Constraints; [CLAUDE.md](../../CLAUDE.md), Code rules и Logging | слои `runtime ← agents ← workflows ← приложения`, общий пакет `common`, логирование |
-| Определено здесь | [design-runtime.md](../features/agent-platform/design-runtime.md), [design-code-execution.md](../features/code-execution/design-code-execution.md) | шаг задачи как единица durable-работы; слой исполнителя кода |
+| Определено здесь | [design-runtime.md](../features/agent-platform/design-runtime.md), [design-code-execution.md](../features/code-execution/design-code-execution.md), [design-identity.md](../features/enterprise-access/design-identity.md) | шаг задачи как единица durable-работы; слой исполнителя кода; граница аутентификации API и запечатанные секреты |
 | [ADR-0001](../adr/ADR-0001-durable-runtime-owner.md), [ADR-0003](../adr/ADR-0003-drizzle-data-layer.md), [ADR-0004](../adr/ADR-0004-agent-framework-packages.md) | `docs/adr/` | владелец состояния задач, схема `app` и миграции, правила приватных пакетов |
 
 ## Style
@@ -26,7 +26,7 @@
 | Runtime | задачи и их шаги, очередь сообщений, запросы решений, журнал событий, журнал токенов, восстановление | `packages/runtime` | db, contracts, common |
 | Данные | пул `pg`, клиент Drizzle, модель схемы `app`, миграции | `packages/db` | contracts |
 | Контракты | zod-схемы данных, пересекающих границу, и наборы значений для CHECK | `packages/contracts` | — |
-| Общее | логгер и его приёмники | `packages/common` | — |
+| Общее | логгер и его приёмники; `SecretBox` для запечатанных секретов | `packages/common` | — |
 
 - **Dependency rule**: зависимость идёт только вниз и объявлена в `package.json`. Нижний слой никогда не импортирует верхний; цикл отвергает turbo, необъявленный импорт отмечает knip.
 - **`common`** не зависит ни от одного пакета workspace и ни от одного SDK. Его используют все пакеты и оба приложения.
@@ -40,7 +40,8 @@
 | `runtime` | таблицы `runtime_*`: задачи, сообщения, запросы решений, события, журнал токенов | функция сборки `createRuntime` и порт обработчика шага | верхние пакеты и `apps/api`; чужой код не читает и не пишет таблицы `runtime_*` |
 | `agents`, `workflows` | свои таблицы со своим префиксом | своя функция сборки | слой выше и `apps/api` |
 | `db` | модель схемы `app` всех пакетов и историю миграций | пул, клиент, тип транзакции, функции миграций | все пакеты с таблицами |
-| `common` | логгер | `createLogger`, приёмники и `createSecretMasker` — маскировка секретов логгера для текста вне лога | все |
+| `common` | логгер; шифрование секретов | `createLogger`, приёмники и `createSecretMasker` — маскировка секретов логгера для текста вне лога; `SecretBox` ([sealed-secret.md](./patterns/sealed-secret.md)) | все |
+| `identity` в `apps/api` | таблицы `identity_*`: сотрудники, группы IdP, роли, подключения входа, запросы входа, сеансы; таблица `audit_events` модуля аудита | `SessionGuard` и `req.user` ([auth-boundary.md](./patterns/auth-boundary.md)), `IdentityDirectory`, `AuditLog`, реализация порта `OwnerGate` | модули `apps/api`; пакеты получают только строку владельца и порт `OwnerGate` ([design-identity.md](../features/enterprise-access/design-identity.md)) |
 | `code-runner` | процесс исполнителя кода и его вход; процесс запускается только с флагами модели разрешений Node и читает только собранный вход пакета и QuickJS из каталогов, где ни одна ссылка не ведёт наружу | функция сборки `createCodeRunner` и операция `CodeRunner.run` | только `agents`; правила вызовов держит вызывающий, а не пакет ([design-code-execution.md](../features/code-execution/design-code-execution.md), KD-1, KD-2; [ADR-0011](../adr/ADR-0011-code-runner-quickjs-process.md)) |
 
 Пакет пишет и читает только таблицы со своим префиксом. Данные другого пакета он получает через операции этого пакета. Транзакция пересекает границу только в одну сторону: runtime открывает транзакцию шага и даёт её обработчику верхнего слоя для его собственных записей.
@@ -54,3 +55,5 @@
 | Обработчик шага | как долгая работа переживает рестарт и продолжается на любом экземпляре | [patterns/step-handler.md](./patterns/step-handler.md) |
 | Журнал событий с доставкой | как изменение становится видно потребителям и наблюдателям без потерь | [patterns/transactional-outbox.md](./patterns/transactional-outbox.md) |
 | Логирование через `common` | как любой код пишет лог в консоль и Sentry, не утекая секретами | [patterns/logging.md](./patterns/logging.md) |
+| Граница аутентификации API | как маршрут узнаёт сотрудника и не открывается по забывчивости | [patterns/auth-boundary.md](./patterns/auth-boundary.md) |
+| Запечатанный секрет | как хранить в базе секрет, дающий доступ к чужой системе | [patterns/sealed-secret.md](./patterns/sealed-secret.md) |
