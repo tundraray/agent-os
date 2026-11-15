@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "outDir": "./build/test-child",
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": ["test/support/hostile-entry.ts", "test/support/broken-entry.ts"],
+  "exclude": []
+}

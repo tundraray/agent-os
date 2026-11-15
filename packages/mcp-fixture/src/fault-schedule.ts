@@ -37,6 +37,8 @@ const RESULT_FAULT_RULES = [
   rule('snapshot_flip', { version: DatasetVersionSchema.optional() }),
   rule('oversize', { bytes: z.int().min(1) }),
   rule('delay_ms', { ms: z.int().min(1) }),
+  /** Test latch: the call is already in the call log; the server answers only once the file at `path` exists. */
+  rule('wait_for_file', { path: z.string().min(1) }),
 ] as const;
 
 const FaultRulesFileSchema = z.array(z.discriminatedUnion('mode', [...TRANSPORT_FAULT_RULES, ...RESULT_FAULT_RULES]));

@@ -1,148 +1,132 @@
+import { rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { Agent, type ToolsInput } from '@mastra/core/agent';
-import { Mastra } from '@mastra/core/mastra';
-import type { RequestContext } from '@mastra/core/request-context';
-import { createTool } from '@mastra/core/tools';
-import { Memory } from '@mastra/memory';
-import { PostgresStore } from '@mastra/pg';
-import type { MockLanguageModelV4 } from 'ai/test';
+import type { Agents } from '@agent-os/agents';
+import {
+  createScriptedModel,
+  type ScriptedModel,
+} from '@agent-os/agents/testing';
+import type { DatabaseConnection } from '@agent-os/db';
+import {
+  createFixtureFiles,
+  type FixtureFaultRule,
+  type FixtureFiles,
+  fixtureServersFile,
+} from '@agent-os/mcp-fixture';
+import type { Runtime } from '@agent-os/runtime';
 import type { App } from 'supertest/types.js';
-import { z } from 'zod';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
-import { ENGINE_GROUP_TABLES } from '../../src/engine/engine.tokens.js';
-import { MASTRA } from '../../src/mastra/mastra.constants.js';
-import {
-  createThreadTitleAgent,
-  THREAD_TITLE_AGENT,
-} from '../../src/threads/thread-title.agent.js';
-import {
-  assistantModel as scriptedAssistantModel,
-  FAILING_TOOL,
-  titleModel as defaultTitleModel,
-  type TitleModel,
-  WEATHER_TOOL,
-} from './mockModels.js';
-import { TEST_GROUP_TABLES } from './testGroupTables.js';
+import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
+import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
+import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
 
 export interface TestAppOptions {
-  /** Mock model of the `assistant` agent; default — one with no scripted responses. */
-  assistantModel?: MockLanguageModelV4;
-  /** Mock model of the title agent; default — one answering `'Тестовый заголовок'`. */
-  titleModel?: TitleModel;
+  /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
+  model?: ScriptedModel;
+  /** `MCP_ACCESS_TABLE`: employee id → MCP server ids; default — nobody has servers. */
+  mcpAccess?: Readonly<Record<string, readonly string[]>>;
+  /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
+  workers?: boolean;
+  /** Replaces `AGENT_LIST_PAGE_SIZE` (the page of `GET /agents`), so a cursor walk shows over a few agents. */
+  agentPageSize?: number;
+  /**
+   * Fault rules of the fixture processes (`holdCall`, `crashOn`), written before the boot: the processes
+   * start with the app and read their rules once. Latches come from the given files (`files.latch(name)`;
+   * the same name later gives the same latch through `fixtureLog.latch(name)`).
+   */
+  faults?: (files: FixtureFiles) => readonly FixtureFaultRule[];
 }
 
 export interface TestApp {
   /** Initialised app with `configureApp` applied: requests go to `/api/...`. */
   app: INestApplication<App>;
-  mastra: Mastra;
-  /** The `assistant` agent's memory (shared `PostgresStore`), for `seed` / `cleanupUsers`. */
-  memory: Memory;
-  /** The title agent's mock model (calls, scenario switch). */
-  titleModel: TitleModel;
-}
-
-const getWeather = createTool({
-  id: WEATHER_TOOL,
-  description: 'Returns the current weather for a city.',
-  inputSchema: z.object({ city: z.string() }),
-  execute: ({ city }) =>
-    Promise.resolve({ city, temperatureC: 21, conditions: 'sunny' }),
-});
-
-const failing = createTool({
-  id: FAILING_TOOL,
-  description: 'Always fails.',
-  inputSchema: z.object({}),
-  execute: () => Promise.reject(new Error('boom')),
-});
-
-/** The test `assistant` agent: its mock model, and the instruction and tools that replace the defaults. */
-export interface TestAgentOptions {
-  /** A mock model, or a function of the turn's `requestContext` picking one (an agent whose model follows the turn). */
-  model:
-    | MockLanguageModelV4
-    | ((turn: { requestContext: RequestContext }) => MockLanguageModelV4);
-  /** Default `'You are a test assistant.'`. */
-  instructions?: string;
-  /** Default: `getWeather` and `failing`. */
-  tools?: ToolsInput;
+  model: ScriptedModel;
+  /** The fixture files of this app: the call log of the `logs` and `backoffice` servers, fault rules, latches. */
+  fixtureLog: FixtureFiles;
+  /** The app's agents package (`AGENTS`), for reads the API does not offer. */
+  agents: Agents;
+  /** The app's runtime (`RUNTIME`). */
+  runtime: Runtime;
+  /** The app's pool (`RUNTIME_DATABASE`): rows the plan's tests name and `pg_terminate_backend`. */
+  pool: DatabaseConnection['pool'];
+  /** Closes the app and removes the fixture files. */
+  close(): Promise<void>;
 }
 
 /**
- * `Mastra` with the test `assistant` agent on a mock model and the shared `PostgresStore` — the `MASTRA` of every
- * e2e app that runs chat turns.
- */
-export function createTestMastra(
-  config: ConfigService,
-  agent: TestAgentOptions,
-): Mastra {
-  return new Mastra({
-    agents: {
-      assistant: new Agent({
-        id: 'assistant',
-        name: 'Assistant',
-        instructions: agent.instructions ?? 'You are a test assistant.',
-        model: agent.model,
-        // Storage is inherited from the Mastra instance, as in production.
-        memory: new Memory({ options: { lastMessages: 20 } }),
-        tools: agent.tools ?? {
-          [WEATHER_TOOL]: getWeather,
-          [FAILING_TOOL]: failing,
-        },
-      }),
-    },
-    storage: new PostgresStore({
-      id: 'agent-os-e2e',
-      connectionString: config.getOrThrow<string>('DATABASE_URL'),
-    }),
-  });
-}
-
-/**
- * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`)
- * with `MASTRA` replaced by a test instance whose `assistant` agent runs on a
- * `MockLanguageModelV4` — no network, no provider keys. `THREAD_TITLE_AGENT` is
- * always replaced too — the production factory on the mock title model — so no reply ever
- * triggers a network title model.
+ * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`) with only
+ * `AGENT_TURN_CLIENT` replaced by the scripted double of `@agent-os/agents/testing` — no network,
+ * no provider keys. The MCP servers are the fixture processes (`logs`, `backoffice`) writing into
+ * this app's call log. `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS` are set for the
+ * boot only and restored once the app is initialised.
  */
 export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
-  const model = options.assistantModel ?? scriptedAssistantModel();
-  const title = options.titleModel ?? defaultTitleModel();
+  const model = options.model ?? createScriptedModel();
+  const fixtureLog = createFixtureFiles('api-e2e');
+  const serversFile = join(fixtureLog.dir, 'mcp-servers.json');
+  writeFileSync(
+    serversFile,
+    JSON.stringify(
+      fixtureServersFile(fixtureLog, [
+        { id: 'logs', source: 'logs' },
+        { id: 'backoffice', source: 'backoffice' },
+      ]),
+    ),
+    'utf8',
+  );
+  if (options.faults) fixtureLog.setFaults(options.faults(fixtureLog));
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(MASTRA)
-    .useFactory({
-      factory: (config: ConfigService) => createTestMastra(config, { model }),
-      inject: [ConfigService],
-    })
-    .overrideProvider(THREAD_TITLE_AGENT)
-    .useValue(createThreadTitleAgent(title.model))
-    .overrideProvider(ENGINE_GROUP_TABLES)
-    .useValue(TEST_GROUP_TABLES)
-    .compile();
+  const restoreEnv = setEnv({
+    MCP_SERVERS_FILE: serversFile,
+    MCP_ACCESS_TABLE: JSON.stringify(options.mcpAccess ?? {}),
+    ...(options.workers ? { RUNTIME_WORKERS: 'on' } : {}),
+  });
+  let app: INestApplication<App>;
+  try {
+    let builder = Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(AGENT_TURN_CLIENT)
+      .useValue(model.turnClient);
+    if (options.agentPageSize !== undefined) {
+      builder = builder
+        .overrideProvider(AGENT_LIST_PAGE_SIZE)
+        .useValue(options.agentPageSize);
+    }
+    const moduleRef = await builder.compile();
+    app = moduleRef.createNestApplication<INestApplication<App>>();
+    configureApp(app);
+    await app.init();
+  } finally {
+    restoreEnv();
+  }
 
-  const app = moduleRef.createNestApplication<INestApplication<App>>();
-  configureApp(app);
-  await app.init();
-  const mastra = moduleRef.get<Mastra>(MASTRA);
   return {
     app,
-    mastra,
-    memory: await assistantMemory(mastra),
-    titleModel: title,
+    model,
+    fixtureLog,
+    agents: app.get<Agents>(AGENTS),
+    runtime: app.get<Runtime>(RUNTIME),
+    pool: app.get<DatabaseConnection>(RUNTIME_DATABASE).pool,
+    close: async () => {
+      await app.close();
+      rmSync(fixtureLog.dir, { recursive: true, force: true });
+    },
   };
 }
 
-/** The agent's memory once Mastra has injected its storage (fails fast otherwise). */
-async function assistantMemory(mastra: Mastra): Promise<Memory> {
-  const memory = await mastra.getAgent('assistant').getMemory();
-  if (!(memory instanceof Memory)) {
-    throw new Error('Test assistant agent has no @mastra/memory Memory');
-  }
-  return memory;
+/** Sets the variables and returns the function that puts back their previous values. */
+function setEnv(values: Readonly<Record<string, string>>): () => void {
+  const previous = Object.entries(values).map(
+    ([name]) => [name, process.env[name]] as const,
+  );
+  Object.assign(process.env, values);
+  return () => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
 }

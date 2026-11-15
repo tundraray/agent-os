@@ -3,12 +3,12 @@ import { LOG_LEVELS, LOG_SERVICES, LOG_STATUSES, type LogDataset, type LogRecord
 
 /** Time window and optional record filters shared by `search_logs` and `aggregate_logs`. */
 export const LogQueryShape = {
-  from: z.iso.datetime({ offset: true }),
-  to: z.iso.datetime({ offset: true }),
-  service: z.enum(LOG_SERVICES).optional(),
-  level: z.enum(LOG_LEVELS).optional(),
-  event: z.string().min(1).max(200).optional(),
-  status: z.enum(LOG_STATUSES).optional(),
+  from: z.iso.datetime({ offset: true }).meta({ title: 'С' }),
+  to: z.iso.datetime({ offset: true }).meta({ title: 'По' }),
+  service: z.enum(LOG_SERVICES).optional().meta({ title: 'Сервис' }),
+  level: z.enum(LOG_LEVELS).optional().meta({ title: 'Уровень' }),
+  event: z.string().min(1).max(200).optional().meta({ title: 'Событие' }),
+  status: z.enum(LOG_STATUSES).optional().meta({ title: 'Статус' }),
 };
 
 /** `from < to`, checked after both are valid ISO times. */

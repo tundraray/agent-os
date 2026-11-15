@@ -10,13 +10,33 @@
     "apps/api": {
       "entry": [
         "src/main.ts",
-        "src/research/migrate-cli.ts",
-        "src/self-check/main.ts",
-        "test/support/apiBootChildMain.ts",
-        "test/support/chatEntryChildMain.ts",
-        "test/support/selfCheckChildMain.ts"
+        "src/runtime/migrate-cli.ts",
+        "test/verify/**/*.verify.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
+    },
+    "packages/agents": {
+      "entry": [
+        "src/index.ts",
+        "src/testing.ts",
+        "test/**/*.e2e-spec.ts",
+        "test/verify/**/*.verify.ts",
+        "test/support/codeRunChildMain.ts"
+      ]
+    },
+    "packages/code-runner": {
+      "entry": [
+        "src/index.ts",
+        "src/executor-main.ts",
+        "test/**/*.e2e-spec.ts",
+        "test/support/*-entry.ts"
+      ]
+    },
+    "packages/mcp-fixture": {
+      "entry": [
+        "src/index.ts",
+        "src/server.ts"
+      ]
     },
     "packages/runtime": {
       "entry": [
@@ -24,15 +44,6 @@
         "test/support/runtimeChildMain.ts",
         "test/verify/**/*.verify.ts"
       ]
-    },
-    "packages/mcp-fixture": {
-      "entry": ["src/index.ts", "src/server.ts", "src/generate-ground-truth.ts"]
-    },
-    "packages/sources": {
-      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/fetchChildMain.ts"]
-    },
-    "packages/engine": {
-      "entry": ["src/index.ts", "test/**/*.e2e-spec.ts", "test/support/engineChildMain.ts"]
     }
   }
 }

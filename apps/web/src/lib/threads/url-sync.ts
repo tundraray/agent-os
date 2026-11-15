@@ -1,4 +1,4 @@
-import { CHAT_PATH_PREFIX, threadPath } from "./route-thread-id";
+import { CHAT_PATH_PREFIX, threadPath } from "@/lib/shell-route";
 
 export type UrlSyncInput = {
   /** Settled remote id of the active thread; undefined for a new, not yet created thread. */

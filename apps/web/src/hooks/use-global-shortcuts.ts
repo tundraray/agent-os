@@ -13,7 +13,7 @@ export function useGlobalShortcuts(): void {
     const onKeyDown = (event: KeyboardEvent) => {
       if (matchShortcut(event) !== 'new-chat' || isShortcutBlocked(event)) return;
       event.preventDefault();
-      newChat('shortcut');
+      newChat();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);

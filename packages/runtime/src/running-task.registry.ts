@@ -1,98 +1,91 @@
-import type { AbortReasonKind } from '@agent-os/contracts';
+import type { StepSignalReason } from './handler.registry.js';
 
-/** `signal.reason` of an aborted attempt (TaskContext). */
-export interface AttemptAbortReason {
-  kind: AbortReasonKind;
-}
-
-/** One attempt executing in this process. */
-export interface RunningTaskHandle {
-  /** Aborted with an {@link AttemptAbortReason}; the first abort wins. */
+/** One step executing in this process. */
+export interface RunningStepHandle {
+  /** Aborted with a {@link StepSignalReason} as `signal.reason`; the first abort wins. */
   readonly signal: AbortSignal;
-  abort(kind: AbortReasonKind): void;
-  /** The attempt is over: its last write is done. Idempotent. */
+  abort(reason: StepSignalReason): void;
+  /** The step is over: its last write is done. Idempotent. */
   release(): void;
 }
 
-interface RunningTask {
+interface RunningStep {
   taskId: string;
-  investigationId: string;
+  /** The attempt that claimed the step. */
+  attempt: number;
   controller: AbortController;
   /** Resolves on the first `release()`. */
   released: Promise<void>;
 }
 
-/** The kind of an attempt's abort, or `undefined` while it is not aborted. */
-export function abortKindOf(signal: AbortSignal): AbortReasonKind | undefined {
-  if (!signal.aborted) return undefined;
-  return (signal.reason as AttemptAbortReason).kind;
-}
-
 /**
- * Attempts executing in this process, by task (after the pattern of `ThreadRunRegistry`):
- * cancellation, thread deletion and shutdown abort them and wait for their last write.
- * Process-local: attempts of another instance learn about a cancel through their heartbeat.
+ * Steps executing in this process, by task. A cut-off step may still run beside the next step of
+ * the same task (Invariant 1), so a task can hold more than one entry. Process-local: a step on
+ * another instance learns about an interrupt through NOTIFY or its heartbeat.
  */
 export class RunningTaskRegistry {
-  private readonly running = new Map<string, RunningTask>();
+  private readonly running = new Map<string, Set<RunningStep>>();
 
-  register(task: {
-    taskId: string;
-    investigationId: string;
-  }): RunningTaskHandle {
+  register(step: { taskId: string; attempt: number }): RunningStepHandle {
     const controller = new AbortController();
     let markReleased: () => void = () => undefined;
-    const entry: RunningTask = {
-      ...task,
+    const entry: RunningStep = {
+      ...step,
       controller,
       released: new Promise<void>((resolve) => {
         markReleased = resolve;
       }),
     };
-    this.running.set(task.taskId, entry);
+    const steps = this.running.get(step.taskId) ?? new Set<RunningStep>();
+    steps.add(entry);
+    this.running.set(step.taskId, steps);
     let isReleased = false;
     return {
       signal: controller.signal,
-      abort: (kind) => abortWith(controller, kind),
+      abort: (reason) => abortWith(controller, reason),
       release: () => {
         if (isReleased) return;
         isReleased = true;
-        if (this.running.get(task.taskId) === entry) {
-          this.running.delete(task.taskId);
+        steps.delete(entry);
+        if (steps.size === 0 && this.running.get(step.taskId) === steps) {
+          this.running.delete(step.taskId);
         }
         markReleased();
       },
     };
   }
 
-  /** Aborts the investigation's attempts in this process; resolves when they are released. */
-  abortInvestigation(
-    investigationId: string,
-    kind: AbortReasonKind,
+  /**
+   * Aborts the task's steps in this process whose attempt is below `currentAttempt` (all of them
+   * when it is not given); resolves when they are released.
+   */
+  abortTask(
+    taskId: string,
+    reason: StepSignalReason,
+    currentAttempt?: number,
   ): Promise<void> {
-    return this.abortWhere(
-      (task) => task.investigationId === investigationId,
-      kind,
+    const steps = [...(this.running.get(taskId) ?? [])].filter(
+      (step) => currentAttempt === undefined || step.attempt < currentAttempt,
     );
+    return abortAndWait(steps, reason);
   }
 
-  /** Aborts every attempt of the process; resolves when they are released. */
-  abortAll(kind: AbortReasonKind): Promise<void> {
-    return this.abortWhere(() => true, kind);
-  }
-
-  private async abortWhere(
-    matches: (task: RunningTask) => boolean,
-    kind: AbortReasonKind,
-  ): Promise<void> {
-    const targets = [...this.running.values()].filter(matches);
-    for (const task of targets) abortWith(task.controller, kind);
-    await Promise.all(targets.map((task) => task.released));
+  /** Aborts every step of the process; resolves when they are released. */
+  abortAll(reason: StepSignalReason): Promise<void> {
+    const steps = [...this.running.values()].flatMap((set) => [...set]);
+    return abortAndWait(steps, reason);
   }
 }
 
-function abortWith(controller: AbortController, kind: AbortReasonKind): void {
+async function abortAndWait(
+  steps: readonly RunningStep[],
+  reason: StepSignalReason,
+): Promise<void> {
+  for (const step of steps) abortWith(step.controller, reason);
+  await Promise.all(steps.map((step) => step.released));
+}
+
+function abortWith(controller: AbortController, reason: StepSignalReason): void {
   if (controller.signal.aborted) return;
-  const reason: AttemptAbortReason = { kind };
   controller.abort(reason);
 }

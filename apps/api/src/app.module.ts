@@ -1,27 +1,23 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { MastraModule } from './mastra/mastra.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { RuntimeModule } from './runtime/runtime.module.js';
+import { LoggingModule } from './logging/logging.module.js';
+import { AgentsModule } from './agents/agents.module.js';
+import { WorkflowsModule } from './workflows/workflows.module.js';
 import { ChatModule } from './chat/chat.module.js';
-import { ThreadsModule } from './threads/threads.module.js';
-import { ResearchModule } from './research/research.module.js';
-import { SourcesModule } from './sources/sources.module.js';
-import { EngineModule } from './engine/engine.module.js';
-import { ResearchChatModule } from './research-chat/research-chat.module.js';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    MastraModule,
+    LoggingModule,
     AuthModule,
     AuditModule,
+    RuntimeModule,
+    AgentsModule,
+    WorkflowsModule,
     ChatModule,
-    ThreadsModule,
-    ResearchModule,
-    SourcesModule,
-    EngineModule,
-    ResearchChatModule,
   ],
 })
 export class AppModule {}

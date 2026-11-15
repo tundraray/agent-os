@@ -13,7 +13,6 @@ const entry = (id: string, title: string | undefined, overrides: Partial<ThreadL
   remoteId: id,
   title,
   activityAt: 0,
-  isRunning: false,
   ...overrides,
 });
 

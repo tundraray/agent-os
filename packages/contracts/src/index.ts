@@ -1,16 +1,5 @@
 import { z } from 'zod';
 
-/**
- * Body of POST /api/chat/:agentId (AI SDK UI messages are passed through as-is).
- * The AI SDK chat transport sends the chat id as `id`; `threadId` takes precedence when set.
- */
-export const ChatRequestSchema = z.object({
-  id: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-  messages: z.array(z.unknown()),
-});
-export type ChatRequest = z.infer<typeof ChatRequestSchema>;
-
 /** Audit event persisted by the API audit interceptor. */
 export const AuditEventSchema = z.object({
   type: z.string(),
@@ -22,5 +11,6 @@ export const AuditEventSchema = z.object({
 });
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export * from './threads.js';
-export * from './research.js';
-export * from './research-chat.js';
+export * from './runtime.js';
+export * from './agents.js';
+export * from './chat.js';

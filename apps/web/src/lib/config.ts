@@ -20,9 +20,3 @@ if (process.env.NODE_ENV === "production") {
 
 /** Public API origin, without a trailing slash. Not a secret: it ships in the client bundle. */
 export const apiBaseUrl = parsed.data.replace(/\/+$/, "");
-
-/**
- * Emergency switch for «Перегенерировать» in the reply error block (UXRD TH-08 Rollback). `true` ships;
- * `false` withdraws the action in one line — the block then reads only «Не удалось получить ответ.».
- */
-export const regenerateAfterError: boolean = true;

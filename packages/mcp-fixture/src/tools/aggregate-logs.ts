@@ -9,8 +9,8 @@ const GROUP_BY_FIELDS = ['service', 'level', 'event', 'status'] as const;
 const AggregateLogsArgsSchema = z
   .strictObject({
     ...LogQueryShape,
-    groupBy: z.enum(GROUP_BY_FIELDS),
-    bucket: z.enum(['15m', '1h']),
+    groupBy: z.enum(GROUP_BY_FIELDS).meta({ title: 'Группировать по' }),
+    bucket: z.enum(['15m', '1h']).meta({ title: 'Интервал' }),
   })
   .refine(windowIsOrdered, { message: WINDOW_ORDER_MESSAGE, path: ['to'] });
 
@@ -26,9 +26,11 @@ interface Bucket {
  */
 export const aggregateLogsTool = defineTool({
   name: 'aggregate_logs',
+  title: 'Посчитать записи в логах платежей',
   description:
     'Count payment logs in [from, to) per time bucket (15m or 1h, UTC-aligned) and groupBy field value, ' +
     'with the same filters as search_logs. Returns non-empty buckets ordered by start, then key.',
+  readOnly: true,
   argsSchema: AggregateLogsArgsSchema,
   run(args, dataset) {
     const { groupBy, bucket, ...query } = args;

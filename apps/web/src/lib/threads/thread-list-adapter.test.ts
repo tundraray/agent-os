@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { threadList, threadSummary } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
 import { createShellStatusStore } from './shell-status-store';
-import { createHistoryAdapterFactory } from './thread-history-adapter';
 import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
 import { threadsApiClient } from './threads-api-client';
 import { ThreadsApiError } from './threads-api-error';
@@ -18,8 +17,7 @@ function setup() {
     deleted: vi.fn<OperationNotifier['deleted']>(),
     deleteFailed: vi.fn<OperationNotifier['deleteFailed']>(),
   };
-  const history = createHistoryAdapterFactory({ api: threadsApiClient, status });
-  const adapter = createThreadListAdapter({ api: threadsApiClient, status, notify, history });
+  const adapter = createThreadListAdapter({ api: threadsApiClient, status, notify, feeds: { forget: vi.fn() } });
   return { adapter, status, notify };
 }
 

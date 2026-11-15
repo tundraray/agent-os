@@ -1,5 +1,6 @@
 import type { ThreadMessage } from "@assistant-ui/react";
 import { createAssistantStream, type AssistantStream } from "assistant-stream";
+import { logger } from "@/lib/logger";
 import type { ThreadsApiClient } from "./threads-api-client";
 import { describeThreadsError, isThreadsApiError } from "./threads-api-error";
 import type { ShellStatusStore } from "./shell-status-store";
@@ -53,7 +54,7 @@ export function createTitlePollStream({
           }
         } catch (error) {
           if (isThreadsApiError(error) && error.kind === "not_found") return;
-          console.warn("[web-shell] title poll request failed", {
+          logger.warn("[web-shell] title poll request failed", {
             remoteId,
             ...describeThreadsError(error),
           });

@@ -10,6 +10,8 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     environment: 'jsdom',
+    // Node 26 defines a global localStorage that throws without a file and hides jsdom's own.
+    execArgv: ['--no-experimental-webstorage'],
     testTimeout: 20_000,
     hookTimeout: 20_000,
     setupFiles: ['./src/test/setup.ts'],

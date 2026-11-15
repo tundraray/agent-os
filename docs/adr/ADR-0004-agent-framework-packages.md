@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Частично заменён: таблицу пакетов и правило о Mastra заменяет Layer Map [code system](../code-system/README.md)
 
 ## Decision
 

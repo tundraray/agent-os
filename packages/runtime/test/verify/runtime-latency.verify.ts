@@ -1,48 +1,28 @@
-// research-runtime / runtime — on-demand timing checks, not part of any suite (testing-principles: timing-sensitive
-// checks live in a separate script). Run: `pnpm --filter @agent-os/runtime test:verify` (builds the child first).
-// Design Doc: docs/features/research-runtime/design-runtime.md, Non-Functional Use Cases UC-N1, UC-N2; Early Verification Point.
-// PRD targets: Performance — dependent task start p95 <= 2 s (50 pairs, local Postgres); Reliability — recovery <= 60 s.
+// agent-platform / runtime — on-demand timing checks, not part of any suite (testing-principles: timing-sensitive checks live in a separate
+// script). Run: `pnpm --filter @agent-os/runtime test:verify` (builds the package and the child first).
+// Design Doc: docs/features/agent-platform/design-runtime.md, Non-Functional Use Cases UC-N1 (NFR-05), UC-N2 (NFR-01).
+// The step runs in a compiled child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test process
+// creates the tasks and sends the commands through its own runtime with `RUNTIME_WORKERS=off`.
 
-import type { ProposeResult } from '@agent-os/contracts';
-import { setTimeout as delay } from 'node:timers/promises';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { consoleSink, createLogger } from '@agent-os/common';
+import { afterAll, describe, expect, it } from 'vitest';
 import { newUser } from '../support/new-user.js';
-import { RECOVERY_TARGET_MS, runScenario } from '../support/runtimeChild.js';
-import {
-  closeRuntimeDb,
-  query,
-  runtimeWorkSettled,
-} from '../support/runtimeDb.js';
-import {
-  createRuntimeHarness,
-  type RuntimeHarness,
-} from '../support/runtimeHarness.js';
-import {
-  completed,
-  latch,
-  type Latch,
-  taskSpec,
-  testHandler,
-  uniqueWorkflowType,
-} from '../support/testHandlers.js';
+import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild.js';
+import { handlersFor } from '../support/runtimeChildHandlers.js';
+import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb.js';
+import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness.js';
+import { uniqueType } from '../support/testHandlers.js';
 
-/** PRD Performance: start of the dependent task after its dependency succeeded, p95. */
-const DEPENDENT_START_TARGET_MS = 2_000;
-const PAIRS = 50;
-const MEASUREMENT_MS = 600_000;
-const POLL_MS = 25;
-const PAIR_MS = 30_000;
+/** NFR-05: the step is started again within 60 s of the kill. */
+const RESUME_TARGET_MS = 60_000;
+/** NFR-01: the new status is read within 5 s of the command, p95. */
+const STATUS_TARGET_MS = 5_000;
+/** Samples per command of UC-N2. */
+const SAMPLES = 20;
+const WAIT_MS = 120_000;
+const MEASUREMENT_MS = 900_000;
 
-/** Runtime Settings at their defaults (design-runtime.md, Runtime Settings). */
-const DEFAULT_SETTINGS: Readonly<Record<string, string>> = {
-  RUNTIME_CONCURRENCY: '4',
-  RUNTIME_POLL_MS: '500',
-  RUNTIME_NOTIFY: 'on',
-  RUNTIME_LEASE_MS: '30000',
-  RUNTIME_HEARTBEAT_MS: '10000',
-  RUNTIME_REAPER_MS: '5000',
-  DB_POOL_MAX: '10',
-};
+const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
 
 /** The nearest-rank 95th percentile. */
 function p95(values: readonly number[]): number {
@@ -50,166 +30,130 @@ function p95(values: readonly number[]): number {
   return sorted[Math.ceil(sorted.length * 0.95) - 1];
 }
 
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
-}
-
-function createdTaskId(result: ProposeResult): string {
-  if (result.outcome !== 'created') {
-    throw new Error(`Task not created: ${JSON.stringify(result)}`);
+async function holdRuntime(holdType: string): Promise<RuntimeHarness> {
+  const control = await createRuntimeHarness({ handlers: [], config: { workers: false } });
+  for (const handler of handlersFor({ hold: holdType }, control.db)) {
+    control.handlers.register(handler);
   }
-  return result.taskId;
+  return control;
 }
 
-async function waitSucceeded(taskId: string): Promise<void> {
-  const deadline = Date.now() + PAIR_MS;
-  while (Date.now() < deadline) {
-    const [row] = await query<{ status: string }>(
-      'SELECT status FROM app.research_tasks WHERE task_id = $1',
-      [taskId],
-    );
-    if (row?.status === 'succeeded') return;
-    await delay(POLL_MS);
-  }
-  throw new Error(`Task ${taskId} did not succeed within ${PAIR_MS} ms`);
+async function stepStarts(taskId: string): Promise<number> {
+  const events = await eventsOf(taskId);
+  return events.filter((event) => event.type === 'task.step_started').length;
 }
 
-/** From the dependency's `TaskSucceeded` to the dependent's first `TaskStarted`, by the stored times. */
-async function dependentStartMs(
-  dependencyId: string,
-  dependentId: string,
-): Promise<number> {
-  const [row] = await query<{ ms: number }>(
-    `SELECT (extract(epoch FROM started.created_at - succeeded.created_at) * 1000)::float8 AS ms
-       FROM app.research_events succeeded, app.research_events started
-      WHERE succeeded.task_id = $1 AND succeeded.type = 'TaskSucceeded'
-        AND started.task_id = $2 AND started.type = 'TaskStarted'
-      ORDER BY started.seq LIMIT 1`,
-    [dependencyId, dependentId],
-  );
-  return row.ms;
+async function statusOf(taskId: string): Promise<string | undefined> {
+  return (await statusesOf([taskId])).get(taskId);
 }
 
-afterAll(async () => {
-  await closeRuntimeDb();
-});
+/** Creates a root task of the hold type and waits until the child runs its step. */
+async function runningHold(
+  control: RuntimeHarness,
+  child: RuntimeChild,
+  holdType: string,
+  ownerId: string,
+): Promise<string> {
+  const taskId = await control.tasks.create({ type: holdType, ownerId, input: {} });
+  await child.until(async () => (await statusOf(taskId)) === 'running', {
+    what: `task ${taskId} to run`,
+    timeoutMs: WAIT_MS,
+  });
+  return taskId;
+}
 
-describe('UC-N1: dependent task start with RUNTIME_NOTIFY=off', () => {
-  // The dependency runs in one instance and the dependent in another, so the dependent's start
-  // rests on polling alone: no NOTIFY, and no local wake after the dependency's slot frees.
-  const dependencyType = uniqueWorkflowType('n1-dependency');
-  const dependentType = uniqueWorkflowType('n1-dependent');
-  const resourceId = newUser();
-  const settings = { notify: false, pollMs: 500, concurrency: 4 };
-  // Per pair: opened once the dependent is admitted, so the dependency cannot succeed earlier and
-  // the dependent's start never rests on the admission racing the dependency.
-  const dependentAdmitted = new Map<string, Latch>();
-  let upstream: RuntimeHarness | undefined;
-  let downstream: RuntimeHarness | undefined;
+afterAll(closeRuntimeDb);
 
-  beforeAll(async () => {
-    upstream = await createRuntimeHarness({
-      handlers: [
-        testHandler(dependencyType, async (ctx) => {
-          const pair = ctx.input.pair;
-          if (typeof pair !== 'string')
-            throw new Error('Pair missing in input');
-          await dependentAdmitted.get(pair)?.promise;
-          return completed();
-        }),
-      ],
-      runtime: settings,
-    });
-    downstream = await createRuntimeHarness({
-      handlers: [
-        testHandler(dependentType, () => Promise.resolve(completed())),
-      ],
-      runtime: settings,
-    });
-  }, 120_000);
-
-  afterAll(async () => {
-    // The last pairs' events are still being delivered to `runtime.scheduler` when the
-    // measurement ends: closing now would leave them pending, and the kill matrix of UC-N2
-    // refuses a database with pending runtime deliveries.
-    await runtimeWorkSettled([dependencyType, dependentType], PAIR_MS);
-    await downstream?.close();
-    await upstream?.close();
-  }, 2 * PAIR_MS);
-
+describe('UC-N1: a step killed with its process starts again within 60 s', () => {
   it(
-    `p95 over ${PAIRS} pairs is within the PRD target (${DEPENDENT_START_TARGET_MS} ms)`,
+    'measures from the kill to the next claim of the same step on a fresh process',
     async () => {
-      if (!upstream || !downstream) throw new Error('Apps did not start');
-      const threadId = await upstream.createThread(resourceId);
-      const { investigationId } = await upstream.investigations.create({
-        resourceId,
-        threadId,
-        query: 'UC-N1',
-        budget: { maxTasks: 2 * PAIRS, maxToolCalls: 4 * PAIRS },
-      });
+      const holdType = uniqueType('n1-hold');
+      const control = await holdRuntime(holdType);
+      const children = new Children();
+      const ownerId = newUser();
+      try {
+        const first = await children.start({
+          types: { hold: holdType },
+          settings: DEFAULT_SETTINGS,
+        });
+        const taskId = await runningHold(control, first, holdType, ownerId);
 
-      const latencies: number[] = [];
-      for (let pair = 0; pair < PAIRS; pair += 1) {
-        const input = { pair: String(pair) };
-        const admitted = latch();
-        dependentAdmitted.set(input.pair, admitted);
-        const dependency = createdTaskId(
-          await upstream.scheduler.propose(
-            taskSpec({ investigationId, workflowType: dependencyType, input }),
-            `n1-dependency-${pair}`,
-          ),
-        );
-        const dependent = createdTaskId(
-          await downstream.scheduler.propose(
-            taskSpec({
-              investigationId,
-              workflowType: dependentType,
-              input,
-              dependsOn: [dependency],
-            }),
-            `n1-dependent-${pair}`,
-          ),
-        );
-        admitted.release();
-        await waitSucceeded(dependent);
-        latencies.push(await dependentStartMs(dependency, dependent));
+        await first.kill();
+        const killedAt = Date.now();
+        const second = await children.start({
+          types: { hold: holdType },
+          settings: DEFAULT_SETTINGS,
+        });
+        await second.until(async () => (await stepStarts(taskId)) === 2, {
+          what: 'the lost step to start again',
+          timeoutMs: WAIT_MS,
+        });
+        const resumedMs = Date.now() - killedAt;
+        logger.info('UC-N1: step started again after the kill', { durationMs: resumedMs });
+
+        await control.tasks.stop(taskId, ownerId);
+        await second.stop();
+        expect(resumedMs).toBeLessThanOrEqual(RESUME_TARGET_MS);
+      } finally {
+        await children.killAll();
+        await control.close();
       }
-
-      const value = p95(latencies);
-      console.log(
-        `UC-N1 RUNTIME_NOTIFY=off RUNTIME_POLL_MS=500, ${PAIRS} pairs: p95=${value.toFixed(0)} ms, ` +
-          `max=${Math.max(...latencies).toFixed(0)} ms, median=${median(latencies).toFixed(0)} ms`,
-      );
-      expect(value).toBeLessThanOrEqual(DEPENDENT_START_TARGET_MS);
     },
     MEASUREMENT_MS,
   );
 });
 
-describe('UC-N2: recovery time after a process death, Runtime Settings at their defaults', () => {
-  it.each([
-    { point: 'handler.after-evidence', left: 'a running task' },
-    {
-      point: 'dispatch.after-terminal',
-      left: 'end-to-end recovery of the undelivered terminal event',
-    },
-  ])(
-    'death at $point ($left): the restarted process reaches the end state within the PRD target',
-    async ({ point }) => {
-      const run = await runScenario({
-        crashAt: point,
-        settings: DEFAULT_SETTINGS,
-        // Measure past the target instead of timing out at it.
-        recoveryTimeoutMs: 2 * RECOVERY_TARGET_MS,
-      });
+describe('UC-N2: the status after interrupt and stop is read within 5 s (p95)', () => {
+  it(
+    'measures from the command to the read of the new status while the step holds on another instance',
+    async () => {
+      const holdType = uniqueType('n2-hold');
+      const control = await holdRuntime(holdType);
+      const children = new Children();
+      const ownerId = newUser();
+      const interrupted: string[] = [];
+      try {
+        const child = await children.start({
+          types: { hold: holdType },
+          settings: DEFAULT_SETTINGS,
+        });
+        const interruptMs: number[] = [];
+        const stopMs: number[] = [];
+        for (let sample = 0; sample < SAMPLES; sample += 1) {
+          const toInterrupt = await runningHold(control, child, holdType, ownerId);
+          const interruptAt = Date.now();
+          expect(await control.tasks.interrupt(toInterrupt, ownerId)).toBe('interrupted');
+          await child.until(async () => (await statusOf(toInterrupt)) === 'waiting', {
+            what: 'the interrupted status',
+            timeoutMs: WAIT_MS,
+          });
+          interruptMs.push(Date.now() - interruptAt);
+          interrupted.push(toInterrupt);
 
-      console.log(
-        `UC-N2 ${point}: recovery ${run.recoveryMs} ms from the restart's spawn (recovered attempts: ${run.recoveries})`,
-      );
-      expect(run.firstExitCode).toBe(137);
-      expect(run.recoveryMs).toBeLessThanOrEqual(RECOVERY_TARGET_MS);
+          const toStop = await runningHold(control, child, holdType, ownerId);
+          const stopAt = Date.now();
+          expect(await control.tasks.stop(toStop, ownerId)).toEqual([toStop]);
+          await child.until(async () => (await statusOf(toStop)) === 'stopped', {
+            what: 'the stopped status',
+            timeoutMs: WAIT_MS,
+          });
+          stopMs.push(Date.now() - stopAt);
+        }
+        logger.info('UC-N2: status read after the command, p95', {
+          interruptP95Ms: p95(interruptMs),
+          stopP95Ms: p95(stopMs),
+          samples: SAMPLES,
+        });
+
+        for (const taskId of interrupted) await control.tasks.stop(taskId, ownerId);
+        await child.stop();
+        expect(p95(interruptMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
+        expect(p95(stopMs)).toBeLessThanOrEqual(STATUS_TARGET_MS);
+      } finally {
+        await children.killAll();
+        await control.close();
+      }
     },
     MEASUREMENT_MS,
   );

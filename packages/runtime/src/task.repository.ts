@@ -1,138 +1,121 @@
-import { TaskStatusSchema, type TaskEdgeKind } from '@agent-os/contracts';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import {
-  researchInvestigations,
-  researchTaskDependencies,
-  researchTasks,
-  researchTaskSubscribers,
-} from '@agent-os/db';
+import { TaskStatusSchema } from '@agent-os/contracts';
+import { runtimeTasks } from '@agent-os/db';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import {
   guardedTaskWrite,
-  type RuntimeTx,
   type TaskChange,
   type TaskGuard,
   type TaskRow,
 } from './guarded-transition.js';
+import type { RuntimeTx } from './runtime-tx.js';
 
-export type InvestigationRow = typeof researchInvestigations.$inferSelect;
-export type NewTaskRow = typeof researchTasks.$inferInsert;
-
-export interface TaskEdge {
-  investigationId: string;
-  taskId: string;
-  dependsOnTaskId: string;
-  kind: TaskEdgeKind;
-}
+export type NewTaskRow = Pick<
+  typeof runtimeTasks.$inferInsert,
+  'taskId' | 'type' | 'ownerId' | 'parentId' | 'rootId' | 'depth' | 'input'
+>;
 
 /**
- * Predicate of the partial UNIQUE `research_tasks_live_dedup_key_idx`, written with literals:
- * ON CONFLICT infers the arbiter index only from a predicate that implies the index's own.
- * The values are code constants of the contract enum (ADR-0003: `sql.raw` only for constants).
- */
-const LIVE_DEDUP_KEY_PREDICATE = sql`${researchTasks.status} in (${sql.raw(
-  TaskStatusSchema.exclude(['failed', 'cancelled'])
-    .options.map((status) => `'${status}'`)
-    .join(', '),
-)})`;
-
-/**
- * Drizzle queries of investigations and tasks inside the caller's transaction.
- *
- * Lock order (System Invariants): the investigation first (`lockInvestigation`, FOR NO KEY
- * UPDATE), then tasks by `task_id` (`lockTasks`, or the guarded write of one task). Task rows
- * change only through {@link guardedTaskWrite}.
+ * Drizzle queries of `runtime_tasks` inside the caller's transaction (repository over a
+ * transaction). Lock order: a parent before its children, tasks of one level by `task_id`. Task
+ * rows change only through {@link guardedTaskWrite}.
  */
 export class TaskRepository {
-  /** Locks the investigation FOR NO KEY UPDATE; the first lock of a multi-task transaction. */
-  async lockInvestigation(
-    tx: RuntimeTx,
-    investigationId: string,
-  ): Promise<InvestigationRow | undefined> {
+  /** Locks the task FOR UPDATE. */
+  async lock(tx: RuntimeTx, taskId: string): Promise<TaskRow | undefined> {
     const [row] = await tx
       .select()
-      .from(researchInvestigations)
-      .where(eq(researchInvestigations.investigationId, investigationId))
-      .for('no key update');
-    return row;
-  }
-
-  /** Locks the tasks FOR UPDATE in `task_id` order; call under the investigation lock. */
-  async lockTasks(
-    tx: RuntimeTx,
-    taskIds: readonly string[],
-  ): Promise<TaskRow[]> {
-    if (taskIds.length === 0) return [];
-    return tx
-      .select()
-      .from(researchTasks)
-      .where(inArray(researchTasks.taskId, [...taskIds]))
-      .orderBy(asc(researchTasks.taskId))
+      .from(runtimeTasks)
+      .where(eq(runtimeTasks.taskId, taskId))
       .for('update');
-  }
-
-  async findTask(tx: RuntimeTx, taskId: string): Promise<TaskRow | undefined> {
-    const [row] = await tx
-      .select()
-      .from(researchTasks)
-      .where(eq(researchTasks.taskId, taskId));
-    return row;
-  }
-
-  /** The live task (`queued`, `running`, `waiting`, `succeeded`) holding the dedup key. */
-  async findLiveTask(
-    tx: RuntimeTx,
-    investigationId: string,
-    dedupKey: string,
-  ): Promise<TaskRow | undefined> {
-    const [row] = await tx
-      .select()
-      .from(researchTasks)
-      .where(
-        and(
-          eq(researchTasks.investigationId, investigationId),
-          eq(researchTasks.dedupKey, dedupKey),
-          LIVE_DEDUP_KEY_PREDICATE,
-        ),
-      );
     return row;
   }
 
   /**
-   * Inserts a task; `undefined` when a live task of the investigation already holds its dedup
-   * key (ON CONFLICT DO NOTHING on the partial UNIQUE).
+   * Locks the task FOR KEY SHARE: it cannot be deleted meanwhile, while guarded writes of it go
+   * on. `false` when it no longer exists.
    */
-  async insertTask(
+  async lockAgainstDelete(tx: RuntimeTx, taskId: string): Promise<boolean> {
+    const rows = await tx
+      .select({ taskId: runtimeTasks.taskId })
+      .from(runtimeTasks)
+      .where(eq(runtimeTasks.taskId, taskId))
+      .for('key share');
+    return rows.length > 0;
+  }
+
+  /** Locks the owner's task FOR UPDATE; another owner's task is as absent as a missing one. */
+  async lockOwned(
     tx: RuntimeTx,
-    task: NewTaskRow,
+    taskId: string,
+    ownerId: string,
+  ): Promise<TaskRow | undefined> {
+    const row = await this.lock(tx, taskId);
+    return row?.ownerId === ownerId ? row : undefined;
+  }
+
+  /**
+   * Locks the task's parent FOR UPDATE, then the task: the lock of a write that may end the task,
+   * whose end notice goes to the parent. A parent before its children in every transaction keeps
+   * an ending child and a stop of its parent from deadlocking (plan Notes 4, Invariant 6).
+   */
+  async lockWithParent(tx: RuntimeTx, taskId: string): Promise<TaskRow | undefined> {
+    const [found] = await tx
+      .select({ parentId: runtimeTasks.parentId })
+      .from(runtimeTasks)
+      .where(eq(runtimeTasks.taskId, taskId));
+    if (!found) return undefined;
+    if (found.parentId !== null) await this.lock(tx, found.parentId);
+    return this.lock(tx, taskId);
+  }
+
+  /**
+   * Locks every child of the given tasks FOR UPDATE, finished or not, in `task_id` order: an
+   * unfinished grandchild may sit under a finished child, and a locked child cannot be revived
+   * meanwhile.
+   */
+  async lockChildren(tx: RuntimeTx, parentIds: readonly string[]): Promise<TaskRow[]> {
+    if (parentIds.length === 0) return [];
+    return tx
+      .select()
+      .from(runtimeTasks)
+      .where(inArray(runtimeTasks.parentId, [...parentIds]))
+      .orderBy(asc(runtimeTasks.taskId))
+      .for('update');
+  }
+
+  /** The owner's task without a lock; another owner's task is as absent as a missing one. */
+  async findOwned(
+    tx: RuntimeTx,
+    taskId: string,
+    ownerId: string,
   ): Promise<TaskRow | undefined> {
     const [row] = await tx
-      .insert(researchTasks)
-      .values(task)
-      .onConflictDoNothing({
-        target: [researchTasks.investigationId, researchTasks.dedupKey],
-        where: LIVE_DEDUP_KEY_PREDICATE,
-      })
-      .returning();
+      .select()
+      .from(runtimeTasks)
+      .where(
+        and(eq(runtimeTasks.taskId, taskId), eq(runtimeTasks.ownerId, ownerId)),
+      );
     return row;
   }
 
-  async insertEdges(tx: RuntimeTx, edges: readonly TaskEdge[]): Promise<void> {
-    if (edges.length === 0) return;
-    await tx.insert(researchTaskDependencies).values([...edges]);
+  /** Every task of the owner's tree in creation order; `[]` for another owner's or no tree. */
+  listTree(tx: RuntimeTx, rootId: string, ownerId: string): Promise<TaskRow[]> {
+    return tx
+      .select()
+      .from(runtimeTasks)
+      .where(
+        and(eq(runtimeTasks.rootId, rootId), eq(runtimeTasks.ownerId, ownerId)),
+      )
+      .orderBy(asc(runtimeTasks.createdSeq));
   }
 
-  /** Adds the subscriber once; `false` when it was already subscribed. */
-  async addSubscriber(
-    tx: RuntimeTx,
-    taskId: string,
-    subscriberKey: string,
-  ): Promise<boolean> {
-    const rows = await tx
-      .insert(researchTaskSubscribers)
-      .values({ taskId, subscriberKey })
-      .onConflictDoNothing()
-      .returning({ taskId: researchTaskSubscribers.taskId });
-    return rows.length > 0;
+  /** Inserts a task in `queued`. */
+  async insert(tx: RuntimeTx, task: NewTaskRow): Promise<TaskRow> {
+    const [row] = await tx
+      .insert(runtimeTasks)
+      .values({ ...task, status: TaskStatusSchema.enum.queued })
+      .returning();
+    return row;
   }
 
   /** The guarded write of one task; `undefined` when fenced. */

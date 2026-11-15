@@ -13,8 +13,8 @@ import {
 import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { focusShellTarget, isFinePointer } from '@/lib/focus';
+import { threadPath } from '@/lib/shell-route';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
-import { threadPath } from '@/lib/threads/route-thread-id';
 import { cn } from '@/lib/utils';
 import { ThreadTitleField } from './thread-title-field';
 

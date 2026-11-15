@@ -5,7 +5,6 @@ export type ThreadListEntry = {
   remoteId: string | undefined;
   title: string | undefined;
   activityAt: number;
-  isRunning: boolean;
 };
 
 export type ThreadGroup = { key: DateGroupKey; label: string; entries: ThreadListEntry[] };

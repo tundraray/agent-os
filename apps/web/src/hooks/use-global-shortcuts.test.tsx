@@ -23,7 +23,7 @@ describe('useGlobalShortcuts — Ctrl/⌘+Shift+O wiring (AC-22.1)', () => {
 
     const composerNotPrevented = fireEvent.keyDown(composer, keys);
 
-    expect(newChat).toHaveBeenCalledExactlyOnceWith('shortcut');
+    expect(newChat).toHaveBeenCalledExactlyOnceWith();
     expect(composerNotPrevented).toBe(false);
 
     const renameNotPrevented = fireEvent.keyDown(renameField, keys);

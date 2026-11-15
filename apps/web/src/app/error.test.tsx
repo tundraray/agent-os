@@ -17,6 +17,8 @@ describe('ShellError', () => {
     expect(screen.getByRole('button', { name: 'Обновить страницу' })).toBeInTheDocument();
     expect(screen.queryByText(/secret render failure/)).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledOnce();
-    expect(consoleError).toHaveBeenCalledWith('chat shell: render failed', { digest: 'digest-123' });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('"level":"error","message":"chat shell: render failed","fields":{"digest":"digest-123"}}'),
+    );
   });
 });
