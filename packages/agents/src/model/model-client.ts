@@ -1,6 +1,7 @@
 import type { Logger } from '@agent-os/common';
 import { type CallUsage, type Clock, type Runtime, systemClock } from '@agent-os/runtime';
 import type { AgentsConfig } from '../config.js';
+import { isOwnerDisabled, OwnerDisabledError, type OwnerGate } from '../owner-gate.js';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -47,6 +48,8 @@ export interface ModelClientDeps {
   readonly config: Pick<AgentsConfig, 'maxOutputTokens' | 'defaultModel'>;
   /** The package logger: `completeText` runs outside any step. */
   readonly logger: Logger;
+  /** Asked before every call: a refused owner's call does not start (KD-4). */
+  readonly ownerGate: OwnerGate;
   /** Gets every text part of an agent turn; none by default. */
   readonly onTextDelta?: OnTextDelta;
   /** Times the pauses between retries; the real clock by default. */
@@ -102,15 +105,22 @@ export interface ModelError {
   readonly error: ProviderError;
 }
 
-export type ModelCallResult = ModelAnswer | ModelError;
+/** `OwnerGate` refused the owner: the call did not start (KD-4). */
+export interface OwnerRefused {
+  readonly kind: 'owner_disabled';
+}
+
+export type ModelCallResult = ModelAnswer | ModelError | OwnerRefused;
 
 /** The only place the package calls the model (KD-6). */
 export interface ModelClient {
+  /** Asks `OwnerGate` first: a refused owner gets `owner_disabled` and the model is not called. */
   call(request: ModelCallRequest): Promise<ModelCallResult>;
   /**
    * One call of `AGENT_DEFAULT_MODEL` without tools and outside any task: the same retries and cancel
    * as `call`, a ledger row without `taskId`, no text parts to the hook. A provider that keeps failing
-   * rejects with an error that names the status.
+   * rejects with an error that names the status; a refused owner rejects with `OwnerDisabledError`
+   * before the call.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
 }
@@ -135,8 +145,20 @@ type Generated = { readonly kind: 'generated'; readonly generation: AgentTurnGen
  * the parts again at offset 0.
  */
 export function createModelClient(deps: ModelClientDeps): ModelClient {
-  const { turnClient, ledger, config } = deps;
+  const { turnClient, ledger, config, ownerGate } = deps;
   const clock = deps.clock ?? systemClock;
+
+  /** Whether `OwnerGate` admits the owner; a refusal is logged, any other rejection is thrown. */
+  async function admitted(ownerId: string, logger: Logger): Promise<boolean> {
+    try {
+      await ownerGate.check(ownerId);
+      return true;
+    } catch (error) {
+      if (!isOwnerDisabled(error)) throw error;
+      logger.warn('owner gate refused a model call', { ownerId, reason: 'owner_disabled' });
+      return false;
+    }
+  }
 
   /** Runs the attempts until an answer, a final provider error, or a cancel (thrown). */
   async function generate(attempt: Attempt): Promise<Generated> {
@@ -190,6 +212,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
 
   return {
     async call(request) {
+      if (!(await admitted(request.ownerId, request.logger))) return { kind: 'owner_disabled' };
       const result = await generate({
         call: {
           purpose: 'agent_turn',
@@ -233,6 +256,8 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
     async completeText(request) {
       const model = config.defaultModel;
       const logger = deps.logger.child({ ownerId: request.ownerId });
+      // A refused owner is the caller's error to handle (the conversation title logs it).
+      if (!(await admitted(request.ownerId, logger))) throw new OwnerDisabledError(request.ownerId);
       const result = await generate({
         call: {
           purpose: 'complete_text',

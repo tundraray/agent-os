@@ -71,7 +71,9 @@ export function apiRequest(
 }
 
 /** `aos_session=<token>` from the `Set-Cookie` headers of a sign-in. */
-function sessionCookieOf(setCookie: string | string[] | undefined): string {
+export function sessionCookieOf(
+  setCookie: string | string[] | undefined,
+): string {
   const headers =
     typeof setCookie === 'string' ? [setCookie] : (setCookie ?? []);
   const found = headers.find((header) =>
@@ -83,7 +85,7 @@ function sessionCookieOf(setCookie: string | string[] | undefined): string {
 }
 
 /** Signs in with a login and a password (204 + cookie) and reads the employee id from `GET /api/auth/me`. */
-async function signInWithPassword(
+export async function signInWithPassword(
   app: INestApplication<App>,
   login: string,
   password: string,

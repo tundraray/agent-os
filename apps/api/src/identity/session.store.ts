@@ -10,11 +10,14 @@ import {
   type DatabaseConnection,
 } from '@agent-os/db';
 import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { readSessionLimits, sessionLimitColumns } from './identity-settings.js';
 import { isSessionExpired, needsTouch } from './session-lifetime.js';
 import type { Executor } from './users.repository.js';
+
+/** `ended_reason` of a session ended by a block (KD-4, DC-9). */
+export const ENDED_BY_BLOCK = 'account_disabled';
 
 /** Random bytes of a session token (KD-2). */
 const TOKEN_BYTES = 32;
@@ -72,7 +75,10 @@ export class SessionStore {
   }
 
   /** Opens a session of the employee and deletes his rows older than the absolute limit. */
-  async open(userId: string, executor: Executor = this.db): Promise<OpenedSession> {
+  async open(
+    userId: string,
+    executor: Executor = this.db,
+  ): Promise<OpenedSession> {
     const limits = await readSessionLimits(executor);
     await executor
       .delete(identitySessions)
@@ -90,12 +96,16 @@ export class SessionStore {
       .insert(identitySessions)
       .values({ tokenHash: hashToken(token), userId })
       .returning({ id: identitySessions.id });
-    if (row === undefined) throw new Error('identity_sessions insert returned no row');
+    if (row === undefined)
+      throw new Error('identity_sessions insert returned no row');
     return { sessionId: row.id, token };
   }
 
   /** The session of the token with its employee, admin right and expiry, or undefined when there is none. */
-  async find(token: string, now: Date = new Date()): Promise<FoundSession | undefined> {
+  async find(
+    token: string,
+    now: Date = new Date(),
+  ): Promise<FoundSession | undefined> {
     const [row] = await this.db
       .select({
         sessionId: identitySessions.id,
@@ -115,19 +125,38 @@ export class SessionStore {
       .innerJoin(identitySettings, sql`true`)
       .where(eq(identitySessions.tokenHash, hashToken(token)));
     if (row === undefined) return undefined;
-    const { userId, email, name, status, isAdmin, hasPassword, idleMinutes, absoluteMinutes } = row;
+    const {
+      userId,
+      email,
+      name,
+      status,
+      isAdmin,
+      hasPassword,
+      idleMinutes,
+      absoluteMinutes,
+    } = row;
     return {
       sessionId: row.sessionId,
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt,
       endedReason: row.endedReason,
       expired: isSessionExpired(row, { idleMinutes, absoluteMinutes }, now),
-      user: { id: userId, email, name, status: UserStatusSchema.parse(status), isAdmin, hasPassword },
+      user: {
+        id: userId,
+        email,
+        name,
+        status: UserStatusSchema.parse(status),
+        isAdmin,
+        hasPassword,
+      },
     };
   }
 
   /** Records the request time, at most once per 5 minutes. */
-  async touch(session: Pick<FoundSession, 'sessionId' | 'lastSeenAt'>, now: Date = new Date()): Promise<void> {
+  async touch(
+    session: Pick<FoundSession, 'sessionId' | 'lastSeenAt'>,
+    now: Date = new Date(),
+  ): Promise<void> {
     if (!needsTouch(session.lastSeenAt, now)) return;
     await this.db
       .update(identitySessions)
@@ -137,11 +166,34 @@ export class SessionStore {
 
   /** Sign-out: the row is deleted. */
   async end(sessionId: string): Promise<void> {
-    await this.db.delete(identitySessions).where(eq(identitySessions.id, sessionId));
+    await this.db
+      .delete(identitySessions)
+      .where(eq(identitySessions.id, sessionId));
+  }
+
+  /**
+   * Ends every live session of the employee with the block's reason (KD-4): the rows stay, so a
+   * request with such a cookie can answer ACCOUNT_DISABLED instead of AUTH_REQUIRED (DC-9).
+   */
+  async endAllByBlock(
+    userId: string,
+    executor: Executor = this.db,
+  ): Promise<void> {
+    await executor
+      .update(identitySessions)
+      .set({ endedReason: ENDED_BY_BLOCK })
+      .where(
+        and(
+          eq(identitySessions.userId, userId),
+          isNull(identitySessions.endedReason),
+        ),
+      );
   }
 
   /** Deletes every session of the employee. */
   async endAllOf(userId: string, executor: Executor = this.db): Promise<void> {
-    await executor.delete(identitySessions).where(eq(identitySessions.userId, userId));
+    await executor
+      .delete(identitySessions)
+      .where(eq(identitySessions.userId, userId));
   }
 }

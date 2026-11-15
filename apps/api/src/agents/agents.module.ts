@@ -17,6 +17,8 @@ import {
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock, Runtime } from '@agent-os/runtime';
+import { IdentityOwnerGate } from '../identity/identity-owner-gate.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
 import { RuntimeModule } from '../runtime/runtime.module.js';
 import {
@@ -46,7 +48,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
  * its steps in `beforeApplicationShutdown`.
  */
 @Module({
-  imports: [RuntimeModule],
+  imports: [RuntimeModule, IdentityModule],
   providers: [
     {
       provide: AGENTS_SETTINGS,
@@ -92,6 +94,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
         database: DatabaseConnection,
         turnClient: AgentTurnModelClient,
         deltaPublisher: DeltaPublisher,
+        ownerGate: IdentityOwnerGate,
       ): Agents =>
         createAgents({
           database: database.db,
@@ -101,6 +104,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
           logger: createAppLogger(process.env, secretValuesOf(settings)),
           config: settings,
           turnClient,
+          ownerGate,
           onTextDelta: (delta) => deltaPublisher.publish(delta),
         }),
       inject: [
@@ -109,6 +113,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
         RUNTIME_DATABASE,
         AGENT_TURN_CLIENT,
         DELTA_PUBLISHER,
+        IdentityOwnerGate,
       ],
     },
   ],

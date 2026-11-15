@@ -89,6 +89,8 @@ async function main(): Promise<void> {
     logger,
     config: agentsConfig,
     turnClient: scenarioModel().turnClient,
+    // Every owner of these tests is active.
+    ownerGate: { check: async () => {} },
   });
   agents.definitions.register(CODE_RUN_DEFINITION);
   await agents.start();

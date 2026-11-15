@@ -61,18 +61,26 @@
 //     section following `hasPassword`. The real-browser journey is the part's manual L1 checklist.
 
 import { randomUUID } from 'node:crypto';
+import { createLatch } from '@agent-os/agents/testing';
 import {
   AdminUserDetailSchema,
+  AdminUserSummarySchema,
   CurrentUserSchema,
+  ProviderButtonListSchema,
+  ProviderViewSchema,
   RoleListSchema,
   RoleSummarySchema,
   SignInSettingsSchema,
+  type SignInError,
   type SignInSettings,
 } from '@agent-os/contracts';
-import request, { type Response } from 'supertest';
+import request, { type Response, type Test } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { frontendOrigin } from '../src/identity/session-cookie.js';
-import { expectBody, expectError } from './support/api.js';
+import {
+  SESSION_COOKIE,
+  frontendOrigin,
+} from '../src/identity/session-cookie.js';
+import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
   ageSession,
@@ -80,11 +88,14 @@ import {
   apiRequest,
   createEmployee,
   seedSuperAdmin,
+  sessionCookieOf,
+  signInWithPassword,
   type Method,
   type Session,
 } from './support/session.js';
 import {
   startTestProvider,
+  type ProviderAnswer,
   type TestProvider,
 } from './support/test-provider.js';
 
@@ -221,6 +232,238 @@ function getSettings(): Promise<SignInSettings> {
 
 function putSettings(body: object): Promise<Response> {
   return apiRequest(harness.app, admin, 'put', ADMIN_ROUTE, body);
+}
+
+/** Fails unless `POST /api/auth/password` refuses `login` and `password` with 401 `errorCode`. */
+function expectSignInRefused(
+  login: string,
+  password: string,
+  errorCode: 'INVALID_CREDENTIALS' | 'ACCOUNT_DISABLED',
+): Promise<void> {
+  return expectRefusal(
+    apiRequest(harness.app, null, 'post', '/auth/password', {
+      login,
+      password,
+    }),
+    401,
+    errorCode,
+  );
+}
+
+/** Every cookie a response set, as one `Cookie` header value. */
+function cookiesOf(response: Response): string {
+  // Typed as one string, but node gives `set-cookie` as a list.
+  const setCookie: string | string[] | undefined =
+    response.headers['set-cookie'];
+  return [setCookie ?? []]
+    .flat()
+    .map((header) => header.split(';')[0])
+    .join('; ');
+}
+
+/**
+ * Runs `work` with an enabled `google` provider (its issuer is the test issuer) and the public URL set to
+ * this app's address, so the provider redirects back here; then disables the provider and puts the
+ * settings back (rule 11 of the plan: no enabled provider and the developer's own settings are left).
+ */
+async function withGoogleProvider(
+  work: (providerId: string) => Promise<void>,
+): Promise<void> {
+  const previous = await getSettings();
+  const limits = {
+    idleMinutes: previous.idleMinutes,
+    absoluteMinutes: previous.absoluteMinutes,
+  };
+  let providerId: string | undefined;
+  try {
+    await expectBody(
+      putSettings({ publicUrl: apiOrigin(harness.app), ...limits }),
+      200,
+      SignInSettingsSchema,
+    );
+    const created = await expectBody(
+      apiRequest(harness.app, admin, 'post', '/admin/providers', {
+        type: 'google',
+        name: `e2e-google-${randomUUID()}`,
+        options: {
+          clientId: `e2e-client-${randomUUID()}`,
+          clientSecret: `e2e-secret-${randomUUID()}`,
+        },
+      }),
+      201,
+      ProviderViewSchema,
+    );
+    providerId = created.id;
+    await expectBody(
+      apiRequest(
+        harness.app,
+        admin,
+        'patch',
+        `/admin/providers/${providerId}`,
+        {
+          enabled: true,
+        },
+      ),
+      200,
+      ProviderViewSchema,
+    );
+    await work(providerId);
+  } finally {
+    if (providerId !== undefined) {
+      await expectBody(
+        apiRequest(
+          harness.app,
+          admin,
+          'patch',
+          `/admin/providers/${providerId}`,
+          { enabled: false },
+        ),
+        200,
+        ProviderViewSchema,
+      );
+    }
+    await expectBody(
+      putSettings({ publicUrl: previous.publicUrl, ...limits }),
+      200,
+      SignInSettingsSchema,
+    );
+  }
+}
+
+/** A browser that went to the provider and is about to come back. */
+interface AtProvider {
+  /** The callback URL the issuer redirected to; its `state` names the sign-in request. */
+  callback: URL;
+  /** The `aos_login` cookie the start set, as a `Cookie` header value. */
+  loginCookie: string;
+}
+
+/** The start of a provider sign-in (302 with the `aos_login` cookie) and the issuer answering `answer`. */
+async function goToProvider(
+  providerId: string,
+  answer: ProviderAnswer,
+  next = '/',
+): Promise<AtProvider> {
+  const started = await apiRequest(
+    harness.app,
+    null,
+    'get',
+    `/auth/sign-in/${providerId}?next=${encodeURIComponent(next)}`,
+  );
+  expect(started.status).toBe(302);
+  const callback = await provider.authorize(
+    String(started.headers.location),
+    answer,
+  );
+  return { callback, loginCookie: cookiesOf(started) };
+}
+
+/** The browser's return to the callback, with `cookie` or with no cookie at all (another browser). */
+function returnFromProvider(
+  { callback }: AtProvider,
+  cookie: string | undefined,
+): Test {
+  const test = request(callback.origin).get(
+    `${callback.pathname}${callback.search}`,
+  );
+  return cookie === undefined ? test : test.set('cookie', cookie);
+}
+
+/**
+ * One sign-in through the provider as a browser makes it: the start sets the `aos_login` cookie and
+ * redirects to the issuer, the issuer answers with `answer`, the callback carries the cookie back,
+ * sets the session cookie and redirects to `next` on the web.
+ */
+async function signInThroughProvider(
+  providerId: string,
+  answer: ProviderAnswer,
+  next = '/',
+): Promise<Session> {
+  const atProvider = await goToProvider(providerId, answer, next);
+  const returned = await returnFromProvider(atProvider, atProvider.loginCookie);
+  expect(returned.status).toBe(302);
+  expect(returned.headers.location).toBe(`${frontendOrigin()}${next}`);
+  const cookie = sessionCookieOf(returned.headers['set-cookie']);
+  const me = await expectBody(
+    apiRequest(harness.app, { cookie }, 'get', '/auth/me'),
+    200,
+    CurrentUserSchema,
+  );
+  return { id: me.id, cookie };
+}
+
+/** The `app` tables and their text columns (json and arrays read as text) that hold any of `values`. */
+async function textColumnsHolding(
+  values: readonly string[],
+): Promise<string[]> {
+  const { rows: columns } = await harness.pool.query<{
+    table: string;
+    column: string;
+  }>(
+    `SELECT table_name AS "table", column_name AS "column"
+       FROM information_schema.columns
+      WHERE table_schema = 'app'
+        AND udt_name IN ('text', 'varchar', 'bpchar', 'json', 'jsonb', '_text', '_varchar')
+      ORDER BY table_name, column_name`,
+  );
+  const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+  const holding: string[] = [];
+  for (const { table, column } of columns) {
+    const { rows } = await harness.pool.query<{ found: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM app.${quote(table)} AS stored, unnest($1::text[]) AS searched(needle)
+          WHERE strpos(stored.${quote(column)}::text, searched.needle) > 0
+       ) AS found`,
+      [values],
+    );
+    if (rows[0]?.found === true) holding.push(`${table}.${column}`);
+  }
+  return holding;
+}
+
+/** Fails unless a provider sign-in answer sends the browser to `/login` with `reason` and opens no session. */
+function expectProviderRefusal(
+  answer: Response,
+  providerId: string,
+  reason: SignInError,
+): void {
+  expect(answer.status).toBe(302);
+  expect(answer.headers.location).toBe(
+    `${frontendOrigin()}/login?error=${reason}&provider=${providerId}`,
+  );
+  expect(
+    cookiesOf(answer)
+      .split('; ')
+      .filter((cookie) => cookie.startsWith(`${SESSION_COOKIE}=`)),
+  ).toEqual([]);
+}
+
+/** How many session rows the employee has, live or ended. */
+async function sessionRowsOf(userId: string): Promise<number> {
+  const { rows } = await harness.pool.query<{ count: string }>(
+    'SELECT count(*) FROM app.identity_sessions WHERE user_id = $1',
+    [userId],
+  );
+  return Number(rows[0]?.count);
+}
+
+/** The administrator's view of one employee, roles included. */
+function userDetail(userId: string) {
+  return expectBody(
+    apiRequest(harness.app, admin, 'get', `/admin/users/${userId}`),
+    200,
+    AdminUserDetailSchema,
+  );
+}
+
+/** The sign-in buttons (`GET /api/auth/providers`, no session) of the given providers only, in their order. */
+async function buttonsOf(providerIds: readonly string[]) {
+  const buttons = await expectBody(
+    apiRequest(harness.app, null, 'get', '/auth/providers'),
+    200,
+    ProviderButtonListSchema,
+  );
+  return buttons.filter((button) => providerIds.includes(button.id));
 }
 
 describe('enterprise-access / identity - integration (real AppModule + real Postgres + in-process OIDC issuer)', () => {
@@ -630,8 +873,359 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // @category: core-functionality
   // @dependency: PasswordSignIn, AdminUsersController, UsersService.disable, OwnerGate (base-agent check), SessionStore, AuditLog, scripted model, runtime workers, Postgres
   // @complexity: high
-  it.todo(
+  it(
     "INT-2: the administrator creates, resets and blocks an employee and each takes effect at once - one error for every bad credential, no model call after the agent's next check once blocked, no password left anywhere",
+    async () => {
+      const { app } = harness;
+      const login = `e2e-boris-${randomUUID()}`;
+      const email = `${login}@example.test`;
+      const initialPassword = `boris-initial-${randomUUID()}`;
+      const changedPassword = `boris-changed-${randomUUID()}`;
+      const resetPassword = `boris-reset-${randomUUID()}`;
+      const wrongPassword = `boris-wrong-${randomUUID()}`;
+      const unknownLogin = `e2e-nobody-${randomUUID()}`;
+
+      // Row 1 (AC-33.1, AC-01.2) - Given: the administrator creates Борис with an initial password;
+      // Then: a local account without roles, and Борис signs in to his own name and email
+      const created = await expectBody(
+        apiRequest(app, admin, 'post', '/admin/users', {
+          login,
+          name: 'Борис',
+          email,
+          password: initialPassword,
+        }),
+        201,
+        AdminUserSummarySchema,
+      );
+      expect(created).toMatchObject({
+        login,
+        name: 'Борис',
+        email,
+        status: 'active',
+        roles: [],
+      });
+      const boris = await signInWithPassword(app, login, initialPassword);
+      const me = await expectBody(
+        apiRequest(app, boris, 'get', '/auth/me'),
+        200,
+        CurrentUserSchema,
+      );
+      expect(me).toEqual({
+        id: created.id,
+        email,
+        name: 'Борис',
+        isAdmin: false,
+        hasPassword: true,
+      });
+      expect(me.id.startsWith('system:')).toBe(false);
+
+      // Row 2 (AC-01.3, AC-11.3) - When: an unknown login and Борис with a wrong password;
+      // Then: the same 401 INVALID_CREDENTIALS body, and each attempt is audited with its real reason
+      const unknownBefore = (await auditRows('sign_in_rejected', 'system'))
+        .length;
+      const unknownAnswer = await apiRequest(
+        app,
+        null,
+        'post',
+        '/auth/password',
+        { login: unknownLogin, password: initialPassword },
+      );
+      const wrongAnswer = await apiRequest(
+        app,
+        null,
+        'post',
+        '/auth/password',
+        {
+          login,
+          password: wrongPassword,
+        },
+      );
+      await expectRefusal(unknownAnswer, 401, 'INVALID_CREDENTIALS');
+      expect(wrongAnswer.status).toBe(401);
+      expect(wrongAnswer.body).toEqual(unknownAnswer.body);
+      expect(
+        (await auditRows('sign_in_rejected', 'system')).slice(unknownBefore),
+      ).toEqual([
+        expect.objectContaining({
+          after: { method: 'password' },
+          outcome: 'rejected',
+          reason: 'unknown_login',
+          at: expect.any(Date),
+        }),
+      ]);
+      expect(await auditRows('sign_in_rejected', boris.id)).toEqual([
+        expect.objectContaining({
+          objectType: 'user',
+          objectId: boris.id,
+          after: { method: 'password' },
+          outcome: 'rejected',
+          reason: 'wrong_password',
+          at: expect.any(Date),
+        }),
+      ]);
+
+      // Row 3 (AC-33.4, AC-33.3) - a wrong current password changes nothing; a provider-only employee has
+      // no password to change; the right one changes it, his other session stays, and only the new one signs in
+      await expect(
+        expectError(
+          apiRequest(app, boris, 'post', '/auth/password/change', {
+            currentPassword: wrongPassword,
+            newPassword: changedPassword,
+          }),
+          400,
+        ),
+      ).resolves.toMatchObject({
+        errorCode: 'VALIDATION_FAILED',
+        reason: 'wrong_current_password',
+      });
+      await expectSignInRefused(login, changedPassword, 'INVALID_CREDENTIALS');
+      const borisElsewhere = await signInWithPassword(
+        app,
+        login,
+        initialPassword,
+      );
+
+      await withGoogleProvider(async (providerId) => {
+        const providerOnly = await signInThroughProvider(providerId, {
+          email: `e2e-provider-only-${randomUUID()}@example.test`,
+          name: 'Provider Only',
+        });
+        await expect(
+          expectError(
+            apiRequest(app, providerOnly, 'post', '/auth/password/change', {
+              currentPassword: wrongPassword,
+              newPassword: changedPassword,
+            }),
+            400,
+          ),
+        ).resolves.toMatchObject({
+          errorCode: 'VALIDATION_FAILED',
+          reason: 'not_local_account',
+        });
+      });
+
+      expect(
+        (
+          await apiRequest(app, boris, 'post', '/auth/password/change', {
+            currentPassword: initialPassword,
+            newPassword: changedPassword,
+          })
+        ).status,
+      ).toBe(204);
+      await expectBody(
+        apiRequest(app, borisElsewhere, 'get', '/auth/me'),
+        200,
+        CurrentUserSchema,
+      );
+      await expectSignInRefused(login, initialPassword, 'INVALID_CREDENTIALS');
+      const borisChanged = await signInWithPassword(
+        app,
+        login,
+        changedPassword,
+      );
+
+      // Row 4 (AC-33.2, DC-16) - When: the administrator resets the password; Then: every open session of
+      // Борис ends, the old password is refused and the new one signs in
+      expect(
+        (
+          await apiRequest(
+            app,
+            admin,
+            'put',
+            `/admin/users/${boris.id}/password`,
+            {
+              password: resetPassword,
+            },
+          )
+        ).status,
+      ).toBe(204);
+      for (const session of [boris, borisElsewhere, borisChanged]) {
+        await expectRefusal(
+          apiRequest(app, session, 'get', '/auth/me'),
+          401,
+          'AUTH_REQUIRED',
+        );
+      }
+      await expectSignInRefused(login, changedPassword, 'INVALID_CREDENTIALS');
+      const borisWorking = await signInWithPassword(app, login, resetPassword);
+
+      // Row 5 (UC-4, AC-07.2, DC-8) - Given: Борис's agent is holding a model call (the latch); When: the
+      // administrator blocks him; Then: his session is refused at once, the held call finishes, and the
+      // agent's next call (a tool call) is refused by the base-agent check: no further model call, no tool
+      // run, the agent fails with `owner_disabled`
+      harness.model.completeText({ text: 'Борис conversation' });
+      const task = `INT-2: Борис's task ${randomUUID()}`;
+      const modelHeld = createLatch();
+      const chatScript = harness.model.script(
+        { task },
+        [
+          {
+            calls: [
+              {
+                tool: 'start_agent',
+                args: {
+                  agent: 'general-purpose',
+                  description: 'INT-2 helper',
+                  prompt: 'INT-2: never started',
+                },
+              },
+            ],
+            latch: modelHeld,
+          },
+        ],
+        { thereafter: { text: 'INT-2: a model call after the block' } },
+      );
+      const borisChat = chatApi(app, borisWorking);
+      const thread = await borisChat.createThread();
+      try {
+        await borisChat.send(thread.id, task);
+        await modelHeld.reached();
+        const rootId = (await borisChat.history(thread.id)).chat.rootAgentId;
+        if (rootId === null)
+          throw new Error('the conversation row did not get the root id');
+
+        const modelCallsAtBlock = harness.model.calls.length;
+        const blocked = await expectBody(
+          apiRequest(app, admin, 'post', `/admin/users/${boris.id}/block`),
+          200,
+          AdminUserSummarySchema,
+        );
+        expect(blocked).toMatchObject({ id: boris.id, status: 'disabled' });
+        const statusChanges = (
+          await auditRows('admin_change', admin.id)
+        ).filter((row) => row.objectId === boris.id && row.before !== null);
+        expect(statusChanges.at(-1)).toMatchObject({
+          objectType: 'user',
+          before: { status: 'active' },
+          after: { status: 'disabled', sessionsEnded: true },
+          outcome: 'ok',
+        });
+        await expectRefusal(
+          apiRequest(app, borisWorking, 'get', '/auth/me'),
+          401,
+          'ACCOUNT_DISABLED',
+        );
+
+        // The call in flight finishes only now, after the block.
+        modelHeld.open();
+        const failed = await waitFor(
+          () => harness.agents.sessions.get(rootId, boris.id),
+          (agent) => agent.status !== 'working',
+          "Борис's agent to end after the block",
+        );
+        expect([failed.status, failed.failureReason]).toEqual([
+          'failed',
+          'owner_disabled',
+        ]);
+        expect(chatScript.calls).toHaveLength(1);
+        expect(harness.model.calls).toHaveLength(modelCallsAtBlock);
+      } finally {
+        modelHeld.open();
+      }
+
+      // Row 6 (AC-07.3, password half) - the right password of the blocked Борис -> ACCOUNT_DISABLED; a wrong
+      // one -> INVALID_CREDENTIALS (his status is not told to someone without the password)
+      await expectSignInRefused(login, resetPassword, 'ACCOUNT_DISABLED');
+      await expectSignInRefused(login, wrongPassword, 'INVALID_CREDENTIALS');
+
+      // Row 7 (AC-07.4) - When: the administrator unblocks him; Then: nothing is revived (old cookie, failed
+      // agent), and after a new sign-in his conversation is there with the agent's `owner_disabled` end
+      const unblocked = await expectBody(
+        apiRequest(app, admin, 'post', `/admin/users/${boris.id}/unblock`),
+        200,
+        AdminUserSummarySchema,
+      );
+      expect(unblocked.status).toBe('active');
+      await expectRefusal(
+        apiRequest(app, borisWorking, 'get', '/auth/me'),
+        401,
+        'AUTH_REQUIRED',
+      );
+      const borisBack = chatApi(
+        app,
+        await signInWithPassword(app, login, resetPassword),
+      );
+      expect(
+        (await borisBack.listThreads()).threads.map((listed) => listed.id),
+      ).toContain(thread.id);
+      const afterBlock = await borisBack.history(thread.id);
+      expect([
+        afterBlock.chat.status,
+        afterBlock.chat.failureReason,
+        afterBlock.agents,
+      ]).toEqual(['failed', 'owner_disabled', []]);
+      expect(
+        afterBlock.entries.map((entry) =>
+          entry.kind === 'model_answer'
+            ? `model_answer: ${entry.content.toolCalls.map((call) => call.tool).join(', ')}`
+            : entry.kind === 'event'
+              ? `event: ${entry.content.event} ${entry.content.reason}`
+              : entry.kind,
+        ),
+      ).toEqual([
+        'task',
+        'model_answer: start_agent',
+        'event: failed owner_disabled',
+      ]);
+      expect(chatScript.calls).toHaveLength(1);
+
+      // Row 8 (NFR-01) - no password used above is in any text column of an `app` table, in the audit or
+      // in the log; the stored value is an argon2id hash, and create, reset and change audit no value
+      const passwords = [
+        initialPassword,
+        changedPassword,
+        resetPassword,
+        wrongPassword,
+      ];
+      // The scan does find a value that is stored: Борис's login.
+      expect(await textColumnsHolding([login])).toContain(
+        'identity_users.login',
+      );
+      expect(await textColumnsHolding(passwords)).toEqual([]);
+      expect(
+        harness.log.filter((line) =>
+          passwords.some((password) => line.includes(password)),
+        ),
+      ).toEqual([]);
+      const { rows: stored } = await harness.pool.query<{
+        passwordHash: string;
+      }>(
+        'SELECT password_hash AS "passwordHash" FROM app.identity_users WHERE id = $1',
+        [boris.id],
+      );
+      expect(stored[0]?.passwordHash.startsWith('$argon2id$')).toBe(true);
+      const passwordChanges = (
+        await auditRows('admin_change', admin.id)
+      ).filter(
+        (row) =>
+          row.objectId === boris.id &&
+          (row.after as { password?: unknown } | null)?.password !== undefined,
+      );
+      expect(passwordChanges).toEqual([
+        expect.objectContaining({
+          before: null,
+          after: expect.objectContaining({ password: 'password_changed' }),
+        }),
+        expect.objectContaining({
+          before: null,
+          after: { password: 'password_changed', sessionsEnded: true },
+        }),
+      ]);
+      expect(await auditRows('password_changed', boris.id)).toEqual([
+        expect.objectContaining({
+          objectId: boris.id,
+          before: null,
+          after: null,
+          outcome: 'ok',
+        }),
+      ]);
+      expect(await auditRows('password_reset', admin.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ objectId: boris.id, outcome: 'ok' }),
+        ]),
+      );
+    },
+    TEST_TIMEOUT_MS,
   );
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -685,7 +1279,494 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // @category: core-functionality
   // @dependency: AuthController, OAuthSignIn, SignInService, AdminProvidersController, SessionStore, AuditLog, logger, test OIDC issuer, Postgres
   // @complexity: high
-  it.todo(
+  it(
     'INT-3: a valid ID token from `google` or `oidc` opens one session on the one account of that email and leaves its roles alone, every replayed, foreign, expired, email-less or disabled attempt opens none and is audited, and no provider secret leaks',
+    async () => {
+      const { app, pool } = harness;
+      const apiAddress = apiOrigin(app);
+      // Every provider secret of this file starts with the mark (`withGoogleProvider` too), so one needle finds any.
+      const SECRET_MARK = 'e2e-secret-';
+      const firstSecret = `${SECRET_MARK}okta-1-${randomUUID()}`;
+      const secondSecret = `${SECRET_MARK}okta-2-${randomUUID()}`;
+      const firstClientId = `e2e-okta-client-${randomUUID()}`;
+      const secondClientId = `e2e-okta-client-${randomUUID()}`;
+      const oktaName = `e2e-Okta-${randomUUID()}`;
+
+      /** Every answer of the provider administration, for the secrets scan (row 12). */
+      const adminAnswers: Response[] = [];
+      const providerAdmin = async (
+        method: Method,
+        path: string,
+        body?: object,
+      ): Promise<Response> => {
+        const answer = await apiRequest(
+          app,
+          admin,
+          method,
+          `/admin/providers${path}`,
+          body,
+        );
+        adminAnswers.push(answer);
+        return answer;
+      };
+      /** The sessions provider sign-ins opened, for the token scan (row 12). */
+      const providerSessions: Session[] = [];
+      const signIn = async (
+        ...args: Parameters<typeof signInThroughProvider>
+      ): Promise<Session> => {
+        const session = await signInThroughProvider(...args);
+        providerSessions.push(session);
+        return session;
+      };
+      /** The `sign_in_rejected` rows written without an employee for one provider. */
+      const anonymousRejections = async (providerId: string) =>
+        (await auditRows('sign_in_rejected', 'system')).filter(
+          (row) =>
+            (row.after as { providerId?: unknown } | null)?.providerId ===
+            providerId,
+        );
+
+      // Rule 11 of the plan: the developer's own settings come back at the end.
+      const previous = await getSettings();
+      const limits = {
+        idleMinutes: previous.idleMinutes,
+        absoluteMinutes: previous.absoluteMinutes,
+      };
+      let oktaId: string | undefined;
+      try {
+        // Row 1 (AC-03.4, DC-6, AC-03.1) - Given: no saved public URL; When: the administrator creates «Okta»;
+        // Then: the address the test reached the API at is saved and builds the return URL; the provider is
+        // disabled, cannot be enabled incomplete, an issuer that does not answer stores nothing, and the
+        // saved secret is only «set»
+        await expectBody(
+          putSettings({ publicUrl: null, ...limits }),
+          200,
+          SignInSettingsSchema,
+        );
+        const okta = await expectBody(
+          providerAdmin('post', '', { type: 'oidc', name: oktaName }),
+          201,
+          ProviderViewSchema,
+        );
+        oktaId = okta.id;
+        expect((await getSettings()).publicUrl).toBe(apiAddress);
+        expect(okta).toEqual({
+          id: okta.id,
+          type: 'oidc',
+          name: oktaName,
+          enabled: false,
+          complete: false,
+          options: { clientId: null, issuer: null, clientSecretSet: false },
+          providerData: {
+            redirectUri: `${apiAddress}/api/auth/oauth/${okta.id}/callback`,
+            scopes: 'openid email profile',
+          },
+        });
+        await expectRefusal(
+          providerAdmin('patch', `/${okta.id}`, { enabled: true }),
+          409,
+          'PROVIDER_INCOMPLETE',
+        );
+        await expect(
+          expectError(
+            providerAdmin('patch', `/${okta.id}`, {
+              options: {
+                issuer: `${provider.issuer}/not-served`,
+                clientId: firstClientId,
+                clientSecret: firstSecret,
+              },
+            }),
+            422,
+          ),
+        ).resolves.toMatchObject({
+          errorCode: 'PROVIDER_CHECK_FAILED',
+          reason: 'unreachable',
+        });
+        const unchanged = await expectBody(
+          providerAdmin('get', `/${okta.id}`),
+          200,
+          ProviderViewSchema,
+        );
+        expect(unchanged.options).toEqual({
+          clientId: null,
+          issuer: null,
+          clientSecretSet: false,
+        });
+        const configured = await expectBody(
+          providerAdmin('patch', `/${okta.id}`, {
+            options: {
+              issuer: provider.issuer,
+              clientId: firstClientId,
+              clientSecret: firstSecret,
+            },
+          }),
+          200,
+          ProviderViewSchema,
+        );
+        expect(configured).toMatchObject({
+          enabled: false,
+          complete: true,
+          options: {
+            issuer: provider.issuer,
+            clientId: firstClientId,
+            clientSecretSet: true,
+          },
+        });
+
+        // Row 2 (AC-03.2) - a disabled provider has no button; once enabled, the buttons are the enabled
+        // ones in creation order with the administrator's names
+        expect(await buttonsOf([okta.id])).toEqual([]);
+        await expectBody(
+          providerAdmin('patch', `/${okta.id}`, { enabled: true }),
+          200,
+          ProviderViewSchema,
+        );
+        await withGoogleProvider(async (googleId) => {
+          const google = await expectBody(
+            providerAdmin('get', `/${googleId}`),
+            200,
+            ProviderViewSchema,
+          );
+          expect(await buttonsOf([okta.id, googleId])).toEqual([
+            { id: okta.id, name: oktaName, type: 'oidc' },
+            { id: googleId, name: google.name, type: 'google' },
+          ]);
+
+          // Row 3 (AC-02.1, AC-02.5, AC-04.1, AC-04.4, AC-06.1) - When: a first-time email signs in through
+          // either type, with or without a `groups` claim; Then: a session on a new account with the token's
+          // name and email, a server UUID, no roles and no admin right, and a `sign_in` audit row
+          // The test issuer takes the answer in a request header, so the claims are ASCII.
+          const next = '/chat?from=int-3';
+          const firstSignIns: { providerId: string; groups?: unknown }[] = [
+            { providerId: googleId, groups: 'Super-administrators' },
+            {
+              providerId: okta.id,
+              groups: ['agent-os-admins', 'Administrators'],
+            },
+            { providerId: okta.id },
+          ];
+          for (const { providerId, groups } of firstSignIns) {
+            const email = `e2e-first-${randomUUID()}@example.test`;
+            const newcomer = await signIn(
+              providerId,
+              { email, name: 'New Employee', groups },
+              next,
+            );
+            expect(newcomer.id.startsWith('system:')).toBe(false);
+            await expect(
+              expectBody(
+                apiRequest(app, newcomer, 'get', '/auth/me'),
+                200,
+                CurrentUserSchema,
+              ),
+            ).resolves.toEqual({
+              id: newcomer.id,
+              email,
+              name: 'New Employee',
+              isAdmin: false,
+              hasPassword: false,
+            });
+            expect(await userDetail(newcomer.id)).toMatchObject({
+              login: null,
+              status: 'active',
+              roles: [],
+              adminRight: { personal: false, roles: [] },
+            });
+            expect(await auditRows('sign_in', newcomer.id)).toEqual([
+              expect.objectContaining({
+                after: { method: 'provider', providerId },
+                outcome: 'ok',
+                at: expect.any(Date),
+              }),
+            ]);
+          }
+          // The last sign-in went through «Okta»: its token call carried the settings saved in row 1.
+          expect(provider.tokenCalls.at(-1)).toEqual({
+            clientId: firstClientId,
+            clientSecret: firstSecret,
+          });
+
+          // Row 4 (AC-04.2) - Given: Аня's local account with a role and a conversation; When: she signs in
+          // through `google` and through `oidc` (the email in capitals); Then: the same account, the same
+          // conversations, and the role the administrator gave is still hers
+          const anyaEmail = `anna-${randomUUID()}@company.ru`;
+          const anyaLocal = await createEmployee(app, admin, {
+            name: 'Аня',
+            email: anyaEmail,
+          });
+          const anyaThread = await chatApi(app, anyaLocal).createThread();
+          const role = await expectBody(
+            apiRequest(app, admin, 'post', '/admin/roles', {
+              name: `e2e-analysts-${randomUUID()}`,
+            }),
+            201,
+            RoleSummarySchema,
+          );
+          try {
+            await expectBody(
+              apiRequest(
+                app,
+                admin,
+                'put',
+                `/admin/users/${anyaLocal.id}/roles/${role.id}`,
+              ),
+              200,
+              AdminUserDetailSchema,
+            );
+            const throughProviders = [
+              [googleId, anyaEmail],
+              [okta.id, anyaEmail.toUpperCase()],
+            ] as const;
+            for (const [providerId, email] of throughProviders) {
+              const anya = await signIn(providerId, { email, name: 'Anya' });
+              expect(anya.id).toBe(anyaLocal.id);
+              expect(
+                (await chatApi(app, anya).listThreads()).threads.map(
+                  (listed) => listed.id,
+                ),
+              ).toContain(anyaThread.id);
+              expect((await userDetail(anya.id)).roles).toEqual([
+                { id: role.id, name: role.name },
+              ]);
+            }
+          } finally {
+            expect(
+              (
+                await apiRequest(
+                  app,
+                  admin,
+                  'delete',
+                  `/admin/roles/${role.id}`,
+                )
+              ).status,
+            ).toBe(204);
+          }
+
+          // Row 5 (DC-4) - the accepted callback replayed -> `failed`, and no second session
+          const accepted = await goToProvider(okta.id, {
+            email: `e2e-replay-${randomUUID()}@example.test`,
+            name: 'Replay',
+          });
+          const firstReturn = await returnFromProvider(
+            accepted,
+            accepted.loginCookie,
+          );
+          expect(firstReturn.status).toBe(302);
+          const replayCookie = sessionCookieOf(
+            firstReturn.headers['set-cookie'],
+          );
+          const replayer = await expectBody(
+            apiRequest(app, { cookie: replayCookie }, 'get', '/auth/me'),
+            200,
+            CurrentUserSchema,
+          );
+          providerSessions.push({ id: replayer.id, cookie: replayCookie });
+          expectProviderRefusal(
+            await returnFromProvider(accepted, accepted.loginCookie),
+            okta.id,
+            'failed',
+          );
+          expect(await sessionRowsOf(replayer.id)).toBe(1);
+
+          // Row 6 - the callback without the `aos_login` cookie (another browser) -> `failed`
+          const usersBefore = await countUsers();
+          const foreign = await goToProvider(okta.id, {
+            email: `e2e-foreign-${randomUUID()}@example.test`,
+            name: 'Foreign Browser',
+          });
+          expectProviderRefusal(
+            await returnFromProvider(foreign, undefined),
+            okta.id,
+            'failed',
+          );
+
+          // Row 7 - a sign-in request older than 10 minutes (its row moved back) -> `failed`
+          const stale = await goToProvider(okta.id, {
+            email: `e2e-stale-${randomUUID()}@example.test`,
+            name: 'Stale Request',
+          });
+          const moved = await pool.query(
+            `UPDATE app.identity_login_requests
+                SET created_at = now() - interval '11 minutes',
+                    expires_at = now() - interval '1 minute'
+              WHERE state = $1`,
+            [stale.callback.searchParams.get('state')],
+          );
+          expect(moved.rowCount).toBe(1);
+          expectProviderRefusal(
+            await returnFromProvider(stale, stale.loginCookie),
+            okta.id,
+            'failed',
+          );
+
+          // Row 8 (AC-04.5) - an ID token without an email -> `no_email`, and no account was made by rows 6-8
+          const noEmail = await goToProvider(okta.id, { name: 'No Email' });
+          expectProviderRefusal(
+            await returnFromProvider(noEmail, noEmail.loginCookie),
+            okta.id,
+            'no_email',
+          );
+          expect(await countUsers()).toBe(usersBefore);
+          // AC-11.3: each refusal is audited with the method, the provider, the time and the reason, and nothing else
+          expect(await anonymousRejections(okta.id)).toEqual(
+            ['failed', 'failed', 'failed', 'no_email'].map((reason) =>
+              expect.objectContaining({
+                after: { method: 'provider', providerId: okta.id },
+                outcome: 'rejected',
+                reason,
+                at: expect.any(Date),
+              }),
+            ),
+          );
+
+          // Row 9 (AC-03.2) - the provider switched off after its button was shown: the button goes, and the
+          // old sign-in link -> `provider_unavailable`
+          await expectBody(
+            providerAdmin('patch', `/${googleId}`, { enabled: false }),
+            200,
+            ProviderViewSchema,
+          );
+          expect(await buttonsOf([okta.id, googleId])).toEqual([
+            { id: okta.id, name: oktaName, type: 'oidc' },
+          ]);
+          expectProviderRefusal(
+            await apiRequest(app, null, 'get', `/auth/sign-in/${googleId}`),
+            googleId,
+            'provider_unavailable',
+          );
+          expect(await anonymousRejections(googleId)).toEqual([
+            expect.objectContaining({
+              after: { method: 'provider', providerId: googleId },
+              outcome: 'rejected',
+              reason: 'provider_unavailable',
+            }),
+          ]);
+
+          // Row 10 (AC-07.3, provider half) - an employee blocked before he signs in, with a normal ID token
+          // -> `account_disabled`, no session, the refusal audited on him
+          const blockedEmail = `e2e-blocked-${randomUUID()}@example.test`;
+          const blocked = await createEmployee(app, admin, {
+            email: blockedEmail,
+          });
+          await expect(
+            expectBody(
+              apiRequest(
+                app,
+                admin,
+                'post',
+                `/admin/users/${blocked.id}/block`,
+              ),
+              200,
+              AdminUserSummarySchema,
+            ),
+          ).resolves.toMatchObject({ status: 'disabled' });
+          const blockedSessions = await sessionRowsOf(blocked.id);
+          const blockedAtProvider = await goToProvider(okta.id, {
+            email: blockedEmail,
+            name: 'Blocked',
+          });
+          expectProviderRefusal(
+            await returnFromProvider(
+              blockedAtProvider,
+              blockedAtProvider.loginCookie,
+            ),
+            okta.id,
+            'account_disabled',
+          );
+          expect(await sessionRowsOf(blocked.id)).toBe(blockedSessions);
+          expect(await auditRows('sign_in_rejected', blocked.id)).toEqual([
+            expect.objectContaining({
+              objectType: 'user',
+              objectId: blocked.id,
+              after: { method: 'provider', providerId: okta.id },
+              outcome: 'rejected',
+              reason: 'account_disabled',
+              at: expect.any(Date),
+            }),
+          ]);
+
+          // Row 11 (AC-03.3, AC-11.2) - When: the administrator replaces the secret and the client id of
+          // «Okta»; Then: the next sign-in uses the new ones without a restart, and the audit marks the
+          // secret as changed without its value
+          const edited = await expectBody(
+            providerAdmin('patch', `/${okta.id}`, {
+              options: { clientId: secondClientId, clientSecret: secondSecret },
+            }),
+            200,
+            ProviderViewSchema,
+          );
+          expect(edited).toMatchObject({
+            enabled: true,
+            complete: true,
+            options: {
+              issuer: provider.issuer,
+              clientId: secondClientId,
+              clientSecretSet: true,
+            },
+          });
+          await signIn(okta.id, {
+            email: `e2e-after-edit-${randomUUID()}@example.test`,
+            name: 'After Edit',
+          });
+          expect(provider.tokenCalls.at(-1)).toEqual({
+            clientId: secondClientId,
+            clientSecret: secondSecret,
+          });
+          const oktaChanges = (
+            await auditRows('admin_change', admin.id)
+          ).filter(
+            (row) => row.objectType === 'provider' && row.objectId === okta.id,
+          );
+          expect(oktaChanges.at(-1)).toMatchObject({
+            before: { clientId: firstClientId },
+            after: { clientId: secondClientId, clientSecret: 'secret_changed' },
+            outcome: 'ok',
+          });
+        });
+
+        // Row 12 (NFR-02, AC-03.1, AC-11.2) - no provider secret in any answer of the provider administration
+        // or in the log, and no session token in the log; the scan does find the secrets where they are
+        // kept as they are (KD-7) and nowhere else - the audit included - and the tokens nowhere (hashes only)
+        const holdsSecret = (text: string) => text.includes(SECRET_MARK);
+        expect(
+          adminAnswers
+            .filter((answer) =>
+              holdsSecret(
+                JSON.stringify({ headers: answer.headers, text: answer.text }),
+              ),
+            )
+            .map((answer) => answer.status),
+        ).toEqual([]);
+        const tokens = providerSessions.map((session) =>
+          session.cookie.slice(`${SESSION_COOKIE}=`.length),
+        );
+        expect(
+          harness.log.filter(
+            (line) =>
+              holdsSecret(line) || tokens.some((token) => line.includes(token)),
+          ),
+        ).toEqual([]);
+        expect(await textColumnsHolding([SECRET_MARK, ...tokens])).toEqual([
+          'identity_providers.options',
+        ]);
+      } finally {
+        // Rule 11 of the plan: no provider of this test stays enabled, and the public URL is put back.
+        if (oktaId !== undefined) {
+          await expectBody(
+            apiRequest(app, admin, 'patch', `/admin/providers/${oktaId}`, {
+              enabled: false,
+            }),
+            200,
+            ProviderViewSchema,
+          );
+        }
+        await expectBody(
+          putSettings({ publicUrl: previous.publicUrl, ...limits }),
+          200,
+          SignInSettingsSchema,
+        );
+      }
+    },
+    TEST_TIMEOUT_MS,
   );
 });

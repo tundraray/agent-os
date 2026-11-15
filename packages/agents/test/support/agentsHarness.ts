@@ -194,6 +194,8 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
+    // Every owner of these tests is active.
+    ownerGate: { check: async () => {} },
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
   for (const definition of options.definitions ?? []) agents.definitions.register(definition);

@@ -11,6 +11,7 @@ import { createMcpClients } from './mcp/mcp-clients.js';
 import type { AgentTurnModelClient } from './model/mastra-turn.js';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
+import type { OwnerGate } from './owner-gate.js';
 import { createAgentStepHandler } from './step/agent-step.handler.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
@@ -28,6 +29,11 @@ export interface AgentsOptions {
   readonly config: AgentsConfig;
   /** The seam of the model: Mastra over Anthropic in production, a scripted double in tests (plan Notes 9). */
   readonly turnClient: AgentTurnModelClient;
+  /**
+   * Asked before every model and tool call of an agent and before `completeText` (KD-4 of
+   * design-identity.md): a disabled or unknown owner's call does not start.
+   */
+  readonly ownerGate: OwnerGate;
   /**
    * Gets every text part of an agent's answer with `ownerId`, `rootId`, `agentId`, `offset` (KD-3);
    * none by default. A failure of the hook is logged and does not break the step.
@@ -92,6 +98,7 @@ export function createAgents(options: AgentsOptions): Agents {
     access: config.mcpAccess,
     toolResultMaxBytes: config.toolResultMaxBytes,
     startChildFor: createStartChild(startChildDeps),
+    ownerGate: options.ownerGate,
   });
   const codeRunner =
     options.codeRunner ??
@@ -123,6 +130,7 @@ export function createAgents(options: AgentsOptions): Agents {
     ledger: runtime.ledger,
     config,
     logger: logger.child({ service: 'agents.model' }),
+    ownerGate: options.ownerGate,
     ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
   });
 

@@ -80,4 +80,24 @@ export class AdminUsersController {
   ): Promise<AdminUserDetail> {
     return this.users.setPersonalAdmin(req.user.id, id, body.enabled);
   }
+
+  /** Blocks the employee (Flow 4): 200 `AdminUserSummary`; his sessions are ended at once. */
+  @Post(':id/block')
+  @HttpCode(200)
+  block(
+    @Param('id') id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<AdminUserSummary> {
+    return this.users.disable(req.user.id, id);
+  }
+
+  /** Unblocks the employee: 200 `AdminUserSummary`; old sessions stay ended. */
+  @Post(':id/unblock')
+  @HttpCode(200)
+  unblock(
+    @Param('id') id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<AdminUserSummary> {
+    return this.users.enable(req.user.id, id);
+  }
 }

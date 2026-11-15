@@ -13,6 +13,7 @@ import type { McpAccessTable } from '../config.js';
 import type { McpClients } from '../mcp/mcp-clients.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
 import { scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
+import { isOwnerDisabled, type OwnerGate } from '../owner-gate.js';
 import type { Session } from '../store/sessions.repository.js';
 import { toolCalls } from '../store/tool-calls.repository.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
@@ -123,6 +124,11 @@ export interface ToolRunnerOptions {
   readonly toolResultMaxBytes: number;
   /** Binds `createStartChild` (T3.4) to the commit transaction and the caller; `createAgents` supplies it. */
   readonly startChildFor: (scope: StartChildScope) => StartChild;
+  /**
+   * Asked before every call the runner starts — direct, in-commit, confirmed and from code (KD-4): its
+   * `OwnerDisabledError` rejects the runner's method, and the call does not start.
+   */
+  readonly ownerGate: OwnerGate;
 }
 
 /** A script's request to call a tool: the name from the model's tool list and the arguments. */
@@ -202,12 +208,13 @@ export interface ToolRunner {
    * Checks and runs a script's call (code-execution «Проверка вызова из кода»; KD-2, KD-8, DC-5, DC-6):
    * a built-in or registered tool or `run_code` — `not_callable_from_code`; a `write` run and a name
    * outside the confirmed list — `not_in_confirmed_script`; then `check` against the snapshot; a `read`
-   * run and a tool without `McpTool.readOnly` — `changing_in_read_run`. An allowed call goes to its
-   * server on behalf of the caller's owner; a value is not cut, a server's error text is not returned.
+   * run and a tool without `McpTool.readOnly` — `changing_in_read_run`; then `OwnerGate`, whose refusal
+   * rejects. An allowed call goes to its server on behalf of the caller's owner; a value is not cut, a
+   * server's error text is not returned.
    */
   callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution>;
-  /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper. */
-  planInCommit(call: InCommitCall, logger: Logger): InCommitPlan;
+  /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper; `OwnerGate` is asked first. */
+  planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
   /**
    * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
@@ -322,7 +329,24 @@ function withoutServerText(
 
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
-  const { mcpClients, access, toolResultMaxBytes } = options;
+  const { mcpClients, access, toolResultMaxBytes, ownerGate } = options;
+
+  /** Asks `OwnerGate` for the caller's owner; a refusal is logged and thrown, so the call does not start. */
+  async function admit(callId: string, caller: ToolCaller, logger: Logger): Promise<void> {
+    try {
+      await ownerGate.check(caller.ownerId);
+    } catch (error) {
+      if (isOwnerDisabled(error)) {
+        logger.warn('owner gate refused a tool call', {
+          ownerId: caller.ownerId,
+          agentId: caller.agentId,
+          callId,
+          reason: 'owner_disabled',
+        });
+      }
+      throw error;
+    }
+  }
 
   async function callMcp(
     call: ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> },
@@ -427,6 +451,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     if (scope.runClass === 'read' && !call.tool.mcp.readOnly) {
       return refuse('changing_in_read_run');
     }
+    await admit(scope.callId, scope.caller, scope.logger);
     return callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
   }
 
@@ -461,6 +486,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     },
 
     async runOutside(call, ctx) {
+      await admit(call.callId, call.caller, ctx.logger);
       const startedAt = Date.now();
       const execution = await execute(call, ctx);
       logCall(ctx.logger, loggedCall(call), execution, startedAt);
@@ -479,7 +505,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       return withoutServerText(execution, logged, scope.logger);
     },
 
-    planInCommit(call, logger) {
+    async planInCommit(call, logger) {
+      await admit(call.callId, call.caller, logger);
       return async (tx, effects) => {
         const startedAt = Date.now();
         const execution = await runInCommit(call, tx, effects);
@@ -489,6 +516,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     },
 
     async sendConfirmed(call, ctx, editedArgs, confirmed) {
+      await admit(call.callId, call.caller, ctx.logger);
       const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
       const key = {
         taskId: ctx.taskId,

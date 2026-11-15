@@ -145,6 +145,8 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
+    // Every owner of these tests is active.
+    ownerGate: { check: async () => {} },
   });
   const workflows = createWorkflows({ agents, logger, templates: options.templates });
   const rootDefinition = `workflows-root-${randomUUID()}`;

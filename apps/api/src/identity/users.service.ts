@@ -15,6 +15,7 @@ import {
   type AdminUserSummary,
   type CreateLocalUserBody,
   type PasswordChangeBody,
+  type UserStatus,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { z } from 'zod';
@@ -32,6 +33,7 @@ import {
   rolesOfUsers,
   setPasswordHash,
   setPersonalAdmin,
+  setUserStatus,
   takenField,
   type MemberRole,
   type UserListPosition,
@@ -284,6 +286,53 @@ export class UsersService {
       durationMs: Date.now() - startedAt,
     });
     return this.detail(user.id);
+  }
+
+  /**
+   * Blocks the employee (KD-4, Flow 4, AC-07.2): in one transaction the status becomes `disabled`,
+   * every live session ends with `account_disabled` and `admin_change` is written. Running agents are
+   * not stopped here: each ends at its next model or tool call through `OwnerGate`. 404 USER_NOT_FOUND.
+   */
+  async disable(actorId: string, userId: string): Promise<AdminUserSummary> {
+    return this.changeStatus(actorId, userId, UserStatusSchema.enum.disabled);
+  }
+
+  /** Unblocks the employee (AC-07.4): only the status; old sessions stay ended. 404 USER_NOT_FOUND. */
+  async enable(actorId: string, userId: string): Promise<AdminUserSummary> {
+    return this.changeStatus(actorId, userId, UserStatusSchema.enum.active);
+  }
+
+  private async changeStatus(
+    actorId: string,
+    userId: string,
+    status: UserStatus,
+  ): Promise<AdminUserSummary> {
+    const startedAt = Date.now();
+    const user = await this.findOr404(userId);
+    const disabling = status === UserStatusSchema.enum.disabled;
+    await this.db.transaction(async (tx) => {
+      await setUserStatus(tx, user.id, status);
+      if (disabling) await this.sessions.endAllByBlock(user.id, tx);
+      await this.auditLog.record(tx, {
+        kind: 'admin_change',
+        actor: actorId,
+        objectType: 'user',
+        objectId: user.id,
+        before: { status: user.status },
+        after: disabling ? { status, sessionsEnded: true } : { status },
+        outcome: 'ok',
+      });
+    });
+    this.logger.info(disabling ? 'employee blocked' : 'employee unblocked', {
+      actorId,
+      userId: user.id,
+      before: user.status,
+      after: status,
+      outcome: 'ok',
+      durationMs: Date.now() - startedAt,
+    });
+    const roles = await rolesOfUsers(this.db, [user.id]);
+    return toAdminUserSummary({ ...user, status }, roles);
   }
 
   /**

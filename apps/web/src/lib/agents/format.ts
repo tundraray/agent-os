@@ -21,6 +21,7 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
 const NAMED_FAILURE_REASON: Record<string, string> = {
   turn_limit: "исчерпан предел ходов",
   model_error: "ошибка модели",
+  owner_disabled: "сотрудник отключён",
 };
 
 /**

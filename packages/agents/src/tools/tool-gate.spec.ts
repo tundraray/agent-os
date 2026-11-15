@@ -84,6 +84,7 @@ function checkCall(input: CallCheckInput) {
     access: new Map([[OWNER, new Set(input.ownerServers)]]),
     toolResultMaxBytes: 1024,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
+    ownerGate: { check: async () => {} },
   });
   return runner.check(
     { callId: 'call-1', toolName: input.toolName, args: input.args },

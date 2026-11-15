@@ -16,6 +16,7 @@ import {
   failResult,
   logStep,
   modelErrorMessage,
+  ownerDisabledResult,
   previewEntries,
   readSessionHistory,
   type StepPrelude,
@@ -112,6 +113,19 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     const writePrelude = async (tx: RuntimeTx): Promise<readonly NewHistoryEntry[]> =>
       prelude === undefined ? [] : prelude.write(tx);
 
+    const writeFailureEntries = async (tx: RuntimeTx): Promise<NewHistoryEntry[]> => [
+      ...(await writePrelude(tx)),
+      ...delivered,
+    ];
+    if (result.kind === 'owner_disabled') {
+      return ownerDisabledResult({
+        ctx,
+        stepKind: STEP_KIND,
+        startedAt,
+        writeEntries: writeFailureEntries,
+        patch: { ...prelude?.patch },
+      });
+    }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
         reason: FAILURE_REASONS.modelError,
@@ -121,7 +135,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         ctx,
         reason: FAILURE_REASONS.modelError,
         message: modelErrorMessage(session.model, result),
-        writeEntries: async (tx) => [...(await writePrelude(tx)), ...delivered],
+        writeEntries: writeFailureEntries,
         patch: { ...prelude?.patch },
       });
     }

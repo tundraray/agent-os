@@ -144,6 +144,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       },
       config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
       logger,
+      ownerGate: { check: async () => {} },
       onTextDelta: (delta) => {
         deltas.push(delta);
         if (row.hookFails) throw new Error('notify is down');
@@ -167,7 +168,10 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
               signal: new AbortController().signal,
               logger,
             })
-            .then((result) => (result.kind === 'answer' ? result.text : `model_error ${result.error.statusCode}`))
+            .then((result) => {
+              if (result.kind === 'answer') return result.text;
+              return result.kind === 'model_error' ? `model_error ${result.error.statusCode}` : result.kind;
+            })
         : await client.completeText({
             ownerId: 'owner-1',
             system: 'Write a title.',
@@ -206,6 +210,7 @@ describe('ModelClient instructions', () => {
       ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
       config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
       logger,
+      ownerGate: { check: async () => {} },
     });
 
     await client.call({

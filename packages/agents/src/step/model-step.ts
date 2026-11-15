@@ -34,7 +34,11 @@ const STEP_KIND = 'model';
 const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
-export const FAILURE_REASONS = { turnLimit: 'turn_limit', modelError: 'model_error' } as const;
+export const FAILURE_REASONS = {
+  turnLimit: 'turn_limit',
+  modelError: 'model_error',
+  ownerDisabled: 'owner_disabled',
+} as const;
 
 /**
  * What the handler (T4.4) writes before the step's own entries — a continuation (Flow 6, Flow 7) or
@@ -159,7 +163,7 @@ export function failResult(input: {
   readonly reason: string;
   readonly message: string;
   /** Writes the entries before the event and returns them. */
-  readonly writeEntries: (tx: RuntimeTx) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (tx: RuntimeTx, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): StepResult {
   const { ctx, reason, message } = input;
@@ -168,7 +172,7 @@ export function failResult(input: {
     reason,
     message,
     commit: async (tx, effects) => {
-      const entries = await input.writeEntries(tx);
+      const entries = await input.writeEntries(tx, effects);
       await appendWithEvent(tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
       await sessions.update(tx, ctx.taskId, {
         ...input.patch,
@@ -177,6 +181,34 @@ export function failResult(input: {
       });
     },
   };
+}
+
+/**
+ * `OwnerGate` refused the owner (KD-4, DC-8): no call started, and the agent fails with `owner_disabled`
+ * by `failResult`, as on `model_error`.
+ */
+export function ownerDisabledResult(input: {
+  readonly ctx: StepContext;
+  readonly stepKind: string;
+  readonly startedAt: number;
+  readonly writeEntries: (tx: RuntimeTx, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly patch: SessionPatch;
+}): StepResult {
+  const { ctx } = input;
+  ctx.logger.warn('owner gate refused the agent; it fails', {
+    ownerId: ctx.ownerId,
+    agentId: ctx.taskId,
+    taskId: ctx.taskId,
+    stepKind: input.stepKind,
+  });
+  logStep(ctx, input.stepKind, input.startedAt, 'fail', { reason: FAILURE_REASONS.ownerDisabled });
+  return failResult({
+    ctx,
+    reason: FAILURE_REASONS.ownerDisabled,
+    message: `Owner ${ctx.ownerId} of agent ${ctx.taskId} is disabled or unknown`,
+    writeEntries: input.writeEntries,
+    patch: input.patch,
+  });
 }
 
 /** Logs the end of a step (rule 3 of the plan). */
@@ -268,7 +300,8 @@ function newToolCalls(
  * - The turn limit spent → `fail` `turn_limit`, the delivered messages written before the `failed` event.
  * - Otherwise the delivered messages go to history before the call, and the model of the session
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
- *   `model_error`. Both failures close the session and reset the turn counter (DC-1).
+ *   `model_error`; an owner `OwnerGate` refused → `fail` `owner_disabled`, the model not called. Each
+ *   failure closes the session and resets the turn counter (DC-1).
  * - An answer with calls is written with its open calls (`requested`): `continue`, the tool step runs
  *   them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
  *   `complete` with `{ report }`, the session closed and its counter reset.
@@ -369,6 +402,15 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     );
     if (result === undefined) return { outcome: 'continue' };
 
+    if (result.kind === 'owner_disabled') {
+      return ownerDisabledResult({
+        ctx,
+        stepKind: STEP_KIND,
+        startedAt,
+        writeEntries: writeStepEntries,
+        patch: basePatch,
+      });
+    }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
         reason: FAILURE_REASONS.modelError,

@@ -5,7 +5,7 @@ import {
   type Database,
 } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { UserStatusSchema } from '@agent-os/contracts';
+import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 
 /** A transaction of the caller or the plain client: both run the same queries. */
@@ -185,6 +185,18 @@ export async function setPersonalAdmin(
   await executor
     .update(identityUsers)
     .set({ isAdmin: enabled })
+    .where(eq(identityUsers.id, userId));
+}
+
+/** Turns the account on or off; nothing else of the employee changes. */
+export async function setUserStatus(
+  executor: Executor,
+  userId: string,
+  status: UserStatus,
+): Promise<void> {
+  await executor
+    .update(identityUsers)
+    .set({ status })
     .where(eq(identityUsers.id, userId));
 }
 

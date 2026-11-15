@@ -8,6 +8,7 @@ import { AdminUsersController } from './admin-users.controller.js';
 import { AuthController } from './auth.controller.js';
 import { HealthController } from './health.controller.js';
 import { IdentityDirectory } from './identity-directory.js';
+import { IdentityOwnerGate } from './identity-owner-gate.js';
 import { IdentitySettings } from './identity-settings.js';
 import {
   DEFAULT_GOOGLE_ISSUER_URL,
@@ -38,6 +39,7 @@ import { UsersService } from './users.service.js';
   ],
   providers: [
     IdentityDirectory,
+    IdentityOwnerGate,
     IdentitySettings,
     OidcSignIn,
     PasswordSignIn,
@@ -49,6 +51,6 @@ import { UsersService } from './users.service.js';
     { provide: GOOGLE_ISSUER_URL, useValue: DEFAULT_GOOGLE_ISSUER_URL },
     { provide: APP_GUARD, useClass: SessionGuard },
   ],
-  exports: [IdentityDirectory, IdentitySettings],
+  exports: [IdentityDirectory, IdentityOwnerGate, IdentitySettings],
 })
 export class IdentityModule {}

@@ -15,13 +15,14 @@ import type { AuthedRequest, AuthUser } from './auth-user.js';
 import { identityError } from './identity.errors.js';
 import { IS_PUBLIC } from './public.decorator.js';
 import { frontendOrigin, readSessionToken } from './session-cookie.js';
-import { type FoundSession, SessionStore } from './session.store.js';
+import {
+  ENDED_BY_BLOCK,
+  type FoundSession,
+  SessionStore,
+} from './session.store.js';
 
 /** Methods that change state: with the session cookie they must come from the web's origin (DC-3). */
 const CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-
-/** Session ended by a block (KD-4); answered ACCOUNT_DISABLED while the employee stays disabled (DC-9). */
-const ENDED_BY_BLOCK = 'account_disabled';
 
 /**
  * The one global check of the API (KD-3, ADR-0012, Flow 3): a changing request with the cookie
@@ -115,9 +116,10 @@ export class SessionGuard implements CanActivate {
 }
 
 /**
- * Why a found session does not let the request in, or undefined when it does. A blocked employee
- * hears ACCOUNT_DISABLED until the session's own limit passes; a session ended by a block whose
- * employee was enabled again stays dead (Invariant 1).
+ * Why a found session does not let the request in, or undefined when it does — the one place of the
+ * session's state. A blocked employee hears ACCOUNT_DISABLED until the session's own limit passes; a
+ * session ended by a block whose employee was enabled again stays dead and answers AUTH_REQUIRED
+ * (Invariant 1, DC-9). A disabled employee never passes, whatever his session row says.
  */
 function refusalOf(session: FoundSession): string | undefined {
   if (session.expired) return 'expired';

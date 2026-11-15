@@ -7,11 +7,13 @@ import {
   type RunCodeArgs,
   RunCodeArgsSchema,
   RunCodeConfirmationContentSchema,
+  ToolOutcomeSchema,
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
 import type { CodeRunConfig } from '../../config.js';
 import { type DefinitionCatalog, definitionOf } from '../../definitions/catalog.js';
+import { isOwnerDisabled } from '../../owner-gate.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
 import { sessions } from '../../store/sessions.repository.js';
 import { toolCalls } from '../../store/tool-calls.repository.js';
@@ -251,10 +253,22 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     }
 
     const signal = AbortSignal.any([run.codeScope.signal, runSignal]);
-    const execution = await deps.runner.callFromCode(
-      { name: request.name, args: request.args },
-      { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
-    );
+    const execution = await deps.runner
+      .callFromCode(
+        { name: request.name, args: request.args },
+        { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
+      )
+      .catch(async (error: unknown) => {
+        // `OwnerGate` refused before the call started (KD-4): `interrupted` even in a `write` run, never
+        // `unknown`. The rejection still ends the run; the agent fails at its next model call.
+        if (isOwnerDisabled(error)) {
+          await codeCalls.close(deps.database, key, {
+            outcome: ToolOutcomeSchema.enum.interrupted,
+            finishedAt: new Date(),
+          });
+        }
+        throw error;
+      });
     if (execution.kind === 'aborted') {
       // A record that the call was cancelled, not a new action: its own transaction, no `guard` (Flow 4).
       await codeCalls.close(deps.database, key, {
