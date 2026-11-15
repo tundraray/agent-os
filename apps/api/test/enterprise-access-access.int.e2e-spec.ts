@@ -108,7 +108,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // @category: core-functionality
   // @dependency: AdminAccessController, AccessService, effectiveAccess, ToolRegistry, ToolRunner, run_code, workflow start, AuditLog, McpRegistry, runtime workers, scripted model, MCP fixture process, Postgres
   // @complexity: high
-  it.todo('INT-1: tools are offered, run, confirmed and run from code only by the rights of that moment, and a refusal reaches no server and leaves exactly one audit record');
+  it.todo(
+    'INT-1: tools are offered, run, confirmed and run from code only by the rights of that moment, and a refusal reaches no server and leaves exactly one audit record',
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-2: a model call is made only with a verdict - at every place that calls a model
@@ -148,7 +150,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // @category: core-functionality
   // @dependency: AdminModelsController, AdminAccessController, AccessService, ModelClient, ModelStep, CompactionStep, start_agent, TitleService, TokenLedger, AuditLog, runtime workers, scripted model, Postgres
   // @complexity: high
-  it.todo('INT-2: every model call - chat, agent start, running agent, title - is made only on a verdict, costs what the catalogue said before that call, and a refusal is recorded once');
+  it.todo(
+    'INT-2: every model call - chat, agent start, running agent, title - is made only on a verdict, costs what the catalogue said before that call, and a refusal is recorded once',
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-3: quota - the call that reaches it is the last one, the pause is the platform's, and a raise or a refusal ends it before the answer
@@ -201,5 +205,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // @category: core-functionality
   // @dependency: AccessService, effectiveAccess, TokenLedger.monthSpendByModel, ModelClient, ModelStep, QuotaPauses, Decisions, AdminAccessController, MyAccessController, AuditLog, runtime workers, scripted model, Postgres
   // @complexity: high
-  it.todo('INT-3: a quota reached by in-flight calls pauses the next call, a raise or a refusal ends the pause before the route answers, a new month ends it, and "Мой доступ" agrees with the check');
+  it.todo(
+    'INT-3: a quota reached by in-flight calls pauses the next call, a raise or a refusal ends the pause before the route answers, a new month ends it, and "Мой доступ" agrees with the check',
+  );
 });

@@ -51,7 +51,8 @@ export async function seedSuperAdmin(
           name: input.name,
           passwordHash,
         }));
-      if (found !== undefined) await setPasswordAndEnable(tx, found.id, passwordHash);
+      if (found !== undefined)
+        await setPasswordAndEnable(tx, found.id, passwordHash);
       await addRoleMember(tx, await builtinRoleId(tx), user.id);
       await auditLog.record(tx, {
         kind: 'admin_change',

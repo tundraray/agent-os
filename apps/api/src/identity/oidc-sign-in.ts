@@ -22,7 +22,7 @@ import { isUuid } from './users.service.js';
 export const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;
 
 /** Scopes the sign-in asks the provider for (ProviderView.providerData). */
-const SIGN_IN_SCOPES = 'openid email profile';
+export const SIGN_IN_SCOPES = 'openid email profile';
 
 /** Seconds the issuer may take to answer discovery, the token exchange and its keys. */
 const ISSUER_TIMEOUT_SECONDS = 10;
@@ -70,7 +70,7 @@ export interface ReturnFromProvider {
 }
 
 /** `identity_providers.options` as stored; the table accepts any JSON, so it is read through a schema. */
-const StoredOptionsSchema = z.object({
+export const StoredOptionsSchema = z.object({
   issuer: z.string().optional(),
   clientId: z.string().optional(),
   clientSecret: z.string().optional(),

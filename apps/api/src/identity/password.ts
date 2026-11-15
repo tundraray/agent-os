@@ -14,7 +14,8 @@ const TAG_BYTES = 32;
 const ARGON2_VERSION = 19;
 
 /** PHC string: `$argon2id$v=19$m=<KiB>,t=<passes>,p=<lanes>$<salt>$<hash>`, base64 without padding. */
-const HASH_FORMAT = /^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/;
+const HASH_FORMAT =
+  /^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/;
 
 interface Argon2Run {
   password: string;
@@ -42,7 +43,8 @@ function runArgon2(run: Argon2Run): Promise<Buffer> {
   });
 }
 
-const toBase64 = (bytes: Buffer): string => bytes.toString('base64').replace(/=+$/, '');
+const toBase64 = (bytes: Buffer): string =>
+  bytes.toString('base64').replace(/=+$/, '');
 
 /** Throws 400 VALIDATION_FAILED `weak_password` unless the new password is 12..256 characters. */
 export function checkNewPassword(password: string): void {
@@ -55,7 +57,12 @@ export function checkNewPassword(password: string): void {
 /** The argon2id hash of the password with a fresh random salt, parameters kept in the string. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(SALT_BYTES);
-  const tag = await runArgon2({ password, salt, ...ARGON2, tagBytes: TAG_BYTES });
+  const tag = await runArgon2({
+    password,
+    salt,
+    ...ARGON2,
+    tagBytes: TAG_BYTES,
+  });
   const { memoryKib, passes, parallelism } = ARGON2;
   return `$argon2id$v=${ARGON2_VERSION}$m=${memoryKib},t=${passes},p=${parallelism}$${toBase64(salt)}$${toBase64(tag)}`;
 }
@@ -67,15 +74,25 @@ let decoyHash: Promise<string> | undefined;
  * Whether the password matches the stored hash, compared in constant time. With no stored hash (an
  * unknown login) a decoy hash is still computed and the answer is `false` (KD-5).
  */
-export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  stored: string | null,
+): Promise<boolean> {
   if (stored === null) {
     decoyHash ??= hashPassword(randomBytes(SALT_BYTES).toString('base64'));
     await verifyPassword(password, await decoyHash);
     return false;
   }
   const match = HASH_FORMAT.exec(stored);
-  if (match === null) throw new Error('stored password hash is not an argon2id PHC string');
-  const [memoryKib = '', passes = '', parallelism = '', salt = '', expected = ''] = match.slice(1);
+  if (match === null)
+    throw new Error('stored password hash is not an argon2id PHC string');
+  const [
+    memoryKib = '',
+    passes = '',
+    parallelism = '',
+    salt = '',
+    expected = '',
+  ] = match.slice(1);
   const expectedTag = Buffer.from(expected, 'base64');
   const tag = await runArgon2({
     password,

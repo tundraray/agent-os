@@ -61,7 +61,9 @@ describe('enterprise-access / access - E2E (full API process + real Postgres)', 
   // @category: e2e
   // @dependency: full-system (AccessModule, AccessService, AdminAccessController, MyAccessController, QuotaPauses and its WorkerLoop, Decisions, LiveHub stream, SessionGuard, AuditLog, runtime workers on two instances, process start/stop, scripted model)
   // @complexity: high
-  it.todo('E2E-1: after the quota is reached the stream shows the pause, a restart and a second instance leave it as it was, and the administrator\'s raise makes the answer arrive once without the employee doing anything');
+  it.todo(
+    "E2E-1: after the quota is reached the stream shows the pause, a restart and a second instance leave it as it was, and the administrator's raise makes the answer arrive once without the employee doing anything",
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // E2E-2: the developer's first run - `seed:access` and the `dev` role
@@ -89,5 +91,7 @@ describe('enterprise-access / access - E2E (full API process + real Postgres)', 
   // @category: e2e
   // @dependency: full-system (seed:access script, seed:mcp script, AdminModelsController, AdminAccessController, AccessService, TokenLedger, SessionGuard dev sign-in, runtime workers, scripted model)
   // @complexity: medium
-  it.todo('E2E-2: seed:access on a database after seed:mcp makes the catalogue with the old prices and the dev role, is safe to run twice, and the development employee gets an answer priced from the catalogue once the role is assigned');
+  it.todo(
+    'E2E-2: seed:access on a database after seed:mcp makes the catalogue with the old prices and the dev role, is safe to run twice, and the development employee gets an answer priced from the catalogue once the role is assigned',
+  );
 });

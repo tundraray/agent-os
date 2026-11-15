@@ -15,13 +15,16 @@ import {
 } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { asc, eq, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import { AuditLog } from '../audit/audit-log.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import { identityError } from './identity.errors.js';
 import { IdentitySettings } from './identity-settings.js';
-import { redirectUriOf } from './oidc-sign-in.js';
+import {
+  redirectUriOf,
+  SIGN_IN_SCOPES,
+  StoredOptionsSchema,
+} from './oidc-sign-in.js';
 import {
   isComplete,
   parseProviderType,
@@ -33,16 +36,6 @@ import {
 import type { AddressedRequest } from './public-url.js';
 import type { Executor } from './users.repository.js';
 import { isUuid } from './users.service.js';
-
-/** Scopes the sign-in asks the provider for (ProviderView.providerData). */
-const PROVIDER_SCOPES = 'openid email profile';
-
-/** `identity_providers.options` as stored; the table accepts any JSON, so it is read through a schema. */
-const StoredOptionsSchema = z.object({
-  issuer: z.string().optional(),
-  clientId: z.string().optional(),
-  clientSecret: z.string().optional(),
-});
 
 type ProviderRow = typeof identityProviders.$inferSelect;
 
@@ -292,7 +285,7 @@ export class ProvidersService {
       options: toOptionsView(provider.type, provider.options),
       providerData: {
         redirectUri: redirectUriOf(publicUrl, provider.id),
-        scopes: PROVIDER_SCOPES,
+        scopes: SIGN_IN_SCOPES,
       },
     };
   }

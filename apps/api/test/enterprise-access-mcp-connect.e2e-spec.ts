@@ -52,7 +52,9 @@ describe('enterprise-access / mcp-connect - E2E (full API process + real Postgre
   // @category: e2e
   // @dependency: full-system (AdminMcpServersController, McpConnectionsController, McpAccounts, McpClient, SecretBox, AuditLog, logger masker, secrets:reset command, runtime workers, LiveHub, scripted model, MCP fixture process + authorization server)
   // @complexity: high
-  it.todo('E2E-1: a registered, connected and used server leaves no secret value in any table, log, audit row, response or history, and secrets:reset empties the accounts and disables shared tokens');
+  it.todo(
+    'E2E-1: a registered, connected and used server leaves no secret value in any table, log, audit row, response or history, and secrets:reset empties the accounts and disables shared tokens',
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // E2E-2: the developer's first run - `seed:mcp` and an agent reading logs
@@ -78,5 +80,7 @@ describe('enterprise-access / mcp-connect - E2E (full API process + real Postgre
   // @category: e2e
   // @dependency: full-system (seed:mcp script, McpRegistry, McpAccounts, SessionGuard dev sign-in, runtime workers, scripted model, MCP fixture process + authorization server)
   // @complexity: medium
-  it.todo('E2E-2: seed:mcp on a clean database registers logs, tracker and backoffice without the internet, is safe to run twice, and the development employee\'s agent calls a seeded tool');
+  it.todo(
+    "E2E-2: seed:mcp on a clean database registers logs, tracker and backoffice without the internet, is safe to run twice, and the development employee's agent calls a seeded tool",
+  );
 });

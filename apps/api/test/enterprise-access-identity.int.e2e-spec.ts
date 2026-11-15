@@ -3,7 +3,7 @@
 //   INT-3 = UC-3, the E2E = UC-5); PRD: docs/features/enterprise-access/prd.md (v2.4) FR-01..FR-04, FR-06..FR-08, FR-11, FR-33, NFR-01..NFR-03.
 // Generated: 2026-11-15 | Budget Used: 3/3 API integration skeletons (boundary and sessions; password sign-in and local accounts; OIDC
 //   provider sign-in), 0 web integration (see "NOT here"), 1 E2E in enterprise-access-identity.e2e-spec.ts (the operator command).
-// Test Type: Integration. Every case is `it.todo` - skeletons only, no implementation.
+// Test Type: Integration.
 //
 // Design facts the skeletons rest on (v2.2): one API process; login and password is always on (argon2id, one
 //   `INVALID_CREDENTIALS`, no attempt limit); providers are only OIDC-based, `google` (preset issuer) and `oidc` (Okta), led by
@@ -24,16 +24,6 @@
 // Harness (follows apps/api/test/support/*, vitest.config.e2e.ts): one `createTestApp({ workers: true })` per file against the docker-compose
 //   Postgres, real AppModule with the real global SessionGuard; only `AGENT_TURN_CLIENT` is the scripted model (as in
 //   agent-platform-chat.int.e2e-spec.ts). Every case uses its own employees. Responses are parsed with `@agent-os/contracts` schemas.
-//   Support the implementation tasks add (not skeletons) - see the report for what is still needed:
-//   - `test/support/test-provider.ts`: one OIDC issuer in the test process (discovery, authorize, token, JWKS, signed ID tokens with `email` and
-//     `name`, a no-email variant) and a record of the `client_id` and secret each token call carried.
-//   - `createTestApp` option `providerEndpoints` (the `google` preset issuer points at the test issuer) and a captured process log for the
-//     NFR-02 scan.
-//   - `test/support/session.ts`: cookie-jar request helper; `signInWithPassword(app, login, password)` through `POST /api/auth/password`
-//     (returns cookie and the `id` read from `GET /api/auth/me`); `seedSuperAdmin(app, login, password)` (the function the operator command
-//     calls, no process) so the first administrator exists; `createEmployee(adminApi, {...})` through `POST /api/admin/users`;
-//     `ageSession(pool, cookie, { createdMinutesAgo, lastSeenMinutesAgo })` that moves the session row's timestamps - the clock is never faked.
-//   - `chatApi` and `sseClient` in support/api.ts stop sending `x-user-id` and carry the cookie; `newUser()` is replaced by `createEmployee`.
 // Mock boundary: the model (scripted double, with its latch) and the provider (in-process). SessionGuard, AuditLog, password hashing,
 //   OwnerGate, repositories, Postgres - real. Do NOT mock the guard, the database or the hasher.
 //
@@ -261,13 +251,25 @@ function cookiesOf(response: Response): string {
     .join('; ');
 }
 
+/** A request of the administrator under `/admin/providers`. */
+type ProviderAdminRequest = (
+  method: Method,
+  path: string,
+  body?: object,
+) => Promise<Response>;
+
+const providerAdminRequest: ProviderAdminRequest = (method, path, body) =>
+  apiRequest(harness.app, admin, method, `/admin/providers${path}`, body);
+
 /**
  * Runs `work` with an enabled `google` provider (its issuer is the test issuer) and the public URL set to
  * this app's address, so the provider redirects back here; then disables the provider and puts the
  * settings back (rule 11 of the plan: no enabled provider and the developer's own settings are left).
+ * Every provider administration call goes through `providerAdmin`, so a caller can collect the answers.
  */
 async function withGoogleProvider(
   work: (providerId: string) => Promise<void>,
+  providerAdmin: ProviderAdminRequest = providerAdminRequest,
 ): Promise<void> {
   const previous = await getSettings();
   const limits = {
@@ -282,7 +284,7 @@ async function withGoogleProvider(
       SignInSettingsSchema,
     );
     const created = await expectBody(
-      apiRequest(harness.app, admin, 'post', '/admin/providers', {
+      providerAdmin('post', '', {
         type: 'google',
         name: `e2e-google-${randomUUID()}`,
         options: {
@@ -295,15 +297,7 @@ async function withGoogleProvider(
     );
     providerId = created.id;
     await expectBody(
-      apiRequest(
-        harness.app,
-        admin,
-        'patch',
-        `/admin/providers/${providerId}`,
-        {
-          enabled: true,
-        },
-      ),
+      providerAdmin('patch', `/${providerId}`, { enabled: true }),
       200,
       ProviderViewSchema,
     );
@@ -311,13 +305,7 @@ async function withGoogleProvider(
   } finally {
     if (providerId !== undefined) {
       await expectBody(
-        apiRequest(
-          harness.app,
-          admin,
-          'patch',
-          `/admin/providers/${providerId}`,
-          { enabled: false },
-        ),
+        providerAdmin('patch', `/${providerId}`, { enabled: false }),
         200,
         ProviderViewSchema,
       );
@@ -1292,20 +1280,14 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       const secondClientId = `e2e-okta-client-${randomUUID()}`;
       const oktaName = `e2e-Okta-${randomUUID()}`;
 
-      /** Every answer of the provider administration, for the secrets scan (row 12). */
+      /** Every answer of the provider administration (`withGoogleProvider` too), for the secrets scan (row 12). */
       const adminAnswers: Response[] = [];
-      const providerAdmin = async (
-        method: Method,
-        path: string,
-        body?: object,
-      ): Promise<Response> => {
-        const answer = await apiRequest(
-          app,
-          admin,
-          method,
-          `/admin/providers${path}`,
-          body,
-        );
+      const providerAdmin: ProviderAdminRequest = async (
+        method,
+        path,
+        body,
+      ) => {
+        const answer = await providerAdminRequest(method, path, body);
         adminAnswers.push(answer);
         return answer;
       };
@@ -1722,7 +1704,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
             after: { clientId: secondClientId, clientSecret: 'secret_changed' },
             outcome: 'ok',
           });
-        });
+        }, providerAdmin);
 
         // Row 12 (NFR-02, AC-03.1, AC-11.2) - no provider secret in any answer of the provider administration
         // or in the log, and no session token in the log; the scan does find the secrets where they are

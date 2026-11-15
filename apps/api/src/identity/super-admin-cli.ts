@@ -19,10 +19,13 @@ function readArguments(): { login: string; name: string; email: string } {
     allowPositionals: true,
   });
   if (positionals.length > 0) {
-    throw new Error('Positional arguments are not accepted; the password is read from standard input');
+    throw new Error(
+      'Positional arguments are not accepted; the password is read from standard input',
+    );
   }
   const { login, name, email } = values;
-  if (!login || !name || !email) throw new Error('--login, --name and --email are required');
+  if (!login || !name || !email)
+    throw new Error('--login, --name and --email are required');
   return { login, name, email };
 }
 
@@ -36,7 +39,9 @@ async function readPassword(): Promise<string> {
  * and `params`; only its cause (the driver error) is logged.
  */
 function withoutQueryParams(error: unknown): unknown {
-  return error instanceof Error && 'params' in error ? (error.cause ?? new Error('Query failed')) : error;
+  return error instanceof Error && 'params' in error
+    ? (error.cause ?? new Error('Query failed'))
+    : error;
 }
 
 /**
@@ -49,20 +54,30 @@ async function main(): Promise<void> {
   if (!databaseUrl) throw new Error('DATABASE_URL is not set');
   const { login, name, email } = readArguments();
   const password = await readPassword();
-  const connection = createDatabase({ connectionString: databaseUrl, poolMax: 1 });
+  const connection = createDatabase({
+    connectionString: databaseUrl,
+    poolMax: 1,
+  });
   try {
-    const { userId, created } = await seedSuperAdmin(connection.db, new AuditLog(connection.db), {
-      login,
-      name,
-      email,
-      password,
-    });
-    logger.info(created ? 'Super-administrator created' : 'Super-administrator repaired', {
-      login,
-      userId,
-      created,
-      durationMs: Date.now() - startedAt,
-    });
+    const { userId, created } = await seedSuperAdmin(
+      connection.db,
+      new AuditLog(connection.db),
+      {
+        login,
+        name,
+        email,
+        password,
+      },
+    );
+    logger.info(
+      created ? 'Super-administrator created' : 'Super-administrator repaired',
+      {
+        login,
+        userId,
+        created,
+        durationMs: Date.now() - startedAt,
+      },
+    );
   } finally {
     await connection.close();
   }
@@ -72,6 +87,8 @@ try {
   await main();
 } catch (error) {
   // The whole error: a connection failure is an AggregateError with an empty message.
-  logger.error('Super-administrator command failed', { error: withoutQueryParams(error) });
+  logger.error('Super-administrator command failed', {
+    error: withoutQueryParams(error),
+  });
   process.exitCode = 1;
 }

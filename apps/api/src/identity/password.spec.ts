@@ -26,10 +26,18 @@ describe('password policy and argon2id round trip', () => {
   it('verifies only the hashed password; the hash is an argon2id string with its parameters', async () => {
     const hash = await hashPassword('correct horse battery');
 
-    expect(hash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]+$/);
+    expect(hash).toMatch(
+      /^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]+$/,
+    );
     expect(hash).not.toContain('correct horse battery');
-    await expect(verifyPassword('correct horse battery', hash)).resolves.toBe(true);
-    await expect(verifyPassword('correct horse batterz', hash)).resolves.toBe(false);
-    await expect(verifyPassword('correct horse battery', null)).resolves.toBe(false);
+    await expect(verifyPassword('correct horse battery', hash)).resolves.toBe(
+      true,
+    );
+    await expect(verifyPassword('correct horse batterz', hash)).resolves.toBe(
+      false,
+    );
+    await expect(verifyPassword('correct horse battery', null)).resolves.toBe(
+      false,
+    );
   });
 });

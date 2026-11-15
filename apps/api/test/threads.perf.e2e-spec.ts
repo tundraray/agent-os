@@ -9,7 +9,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { THREAD_PAGE_SIZE, ThreadListResponseSchema } from '@agent-os/contracts';
+import {
+  THREAD_PAGE_SIZE,
+  ThreadListResponseSchema,
+} from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chatApi } from './support/api.js';
@@ -63,20 +66,31 @@ describe('agent-platform / chat - conversation list performance (local Postgres)
   it(
     'GET /threads answers with p95 <= 300 ms for an owner with 200 conversations',
     async () => {
-      const admin = await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`);
-      const api = chatApi(harness.app, await createEmployee(harness.app, admin));
-      for (let index = 0; index < CONVERSATIONS; index += 1) await api.createThread();
+      const admin = await seedSuperAdmin(
+        harness.app,
+        `e2e-admin-${randomUUID()}`,
+      );
+      const api = chatApi(
+        harness.app,
+        await createEmployee(harness.app, admin),
+      );
+      for (let index = 0; index < CONVERSATIONS; index += 1)
+        await api.createThread();
 
       const durations = await measureSequential(
         () => api.raw('get', '/threads'),
         (response) => {
           expect(response.status).toBe(200);
-          expect(ThreadListResponseSchema.parse(response.body).threads).toHaveLength(THREAD_PAGE_SIZE);
+          expect(
+            ThreadListResponseSchema.parse(response.body).threads,
+          ).toHaveLength(THREAD_PAGE_SIZE);
         },
       );
 
       expect(durations).toHaveLength(TIMED_REQUESTS);
-      expect(durations[P95_INDEX], 'list p95, ms').toBeLessThanOrEqual(LIST_P95_BUDGET_MS);
+      expect(durations[P95_INDEX], 'list p95, ms').toBeLessThanOrEqual(
+        LIST_P95_BUDGET_MS,
+      );
     },
     PERF_TEST_TIMEOUT_MS,
   );

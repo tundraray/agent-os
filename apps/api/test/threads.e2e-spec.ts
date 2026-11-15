@@ -13,11 +13,24 @@
 // another's. Response bodies are parsed with the `@agent-os/contracts` schemas.
 
 import { randomUUID } from 'node:crypto';
-import { ThreadSummarySchema, type ThreadListResponse, type ThreadSummary } from '@agent-os/contracts';
+import {
+  ThreadSummarySchema,
+  type ThreadListResponse,
+  type ThreadSummary,
+} from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ChatApi, chatApi, expectBody, expectError } from './support/api.js';
+import {
+  type ChatApi,
+  chatApi,
+  expectBody,
+  expectError,
+} from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { createEmployee, seedSuperAdmin, type Session } from './support/session.js';
+import {
+  createEmployee,
+  seedSuperAdmin,
+  type Session,
+} from './support/session.js';
 
 /** Creating 120 conversations one by one plus a page walk exceeds the default 5 s. */
 const BULK_TEST_TIMEOUT_MS = 60_000;
@@ -50,9 +63,13 @@ async function asNewUser(): Promise<ChatApi> {
 }
 
 /** Creates `count` conversations one request after another. */
-async function createConversations(api: ChatApi, count: number): Promise<ThreadSummary[]> {
+async function createConversations(
+  api: ChatApi,
+  count: number,
+): Promise<ThreadSummary[]> {
   const created: ThreadSummary[] = [];
-  for (let index = 0; index < count; index += 1) created.push(await api.createThread());
+  for (let index = 0; index < count; index += 1)
+    created.push(await api.createThread());
   return created;
 }
 
@@ -63,7 +80,13 @@ async function createConversations(api: ChatApi, count: number): Promise<ThreadS
 function listOrder(summaries: readonly ThreadSummary[]): string[] {
   return summaries
     .toSorted((a, b) =>
-      a.updatedAt !== b.updatedAt ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.id < b.id ? 1 : -1,
+      a.updatedAt !== b.updatedAt
+        ? a.updatedAt < b.updatedAt
+          ? 1
+          : -1
+        : a.id < b.id
+          ? 1
+          : -1,
     )
     .map((summary) => summary.id);
 }
@@ -71,11 +94,18 @@ function listOrder(summaries: readonly ThreadSummary[]): string[] {
 type Page = { ids: string[]; nextCursor: string | null };
 
 function pageOf(response: ThreadListResponse): Page {
-  return { ids: response.threads.map((thread) => thread.id), nextCursor: response.nextCursor };
+  return {
+    ids: response.threads.map((thread) => thread.id),
+    nextCursor: response.nextCursor,
+  };
 }
 
 /** Follows `nextCursor` from `cursor` until null; bounded, so a cursor loop fails instead of hanging. */
-async function walkFrom(api: ChatApi, cursor: string | null, pages: Page[]): Promise<Page[]> {
+async function walkFrom(
+  api: ChatApi,
+  cursor: string | null,
+  pages: Page[],
+): Promise<Page[]> {
   let next = cursor;
   while (next !== null && pages.length < 10) {
     const page = pageOf(await api.listThreads(next));
@@ -92,58 +122,80 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
   describe('GET /threads', () => {
     // AC-14.3 (list), former AC-13.2: 120 conversations walk as 6 pages of 20 with no duplicates, nextCursor null at the end.
     // Catches: a duplicate or skipped conversation at a page boundary of the SQL keyset page; a non-null cursor after the last page.
-    it('pages 120 conversations as 6 pages of 20 in the list order with no duplicates and nextCursor null at the end', async () => {
-      const api = await asNewUser();
-      const expected = listOrder(await createConversations(api, 120));
+    it(
+      'pages 120 conversations as 6 pages of 20 in the list order with no duplicates and nextCursor null at the end',
+      async () => {
+        const api = await asNewUser();
+        const expected = listOrder(await createConversations(api, 120));
 
-      const first = pageOf(await api.listThreads());
-      const pages = await walkFrom(api, first.nextCursor, [first]);
+        const first = pageOf(await api.listThreads());
+        const pages = await walkFrom(api, first.nextCursor, [first]);
 
-      expect(pages).toHaveLength(6);
-      expect(pages.map((page) => page.ids.length)).toEqual([20, 20, 20, 20, 20, 20]);
-      for (const page of pages.slice(0, 5)) expect(page.nextCursor).not.toBeNull();
-      expect(pages[5]?.nextCursor).toBeNull();
-      const union = pages.flatMap((page) => page.ids);
-      expect(new Set(union).size).toBe(120);
-      expect(union).toEqual(expected);
-    }, BULK_TEST_TIMEOUT_MS);
+        expect(pages).toHaveLength(6);
+        expect(pages.map((page) => page.ids.length)).toEqual([
+          20, 20, 20, 20, 20, 20,
+        ]);
+        for (const page of pages.slice(0, 5))
+          expect(page.nextCursor).not.toBeNull();
+        expect(pages[5]?.nextCursor).toBeNull();
+        const union = pages.flatMap((page) => page.ids);
+        expect(new Set(union).size).toBe(120);
+        expect(union).toEqual(expected);
+      },
+      BULK_TEST_TIMEOUT_MS,
+    );
 
     // AC-14.3 (list), former AC-13.2a: a delete and a rename between pages 2 and 3.
     // Catches: a positional (offset) cursor that skips a conversation after a delete, or a renamed (raised) conversation
     //   returned again on a later page of the same walk.
-    it('continues after the cursor when a page-1 conversation is deleted and a page-5 one is renamed to the top between pages 2 and 3', async () => {
-      const api = await asNewUser();
-      const expected = listOrder(await createConversations(api, 120));
-      const deletedId = expected[4];
-      const raisedId = expected[84];
-      if (deletedId === undefined || raisedId === undefined) throw new Error('fewer than 120 conversations');
+    it(
+      'continues after the cursor when a page-1 conversation is deleted and a page-5 one is renamed to the top between pages 2 and 3',
+      async () => {
+        const api = await asNewUser();
+        const expected = listOrder(await createConversations(api, 120));
+        const deletedId = expected[4];
+        const raisedId = expected[84];
+        if (deletedId === undefined || raisedId === undefined)
+          throw new Error('fewer than 120 conversations');
 
-      const pages = [pageOf(await api.listThreads())];
-      pages.push(pageOf(await api.listThreads(pages[0]?.nextCursor ?? undefined)));
-      await api.deleteThread(deletedId);
-      await api.renameThread(raisedId, 'Поднятая');
-      await walkFrom(api, pages[1]?.nextCursor ?? null, pages);
+        const pages = [pageOf(await api.listThreads())];
+        pages.push(
+          pageOf(await api.listThreads(pages[0]?.nextCursor ?? undefined)),
+        );
+        await api.deleteThread(deletedId);
+        await api.renameThread(raisedId, 'Поднятая');
+        await walkFrom(api, pages[1]?.nextCursor ?? null, pages);
 
-      expect(pages).toHaveLength(6);
-      expect(pages[0]?.ids).toContain(deletedId);
-      const later = pages.slice(2).flatMap((page) => page.ids);
-      expect(later).toEqual(expected.slice(40).filter((id) => id !== raisedId));
-      expect(later).toHaveLength(79);
-      const union = pages.flatMap((page) => page.ids);
-      expect(union).toHaveLength(119);
-      expect(new Set(union).size).toBe(119);
-      expect(union).not.toContain(raisedId);
-      expect(pages[5]?.ids).toHaveLength(19);
-      expect(pages[5]?.nextCursor).toBeNull();
-      expect((await api.listThreads()).threads[0]).toMatchObject({ id: raisedId, title: 'Поднятая' });
-    }, BULK_TEST_TIMEOUT_MS);
+        expect(pages).toHaveLength(6);
+        expect(pages[0]?.ids).toContain(deletedId);
+        const later = pages.slice(2).flatMap((page) => page.ids);
+        expect(later).toEqual(
+          expected.slice(40).filter((id) => id !== raisedId),
+        );
+        expect(later).toHaveLength(79);
+        const union = pages.flatMap((page) => page.ids);
+        expect(union).toHaveLength(119);
+        expect(new Set(union).size).toBe(119);
+        expect(union).not.toContain(raisedId);
+        expect(pages[5]?.ids).toHaveLength(19);
+        expect(pages[5]?.nextCursor).toBeNull();
+        expect((await api.listThreads()).threads[0]).toMatchObject({
+          id: raisedId,
+          title: 'Поднятая',
+        });
+      },
+      BULK_TEST_TIMEOUT_MS,
+    );
 
     // Contract «Беседы»: GET /threads -> 400 INVALID_CURSOR for a cursor that does not decode.
     // Catches: an unparsable cursor that reaches the SQL page and answers 500.
     it('rejects an unparsable cursor with 400 INVALID_CURSOR', async () => {
       const api = await asNewUser();
 
-      const body = await expectError(api.raw('get', '/threads?cursor=not-a-cursor'), 400);
+      const body = await expectError(
+        api.raw('get', '/threads?cursor=not-a-cursor'),
+        400,
+      );
 
       expect(body).toEqual({
         statusCode: 400,
@@ -158,7 +210,10 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
     it('rejects a 513-character cursor with 400 VALIDATION_FAILED', async () => {
       const api = await asNewUser();
 
-      const body = await expectError(api.raw('get', `/threads?cursor=${'a'.repeat(513)}`), 400);
+      const body = await expectError(
+        api.raw('get', `/threads?cursor=${'a'.repeat(513)}`),
+        400,
+      );
 
       expect(body.errorCode).toBe('VALIDATION_FAILED');
       expect(body.message).toEqual([expect.stringContaining('cursor')]);
@@ -174,13 +229,19 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
     const api = await asNewUser();
     const older = await api.createThread();
 
-    const body = await expectBody(api.raw('post', '/threads', { id: 'client-id' }), 201, ThreadSummarySchema);
+    const body = await expectBody(
+      api.raw('post', '/threads', { id: 'client-id' }),
+      201,
+      ThreadSummarySchema,
+    );
 
     expect(body.title).toBeNull();
     expect(body.id).toMatch(UUID);
     expect(body.id).not.toBe('client-id');
     expect(body.createdAt).toBe(body.updatedAt);
-    expect((await api.listThreads()).threads.map((thread) => thread.id)).toEqual([body.id, older.id]);
+    expect(
+      (await api.listThreads()).threads.map((thread) => thread.id),
+    ).toEqual([body.id, older.id]);
   });
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -196,8 +257,13 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
       const renamed = await api.renameThread(id, '  Отчёт Q3  ');
 
       expect(renamed).toMatchObject({ id, title: 'Отчёт Q3' });
-      expect((await api.listThreads()).threads.find((thread) => thread.id === id)?.title).toBe('Отчёт Q3');
-      expect((await api.renameThread(id, 'a'.repeat(200))).title).toHaveLength(200);
+      expect(
+        (await api.listThreads()).threads.find((thread) => thread.id === id)
+          ?.title,
+      ).toBe('Отчёт Q3');
+      expect((await api.renameThread(id, 'a'.repeat(200))).title).toHaveLength(
+        200,
+      );
     });
 
     // AC-14.3 (rename), former AC-15.2: missing, empty, whitespace-only and 201-character titles.
@@ -207,8 +273,16 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
       const { id } = await api.createThread();
       await api.renameThread(id, 'Исходный');
 
-      for (const invalid of [{}, { title: '' }, { title: '   ' }, { title: 'a'.repeat(201) }]) {
-        const body = await expectError(api.raw('patch', `/threads/${id}`, invalid), 400);
+      for (const invalid of [
+        {},
+        { title: '' },
+        { title: '   ' },
+        { title: 'a'.repeat(201) },
+      ]) {
+        const body = await expectError(
+          api.raw('patch', `/threads/${id}`, invalid),
+          400,
+        );
         expect(body.errorCode).toBe('VALIDATION_FAILED');
         expect(body.message).toEqual([expect.stringContaining('title')]);
       }
@@ -232,10 +306,23 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
 
     expect(deleted.status).toBe(204);
     expect(deleted.text).toBe('');
-    expect((await api.listThreads()).threads.map((thread) => thread.id)).toEqual([kept.id]);
-    expect(await expectError(api.raw('get', `/threads/${id}`), 404)).toEqual(NOT_FOUND_BODY);
-    expect(await expectError(api.raw('patch', `/threads/${id}`, { title: 'Снова' }), 404)).toEqual(NOT_FOUND_BODY);
-    expect(await expectError(api.raw('delete', `/threads/${id}`), 404)).toEqual(NOT_FOUND_BODY);
-    expect((await api.listThreads()).threads.map((thread) => thread.id)).toEqual([kept.id]);
+    expect(
+      (await api.listThreads()).threads.map((thread) => thread.id),
+    ).toEqual([kept.id]);
+    expect(await expectError(api.raw('get', `/threads/${id}`), 404)).toEqual(
+      NOT_FOUND_BODY,
+    );
+    expect(
+      await expectError(
+        api.raw('patch', `/threads/${id}`, { title: 'Снова' }),
+        404,
+      ),
+    ).toEqual(NOT_FOUND_BODY);
+    expect(await expectError(api.raw('delete', `/threads/${id}`), 404)).toEqual(
+      NOT_FOUND_BODY,
+    );
+    expect(
+      (await api.listThreads()).threads.map((thread) => thread.id),
+    ).toEqual([kept.id]);
   });
 });

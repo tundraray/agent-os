@@ -11,7 +11,7 @@
 // Migration 0010 drops the research tables, 0011 creates the six `runtime_*` tables, 0012 the three `agent_*`
 // tables (design-agents.md, Data Model), 0014 `chat_conversations` (design-chat.md, Data Model) and 0015 drops
 // `chat_thread_runs`, 0016 adds `agent_tool_results` and `agent_code_calls` (code-execution/design-code-execution.md,
-// Data Model): after them, only these are in `app`.
+// Data Model), the identity migrations add `identity_*` and `audit_events` (enterprise-access/design-identity.md): after them, only these are in `app`.
 // The `agent_*` CHECK domains (history kind, tool call state, outcome, refusal reason) come from
 // packages/contracts/src/agents.ts.
 //
@@ -25,10 +25,12 @@ import {
   DeliveryStatusSchema,
   HistoryEntryKindSchema,
   MessageStatusSchema,
+  ProviderTypeSchema,
   TaskStatusSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  UserStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import type pg from 'pg';
@@ -47,7 +49,15 @@ const APP_TABLES = [
   'agent_sessions',
   'agent_tool_calls',
   'agent_tool_results',
+  'audit_events',
   'chat_conversations',
+  'identity_login_requests',
+  'identity_providers',
+  'identity_role_members',
+  'identity_roles',
+  'identity_sessions',
+  'identity_settings',
+  'identity_users',
   'runtime_decisions',
   'runtime_event_deliveries',
   'runtime_events',
@@ -223,6 +233,8 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         agent_code_calls_refusal_reason_check: sorted(
           ToolRefusalReasonSchema.options,
         ),
+        identity_users_status_check: sorted(UserStatusSchema.options),
+        identity_providers_type_check: sorted(ProviderTypeSchema.options),
       });
     });
   });

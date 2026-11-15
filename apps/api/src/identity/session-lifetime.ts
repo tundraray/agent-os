@@ -18,7 +18,11 @@ const TOUCH_INTERVAL_MS = 5 * MINUTE_MS;
  * DC-2: a session ends after `idleMinutes` without requests or `absoluteMinutes` after sign-in,
  * whichever comes first. Counted on every request, so new limits reach open sessions at once.
  */
-export function isSessionExpired(times: SessionTimes, limits: SessionLimits, now: Date): boolean {
+export function isSessionExpired(
+  times: SessionTimes,
+  limits: SessionLimits,
+  now: Date,
+): boolean {
   const sinceSignIn = now.getTime() - times.createdAt.getTime();
   const sinceLastRequest = now.getTime() - times.lastSeenAt.getTime();
   return (

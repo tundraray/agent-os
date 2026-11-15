@@ -8,7 +8,7 @@ import { isUuid } from './users.service.js';
 /**
  * The employee for `access` and the owner check (design-identity.md, Contract «Сотрудник для
  * `access`»): one query per call, no cache, so a changed role or status counts from the next call.
- * An id that is not a UUID (`dev-user`, `e2e-…` owners in the shared database) names nobody and
+ * An id that is not a UUID (owners left by the old development stub and `e2e-…` owners in the shared database) names nobody and
  * never reaches Postgres.
  */
 @Injectable()

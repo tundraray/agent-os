@@ -61,7 +61,9 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   // @category: core-functionality
   // @dependency: AdminMcpServersController, McpRegistry, McpAccounts, SecretBox, AuditLog, MCP fixture process + authorization server, Postgres
   // @complexity: high
-  it.todo('INT-3: a server is verified before it is saved, no shared token appears in any response, and an oauth server stays invisible until the administrator\'s account has brought its tool list');
+  it.todo(
+    "INT-3: a server is verified before it is saved, no shared token appears in any response, and an oauth server stays invisible until the administrator's account has brought its tool list",
+  );
 
   // ---------------------------------------------------------------------------------------------------------------
   // INT-4: connecting an employee's account - one-time, same-session, in time, and re-checked admin right
@@ -101,5 +103,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   // @category: core-functionality
   // @dependency: McpConnectionsController, AdminMcpServersController, McpAccounts (begin/finish), McpRegistry, SessionGuard, SecretBox, AuditLog, MCP fixture authorization server, Postgres
   // @complexity: high
-  it.todo('INT-4: a connection request is consumed once, in time and only by the employee who began it, with the issuer checked, and a demoted administrator\'s return stores nothing');
+  it.todo(
+    "INT-4: a connection request is consumed once, in time and only by the employee who began it, with the issuer checked, and a demoted administrator's return stores nothing",
+  );
 });
