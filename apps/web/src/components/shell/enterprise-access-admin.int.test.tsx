@@ -1,17 +1,13 @@
-// enterprise-access / admin (web) - integration skeleton
-// Design Doc: docs/features/enterprise-access/design-admin.md (v1.4), Test Strategy UC-1..UC-10, UC-E1..UC-E9; UXRD: docs/features/enterprise-access/uxrd.md (v2.2)
+// enterprise-access / admin (web) - integration tests
+// Design Doc: docs/features/enterprise-access/design-admin.md (v1.5), Test Strategy UC-1..UC-10, UC-E1..UC-E9; UXRD: docs/features/enterprise-access/uxrd.md (v2.3)
 //   Screens AD-01..AD-11, AD-14..AD-16, GR-01, GR-02; MC-19, MC-22..MC-30, MC-33, MC-34.
-// API contracts the rows follow (built): packages/contracts/src/identity.ts, mcp.ts, access.ts; controllers apps/api/src/identity/admin-*.controller.ts,
-//   agents/admin-mcp-servers.controller.ts, access/admin-models.controller.ts, access/admin-access.controller.ts.
-// Generated: 2026-11-16 (rewritten to the final design; replaces the 2026-11-15 five-skeleton version).
-// Budget Used: 3/3 web integration skeletons (INT-1..INT-3), each a table of rows; 0 web E2E (the design's Test Strategy names none; its
-//   «L1-сценарии в браузере» table is the manual real-browser acceptance and is not turned into skeletons).
-// Test Type: Integration (Vitest + RTL + MSW 2, jsdom). Cases are `it.todo` - skeletons only.
+// Test Type: Integration (Vitest + RTL + MSW 2, jsdom): three cases, INT-1..INT-3, each a table of rows. No web E2E: the design's «L1-сценарии в
+//   браузере» table is the manual real-browser acceptance.
 //
 // Harness (src/test/): `renderWithRuntime` mounts ChatRuntimeProvider + ChatShell + Toaster with mocked next/navigation (controlled pathname,
 //   router spy). MSW server from '@/test/msw-server' (`onUnhandledRequest: 'error'`: a request the screen must NOT send fails the test); `deferred()` and
-//   `currentUser({ isAdmin })` from '@/test/fixtures'. Test support the implementation tasks add is listed in the report of this skeleton and is marked
-//   `[support]` below. Response bodies are built by fixtures that pass the `@agent-os/contracts` schemas (grant holder `{ kind: 'role' | 'user' }`).
+//   `currentUser({ isAdmin })` from '@/test/fixtures'. The test's own support is marked `[support]` in the rows below. Response bodies are built by
+//   fixtures that pass the `@agent-os/contracts` schemas (grant holder `{ kind: 'role' | 'user' }`).
 // Mock boundary: network (MSW: `GET /api/auth/me`, `/api/admin/*`, the reads the shell makes anyway), next/navigation, the same-tab navigation
 //   (`location.assign`, jsdom does not navigate), the clipboard, and the logger module (a recording stand-in: the logger is the Sentry/console boundary).
 //   Real: shell route parsing, AdminGate, the panel sidebar and user menu, `apiRequest` with its 401 / 403 handlers, `adminApi`, `useResource`,
@@ -21,31 +17,14 @@
 //   that deleting a model deletes its grants and that no secret leaves the API are proven by the API tests of identity, mcp-connect and access. This
 //   file proves only what the browser does with those answers: what it shows, what it sends, what it keeps.
 //
-// `provenAt: unit` (table-driven tests next to the code, named for the plan; one table per rule, cases as rows):
-//   - `parseShellRoute` (shell-route.test.ts): every address of C3 · web; `/admin/servers/new` opens the server named `new` while
-//     `/admin/register-server` opens the form; `/admin` and an unknown address under it open «Сотрудники»; percent-decoded keys.
-//   - `useResource` / `usePagedResource`: a response for a previous key and one after unmount are dropped, one log record per error, the «Показать
-//     ещё» error keeps the loaded rows; the 300 ms employee search debounce and the stale search answer («ан» arriving after «аня») - DC-3.
-//   - `apiRequest` / `ApiRequestError` (api-request.test.ts): `PUT`, 204 without body, `reason` carried from the body, the 401 and the 403
-//     `ADMIN_REQUIRED` handlers called once each, `describeApiError` has method, path, status, code and reason and never a body; `adminApi` paths
-//     with `encodeURIComponent` (server name, model id `anthropic/...`).
-//   - `describeAdminError`: code and `reason` -> UXRD text for LOGIN_TAKEN, EMAIL_TAKEN, `weak_password`, ROLE_NAME_TAKEN, `GRANT_INVALID`
-//     (`deny_for_role`, `quota_not_on_model_allow`, `quota_out_of_range`), `GRANT_TARGET_UNKNOWN` (`server_unknown`, `tool_unknown`, `model_unknown`),
-//     GRANT_EXISTS, PROVIDER_CHECK_FAILED (`insecure_url`, `unreachable`, `invalid_document`), MCP_SERVER_CHECK_FAILED (seven reasons of MC-29),
-//     MCP_SERVER_NAME_TAKEN, MODEL_ID_TAKEN; the fallback to the server's `message` for a code or reason with no UXRD text (PUBLIC_URL_REQUIRED,
-//     `invalid_cursor`, NOT_LOCAL_ACCOUNT, BUILTIN_ROLE).
-//   - form rules (pure functions): account (login, name, email, password 12..256), role name 1..80, provider name 1..60, server name kebab-case 1..32,
-//     https address, token <= 4096, model id `anthropic/<name>` and the four prices with comma decimals, long-context threshold; sign-in settings
-//     hours <-> minutes both ways, comma decimals, MC-33 bounds (idle 0,25..24 h = 15..1440 min, total 1..720 h = 60..43200 min, total >= idle);
-//     grant quota 0,01..1 000 000 with two decimals, empty = no quota, sent as a number without float drift («0,29» -> 0.29).
-//   - orphan-grant detection (GR-02), `formatQuota` / `formatPrice` / `formatSpend`, status and mode labels, the «читает» / «меняет» mark (a tool
-//     without the mark is «меняет»).
-//   - `DataTable` focus after a removed row (next row, else previous, else `h1`) and `AdminForm` focus on the first field with an error: component
-//     tests next to the components.
+// Proven by the unit tests next to the code, not here: `parseShellRoute` (lib/shell-route.test.ts), `useResource` (hooks/use-resource.test.tsx),
+//   `apiRequest` (lib/api/api-request.test.ts), `describeAdminError` (lib/admin/admin-errors.test.ts), the form rules (lib/admin/form-rules.test.ts),
+//   orphan grants (lib/admin/grants.test.ts), `formatPriceUsd` (lib/access/money.test.ts), `DataTable` focus after a removed row
+//   (components/admin/data-table.test.tsx) and `AdminForm` focus on the first field with an error (components/admin/admin-form.test.tsx).
 //
-// `not automated`: density, tokens, contrast and the keyboard order across the panel (NFR-05, UC-N1) - component tests of the primitives and the L1
-//   browser table; the loss of a deleted role's rights for running agents (AC-25.2, server half) - proven by `access`; FR-31 (audit journal) is out of
-//   the feature; delete-user does not exist.
+// `not automated`: density, tokens, contrast and the keyboard order across the panel (NFR-05, UC-N1) - the L1 browser table; the loss of a deleted
+//   role's rights for running agents (AC-25.2, server half) - proven by `access`; FR-31 (audit journal) is out of the feature; delete-user does not
+//   exist.
 //
 // AC proof map (one proof per AC):
 //   AC-24.1 INT-1 | AC-24.2 INT-1 | AC-25.1 INT-2 | AC-25.2 INT-2 (panel half: confirmed DELETE, list, notice; rights loss - `access`) | AC-25.3 INT-2

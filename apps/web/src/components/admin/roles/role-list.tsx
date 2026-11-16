@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { ShieldIcon } from 'lucide-react';
 import type { RoleList as Roles, RoleSummary } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
@@ -20,10 +19,7 @@ const TEXT = {
   builtin: 'встроенная',
   isAdmin: 'да',
   notAdmin: '—',
-  // Not in the UXRD: the read failure follows the shell's «Не удалось …» texts, as in «Мой доступ».
   loadFailed: 'Не удалось загрузить роли',
-  // Not in the UXRD and never shown: the built-in role always exists, so the list is never empty.
-  empty: 'Ролей нет',
 } as const;
 
 const COLUMNS: readonly DataTableColumn[] = [
@@ -59,10 +55,8 @@ export function RoleList() {
   const roles = useResource(adminApi.roles.list, 'roles');
   const [creating, setCreating] = useState(false);
 
-  const state = resourceTableState(roles, TEXT.loadFailed, (data) => ({
-    rows: builtinFirst(data).map(toRow),
-    empty: { Icon: ShieldIcon, title: TEXT.empty },
-  }));
+  // No empty state: the built-in role always exists.
+  const state = resourceTableState(roles, TEXT.loadFailed, (data) => ({ rows: builtinFirst(data).map(toRow) }));
 
   return (
     <>

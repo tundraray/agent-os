@@ -27,11 +27,10 @@ const TEXT = {
   disconnectedNotice: (server: string) => `Аккаунт ${server} отключён`,
   connectFailed: (server: string) =>
     `Не удалось подключить аккаунт ${server}: вход отменён или не завершён. Попробуйте ещё раз.`,
-  // Not in MC-8: a failed return that names no server has no row to sit under.
+  // A failed return that names no server has no row to sit under.
   connectFailedUnknown: "Не удалось подключить аккаунт. Попробуйте ещё раз.",
   empty: "Подключать пока нечего",
   emptyCaption: "Когда администратор даст вам доступ к серверу с личным входом, он появится здесь.",
-  // Not in MC-8: the load and disconnect failures follow the shell's «Не удалось …» texts.
   loadFailed: "Не удалось загрузить подключения",
   disconnectFailed: (server: string) => `Не удалось отключить аккаунт ${server}. Попробуйте ещё раз.`,
   retry: "Повторить",

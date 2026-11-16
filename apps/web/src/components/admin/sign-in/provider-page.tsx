@@ -26,8 +26,6 @@ import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL, ProviderEnabledSwitc
 
 /** UXRD MC-27; «Сохранить» — MC-20. */
 const TEXT = {
-  on: 'Включено',
-  off: 'Выключен',
   settings: 'Настройки провайдера',
   issuer: 'Issuer',
   clientId: 'Client ID',
@@ -37,7 +35,6 @@ const TEXT = {
   redirectUri: 'Адрес возврата',
   scopes: 'Scopes',
   save: 'Сохранить',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
   loadFailed: 'Не удалось загрузить провайдера',
 } as const;
 
@@ -90,7 +87,7 @@ export function ProviderPage({ id }: { id: string }) {
       <RecordPlaceholder
         section="sign-in"
         resource={provider}
-        // Notes 6: the provider's data are built from the public address, which cannot be derived here.
+        // MC-27: the provider's data are built from the public address, which cannot be derived here.
         loadFailed={isPublicUrlRequired(provider.error) ? ADMIN_TEXT.publicUrlRequired : TEXT.loadFailed}
       />
     );
@@ -103,7 +100,7 @@ export function ProviderPage({ id }: { id: string }) {
       <AdminPageHeader
         title={data.name}
         parent="sign-in"
-        badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? TEXT.on : TEXT.off}</StateBadge>}
+        badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? PROVIDER_TEXT.enabled : PROVIDER_TEXT.disabled}</StateBadge>}
       />
       <div className="flex max-w-160 flex-col gap-6">
         <ProviderEnabledSwitch key={saves} provider={data} inTable={false} onChanged={provider.reload} />

@@ -17,7 +17,7 @@ const LOOK: Readonly<Record<AdminSection, { title: string; Icon: LucideIcon }>> 
   models: { title: 'Модели', Icon: BoxIcon },
 };
 
-/** The panel's five sections in sidebar order (AD-01); «Журнал» of MC-18 is outside this part. */
+/** The panel's five sections in sidebar order (AD-01, MC-18). */
 export const ADMIN_SECTIONS: readonly AdminSectionEntry[] = ADMIN_SECTION_IDS.map((section) => ({
   section,
   ...LOOK[section],

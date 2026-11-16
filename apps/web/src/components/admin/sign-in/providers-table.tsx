@@ -1,7 +1,6 @@
 'use client';
 
 import { useId } from 'react';
-import { KeyRoundIcon } from 'lucide-react';
 import type { ProviderSummary, ProviderType } from '@agent-os/contracts';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
@@ -16,24 +15,21 @@ import { SavingSwitch } from '../saving-switch';
 const TEXT = {
   title: 'Способы входа',
   button: 'Кнопка',
-  enabled: 'Включено',
-  disabled: 'Выключено',
   password: 'Логин и пароль',
   builtin: 'встроенный',
   alwaysOn: 'Всегда включён',
   googleWarning:
     'Включённый Google пускает любого владельца аккаунта Google: первый вход создаёт учётную запись без ролей. Пока вы не дадите ей права, чат ей не отвечает.',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
   loadFailed: 'Не удалось загрузить способы входа',
-  // Never shown: the built-in row is always there; DataTable needs an empty state all the same.
-  empty: 'Способов входа нет',
 } as const;
 
-/** MC-27: the provider fields the new form and the provider page share. */
+/** MC-27: the provider texts the table, the new form and the provider page share. */
 export const PROVIDER_TEXT = {
   type: 'Тип',
   name: 'Название кнопки',
   nameHint: (name: string) => `Сотрудники увидят «Войти через ${name.trim()}»`,
+  enabled: 'Включено',
+  disabled: 'Выключено',
 } as const;
 
 /** MC-27: the provider types of the first version as the panel names them. */
@@ -56,7 +52,7 @@ type ProviderEnabledSwitchProps = {
 
 /**
  * DC-8: «Включено» of a provider, in its table row and on its page. A refused enable (`PROVIDER_INCOMPLETE`,
- * `PUBLIC_URL_REQUIRED`) puts the switch back with the MC-27 or Notes 6 text under it.
+ * `PUBLIC_URL_REQUIRED`) puts the switch back with its MC-27 text under it.
  */
 export function ProviderEnabledSwitch({ provider, inTable, onChanged }: ProviderEnabledSwitchProps) {
   const save = async (enabled: boolean): Promise<void> => {
@@ -66,8 +62,8 @@ export function ProviderEnabledSwitch({ provider, inTable, onChanged }: Provider
 
   return (
     <SavingSwitch
-      label={inTable ? `${TEXT.enabled}: ${provider.name}` : TEXT.enabled}
-      labelOff={TEXT.disabled}
+      label={inTable ? `${PROVIDER_TEXT.enabled}: ${provider.name}` : PROVIDER_TEXT.enabled}
+      labelOff={PROVIDER_TEXT.disabled}
       labelHidden={inTable}
       checked={provider.enabled}
       onSave={save}
@@ -79,7 +75,7 @@ export function ProviderEnabledSwitch({ provider, inTable, onChanged }: Provider
 const COLUMNS: readonly DataTableColumn[] = [
   { header: TEXT.button },
   { header: PROVIDER_TEXT.type },
-  { header: TEXT.enabled },
+  { header: PROVIDER_TEXT.enabled },
 ];
 
 /** FR-01: the password sign-in is always on; it is not in the response and not a link. */
@@ -116,10 +112,8 @@ export function ProvidersTable() {
     ],
   });
 
-  const state = resourceTableState(providers, TEXT.loadFailed, (data) => ({
-    rows: [PASSWORD_ROW, ...data.map(toRow)],
-    empty: { Icon: KeyRoundIcon, title: TEXT.empty },
-  }));
+  // No empty state: the password row is always there.
+  const state = resourceTableState(providers, TEXT.loadFailed, (data) => ({ rows: [PASSWORD_ROW, ...data.map(toRow)] }));
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">

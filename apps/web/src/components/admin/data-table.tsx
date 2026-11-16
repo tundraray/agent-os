@@ -81,7 +81,8 @@ export type DataTableState =
       status: 'ready';
       /** In the server's order; the table never sorts. */
       rows: readonly DataTableRow[];
-      empty: DataTableEmpty;
+      /** Left out by a table that always has a row. */
+      empty?: DataTableEmpty;
       /** Set while a search or filter is applied: an empty result reads this line under the header. */
       noMatches?: string;
       more?: DataTableMore;
@@ -214,7 +215,9 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
 
   if (state.status === 'loading') return <LoadingTable caption={caption} columns={columns} />;
   if (state.status === 'error') return <LoadError message={state.message} onRetry={state.onRetry} />;
-  if (state.rows.length === 0 && state.noMatches === undefined) return <EmptyTable {...state.empty} />;
+  if (state.rows.length === 0 && state.noMatches === undefined && state.empty !== undefined) {
+    return <EmptyTable {...state.empty} />;
+  }
 
   const hasActions = state.rows.some((row) => row.actions !== undefined && row.actions.length > 0);
   const columnCount = columns.length + (hasActions ? 1 : 0);

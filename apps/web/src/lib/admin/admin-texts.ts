@@ -2,8 +2,8 @@ import type { GrantEffect, McpCheckFailureReason, ProviderCheckFailure } from '@
 
 /**
  * Error texts of the admin panel's fields and forms (enterprise-access UXRD, MC-20, MC-22, MC-23, MC-25,
- * MC-26, MC-27, MC-29, MC-30, MC-33, and the plan's Notes 6 for the texts the UXRD lacks). The only place
- * these texts live: field rules and `describeAdminError` take them from here.
+ * MC-26, MC-27, MC-29, MC-30, MC-33). The only place these texts live: field rules and `describeAdminError`
+ * take them from here.
  */
 
 /** MC-20: a save the server refused, named by `reason`. */
@@ -43,15 +43,15 @@ export const ADMIN_TEXT = {
   modelIdTaken: 'Модель с таким ID уже есть в каталоге',
   modelNameLength: 'Название — от 1 до 80 знаков',
   thresholdRule: 'Порог — целое число больше нуля',
-  /** Not in MC-30, which names no price error; awaits the UXRD owner like the plan's Notes 6 texts. */
   priceRule: 'Введите цену — число от 0',
   // MC-33
   fullUrl: 'Введите полный адрес, например https://agent-os.example',
   idleHours: 'Введите от 0,25 до 24 часов с шагом 0,25',
   absoluteHours: 'Введите целое число от 1 до 720',
   absoluteBelowIdle: 'Общий срок не может быть меньше срока без активности',
-  // Notes 6
+  // MC-27
   publicUrlRequired: 'Сначала сохраните публичный адрес Agent OS в настройках входа.',
+  // MC-20
   listChanged: 'Список изменился. Откройте раздел заново.',
   noConnection: saveFailed('нет связи с сервером'),
 } as const;
