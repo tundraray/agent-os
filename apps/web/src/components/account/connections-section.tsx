@@ -11,6 +11,7 @@ import { describeApiError } from "@/lib/api/api-request";
 import { logger } from "@/lib/logger";
 import { takeConnectReturn, type ConnectReturn } from "@/lib/mcp/connect-return";
 import { mcpApi } from "@/lib/mcp/mcp-api";
+import { cn } from "@/lib/utils";
 
 /** UXRD MC-7 and MC-8. */
 const TEXT = {
@@ -127,6 +128,8 @@ export function ConnectionsSection() {
           : current,
       );
       setFailedServer((failed) => (failed === server ? null : failed));
+      // The focused «Отключить» is replaced by «Подключить»: focus follows to it instead of falling to the body.
+      setFocusServer(server);
       toast.success(TEXT.disconnectedNotice(server));
     } catch (error) {
       logger.error("account: mcp account disconnect failed", { server, ...describeApiError(error) });
@@ -250,7 +253,8 @@ function ConnectionRow({ row, connecting, disconnecting, failed, actionRef, onCo
             <a
               ref={actionRef}
               href={mcpApi.connectUrl(row.server)}
-              className={buttonVariants({ variant: "outline", size: "sm", className: actionClass })}
+              // `cn` as in `Button`: without the merge the base `border-transparent` wins over the outline border.
+              className={cn(buttonVariants({ variant: "outline", size: "sm", className: actionClass }))}
               onClick={onConnect}
             >
               {connecting && <LoaderCircle className="animate-spin" aria-hidden />}

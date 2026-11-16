@@ -55,11 +55,14 @@ function spendText(spend: SpendState): string {
 }
 
 /**
- * UM-01: how many personal-OAuth servers still wait for the employee's sign-in, read once when the shell
- * mounts. A failed read shows nothing, as if none were waiting.
+ * UM-01: how many personal-OAuth servers still wait for the employee's sign-in, read when the shell mounts
+ * and again after each change of the connections in this tab («Отключить» on «Мой доступ»). A failed read
+ * keeps the last count; before the first read nothing is shown.
  */
 function useNeedsAuthCount(): number {
   const [count, setCount] = useState(0);
+  const [version, setVersion] = useState(0);
+  useEffect(() => mcpApi.onConnectionsChanged(() => setVersion((current) => current + 1)), []);
   useEffect(() => {
     let current = true;
     mcpApi.connections().then(
@@ -73,7 +76,7 @@ function useNeedsAuthCount(): number {
     return () => {
       current = false;
     };
-  }, []);
+  }, [version]);
   return count;
 }
 

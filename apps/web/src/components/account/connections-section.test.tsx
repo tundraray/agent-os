@@ -62,10 +62,9 @@ describe("«Подключения» (MA-01): a row per server with its badge an
 
     expect(await within(jira).findByText("Нужна аутентификация")).toBeInTheDocument();
     expect(deleted).toBe("jira");
-    expect(within(jira).getByRole("link", { name: "Подключить" })).toHaveAttribute(
-      "href",
-      "http://api.test/api/mcp/connections/jira/connect",
-    );
+    const connect = within(jira).getByRole("link", { name: "Подключить" });
+    expect(connect).toHaveAttribute("href", "http://api.test/api/mcp/connections/jira/connect");
+    await waitFor(() => expect(connect).toHaveFocus());
     expect(await screen.findByText("Аккаунт jira отключён")).toBeInTheDocument();
   });
 

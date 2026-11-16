@@ -8,6 +8,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apiBaseUrl } from '@/lib/config';
+import { mcpApi } from '@/lib/mcp/mcp-api';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { currentUser } from '@/test/fixtures';
 import { server } from '@/test/msw-server';
@@ -130,6 +131,24 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
     const access = within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Мой доступ' });
     if (count === null) expect(access).toHaveTextContent(/^Мой доступ$/);
     else expect(access).toHaveTextContent(`Мой доступ${count}`);
+  });
+
+  // The menu lives in the shell, «Отключить» on the page: the count must come back without a page reload.
+  it('a disconnect brings the count back without a reload', async () => {
+    let list: McpConnection[] = [JIRA];
+    server.use(
+      http.get(`${apiBaseUrl}/api/mcp/connections`, () => HttpResponse.json(list)),
+      http.delete(`${apiBaseUrl}/api/mcp/connections/jira`, () => {
+        list = [{ ...JIRA, status: 'needs_auth' }];
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderUserMenu();
+    await screen.findByRole('button', { name: MENU_BUTTON });
+
+    await mcpApi.disconnect('jira');
+
+    expect(await screen.findByRole('button', { name: `${MENU_BUTTON}, нужна аутентификация: 1` })).toBeInTheDocument();
   });
 
   it('without a name the block shows the email up to «@»', async () => {
