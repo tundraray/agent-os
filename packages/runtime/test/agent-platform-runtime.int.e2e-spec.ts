@@ -28,7 +28,7 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven):
 // - unit, packages/runtime/src: the cost rule (one table: input tier threshold, output, cache read, cache write; model with and without a tier) in `model-cost.spec.ts` - AC-02.2 (price per model, literal rows), the part of DC-9 that is the rule;
-//   `parseRuntimeConfig` / `parseModelPrices` rows extend the existing `runtime-config.spec.ts` only if the plan changes the parsing
+//   `parseRuntimeConfig` rows extend the existing `runtime-config.spec.ts` only if the plan changes the parsing
 // - unit, packages/common/src: DC-11 and UC-9 - redaction by field name (case-insensitive, nested) and by secret value, the `[redacted]` replacement in BOTH sinks, error expansion with cause chain, the 16 KiB truncation, `child(fields)`; the console and the
 //   Sentry sink over a fake SDK (one log call, plus one exception call when `error` is set). One table-driven file over `@agent-os/common/testing`; no integration test, the logger has no I/O of its own.
 // - the process-kill matrix, restart, recovery exhaustion, the guard intent, the decision across a restart: sibling file agent-platform-runtime.e2e-spec.ts (E2E-1)
@@ -40,7 +40,7 @@
 // - AC-01.2: E2E-1 row "guard" (UC-7)
 // - AC-01.3: INT-2 (rows A, B, E: once and in order), E2E-1 (a message pending at the kill)
 // - AC-02.1, AC-02.2: INT-5 (rows A, B) and the cost-rule unit table
-// - DC-1: INT-1 row A + E2E-1 row "kill inside the commit"; DC-2, DC-3, DC-7: E2E-1; DC-4: INT-2; DC-5: INT-1 rows A, B and INT-3 row B; DC-6: INT-3; DC-8: INT-4; DC-9: INT-5 row C; DC-10: INT-5 rows B, D; DC-11: unit (packages/common)
+// - DC-1: INT-1 row A + E2E-1 row "kill inside the commit"; DC-2, DC-3, DC-7: E2E-1; DC-4: INT-2; DC-5: INT-1 rows A, B and INT-3 row B; DC-6: INT-3; DC-8: INT-4; DC-10: INT-5 rows B, D; DC-11: unit (packages/common)
 // - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E, INT-1 row C; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
 
 import { randomUUID } from 'node:crypto';
@@ -72,7 +72,9 @@ import {
   type RuntimeHarness,
   settableClock,
   TEST_MODEL_ONE,
+  TEST_MODEL_ONE_PRICE,
   TEST_MODEL_TWO,
+  TEST_MODEL_TWO_PRICE,
 } from './support/runtimeHarness.js';
 import {
   createGate,
@@ -1052,6 +1054,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
           ownerId,
           taskId,
           model: TEST_MODEL_ONE,
+          price: TEST_MODEL_ONE_PRICE,
           usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
         }),
     });
@@ -1519,7 +1522,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // - Row B "the month window": A also has calls at 2026-10-31T23:59:59Z, 2026-11-01T00:00:00Z, 2026-11-30T23:59:59Z and 2026-12-01T00:00:00Z; owner B has November calls. Then: `monthSpend(A, '2026-11')` equals the literal sum of A's calls from 2026-11-01T00:00:00Z
   //   through 2026-11-30T23:59:59Z, and its call count equals their number; October, December and B's rows are not in it; `monthSpend(A, '2026-09')` is `{ costUsd: 0, calls: 0 }`.
   //   `monthSpendByModel(A, '2026-11')` holds each model's literal sum (AC-21.4, DC-9 of design-access.md), `'2026-09'` is empty, B's rows are not in A's map.
-  // - Row C "unknown price": `record` for a model absent from the price table rejects with `UNKNOWN_MODEL_PRICE`; the ledger has no new row (row count before equals after); the in-memory log has an error entry naming the model; `pricedModels()` lists exactly the table's models.
   // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: the tree's tasks, messages, decisions and events are gone; the ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
   it('INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model\'s price', async () => {
     // Given: a task of owner A and a clock in November 2026
@@ -1541,10 +1543,22 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       };
 
       // When: one call is recorded on each model
-      const one = await harness.ledger.record({ ownerId, taskId, model: TEST_MODEL_ONE, usage });
-      const two = await harness.ledger.record({ ownerId, taskId, model: TEST_MODEL_TWO, usage });
+      const one = await harness.ledger.record({
+        ownerId,
+        taskId,
+        model: TEST_MODEL_ONE,
+        price: TEST_MODEL_ONE_PRICE,
+        usage,
+      });
+      const two = await harness.ledger.record({
+        ownerId,
+        taskId,
+        model: TEST_MODEL_TWO,
+        price: TEST_MODEL_TWO_PRICE,
+        usage,
+      });
 
-      // Then: each cost is its own model's price (by hand: 1000*1 + 100*1.25 + 100*0.125 +
+      // Then: each cost is the price the call carried (by hand: 1000*1 + 100*1.25 + 100*0.125 +
       // 200*5 = 2137.5 micro-USD; 1000*3 + 100*3.75 + 100*0.375 + 200*15 = 6412.5 micro-USD)
       expect(one.costUsd).toBe(0.0021375);
       expect(two.costUsd).toBe(0.0064125);
@@ -1592,17 +1606,19 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     const harness = await createRuntimeHarness({ handlers: [], clock, startWorkers: false });
     // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
     const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    const calls: { ownerId: string; model: string; at: string }[] = [
-      { ownerId: ownerA, model: TEST_MODEL_ONE, at: '2026-10-31T23:59:59Z' },
-      { ownerId: ownerA, model: TEST_MODEL_ONE, at: '2026-11-01T00:00:00Z' },
-      { ownerId: ownerA, model: TEST_MODEL_TWO, at: '2026-11-30T23:59:59Z' },
-      { ownerId: ownerA, model: TEST_MODEL_TWO, at: '2026-12-01T00:00:00Z' },
-      { ownerId: ownerB, model: TEST_MODEL_TWO, at: '2026-11-15T12:00:00Z' },
+    const one = { model: TEST_MODEL_ONE, price: TEST_MODEL_ONE_PRICE };
+    const two = { model: TEST_MODEL_TWO, price: TEST_MODEL_TWO_PRICE };
+    const calls = [
+      { ownerId: ownerA, ...one, at: '2026-10-31T23:59:59Z' },
+      { ownerId: ownerA, ...one, at: '2026-11-01T00:00:00Z' },
+      { ownerId: ownerA, ...two, at: '2026-11-30T23:59:59Z' },
+      { ownerId: ownerA, ...two, at: '2026-12-01T00:00:00Z' },
+      { ownerId: ownerB, ...two, at: '2026-11-15T12:00:00Z' },
     ];
     try {
-      for (const call of calls) {
-        clock.set(new Date(call.at));
-        await harness.ledger.record({ ownerId: call.ownerId, model: call.model, usage });
+      for (const { at, ...call } of calls) {
+        clock.set(new Date(at));
+        await harness.ledger.record({ ...call, usage });
       }
 
       // When / Then: each month holds exactly the owner's calls inside it, by UTC
@@ -1643,35 +1659,6 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-5 C: a call for a model with no price is rejected with UNKNOWN_MODEL_PRICE and leaves no row', async () => {
-    // Given: the test price table of two models
-    const ownerId = newUser();
-    const unknownModel = 'test/model-without-price';
-    const harness = await createRuntimeHarness({ handlers: [], startWorkers: false });
-    try {
-      const before = await ledgerRowsOf(harness, ownerId);
-
-      // When: a call on a model outside the table is recorded
-      const recording = harness.ledger.record({
-        ownerId,
-        model: unknownModel,
-        usage: { inputTokens: 10, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      });
-
-      // Then: rejected, no row, an error naming the model, and the table's models listed
-      await expect(recording).rejects.toMatchObject({ code: 'UNKNOWN_MODEL_PRICE' });
-      expect(before).toEqual([]);
-      expect(await ledgerRowsOf(harness, ownerId)).toEqual([]);
-      expect(
-        harness.logs.filter(
-          (record) => record.level === 'error' && record.fields.model === unknownModel,
-        ),
-      ).toHaveLength(1);
-      expect(harness.ledger.pricedModels()).toEqual([TEST_MODEL_ONE, TEST_MODEL_TWO]);
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
   it('INT-5 D: deleting the task tree removes the tree but leaves the ledger rows and the month spend unchanged', async () => {
     // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
     // call recorded for each task in November 2026
@@ -1712,8 +1699,20 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       );
       // 1000 input + 200 output tokens: 0.002 USD on model one, 0.006 USD on model two (by hand)
       const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 };
-      await harness.ledger.record({ ownerId, taskId: rootId, model: TEST_MODEL_ONE, usage });
-      await harness.ledger.record({ ownerId, taskId: childId, model: TEST_MODEL_TWO, usage });
+      await harness.ledger.record({
+        ownerId,
+        taskId: rootId,
+        model: TEST_MODEL_ONE,
+        price: TEST_MODEL_ONE_PRICE,
+        usage,
+      });
+      await harness.ledger.record({
+        ownerId,
+        taskId: childId,
+        model: TEST_MODEL_TWO,
+        price: TEST_MODEL_TWO_PRICE,
+        usage,
+      });
       expect(await harness.ledger.monthSpend(ownerId, '2026-11')).toEqual({
         costUsd: 0.008,
         calls: 2,

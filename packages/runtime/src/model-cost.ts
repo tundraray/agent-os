@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 /**
  * Usage of one call as the provider reported it: `inputTokens` is the whole input, the cached
  * parts included; `outputTokens` includes thinking; `cacheReadTokens` and `cacheWriteTokens` are
@@ -12,52 +10,26 @@ export interface CallUsage {
   readonly cacheWriteTokens: number;
 }
 
-const usdPerMTok = z.number().min(0);
-
-const PriceRatesSchema = z.object({
-  inputUsdPerMTok: usdPerMTok,
-  outputUsdPerMTok: usdPerMTok,
-  cacheWriteUsdPerMTok: usdPerMTok,
-  cacheReadUsdPerMTok: usdPerMTok,
-});
-
-/** Price of one model in USD per million tokens, with an optional tier above an input size. */
-const ModelPriceSchema = PriceRatesSchema.extend({
-  above: PriceRatesSchema.extend({
-    /** The tier applies when the whole input of a call is larger than this. */
-    inputTokens: z.number().int().positive(),
-  }).optional(),
-});
-
-/** The prices file (`MODEL_PRICES_FILE`): `{ "<provider/model>": ModelPrice }`, at least one model. */
-const ModelPricesFileSchema = z
-  .record(z.string().min(1), ModelPriceSchema)
-  .refine((prices) => Object.keys(prices).length > 0, {
-    message: 'the prices file names no model',
-  });
-
-export type ModelPrice = z.infer<typeof ModelPriceSchema>;
-type PriceRates = z.infer<typeof PriceRatesSchema>;
-
-/** Prices by model id (`<provider/model>`). */
-export type ModelPrices = ReadonlyMap<string, ModelPrice>;
-
-const TOKENS_PER_PRICE_UNIT = 1_000_000;
+/** Rates in USD per million tokens. */
+interface PriceRates {
+  readonly inputUsdPerMTok: number;
+  readonly outputUsdPerMTok: number;
+  readonly cacheWriteUsdPerMTok: number;
+  readonly cacheReadUsdPerMTok: number;
+}
 
 /**
- * Checks the parsed JSON of the prices file. A file without models or with a negative price throws,
- * naming the problem, which stops the start.
+ * Price of one model, with an optional tier above an input size. It comes with the call from the
+ * model catalogue (ADR-0015); the runtime keeps no prices.
  */
-export function parseModelPrices(json: unknown): ModelPrices {
-  const result = ModelPricesFileSchema.safeParse(json);
-  if (!result.success) {
-    const problems = result.error.issues.map(
-      (issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`,
-    );
-    throw new Error(`Invalid model prices — ${problems.join('; ')}`);
-  }
-  return new Map(Object.entries(result.data));
+export interface ModelPrice extends PriceRates {
+  readonly above?: PriceRates & {
+    /** The tier applies when the whole input of a call is larger than this. */
+    readonly inputTokens: number;
+  };
 }
+
+const TOKENS_PER_PRICE_UNIT = 1_000_000;
 
 /**
  * Cost of one call in USD (KD-5). The tier `above` applies when the whole input is larger than its

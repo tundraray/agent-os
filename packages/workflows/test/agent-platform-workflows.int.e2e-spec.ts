@@ -20,7 +20,7 @@
 // - The model is the only double: the scripted `ModelClient` double of the agents harness (scenarios per agent keyed by description, gated answers, recorded inputs, model errors as a scripted answer kind). The coordinator's scenario answers from the state of ITS history
 //   (the Design Doc's UC-1 Given), because a fixed list of answers cannot tell which report has arrived; the harness gets a "reply from history" scenario kind for that.
 // - MCP is real: the `packages/mcp-fixture` HTTP process of the harness, its `logs` (read-only) registered in the registry under the run's name (`LOGS_SERVER` of test/support/workflowsHarness.ts), `FIXTURE_CALL_LOG` as the evidence of what reached a server; a read call
-//   held on a latch, `MCP_ACCESS_TABLE` per test maps the owner to that server.
+//   held on a latch, the harness's `AccessGate` double (`@agent-os/agents/testing`) gives the test's owners that server.
 // - The tree root is an agent with a TEST definition that lists `start_workflow` and nothing else (the `chat` part's main chat does not exist yet; Design Doc "Test Strategy"). Its scenario calls `start_workflow`. Reusing the harness of the agents part
 //   (`agentsHarness.ts`, `scriptedModel.ts`, `fixtureLog.ts`) is the plan's task, not a copy.
 // - The templates under test: the SHIPPED `deep-research` (INT-1, INT-2 - the real file, so a template whose wiring is wrong fails here) and, in INT-3 only, a small TEST template built with the same `parseTemplate` and registered through the same `createWorkflows` path
@@ -45,7 +45,7 @@
 // - agents (AC-18.3 stop reaches all the run's agents, AC-18.4 continue in the same session, AC-26.1 a message lands at the nearest tool-result boundary of the coordinator): agents INT-2 row B, INT-1 row C, INT-1 row B - the operations are called on the coordinator
 //   and need no code of this part (Design Doc Test Strategy: "своих тестов на них нет").
 // - not automated: that the answer names the direction without data and that the coordinator follows its prompt rules (AC-19.3, the content half: the Design Doc assigns it to the manual run, business constraint 6); the 500-word cap of a gather report (prompt text);
-//   the price of the Sonnet coordinator in the models price file (a startup row of `parseAgentsConfig`/`start()`: an unpriced model is `UNKNOWN_MODEL` - agents unit); live events of the card (the `chat` part reads runtime events, the package writes none).
+//   live events of the card (the `chat` part reads runtime events, the package writes none). Whether the Sonnet coordinator may be called (catalogue, grants, quota) is the access gate's verdict at the call (agents unit, apps/api access tests).
 //
 // AC -> proving test:
 // - AC-18.1: INT-2 row A (one coordinator, every agent of the run its child, `runs.get` shows one run with its steps)

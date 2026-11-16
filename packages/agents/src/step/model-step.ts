@@ -10,10 +10,19 @@ import {
 } from '@agent-os/runtime';
 import { eq } from 'drizzle-orm';
 
+import type { AccessAudit } from '../access-gate.js';
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
 import { mcpToolName } from '../mcp/mcp-tool.js';
-import type { ModelAnswer, ModelClient, ModelError } from '../model/model-client.js';
+import {
+  type ModelAnswer,
+  type ModelClient,
+  modelDeniedEntry,
+  type ModelError,
+  type ModelRefusal,
+  modelRefusalMessage,
+  refusalFields,
+} from '../model/model-client.js';
 import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
@@ -38,6 +47,10 @@ export const FAILURE_REASONS = {
   turnLimit: 'turn_limit',
   modelError: 'model_error',
   ownerDisabled: 'owner_disabled',
+  quotaExhausted: 'quota_exhausted',
+  modelNotConnected: 'model_not_connected',
+  modelNotAllowed: 'model_not_allowed',
+  noModelsAllowed: 'no_models_allowed',
 } as const;
 
 /**
@@ -184,28 +197,30 @@ export function failResult(input: {
 }
 
 /**
- * `OwnerGate` refused the owner (KD-4, DC-8): no call started, and the agent fails with `owner_disabled`
- * by `failResult`, as on `model_error`.
+ * `AccessGate` refused the agent's call (KD-4, KD-5, DC-3): no call started, and the agent fails with the
+ * verdict's reason by `failResult`, as on `model_error` — no pause. Every reason but `owner_disabled` is
+ * written to the audit first (KD-6, plan Notes 3): a failing hook rejects, and the runtime repeats the step.
  */
-export function ownerDisabledResult(input: {
+export async function refusedResult(input: {
   readonly ctx: StepContext;
   readonly stepKind: string;
   readonly startedAt: number;
+  /** The model of the refused call (the session's). */
+  readonly model: string;
+  readonly refusal: ModelRefusal;
+  readonly audit: AccessAudit;
   readonly writeEntries: (tx: RuntimeTx, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
-}): StepResult {
-  const { ctx } = input;
-  ctx.logger.warn('owner gate refused the agent; it fails', {
-    ownerId: ctx.ownerId,
-    agentId: ctx.taskId,
-    taskId: ctx.taskId,
-    stepKind: input.stepKind,
-  });
-  logStep(ctx, input.stepKind, input.startedAt, 'fail', { reason: FAILURE_REASONS.ownerDisabled });
+}): Promise<StepResult> {
+  const { ctx, model, refusal } = input;
+  if (refusal.reason !== FAILURE_REASONS.ownerDisabled) {
+    await input.audit(modelDeniedEntry(ctx.ownerId, model, refusal));
+  }
+  logStep(ctx, input.stepKind, input.startedAt, 'fail', { model, ...refusalFields(refusal) });
   return failResult({
     ctx,
-    reason: FAILURE_REASONS.ownerDisabled,
-    message: `Owner ${ctx.ownerId} of agent ${ctx.taskId} is disabled or unknown`,
+    reason: refusal.reason,
+    message: `Agent ${ctx.taskId}: ${modelRefusalMessage(ctx.ownerId, model, refusal)}`,
     writeEntries: input.writeEntries,
     patch: input.patch,
   });
@@ -255,6 +270,8 @@ export interface ModelStepDeps {
   readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
+  /** Gets the `access_denied` record of a refused model call (KD-6). */
+  readonly audit: AccessAudit;
   /** Children of the agent: the end of a turn waits for the unfinished ones (DC-3). */
   readonly tasks: Pick<Runtime['tasks'], 'listTree'>;
   /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
@@ -300,8 +317,8 @@ function newToolCalls(
  * - The turn limit spent → `fail` `turn_limit`, the delivered messages written before the `failed` event.
  * - Otherwise the delivered messages go to history before the call, and the model of the session
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
- *   `model_error`; an owner `OwnerGate` refused → `fail` `owner_disabled`, the model not called. Each
- *   failure closes the session and resets the turn counter (DC-1).
+ *   `model_error`; a call `AccessGate` refused → `fail` with the verdict's reason, the model not called.
+ *   Each failure closes the session and resets the turn counter (DC-1).
  * - An answer with calls is written with its open calls (`requested`): `continue`, the tool step runs
  *   them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
  *   `complete` with `{ report }`, the session closed and its counter reset.
@@ -309,7 +326,7 @@ function newToolCalls(
  *   `agents.history_appended`.
  */
 export function createModelStep(deps: ModelStepDeps): ModelStep {
-  const { database, catalog, registry, modelClient } = deps;
+  const { database, catalog, registry, modelClient, audit } = deps;
 
   /** The last report of `finalAgent` among the session's child reports, the delivered ones included (DC-4). */
   async function finalAgentReport(
@@ -402,11 +419,14 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     );
     if (result === undefined) return { outcome: 'continue' };
 
-    if (result.kind === 'owner_disabled') {
-      return ownerDisabledResult({
+    if (result.kind === 'not_started') {
+      return refusedResult({
         ctx,
         stepKind: STEP_KIND,
         startedAt,
+        model: session.model,
+        refusal: result.verdict,
+        audit,
         writeEntries: writeStepEntries,
         patch: basePatch,
       });

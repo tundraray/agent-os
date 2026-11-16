@@ -10,6 +10,7 @@ import {
   createMastraTurnClient,
   createResolveModel,
   secretValuesOf,
+  type AccessAudit,
   type Agents,
   type AgentsConfig,
   type AgentTurnModelClient,
@@ -17,7 +18,9 @@ import {
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock, Runtime } from '@agent-os/runtime';
-import { IdentityOwnerGate } from '../identity/identity-owner-gate.js';
+import { AccessModule } from '../access/access.module.js';
+import { AccessService } from '../access/access.service.js';
+import { AuditLog } from '../audit/audit-log.js';
 import { IdentityModule } from '../identity/identity.module.js';
 import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
 import { RuntimeModule } from '../runtime/runtime.module.js';
@@ -38,10 +41,30 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
 import { McpConnectionsController } from './mcp-connections.controller.js';
 
 /**
+ * The agents' audit hook (design-access.md KD-6): an `access_denied` record by its own insert, outside any
+ * transaction. A failed write is logged with the record and thrown, so the step that refused is repeated
+ * (plan Notes 3) — a refusal is never left out of the audit silently.
+ */
+function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
+  return async (entry) => {
+    try {
+      await auditLog.record(null, entry);
+    } catch (error) {
+      logger.error('access_denied audit record not written', {
+        ...entry,
+        error,
+      });
+      throw error;
+    }
+  };
+}
+
+/**
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
  * design-chat.md «Сборка»): reads the settings and assembles the package on the
  * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` (the one token tests replace) and
- * the `DeltaPublisher` as the `onTextDelta` hook. The `agent` handler and the `task.failed` consumer are
+ * the `DeltaPublisher` as the `onTextDelta` hook, `AccessService` as the `AccessGate` port and `AuditLog` behind
+ * the `audit` hook (design-access.md KD-1, KD-6). The `agent` handler and the `task.failed` consumer are
  * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own
  * factories injecting `AGENTS`.
  *
@@ -52,7 +75,7 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
  * Its controllers are the HTTP layer of `Agents.mcp`: an employee's MCP accounts and the admin's registry.
  */
 @Module({
-  imports: [RuntimeModule, IdentityModule],
+  imports: [RuntimeModule, IdentityModule, AccessModule],
   controllers: [McpConnectionsController, AdminMcpServersController],
   providers: [
     {
@@ -99,7 +122,9 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
         database: DatabaseConnection,
         turnClient: AgentTurnModelClient,
         deltaPublisher: DeltaPublisher,
-        ownerGate: IdentityOwnerGate,
+        access: AccessService,
+        auditLog: AuditLog,
+        appLogger: Logger,
       ): Agents =>
         createAgents({
           database: database.db,
@@ -109,7 +134,11 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
           logger: createAppLogger(process.env, secretValuesOf(settings)),
           config: settings,
           turnClient,
-          ownerGate,
+          access,
+          audit: accessAudit(
+            auditLog,
+            appLogger.child({ service: 'agents.audit' }),
+          ),
           onTextDelta: (delta) => deltaPublisher.publish(delta),
         }),
       inject: [
@@ -118,7 +147,9 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
         RUNTIME_DATABASE,
         AGENT_TURN_CLIENT,
         DELTA_PUBLISHER,
-        IdentityOwnerGate,
+        AccessService,
+        AuditLog,
+        APP_LOGGER,
       ],
     },
   ],

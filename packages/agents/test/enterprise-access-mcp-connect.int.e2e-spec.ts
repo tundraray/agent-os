@@ -12,11 +12,11 @@
 //   bearer it actually received) is the proof of "the server received nothing" and of "the call came with Аня's account", and the
 //   authorization-server log (token requests, refresh counter) is the proof of "no refresh was asked".
 //   Support: `createAgentsHarness` starts the fixture process (`harness.fixtureProcess`: its addresses and the KD-7 controls - revoke
-//   tokens, hold a refresh, the per-account counters, add a tool) and takes an `ownerGate` option (a port double that throws
-//   `OwnerDisabledError`; the real gate is proven by identity INT-2 row 5); `registerServer` / `removeServer` go through `Agents.mcp`;
+//   tokens, hold a refresh, the per-account counters, add a tool) and takes a `refusedOwners` option (owners the `AccessGate` double of
+//   `@agent-os/agents/testing` answers `owner_disabled` for; the real gate is `AccessService`, apps/api); `registerServer` / `removeServer` go through `Agents.mcp`;
 //   `connectAccount(harness, ownerId, server)` = `Agents.mcp.beginConnect`, GET the authorization URL without following redirects, hand
 //   `code`/`state`/`iss` to `Agents.mcp.finishConnect`.
-// Mock boundary: the model, and the owner-gate port in INT-2 row 5 only. Do NOT mock the fixture, the database, the token clock (expiry
+// Mock boundary: the model, and the `AccessGate` port (a double by table; owner refusal in INT-2 row 6). Do NOT mock the fixture, the database, the token clock (expiry
 //   is set by moving the account row's `expires_at`) or `McpAccounts`.
 //
 // Adapted by this design, not duplicated here:
@@ -37,7 +37,7 @@
 // Not automated: AC-15.1 (`seed:mcp` on a clean development database) - the manual L1 run of the script, it is a developer tool, not a
 //   product path; AC-15.2 is a property of this whole suite (it runs on the fixture and needs no internet), not a case.
 
-import { type AgentHistoryEntry, OwnerDisabledError } from '@agent-os/agents';
+import type { AgentHistoryEntry } from '@agent-os/agents';
 import {
   createScriptedModel,
   type RecordedModelCall,
@@ -264,7 +264,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   the scripted model asks for tools -> `ToolRunner` asks the one access function, then opens ONE connection with the owner's token ->
   //   fixture journal and `agent_tool_calls` rows.
   // Steps (one story, literal expectations; the registry is empty at the start; Аня and Борис are permitted `logs` and `backoffice` and Глеб
-  //   nothing, `MCP_ACCESS_TABLE` keyed by their ids; the definitions name `*` and also `ghost`, which is never registered; an agent of Аня is running):
+  //   nothing, server rights of the access gate double keyed by their ids; the definitions name `*` and also `ghost`, which is never registered; an agent of Аня is running):
   //   1. DC-11: startup passed with `ghost` in the definitions; `ghost` yields no tool in any set.
   //   2. AC-12.5 / AC-13.1: the admin registers `logs` (shared token); at Аня's next model call her set holds the `logs` tools, no restart.
   //      Аня's and Борис's agents each call one `logs` tool -> the journal holds two calls with the shared identity, and each
@@ -531,7 +531,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   // ---------------------------------------------------------------------------------------------------------------
   // AC: AC-13.3 "срок токена Ани истёк, а обновить его можно: платформа обновляет токен, вызов проходит, и Аню ни о чём не спрашивают";
   //   AC-14.5 "обновить токен Ани не удалось: вызов получает ошибку «нужно подключить аккаунт», статус в списке - «нужна аутентификация»,
-  //   а агент продолжает работу". Design: DC-3, DC-4, DC-10, KD-5; UC-3, UC-E4 (connection loss); the `OwnerGate` refusal inside `run_code`
+  //   а агент продолжает работу". Design: DC-3, DC-4, DC-10, KD-5; UC-3, UC-E4 (connection loss); the `AccessGate` owner refusal inside `run_code`
   //   (identity KD-4, `packages/agents/src/tools/builtin/run-code.ts`), a row the identity part left without a proof.
   // Behavior: access token past its time (the account row's `expires_at` moved) -> two calls of Аня at once -> one refresh, both pass;
   //   then the refresh token is revoked -> the call ends `auth_required` without a request to the server; other endings are tied to their causes.
@@ -550,7 +550,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   5. UC-E4: a `drop_connection` rule on one `logs` call -> `transport_failure`, the step does not fail and the agent goes on to its next
   //      model call (the real SDK failure class, which the unit map cannot show).
   //   6. owner gate inside a script: Аня's agent runs a `write`-class `run_code` script that calls a `logs` tool twice; the first call is held
-  //      on the fixture; the owner-gate double is switched to refusing; the first call is released -> `agent_code_calls`: seq 1 `success`,
+  //      on the fixture; the access gate double is switched to refusing; the first call is released -> `agent_code_calls`: seq 1 `success`,
   //      seq 2 `interrupted` (not `unknown`, although the run is `write`) with no `refusalReason`; the journal holds no second `logs` call
   //      from Аня; the agent's task ends `failed` with reason `owner_disabled`.
   // Catches: a refresh token spent twice (one per simultaneous call) so a rotating authorization server revokes the whole chain and the
@@ -559,7 +559,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   instead of becoming an outcome; a code call refused by the owner gate left open or closed `unknown`, so the history says a blocked
   //   employee's script may have acted.
   // @category: core-functionality
-  // @dependency: McpAccounts (refresh, in-process wait per server+owner), McpClient (AuthProvider, onUnauthorized), mcp-failure, run-code tool, code-calls repository, owner-gate port double, MCP fixture process + authorization server, Postgres
+  // @dependency: McpAccounts (refresh, in-process wait per server+owner), McpClient (AuthProvider, onUnauthorized), mcp-failure, run-code tool, code-calls repository, AccessGate port double, MCP fixture process + authorization server, Postgres
   // @complexity: high
   it('INT-2: two simultaneous calls spend one refresh and both pass, a lost account gives auth_required without a request to the server, a failing shared server blames no employee, and an owner refused inside a script closes the code call as interrupted', async () => {
     // Given: `logs` and `tracker` with the shared token, `backoffice` with personal OAuth; the admin, Аня and
@@ -571,7 +571,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const everyServer = uniqueName('every-server');
     const fixture = createFixtureFiles('mcp-connect');
     const model = createScriptedModel();
-    const refusedOwners = new Set<string>();
+    const refusedOwners: string[] = [];
     const harness = await createAgentsHarness({
       model,
       fixture,
@@ -581,11 +581,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         [boris]: [BACKOFFICE_SERVER],
       },
       definitions: [testDefinition(everyServer, { mcpServers: ['*'] })],
-      ownerGate: {
-        check: async (ownerId) => {
-          if (refusedOwners.has(ownerId)) throw new OwnerDisabledError(ownerId);
-        },
-      },
+      refusedOwners,
     });
     const { control } = harness.fixtureProcess;
     try {
@@ -765,7 +761,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         (calls) => calls.length === 1,
         "the run's first trace at the server",
       );
-      refusedOwners.add(anya);
+      refusedOwners.push(anya);
       firstTraceHeld.release();
       await waitForTaskStatus(harness, anyaFirst.agentId, anya, 'failed');
       fixture.setFaults([]);

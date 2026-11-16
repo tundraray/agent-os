@@ -2,7 +2,6 @@ import { consoleSink, createLogger } from '@agent-os/common';
 import { createDatabase } from '@agent-os/db';
 import { createRuntime, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
 import { type ChildTypes, CHILD_TYPES_ENV, handlersFor } from './runtimeChildHandlers.js';
-import { TEST_MODEL_PRICES } from './runtimeHarness.js';
 import { ensureHandlerRowsTable } from './testHandlers.js';
 
 /**
@@ -44,7 +43,6 @@ async function main(): Promise<void> {
     config,
     logger,
     clock: systemClock,
-    modelPrices: TEST_MODEL_PRICES,
   });
   for (const handler of handlersFor(readTypes(), database.db)) {
     runtime.handlers.register(handler);

@@ -1,5 +1,6 @@
-import type { CallUsage } from '@agent-os/runtime';
+import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
+import type { AccessGate, ModelVerdict } from './access-gate.js';
 import type {
   AgentToolCall,
   AgentTurnCall,
@@ -369,4 +370,48 @@ export function inputLines(messages: readonly AgentTurnMessage[]): string[] {
         return `tool: ${message.results.map((result) => result.toolName).join(', ')}`;
     }
   });
+}
+
+/** What the access gate double answers (plan Notes 6): the shape of the old access table plus literal prices. */
+export interface AccessGateDoubleOptions {
+  /** `{ <owner id> | '*': [<server>, …] }`: every tool of a listed server is allowed; no row — no servers. */
+  readonly servers?: Readonly<Record<string, readonly string[]>>;
+  /** The catalogue: a model with a price is allowed at it, any other is `model_not_connected`. */
+  readonly prices: Readonly<Record<string, ModelPrice>>;
+  /**
+   * Owners the gate answers `owner_disabled` for, tools and models alike; read on every question, so a
+   * test may refuse an owner mid-run by adding to the array it passed.
+   */
+  readonly refusedOwners?: readonly string[];
+  /** A refusal per model for every owner, such as `quota_exhausted`; it goes before the catalogue. */
+  readonly refusedModels?: Readonly<Record<string, Extract<ModelVerdict, { readonly kind: 'refused' }>>>;
+}
+
+/** Row of the `servers` option whose servers every owner has. */
+const EVERY_OWNER = '*';
+
+/**
+ * An `AccessGate` for the package's tests (ADR-0004: a double of the package's own contract): rights by
+ * server from a table, prices from literals, no database. `apps/api` implements the real one over its tables.
+ */
+export function createAccessGateDouble(options: AccessGateDoubleOptions): AccessGate {
+  const disabled = (ownerId: string): boolean => options.refusedOwners?.includes(ownerId) === true;
+  const serversOf = (ownerId: string): ReadonlySet<string> =>
+    new Set([...(options.servers?.[ownerId] ?? []), ...(options.servers?.[EVERY_OWNER] ?? [])]);
+  return {
+    async tools(ownerId) {
+      if (disabled(ownerId)) return { kind: 'owner_disabled' };
+      const servers = serversOf(ownerId);
+      return { kind: 'allowed', allows: (server) => servers.has(server) };
+    },
+    async model(ownerId, model) {
+      if (disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
+      const refusal = options.refusedModels?.[model];
+      if (refusal !== undefined) return refusal;
+      const price = options.prices[model];
+      return price === undefined
+        ? { kind: 'refused', reason: 'model_not_connected' }
+        : { kind: 'allowed', price };
+    },
+  };
 }

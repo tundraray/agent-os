@@ -2,6 +2,7 @@ import { HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
+import type { AccessAudit } from '../access-gate.js';
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { ModelClient } from '../model/model-client.js';
 import { buildProviderMessages } from '../model/provider-messages.js';
@@ -16,9 +17,9 @@ import {
   failResult,
   logStep,
   modelErrorMessage,
-  ownerDisabledResult,
   previewEntries,
   readSessionHistory,
+  refusedResult,
   type StepPrelude,
 } from './model-step.js';
 
@@ -46,6 +47,8 @@ export interface CompactionStepDeps {
   readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
+  /** Gets the `access_denied` record of a refused model call (KD-6). */
+  readonly audit: AccessAudit;
 }
 
 /** The compaction step (KD-7); `prelude` — what the handler writes first (continuation). */
@@ -63,7 +66,7 @@ export type CompactionStep = (
  * the model sees the summary and what follows it, the employee reads the whole history.
  */
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
-  const { database, catalog, registry, modelClient } = deps;
+  const { database, catalog, registry, modelClient, audit } = deps;
 
   return async function compactionStep(ctx, session, prelude) {
     const startedAt = Date.now();
@@ -117,11 +120,14 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
       ...(await writePrelude(tx)),
       ...delivered,
     ];
-    if (result.kind === 'owner_disabled') {
-      return ownerDisabledResult({
+    if (result.kind === 'not_started') {
+      return refusedResult({
         ctx,
         stepKind: STEP_KIND,
         startedAt,
+        model: session.model,
+        refusal: result.verdict,
+        audit,
         writeEntries: writeFailureEntries,
         patch: { ...prelude?.patch },
       });

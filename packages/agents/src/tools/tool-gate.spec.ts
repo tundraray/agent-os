@@ -1,18 +1,22 @@
 import { createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
+import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
+import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate.js';
 import { createCatalog } from '../definitions/catalog.js';
 import type { AgentDefinition } from '../definitions/definition.js';
+import { createToolStep } from '../step/tool-step.js';
+import type { Session } from '../store/sessions.repository.js';
+import type { ToolCallRow } from '../store/tool-calls.repository.js';
 import type { AgentTool, ToolCaller } from './tool.js';
 import { gateStart, type StartGateInput } from './tool-gate.js';
 import { createToolRegistry, type SessionTool } from './tool-registry.js';
 import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner.js';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.2,
-// DC-4 (the caller's list and count), AC-10.3 (depth), DC-2 (unpriced model).
-const HAIKU = 'anthropic/claude-haiku-5-5';
-
+// DC-4 (the caller's list and count), AC-10.3 (depth); design-access.md DC-1, DC-4, AC-16.1, AC-17.1,
+// AC-18.1 (the server–tool pair, one audit record per refusal).
 const OWNER = 'employee-1';
 const CALLER: ToolCaller = { agentId: 'agent-1', ownerId: OWNER, rootId: 'agent-1', parentId: null, depth: 0 };
 
@@ -50,22 +54,22 @@ const START_AGENT_TOOL: SessionTool = {
 interface CallCheckInput {
   readonly toolName: string;
   readonly sessionTools: readonly SessionTool[];
-  /** Servers of the owner's row of the access table. */
-  readonly ownerServers: readonly string[];
+  /** `<server>/<tool>` pairs the gate allows the owner. */
+  readonly ownerPairs: readonly string[];
   readonly args: unknown;
 }
 
 const MCP_CALL: CallCheckInput = {
   toolName: 'mcp__logs__search',
   sessionTools: [START_AGENT_TOOL, MCP_TOOL],
-  ownerServers: ['logs'],
+  ownerPairs: ['logs/search'],
   args: { query: 'error' },
 };
 
 const START_AGENT_CALL: CallCheckInput = {
   toolName: 'start_agent',
   sessionTools: [START_AGENT_TOOL],
-  ownerServers: [],
+  ownerPairs: [],
   args: { description: 'gather', agent: 'general-purpose', prompt: 'look' },
 };
 
@@ -73,38 +77,60 @@ const NO_SERVER_CALLS = async (): Promise<never> => {
   throw new Error('a check calls no server');
 };
 
-/** A runner with the given access table whose client sends nothing: a call that reaches a server throws. */
-function runnerOf(
-  ownerServers: readonly string[],
-  credentialsFor: ToolRunnerOptions['accounts']['credentialsFor'] = NO_SERVER_CALLS,
-): ToolRunner {
+const SILENT = createLogger({ sinks: [], secrets: [], minLevel: 'error' });
+
+/** The gate double: the owner is on and has `pairs`, or is disabled. */
+function gateOf(pairs: readonly string[] | 'owner_disabled'): Pick<AccessGate, 'tools'> {
+  return {
+    tools: async () =>
+      pairs === 'owner_disabled'
+        ? { kind: 'owner_disabled' }
+        : { kind: 'allowed', allows: (server, tool) => pairs.includes(`${server}/${tool}`) },
+  };
+}
+
+/** The pairs `check` refuses with, as a step gets them from the gate. */
+function allowsOf(pairs: readonly string[]) {
+  return (server: string, tool: string) => pairs.includes(`${server}/${tool}`);
+}
+
+interface RunnerDoubles {
+  readonly pairs?: readonly string[] | 'owner_disabled';
+  readonly credentialsFor?: ToolRunnerOptions['accounts']['credentialsFor'];
+  readonly audits?: AccessDeniedEntry[];
+}
+
+/** A runner over the gate double whose client sends nothing: a call that reaches a server throws. */
+function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
   return createToolRunner({
     client: { callTool: NO_SERVER_CALLS },
-    accounts: { credentialsFor },
-    serverAllowed: (ownerId, server) => ownerId === OWNER && ownerServers.includes(server),
+    accounts: { credentialsFor: doubles.credentialsFor ?? NO_SERVER_CALLS },
+    access: gateOf(doubles.pairs ?? []),
+    audit: async (entry) => {
+      doubles.audits?.push(entry);
+    },
     callTimeoutMs: 1000,
     toolResultMaxBytes: 1024,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
-    ownerGate: { check: async () => {} },
   });
 }
 
-/** `ToolRunner.check` of a runner with the given access table; a check calls no server. */
-function checkCall(input: CallCheckInput, runner = runnerOf(input.ownerServers)) {
+/** `ToolRunner.check` with the given pairs; a check calls no server. */
+function checkCall(input: CallCheckInput, runner = runnerOf({ pairs: input.ownerPairs })) {
   return runner.check(
     { callId: 'call-1', toolName: input.toolName, args: input.args },
-    { sessionTools: input.sessionTools, caller: CALLER },
+    { sessionTools: input.sessionTools, caller: CALLER, allows: allowsOf(input.ownerPairs) },
   );
 }
 
 /** DC-2: a call that passed the check, sent after its server row was removed or switched off. */
 async function sendToGoneServer(): Promise<Gate> {
-  const runner = runnerOf(MCP_CALL.ownerServers, async () => ({ kind: 'server_gone' }));
+  const runner = runnerOf({ pairs: MCP_CALL.ownerPairs, credentialsFor: async () => ({ kind: 'server_gone' }) });
   const checked = checkCall(MCP_CALL, runner);
   if (checked.kind !== 'allowed') throw new Error('the call must pass the check');
   const execution = await runner.runOutside(checked.call, {
     signal: new AbortController().signal,
-    logger: createLogger({ sinks: [], secrets: [], minLevel: 'error' }),
+    logger: SILENT,
     guard: NO_SERVER_CALLS,
   });
   return kindOf(execution);
@@ -137,14 +163,14 @@ async function checkRunCode(runClass: 'read' | 'write', script: string): Promise
     catalog: createCatalog(),
     // A definition that names no server reads nothing of the registry.
     database: {} as Database,
-    serverAllowed: () => false,
+    access: gateOf([]),
   });
   const sessionTools = await registry.sessionTools({ definition: NO_TOOLS, limits: null, ownerId: OWNER });
   return kindOf(
     checkCall({
       toolName: RUN_CODE_TOOL,
       sessionTools,
-      ownerServers: [],
+      ownerPairs: [],
       args: { description: 'Count errors', class: runClass, script },
     }),
   );
@@ -167,7 +193,6 @@ const START: StartGateInput = {
   startedCount: 0,
   depth: 1,
   maxDepth: 3,
-  model: { kind: 'chosen', model: HAIKU },
 };
 
 const LIMITED: StartGateInput = {
@@ -196,8 +221,8 @@ describe('a tool call is refused with its reason or allowed', () => {
       { kind: 'refused', reason: 'tool_not_in_definition' },
     ],
     [
-      'a server outside the access table',
-      () => kindOf(checkCall({ ...MCP_CALL, ownerServers: [] })),
+      'a pair the gate does not allow, though another tool of its server is allowed',
+      () => kindOf(checkCall({ ...MCP_CALL, ownerPairs: ['logs/tail'] })),
       { kind: 'refused', reason: 'no_access' },
     ],
     [
@@ -269,12 +294,209 @@ describe('a tool call is refused with its reason or allowed', () => {
       { kind: 'refused', reason: 'depth_limit' },
     ],
     ['a child exactly at the depth limit', () => kindOf(gateStart({ ...START, depth: 2 })), { kind: 'allowed' }],
-    [
-      'a model without a price',
-      () => kindOf(gateStart({ ...START, model: { kind: 'refused', reason: 'unknown_model' } })),
-      { kind: 'refused', reason: 'unknown_model' },
-    ],
   ])('%s', async (_, gate, expected) => {
     expect(await gate()).toEqual(expected);
+  });
+});
+
+/** A changing tool of the same server: it needs a confirmation when allowed. */
+const CHANGING_TOOL: SessionTool = {
+  kind: 'mcp',
+  name: 'mcp__logs__purge',
+  description: 'Purge log lines',
+  inputSchema: { type: 'object' },
+  mcp: { ...MCP_TOOL.mcp, name: 'mcp__logs__purge', tool: 'purge', description: 'Purge log lines', readOnly: false },
+};
+
+const AGENT_DEFINITION: AgentDefinition = { ...NO_TOOLS, name: 'helper', mcpServers: ['logs'] };
+
+const OPEN_PURGE: ToolCallRow = {
+  taskId: CALLER.agentId,
+  callId: 'call-1',
+  answerSeq: 2,
+  position: 0,
+  tool: 'purge',
+  server: 'logs',
+  args: {},
+  state: 'requested',
+  outcome: null,
+  refusalReason: null,
+  resultText: null,
+  childTaskId: null,
+  startedAt: null,
+  finishedAt: null,
+  attempts: 0,
+  output: null,
+};
+
+const SESSION: Session = {
+  taskId: CALLER.agentId,
+  ownerId: OWNER,
+  definition: AGENT_DEFINITION.name,
+  description: 'Clean up',
+  model: 'anthropic/claude-haiku-5-5',
+  prompt: 'Clean up the logs',
+  limits: null,
+  forkedFromTaskId: null,
+  forkedThroughSeq: null,
+  turns: 0,
+  interrupted: false,
+  closed: false,
+  lastInputTokens: null,
+  createdAt: new Date(0),
+};
+
+function stepContext(): StepContext {
+  return {
+    taskId: CALLER.agentId,
+    rootId: CALLER.rootId,
+    parentId: null,
+    ownerId: OWNER,
+    depth: 0,
+    type: 'agent',
+    input: {},
+    stepNo: 3,
+    resumedAfterLoss: false,
+    messages: [],
+    decision: null,
+    signal: new AbortController().signal,
+    logger: SILENT,
+    guard: NO_SERVER_CALLS,
+  };
+}
+
+/** What one admission scenario gave: its end, the audit records and how many credentials were read. */
+interface Admission {
+  readonly end: string;
+  readonly audits: readonly AccessDeniedEntry[];
+  readonly credentialsRead: number;
+}
+
+const DENIED_PURGE: AccessDeniedEntry = {
+  kind: 'access_denied',
+  actor: OWNER,
+  objectType: 'tool',
+  objectId: 'logs/purge',
+  outcome: 'rejected',
+  reason: 'no_access',
+};
+
+const DENIED_SEARCH: AccessDeniedEntry = { ...DENIED_PURGE, objectId: 'logs/search' };
+
+/** Runs one scenario over a runner whose credentials read counts and answers `server_gone`. */
+async function admission(
+  pairs: readonly string[] | 'owner_disabled',
+  act: (runner: ToolRunner, audits: AccessDeniedEntry[]) => Promise<{ kind: string; reason?: string } | string>,
+): Promise<Admission> {
+  const audits: AccessDeniedEntry[] = [];
+  let credentialsRead = 0;
+  const runner = runnerOf({
+    pairs,
+    audits,
+    credentialsFor: async () => {
+      credentialsRead += 1;
+      return { kind: 'server_gone' };
+    },
+  });
+  const end = await act(runner, audits).then(
+    (result) => (typeof result === 'string' ? result : [result.kind, result.reason].filter(Boolean).join(' ')),
+    (error: unknown) => (error instanceof OwnerDisabledError ? `rejects ${error.code}` : Promise.reject(error)),
+  );
+  return { end, audits, credentialsRead };
+}
+
+/** A call that passed `check` when the step's set was built (the pair was allowed then). */
+function resolvedSearch(runner: ToolRunner) {
+  const checked = runner.check(
+    { callId: 'call-1', toolName: MCP_TOOL.name, args: { query: 'error' } },
+    { sessionTools: [MCP_TOOL], caller: CALLER, allows: () => true },
+  );
+  if (checked.kind !== 'allowed') throw new Error('the call must pass the check');
+  return checked.call;
+}
+
+function resolvedBuiltin(runner: ToolRunner) {
+  const checked = runner.check(
+    { callId: 'call-2', toolName: START_AGENT_TOOL.name, args: START_AGENT_CALL.args },
+    { sessionTools: [START_AGENT_TOOL], caller: CALLER, allows: () => false },
+  );
+  if (checked.kind !== 'allowed') throw new Error('the built-in call must pass the check');
+  return checked.call;
+}
+
+const OUTSIDE = { signal: new AbortController().signal, logger: SILENT, guard: NO_SERVER_CALLS };
+
+describe('a tool call is admitted only when the gate allows its server–tool pair: a refused pair is `no_access` with one audit call and no credentials asked; a denied changing tool is `no_access` without a confirmation; a built-in tool asks only whether the employee is on', () => {
+  it.each<[string, () => Promise<Admission>, Admission]>([
+    [
+      'a direct call whose pair was taken away after the set was built',
+      () => admission([], (runner) => runner.runOutside(resolvedSearch(runner), OUTSIDE)),
+      { end: 'refused no_access', audits: [DENIED_SEARCH], credentialsRead: 0 },
+    ],
+    [
+      'a confirmed call whose pair was taken away while the confirmation waited',
+      () =>
+        admission([], async (runner) => {
+          const send = await runner.sendConfirmed(resolvedSearch(runner), { ...OUTSIDE, taskId: CALLER.agentId });
+          return send.kind === 'sent' ? send.execution : send;
+        }),
+      { end: 'refused no_access', audits: [DENIED_SEARCH], credentialsRead: 0 },
+    ],
+    [
+      'a call from code to a pair the gate does not allow',
+      () =>
+        admission(['logs/tail'], (runner) =>
+          runner.callFromCode(
+            { name: MCP_TOOL.name, args: { query: 'error' } },
+            {
+              caller: CALLER,
+              snapshot: [MCP_TOOL],
+              runClass: 'read',
+              agentToolNames: [],
+              callId: 'run-1',
+              signal: new AbortController().signal,
+              logger: SILENT,
+            },
+          ),
+        ),
+      { end: 'refused no_access', audits: [DENIED_SEARCH], credentialsRead: 0 },
+    ],
+    [
+      'an allowed pair reaches the credentials',
+      () => admission(['logs/search'], (runner) => runner.runOutside(resolvedSearch(runner), OUTSIDE)),
+      { end: 'refused tool_not_in_definition', audits: [], credentialsRead: 1 },
+    ],
+    [
+      'a denied changing tool in the tool step: no confirmation request, the agent goes on',
+      () =>
+        admission(['logs/search'], async (runner, audits) => {
+          const catalog = createCatalog();
+          catalog.register(AGENT_DEFINITION);
+          const step = createToolStep({
+            catalog,
+            registry: { checkTools: async () => [MCP_TOOL, CHANGING_TOOL] },
+            runner,
+            access: gateOf(['logs/search']),
+            audit: async (entry) => {
+              audits.push(entry);
+            },
+          });
+          const result = await step(stepContext(), SESSION, [OPEN_PURGE]);
+          return result.outcome;
+        }),
+      { end: 'continue', audits: [DENIED_PURGE], credentialsRead: 0 },
+    ],
+    [
+      'a built-in tool runs although the gate allows no pair',
+      () => admission([], (runner) => runner.runOutside(resolvedBuiltin(runner), OUTSIDE)),
+      { end: 'done', audits: [], credentialsRead: 0 },
+    ],
+    [
+      'a built-in tool of a disabled employee does not run',
+      () => admission('owner_disabled', (runner) => runner.runOutside(resolvedBuiltin(runner), OUTSIDE)),
+      { end: 'rejects OWNER_DISABLED', audits: [], credentialsRead: 0 },
+    ],
+  ])('%s', async (_, scenario, expected) => {
+    expect(await scenario()).toEqual(expected);
   });
 });

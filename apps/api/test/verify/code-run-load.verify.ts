@@ -15,10 +15,19 @@ import type { ConversationView } from '@agent-os/contracts';
 import { consoleSink, createLogger } from '@agent-os/common';
 import type { Response } from 'supertest';
 import { describe, expect, it } from 'vitest';
+import {
+  addModel,
+  allowRole,
+  HAIKU_TEST_PRICES,
+  removeRunRows,
+  runModel,
+} from '../support/access.js';
 import { chatApi, type ChatApi, waitFor } from '../support/api.js';
 import { createTestApp } from '../support/createTestApp.js';
 import { createEmployee, seedSuperAdmin } from '../support/session.js';
 
+/** The app's default model: a model of the run, allowed to both employees through the run's role. */
+const DEFAULT_MODEL = runModel('code-run-load-haiku');
 /** «Performance Requirements»: the conversation list, p95. */
 const LIST_P95_BUDGET_MS = 300;
 /** «Performance Requirements»: the conversation's messages, p95. */
@@ -111,7 +120,11 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
     async () => {
       // Given: one app with runtime workers; A's two conversations each ask for one run at its limit, again after
       // every failure; B's chat answers every message with text; B has 200 conversations
-      const harness = await createTestApp({ workers: true });
+      const harness = await createTestApp({
+        workers: true,
+        defaultModel: DEFAULT_MODEL,
+      });
+      let roleId: string | undefined;
       try {
         const loopTask = 'UC-N3: run the endless loop';
         const heapTask = 'UC-N3: grow the heap';
@@ -135,14 +148,23 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
           harness.app,
           `verify-admin-${randomUUID()}`,
         );
-        const employeeA = chatApi(
-          harness.app,
-          await createEmployee(harness.app, admin),
-        );
-        const employeeB = chatApi(
-          harness.app,
-          await createEmployee(harness.app, admin),
-        );
+        await addModel(harness.app, admin, {
+          id: DEFAULT_MODEL,
+          ...HAIKU_TEST_PRICES,
+        });
+        const role = await allowRole(harness.app, admin, {
+          name: 'code-run-load',
+          models: [DEFAULT_MODEL],
+          servers: [],
+        });
+        roleId = role.id;
+        const employee = async () => {
+          const session = await createEmployee(harness.app, admin);
+          await role.add(session);
+          return chatApi(harness.app, session);
+        };
+        const employeeA = await employee();
+        const employeeB = await employee();
         for (let index = 1; index < CONVERSATIONS; index += 1)
           await employeeB.createThread();
         const chat = await employeeB.createThread();
@@ -207,7 +229,14 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
           MESSAGE_P95_BUDGET_MS,
         );
       } finally {
-        await harness.close();
+        try {
+          await removeRunRows(harness.pool, {
+            models: [DEFAULT_MODEL],
+            roles: roleId === undefined ? [] : [roleId],
+          });
+        } finally {
+          await harness.close();
+        }
       }
     },
     MEASUREMENT_MS,

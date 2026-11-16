@@ -14,7 +14,7 @@
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup. The real `AppModule` boots in the process (`createTestApp`, rewritten for this part: no Mastra override), `RUNTIME_WORKERS` on, so the chat answers in the runtime workers, not in the HTTP request. No mock of Postgres, the runtime, agents, workflows, `LiveHub` or the controllers.
 // - The model is the only double: a scripted `ModelClient` at the boundary the agents package defines ("модель подменяется сценарием на границе `ModelClient`"), keyed by agent description. A scenario is a list of answers per agent: text parts (so `onTextDelta` is exercised with three parts) and/or tool calls plus `usage`; answers can be gated on a latch to hold a step with its model call in flight. The same double answers `agents.completeText` for the title (answers, fails, or waits per scenario).
-// - MCP is the real `packages/mcp-fixture` HTTP process of `createTestApp({ mcpServers })`, registered under the run's names (`LOGS_SERVER` read-only with a delayed read; `BACKOFFICE_SERVER` with the mutating `create_incident_note`; test/support/mcp-servers.ts), `FIXTURE_CALL_LOG` is the evidence of what reached a server; `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
+// - MCP is the real `packages/mcp-fixture` HTTP process of `createTestApp({ mcpServers })`, registered under the run's names (`LOGS_SERVER` read-only with a delayed read; `BACKOFFICE_SERVER` with the mutating `create_incident_note`; test/support/mcp-servers.ts), `FIXTURE_CALL_LOG` is the evidence of what reached a server; every employee of the file is in the run's role `chat-t<runId>`, which allows both servers and the run's default model (test/support/access.ts).
 // - The SSE client is a small helper over a raw HTTP request to `GET /api/events` (EventSource is a browser API; the helper parses `event:`/`data:` lines and exposes "wait for the next event of type X" and the received list with arrival times). Requests are made with supertest; the user is a signed-in employee whose session cookie and the web's `Origin` go with every request (test/support/session.ts), and the session check is real.
 // - Isolation (project convention, no truncate): a unique employee per test (created through `POST /api/admin/users` by the file's administrator after the boot), a unique conversation per test; each test reads only its own data. `fileParallelism: false`. No sleeps for ordering and no latency assertions: tests synchronise on the double's latches, the fixture's latches, SSE events and rows. NFR-02 (a report in the open conversation within 2 s) is asserted as "the `tree` note arrives after the report row and before the test's own wait ends"; the p95 figure belongs to an on-demand script, not to this suite.
 // - Support to write alongside (test/support): createTestApp.ts (rewritten: `AppModule` with the scripted `ModelClient` and the fixture config), scriptedModel.ts (scenarios, latches, recorded inputs, title scenarios), sseClient.ts (parse, wait, record), fixtureLog.ts (read and filter the call log), api.ts (typed helpers over supertest validating bodies with the `packages/contracts` schemas: ConversationView, AgentPageView, AgentListPage, ApiErrorSchema).
@@ -48,6 +48,9 @@
 // - NFR-06 and DC-3, DC-4, AC-13.3 at the HTTP edge: INT-4; DC-5: INT-1 row E; DC-1: INT-1 rows A and F; DC-2: INT-3 row B
 
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import {
   createLatch,
   inputLines,
@@ -66,7 +69,15 @@ import {
 } from '@agent-os/contracts';
 import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub.js';
+import {
+  addModel,
+  allowRole,
+  HAIKU_TEST_PRICES,
+  removeRunRows,
+  runModel,
+} from './support/access.js';
 import {
   type ChatApi,
   chatApi,
@@ -103,10 +114,32 @@ const DEEP_RESEARCH = {
   name: 'deep-research',
   title: 'Глубокий ресерч',
 } as const;
-/** `AGENT_DEFAULT_MODEL` of the test environment: every agent that names no model runs on it. */
-const DEFAULT_MODEL = 'anthropic/claude-haiku-5-5';
+/**
+ * `AGENT_DEFAULT_MODEL` of the file's app: every agent that names no model runs on it. A model of the run with Haiku's
+ * prices, which the spend literals of INT-2 E and INT-3 B are computed on.
+ */
+const DEFAULT_MODEL = runModel('claude-haiku-5-5');
 /** The title every first message gets (the text script of `beforeAll`). */
 const GENERATED_TITLE = 'Conversation title';
+
+/**
+ * The shipped deep-research template with its coordinator on {@link DEFAULT_MODEL}: the template names a developer's
+ * model, which a suite neither adds nor allows (plan rule 11); name, title and agents stay as shipped.
+ */
+function deepResearchOnRunModel(): unknown {
+  const file = join(
+    dirname(createRequire(import.meta.url).resolve('@agent-os/workflows')),
+    'templates',
+    `${DEEP_RESEARCH.name}.json`,
+  );
+  const template = z
+    .looseObject({ coordinator: z.looseObject({}) })
+    .parse(JSON.parse(readFileSync(file, 'utf8')));
+  return {
+    ...template,
+    coordinator: { ...template.coordinator, model: DEFAULT_MODEL },
+  };
+}
 
 /** The `retry:` hint of the stream's first event (EventsController). */
 const STREAM_RETRY_MS = 2000;
@@ -502,13 +535,16 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // One boot of `AppModule` per file (plan Notes 4): two apps with workers over one database would step
   // each other's tasks with the wrong model double.
   let harness: TestApp;
+  /** The run's role of the file's employees; deleted with the model in `afterAll`. */
+  let roleId: string | undefined;
 
   beforeAll(async () => {
     harness = await createTestApp({
       workers: true,
       agentPageSize: 2,
       mcpServers: ['logs', 'backoffice'],
-      mcpAccess: { '*': [LOGS_SERVER, BACKOFFICE_SERVER] },
+      defaultModel: DEFAULT_MODEL,
+      workflowTemplates: [deepResearchOnRunModel()],
       faults: (files) => [
         holdCall('get_trace', TRACE_C, files.latch(FIXTURE_LATCHES.c)),
         holdCall('get_trace', TRACE_D1, files.latch(FIXTURE_LATCHES.d1)),
@@ -526,7 +562,22 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.app,
       `e2e-admin-${randomUUID()}`,
     );
-    const employee = () => createEmployee(harness.app, admin);
+    // The file's model and rights: the run's model and role, never the developer's catalogue or rights.
+    await addModel(harness.app, admin, {
+      id: DEFAULT_MODEL,
+      ...HAIKU_TEST_PRICES,
+    });
+    const role = await allowRole(harness.app, admin, {
+      name: 'chat',
+      models: [DEFAULT_MODEL],
+      servers: [LOGS_SERVER, BACKOFFICE_SERVER],
+    });
+    roleId = role.id;
+    const employee = async () => {
+      const session = await createEmployee(harness.app, admin);
+      await role.add(session);
+      return session;
+    };
     INT1 = {
       a: await employee(),
       b: await employee(),
@@ -553,7 +604,14 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     if (harness === undefined) return;
     for (const name of Object.values(FIXTURE_LATCHES))
       harness.fixtureLog.latch(name).release();
-    await harness.close();
+    try {
+      await removeRunRows(harness.pool, {
+        models: [DEFAULT_MODEL],
+        roles: roleId === undefined ? [] : [roleId],
+      });
+    } finally {
+      await harness.close();
+    }
   }, TEST_TIMEOUT_MS);
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -2202,7 +2260,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     "INT-2 E: the spend endpoint returns the UTC month's ledger sum including calls without a task and nothing of another month or owner",
     async () => {
       // Given: the owner's chat answers with literal usage on the default model
-      // (prices of config/model-prices.json, anthropic/claude-haiku-5-5: input 0.1, output 0.5 USD per MTok)
+      // (Haiku's prices of `HAIKU_TEST_PRICES`, added to the catalogue in `beforeAll`: input 0.1, output 0.5 USD per MTok)
       const api = chatApi(harness.app, INT2.e);
       const other = chatApi(harness.app, INT2.eOther);
       const task = 'INT-2 E: first message';

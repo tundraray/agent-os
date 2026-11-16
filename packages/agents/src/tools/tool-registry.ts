@@ -9,7 +9,7 @@ import {
   type DefinitionHeader,
   START_AGENT_TOOL,
 } from '../definitions/definition.js';
-import type { McpServerAllowed } from '../mcp/mcp-accounts.js';
+import type { AccessGate } from '../access-gate.js';
 import { accountsOf } from '../mcp/mcp-accounts.repository.js';
 import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository.js';
 import { type McpTool, storedMcpTools } from '../mcp/mcp-tool.js';
@@ -79,9 +79,10 @@ export interface ToolRegistry {
   /**
    * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1): the
    * built-in and registered ones its definition names, `run_code` in every session (code-execution KD-3),
-   * then the MCP tools of the definition's servers (`*` — all) that are enabled in the registry, that the
-   * owner may use (`serverAllowed`, as the call check) and, for an `oauth` server, that the owner has an
-   * account on. Read from the database on every call: nothing is kept between steps (Invariant 3).
+   * then the MCP tools of the definition's servers (`*` — all) that are enabled in the registry, whose
+   * server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled owner gets no MCP
+   * tool, and his model call fails the step) and, for an `oauth` server, that the owner has an account on.
+   * Read from the database on every call: nothing is kept between steps (Invariant 3).
    */
   sessionTools(input: SessionToolsInput): Promise<SessionTool[]>;
   /**
@@ -107,14 +108,14 @@ export interface ToolRegistryOptions {
   readonly catalog: DefinitionCatalog;
   /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
   readonly database: Database;
-  /** The one access function: the same in the tool set, in the call check and in the connections list. */
-  readonly serverAllowed: McpServerAllowed;
+  /** The one access check: the same in the tool set, in the call check and in the connections list. */
+  readonly access: Pick<AccessGate, 'tools'>;
 }
 
 /** The registry of the tools a session may offer its model (C3, `ToolRunner` reads it). */
 export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
   const tools = new Map<string, AgentTool>();
-  const { runCode, database, serverAllowed } = options;
+  const { runCode, database, access } = options;
   let sealed = false;
 
   function add(tool: AgentTool): void {
@@ -178,10 +179,14 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     );
   }
 
-  /** The definition's enabled servers the owner may use. */
-  async function allowedServers(input: SessionToolsInput): Promise<McpServerRow[]> {
-    const rows = await definitionServers(input.definition);
-    return rows.filter((row) => serverAllowed(input.ownerId, row.name));
+  /** The MCP tools of the given servers whose pair the gate allows the owner; none for a disabled owner. */
+  async function allowedTools(rows: readonly McpServerRow[], ownerId: string): Promise<SessionTool[]> {
+    if (rows.length === 0) return [];
+    const answer = await access.tools(ownerId);
+    if (answer.kind === 'owner_disabled') return [];
+    return mcpToolsOf(rows).filter(
+      (tool) => tool.kind === 'mcp' && answer.allows(tool.mcp.server, tool.mcp.tool),
+    );
   }
 
   /** Keeps a shared server, and an `oauth` server only when the owner has an account on it. */
@@ -218,8 +223,8 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
       });
     },
     async sessionTools(input) {
-      const rows = await withAccounts(await allowedServers(input), input.ownerId);
-      return [...agentTools(input), ...mcpToolsOf(rows)];
+      const rows = await withAccounts(await definitionServers(input.definition), input.ownerId);
+      return [...agentTools(input), ...(await allowedTools(rows, input.ownerId))];
     },
     async checkTools(input) {
       return [...agentTools(input), ...mcpToolsOf(await definitionServers(input.definition))];

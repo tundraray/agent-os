@@ -12,8 +12,6 @@ export const RUNTIME_ERROR_CODES = [
   'PAYLOAD_TOO_LARGE',
   /** The decision request does not exist or belongs to another owner. */
   'DECISION_NOT_FOUND',
-  /** No price is configured for the model. */
-  'UNKNOWN_MODEL_PRICE',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 

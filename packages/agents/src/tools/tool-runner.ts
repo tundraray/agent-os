@@ -9,11 +9,17 @@ import {
 import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { McpAccounts, McpServerAllowed } from '../mcp/mcp-accounts.js';
+import {
+  type AccessAudit,
+  type AccessDeniedEntry,
+  type AccessGate,
+  OwnerDisabledError,
+  type ToolAccess,
+} from '../access-gate.js';
+import type { McpAccounts } from '../mcp/mcp-accounts.js';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
-import { isOwnerDisabled, type OwnerGate } from '../owner-gate.js';
 import type { Session } from '../store/sessions.repository.js';
 import { toolCalls } from '../store/tool-calls.repository.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
@@ -47,6 +53,27 @@ export function isInCommit(call: ResolvedCall): call is InCommitCall {
 export type CallCheck =
   | { readonly kind: 'allowed'; readonly call: ResolvedCall }
   | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
+
+/** Whether the owner may call this tool of this server: the answer of `AccessGate.tools` for him. */
+export type PairAllowed = Extract<ToolAccess, { readonly kind: 'allowed' }>['allows'];
+
+/** A call refused because the gate does not allow its server–tool pair. */
+export interface NoAccess {
+  readonly kind: 'refused';
+  readonly reason: 'no_access';
+}
+
+/** The `access_denied` record of a tool call refused `no_access` (KD-6): one per refusal. */
+export function toolDeniedEntry(ownerId: string, server: string, tool: string): AccessDeniedEntry {
+  return {
+    kind: 'access_denied',
+    actor: ownerId,
+    objectType: 'tool',
+    objectId: `${server}/${tool}`,
+    outcome: 'rejected',
+    reason: 'no_access',
+  };
+}
 
 /** How a tool call the runner ran ended; a refusal reached no external system. */
 export type ToolExecution =
@@ -120,19 +147,20 @@ export interface ToolRunnerOptions {
   readonly client: Pick<McpClient, 'callTool'>;
   /** The credentials of the caller's owner, read just before the call (KD-5). */
   readonly accounts: Pick<McpAccounts, 'credentialsFor'>;
-  /** The one access function: the same check `sessionTools` filters with. */
-  readonly serverAllowed: McpServerAllowed;
+  /**
+   * Asked before every call the runner starts — direct, in-commit, confirmed and from code (design-access.md
+   * KD-1, KD-4): a disabled owner rejects the runner's method with `OwnerDisabledError` and the call does not
+   * start; an MCP pair it does not allow is refused `no_access` before any credentials are read.
+   */
+  readonly access: Pick<AccessGate, 'tools'>;
+  /** Gets the `access_denied` record of each `no_access` the runner decides (KD-6). */
+  readonly audit: AccessAudit;
   /** `MCP_CALL_TIMEOUT_MS`: bounds one call, the handshake included. */
   readonly callTimeoutMs: number;
   /** `AGENT_TOOL_RESULT_MAX_BYTES`. */
   readonly toolResultMaxBytes: number;
   /** Binds `createStartChild` (T3.4) to the commit transaction and the caller; `createAgents` supplies it. */
   readonly startChildFor: (scope: StartChildScope) => StartChild;
-  /**
-   * Asked before every call the runner starts — direct, in-commit, confirmed and from code (KD-4): its
-   * `OwnerDisabledError` rejects the runner's method, and the call does not start.
-   */
-  readonly ownerGate: OwnerGate;
 }
 
 /** A script's request to call a tool: the name from the model's tool list and the arguments. */
@@ -185,13 +213,17 @@ export interface ToolRunner {
   /**
    * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's check set
    * (`ToolRegistry.checkTools`: a disabled, removed or unnamed server's tool is not), the owner may
-   * use its server — `serverAllowed`, as when the set was built — and the arguments of a built-in or
-   * registered tool fit its schema. A refused call never reaches the server; allowed arguments are the
-   * parsed ones.
+   * use its server–tool pair — `allows`, the gate's answer for this step — and the arguments of a built-in
+   * or registered tool fit its schema. A refused call never reaches the server; allowed arguments are the
+   * parsed ones. A `no_access` decided here is audited by the caller of `check`.
    */
   check(
     requested: RequestedCall,
-    scope: { readonly sessionTools: readonly SessionTool[]; readonly caller: ToolCaller },
+    scope: {
+      readonly sessionTools: readonly SessionTool[];
+      readonly caller: ToolCaller;
+      readonly allows: PairAllowed;
+    },
   ): CallCheck;
   /**
    * A changing MCP tool (not `readOnlyHint`), or a tool with `confirmation` whose `required(args)` is
@@ -213,12 +245,13 @@ export interface ToolRunner {
    * Checks and runs a script's call (code-execution «Проверка вызова из кода»; KD-2, KD-8, DC-5, DC-6):
    * a built-in or registered tool or `run_code` — `not_callable_from_code`; a `write` run and a name
    * outside the confirmed list — `not_in_confirmed_script`; then `check` against the snapshot; a `read`
-   * run and a tool without `McpTool.readOnly` — `changing_in_read_run`; then `OwnerGate`, whose refusal
-   * rejects. An allowed call goes to its server on behalf of the caller's owner; a value is not cut, a
-   * server's error text is not returned.
+   * run and a tool without `McpTool.readOnly` — `changing_in_read_run`. `check` gets the gate's answer asked
+   * for this call: a disabled owner rejects, a pair it does not allow is `no_access` with one audit record.
+   * An allowed call goes to its server on behalf of the caller's owner; a value is not cut, a server's error
+   * text is not returned.
    */
   callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution>;
-  /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper; `OwnerGate` is asked first. */
+  /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper; the gate is asked first. */
   planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
   /**
    * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
@@ -337,23 +370,52 @@ function withoutServerText(
 
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
-  const { client, accounts, serverAllowed, callTimeoutMs, toolResultMaxBytes, ownerGate } = options;
+  const { client, accounts, access, audit, callTimeoutMs, toolResultMaxBytes } = options;
 
-  /** Asks `OwnerGate` for the caller's owner; a refusal is logged and thrown, so the call does not start. */
-  async function admit(callId: string, caller: ToolCaller, logger: Logger): Promise<void> {
-    try {
-      await ownerGate.check(caller.ownerId);
-    } catch (error) {
-      if (isOwnerDisabled(error)) {
-        logger.warn('owner gate refused a tool call', {
-          ownerId: caller.ownerId,
-          agentId: caller.agentId,
-          callId,
-          reason: 'owner_disabled',
-        });
-      }
-      throw error;
-    }
+  /**
+   * The gate's answer for the caller's owner, asked right before a call starts: a disabled owner is logged
+   * and thrown as `OwnerDisabledError`, so the call does not start.
+   */
+  async function pairsOf(callId: string, caller: ToolCaller, logger: Logger): Promise<PairAllowed> {
+    const answer = await access.tools(caller.ownerId);
+    if (answer.kind === 'allowed') return answer.allows;
+    logger.warn('access gate refused a tool call', {
+      ownerId: caller.ownerId,
+      agentId: caller.agentId,
+      callId,
+      reason: 'owner_disabled',
+    });
+    throw new OwnerDisabledError(caller.ownerId);
+  }
+
+  /** The one audit record of a `no_access` the runner decided, and its log line. */
+  async function refuseNoAccess(
+    call: { readonly callId: string; readonly caller: ToolCaller },
+    target: { readonly server: string; readonly tool: string },
+    logger: Logger,
+  ): Promise<NoAccess> {
+    logger.warn('access gate refused a tool pair', {
+      ownerId: call.caller.ownerId,
+      agentId: call.caller.agentId,
+      callId: call.callId,
+      server: target.server,
+      tool: target.tool,
+      reason: 'no_access',
+    });
+    await audit(toolDeniedEntry(call.caller.ownerId, target.server, target.tool));
+    return { kind: 'refused', reason: 'no_access' };
+  }
+
+  /**
+   * The admission point every execution path goes through right before it starts (design-access.md KD-1):
+   * the owner is on, and an MCP pair is still allowed — a right taken away after the set was built or while
+   * a confirmation waited is `no_access`, with no token read and no request sent. A built-in tool asks only
+   * whether the owner is on.
+   */
+  async function admit(call: ResolvedCall, logger: Logger): Promise<NoAccess | undefined> {
+    const allows = await pairsOf(call.callId, call.caller, logger);
+    if (call.tool.kind !== 'mcp' || allows(call.tool.mcp.server, call.tool.mcp.tool)) return undefined;
+    return refuseNoAccess(call, call.tool.mcp, logger);
   }
 
   /**
@@ -443,10 +505,10 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     });
   }
 
-  const check: ToolRunner['check'] = (requested, { sessionTools, caller }) => {
+  const check: ToolRunner['check'] = (requested, { sessionTools, caller, allows }) => {
     const tool = sessionTools.find((candidate) => candidate.name === requested.toolName);
     if (tool === undefined) return { kind: 'refused', reason: 'tool_not_in_definition' };
-    if (tool.kind === 'mcp' && !serverAllowed(caller.ownerId, tool.mcp.server)) {
+    if (tool.kind === 'mcp' && !allows(tool.mcp.server, tool.mcp.tool)) {
       return { kind: 'refused', reason: 'no_access' };
     }
     const schema = tool.kind === 'agent' ? tool.inputSchema : MCP_ARGS_SCHEMA;
@@ -473,11 +535,19 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     if (scope.runClass === 'write' && !(scope.confirmedNames ?? []).includes(name)) {
       return refuse('not_in_confirmed_script');
     }
+    // One answer of the gate for this call: `check` decides with it, and nothing is asked again before the send.
+    const allows = await pairsOf(scope.callId, scope.caller, scope.logger);
     const checked = check(
       { callId: scope.callId, toolName: name, args: request.args },
-      { sessionTools: scope.snapshot, caller: scope.caller },
+      { sessionTools: scope.snapshot, caller: scope.caller, allows },
     );
-    if (checked.kind === 'refused') return refuse(checked.reason);
+    if (checked.kind === 'refused') {
+      const { server, tool } = callTargetOf(scope.snapshot, name);
+      if (checked.reason === 'no_access' && server !== null) {
+        await refuseNoAccess(scope, { server, tool }, scope.logger);
+      }
+      return refuse(checked.reason);
+    }
     const { call } = checked;
     if (call.tool.kind !== 'mcp') {
       // The snapshot holds MCP tools only; an agent tool here is a wrong snapshot, not a script's error.
@@ -486,7 +556,6 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     if (scope.runClass === 'read' && !call.tool.mcp.readOnly) {
       return refuse('changing_in_read_run');
     }
-    await admit(scope.callId, scope.caller, scope.logger);
     const execution = await callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
     return execution.kind === 'refused' ? refuse(execution.reason) : execution;
   }
@@ -522,9 +591,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     },
 
     async runOutside(call, ctx) {
-      await admit(call.callId, call.caller, ctx.logger);
       const startedAt = Date.now();
-      const execution = await execute(call, ctx);
+      const execution = (await admit(call, ctx.logger)) ?? (await execute(call, ctx));
       logCall(ctx.logger, loggedCall(call), execution, startedAt);
       return execution;
     },
@@ -542,18 +610,23 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     },
 
     async planInCommit(call, logger) {
-      await admit(call.callId, call.caller, logger);
+      const refusal = await admit(call, logger);
       return async (tx, effects) => {
         const startedAt = Date.now();
-        const execution = await runInCommit(call, tx, effects);
+        const execution = refusal ?? (await runInCommit(call, tx, effects));
         logCall(logger, loggedCall(call), execution, startedAt);
         return execution;
       };
     },
 
     async sendConfirmed(call, ctx, editedArgs, confirmed) {
-      await admit(call.callId, call.caller, ctx.logger);
       const sent: ResolvedCall = editedArgs === undefined ? call : { ...call, args: editedArgs };
+      const refusal = await admit(call, ctx.logger);
+      if (refusal !== undefined) {
+        // The right went away while the confirmation waited: no intent and no request (INT-1 steps 5–6).
+        logCall(ctx.logger, loggedCall(sent), refusal, Date.now());
+        return { kind: 'sent', execution: refusal };
+      }
       const key = {
         taskId: ctx.taskId,
         callId: call.callId,

@@ -15,6 +15,7 @@ import {
   type OAuthTokens,
 } from '@modelcontextprotocol/client';
 
+import type { AccessGate, ToolAccess } from '../access-gate.js';
 import type { ConnectRequest, ConnectRequests, ConnectTarget } from './connect-requests.js';
 import {
   type McpAccountRow,
@@ -28,18 +29,17 @@ import {
 import { type McpAuth, deadlineFetch } from './mcp-client.js';
 import { type McpFailure, failureName, transportFailureReason } from './mcp-failure.js';
 import { type McpServerRow, findServer, listServers } from './mcp-servers.repository.js';
+import { storedMcpTools } from './mcp-tool.js';
 import { checkServerUrl } from './mcp-url.js';
 
 /** A token closer than this to its end is refreshed before the call (Runtime settings). */
 const REFRESH_BEFORE_EXPIRY_MS = 60 * 1000;
 
-/** The one access function (Contract «Для `access`»): today `serverAllowed` over `MCP_ACCESS_TABLE`. */
-export type McpServerAllowed = (ownerId: string, server: string) => boolean;
-
 export interface McpAccountsOptions {
   readonly database: Database;
   readonly requests: ConnectRequests;
-  readonly serverAllowed: McpServerAllowed;
+  /** The one access check (Contract «Для `access`»): the same as in the tool set and the call check. */
+  readonly access: Pick<AccessGate, 'tools'>;
   readonly logger: Logger;
   /** `MCP_CALL_TIMEOUT_MS`: bounds a code exchange and a token refresh. */
   readonly callTimeoutMs: number;
@@ -122,6 +122,12 @@ function isOAuthServer(row: McpServerRow | undefined): row is McpServerRow {
   return row !== undefined && row.mode === McpServerModeSchema.enum.oauth;
 }
 
+/** An enabled server the employee may use: the gate allows him at least one tool of its list. */
+function usableServer(row: McpServerRow, access: ToolAccess): boolean {
+  if (!row.enabled || access.kind === 'owner_disabled') return false;
+  return (storedMcpTools(row.tools) ?? []).some((tool) => access.allows(row.name, tool.tool));
+}
+
 /** Tokens as stored: `expires_in` seconds from now becomes the end of the access. */
 function tokensOf(tokens: OAuthTokens, now: Date): McpTokens {
   return {
@@ -164,11 +170,16 @@ export class McpAccounts {
 
   constructor(private readonly options: McpAccountsOptions) {}
 
-  /** Enabled `oauth` servers the access function allows the employee, by name, with his account status (AC-14.1, AC-14.6). */
+  /**
+   * Enabled `oauth` servers with at least one tool the gate allows the employee, by name, with his account
+   * status (AC-14.1, AC-14.6); none for a disabled employee.
+   */
   async connections(ownerId: string): Promise<McpConnection[]> {
-    const { database, serverAllowed } = this.options;
+    const { database } = this.options;
+    const access = await this.options.access.tools(ownerId);
+    if (access.kind === 'owner_disabled') return [];
     const servers = (await listServers(database)).filter(
-      (row) => row.enabled && isOAuthServer(row) && serverAllowed(ownerId, row.name),
+      (row) => isOAuthServer(row) && usableServer(row, access),
     );
     if (servers.length === 0) return [];
     const connected = new Set((await accountsOf(database, ownerId)).map((account) => account.server));
@@ -187,7 +198,7 @@ export class McpAccounts {
   async begin(input: McpConnectBegin): Promise<McpConnectStart> {
     const fields = { ownerId: input.ownerId, server: input.server, target: input.target };
     const row = await findServer(this.options.database, input.server);
-    if (!this.mayBegin(input, row)) {
+    if (!isOAuthServer(row) || !(await this.mayBegin(input, row))) {
       this.options.logger.warn('mcp connect refused', { ...fields, outcome: 'refused' });
       return { kind: 'refused' };
     }
@@ -312,9 +323,10 @@ export class McpAccounts {
     this.options.logger.info('mcp account disconnected', { ownerId, server, outcome: removed ? 'removed' : 'none' });
   }
 
-  private mayBegin(input: McpConnectBegin, row: McpServerRow | undefined): row is McpServerRow {
-    if (!isOAuthServer(row)) return false;
-    return input.target === 'admin' || (row.enabled && this.options.serverAllowed(input.ownerId, input.server));
+  /** The admin connects his `oauth` server in any status; an employee only one he may use (`connections`' rule). */
+  private async mayBegin(input: McpConnectBegin, row: McpServerRow): Promise<boolean> {
+    if (input.target === 'admin') return true;
+    return usableServer(row, await this.options.access.tools(input.ownerId));
   }
 
   /** Tokens for the code, or `undefined` when the authorization server or the network refused the exchange. */

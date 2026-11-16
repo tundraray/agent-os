@@ -259,7 +259,8 @@ export class UsersService {
   /**
    * Blocks the employee (KD-4, Flow 4, AC-07.2): in one transaction the status becomes `disabled`,
    * every live session ends with `account_disabled` and `admin_change` is written. Running agents are
-   * not stopped here: each ends at its next model or tool call through `OwnerGate`. 404 USER_NOT_FOUND.
+   * not stopped here: each ends at its next model or tool call, which the access gate refuses with
+   * `owner_disabled` (design-access.md KD-5). 404 USER_NOT_FOUND.
    */
   async disable(actorId: string, userId: string): Promise<AdminUserSummary> {
     return this.changeStatus(actorId, userId, UserStatusSchema.enum.disabled);

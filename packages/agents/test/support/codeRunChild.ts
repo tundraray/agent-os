@@ -117,13 +117,17 @@ export function writeRun(servers: ScenarioServers): ScenarioRun {
   };
 }
 
-/** What a child gets from the test: the agents settings and the run's names of the scenario's servers. */
+/**
+ * What a child gets from the test: the agents settings, the server rights of its access gate double
+ * (`{ <owner id> | '*': [<server>, …] }`) and the run's names of the scenario's servers.
+ */
 export interface ChildScenario {
   readonly variables: Readonly<Record<string, string>>;
+  readonly access: Readonly<Record<string, readonly string[]>>;
   readonly servers: ScenarioServers;
 }
 
-/** The scenario of a test: its access table and the run's servers it registered. */
+/** The scenario of a test: its server rights and the run's servers it registered. */
 export function childScenario(
   access: Readonly<Record<string, readonly string[]>>,
   servers: ScenarioServers,
@@ -131,10 +135,10 @@ export function childScenario(
   return {
     variables: {
       AGENT_DEFAULT_MODEL: CHILD_MODEL,
-      MCP_ACCESS_TABLE: JSON.stringify(access),
       MCP_CALL_TIMEOUT_MS: '90000',
       NODE_ENV: 'test',
     },
+    access,
     servers,
   };
 }

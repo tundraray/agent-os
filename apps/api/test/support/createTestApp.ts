@@ -7,6 +7,7 @@ import {
   createScriptedModel,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
+import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
@@ -17,24 +18,31 @@ import {
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
 import type { Runtime } from '@agent-os/runtime';
+import { createWorkflows, type Workflows } from '@agent-os/workflows';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
+import { APP_LOGGER } from '../../src/logging/app-logger.js';
 import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
+import { WORKFLOWS } from '../../src/workflows/workflows.tokens.js';
 import { registerFixtureServers } from './mcp-servers.js';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
   model?: ScriptedModel;
   /**
-   * `MCP_ACCESS_TABLE`: employee id (or `*` for every employee) → MCP server names of the run
-   * (`mcp-servers.ts`); default — nobody has servers. Employees sign in after the boot, so a suite names
-   * `*` rather than their ids.
+   * `AGENT_DEFAULT_MODEL` for the boot: a model of the run (`access.ts` `runModel`) that the suite adds to the
+   * catalogue and allows its employees itself; default — the variable as the environment has it.
    */
-  mcpAccess?: Readonly<Record<string, readonly string[]>>;
+  defaultModel?: string;
+  /**
+   * Raw workflow templates in place of the shipped ones (`createWorkflows({ templates })`); default — the shipped
+   * templates.
+   */
+  workflowTemplates?: readonly unknown[];
   /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
   workers?: boolean;
   /** Replaces `AGENT_LIST_PAGE_SIZE` (the page of `GET /agents`), so a cursor walk shows over a few agents. */
@@ -80,7 +88,7 @@ export interface TestApp {
  * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`) with only
  * `AGENT_TURN_CLIENT` replaced by the scripted double of `@agent-os/agents/testing` — no network,
  * no provider keys. With `mcpServers` the MCP servers are one fixture process writing into this app's
- * call log, registered in the registry under the run's names after the boot. `MCP_ACCESS_TABLE` and
+ * call log, registered in the registry under the run's names after the boot. `AGENT_DEFAULT_MODEL` and
  * `RUNTIME_WORKERS` are set for the boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
  * helpers reach it as `http://localhost:<port>` (session.ts `apiOrigin`).
  */
@@ -96,7 +104,9 @@ export async function createTestApp(
       : await startFixtureProcess(fixtureLog);
 
   const restoreEnv = setEnv({
-    MCP_ACCESS_TABLE: JSON.stringify(options.mcpAccess ?? {}),
+    ...(options.defaultModel === undefined
+      ? {}
+      : { AGENT_DEFAULT_MODEL: options.defaultModel }),
     ...(options.workers ? { RUNTIME_WORKERS: 'on' } : {}),
   });
   const log = options.captureLog ? captureConsole() : undefined;
@@ -109,6 +119,14 @@ export async function createTestApp(
       builder = builder
         .overrideProvider(AGENT_LIST_PAGE_SIZE)
         .useValue(options.agentPageSize);
+    }
+    const templates = options.workflowTemplates;
+    if (templates !== undefined) {
+      builder = builder.overrideProvider(WORKFLOWS).useFactory({
+        factory: (agents: Agents, logger: Logger): Workflows =>
+          createWorkflows({ agents, logger, templates }),
+        inject: [AGENTS, APP_LOGGER],
+      });
     }
     if (options.providerEndpoints !== undefined) {
       builder = builder

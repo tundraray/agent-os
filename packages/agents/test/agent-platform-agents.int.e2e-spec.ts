@@ -21,7 +21,7 @@
 //   (KD-6: "сразу после ответа обёртка пишет вызов в журнал токенов"), so INT-1 row A can assert real ledger rows; if the plan puts the double above the ledger write, that one assertion moves out of this file. Answers may be gated (the call waits on a latch) so a
 //   step is held with its model call in flight.
 // - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its `logs` (read-only) and `backoffice` (with the new mutating `create_incident_note`) registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
-//   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
+//   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. The harness `access` option per test maps the test's owners to servers (the `AccessGate` double of `@agent-os/agents/testing`).
 // - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `createRuntime` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
 //   else from the database; "lease expired" is the harness `expireLease`, a held handler of the first instance is the zombie.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test and a unique definition name per test (definitions are registered before `start()` into the test's own catalog); each test reads only its own tree. `fileParallelism: false`.
@@ -40,7 +40,7 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven):
 // - unit, packages/agents/src, one table-driven file per rule (literal rows, no database):
-//     * model resolution - launch model, then definition model, then AGENT_DEFAULT_MODEL, then UNKNOWN_MODEL for a model without a price - AC-04.1, AC-04.2, AC-04.3, DC-2, UC-E8 (the chosen model reaching the provider call is wired by INT-1 row A)
+//     * model resolution - launch model, then definition model, then AGENT_DEFAULT_MODEL - AC-04.1, AC-04.2, AC-04.3, DC-2, UC-E8 (the chosen model reaching the provider call is wired by INT-1 row A)
 //     * the tool-call gate rule - `tool_not_in_definition`, `no_access`, `depth_limit`, `not_allowed` (list and count), `unknown_agent`, `invalid_arguments`, and "allowed" - AC-03.1, AC-10.2, AC-10.3, DC-6, UC-E4 rule rows; the boundary half (the refused call never
 //       reaches the server, never creates a task) is INT-3 row A and INT-1 row D
 //     * the turn counter - counts model calls since the task, not the compaction call; resets when the agent finishes a turn (report, failure, stop, interrupt without text) and, for a root session, on each delivered employee message - DC-1 (the effect on a real run is INT-1 row C)
@@ -50,7 +50,7 @@
 //       (history up to `throughSeq` plus the task), compaction summary replaces older entries for the model while `history` still returns all; this is also the property test: FOR ALL histories with open calls and delivered messages in any interleaving, the provider
 //       messages never put a message between a call and its result (SHRINK: fewest entries) - AC-07.1, AC-07.2 (assembly half), AC-25.1 and AC-27.1 (assembly half)
 //     * MCP result to outcome - `success`, `empty`, `tool_error`, `transport_failure`, and the read-only classification by `readOnlyHint` (absent means mutating) - AC-13.1 (outcome rows), KD-4
-//     * `parseAgentsConfig` and the catalog check in `start()` - a server name in the access table that is not kebab-case, duplicate definition name, unknown tool or agent reference, unpriced model: one table, each row a startup error naming the variable or the name
+//     * `parseAgentsConfig` and the catalog check in `start()` - duplicate definition name, unknown tool or agent reference: one table, each row a startup error naming the variable or the name; whether a model may be called (catalogue, grants, quota) is the access gate's verdict at the call (`model-client.spec.ts`, `tool-gate.spec.ts`)
 // - runtime INT-1..INT-5 and E2E-1 (list above): everything about steps, inbox, fence, stop closure, owner check of `runtime_*`, ledger and restarts.
 // - not automated: AgentView does not carry tokens or cost (AC-13.2: a type shape; the chosen model in the view is a unit row of the status/view mapping and the ledger row is INT-1 row A); the zod validation of `start_agent` arguments (library; the gate row
 //   `invalid_arguments` is in the unit table); `AGENT_TOOL_RESULT_MAX_BYTES` truncation (one unit row if the plan wants it, no AC); the Haiku quality risk (a manual run after the `chat` part, per the Design Doc risk list).
@@ -1361,7 +1361,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @complexity: high
   //
   // Verification items (table-driven by row; every row reads the fixture journal and the `agent_tool_calls` rows of its agent):
-  // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): `MCP_ACCESS_TABLE` gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__${LOGS_SERVER}__<read tool>`. Then: U1's model input lists the
+  // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): the access gate double gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__${LOGS_SERVER}__<read tool>`. Then: U1's model input lists the
   //   `logs` tools and the call succeeds (outcome `success`, one journal entry); U2's model input does not list them, and the scripted forced call is refused: outcome `refused`, reason `no_access`, ZERO journal entries for U2, the refusal in U2's history. A second case in
   //   U1's run: a tool name not in the definition's `tools` gets `tool_not_in_definition` and no journal entry.
   // - Row B "read passes, mutating waits" (UC-3, AC-12.1, AC-12.2, NFR-07): the script calls the read tool, then `create_incident_note`. Then: the read call finishes with no decision requested; before any decision the journal has NO `create_incident_note` entry, the agent reads

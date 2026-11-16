@@ -65,13 +65,12 @@ const catalogModelFields = {
   longContext: LongContextSchema.nullable(),
 };
 
-/** Row of GET /api/admin/models (by name). */
-export const CatalogModelSchema = z.object({ id: ModelIdSchema, ...catalogModelFields });
-export type CatalogModel = z.infer<typeof CatalogModelSchema>;
-
 /** Body of POST /api/admin/models. */
-export const CreateCatalogModelBodySchema = CatalogModelSchema;
+export const CreateCatalogModelBodySchema = z.object({ id: ModelIdSchema, ...catalogModelFields });
 export type CreateCatalogModelBody = z.infer<typeof CreateCatalogModelBodySchema>;
+
+/** Row of GET /api/admin/models (by name): the same fields as the create body. */
+export type CatalogModel = CreateCatalogModelBody;
 
 /** Body of PATCH /api/admin/models/:id. The id never changes. */
 export const UpdateCatalogModelBodySchema = z

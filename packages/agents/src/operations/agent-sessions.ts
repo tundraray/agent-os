@@ -29,7 +29,7 @@ import { interruptText } from '../step/deliver.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
 import { history } from '../store/history.repository.js';
 import { type Session, type SessionInput, sessions } from '../store/sessions.repository.js';
-import { sessionInputOf, type StartChildDeps } from '../tools/builtin/start-child.js';
+import { type SessionInputDeps, sessionInputOf } from '../tools/builtin/start-child.js';
 import type { SessionLimits, ToolDisplay } from '../tools/tool.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { stopEntries } from './stop-entries.js';
@@ -137,7 +137,7 @@ export interface AgentSessions {
 
 export interface AgentSessionsDeps {
   readonly database: Database;
-  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions' | 'ledger'>;
+  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions'>;
   readonly catalog: DefinitionCatalog;
   readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
   readonly config: Pick<AgentsConfig, 'maxDepth' | 'defaultModel'>;
@@ -180,11 +180,10 @@ function agentNotFound(id: string): AgentsError {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const { database, runtime, catalog, registry, config } = deps;
   const logger = deps.logger.child({ service: 'agents.sessions' });
-  const startDeps: StartChildDeps = {
+  const startDeps: SessionInputDeps = {
     catalog,
     maxDepth: config.maxDepth,
     defaultModel: config.defaultModel,
-    pricedModels: () => runtime.ledger.pricedModels(),
   };
 
   async function logged<T>(

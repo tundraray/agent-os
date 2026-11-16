@@ -2,11 +2,11 @@ import { ToolCallStateSchema, ToolOutcomeSchema } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
+import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate.js';
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import type { Session } from '../store/sessions.repository.js';
 import { type ToolCallEnding, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
-import { isOwnerDisabled } from '../owner-gate.js';
 import { toolResults } from '../store/tool-results.repository.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import {
@@ -14,9 +14,10 @@ import {
   isInCommit,
   type ToolExecution,
   type ToolRunner,
+  toolDeniedEntry,
 } from '../tools/tool-runner.js';
 import { entriesOf, toolResultEntry } from './deliver.js';
-import { appendWithEvent, logStep, ownerDisabledResult, requestedName } from './model-step.js';
+import { appendWithEvent, logStep, refusedResult, requestedName } from './model-step.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';
@@ -51,8 +52,12 @@ type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<ToolCallRow | un
 
 export interface ToolStepDeps {
   readonly catalog: DefinitionCatalog;
-  readonly registry: ToolRegistry;
+  readonly registry: Pick<ToolRegistry, 'checkTools'>;
   readonly runner: ToolRunner;
+  /** Asked once per step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
+  readonly access: Pick<AccessGate, 'tools'>;
+  /** Gets the `access_denied` record of each `no_access` the step's check decides (KD-6). */
+  readonly audit: AccessAudit;
 }
 
 /**
@@ -162,6 +167,8 @@ function commitOf(
  *
  * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2). It is
  *   `sending` only when a step was lost after the intent; an interrupt or a stop closes it elsewhere.
+ * - The gate is asked once before the calls: a disabled owner fails the agent with `owner_disabled` and no
+ *   call starts; a pair it does not allow is `no_access` before any confirmation, with one audit record.
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
  *   a call needing confirmation without a decision ends the step with `await_decision`, the ready
  *   results committed and the call marked awaiting, the rest waiting; a rejected one is `rejected`; a
@@ -170,11 +177,11 @@ function commitOf(
  *   step's signal; an `in_commit` call runs in the commit.
  * - The signal aborted around a call, or the intent fenced: `continue` without writes — the runtime
  *   rejects the result of a step that is no longer current.
- * - `OwnerGate` refused the owner before a call (KD-4): that call and the rest do not start; the calls
- *   that ran are closed and the agent fails with `owner_disabled`.
+ * - The gate refused the owner at a call's admission (KD-4): that call and the rest do not start; the
+ *   calls that ran are closed and the agent fails with `owner_disabled`.
  */
 export function createToolStep(deps: ToolStepDeps): ToolStep {
-  const { catalog, registry, runner } = deps;
+  const { catalog, registry, runner, access, audit } = deps;
 
   return async function toolStep(ctx, session, openCalls) {
     const stepStartedAt = Date.now();
@@ -205,6 +212,33 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
       logStep(ctx, STEP_KIND, stepStartedAt, 'continue', { calls: closings.length });
       return { outcome: 'continue', commit: commitOf(ctx, closings) };
     };
+    /** The agent fails with `owner_disabled`: the calls that ran are closed, the rest never start (KD-5). */
+    const ownerDisabled = (): Promise<StepResult> =>
+      refusedResult({
+        ctx,
+        stepKind: STEP_KIND,
+        startedAt: stepStartedAt,
+        model: session.model,
+        refusal: { kind: 'refused', reason: 'owner_disabled' },
+        audit,
+        writeEntries: async (tx, effects) => [
+          ...(await closeAll(closings, tx, effects)),
+          ...(await entriesOf(tx, ctx.messages)),
+        ],
+        patch: {},
+      });
+
+    const toolAccess = await access.tools(session.ownerId);
+    if (toolAccess.kind === 'owner_disabled') {
+      ctx.logger.warn('access gate refused the tool step', {
+        ownerId: session.ownerId,
+        agentId: ctx.taskId,
+        calls: openCalls.length,
+        reason: 'owner_disabled',
+      });
+      return ownerDisabled();
+    }
+    const { allows } = toolAccess;
 
     const runCalls = async (): Promise<StepResult> => {
       for (const call of openCalls) {
@@ -225,9 +259,13 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
 
         const check = runner.check(
           { callId: call.callId, toolName: requestedName(call), args: call.args },
-          { sessionTools, caller },
+          { sessionTools, caller, allows },
         );
         if (check.kind === 'refused') {
+          // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
+          if (check.reason === 'no_access' && call.server !== null) {
+            await audit(toolDeniedEntry(session.ownerId, call.server, call.tool));
+          }
           ctx.logger.info('tool call refused', {
             callId: call.callId,
             tool: call.tool,
@@ -347,17 +385,8 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     try {
       return await runCalls();
     } catch (error) {
-      if (!isOwnerDisabled(error)) throw error;
-      return ownerDisabledResult({
-        ctx,
-        stepKind: STEP_KIND,
-        startedAt: stepStartedAt,
-        writeEntries: async (tx, effects) => [
-          ...(await closeAll(closings, tx, effects)),
-          ...(await entriesOf(tx, ctx.messages)),
-        ],
-        patch: {},
-      });
+      if (!(error instanceof OwnerDisabledError)) throw error;
+      return ownerDisabled();
     }
   };
 }

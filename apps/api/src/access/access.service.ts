@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { AccessGate, ToolAccess } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import type {
   CatalogModel,
@@ -51,14 +52,6 @@ import {
   listModels,
   updateModel,
 } from './models.repository.js';
-
-/** The answer of `AccessGate.tools`: the pair check needs no database once the grants are read. */
-export type ToolsAccess =
-  | { readonly kind: 'owner_disabled' }
-  | {
-      readonly kind: 'allowed';
-      allows(server: string, tool: string): boolean;
-    };
 
 /** The answer of `AccessGate.model`: an allowed call carries the catalogue price (KD-3). */
 export type ModelAccessVerdict =
@@ -116,7 +109,7 @@ function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
  * the month's spend, without a cache; the rules are `effectiveAccess` and `modelVerdict` alone.
  */
 @Injectable()
-export class AccessService {
+export class AccessService implements AccessGate {
   private readonly db: Database;
 
   constructor(
@@ -130,7 +123,7 @@ export class AccessService {
   }
 
   /** The employee's tool rights; `owner_disabled` for a disabled or unknown employee. */
-  async tools(ownerId: string): Promise<ToolsAccess> {
+  async tools(ownerId: string): Promise<ToolAccess> {
     const startedAt = Date.now();
     if (!(await this.identity.isActive(ownerId))) {
       this.logger.info('tool access checked', {

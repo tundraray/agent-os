@@ -141,6 +141,13 @@
       "when": 1794818328805,
       "tag": "0019_light_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794819312594,
+      "tag": "0020_cheerful_lockheed",
+      "breakpoints": true
     }
   ]
 }

@@ -5,21 +5,12 @@ export interface ModelChoiceInput {
   readonly definitionModel?: string | null;
   /** `AGENT_DEFAULT_MODEL`. */
   readonly defaultModel: string;
-  /** Models with a price in the deployment's prices file (`ledger.pricedModels()`). */
-  readonly pricedModels: readonly string[];
 }
-
-export type ModelChoice =
-  | { readonly kind: 'chosen'; readonly model: string }
-  | { readonly kind: 'refused'; readonly reason: 'unknown_model' };
 
 /**
  * The model of a new agent (FR-04, DC-2): the launch's, else the definition's, else the default.
- * A model without a price is refused before the agent is created.
+ * Whether the owner may call it is the access gate's answer at the call (KD-4).
  */
-export function chooseModel(input: ModelChoiceInput): ModelChoice {
-  const model = input.launchModel ?? input.definitionModel ?? input.defaultModel;
-  return input.pricedModels.includes(model)
-    ? { kind: 'chosen', model }
-    : { kind: 'refused', reason: 'unknown_model' };
+export function chooseModel(input: ModelChoiceInput): string {
+  return input.launchModel ?? input.definitionModel ?? input.defaultModel;
 }

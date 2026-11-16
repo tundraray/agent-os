@@ -1,7 +1,13 @@
 import type { Logger } from '@agent-os/common';
 import { type CallUsage, type Clock, type Runtime, systemClock } from '@agent-os/runtime';
+import {
+  type AccessAudit,
+  type AccessDeniedEntry,
+  type AccessGate,
+  type ModelVerdict,
+  OwnerDisabledError,
+} from '../access-gate.js';
 import type { AgentsConfig } from '../config.js';
-import { isOwnerDisabled, OwnerDisabledError, type OwnerGate } from '../owner-gate.js';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -48,8 +54,10 @@ export interface ModelClientDeps {
   readonly config: Pick<AgentsConfig, 'maxOutputTokens' | 'defaultModel'>;
   /** The package logger: `completeText` runs outside any step. */
   readonly logger: Logger;
-  /** Asked before every call: a refused owner's call does not start (KD-4). */
-  readonly ownerGate: OwnerGate;
+  /** Asked once before the first attempt of every call: a refused call does not start (KD-4). */
+  readonly access: Pick<AccessGate, 'model'>;
+  /** Gets the `access_denied` record of a refused title (KD-6); a step's refusal is audited by the step. */
+  readonly audit: AccessAudit;
   /** Gets every text part of an agent turn; none by default. */
   readonly onTextDelta?: OnTextDelta;
   /** Times the pauses between retries; the real clock by default. */
@@ -65,7 +73,7 @@ export interface ModelCallRequest {
   readonly taskId: string;
   /** The definition's name: the id of the request agent Mastra builds. */
   readonly agentName: string;
-  /** The session's model (`anthropic/…`), a key of the prices file (Invariant 6). */
+  /** The session's model (`anthropic/…`), an id of the model catalogue (Invariant 6). */
   readonly model: string;
   /** The definition's prompt; the data preamble and the code rule are appended here. */
   readonly instructions: string;
@@ -105,24 +113,69 @@ export interface ModelError {
   readonly error: ProviderError;
 }
 
-/** `OwnerGate` refused the owner: the call did not start (KD-4). */
-export interface OwnerRefused {
-  readonly kind: 'owner_disabled';
+/** A refusal of the access gate for a model call. */
+export type ModelRefusal = Extract<ModelVerdict, { readonly kind: 'refused' }>;
+
+/** `AccessGate` refused the model call: it did not start (KD-4). */
+export interface ModelNotStarted {
+  readonly kind: 'not_started';
+  readonly verdict: ModelRefusal;
 }
 
-export type ModelCallResult = ModelAnswer | ModelError | OwnerRefused;
+export type ModelCallResult = ModelAnswer | ModelError | ModelNotStarted;
 
 /** The only place the package calls the model (KD-6). */
 export interface ModelClient {
-  /** Asks `OwnerGate` first: a refused owner gets `owner_disabled` and the model is not called. */
+  /**
+   * Asks `AccessGate.model` once, before the first attempt: a refusal gives `not_started` with the
+   * verdict and the model is not called; provider retries are not checked again.
+   */
   call(request: ModelCallRequest): Promise<ModelCallResult>;
   /**
-   * One call of `AGENT_DEFAULT_MODEL` without tools and outside any task: the same retries and cancel
-   * as `call`, a ledger row without `taskId`, no text parts to the hook. A provider that keeps failing
-   * rejects with an error that names the status; a refused owner rejects with `OwnerDisabledError`
-   * before the call.
+   * One call of `AGENT_DEFAULT_MODEL` without tools and outside any task: the same verdict, retries
+   * and cancel as `call`, a ledger row without `taskId`, no text parts to the hook. A provider that
+   * keeps failing rejects with an error that names the status. A refused call rejects before the call:
+   * a disabled owner with `OwnerDisabledError`, any other refusal after its `access_denied` record.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
+}
+
+/** The `access_denied` record of a refused model call (KD-6). */
+export function modelDeniedEntry(ownerId: string, model: string, refusal: ModelRefusal): AccessDeniedEntry {
+  return {
+    kind: 'access_denied',
+    actor: ownerId,
+    objectType: 'model',
+    objectId: model,
+    outcome: 'rejected',
+    reason: refusal.reason,
+  };
+}
+
+/** Why a model call did not start, in words for the failure and the logs; amounts in USD. */
+export function modelRefusalMessage(ownerId: string, model: string, refusal: ModelRefusal): string {
+  switch (refusal.reason) {
+    case 'owner_disabled':
+      return `Owner ${ownerId} is disabled or unknown`;
+    case 'quota_exhausted':
+      return (
+        `The ${refusal.month} quota of ${refusal.quotaUsd} USD for model ${model} ` +
+        `is spent (${refusal.spentUsd} USD)`
+      );
+    case 'model_not_connected':
+      return `Model ${model} is not in the model catalogue`;
+    case 'model_not_allowed':
+      return `Model ${model} is not allowed to owner ${ownerId}`;
+    case 'no_models_allowed':
+      return `Owner ${ownerId} has no models allowed`;
+  }
+}
+
+/** The log fields of a refusal: the reason, and the spend, quota and month of a spent quota. */
+export function refusalFields(refusal: ModelRefusal): Record<string, unknown> {
+  return refusal.reason === 'quota_exhausted'
+    ? { reason: refusal.reason, spentUsd: refusal.spentUsd, quotaUsd: refusal.quotaUsd, month: refusal.month }
+    : { reason: refusal.reason };
 }
 
 /** What one attempt sends; `onText` gets the parts of this attempt only. */
@@ -145,19 +198,16 @@ type Generated = { readonly kind: 'generated'; readonly generation: AgentTurnGen
  * the parts again at offset 0.
  */
 export function createModelClient(deps: ModelClientDeps): ModelClient {
-  const { turnClient, ledger, config, ownerGate } = deps;
+  const { turnClient, ledger, config, access } = deps;
   const clock = deps.clock ?? systemClock;
 
-  /** Whether `OwnerGate` admits the owner; a refusal is logged, any other rejection is thrown. */
-  async function admitted(ownerId: string, logger: Logger): Promise<boolean> {
-    try {
-      await ownerGate.check(ownerId);
-      return true;
-    } catch (error) {
-      if (!isOwnerDisabled(error)) throw error;
-      logger.warn('owner gate refused a model call', { ownerId, reason: 'owner_disabled' });
-      return false;
+  /** The gate's verdict for one call, asked once before the first attempt; a refusal is logged. */
+  async function verdictOf(ownerId: string, model: string, logger: Logger): Promise<ModelVerdict> {
+    const verdict = await access.model(ownerId, model);
+    if (verdict.kind === 'refused') {
+      logger.warn('access gate refused a model call', { ownerId, model, ...refusalFields(verdict) });
     }
+    return verdict;
   }
 
   /** Runs the attempts until an answer, a final provider error, or a cancel (thrown). */
@@ -212,7 +262,12 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
 
   return {
     async call(request) {
-      if (!(await admitted(request.ownerId, request.logger))) return { kind: 'owner_disabled' };
+      const verdict = await verdictOf(
+        request.ownerId,
+        request.model,
+        request.logger.child({ agentId: request.taskId, taskId: request.taskId }),
+      );
+      if (verdict.kind === 'refused') return { kind: 'not_started', verdict };
       const result = await generate({
         call: {
           purpose: 'agent_turn',
@@ -234,6 +289,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         ownerId: request.ownerId,
         taskId: request.taskId,
         model: request.model,
+        price: verdict.price,
         usage,
       });
       request.logger.info('model call answered', {
@@ -256,8 +312,13 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
     async completeText(request) {
       const model = config.defaultModel;
       const logger = deps.logger.child({ ownerId: request.ownerId });
-      // A refused owner is the caller's error to handle (the conversation title logs it).
-      if (!(await admitted(request.ownerId, logger))) throw new OwnerDisabledError(request.ownerId);
+      // A refusal is the caller's error to handle (the conversation title logs it, DC-7).
+      const verdict = await verdictOf(request.ownerId, model, logger);
+      if (verdict.kind === 'refused') {
+        if (verdict.reason === 'owner_disabled') throw new OwnerDisabledError(request.ownerId);
+        await deps.audit(modelDeniedEntry(request.ownerId, model, verdict));
+        throw new Error(modelRefusalMessage(request.ownerId, model, verdict));
+      }
       const result = await generate({
         call: {
           purpose: 'complete_text',
@@ -277,7 +338,12 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         throw new Error(`Model ${model} kept failing on completeText (${status})`);
       }
       const { usage } = result.generation;
-      const { callId } = await ledger.record({ ownerId: request.ownerId, model, usage });
+      const { callId } = await ledger.record({
+        ownerId: request.ownerId,
+        model,
+        price: verdict.price,
+        usage,
+      });
       logger.info('model text completed', {
         model,
         callId,

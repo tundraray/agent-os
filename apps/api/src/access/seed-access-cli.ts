@@ -16,7 +16,7 @@ import { createAppLogger } from '../logging/app-logger.js';
 
 const logger = createAppLogger(process.env);
 
-/** The developer's catalogue: the prices of the former `config/model-prices.json`. */
+/** The developer's catalogue: the models and prices of local runs. */
 const MODELS: CreateCatalogModelBody[] = [
   {
     id: 'anthropic/claude-haiku-5-5',

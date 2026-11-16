@@ -8,7 +8,7 @@ import {
   createAgents,
   parseAgentsConfig,
 } from '@agent-os/agents';
-import type { ScriptedModel } from '@agent-os/agents/testing';
+import { createAccessGateDouble, type ScriptedModel } from '@agent-os/agents/testing';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
 import { createDatabase } from '@agent-os/db';
@@ -21,8 +21,7 @@ import {
 } from '@agent-os/mcp-fixture';
 import {
   createRuntime,
-  type ModelPrices,
-  parseModelPrices,
+  type ModelPrice,
   parseRuntimeConfig,
   type Runtime,
   type RuntimeConfig,
@@ -47,7 +46,8 @@ const HAIKU_MODEL = 'anthropic/claude-haiku-5-5';
 /** The coordinator's model of the shipped `deep-research` template. */
 export const SONNET_MODEL = 'anthropic/claude-sonnet-5-5';
 
-const MODEL_PRICES: ModelPrices = parseModelPrices({
+/** The model catalogue of the access gate double: both models of the shipped template. */
+const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   [HAIKU_MODEL]: {
     inputUsdPerMTok: 0.1,
     outputUsdPerMTok: 0.5,
@@ -60,7 +60,7 @@ const MODEL_PRICES: ModelPrices = parseModelPrices({
     cacheWriteUsdPerMTok: 2.5,
     cacheReadUsdPerMTok: 0.1,
   },
-});
+};
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -90,7 +90,7 @@ const HISTORY_PAGE = 500;
 
 export interface WorkflowsHarnessOptions {
   readonly model: ScriptedModel;
-  /** Owners of the test: `MCP_ACCESS_TABLE` gives each of them the `logs` server. */
+  /** Owners of the test: the access gate double gives each of them the `logs` server. */
   readonly owners: readonly string[];
   /** Raw templates for `createWorkflows`; the shipped ones by default. */
   readonly templates?: readonly unknown[];
@@ -144,9 +144,6 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
   const agentsConfig = parseAgentsConfig(
     {
       AGENT_DEFAULT_MODEL: HAIKU_MODEL,
-      MCP_ACCESS_TABLE: JSON.stringify(
-        Object.fromEntries(options.owners.map((ownerId) => [ownerId, [LOGS_SERVER]])),
-      ),
       NODE_ENV: 'test',
     },
   );
@@ -162,7 +159,6 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     config: runtimeConfig,
     logger,
     clock: systemClock,
-    modelPrices: MODEL_PRICES,
   });
   const agents = createAgents({
     database: database.db,
@@ -170,8 +166,12 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
-    // Every owner of these tests is active.
-    ownerGate: { check: async () => {} },
+    // Every owner of these tests is active; no test here asserts the audit hook.
+    access: createAccessGateDouble({
+      servers: Object.fromEntries(options.owners.map((ownerId) => [ownerId, [LOGS_SERVER]])),
+      prices: MODEL_PRICES,
+    }),
+    audit: async () => {},
   });
   const workflows = createWorkflows({ agents, logger, templates: options.templates });
   const rootDefinition = `workflows-root-${randomUUID()}`;

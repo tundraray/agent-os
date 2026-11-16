@@ -8,7 +8,9 @@
 //
 // Harness (follows apps/api/test/support/*): one `createTestApp({ workers: true, captureLog: true, mcpServers: [] })` against the docker-compose
 //   Postgres - the fixture process runs, and the test registers every server itself through the API under the run's names (`runName`).
-//   `MCP_ACCESS_TABLE` is read once at the boot, so Аня, Борис and Глеб are written by `insertEmployee` before it and sign in after it; the
+//   Аня, Борис and Глеб are written by `insertEmployee` before the boot and sign in after it; their rights on the run's servers are personal
+//   grants the administrator gives (`grantTo`, test/support/access.ts) once each server is registered, and Аня's chat runs on the run's
+//   default model (`runModel`), added to the catalogue and allowed to her in `beforeAll`; the
 //   super administrator comes from `seedSuperAdmin`, the second administrator is an employee given the admin right by a role (taken away in
 //   row 8). The employee connect route reads only the saved public address; the test uses the one the database already holds (the test plays
 //   the browser and calls the callback on the app itself, and the fixture only compares the return address with the registered one), and
@@ -46,6 +48,13 @@ import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { frontendOrigin } from '../src/identity/session-cookie.js';
+import {
+  addModel,
+  grantTo,
+  HAIKU_TEST_PRICES,
+  removeRunRows,
+  runModel,
+} from './support/access.js';
 import { chatApi, expectBody, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
@@ -74,6 +83,8 @@ import { databaseUrl } from './support/migrate.global-setup.js';
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 const PASSWORD = 'e2e-password-12';
+/** The app's default model: a model of the run, allowed to Аня (row 11a runs her chat). */
+const DEFAULT_MODEL = runModel('mcp-connect-haiku');
 /** Row 8: a second `oauth` server at the same fixture path, waiting for its administrator's account. */
 const SECOND_OAUTH_SERVER = runName('backoffice-second');
 /** Row 5: a name the registry does not hold. */
@@ -168,15 +179,11 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       }),
     ];
     userIds.push(anyaId, borisId, glebId);
-    // Глеб has no row: no MCP server is his.
     harness = await createTestApp({
       workers: true,
       captureLog: true,
       mcpServers: [],
-      mcpAccess: {
-        [anyaId]: [LOGS_SERVER, BACKOFFICE_SERVER, SECOND_OAUTH_SERVER],
-        [borisId]: [BACKOFFICE_SERVER],
-      },
+      defaultModel: DEFAULT_MODEL,
     });
     harness.model.completeText({ text: 'MCP conversation' });
     const { app } = harness;
@@ -187,6 +194,14 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     gleb = await signInWithPassword(app, login('gleb'), PASSWORD);
     admin2 = await createEmployee(app, admin);
     userIds.push(admin2.id);
+    // Аня's chat (row 11a) runs on the run's model; Глеб never gets a right: no MCP server is his.
+    await addModel(app, admin, { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES });
+    await grantTo(
+      app,
+      admin,
+      { userId: anya.id },
+      { effect: 'allow', target: { kind: 'model', model: DEFAULT_MODEL } },
+    );
 
     // The second administrator's right comes from a role (row 8 takes it away).
     const role = await expectBody(
@@ -251,8 +266,13 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       }
     } finally {
       await harness?.close();
-      // The servers take their accounts with them; the users take their sessions and role assignments.
+      // The servers take their accounts with them; the users take their sessions, role assignments and
+      // personal grants; the model takes its grants.
       await deleteRunServers(database.pool);
+      await removeRunRows(database.pool, {
+        models: [DEFAULT_MODEL],
+        roles: [],
+      });
       if (adminRoleId !== undefined)
         await database.pool.query(
           'DELETE FROM app.identity_roles WHERE id = $1',
@@ -450,6 +470,14 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         );
         return rows.rows;
       };
+      /** A personal right of the employee on every tool of a registered server. */
+      const allowServer = (session: Session, server: string) =>
+        grantTo(
+          app,
+          admin,
+          { userId: session.id },
+          { effect: 'allow', target: { kind: 'server', server } },
+        );
       const runServerCount = async (): Promise<number> => {
         const rows = await pool.query<{ count: string }>(
           'SELECT count(*) FROM app.agent_mcp_servers WHERE name LIKE $1',
@@ -519,6 +547,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
           reason: null,
         },
       ]);
+      // Аня's right on the registered server (she reads it in row 11a)
+      await allowServer(anya, LOGS_SERVER);
       // When: a wrong token replaces it; Then: 422 unauthorized, and the stored token still reads the list
       expect(
         await refusal(
@@ -626,6 +656,9 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         waiting.sharedTokenSet,
         waiting.tools,
       ]).toEqual(['awaiting_admin_account', 0, false, []]);
+      // Аня's and Борис's rights on the registered server (Глеб has none)
+      await allowServer(anya, BACKOFFICE_SERVER);
+      await allowServer(boris, BACKOFFICE_SERVER);
       // Then: it cannot be switched on and no employee sees it
       expect(
         await refusal(

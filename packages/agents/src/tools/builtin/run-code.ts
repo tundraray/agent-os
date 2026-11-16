@@ -11,9 +11,9 @@ import {
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
+import { OwnerDisabledError } from '../../access-gate.js';
 import type { CodeRunConfig } from '../../config.js';
 import { type DefinitionCatalog, definitionOf } from '../../definitions/catalog.js';
-import { isOwnerDisabled } from '../../owner-gate.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
 import { sessions } from '../../store/sessions.repository.js';
 import { toolCalls } from '../../store/tool-calls.repository.js';
@@ -259,9 +259,9 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
       )
       .catch(async (error: unknown) => {
-        // `OwnerGate` refused before the call started (KD-4): `interrupted` even in a `write` run, never
-        // `unknown`. The rejection still ends the run; the agent fails at its next model call.
-        if (isOwnerDisabled(error)) {
+        // The gate refused a disabled owner before the call started (KD-4): `interrupted` even in a `write`
+        // run, never `unknown`. The rejection still ends the run; the agent fails at its next model call.
+        if (error instanceof OwnerDisabledError) {
           await codeCalls.close(deps.database, key, {
             outcome: ToolOutcomeSchema.enum.interrupted,
             finishedAt: new Date(),

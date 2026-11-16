@@ -162,9 +162,9 @@ export async function ageSession(
 }
 
 /**
- * A local employee written straight into `identity_users` over `pool`, for a suite that needs the id
- * before the app boots (`MCP_ACCESS_TABLE` is read once at the boot). Returns the id; the employee signs
- * in with `signInWithPassword` after the boot.
+ * A local employee written straight into `identity_users` over `pool`, for a suite that makes its
+ * employees before the app boots. Returns the id; the employee signs in with `signInWithPassword` after
+ * the boot.
  */
 export async function insertEmployee(
   pool: DatabaseConnection['pool'],

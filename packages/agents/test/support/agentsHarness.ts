@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  type AccessDeniedEntry,
   type AgentDefinition,
   type AgentHistoryEntry,
   type Agents,
   type AgentSessions,
   type AgentTurnMessage,
   createAgents,
-  type OwnerGate,
   parseAgentsConfig,
   secretValuesOf,
 } from '@agent-os/agents';
@@ -30,11 +30,10 @@ import {
   type FixtureSource,
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
-import type { ScriptedModel } from '@agent-os/agents/testing';
+import { createAccessGateDouble, type ScriptedModel } from '@agent-os/agents/testing';
 import {
   createRuntime,
-  type ModelPrices,
-  parseModelPrices,
+  type ModelPrice,
   parseRuntimeConfig,
   type Runtime,
   type RuntimeConfig,
@@ -60,8 +59,8 @@ const TEST_MODEL_DEFAULT = 'anthropic/test-default';
 /** A second priced model a launch may name: input 3, output 15 USD per million tokens. */
 export const TEST_MODEL_CHOSEN = 'anthropic/test-chosen';
 
-/** Prices of every harness: both models, rates exact in binary. */
-const TEST_MODEL_PRICES: ModelPrices = parseModelPrices({
+/** The model catalogue of every harness: both models, rates exact in binary. */
+const TEST_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   [TEST_MODEL_DEFAULT]: {
     inputUsdPerMTok: 1,
     outputUsdPerMTok: 5,
@@ -74,14 +73,11 @@ const TEST_MODEL_PRICES: ModelPrices = parseModelPrices({
     cacheWriteUsdPerMTok: 3.75,
     cacheReadUsdPerMTok: 0.375,
   },
-});
+};
 
 /** The fixture sources a harness registers unless told otherwise. */
 const DEFAULT_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice'];
 const ALL_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice', 'tracker'];
-
-/** Every owner of these tests is active unless a test passes its own gate. */
-const OPEN_GATE: OwnerGate = { check: async () => {} };
 
 /** A heartbeat that never comes within a test: the instance's lease is renewed only by the test. */
 const ZOMBIE_HEARTBEAT_MS = 600_000;
@@ -116,7 +112,7 @@ export function testDefinition(
 
 export interface AgentsHarnessOptions {
   readonly model: ScriptedModel;
-  /** `MCP_ACCESS_TABLE` of the test: employee id → server names of the run (`mcp-servers.ts`). */
+  /** Server rights of the test: employee id (or `*`) → server names of the run (`mcp-servers.ts`); the access gate double. */
   readonly access: Readonly<Record<string, readonly string[]>>;
   /** Registered before `start()`. */
   readonly definitions?: readonly AgentDefinition[];
@@ -130,8 +126,8 @@ export interface AgentsHarnessOptions {
    * harness of the file left (a test that registers its own).
    */
   readonly mcpServers?: readonly FixtureSource[];
-  /** The owner gate of `createAgents`; one that lets every owner through by default. */
-  readonly ownerGate?: OwnerGate;
+  /** Owners the access gate double answers `owner_disabled` for; every owner is active by default. */
+  readonly refusedOwners?: readonly string[];
   /** The code executor; the real one (`createCodeRunner`) by default. */
   readonly codeRunner?: CodeRunner;
   /** Runtime settings over the harness defaults (workers on, 6 slots, short polls and lease). */
@@ -151,6 +147,8 @@ export interface AgentsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
+  /** Every `access_denied` record the agents handed to the audit hook, in order. */
+  readonly audits: readonly AccessDeniedEntry[];
   /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
   close(): Promise<void>;
 }
@@ -173,7 +171,6 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
   const agentsConfig = parseAgentsConfig(
     {
       AGENT_DEFAULT_MODEL: TEST_MODEL_DEFAULT,
-      MCP_ACCESS_TABLE: JSON.stringify(options.access),
       MCP_CALL_TIMEOUT_MS: '90000',
       NODE_ENV: 'test',
       ...options.variables,
@@ -191,15 +188,22 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     config: runtimeConfig,
     logger,
     clock: systemClock,
-    modelPrices: TEST_MODEL_PRICES,
   });
+  const audits: AccessDeniedEntry[] = [];
   const agents = createAgents({
     database: database.db,
     runtime,
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
-    ownerGate: options.ownerGate ?? OPEN_GATE,
+    access: createAccessGateDouble({
+      servers: options.access,
+      prices: TEST_MODEL_PRICES,
+      ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
+    }),
+    audit: async (entry) => {
+      audits.push(entry);
+    },
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
   for (const definition of options.definitions ?? []) agents.definitions.register(definition);
@@ -240,6 +244,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     fixture,
     fixtureProcess,
     logs: sink.records,
+    audits,
     close,
   };
 }

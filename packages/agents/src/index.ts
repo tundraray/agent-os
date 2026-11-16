@@ -1,3 +1,10 @@
+export type {
+  AccessAudit,
+  AccessDeniedEntry,
+  AccessGate,
+  ModelVerdict,
+  ToolAccess,
+} from './access-gate.js';
 export type { AgentView } from './agent-view.js';
 export { type AgentsConfig, parseAgentsConfig, secretValuesOf } from './config.js';
 export { type Agents, createAgents } from './create-agents.js';
@@ -21,7 +28,6 @@ export {
 } from './model/mastra-turn.js';
 export type { TextDelta } from './model/model-client.js';
 export type { AgentConfirmation, AgentHistoryEntry, AgentSessions } from './operations/agent-sessions.js';
-export { OWNER_DISABLED, OwnerDisabledError, type OwnerGate } from './owner-gate.js';
 export { WAITING_RULE } from './tools/builtin/start-agent.js';
 export type {
   InCommitAgentTool,

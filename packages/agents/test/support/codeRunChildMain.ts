@@ -1,9 +1,9 @@
 import { createAgents, parseAgentsConfig } from '@agent-os/agents';
-import { createScriptedModel, type ScriptedModel } from '@agent-os/agents/testing';
+import { createAccessGateDouble, createScriptedModel, type ScriptedModel } from '@agent-os/agents/testing';
 import { consoleSink, createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
 import { createDatabase } from '@agent-os/db';
-import { createRuntime, parseModelPrices, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
+import { createRuntime, type ModelPrice, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
 import {
   CHILD_MODEL,
   CHILD_SCENARIO_ENV,
@@ -32,15 +32,15 @@ export type ChildMessage = { kind: 'ready' };
 /** Messages of the harness to the child. */
 export type HarnessMessage = { kind: 'stop' };
 
-/** The prices of {@link CHILD_MODEL}, as in `agentsHarness.ts`: input 1, output 5 USD per million tokens. */
-const CHILD_MODEL_PRICES = parseModelPrices({
+/** The catalogue of the child: {@link CHILD_MODEL} priced as in `agentsHarness.ts`, input 1, output 5 USD per million tokens. */
+const CHILD_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   [CHILD_MODEL]: {
     inputUsdPerMTok: 1,
     outputUsdPerMTok: 5,
     cacheWriteUsdPerMTok: 1.25,
     cacheReadUsdPerMTok: 0.125,
   },
-});
+};
 
 function readScenario(): ChildScenario {
   const raw = process.env[CHILD_SCENARIO_ENV];
@@ -83,7 +83,6 @@ async function main(): Promise<void> {
     config: runtimeConfig,
     logger,
     clock: systemClock,
-    modelPrices: CHILD_MODEL_PRICES,
   });
   const agents = createAgents({
     database: database.db,
@@ -91,8 +90,9 @@ async function main(): Promise<void> {
     logger,
     config: agentsConfig,
     turnClient: scenarioModel(scenario.servers).turnClient,
-    // Every owner of these tests is active.
-    ownerGate: { check: async () => {} },
+    // Every owner of these tests is active; the audit hook is not asserted in the child.
+    access: createAccessGateDouble({ servers: scenario.access, prices: CHILD_MODEL_PRICES }),
+    audit: async () => {},
   });
   agents.definitions.register(codeRunDefinition(scenario.servers));
   await agents.start();

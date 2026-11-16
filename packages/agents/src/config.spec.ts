@@ -18,13 +18,8 @@ const RESEARCHER: AgentDefinition = {
   maxTurns: 10,
 };
 
-const checkWith = (definitions: AgentDefinition[], overrides: { defaultModel?: string } = {}) =>
-  checkCatalog({
-    definitions: [GENERAL_PURPOSE, ...definitions],
-    toolNames: BUILTIN_TOOLS,
-    pricedModels: [DEFAULT_MODEL],
-    defaultModel: overrides.defaultModel ?? DEFAULT_MODEL,
-  });
+const checkWith = (definitions: AgentDefinition[]) =>
+  checkCatalog({ definitions: [GENERAL_PURPOSE, ...definitions], toolNames: BUILTIN_TOOLS });
 
 describe('agents configuration and catalog refuse to start naming the variable or the name', () => {
   it.each<[string, () => unknown, RegExp]>([
@@ -33,12 +28,6 @@ describe('agents configuration and catalog refuse to start naming the variable o
       'CODE_RUN_MAX_CONCURRENT_PER_USER=0',
       () => parseAgentsConfig({ CODE_RUN_MAX_CONCURRENT_PER_USER: '0' }),
       /CODE_RUN_MAX_CONCURRENT_PER_USER/,
-    ],
-    [
-      // design-mcp-connect.md DC-11: access rows name registry servers, checked only for their form
-      'an access row names a server that is not a registry name',
-      () => parseAgentsConfig({ MCP_ACCESS_TABLE: '{"emp-1":["logs","Crm_1"]}' }),
-      /MCP_ACCESS_TABLE.*emp-1/,
     ],
     [
       'a repeated definition name',
@@ -71,16 +60,6 @@ describe('agents configuration and catalog refuse to start naming the variable o
       () => checkWith([{ ...RESEARCHER, mcpServers: ['Logs_1'] }]),
       /researcher.*Logs_1/,
     ],
-    [
-      'a definition model without a price',
-      () => checkWith([{ ...RESEARCHER, model: 'anthropic/claude-opus-5-5' }]),
-      /researcher.*claude-opus-5-5/,
-    ],
-    [
-      'AGENT_DEFAULT_MODEL without a price',
-      () => checkWith([], { defaultModel: 'anthropic/claude-sonnet-5-5' }),
-      /AGENT_DEFAULT_MODEL/,
-    ],
   ])('refuses %s', (_, start, problem) => {
     expect(start).toThrow(problem);
   });
@@ -96,7 +75,6 @@ describe('agents configuration and catalog refuse to start naming the variable o
       compactAtTokens: 200_000,
       mcpCallTimeoutMs: 60_000,
       allowHttpUrls: true,
-      mcpAccess: new Map(),
       codeRun: {
         timeoutMs: 30_000,
         memoryMb: 512,
@@ -106,7 +84,7 @@ describe('agents configuration and catalog refuse to start naming the variable o
       },
     };
 
-    const config = parseAgentsConfig({ AGENT_MAX_DEPTH: '', MCP_ACCESS_TABLE: '' });
+    const config = parseAgentsConfig({ AGENT_MAX_DEPTH: '' });
 
     expect(config).toEqual(expected);
     expect(() => checkWith([{ ...RESEARCHER, mcpServers: ['not-registered'] }])).not.toThrow();
