@@ -11,7 +11,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
+import { ADMIN_TEXT, saveFailed } from '@/lib/admin/admin-texts';
 import { sharedTokenRules } from '@/lib/admin/form-rules';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { focusShellTarget } from '@/lib/focus';
@@ -46,7 +46,9 @@ const TEXT = {
   changes: 'меняет',
   remove: 'Удалить',
   removeTitle: (server: string) => `Удалить сервер «${server}»?`,
-  removeBody: 'Агенты сразу потеряют его инструменты. Это действие нельзя отменить.',
+  // The second sentence is not in the UXRD: the API deletes every employee's account with the server.
+  removeBody:
+    'Агенты сразу потеряют его инструменты. Это действие нельзя отменить. Подключённые аккаунты сотрудников на этом сервере будут удалены.',
   // The «⋯» menu follows the data-table's «Действия: {запись}».
   menu: (server: string) => `Действия: ${server}`,
   // Not in the UXRD: the hidden caption of the tools table, its empty state (a server still waiting for the
@@ -305,6 +307,7 @@ function SharedTokenForm({ isSet, onSave, onSaved }: SharedTokenFormProps) {
       savedText={null}
       onSaved={onSaved}
       secretFields={['sharedToken']}
+      errorContext={{ checkFailed: saveFailed }}
       logEvent="admin: server token"
     >
       {(form) => (

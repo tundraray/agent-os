@@ -13,6 +13,7 @@ import { FieldDescription, FieldLegend, FieldSet } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { adminApi } from '@/lib/admin/admin-api';
+import { registerFailed } from '@/lib/admin/admin-texts';
 import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
@@ -92,6 +93,7 @@ export function RegisterServerForm() {
         savedText={null}
         onCancel={() => router.push(adminPath('servers'))}
         secretFields={['sharedToken']}
+        errorContext={{ checkFailed: registerFailed }}
         logEvent="admin: server register"
       >
         {(form) => (

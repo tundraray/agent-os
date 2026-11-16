@@ -54,20 +54,29 @@
 import {
   AccessErrorCode,
   IdentityErrorCode,
+  McpErrorCode,
   type AdminUserDetail,
   type CatalogModel,
   type CreateCatalogModelBody,
   type CreateGrantBody,
   type CreateLocalUserBody,
+  type CreateProviderBody,
   type Grant,
+  type McpServerView,
+  type McpToolView,
+  type ProviderView,
+  type RegisterMcpServerBody,
   type RoleDetail,
+  type UpdateMcpServerBody,
+  type UpdateProviderBody,
   type UpdateRoleBody,
+  type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
-import { expectNowhere, trackRequests, type TrackedRequests } from '@/test/admin-support';
+import { expectNowhere, stubClipboard, trackRequests, type TrackedRequests } from '@/test/admin-support';
 import {
   adminUserDetail,
   adminUserPage,
@@ -79,8 +88,11 @@ import {
   grant,
   mcpServerSummary,
   mcpServerView,
+  providerSummary,
+  providerView,
   roleDetail,
   roleSummary,
+  signInSettings,
   threadList,
   threadSummary,
 } from '@/test/fixtures';
@@ -360,6 +372,130 @@ function rowCells(table: HTMLElement, text: string): string[] {
   if (row === undefined) throw new Error(`no row with «${text}»`);
   return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '');
 }
+
+// INT-3 support -----------------------------------------------------------------------------------------------------------------------------
+
+const OKTA = fixtureId(400);
+const GOOGLE = fixtureId(401);
+/** Where the tab goes to connect the administrator's own account (Flow 2): a page address, never a `fetch`. */
+const connectAddress = (server: string): string => `${API}/api/admin/mcp-servers/${server}/connect`;
+/** The tools of `sentry` after the refresh: `update_issue` is gone, `create_issue` is new. */
+const REFRESHED_TOOLS: McpToolView[] = [
+  { name: 'create_issue', title: 'Create issue', description: 'Заводит задачу', readOnly: false },
+  { name: 'list_issues', title: 'List issues', description: 'Список задач', readOnly: true },
+];
+
+/**
+ * Providers, sign-in settings and the MCP registry as an in-memory store behind MSW, like `adminBackend`: a
+ * secret or a token sent in a change is kept only as «set», never answered back.
+ */
+function signInBackend() {
+  const store = {
+    providers: [] as ProviderView[],
+    settings: signInSettings({ publicUrl: null }),
+    // `jira` still waits for the administrator's account.
+    servers: [mcpServerView({ name: 'jira', status: 'awaiting_admin_account', tools: [] })] as McpServerView[],
+  };
+  let nextProvider = 400;
+  let settingsSaves = 0;
+
+  const provider = (id: unknown) => store.providers.find((entry) => entry.id === id);
+  const registered = (name: unknown) => store.servers.find((entry) => entry.name === name);
+  const providerNotFound = () => apiError(404, IdentityErrorCode.PROVIDER_NOT_FOUND, 'Provider not found');
+  const serverNotFound = () => apiError(404, McpErrorCode.MCP_SERVER_NOT_FOUND, 'Server not found');
+
+  const handlers = [
+    http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+    // Providers
+    http.get(`${API}/api/admin/providers`, () =>
+      HttpResponse.json(store.providers.map(({ id, type, name, enabled }) => providerSummary({ id, type, name, enabled }))),
+    ),
+    http.post(`${API}/api/admin/providers`, async ({ request }) => {
+      const { type, name } = (await request.json()) as CreateProviderBody;
+      const created = providerView({ id: fixtureId(nextProvider), type: type === 'google' ? 'google' : 'oidc', name });
+      nextProvider += 1;
+      store.providers.push(created);
+      return HttpResponse.json(created, { status: 201 });
+    }),
+    http.get(`${API}/api/admin/providers/:id`, ({ params }) => {
+      const found = provider(params.id);
+      return found === undefined ? providerNotFound() : HttpResponse.json(found);
+    }),
+    http.patch(`${API}/api/admin/providers/:id`, async ({ params, request }) => {
+      const found = provider(params.id);
+      if (found === undefined) return providerNotFound();
+      const { name, enabled, options } = (await request.json()) as UpdateProviderBody;
+      if (name !== undefined) found.name = name;
+      if (enabled !== undefined) found.enabled = enabled;
+      if (options?.issuer !== undefined) found.options.issuer = options.issuer;
+      if (options?.clientId !== undefined) found.options.clientId = options.clientId;
+      if (options?.clientSecret !== undefined) found.options.clientSecretSet = true;
+      return HttpResponse.json(found);
+    }),
+    // Sign-in settings: every save moves `updatedAt`, as the API does
+    http.get(`${API}/api/admin/settings/sign-in`, () => HttpResponse.json(store.settings)),
+    http.put(`${API}/api/admin/settings/sign-in`, async ({ request }) => {
+      settingsSaves += 1;
+      const body = (await request.json()) as UpdateSignInSettingsBody;
+      store.settings = signInSettings({ ...body, updatedAt: `2026-11-16T10:0${settingsSaves}:00.000Z` });
+      return HttpResponse.json(store.settings);
+    }),
+    // MCP servers
+    http.get(`${API}/api/admin/mcp-servers`, () =>
+      HttpResponse.json(
+        store.servers.map(({ name, url, mode, status, toolCount }) => mcpServerSummary({ name, url, mode, status, toolCount })),
+      ),
+    ),
+    http.post(`${API}/api/admin/mcp-servers`, async ({ request }) => {
+      const { name, url, mode } = (await request.json()) as RegisterMcpServerBody;
+      const created =
+        mode === 'oauth'
+          ? mcpServerView({ name, url, mode, status: 'awaiting_admin_account', tools: [] })
+          : mcpServerView({ name, url, mode, status: 'enabled', sharedTokenSet: true });
+      store.servers.push(created);
+      return HttpResponse.json(created, { status: 201 });
+    }),
+    http.get(`${API}/api/admin/mcp-servers/:name`, ({ params }) => {
+      const found = registered(params.name);
+      return found === undefined ? serverNotFound() : HttpResponse.json(found);
+    }),
+    http.patch(`${API}/api/admin/mcp-servers/:name`, async ({ params, request }) => {
+      const found = registered(params.name);
+      if (found === undefined) return serverNotFound();
+      const { enabled, sharedToken } = (await request.json()) as UpdateMcpServerBody;
+      if (enabled !== undefined) found.status = enabled ? 'enabled' : 'disabled';
+      if (sharedToken !== undefined) found.sharedTokenSet = true;
+      return HttpResponse.json(found);
+    }),
+    http.post(`${API}/api/admin/mcp-servers/:name/tools/refresh`, ({ params }) => {
+      const found = registered(params.name);
+      if (found === undefined) return serverNotFound();
+      const before = found.tools.map((tool) => tool.name);
+      found.tools = REFRESHED_TOOLS;
+      found.toolCount = REFRESHED_TOOLS.length;
+      const after = REFRESHED_TOOLS.map((tool) => tool.name);
+      return HttpResponse.json({
+        server: found,
+        added: after.filter((name) => !before.includes(name)),
+        removed: before.filter((name) => !after.includes(name)),
+      });
+    }),
+    http.delete(`${API}/api/admin/mcp-servers/:name`, ({ params }) => {
+      if (registered(params.name) === undefined) return serverNotFound();
+      store.servers = store.servers.filter((entry) => entry.name !== params.name);
+      return new HttpResponse(null, { status: 204 });
+    }),
+  ];
+
+  return { store, handlers };
+}
+
+/** The rows of a table below its header row, as their text. */
+const bodyRows = (table: HTMLElement): string[] =>
+  within(table)
+    .getAllByRole('row')
+    .slice(1)
+    .map((row) => row.textContent ?? '');
 
 describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // INT-1 ---------------------------------------------------------------------------------------------------------------------------------
@@ -1169,5 +1305,518 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: sign-in (providers, settings) and MCP server screens, SecretField, CopyValue, AdminForm, adminApi (providers, signInSettings, servers), logger stand-in, clipboard stub, location.assign spy, toast, announcer, MSW, next/navigation mock
   // @complexity: high
-  it.todo('INT-3 / UC-7..UC-10 / UC-E3 / UC-E4 / UC-E5 / UC-E8: provider fields and copyable data per type, a refused enable returns the switch, a secret is never read back, session hours are sent as minutes, a server registers and returns from the owner\'s sign-in with its tools, and refresh without an administrator account goes to the connect address');
+  it('INT-3 / UC-7..UC-10 / UC-E3 / UC-E4 / UC-E5 / UC-E8: provider fields and copyable data per type, a refused enable returns the switch, a secret is never read back, session hours are sent as minutes, a server registers and returns from the owner\'s sign-in with its tools, and refresh without an administrator account goes to the connect address', async () => {
+    // Arrange: an administrator, no providers yet, the default sign-in settings without an address, the registry with `jira`
+    const { store, handlers } = signInBackend();
+    server.use(
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров', email: 'igor@corp.example' })),
+      ),
+      ...handlers,
+    );
+    const api = trackRequests(server);
+    const user = userEvent.setup();
+    const writeText = stubClipboard();
+    let view = renderWithRuntime({ pathname: '/admin/sign-in' });
+    const open = async (pathname: string, title: string): Promise<void> => {
+      view.setPathname(pathname);
+      expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+    };
+    const connectRequests = (): string[] =>
+      api.requests.filter((request) => request.path.endsWith('/connect')).map((request) => request.path);
+    const googleWarning =
+      'Включённый Google пускает любого владельца аккаунта Google: первый вход создаёт учётную запись без ролей. Пока вы не дадите ей права, чат ей не отвечает.';
+    let mark = 0;
+
+    // Row 1 - «Авторизация»: the permanent password row comes first and is not from the response
+    expect(await screen.findByRole('heading', { level: 1, name: 'Авторизация' })).toBeInTheDocument();
+    const methods = await screen.findByRole('table', { name: 'Способы входа' });
+    expect(bodyRows(methods)).toEqual(['Логин и парольвстроенныйВсегда включён']);
+    expect(within(methods).queryAllByRole('link')).toEqual([]);
+    expect(readsAfterChange(api, 0)).toContain('/api/admin/providers');
+
+    // Row 4 - sign-in settings (AC-26.3, DC-7): hours from the stored minutes, the API address while none is saved
+    const address = await screen.findByLabelText('Публичный адрес Agent OS');
+    expect(address).toHaveValue('http://api.test');
+    const idle = screen.getByLabelText('Без активности');
+    expect(idle).toHaveValue('8');
+    expect(screen.getByLabelText('Всего с момента входа')).toHaveValue('24');
+
+    // Act (row 4): 0,3 hours is off the 0,25 step - nothing is sent, the focus is on the field with the MC-33 rule
+    await user.clear(idle);
+    await user.type(idle, '0,3');
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(idle).toHaveFocus());
+    expect(screen.getByText('Введите от 0,25 до 24 часов с шагом 0,25')).toBeInTheDocument();
+    expect(changesSince(api, mark)).toEqual([]);
+
+    // Act (row 4): the public address and 0,25 hours
+    await user.clear(address);
+    await user.type(address, 'https://agent-os.corp.example');
+    await user.clear(idle);
+    await user.type(idle, '0,25');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    // Assert (row 4): ONE PUT with both limits in minutes, then the fields show the new read
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'PUT',
+          path: '/api/admin/settings/sign-in',
+          body: { publicUrl: 'https://agent-os.corp.example', idleMinutes: 15, absoluteMinutes: 1440 },
+        },
+      ],
+      '/api/admin/settings/sign-in',
+    );
+    expect(await screen.findByText('Настройки входа сохранены')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Без активности')).toHaveValue('0,25'));
+    expect(screen.getByLabelText('Всего с момента входа')).toHaveValue('24');
+    expect(screen.getByLabelText('Публичный адрес Agent OS')).toHaveValue('https://agent-os.corp.example');
+
+    // Row 1 - a new provider (AC-26.4): Google by default with its warning; OIDC drops both and sends `{ type, name }`
+    await followLink(user, screen.getByRole('link', { name: 'Добавить провайдера' }), view.setPathname);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Новый провайдер' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Google' })).toBeChecked();
+    expect(screen.getByLabelText('Название кнопки')).toHaveValue('Google');
+    expect(screen.getByText(googleWarning)).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'OIDC' }));
+    expect(screen.queryByText(googleWarning)).toBeNull();
+    expect(screen.getByLabelText('Название кнопки')).toHaveValue('');
+    await user.type(screen.getByLabelText('Название кнопки'), 'Okta');
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Создать' }));
+    await waitFor(() => expect(view.router.push).toHaveBeenCalledWith(`/admin/sign-in/${OKTA}`));
+    expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'oidc', name: 'Okta' } }]);
+
+    // Assert (row 1): the OIDC page has «Issuer», «Client ID» and an empty «Client secret»; both values copy exactly (AC-26.1)
+    await open(`/admin/sign-in/${OKTA}`, 'Okta');
+    expect(screen.getByLabelText('Issuer')).toHaveValue('');
+    expect(screen.getByLabelText('Client ID')).toHaveValue('');
+    expect(screen.getByLabelText('Client secret')).toHaveAttribute('type', 'password');
+    const redirectUri = `https://agent-os.corp.example/api/auth/oauth/${OKTA}/callback`;
+    expect(screen.getByText(redirectUri)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Копировать: Адрес возврата' }));
+    expect(writeText).toHaveBeenLastCalledWith(redirectUri);
+    expect(await screen.findAllByText('Скопировано')).not.toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Копировать: Scopes' }));
+    expect(writeText).toHaveBeenLastCalledWith('openid email profile');
+    expect(writeText).toHaveBeenCalledTimes(2);
+
+    // Row 3 - the client secret (NFR-02, UC-E3): the check refuses the settings (`422 PROVIDER_CHECK_FAILED`)
+    const secret = 'okta-secret-9f3K2xQ';
+    await user.type(screen.getByLabelText('Issuer'), 'https://corp.okta.com');
+    await user.type(screen.getByLabelText('Client ID'), 'agent-os-client');
+    await user.type(screen.getByLabelText('Client secret'), secret);
+    server.use(
+      http.patch(
+        `${API}/api/admin/providers/:id`,
+        () => apiError(422, IdentityErrorCode.PROVIDER_CHECK_FAILED, 'Provider check failed', 'invalid_document'),
+        { once: true },
+      ),
+    );
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    // Assert (row 3): the form error, every field kept; the typed secret is only in its own field
+    expect(
+      await screen.findByText(
+        'Не удалось проверить настройки провайдера: по этому адресу нет описания OIDC для этого Issuer. Настройки не сохранены.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Issuer')).toHaveValue('https://corp.okta.com');
+    expect(screen.getByLabelText('Client ID')).toHaveValue('agent-os-client');
+    expect(screen.getByLabelText('Client secret')).toHaveValue(secret);
+    expectNowhere(secret, { exceptInput: 'Client secret' });
+
+    // Act (row 3): the same save accepted
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    const oktaOptions = { issuer: 'https://corp.okta.com', clientId: 'agent-os-client' };
+    const oktaSave = { method: 'PATCH', path: `/api/admin/providers/${OKTA}`, body: { name: 'Okta', options: { ...oktaOptions, clientSecret: secret } } };
+    await expectSent(api, mark, [oktaSave, oktaSave], `/api/admin/providers/${OKTA}`);
+
+    // Assert (row 3): «Задан» with «Заменить» and no input; the secret is nowhere
+    expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
+    expect(screen.getByText('Задан')).toBeInTheDocument();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expectNowhere(secret);
+
+    // Act (row 3): renaming without «Заменить» sends no secret key at all
+    mark = api.requests.length;
+    await user.clear(screen.getByLabelText('Название кнопки'));
+    await user.type(screen.getByLabelText('Название кнопки'), 'Okta SSO');
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await expectSent(
+      api,
+      mark,
+      [{ method: 'PATCH', path: `/api/admin/providers/${OKTA}`, body: { name: 'Okta SSO', options: oktaOptions } }],
+      `/api/admin/providers/${OKTA}`,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'Okta SSO' })).toBeInTheDocument();
+
+    // Act (row 3): «Заменить» -> a new value -> «Сохранить» sends it once
+    const replacement = 'okta-secret-rotated-7Qp';
+    await user.click(screen.getByRole('button', { name: 'Заменить: Client secret' }));
+    await user.type(screen.getByLabelText('Client secret'), replacement);
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'PATCH',
+          path: `/api/admin/providers/${OKTA}`,
+          body: { name: 'Okta SSO', options: { ...oktaOptions, clientSecret: replacement } },
+        },
+      ],
+      `/api/admin/providers/${OKTA}`,
+    );
+    expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
+    expectNowhere(replacement);
+    expectNowhere(secret);
+
+    // Row 1 - a Google provider (AC-26.4): «Client ID» and «Client secret» without «Issuer», the warning, no «Scopes»
+    await open('/admin/sign-in/new', 'Новый провайдер');
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Создать' }));
+    await waitFor(() => expect(view.router.push).toHaveBeenCalledWith(`/admin/sign-in/${GOOGLE}`));
+    expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'google', name: 'Google' } }]);
+    await open(`/admin/sign-in/${GOOGLE}`, 'Google');
+    expect(screen.getByLabelText('Client ID')).toHaveValue('');
+    expect(screen.getByLabelText('Client secret')).toHaveAttribute('type', 'password');
+    expect(screen.queryByLabelText('Issuer')).toBeNull();
+    expect(screen.getByText(googleWarning)).toBeInTheDocument();
+    expect(screen.getByText(`https://agent-os.corp.example/api/auth/oauth/${GOOGLE}/callback`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Копировать: Адрес возврата' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Копировать: Scopes' })).toBeNull();
+
+    // Row 2 - enabling (DC-8): each refusal puts the switch back with its text under it (role `alert`)
+    await open('/admin/sign-in', 'Авторизация');
+    const providers = await screen.findByRole('table', { name: 'Способы входа' });
+    await waitFor(() => expect(rowCells(providers, 'Okta SSO').slice(0, 2)).toEqual(['Okta SSO', 'OIDC']));
+    expect(rowCells(providers, 'Google').slice(0, 2)).toEqual(['Google', 'Google']);
+    const refusedEnables = [
+      {
+        id: GOOGLE,
+        name: 'Google',
+        answer: () => apiError(409, IdentityErrorCode.PROVIDER_INCOMPLETE, 'Provider settings are incomplete'),
+        text: 'Нельзя включить: сначала заполните настройки провайдера.',
+      },
+      {
+        id: OKTA,
+        name: 'Okta SSO',
+        answer: () => apiError(409, IdentityErrorCode.PUBLIC_URL_REQUIRED, 'Public URL is required'),
+        text: 'Сначала сохраните публичный адрес Agent OS в настройках входа.',
+      },
+    ];
+    for (const refused of refusedEnables) {
+      const toggle = within(providers).getByRole('switch', { name: `Включено: ${refused.name}` });
+      expect(toggle).not.toBeChecked();
+      server.use(http.patch(`${API}/api/admin/providers/:id`, refused.answer, { once: true }));
+      mark = api.requests.length;
+      await user.click(toggle);
+      const refusal = await within(providers).findByText(refused.text);
+      expect(refusal).toHaveAttribute('role', 'alert');
+      await waitFor(() => expect(toggle).not.toBeChecked());
+      expect(changesSince(api, mark)).toEqual([
+        { method: 'PATCH', path: `/api/admin/providers/${refused.id}`, body: { enabled: true } },
+      ]);
+    }
+    expect(screen.queryByText('Public URL is required')).toBeNull();
+
+    // Act (row 2): an accepted enable - the switch stands «вкл.» from the new read of the list
+    mark = api.requests.length;
+    await user.click(within(providers).getByRole('switch', { name: 'Включено: Okta SSO' }));
+    await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/providers/${OKTA}`, body: { enabled: true } }], '/api/admin/providers');
+    await waitFor(() => expect(within(providers).getByRole('switch', { name: 'Включено: Okta SSO' })).toBeChecked());
+    expect(within(providers).queryByText('Сначала сохраните публичный адрес Agent OS в настройках входа.')).toBeNull();
+
+    // Row 3: a reload of the provider's page reads «Задан» and neither secret
+    await open(`/admin/sign-in/${OKTA}`, 'Okta SSO');
+    expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Issuer')).toHaveValue('https://corp.okta.com');
+    expectNowhere(replacement);
+    expectNowhere(secret);
+
+    // Row 5 - register a personal-OAuth server (AC-27.1, Flow 2): no token key, the TAB goes to the connect address
+    await open('/admin/servers', 'MCP-серверы');
+    const registry = await screen.findByRole('table', { name: 'MCP-серверы' });
+    expect(rowCells(registry, 'jira')).toEqual(['jirahttps://jira.example/mcp', 'Личный OAuth', '0', 'Ждёт аккаунта администратора']);
+    await followLink(user, screen.getByRole('link', { name: 'Зарегистрировать сервер' }), view.setPathname);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Регистрация' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Имя'), 'sentry');
+    await user.type(screen.getByLabelText('Адрес'), 'https://mcp.sentry.dev/mcp');
+    expect(screen.getByLabelText('Токен доступа')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Личный OAuth' }));
+    expect(screen.queryByLabelText('Токен доступа')).toBeNull();
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
+
+    // Assert (row 5): one POST, then a navigation of the tab - not a request - to the connect address
+    await waitFor(() => expect(view.assign).toHaveBeenCalledWith(connectAddress('sentry')));
+    expect(view.assign).toHaveBeenCalledTimes(1);
+    expect(changesSince(api, mark)).toEqual([
+      { method: 'POST', path: '/api/admin/mcp-servers', body: { name: 'sentry', url: 'https://mcp.sentry.dev/mcp', mode: 'oauth' } },
+    ]);
+    expect(connectRequests()).toEqual([]);
+    expect(view.router.push).not.toHaveBeenCalledWith('/admin/servers/sentry');
+
+    // Act (row 5): the owner signs in at Sentry, the API reads the tools and sends the tab back with `?connected=1`
+    store.servers = store.servers.map((entry) =>
+      entry.name === 'sentry' ? mcpServerView({ name: 'sentry', url: 'https://mcp.sentry.dev/mcp' }) : entry,
+    );
+    view.unmount();
+    view = renderWithRuntime({ pathname: '/admin/servers/sentry', search: '?connected=1' });
+
+    // Assert (row 5): «Включён» and the tools with «читает» / «меняет»; `connected` is gone from the address
+    expect(await screen.findByRole('heading', { level: 1, name: 'sentry' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/admin/servers/sentry');
+    expect(window.location.search).toBe('');
+    expect(screen.getByRole('switch', { name: 'Включён' })).toBeChecked();
+    expect(bodyRows(screen.getByRole('table', { name: 'Инструменты' }))).toEqual([
+      'List issueslist_issuesСписок задаччитает',
+      'Update issueupdate_issueИзменяет задачуменяет',
+    ]);
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // Row 5 - `?error=connect_failed` on a server still waiting: its text once and «Подключить мой аккаунт» to the connect address
+    view.unmount();
+    view = renderWithRuntime({ pathname: '/admin/servers/jira', search: '?error=connect_failed' });
+    expect(await screen.findByRole('heading', { level: 1, name: 'jira' })).toBeInTheDocument();
+    expect(window.location.search).toBe('');
+    expect(
+      screen.getAllByText('Не удалось подключить ваш аккаунт: вход отменён или не завершён. Попробуйте ещё раз.'),
+    ).toHaveLength(1);
+    expect(screen.getByText('Ждёт аккаунта администратора')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Подключить мой аккаунт' })).toHaveAttribute('href', connectAddress('jira'));
+
+    // Row 5 - `?error=tools_failed`: its text above the table, read once - the page opened again has none
+    const toolsFailed = 'Аккаунт подключён, но список инструментов получить не удалось. Нажмите «Обновить список».';
+    view.unmount();
+    view = renderWithRuntime({ pathname: '/admin/servers/sentry', search: '?error=tools_failed' });
+    expect(await screen.findByText(toolsFailed)).toBeInTheDocument();
+    expect(window.location.search).toBe('');
+    await open('/admin/servers', 'MCP-серверы');
+    await open('/admin/servers/sentry', 'sentry');
+    expect(screen.getByRole('table', { name: 'Инструменты' })).toBeInTheDocument();
+    expect(screen.queryByText(toolsFailed)).toBeNull();
+
+    // Row 8 - refresh (DC-11, UC-E8): «Обновляем…» while the answer is held, then the counts and the new read
+    const refreshAnswer = deferred();
+    server.use(
+      http.post(
+        `${API}/api/admin/mcp-servers/:name/tools/refresh`,
+        async () => {
+          // Held, then answered by the store's handler.
+          await refreshAnswer.promise;
+        },
+        { once: true },
+      ),
+    );
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Обновить список' }));
+    expect(await screen.findByRole('button', { name: 'Обновляем…' })).toBeDisabled();
+    refreshAnswer.resolve();
+    expect(await screen.findByText('Список обновлён: новых 1, убрано 1')).toBeInTheDocument();
+    await expectSent(
+      api,
+      mark,
+      [{ method: 'POST', path: '/api/admin/mcp-servers/sentry/tools/refresh', body: null }],
+      '/api/admin/mcp-servers/sentry',
+    );
+    const refreshedTools = ['Create issuecreate_issueЗаводит задачуменяет', 'List issueslist_issuesСписок задаччитает'];
+    await waitFor(() => expect(bodyRows(screen.getByRole('table', { name: 'Инструменты' }))).toEqual(refreshedTools));
+
+    // Row 8: a failed check keeps the old tools and shows its bare reason
+    server.use(
+      http.post(
+        `${API}/api/admin/mcp-servers/:name/tools/refresh`,
+        () => apiError(422, McpErrorCode.MCP_SERVER_CHECK_FAILED, 'Server check failed', 'unreachable'),
+        { once: true },
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Обновить список' }));
+    expect(await screen.findByText('сервер не отвечает по этому адресу')).toBeInTheDocument();
+    expect(bodyRows(screen.getByRole('table', { name: 'Инструменты' }))).toEqual(refreshedTools);
+
+    // Row 8: no administrator account - no error text, the tab goes to the same connect address, no request goes there
+    server.use(
+      http.post(
+        `${API}/api/admin/mcp-servers/:name/tools/refresh`,
+        () => apiError(409, McpErrorCode.MCP_ACCOUNT_REQUIRED, 'Connect your account first'),
+        { once: true },
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Обновить список' }));
+    await waitFor(() => expect(view.assign).toHaveBeenCalledWith(connectAddress('sentry')));
+    expect(view.assign).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('сервер не отвечает по этому адресу')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(connectRequests()).toEqual([]);
+
+    // Row 6 - register a shared-token server (DC-10): «Проверяем сервер…» while the check runs
+    await open('/admin/register-server', 'Регистрация');
+    expect(screen.getByRole('radio', { name: 'Общая учётная запись' })).toBeChecked();
+    await user.type(screen.getByLabelText('Имя'), 'gitlab');
+    await user.type(screen.getByLabelText('Адрес'), 'https://gitlab.corp.example/mcp');
+    const token = 'glpat-shared-4Hk2mQz';
+    await user.type(screen.getByLabelText('Токен доступа'), token);
+    const checkAnswer = deferred();
+    server.use(
+      http.post(
+        `${API}/api/admin/mcp-servers`,
+        async () => {
+          await checkAnswer.promise;
+          return apiError(422, McpErrorCode.MCP_SERVER_CHECK_FAILED, 'Server check failed', 'unauthorized');
+        },
+        { once: true },
+      ),
+    );
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
+    expect(await screen.findByRole('button', { name: 'Проверяем сервер…' })).toBeDisabled();
+    checkAnswer.resolve();
+
+    // Assert (row 6): the refusal with the registration's prefix, every field kept, the token only in its own field
+    expect(await screen.findByText('Не удалось зарегистрировать: сервер не принял токен доступа')).toBeInTheDocument();
+    expect(screen.getByLabelText('Имя')).toHaveValue('gitlab');
+    expect(screen.getByLabelText('Адрес')).toHaveValue('https://gitlab.corp.example/mcp');
+    expect(screen.getByRole('radio', { name: 'Общая учётная запись' })).toBeChecked();
+    expect(screen.getByLabelText('Токен доступа')).toHaveValue(token);
+    expectNowhere(token, { exceptInput: 'Токен доступа' });
+
+    // Act (row 6): the name is taken
+    server.use(
+      http.post(`${API}/api/admin/mcp-servers`, () => apiError(409, McpErrorCode.MCP_SERVER_NAME_TAKEN, 'Server name is taken'), {
+        once: true,
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
+    expect(await screen.findByText('Сервер с таким именем уже есть')).toBeInTheDocument();
+    expect(screen.getByLabelText('Имя')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Токен доступа')).toHaveValue(token);
+    expectNowhere(token, { exceptInput: 'Токен доступа' });
+    // Nothing half-saved: the form stays, no page opened, no navigation
+    expect(view.router.push).not.toHaveBeenCalled();
+    expect(view.assign).toHaveBeenCalledTimes(1);
+
+    // Act (row 6): another name is accepted
+    await user.clear(screen.getByLabelText('Имя'));
+    await user.type(screen.getByLabelText('Имя'), 'gitlab-prod');
+    await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
+    await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/servers/gitlab-prod'));
+    const sharedBody = { name: 'gitlab', url: 'https://gitlab.corp.example/mcp', mode: 'shared', sharedToken: token };
+    expect(changesSince(api, mark)).toEqual([
+      { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
+      { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
+      { method: 'POST', path: '/api/admin/mcp-servers', body: { ...sharedBody, name: 'gitlab-prod' } },
+    ]);
+    await waitFor(() => expectNowhere(token));
+
+    // Row 7 - the server's page (DC-10): name, address and mode are text with the hint, no field holds them
+    await open('/admin/servers/gitlab-prod', 'gitlab-prod');
+    expect(screen.getByText('https://gitlab.corp.example/mcp')).toBeInTheDocument();
+    expect(screen.getByText('Общая учётная запись')).toBeInTheDocument();
+    expect(screen.getByText('Чтобы сменить адрес или режим, удалите сервер и зарегистрируйте его заново.')).toBeInTheDocument();
+    expect(screen.queryAllByRole('textbox')).toEqual([]);
+    expect(screen.queryAllByRole('radio')).toEqual([]);
+    expect(screen.queryByDisplayValue('https://gitlab.corp.example/mcp')).toBeNull();
+    expect(screen.queryByDisplayValue('gitlab-prod')).toBeNull();
+    expect(screen.getByText('Задан')).toBeInTheDocument();
+    expectNowhere(token);
+
+    // Act (row 7): «Сохранить» without «Заменить» sends nothing - the stored token is never sent back
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(readsAfterChange(api, mark)).toContain('/api/admin/mcp-servers/gitlab-prod'));
+    expect(changesSince(api, mark)).toEqual([]);
+
+    // Act (row 7): a replacement refused by the check, then accepted
+    const newToken = 'glpat-rotated-8Zr5VwK';
+    await user.click(screen.getByRole('button', { name: 'Заменить: Токен доступа' }));
+    await user.type(screen.getByLabelText('Токен доступа'), newToken);
+    server.use(
+      http.patch(
+        `${API}/api/admin/mcp-servers/:name`,
+        () => apiError(422, McpErrorCode.MCP_SERVER_CHECK_FAILED, 'Server check failed', 'unauthorized'),
+        { once: true },
+      ),
+    );
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(await screen.findByText('Не удалось сохранить: сервер не принял токен доступа')).toBeInTheDocument();
+    expect(screen.getByLabelText('Токен доступа')).toHaveValue(newToken);
+    expectNowhere(newToken, { exceptInput: 'Токен доступа' });
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
+    const tokenSave = { method: 'PATCH', path: '/api/admin/mcp-servers/gitlab-prod', body: { sharedToken: newToken } };
+    await expectSent(api, mark, [tokenSave, tokenSave], '/api/admin/mcp-servers/gitlab-prod');
+    expect(await screen.findByRole('button', { name: 'Заменить: Токен доступа' })).toBeInTheDocument();
+    expectNowhere(newToken);
+    expectNowhere(token);
+
+    // Act (row 7): the switch «Включён» sends `{ enabled: false }` and stands as the new read says
+    const enabledSwitch = screen.getByRole('switch', { name: 'Включён' });
+    expect(enabledSwitch).toBeChecked();
+    mark = api.requests.length;
+    await user.click(enabledSwitch);
+    await expectSent(
+      api,
+      mark,
+      [{ method: 'PATCH', path: '/api/admin/mcp-servers/gitlab-prod', body: { enabled: false } }],
+      '/api/admin/mcp-servers/gitlab-prod',
+    );
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Включён' })).not.toBeChecked());
+    expect(screen.getByText('Выключен')).toBeInTheDocument();
+
+    // Row 7 - enabling a server still waiting for the administrator's account: `409 MCP_SERVER_INCOMPLETE` puts the switch back
+    await open('/admin/servers/jira', 'jira');
+    const jiraSwitch = screen.getByRole('switch', { name: 'Включён' });
+    expect(jiraSwitch).not.toBeChecked();
+    server.use(
+      http.patch(
+        `${API}/api/admin/mcp-servers/:name`,
+        () => apiError(409, McpErrorCode.MCP_SERVER_INCOMPLETE, 'Server has no tools yet'),
+        { once: true },
+      ),
+    );
+    mark = api.requests.length;
+    await user.click(jiraSwitch);
+    const incomplete = await screen.findByText(
+      'Нельзя включить: сначала подключите свой аккаунт и получите список инструментов.',
+    );
+    expect(incomplete).toHaveAttribute('role', 'alert');
+    await waitFor(() => expect(jiraSwitch).not.toBeChecked());
+    expect(changesSince(api, mark)).toEqual([
+      { method: 'PATCH', path: '/api/admin/mcp-servers/jira', body: { enabled: true } },
+    ]);
+
+    // Row 7 - delete: «Отмена» sends nothing; the confirmation sends ONE DELETE and opens the list
+    await open('/admin/servers/gitlab-prod', 'gitlab-prod');
+    const openDelete = async (): Promise<HTMLElement> => {
+      await user.click(screen.getByRole('button', { name: 'Действия: gitlab-prod' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
+      return screen.findByRole('alertdialog', { name: 'Удалить сервер «gitlab-prod»?' });
+    };
+    mark = api.requests.length;
+    let confirm = await openDelete();
+    expect(
+      within(confirm).getByText(
+        'Агенты сразу потеряют его инструменты. Это действие нельзя отменить. Подключённые аккаунты сотрудников на этом сервере будут удалены.',
+      ),
+    ).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+    confirm = await openDelete();
+    await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/servers'));
+    expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: '/api/admin/mcp-servers/gitlab-prod', body: null }]);
+    await open('/admin/servers', 'MCP-серверы');
+    const afterDelete = await screen.findByRole('table', { name: 'MCP-серверы' });
+    await waitFor(() => expect(within(afterDelete).queryByText('gitlab-prod')).toBeNull());
+    expect(within(afterDelete).getByText('sentry')).toBeInTheDocument();
+  }, 120_000);
 });

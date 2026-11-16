@@ -109,6 +109,12 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       form('адрес сервера или его сервера авторизации не https'),
     ],
     [
+      'MCP check with the form text around it',
+      refusal(422, 'MCP_SERVER_CHECK_FAILED', 'unauthorized'),
+      { checkFailed: (reason) => `Не удалось зарегистрировать: ${reason}` },
+      form('Не удалось зарегистрировать: сервер не принял токен доступа'),
+    ],
+    [
       'PROVIDER_INCOMPLETE',
       refusal(409, 'PROVIDER_INCOMPLETE'),
       {},

@@ -20,6 +20,8 @@ export type AdminErrorText = { target: AdminErrorTarget; text: string };
 export type AdminErrorContext = {
   /** The effect of the grant being added: `GRANT_EXISTS` reads «право» or «запрет» by it. */
   grantEffect?: GrantEffect;
+  /** The form's text around a failed server check (MC-29): «Не удалось зарегистрировать» or «Не удалось сохранить». */
+  checkFailed?: (reason: string) => string;
 };
 
 const VALIDATION_FAILED = 'VALIDATION_FAILED';
@@ -76,7 +78,10 @@ export function describeAdminError(error: unknown, context: AdminErrorContext = 
       break;
     case McpErrorCode.MCP_SERVER_CHECK_FAILED: {
       const check = McpCheckFailureReasonSchema.safeParse(reason);
-      if (check.success) return form(MCP_CHECK_REASON[check.data]);
+      if (check.success) {
+        const text = MCP_CHECK_REASON[check.data];
+        return form(context.checkFailed?.(text) ?? text);
+      }
       break;
     }
     case IdentityErrorCode.PROVIDER_INCOMPLETE:
