@@ -26,6 +26,7 @@ import {
 import { z } from "zod";
 import { agentStatusGlyph, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
 import { ValueRows } from "@/components/agents/value-rows";
+import { refusalText } from "@/lib/access/access-texts";
 import { formatTime } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
@@ -59,9 +60,11 @@ const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
   unknown: { label: "исход неизвестен", Icon: CircleQuestionMarkIcon, tone: "text-warning", showsResult: false },
 };
 
-/** MC-22 refusal reasons; any other code reads as one line with the code as its hint (KD-6). */
+/**
+ * MC-22 refusal reasons; the access ones are enterprise-access MC-10 (`refusalText`), and any other code
+ * reads as one line with the code as its hint (KD-6).
+ */
 const REFUSAL_TEXT: Partial<Record<ToolRefusalReason, string>> = {
-  no_access: "Нет доступа к серверу",
   tool_not_in_definition: "Инструмент не входит в набор агента",
   depth_limit: "Достигнут предел вложенности",
   not_allowed: "Шаблон не разрешает этот вызов",
@@ -112,11 +115,20 @@ function outcomeOf(artifact: unknown): CallOutcome {
   return outcome.data;
 }
 
-/** MC-22 text of a refusal; a code outside MC-22 (or none) reads as one line with the code as its hint. */
-function refusalOf(artifact: unknown): { text: string; hint: string | undefined } {
+/** The `model` argument of a `start_agent` call, which MC-10 names in a model refusal (plan Notes 10). */
+function modelArgument(args: unknown): string | null {
+  if (typeof args !== "object" || args === null) return null;
+  const model: unknown = Reflect.get(args, "model");
+  return typeof model === "string" && model !== "" ? model : null;
+}
+
+/** MC-10 or MC-22 text of a refusal; a code outside them (or none) reads as one line with the code as its hint. */
+function refusalOf(artifact: unknown, args: unknown): { text: string; hint: string | undefined } {
   const code = textField(artifact, "refusalReason");
   const reason = ToolRefusalReasonSchema.safeParse(code);
-  const text = reason.success ? REFUSAL_TEXT[reason.data] : undefined;
+  const text = reason.success
+    ? (refusalText(reason.data, modelArgument(args)) ?? REFUSAL_TEXT[reason.data])
+    : undefined;
   return text !== undefined ? { text, hint: undefined } : { text: PLATFORM_REFUSAL_TEXT, hint: code ?? undefined };
 }
 
@@ -127,10 +139,11 @@ function refusalOf(artifact: unknown): { text: string; hint: string | undefined 
 function reasonLine(
   outcome: CallOutcome,
   artifact: unknown,
+  args: unknown,
   server: string,
 ): { content: ReactNode; hint: string | undefined } | null {
   if (outcome === "refused") {
-    const refusal = refusalOf(artifact);
+    const refusal = refusalOf(artifact, args);
     return { content: refusal.text, hint: refusal.hint };
   }
   if (outcome === "auth_required") {
@@ -189,7 +202,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const at =
     textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
   const time = formatTime(at);
-  const reason = reasonLine(outcome, artifact, server ?? toolName);
+  const reason = reasonLine(outcome, artifact, args, server ?? toolName);
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =

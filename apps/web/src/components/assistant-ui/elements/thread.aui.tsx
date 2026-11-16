@@ -42,6 +42,7 @@ import {
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
+import { chatFailureText } from "@/lib/access/access-texts";
 import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
@@ -779,8 +780,8 @@ const ComposerAction: FC<{ sendBlocked: boolean }> = ({ sendBlocked }) => {
 };
 
 /**
- * TH-08 under a failed reply: fixed text only — never the server or model error, and no
- * regeneration (the server owns the run).
+ * TH-08 under a failed reply: a fixed text by the root's failure reason (MC-11) — never the server or
+ * model error text, and no regeneration (the server owns the run).
  */
 const MessageError: FC = () => (
   <MessagePrimitive.Error>
@@ -788,17 +789,28 @@ const MessageError: FC = () => (
   </MessagePrimitive.Error>
 );
 
-const ReplyErrorBlock: FC = () => (
-  <div
-    data-slot="message-error"
-    className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
-  >
-    <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-    <p role="alert" className="text-foreground line-clamp-2 min-w-0">
-      Не удалось получить ответ.
-    </p>
-  </div>
-);
+/** The text of a reply error: by the `ReplyErrorData` toFeed puts on the message, or the generic one. */
+function replyErrorText(error: unknown): string {
+  if (typeof error !== "object" || error === null) return chatFailureText(null, null);
+  const reason: unknown = Reflect.get(error, "reason");
+  const model: unknown = Reflect.get(error, "model");
+  return chatFailureText(typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
+}
+
+const ReplyErrorBlock: FC = () => {
+  const error = useAuiState((s) => (s.message.status?.type === "incomplete" ? s.message.status.error : undefined));
+  return (
+    <div
+      data-slot="message-error"
+      className="border-destructive-border bg-destructive-subtle mt-2 flex items-start gap-2 rounded-md border p-3 text-sm"
+    >
+      <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
+      <p role="alert" className="text-foreground line-clamp-2 min-w-0">
+        {replyErrorText(error)}
+      </p>
+    </div>
+  );
+};
 
 const AssistantMessage: FC = () => {
   const {

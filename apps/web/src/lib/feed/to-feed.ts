@@ -14,6 +14,7 @@ import {
   type ToolRefusalReason,
 } from "@agent-os/contracts";
 import type { ThreadMessageLike } from "@assistant-ui/react";
+import { isChatFailureReason, type ChatFailureReason } from "@/lib/access/access-texts";
 
 /**
  * The feed rule (design-web.md, KD-3, KD-4, «Что сотрудник видит»): pure functions from what the
@@ -138,7 +139,12 @@ export type ReportPartData = Extract<HistoryEntry, { kind: "child_report" }>["co
 };
 export type EventPartData = Extract<HistoryEntry, { kind: "event" }>["content"] & {
   createdAt: string;
+  /** The model of the agent whose feed this is (the conversation's root or the page's agent); QS-01 names it. */
+  model: string | null;
 };
+
+/** `error` of the reply error block TH-08: the root's failure reason and model (MC-11). */
+export type ReplyErrorData = { reason: ChatFailureReason; model: string | null };
 
 /** `artifact` of a `tool-call` part: what tool-call.md shows besides arguments and result. */
 export type ToolCallArtifact = {
@@ -281,18 +287,21 @@ function entryMessage(
     }
     case "event": {
       const { event, reason } = entry.content;
-      // TH-08: a model failure of the conversation's root is the answer's error block.
-      if (view.kind === "thread" && event === "failed" && reason === "model_error") {
+      // TH-08: a model failure of the conversation's root, or its model refused by access (MC-11), is the
+      // answer's error block; a spent quota and a disabled owner stay event lines (QS-01, MC-14).
+      if (view.kind === "thread" && event === "failed" && isChatFailureReason(reason)) {
+        const error: ReplyErrorData = { reason, model: view.chat.model };
         return {
           id,
           role: "assistant",
           createdAt,
           content: [],
-          status: { type: "incomplete", reason: "error", error: reason },
+          status: { type: "incomplete", reason: "error", error },
           metadata: meta({ kind: "answer", report: false }),
         };
       }
-      const data: EventPartData = { event, reason, createdAt: entry.createdAt };
+      const model = view.kind === "thread" ? view.chat.model : view.agent.model;
+      const data: EventPartData = { event, reason, createdAt: entry.createdAt, model };
       return dataMessage(id, entry.createdAt, FEED_PART.event, data);
     }
     case "tool_result":

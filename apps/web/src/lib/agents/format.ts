@@ -17,11 +17,18 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
   stopped: "Остановлен",
 };
 
-/** Failure reasons MC-14 and MC-18 name; every other one reads «ошибка платформы» (KD-6). */
+/**
+ * Failure reasons MC-14 and MC-18 (and enterprise-access MC-14) name; every other one reads «ошибка
+ * платформы» (KD-6).
+ */
 const NAMED_FAILURE_REASON: Record<string, string> = {
   turn_limit: "исчерпан предел ходов",
   model_error: "ошибка модели",
   owner_disabled: "сотрудник отключён",
+  quota_exhausted: "квота исчерпана",
+  model_not_allowed: "модель не разрешена",
+  model_not_connected: "модель не подключена",
+  no_models_allowed: "не разрешена ни одна модель",
 };
 
 /**

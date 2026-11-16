@@ -5,6 +5,7 @@ import { useStore } from "zustand";
 import type { CurrentUserStore } from "@/lib/auth/current-user";
 import { focusShellTarget } from "@/lib/focus";
 import { ConnectionsSection } from "./connections-section";
+import { ModelsSection } from "./models-section";
 import { PasswordSection } from "./password-section";
 
 /**
@@ -28,6 +29,7 @@ export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-col gap-6 px-4 py-4 md:py-6">
         <ConnectionsSection />
+        <ModelsSection />
         <PasswordSection hasPassword={user?.hasPassword === true} />
       </div>
     </div>
