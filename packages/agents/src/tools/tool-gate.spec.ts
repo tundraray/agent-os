@@ -1,3 +1,4 @@
+import { createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import { z } from 'zod';
@@ -6,7 +7,7 @@ import type { AgentDefinition } from '../definitions/definition.js';
 import type { AgentTool, ToolCaller } from './tool.js';
 import { gateStart, type StartGateInput } from './tool-gate.js';
 import { createToolRegistry, type SessionTool } from './tool-registry.js';
-import { createToolRunner } from './tool-runner.js';
+import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner.js';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.2,
 // DC-4 (the caller's list and count), AC-10.3 (depth), DC-2 (unpriced model).
@@ -72,21 +73,41 @@ const NO_SERVER_CALLS = async (): Promise<never> => {
   throw new Error('a check calls no server');
 };
 
-/** `ToolRunner.check` of a runner with the given access table; a check calls no server. */
-function checkCall(input: CallCheckInput) {
-  const runner = createToolRunner({
+/** A runner with the given access table whose client sends nothing: a call that reaches a server throws. */
+function runnerOf(
+  ownerServers: readonly string[],
+  credentialsFor: ToolRunnerOptions['accounts']['credentialsFor'] = NO_SERVER_CALLS,
+): ToolRunner {
+  return createToolRunner({
     client: { callTool: NO_SERVER_CALLS },
-    accounts: { credentialsFor: NO_SERVER_CALLS },
-    serverAllowed: (ownerId, server) => ownerId === OWNER && input.ownerServers.includes(server),
+    accounts: { credentialsFor },
+    serverAllowed: (ownerId, server) => ownerId === OWNER && ownerServers.includes(server),
     callTimeoutMs: 1000,
     toolResultMaxBytes: 1024,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
     ownerGate: { check: async () => {} },
   });
+}
+
+/** `ToolRunner.check` of a runner with the given access table; a check calls no server. */
+function checkCall(input: CallCheckInput, runner = runnerOf(input.ownerServers)) {
   return runner.check(
     { callId: 'call-1', toolName: input.toolName, args: input.args },
     { sessionTools: input.sessionTools, caller: CALLER },
   );
+}
+
+/** DC-2: a call that passed the check, sent after its server row was removed or switched off. */
+async function sendToGoneServer(): Promise<Gate> {
+  const runner = runnerOf(MCP_CALL.ownerServers, async () => ({ kind: 'server_gone' }));
+  const checked = checkCall(MCP_CALL, runner);
+  if (checked.kind !== 'allowed') throw new Error('the call must pass the check');
+  const execution = await runner.runOutside(checked.call, {
+    signal: new AbortController().signal,
+    logger: createLogger({ sinks: [], secrets: [], minLevel: 'error' }),
+    guard: NO_SERVER_CALLS,
+  });
+  return kindOf(execution);
 }
 
 // code-execution AC-01.2, UC-3: `run_code` is in the set of a definition that names no tool.
@@ -185,6 +206,11 @@ describe('a tool call is refused with its reason or allowed', () => {
       { kind: 'refused', reason: 'invalid_arguments' },
     ],
     ['an allowed MCP call', () => kindOf(checkCall(MCP_CALL)), { kind: 'allowed' }],
+    [
+      'an allowed MCP call whose server is gone by the send',
+      sendToGoneServer,
+      { kind: 'refused', reason: 'tool_not_in_definition' },
+    ],
     ['an allowed built-in call', () => kindOf(checkCall(START_AGENT_CALL)), { kind: 'allowed' }],
     [
       'run_code in a session of a definition with tools: []',

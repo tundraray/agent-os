@@ -41,17 +41,15 @@ export async function beginConnect(
 
 /**
  * Opens the authorization address on the fixture's authorization server as `account` (it signs the
- * account in without a consent screen), or cancels there with `deny`; returns the parameters of its
- * redirect back.
+ * account in without a consent screen); returns the parameters of its redirect back.
  */
 export async function authorize(
   url: string,
-  options: { readonly account?: string; readonly deny?: boolean } = {},
+  options: { readonly account?: string } = {},
 ): Promise<OAuthReturn> {
   const target = new URL(url);
   if (options.account !== undefined)
     target.searchParams.set('fixture_account', options.account);
-  if (options.deny === true) target.searchParams.set('fixture_deny', '1');
   const answer = await fetch(target, { redirect: 'manual' });
   const location = answer.headers.get('location');
   if (answer.status !== 302 || location === null) {

@@ -24,6 +24,7 @@ import {
   DecisionStatusSchema,
   DeliveryStatusSchema,
   HistoryEntryKindSchema,
+  McpServerModeSchema,
   MessageStatusSchema,
   ProviderTypeSchema,
   TaskStatusSchema,
@@ -45,6 +46,8 @@ const ROW_TIMEOUT_MS = 120_000;
 const APP_TABLES = [
   '__drizzle_migrations',
   'agent_code_calls',
+  'agent_mcp_accounts',
+  'agent_mcp_servers',
   'agent_messages',
   'agent_sessions',
   'agent_tool_calls',
@@ -235,6 +238,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         ),
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
+        agent_mcp_servers_mode_check: sorted(McpServerModeSchema.options),
       });
     });
   });

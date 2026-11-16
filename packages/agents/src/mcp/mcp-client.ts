@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { type McpFailure, mcpFailureReason } from './mcp-failure.js';
 
-export const CLIENT_INFO ={ name: 'agent-os-agents', version: '1.0.0' } as const;
+export const CLIENT_INFO = { name: 'agent-os-agents', version: '1.0.0' } as const;
 
 /** The credentials of one call: whose token goes to the server and how a rejected one is handled. */
 export interface McpAuth {

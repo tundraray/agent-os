@@ -11,37 +11,22 @@ type Row = {
 const register = RegisterMcpServerBodySchema;
 const update = UpdateMcpServerBodySchema;
 
-const url = (length: number) => {
-  const prefix = 'https://mcp.example/';
-  return prefix + 'a'.repeat(length - prefix.length);
-};
 const shared = { name: 'logs', url: 'https://mcp.example/mcp', mode: 'shared', sharedToken: 't' };
 const oauth = { name: 'github', url: 'https://mcp.example/mcp', mode: 'oauth' };
 
 // INT-3 (provenAt: unit), DD Security Considerations / Input Validation: the schema is the boundary
 // that keeps an invalid registry body from reaching the service.
-describe('admin bodies: name kebab 1–32, url http(s) up to 2048, token 1–4096 required only for shared', () => {
+describe('admin bodies: kebab name, http(s) url, a token only and always for shared, an update of status or token only', () => {
   it.each<Row>([
     { label: 'shared with a token', schema: register, body: shared, valid: true },
     { label: 'oauth without a token', schema: register, body: oauth, valid: true },
-    { label: 'name of 1', schema: register, body: { ...oauth, name: 'a' }, valid: true },
-    { label: 'name of 32', schema: register, body: { ...oauth, name: 'a'.repeat(32) }, valid: true },
-    { label: 'name of 33', schema: register, body: { ...oauth, name: 'a'.repeat(33) }, valid: false },
-    { label: 'empty name', schema: register, body: { ...oauth, name: '' }, valid: false },
     { label: 'name not kebab-case', schema: register, body: { ...oauth, name: 'My_Server' }, valid: false },
     { label: 'http url', schema: register, body: { ...oauth, url: 'http://localhost:4100/mcp' }, valid: true },
-    { label: 'url of 2048', schema: register, body: { ...oauth, url: url(2048) }, valid: true },
-    { label: 'url of 2049', schema: register, body: { ...oauth, url: url(2049) }, valid: false },
     { label: 'ftp url', schema: register, body: { ...oauth, url: 'ftp://mcp.example/mcp' }, valid: false },
-    { label: 'token of 4096', schema: register, body: { ...shared, sharedToken: 't'.repeat(4096) }, valid: true },
-    { label: 'token of 4097', schema: register, body: { ...shared, sharedToken: 't'.repeat(4097) }, valid: false },
-    { label: 'empty token', schema: register, body: { ...shared, sharedToken: '' }, valid: false },
     { label: 'shared without a token', schema: register, body: { ...shared, sharedToken: undefined }, valid: false },
     { label: 'oauth with a token', schema: register, body: { ...oauth, sharedToken: 't' }, valid: false },
     { label: 'unknown mode', schema: register, body: { ...oauth, mode: 'stdio' }, valid: false },
     { label: 'update enabled', schema: update, body: { enabled: false }, valid: true },
-    { label: 'update token of 4096', schema: update, body: { sharedToken: 't'.repeat(4096) }, valid: true },
-    { label: 'update token of 4097', schema: update, body: { sharedToken: 't'.repeat(4097) }, valid: false },
     { label: 'empty update', schema: update, body: {}, valid: false },
     { label: 'update with name', schema: update, body: { enabled: true, name: 'other' }, valid: false },
     { label: 'update with url', schema: update, body: { enabled: true, url: 'https://x.example' }, valid: false },

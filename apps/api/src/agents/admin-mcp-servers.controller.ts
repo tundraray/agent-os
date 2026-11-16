@@ -32,6 +32,7 @@ import {
   adminServerPage,
   mcpCallbackUrl,
   recordServerChange,
+  refuseCrossSite,
 } from './mcp-connections.controller.js';
 import { mcpAnswer } from './mcp.errors.js';
 
@@ -88,6 +89,7 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
     @Res() res: Response,
   ): Promise<void> {
+    refuseCrossSite(req);
     const ownerId = req.user.id;
     const redirectUrl = mcpCallbackUrl(await this.settings.publicUrlFor(req));
     const started = await mcpAnswer(

@@ -18,6 +18,7 @@ import type { McpConnection } from '@agent-os/contracts';
 import type { Response } from 'express';
 import { AuditLog } from '../audit/audit-log.js';
 import type { AuthedRequest } from '../identity/auth-user.js';
+import { identityError } from '../identity/identity.errors.js';
 import { IdentitySettings } from '../identity/identity-settings.js';
 import { frontendOrigin } from '../identity/session-cookie.js';
 import { AGENTS } from './agents.tokens.js';
@@ -97,6 +98,17 @@ function returnPage({ outcome, server, target }: McpConnectResult): string {
   }
 }
 
+/**
+ * The connect routes change state with a GET, which the guard's `Origin` check does not cover: a request the
+ * browser marks `Sec-Fetch-Site: cross-site` is refused as a foreign origin is. A client that sends no such
+ * header (`seed:mcp`) passes.
+ */
+export function refuseCrossSite(req: AuthedRequest): void {
+  if (req.headers['sec-fetch-site'] === 'cross-site') {
+    throw identityError('ORIGIN_REJECTED');
+  }
+}
+
 /** A query parameter as a single string; a repeated or missing one is `undefined`. */
 function single(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -130,6 +142,7 @@ export class McpConnectionsController {
     @Req() req: AuthedRequest,
     @Res() res: Response,
   ): Promise<void> {
+    refuseCrossSite(req);
     const ownerId = req.user.id;
     const publicUrl = await this.settings.savedPublicUrl();
     const started =

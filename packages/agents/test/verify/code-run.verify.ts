@@ -145,8 +145,7 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
   it(
     'runs 50 empty scripts in a row on the real executor and measures from run to result',
     async () => {
-      // Given: the executor with its production flags and the run limits at their defaults (design Runtime settings;
-      // the servers file is required by the parser and unused here)
+      // Given: the executor with its production flags and the run limits at their defaults (design Runtime settings)
       const defaults = parseAgentsConfig({});
       const runner = createCodeRunner({ maxConcurrent: defaults.codeRun.maxConcurrent, logger });
       const limits = {

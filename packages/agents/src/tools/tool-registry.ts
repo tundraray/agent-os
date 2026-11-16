@@ -11,7 +11,7 @@ import {
 } from '../definitions/definition.js';
 import type { McpServerAllowed } from '../mcp/mcp-accounts.js';
 import { accountsOf } from '../mcp/mcp-accounts.repository.js';
-import { type McpServerRow, enabledServersWithTools, findServer } from '../mcp/mcp-servers.repository.js';
+import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository.js';
 import { type McpTool, storedMcpTools } from '../mcp/mcp-tool.js';
 import type { JsonSchemaObject } from '../model/mastra-turn.js';
 import { describeStartAgent } from './builtin/start-agent.js';
@@ -38,14 +38,19 @@ export type SessionTool =
     };
 
 /** The tool and the server of a call as `agent_tool_calls` and the confirmation request hold them. */
-export function callTarget(tool: SessionTool): { tool: string; server: string | null } {
+export interface ToolTarget {
+  readonly tool: string;
+  readonly server: string | null;
+}
+
+export function callTarget(tool: SessionTool): ToolTarget {
   return tool.kind === 'mcp'
     ? { tool: tool.mcp.tool, server: tool.mcp.server }
     : { tool: tool.name, server: null };
 }
 
 /** The target of a requested name in a tool set; an unknown name stays as written, with no server. */
-export function callTargetOf(tools: readonly SessionTool[], name: string): { tool: string; server: string | null } {
+export function callTargetOf(tools: readonly SessionTool[], name: string): ToolTarget {
   const tool = tools.find((candidate) => candidate.name === name);
   return tool === undefined ? { tool: name, server: null } : callTarget(tool);
 }
@@ -66,8 +71,11 @@ export interface ToolRegistry {
   toolNames(): string[];
   /** A built-in or registered tool, or `run_code`, by its name. */
   toolOf(name: string): AgentTool | undefined;
-  /** How a call of this tool reads for the employee; empty for a tool that is not known now. */
-  display(tool: string, server: string | null): Promise<ToolDisplay>;
+  /**
+   * How the given calls read for the employee, in their order; empty for a tool that is not known now.
+   * The servers the calls name are read in one query.
+   */
+  displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]>;
   /**
    * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1): the
    * built-in and registered ones its definition names, `run_code` in every session (code-execution KD-3),
@@ -196,17 +204,18 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     },
     toolNames: () => [...tools.keys()],
     toolOf,
-    async display(tool, server) {
-      if (server !== null) {
-        const row = await findServer(database, server);
-        const listed = row === undefined ? null : storedMcpTools(row.tools);
-        return listed?.find((mcp) => mcp.tool === tool)?.display ?? {};
-      }
-      const { title, argLabels } = toolOf(tool) ?? {};
-      return {
-        ...(title === undefined ? {} : { toolTitle: title }),
-        ...(argLabels === undefined ? {} : { argLabels }),
-      };
+    async displays(calls) {
+      const names = new Set(calls.flatMap(({ server }) => (server === null ? [] : [server])));
+      const rows = await findServers(database, [...names]);
+      const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row.tools)]));
+      return calls.map(({ tool, server }): ToolDisplay => {
+        if (server !== null) return listed.get(server)?.find((mcp) => mcp.tool === tool)?.display ?? {};
+        const { title, argLabels } = toolOf(tool) ?? {};
+        return {
+          ...(title === undefined ? {} : { toolTitle: title }),
+          ...(argLabels === undefined ? {} : { argLabels }),
+        };
+      });
     },
     async sessionTools(input) {
       const rows = await withAccounts(await allowedServers(input), input.ownerId);

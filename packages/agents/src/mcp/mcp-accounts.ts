@@ -1,5 +1,5 @@
 import type { LogFields, Logger } from '@agent-os/common';
-import { McpErrorCode, McpServerModeSchema, type McpConnection } from '@agent-os/contracts';
+import { McpServerModeSchema, type McpConnection } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import {
   IssuerMismatchError,
@@ -26,8 +26,7 @@ import {
   upsertAccount,
 } from './mcp-accounts.repository.js';
 import { type McpAuth, deadlineFetch } from './mcp-client.js';
-import { McpError } from './mcp-errors.js';
-import { type McpFailure, transportFailureReason } from './mcp-failure.js';
+import { type McpFailure, failureName, transportFailureReason } from './mcp-failure.js';
 import { type McpServerRow, findServer, listServers } from './mcp-servers.repository.js';
 import { checkServerUrl } from './mcp-url.js';
 
@@ -92,7 +91,9 @@ export type McpCredentials =
        */
       rejected(): Promise<void>;
     }
-  | McpFailure;
+  | McpFailure
+  /** The server is not registered — or, for an agent's call, is switched off: nothing is sent. */
+  | { readonly kind: 'server_gone' };
 
 /** What an `oauth` server row gives the OAuth functions of the SDK. */
 interface OAuthServer {
@@ -148,12 +149,6 @@ function isExchangeFailure(error: unknown): boolean {
   return (
     error instanceof IssuerMismatchError || error instanceof OAuthError || transportFailureReason(error) !== undefined
   );
-}
-
-/** Why the exchange failed, for the log: the class and the OAuth code, never a body, code or token. */
-function failureName(error: unknown): string {
-  if (error instanceof OAuthError) return `${error.name}:${error.code}`;
-  return error instanceof Error ? error.name : String(error);
 }
 
 /**
@@ -264,12 +259,15 @@ export class McpAccounts {
    * The credentials of a call, read from the database just before it (KD-5, Invariant 3): a shared token from
    * the server row, or the owner's account, refreshed first when less than 60 seconds of access are left.
    * Without an account, or when the refresh lost it, the call gets `auth_required` and is not sent (DC-3); an
-   * unreachable authorization server gives `failure` and the account stays (Flow 3).
+   * unreachable authorization server gives `failure` and the account stays (Flow 3). A server removed
+   * meanwhile is `server_gone`; so is a switched-off one for an agent's `call`, while the `admin` reads the
+   * tools of a server in any status.
    */
-  async credentialsFor(server: string, ownerId: string): Promise<McpCredentials> {
+  async credentialsFor(server: string, ownerId: string, use: 'call' | 'admin'): Promise<McpCredentials> {
     const row = await findServer(this.options.database, server);
-    if (row === undefined) {
-      throw new McpError(McpErrorCode.MCP_SERVER_NOT_FOUND, `MCP server ${server} is not registered`);
+    if (row === undefined || (use === 'call' && !row.enabled)) {
+      this.options.logger.warn('mcp token not issued', { server, ownerId, outcome: 'server_gone', use });
+      return { kind: 'server_gone' };
     }
     if (row.mode === McpServerModeSchema.enum.shared) {
       const token = row.sharedToken;

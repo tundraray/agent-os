@@ -139,7 +139,7 @@ export interface AgentSessionsDeps {
   readonly database: Database;
   readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions' | 'ledger'>;
   readonly catalog: DefinitionCatalog;
-  readonly registry: Pick<ToolRegistry, 'toolOf' | 'display'>;
+  readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
   readonly config: Pick<AgentsConfig, 'maxDepth' | 'defaultModel'>;
   readonly logger: Logger;
 }
@@ -278,7 +278,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         and(eq(agentToolCalls.taskId, agentId), inArray(agentToolCalls.answerSeq, [...answerSeqs])),
       )
       .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
-    for (const row of rows) {
+    const displays = await registry.displays(rows);
+    for (const [index, row] of rows.entries()) {
       const calls = byAnswer.get(row.answerSeq) ?? [];
       calls.push({
         callId: row.callId,
@@ -287,7 +288,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         args: row.args,
         // A stopped agent's open calls are shown closed (Flow 7): the stop records follow them.
         state: shownClosed ? ToolCallStateSchema.enum.done : ToolCallStateSchema.parse(row.state),
-        ...(await registry.display(row.tool, row.server)),
+        ...displays[index],
       });
       byAnswer.set(row.answerSeq, calls);
     }
@@ -478,31 +479,31 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           // `AGENT_NOT_FOUND` for another owner's or no tree.
           await tree(rootId, ownerId);
           const decisions = await runtime.decisions.listTree(rootId, ownerId);
-          return Promise.all(
-            decisions.map(async (decision): Promise<AgentConfirmation> => {
-              const payload = ConfirmationPayloadSchema.parse(decision.payload);
-              const resolved =
-                decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
-              return {
-                decisionId: decision.decisionId,
-                agentId: decision.taskId,
-                description: payload.description,
-                kind: decision.kind,
-                tool: payload.tool,
-                server: payload.server,
-                args: payload.args,
-                content: payload.content,
-                status: decision.status,
-                resolution:
-                  resolved === null
-                    ? null
-                    : { approve: resolved.approve, args: resolved.args ?? payload.args },
-                createdAt: decision.createdAt,
-                resolvedAt: decision.resolvedAt,
-                ...(await registry.display(payload.tool, payload.server)),
-              };
-            }),
-          );
+          const requests = decisions.map((decision) => ({
+            decision,
+            payload: ConfirmationPayloadSchema.parse(decision.payload),
+          }));
+          const displays = await registry.displays(requests.map(({ payload }) => payload));
+          return requests.map(({ decision, payload }, index): AgentConfirmation => {
+            const resolved =
+              decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
+            return {
+              decisionId: decision.decisionId,
+              agentId: decision.taskId,
+              description: payload.description,
+              kind: decision.kind,
+              tool: payload.tool,
+              server: payload.server,
+              args: payload.args,
+              content: payload.content,
+              status: decision.status,
+              resolution:
+                resolved === null ? null : { approve: resolved.approve, args: resolved.args ?? payload.args },
+              createdAt: decision.createdAt,
+              resolvedAt: decision.resolvedAt,
+              ...displays[index],
+            };
+          });
         },
         (confirmations) => ({ confirmations: confirmations.length }),
       );

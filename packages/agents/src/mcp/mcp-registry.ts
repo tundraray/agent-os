@@ -25,7 +25,7 @@ import {
 
 import { CLIENT_INFO, type McpAuth, type McpClient, deadlineFetch } from './mcp-client.js';
 import { McpError } from './mcp-errors.js';
-import { type McpFailureReason, mcpFailureReason, transportFailureReason } from './mcp-failure.js';
+import { type McpFailureReason, failureName, mcpFailureReason, transportFailureReason } from './mcp-failure.js';
 import {
   type McpServerPatch,
   type McpServerRow,
@@ -74,10 +74,13 @@ export interface McpServerRemoval {
 /** Registration as the admin sent it, with the OAuth return address the controller built. */
 export type McpServerRegistration = RegisterMcpServerBody & { readonly redirectUrl: string };
 
-/** After the admin connected his account: the list was read and stored, or the server still waits for it. */
+/**
+ * After the admin connected his account: the list was read and stored, the server still waits for it
+ * (`tools_failed`), or the server was removed meanwhile (`connect_failed`).
+ */
 export type McpAdminAccountCompletion =
   | { readonly outcome: 'connected'; readonly change: McpToolsRefresh }
-  | { readonly outcome: 'tools_failed' };
+  | { readonly outcome: 'tools_failed' | 'connect_failed' };
 
 export interface McpRegistryOptions {
   readonly database: Database;
@@ -117,7 +120,7 @@ function checkFailed(reason: McpCheckFailureReason): McpError {
   return new McpError(McpErrorCode.MCP_SERVER_CHECK_FAILED, `MCP server check failed: ${reason}`, reason);
 }
 
-function notFound(name: string): McpError {
+export function notFound(name: string): McpError {
   return new McpError(McpErrorCode.MCP_SERVER_NOT_FOUND, `MCP server ${name} is not registered`);
 }
 
@@ -274,15 +277,16 @@ export class McpRegistry {
 
   /**
    * After the admin connected his account to an `oauth` server: the list is read with his token, stored, and a
-   * waiting server is switched on (Flow 1). A failed read leaves the server waiting: `tools_failed`.
+   * waiting server is switched on (Flow 1). A failed read leaves the server waiting: `tools_failed`; a server
+   * removed meanwhile is `connect_failed`.
    */
   async completeAdminAccount(name: string, accessToken: string): Promise<McpAdminAccountCompletion> {
     try {
       return { outcome: 'connected', change: await this.refreshTools(name, bearer('oauth', accessToken)) };
     } catch (error) {
-      if (error instanceof McpError && error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED) {
-        return { outcome: 'tools_failed' };
-      }
+      if (!(error instanceof McpError)) throw error;
+      if (error.code === McpErrorCode.MCP_SERVER_CHECK_FAILED) return { outcome: 'tools_failed' };
+      if (error.code === McpErrorCode.MCP_SERVER_NOT_FOUND) return { outcome: 'connect_failed' };
       throw error;
     }
   }
@@ -328,7 +332,7 @@ export class McpRegistry {
         server: name,
         mode: auth.mode,
         reason,
-        error: String(error),
+        error: failureName(error),
       });
       throw checkFailed(reason);
     }

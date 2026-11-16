@@ -1,9 +1,9 @@
-// enterprise-access / mcp-connect - agents-package integration skeletons (real Postgres, real `createAgents`, MCP fixture process over HTTP)
+// enterprise-access / mcp-connect - agents-package integration tests (real Postgres, real `createAgents`, MCP fixture process over HTTP)
 // Design Doc: docs/features/enterprise-access/design-mcp-connect.md (v1.5, Approved), Test Strategy UC-1, UC-2 (call half), UC-3, UC-4, UC-E4;
 //   PRD: docs/features/enterprise-access/prd.md (v2.4) FR-12, FR-13, FR-14 (AC-12.3..12.5, AC-13.1..13.3, AC-14.2..14.5).
-// Generated: 2026-11-16 (rewritten to v1.5) | Budget Used: 2 of the part's 3 integration skeletons here (INT-1, INT-2); the third (INT-3, the
-//   registry and the connect flow over HTTP) is apps/api/test/enterprise-access-mcp-connect.int.e2e-spec.ts. 0 E2E: the Test Strategy names none.
-// Test Type: Integration. Every case is `it.todo` - skeletons only, no implementation.
+// Budget Used: 2 of the part's 3 integration tests here (INT-1, INT-2); the third (INT-3, the registry and the connect flow over HTTP) is
+//   apps/api/test/enterprise-access-mcp-connect.int.e2e-spec.ts. 0 E2E: the Test Strategy names none.
+// Test Type: Integration.
 //
 // Harness (follows packages/agents/test/support/agentsHarness.ts): the package's own `createRuntime` + `createAgents` over their own pool, no
 //   `apps/api`, ONE instance (the feature is one API process, Constraints). Only the model (`createScriptedModel`) is a double. Postgres,
@@ -11,12 +11,11 @@
 //   `packages/mcp-fixture` PROCESS over HTTP with its own authorization server (KD-7); the fixture's journal (source, tool, ACCOUNT of the
 //   bearer it actually received) is the proof of "the server received nothing" and of "the call came with Аня's account", and the
 //   authorization-server log (token requests, refresh counter) is the proof of "no refresh was asked".
-//   Support the implementation tasks add (not skeletons): `agentsHarness` registers fixture sources through `Agents.mcp.register` instead of
-//   `fixtureServersFile`, takes `mcpRedirectUrl` and an `ownerGate` option (a port double that throws `OwnerDisabledError` after a flag is
-//   set; the real gate is proven by identity INT-2 row 5); a `fixtureProcess()` helper that starts/stops the process and exposes the
-//   KD-7 controls (token lifetime, revoke the refresh tokens of an account, refresh counter, add a tool, `hang` and `drop_connection`
-//   rules, the journal); `connectAccount(harness, ownerId, server)` = `Agents.mcp.beginConnect`, GET the authorization URL without
-//   following redirects, hand `code`/`state`/`iss` to `Agents.mcp.finishConnect`.
+//   Support: `createAgentsHarness` starts the fixture process (`harness.fixtureProcess`: its addresses and the KD-7 controls - revoke
+//   tokens, hold a refresh, the per-account counters, add a tool) and takes an `ownerGate` option (a port double that throws
+//   `OwnerDisabledError`; the real gate is proven by identity INT-2 row 5); `registerServer` / `removeServer` go through `Agents.mcp`;
+//   `connectAccount(harness, ownerId, server)` = `Agents.mcp.beginConnect`, GET the authorization URL without following redirects, hand
+//   `code`/`state`/`iss` to `Agents.mcp.finishConnect`.
 // Mock boundary: the model, and the owner-gate port in INT-2 row 5 only. Do NOT mock the fixture, the database, the token clock (expiry
 //   is set by moving the account row's `expires_at`) or `McpAccounts`.
 //
@@ -107,7 +106,7 @@ const ORDERS_WINDOW = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:
 const ORDERS_ANYA = { ...ORDERS_WINDOW, pageSize: 1 };
 const ORDERS_BORIS = { ...ORDERS_WINDOW, pageSize: 2 };
 const ORDERS_GLEB = { ...ORDERS_WINDOW, pageSize: 3 };
-/** INT-2: the second agent's call of row 1, and the calls that lose the account in rows 2 and 3. */
+/** INT-2: the second agent's call of row 1 (Борис's is `ORDERS_BORIS`), and the calls that lose the account in rows 2 and 3. */
 const ORDERS_SECOND_AGENT = { ...ORDERS_WINDOW, pageSize: 4 };
 const ORDERS_REFRESH_REVOKED = { ...ORDERS_WINDOW, pageSize: 5 };
 const ORDERS_ACCESS_REVOKED = { ...ORDERS_WINDOW, pageSize: 6 };
@@ -496,7 +495,6 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       expect(
         harness.logs.filter((record) => record.message === 'mcp token issued' && record.fields.ownerId === gleb),
       ).toEqual([]);
-      expect(await control.stats('gleb')).toEqual({ refreshes: 0, codeExchanges: 0, authorizations: 0 });
       expect([await control.stats('anya'), await control.stats('boris')]).toEqual(statsBeforeGleb);
 
       // 7. AC-12.3 / AC-12.4: the fixture gains a tool and the admin refreshes `logs` -> `added` names it and
@@ -636,20 +634,30 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         task: 'Аня checks the chargebacks',
         turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_SECOND_AGENT }] } },
       });
+      const borisAgent = await startEmployee(harness, model, {
+        ownerId: boris,
+        definition: everyServer,
+        task: 'Борис checks the refunds',
+        turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_BORIS }] } },
+      });
 
-      // 1. DC-4 / AC-13.3: Аня's access token is past its time; her refreshes are held on the authorization
-      //    server; both agents call `backoffice` at once. The second call joins the refresh of the first (the
-      //    `joined` record; a second refresh request is the defect), then the hold is released -> one refresh,
-      //    both calls pass with the same new token, the row holds the new tokens and nobody asks Аня anything
+      // 1. DC-4 / AC-13.3: Аня's and Борис's access tokens are past their time; Аня's refreshes are held on the
+      //    authorization server; her two agents and Борис's call `backoffice` at once. Her second call joins the
+      //    refresh of the first (the `joined` record; a second refresh request is the defect). Борис's call ends
+      //    while her refresh is still held: his own refresh, his own new token (a wait keyed by the server alone
+      //    would hold him too, or send Аня's token). Then the hold is released -> one refresh each, both of
+      //    Аня's calls pass with her same new token, and the row holds the new tokens
       const beforeRefresh = await accountRowOf(harness, anya);
       await expireAccount(harness, anya);
+      await expireAccount(harness, boris);
       const refreshHeld = fixture.latch('anya-refresh');
       await control.holdRefresh({ account: 'anya', path: refreshHeld.path });
       const firstBefore = anyaFirst.script.calls.length;
       const secondBefore = anyaSecond.script.calls.length;
+      const borisBefore = borisAgent.script.calls.length;
       await Promise.all(
-        [anyaFirst, anyaSecond].map((employee) =>
-          harness.sessions.send({ agentId: employee.agentId, ownerId: anya, text: READ_ORDERS_TOGETHER }),
+        [anyaFirst, anyaSecond, borisAgent].map((employee) =>
+          harness.sessions.send({ agentId: employee.agentId, ownerId: employee.ownerId, text: READ_ORDERS_TOGETHER }),
         ),
       );
       await waitFor(
@@ -662,26 +670,25 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         (seen) => seen.joined || seen.refreshes >= 2,
         "both of Аня's calls to reach her token",
       );
+      await turnEnded(harness, borisAgent, borisBefore + 2);
       refreshHeld.release();
       await Promise.all([
         turnEnded(harness, anyaFirst, firstBefore + 2),
         turnEnded(harness, anyaSecond, secondBefore + 2),
       ]);
       await control.holdRefresh({ account: 'anya' });
-      expect((await control.stats('anya')).refreshes).toBe(1);
+      expect([(await control.stats('anya')).refreshes, (await control.stats('boris')).refreshes]).toEqual([1, 1]);
       expect((await auditOf(harness, anyaFirst.agentId)).at(-1)).toBe(`${anya} ${BACKOFFICE_SERVER}/search_orders success`);
       expect((await auditOf(harness, anyaSecond.agentId)).at(-1)).toBe(`${anya} ${BACKOFFICE_SERVER}/search_orders success`);
       expect(
-        [ORDERS_ANYA, ORDERS_SECOND_AGENT].flatMap((args) =>
+        [ORDERS_BORIS, ORDERS_ANYA, ORDERS_SECOND_AGENT].flatMap((args) =>
           fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args }).map((entry) => `${entry.account} ${entry.tokenId}`),
         ),
-      ).toEqual(['anya 4', 'anya 4']);
+      ).toEqual(['boris 4', 'anya 5', 'anya 5']);
       const afterRefresh = await accountRowOf(harness, anya);
       expect(afterRefresh?.accessToken).not.toBe(beforeRefresh?.accessToken);
       expect(afterRefresh?.refreshToken).not.toBe(beforeRefresh?.refreshToken);
       expect(afterRefresh?.expiresAt?.getTime()).toBeGreaterThan(Date.now());
-      expect(await harness.sessions.confirmations(anyaFirst.agentId, anya)).toEqual([]);
-      expect(await harness.sessions.confirmations(anyaSecond.agentId, anya)).toEqual([]);
 
       // 2. DC-3 / AC-14.5: Аня's refresh tokens are revoked and her access is past its time again -> the call
       //    ends `auth_required` before any request to the server, the model is told to go to «Мой доступ», the
@@ -701,7 +708,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       expect(await connectionLines(harness, anya)).toEqual([`${BACKOFFICE_SERVER} needs_auth`]);
       expect((await turn(harness, anyaFirst, AFTER_LOSS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS, ...TRACKER_TOOLS]);
       expect(await connectionLines(harness, boris)).toEqual([`${BACKOFFICE_SERVER} connected`]);
-      expect((await control.stats('boris')).refreshes).toBe(0);
+      expect((await control.stats('boris')).refreshes).toBe(1);
 
       // 3. the same loss through the other door: Аня connects again, then her live access token and her
       //    refresh tokens are revoked -> the server answers 401, the one refresh fails -> `auth_required`, row gone

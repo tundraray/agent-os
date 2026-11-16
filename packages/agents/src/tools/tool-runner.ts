@@ -358,7 +358,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
 
   /**
    * Sends one MCP call with the owner's credentials (KD-5): without an account the call is `auth_required`
-   * and reaches no server (DC-3); an `oauth` call that ends `auth_required` loses the account it used.
+   * and reaches no server (DC-3); an `oauth` call that ends `auth_required` loses the account it used. A
+   * server removed or switched off after the call check is `server_gone`, and nothing is sent (DC-2).
    */
   async function sendMcp(request: {
     readonly server: string;
@@ -366,8 +367,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     readonly args: Readonly<Record<string, unknown>>;
     readonly ownerId: string;
     readonly signal: AbortSignal;
-  }): Promise<McpCallResponse> {
-    const credentials = await accounts.credentialsFor(request.server, request.ownerId);
+  }): Promise<McpCallResponse | { readonly kind: 'server_gone' }> {
+    const credentials = await accounts.credentialsFor(request.server, request.ownerId, 'call');
     if (credentials.kind !== 'ready') return credentials;
     const response = await client.callTool({
       url: credentials.url,
@@ -384,13 +385,14 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     call: ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> },
     signal: AbortSignal,
     maxBytes: number,
-  ): Promise<Extract<ToolExecution, { kind: 'done' }> | AbortedExecution> {
+  ): Promise<ToolExecution | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
     const { server, tool } = call.tool.mcp;
     try {
       const response = await sendMcp({ server, tool, args, ownerId: call.caller.ownerId, signal });
       if (signal.aborted) return { kind: 'aborted' };
+      if (response.kind === 'server_gone') return { kind: 'refused', reason: 'tool_not_in_definition' };
       const result = toOutcome(response, maxBytes, { callId: call.callId, server });
       const hasValue =
         response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
@@ -485,7 +487,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       return refuse('changing_in_read_run');
     }
     await admit(scope.callId, scope.caller, scope.logger);
-    return callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
+    const execution = await callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
+    return execution.kind === 'refused' ? refuse(execution.reason) : execution;
   }
 
   return {

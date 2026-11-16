@@ -1,5 +1,12 @@
 import type { McpServerMode } from '@agent-os/contracts';
-import { OAuthError, ProtocolError, SdkError, SdkErrorCode, UnauthorizedError } from '@modelcontextprotocol/client';
+import {
+  OAuthError,
+  ProtocolError,
+  SdkError,
+  SdkErrorCode,
+  SdkHttpError,
+  UnauthorizedError,
+} from '@modelcontextprotocol/client';
 import { z } from 'zod';
 
 /** Why an MCP call got no answer from its server; the reason of a `transport_failure` in the history. */
@@ -57,6 +64,16 @@ function sdkFailureReason(error: SdkError): McpFailureReason {
     return 'protocol_error';
   }
   return 'client_error';
+}
+
+/**
+ * An error for the log: its class with the OAuth or SDK code and the HTTP status, never its message — that
+ * of the SDK carries the server's response body.
+ */
+export function failureName(error: unknown): string {
+  if (error instanceof SdkHttpError) return `${error.name}:${error.code}:${error.status}`;
+  if (error instanceof OAuthError || error instanceof SdkError) return `${error.name}:${error.code}`;
+  return error instanceof Error ? error.name : typeof error;
 }
 
 /** Why a request failed in transport, or `undefined` for an error outside the client's and `fetch`'s classes. */

@@ -144,6 +144,12 @@ async function connectAdminAccount(
     'Fixture authorization',
     await fetch(authorization, { redirect: 'manual' }),
   );
+  // The session cookie goes only to the API: an authorization server that returns elsewhere fails the run.
+  if (callback.origin !== new URL(api).origin) {
+    throw new Error(
+      `Fixture authorization returned to ${callback.origin}, not to the API`,
+    );
+  }
   const landing = await redirectOf(
     'OAuth return',
     await fetch(callback, { headers: { cookie }, redirect: 'manual' }),

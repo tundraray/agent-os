@@ -31,6 +31,12 @@ export async function findServer(
   return row;
 }
 
+/** The registered servers among the names, in one query. */
+export async function findServers(reader: StoreReader, names: readonly string[]): Promise<McpServerRow[]> {
+  if (names.length === 0) return [];
+  return reader.select().from(agentMcpServers).where(inArray(agentMcpServers.name, [...names]));
+}
+
 /** All registry servers by name. */
 export function listServers(reader: StoreReader): Promise<McpServerRow[]> {
   return reader.select().from(agentMcpServers).orderBy(asc(agentMcpServers.name));

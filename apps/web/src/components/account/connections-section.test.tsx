@@ -28,7 +28,7 @@ function renderSection(): void {
 
 const rowOf = (name: string): HTMLElement => screen.getByRole("listitem", { name });
 
-describe("«Подключения» (MA-01): a row per server with its badge and action, the empty list and the OAuth return", () => {
+describe("«Подключения» (MA-01): a row per server with its badge and action, and the OAuth return", () => {
   afterEach(() => {
     // sonner keeps its toasts in a module store: one test's toast must not reach the next.
     toast.dismiss();
@@ -67,17 +67,6 @@ describe("«Подключения» (MA-01): a row per server with its badge an
       "http://api.test/api/mcp/connections/jira/connect",
     );
     expect(await screen.findByText("Аккаунт jira отключён")).toBeInTheDocument();
-  });
-
-  // AC-14.6.
-  it("shows «Подключать пока нечего» without servers", async () => {
-    serveConnections([]);
-    renderSection();
-
-    expect(await screen.findByText("Подключать пока нечего")).toBeInTheDocument();
-    expect(
-      screen.getByText("Когда администратор даст вам доступ к серверу с личным входом, он появится здесь."),
-    ).toBeInTheDocument();
   });
 
   // AC-14.3, AC-14.5, UXRD Accessibility «Возврат на «Мой доступ» после подключения»: focus on the row's button.

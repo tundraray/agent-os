@@ -45,7 +45,7 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
  * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own
  * factories injecting `AGENTS`.
  *
- * Phases: `onModuleInit` — `start()` (catalog check, MCP servers), before `RuntimeModule` starts the
+ * Phases: `onModuleInit` — `start()` (catalog check), before `RuntimeModule` starts the
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
  *
@@ -104,8 +104,8 @@ import { McpConnectionsController } from './mcp-connections.controller.js';
         createAgents({
           database: database.db,
           runtime,
-          // The application logger plus the agents settings' secrets (the provider key, the servers'
-          // environment values) — the same list `run_code` masks in a run's output and result.
+          // The application logger plus the agents settings' secret (the provider key) — the same
+          // list `run_code` masks in a run's output and result.
           logger: createAppLogger(process.env, secretValuesOf(settings)),
           config: settings,
           turnClient,

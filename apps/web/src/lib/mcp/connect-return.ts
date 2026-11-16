@@ -9,7 +9,7 @@ export type ConnectReturn =
 
 const RETURN_PARAMS = ["connected", "error", "server"] as const;
 
-export function parseConnectReturn(search: string): ConnectReturn | null {
+function parseConnectReturn(search: string): ConnectReturn | null {
   const params = new URLSearchParams(search);
   const connected = params.get("connected");
   if (connected !== null && connected !== "") return { kind: "connected", server: connected };

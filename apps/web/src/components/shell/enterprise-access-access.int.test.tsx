@@ -16,8 +16,8 @@
 //   mock any of them.
 //
 // Adapted, not duplicated: the status tables of agent-platform-web.int.test.tsx (labels, the control by status) gain the row `awaiting_quota`
-//   in their own table tests; the `/account` page test of enterprise-access-mcp-connect.int.test.tsx UC-6 is not touched (the models section is
-//   proven here, the connections section there).
+//   in their own table tests; the connections section of the `/account` page is proven by
+//   components/account/connections-section.test.tsx (the models section is proven here).
 // `provenAt: unit` (small tables next to the code): status -> label and control (`format.ts`, `agent-status.tsx`, `agent-header.tsx`) for
 //   `awaiting_quota`; the reason -> text maps of MC-10 / MC-11 / MC-14; money and month formatting («100,40 $», «1 декабря»); `MyModels` row ->
 //   cell texts. The component's states are checked against the design system by the L1 checklist.

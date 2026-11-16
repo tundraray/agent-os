@@ -16,6 +16,7 @@ import {
   type McpServerWrite,
   type McpToolsRefresh,
   credentialsCheckFailed,
+  notFound,
 } from './mcp-registry.js';
 
 /** How a return from the authorization server ended for the controller and the audit. */
@@ -60,7 +61,8 @@ function isRejectedToken(error: unknown): boolean {
 
 export function createAgentsMcp(registry: McpRegistry, accounts: McpAccounts): AgentsMcp {
   async function refreshTools(name: string, actorId: string): Promise<McpToolsRefresh> {
-    const credentials = await accounts.credentialsFor(name, actorId);
+    const credentials = await accounts.credentialsFor(name, actorId, 'admin');
+    if (credentials.kind === 'server_gone') throw notFound(name);
     if (credentials.kind === 'auth_required') {
       throw new McpError(
         McpErrorCode.MCP_ACCOUNT_REQUIRED,
@@ -76,17 +78,21 @@ export function createAgentsMcp(registry: McpRegistry, accounts: McpAccounts): A
     }
   }
 
-  /** The admin's fresh account reads the list of a waiting server and switches it on. */
+  /**
+   * The admin's fresh account reads the list of a waiting server and switches it on; a server removed
+   * meanwhile ends the connection `connect_failed`.
+   */
   async function completeAdminAccount(server: string, adminId: string): Promise<McpConnectResult> {
     const ended = { server, target: 'admin' as const };
-    const credentials = await accounts.credentialsFor(server, adminId);
+    const credentials = await accounts.credentialsFor(server, adminId, 'admin');
+    if (credentials.kind === 'server_gone') return { ...ended, outcome: 'connect_failed' };
     if (credentials.kind !== 'ready') return { ...ended, outcome: 'tools_failed' };
     const token = await credentials.auth.token();
     if (token === undefined) return { ...ended, outcome: 'tools_failed' };
     const completion = await registry.completeAdminAccount(server, token);
     return completion.outcome === 'connected'
       ? { ...ended, outcome: 'connected', change: completion.change }
-      : { ...ended, outcome: 'tools_failed' };
+      : { ...ended, outcome: completion.outcome };
   }
 
   return {

@@ -14,8 +14,8 @@ const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 /**
  * Builds the one application logger: console and Sentry sinks, the settings' secrets redacted
- * (design-runtime.md, KD-6, Security «Sensitive Data Handling»), plus `extraSecrets` (design-agents.md:
- * the values of the MCP servers' environment). An invalid `LOG_LEVEL` stops the start.
+ * (design-runtime.md, KD-6, Security «Sensitive Data Handling»), plus `extraSecrets` (the agents
+ * settings' provider key). An invalid `LOG_LEVEL` stops the start.
  */
 export function createAppLogger(
   env: NodeJS.ProcessEnv,

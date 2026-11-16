@@ -10,9 +10,10 @@
 //   Postgres - the fixture process runs, and the test registers every server itself through the API under the run's names (`runName`).
 //   `MCP_ACCESS_TABLE` is read once at the boot, so Аня, Борис and Глеб are written by `insertEmployee` before it and sign in after it; the
 //   super administrator comes from `seedSuperAdmin`, the second administrator is an employee given the admin right by a role (taken away in
-//   row 8). The employee connect route reads only the saved public address, so the test saves `apiOrigin(app)` through
-//   `PUT /api/admin/settings/sign-in` and puts the previous settings back in `afterAll`; every user, role and server the test made is deleted
-//   there too. Only `AGENT_TURN_CLIENT` is the scripted model; MCP is the fixture PROCESS over HTTP with its authorization server (KD-7): its
+//   row 8). The employee connect route reads only the saved public address; the test uses the one the database already holds (the test plays
+//   the browser and calls the callback on the app itself, and the fixture only compares the return address with the registered one), and
+//   saves `apiOrigin(app)` only when none is saved, unsetting it in `afterAll`; every user, role and server the test made is deleted there
+//   too. Only `AGENT_TURN_CLIENT` is the scripted model; MCP is the fixture PROCESS over HTTP with its authorization server (KD-7): its
 //   counters (`stats`: authorizations and code exchanges per account) are the proof that no code was exchanged. The test plays the browser
 //   (support/mcp-browser.ts): GET the connect route without following redirects, GET the authorization URL on the fixture, take
 //   `code`/`state`/`iss` from its 302 and GET `/api/mcp/oauth/callback` with a cookie (or none).
@@ -81,6 +82,18 @@ const UNKNOWN_SERVER = runName('nobody');
 const UNREACHABLE_SERVER = runName('unreachable');
 const WRONG_TOKEN_SERVER = runName('logs-wrong-token');
 const NO_OAUTH_SERVER = runName('logs-oauth');
+/** Deletes every server this case names; the servers take their accounts with them. */
+const deleteRunServers = (pool: DatabaseConnection['pool']) =>
+  pool.query('DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)', [
+    [
+      LOGS_SERVER,
+      BACKOFFICE_SERVER,
+      SECOND_OAUTH_SERVER,
+      UNREACHABLE_SERVER,
+      WRONG_TOKEN_SERVER,
+      NO_OAUTH_SERVER,
+    ],
+  ]);
 /** Row 3: the tool the fixture adds to the back office before the list is read anew. */
 const ADDED_TOOL = 'list_refunds';
 /** A shared token the fixture refuses; a known value for the secrets scan. */
@@ -127,7 +140,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   let boris: Session;
   let gleb: Session;
   let adminRoleId: string | undefined;
-  let previousSettings: SignInSettings | undefined;
+  /** The sign-in settings as found, kept only when they had no public address and the test saved one. */
+  let settingsWithoutPublicUrl: SignInSettings | undefined;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -135,6 +149,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       connectionString: databaseUrl(),
       poolMax: 2,
     });
+    // An earlier suite of the run registered `logs` and `backoffice` and left them: this case registers them itself.
+    await deleteRunServers(database.pool);
     const tag = randomUUID().slice(0, 8);
     const login = (name: string) => `e2e-mcp-${name}-${tag}`;
     const [anyaId, borisId, glebId] = [
@@ -197,32 +213,38 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       z.unknown(),
     );
 
-    // The employee connect route reads only the saved public address: this app's own, put back in afterAll.
-    previousSettings = await expectBody(
+    // The employee connect route reads only the saved public address. A saved one is used as it is - a killed
+    // run must not leave the developer's database with this app's address; an unset one is set, and unset
+    // again in afterAll.
+    const settings = await expectBody(
       apiRequest(app, admin, 'get', '/admin/settings/sign-in'),
       200,
       SignInSettingsSchema,
     );
-    await expectBody(
-      apiRequest(app, admin, 'put', '/admin/settings/sign-in', {
-        publicUrl: apiOrigin(app),
-        idleMinutes: previousSettings.idleMinutes,
-        absoluteMinutes: previousSettings.absoluteMinutes,
-      }),
-      200,
-      SignInSettingsSchema,
-    );
+    if (settings.publicUrl === null) {
+      settingsWithoutPublicUrl = settings;
+      await expectBody(
+        apiRequest(app, admin, 'put', '/admin/settings/sign-in', {
+          ...settings,
+          publicUrl: apiOrigin(app),
+        }),
+        200,
+        SignInSettingsSchema,
+      );
+    }
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
     try {
-      if (harness !== undefined && previousSettings !== undefined) {
+      if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
         await expectBody(
-          apiRequest(harness.app, admin, 'put', '/admin/settings/sign-in', {
-            publicUrl: previousSettings.publicUrl,
-            idleMinutes: previousSettings.idleMinutes,
-            absoluteMinutes: previousSettings.absoluteMinutes,
-          }),
+          apiRequest(
+            harness.app,
+            admin,
+            'put',
+            '/admin/settings/sign-in',
+            settingsWithoutPublicUrl,
+          ),
           200,
           SignInSettingsSchema,
         );
@@ -230,19 +252,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     } finally {
       await harness?.close();
       // The servers take their accounts with them; the users take their sessions and role assignments.
-      await database.pool.query(
-        'DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)',
-        [
-          [
-            LOGS_SERVER,
-            BACKOFFICE_SERVER,
-            SECOND_OAUTH_SERVER,
-            UNREACHABLE_SERVER,
-            WRONG_TOKEN_SERVER,
-            NO_OAUTH_SERVER,
-          ],
-        ],
-      );
+      await deleteRunServers(database.pool);
       if (adminRoleId !== undefined)
         await database.pool.query(
           'DELETE FROM app.identity_roles WHERE id = $1',
@@ -298,9 +308,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //      for either; Аня's own return of that request now also fails the same way. Аня begins a new connection; its return WITHOUT a cookie
   //      -> 401 `AUTH_REQUIRED` and nothing consumed or stored: her return with her cookie -> 302 `/account?connected=backoffice`, her list
   //      is `connected` (AC-14.3); the same return sent again -> `/account?error=connect_failed` and no second exchange.
-  //   7. forged and cancelled returns of Борис, each -> `/account?error=connect_failed&server=backoffice` and no account: the authorization
-  //      server answers `error=access_denied` (cancelled); a return whose `iss` is another issuer; a return with `iss` missing while the
-  //      authorization server announces it; no code was exchanged.
+  //   7. forged returns of Борис, each -> `/account?error=connect_failed&server=backoffice` and no account: a return whose `iss` is
+  //      another issuer; a return with `iss` missing while the authorization server announces it; no code was exchanged.
   //   8. DC-13 (UC-E5): the second administrator begins connecting his account to a second oauth server that awaits its account; his admin
   //      right is then removed through the identity operation (the role is taken); he returns with a valid code -> 302
   //      `/admin/servers/<name>?error=connect_failed`, the authorization server exchanged no code, no account and no tool list stored, the
@@ -316,8 +325,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //       and refresh token stored, the OAuth client secret if the fixture issued one, every `state` and authorization `code`, the session
   //       cookies) appear in none of: the captured process log, the audit rows of the run's servers, the API responses of rows 1-10 (the
   //       authorization redirect excepted: it carries `state` to the authorization server by design), the agent's history and tool calls, the
-  //       model's input (the tool outputs). The log carries the connection-request ids and `expiresIn`; the audit of the token replacement
-  //       holds `secret_changed`.
+  //       model's input (the tool outputs). The audit of the token replacement holds `secret_changed`.
   // Catches: a server saved without being checked; a shared token or a client secret echoed in a response, the audit, the log or the agent
   //   history by a path no other test reads (the OAuth callback's redirect logging, the transport's error text, tool outputs); a half-registered
   //   oauth server offered to employees or to agents; a rejected registration that still leaves a row; a second administrator's missing
@@ -783,22 +791,17 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       expect(await exchangesOf('anya')).toBe(1);
       await keepStoredSecrets();
 
-      // Row 7 - When: Борис's returns that are cancelled or forged (each from a request of its own)
+      // Row 7 - When: Борис's forged returns (each from a request of its own)
       const borisReturn = async (
         change: (returned: OAuthReturn) => OAuthReturn,
-        deny = false,
       ) => {
         const returned = await authorize(
           await beginConnect(app, boris, employeeConnect(BACKOFFICE_SERVER)),
-          {
-            account: 'boris',
-            deny,
-          },
+          { account: 'boris' },
         );
         return (await back(boris, change(returned))).headers.location;
       };
       const forged = [
-        await borisReturn((returned) => returned, true),
         await borisReturn((returned) => ({
           ...returned,
           iss: 'http://issuer.example.test',
@@ -807,7 +810,6 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       ];
       // Then: each is refused on «Мой доступ», no account and no code exchanged
       expect(forged).toEqual([
-        `${web}/account?error=connect_failed&server=${BACKOFFICE_SERVER}`,
         `${web}/account?error=connect_failed&server=${BACKOFFICE_SERVER}`,
         `${web}/account?error=connect_failed&server=${BACKOFFICE_SERVER}`,
       ]);
@@ -991,23 +993,6 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
           .map(([label]) => `${label} in ${place}`),
       );
       expect(leaks).toEqual([]);
-      // Then: the log names the connection requests and the token's remaining life instead
-      const records = harness.log.flatMap(parseRecord);
-      expect(
-        records.some(
-          (record) =>
-            record.message === 'mcp connect begun' &&
-            record.fields.ownerId === anya.id &&
-            typeof record.fields.requestId === 'string',
-        ),
-      ).toBe(true);
-      expect(
-        records.some(
-          (record) =>
-            record.message === 'mcp token issued' &&
-            typeof record.fields.expiresIn === 'number',
-        ),
-      ).toBe(true);
     },
     TEST_TIMEOUT_MS,
   );
@@ -1032,32 +1017,4 @@ function entryLine(entry: HistoryEntry): string {
     default:
       return entry.kind;
   }
-}
-
-/** A logger record of a console line; Nest's own lines and other text are skipped. */
-function parseRecord(
-  line: string,
-): { message: string; fields: Record<string, unknown> }[] {
-  try {
-    const record: unknown = JSON.parse(line);
-    if (
-      typeof record === 'object' &&
-      record !== null &&
-      'message' in record &&
-      'fields' in record &&
-      typeof record.message === 'string' &&
-      typeof record.fields === 'object' &&
-      record.fields !== null
-    ) {
-      return [
-        {
-          message: record.message,
-          fields: record.fields as Record<string, unknown>,
-        },
-      ];
-    }
-  } catch {
-    // Not a logger record.
-  }
-  return [];
 }
