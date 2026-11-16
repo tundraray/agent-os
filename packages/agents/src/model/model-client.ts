@@ -129,8 +129,9 @@ export type ModelCallResult = ModelAnswer | ModelError | ModelNotStarted;
 export interface ModelClient {
   /**
    * Asks `AccessGate.model` once, before the first attempt: a refusal gives `not_started` with the
-   * verdict and the model is not called; provider retries are not checked again. Every attempt that
-   * reached the provider is a ledger row, also one a cancel or a provider error cut short.
+   * verdict and the model is not called; provider retries are not checked again. An answered attempt is
+   * a ledger row, and so is one cut by a cancel or by a failure after its answer began; an attempt the
+   * provider rejected before any output is not.
    */
   call(request: ModelCallRequest): Promise<ModelCallResult>;
   /**
@@ -202,41 +203,62 @@ type Generated =
     }
   | ModelError;
 
-/** Characters per token of the usage estimate of an attempt that did not finish. */
-const CHARS_PER_TOKEN = 4;
+/** UTF-8 bytes per token of the usage estimate of an attempt that did not finish. */
+const BYTES_PER_TOKEN = 4;
+
+/** The UTF-8 bytes of a text: characters would undercount any text outside ASCII, such as Cyrillic. */
+function utf8Bytes(text: string): number {
+  return Buffer.byteLength(text, 'utf8');
+}
 
 /**
- * The characters of a request: the instructions, the messages and the tools with the JSON Schemas of the
+ * The bytes of a request: the instructions, the messages and the tools with the JSON Schemas of the
  * MCP ones. A built-in tool's zod schema is not serialized, so it counts by its name and description.
  */
-function requestChars(call: AgentTurnCall): number {
+function requestBytes(call: AgentTurnCall): number {
   const tools = call.tools.map(({ name, description, inputSchema }) => [
     name,
     description,
     '_zod' in inputSchema ? null : inputSchema,
   ]);
-  return call.instructions.length + JSON.stringify([call.messages, tools]).length;
+  return utf8Bytes(call.instructions) + utf8Bytes(JSON.stringify([call.messages, tools]));
 }
 
 /**
- * The usage of an attempt cut by a cancel or a provider error: the provider reports usage only when the
- * stream finishes, so the row is an estimate — the whole request as uncached input, the streamed text as output.
+ * The usage of an attempt that did not finish: the provider reports usage only when the stream finishes,
+ * so the row is an estimate — the whole request as uncached input, the streamed text as output.
  */
-function estimatedUsage(sentChars: number, streamedChars: number): CallUsage {
+function estimatedUsage(sentBytes: number, streamedBytes: number): CallUsage {
   return {
-    inputTokens: Math.ceil(sentChars / CHARS_PER_TOKEN),
-    outputTokens: Math.ceil(streamedChars / CHARS_PER_TOKEN),
+    inputTokens: Math.ceil(sentBytes / BYTES_PER_TOKEN),
+    outputTokens: Math.ceil(streamedBytes / BYTES_PER_TOKEN),
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   };
 }
 
 /**
+ * Whether the provider bills an attempt that did not finish — the one place that decides. It does once the
+ * answer began (a text part arrived before the failure, whatever the failure is), and when a cancel cut a
+ * request that was sent. It does not when the provider rejected the request before any output: an HTTP
+ * error answer (429, 5xx, 529) or a network failure before the stream, which is what an `AI_APICallError`
+ * without a text part is — also when a cancel arrived at the same moment.
+ */
+function isBilled(cut: {
+  readonly streamedBytes: number;
+  readonly aborted: boolean;
+  readonly providerError: ProviderError | null;
+}): boolean {
+  return cut.streamedBytes > 0 || (cut.aborted && cut.providerError === null);
+}
+
+/**
  * The model wrapper of KD-6 and KD-3: one streamed request through the turn client, up to two retries
  * of a provider error with pauses of 1000 and 3000 ms, a cancel that is never retried, and one token
- * ledger row per attempt — by its own statement, so it stays when the step is lost. An answered attempt
- * is recorded with the provider's usage; an attempt cut by a cancel or a provider error with an estimate,
- * so a call interrupted before its answer ends still counts against the quota.
+ * ledger row per billed attempt — by its own statement, so it stays when the step is lost. An answered
+ * attempt is recorded with the provider's usage; an attempt cut by a cancel, or by a failure after its
+ * answer began, with an estimate, so a call interrupted before its answer ends still counts against the
+ * quota. An attempt the provider rejected before any output is not billed and leaves no row (`isBilled`).
  * Each text part of an agent's answer goes to `onTextDelta` with its running `offset`; a retry starts
  * the parts again at offset 0.
  */
@@ -254,37 +276,37 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
   }
 
   /**
-   * Runs the attempts until an answer, a final provider error, or a cancel (thrown). Every attempt whose
-   * request went out leaves one ledger row; an error that is neither a cancel nor the provider's (the
-   * request was never sent) leaves none.
+   * Runs the attempts until an answer, a final provider error, or a cancel (thrown). An answered attempt
+   * leaves one ledger row, an unfinished one only when `isBilled` says so.
    */
   async function generate(attempt: Attempt): Promise<Generated> {
-    const sentChars = requestChars(attempt.call);
+    const sentBytes = requestBytes(attempt.call);
     for (let retries = 0; ; retries += 1) {
       attempt.signal.throwIfAborted();
       const startedAt = clock.now().getTime();
       const onText = attempt.onText();
-      let streamedChars = 0;
+      let streamedBytes = 0;
       let generation: AgentTurnGeneration;
       try {
         generation = await turnClient.streamTurn(attempt.call, {
           signal: attempt.signal,
           onText: (text) => {
-            streamedChars += text.length;
+            streamedBytes += utf8Bytes(text);
             onText(text);
           },
         });
       } catch (error) {
         const providerError = classifyRejection(error);
-        if (attempt.signal.aborted || providerError !== null) {
-          const usage = estimatedUsage(sentChars, streamedChars);
+        const { aborted } = attempt.signal;
+        if (isBilled({ streamedBytes, aborted, providerError })) {
+          const usage = estimatedUsage(sentBytes, streamedBytes);
           const { callId } = await attempt.record(usage);
           attempt.logger.warn('unfinished model attempt recorded with estimated usage', {
             model: attempt.call.model,
             callId,
             ...usage,
             estimated: true,
-            aborted: attempt.signal.aborted,
+            aborted,
             attempt: retries + 1,
             durationMs: clock.now().getTime() - startedAt,
           });

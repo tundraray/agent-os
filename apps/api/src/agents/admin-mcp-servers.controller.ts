@@ -39,7 +39,7 @@ import { mcpAnswer } from './mcp.errors.js';
 /**
  * The MCP server registry for an administrator (design-mcp-connect.md, Contract «Реестр — для `admin`»).
  * Every write goes through `Agents.mcp` and is audited after it as `admin_change` on `mcp_server`; no answer
- * carries a token value (AC-13.5). The OAuth return address is built from `IdentitySettings.publicUrlFor`.
+ * carries a token value (AC-13.5). The server's OAuth return address is built from `IdentitySettings.publicUrlFor`.
  */
 @Controller('admin/mcp-servers')
 @AdminOnly()
@@ -64,7 +64,10 @@ export class AdminMcpServersController {
     @Req() req: AuthedRequest,
   ): Promise<McpServerView> {
     const actor = req.user.id;
-    const redirectUrl = mcpCallbackUrl(await this.settings.publicUrlFor(req));
+    const redirectUrl = mcpCallbackUrl(
+      await this.settings.publicUrlFor(req),
+      body.name,
+    );
     const write = await mcpAnswer(
       this.agents.mcp.register({ ...body, redirectUrl }),
     );
@@ -91,7 +94,10 @@ export class AdminMcpServersController {
   ): Promise<void> {
     refuseCrossSite(req);
     const ownerId = req.user.id;
-    const redirectUrl = mcpCallbackUrl(await this.settings.publicUrlFor(req));
+    const redirectUrl = mcpCallbackUrl(
+      await this.settings.publicUrlFor(req),
+      name,
+    );
     const started = await mcpAnswer(
       this.agents.mcp.beginConnect({
         ownerId,

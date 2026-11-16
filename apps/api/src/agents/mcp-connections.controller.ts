@@ -54,9 +54,13 @@ export async function recordServerChange(
   });
 }
 
-/** The OAuth return address registered with the authorization server: `<public address>/api/mcp/oauth/callback`. */
-export function mcpCallbackUrl(publicUrl: string): string {
-  return `${publicUrl}/api/mcp/oauth/callback`;
+/**
+ * The OAuth return address of one server, registered with its authorization server:
+ * `<public address>/api/mcp/oauth/callback/<server>`. Each server has its own, so a code that an authorization
+ * server sends back cannot be presented as another server's.
+ */
+export function mcpCallbackUrl(publicUrl: string, server: string): string {
+  return `${publicUrl}/api/mcp/oauth/callback/${encodeURIComponent(server)}`;
 }
 
 /** The web's «Мой доступ» page with the outcome of a connection. */
@@ -153,7 +157,7 @@ export class McpConnectionsController {
               ownerId,
               server,
               target: 'employee',
-              redirectUrl: mcpCallbackUrl(publicUrl),
+              redirectUrl: mcpCallbackUrl(publicUrl, server),
             }),
           );
     res.redirect(
@@ -165,12 +169,14 @@ export class McpConnectionsController {
   }
 
   /**
-   * The return from the authorization server (DC-5, DC-13): 302 to the page of the target with the outcome.
-   * An admin's return without the admin right is refused before the exchange and audited as `access_denied`;
+   * The return from the authorization server at the server's own address (DC-5, DC-13): 302 to the page of
+   * the target with the outcome. A return at another server's address than the request's is refused before
+   * the exchange. An admin's return without the admin right is refused before the exchange and audited as `access_denied`;
    * an admin's list read with his account is audited as `admin_change`.
    */
-  @Get('oauth/callback')
+  @Get('oauth/callback/:server')
   async callback(
+    @Param('server') server: string,
     @Query() query: Record<string, unknown>,
     @Req() req: AuthedRequest,
     @Res() res: Response,
@@ -180,6 +186,7 @@ export class McpConnectionsController {
       this.agents.mcp.finishConnect({
         ownerId,
         isAdmin: req.user.isAdmin,
+        server,
         state: single(query.state) ?? '',
         code: single(query.code),
         iss: single(query.iss),

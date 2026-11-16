@@ -1,11 +1,12 @@
 // KD-3 (offset), Flow 1 Failure handling (a retry starts the parts again at offset 0), Invariant 4 (a
 // `completeText` call is a ledger row without `taskId`), Contract «Расширения нижних пакетов» (a failing
-// hook is logged and does not break the step); every attempt that reached the provider is one ledger row,
-// an unfinished one with an estimate. The port and the ledger are doubles; the clock fires the retry pause at once.
+// hook is logged and does not break the step); an answered attempt is one ledger row, an attempt cut by a
+// cancel or failed after its answer began is one with an estimate from UTF-8 bytes, and an attempt the provider
+// rejected before any output is none. The port and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
 import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
-import type { AgentTurnModelClient } from './mastra-turn.js';
+import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn.js';
 import { createModelClient, type TextDelta } from './model-client.js';
 
 /** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
@@ -100,20 +101,21 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       'an attempt that streamed a part and failed is retried after the pause from offset 0, and both attempts are ledger rows',
       {
         act: 'call',
-        attempts: [{ parts: ['Stale'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
+        attempts: [{ parts: ['Старт'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
         hookFails: false,
         text: 'Fresh answer',
         deltas: [
-          { offset: 0, text: 'Stale' },
+          { offset: 0, text: 'Старт' },
           { offset: 0, text: 'Fresh' },
           { offset: 5, text: ' answer' },
         ],
         pauses: [1000],
-        // The failed attempt is a row too: the request as input (an estimate), the 5 streamed characters as 2 tokens.
+        // The attempt failed after its answer began, so it is a row too: the request as input (an estimate),
+        // the 5 streamed Cyrillic characters as 10 bytes — 3 tokens, not the 2 of a character count.
         ledgerRows: [
           {
             ...TURN_ROW,
-            usage: { inputTokens: expect.any(Number), outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            usage: { inputTokens: expect.any(Number), outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
           },
           { ...TURN_ROW, usage: LEDGER_USAGE },
         ],
@@ -278,7 +280,11 @@ interface VerdictRow {
   /** The result kind of `call` (with the refusal reason), or `completeText`'s text or `rejects`. */
   readonly outcome: string;
   readonly providerCalls: number;
-  readonly ledgerPrices: readonly ModelPrice[];
+  /**
+   * The ledger rows: the price and the usage — the provider's (`LEDGER_USAGE`), or for an unfinished attempt
+   * the output tokens of its estimate; the input tokens of an estimate are counted from the sent request.
+   */
+  readonly ledgerRows: readonly { readonly price: ModelPrice; readonly estimatedOutputTokens?: number }[];
   readonly audits: readonly AccessDeniedEntry[];
 }
 
@@ -309,7 +315,7 @@ function deniedTitle(reason: string): AccessDeniedEntry {
 }
 
 // UC-6, DC-7, KD-3, KD-4.
-describe('the model verdict comes before the first attempt: a refusal makes no call, every attempt that reached the provider is recorded at the verdict\'s price, retries do not ask again, and a refused title calls the audit hook once', () => {
+describe('the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict\'s price, an attempt the provider rejected before any output is not, retries do not ask again, and a refused title calls the audit hook once', () => {
   it.each<[string, VerdictRow]>([
     [
       'a refused call does not start: no provider call and no ledger row',
@@ -319,19 +325,20 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         attempts: [],
         outcome: 'not_started quota_exhausted',
         providerCalls: 0,
-        ledgerPrices: [],
+        ledgerRows: [],
         audits: [],
       },
     ],
     [
-      "a call cancelled in the middle of its answer rejects and leaves exactly one ledger row at the verdict's price",
+      "a call cancelled in the middle of its answer rejects and leaves exactly one ledger row at the verdict's price, estimated from UTF-8 bytes",
       {
         act: 'call',
         verdict: { kind: 'allowed', price: OTHER_PRICE },
-        attempts: [{ parts: ['half an ans'], cancelled: true }],
+        // 12 characters, 23 bytes: 6 tokens, where a character count would give 3.
+        attempts: [{ parts: ['половина', ' отв'], cancelled: true }],
         outcome: 'rejects',
         providerCalls: 1,
-        ledgerPrices: [OTHER_PRICE],
+        ledgerRows: [{ price: OTHER_PRICE, estimatedOutputTokens: 6 }],
         audits: [],
       },
     ],
@@ -343,19 +350,23 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         attempts: [{ parts: ['ok'] }],
         outcome: 'answer',
         providerCalls: 1,
-        ledgerPrices: [OTHER_PRICE],
+        ledgerRows: [{ price: OTHER_PRICE }],
         audits: [],
       },
     ],
     [
-      'a 529 retry does not ask the gate again, and each attempt is a ledger row',
+      'a 529 on all three attempts does not ask the gate again and leaves no ledger row: the provider rejected each before any output',
       {
         act: 'call',
         verdict: { kind: 'allowed', price: VERDICT_PRICE },
-        attempts: [{ parts: [], failWith: 529 }, { parts: ['ok'] }],
-        outcome: 'answer',
-        providerCalls: 2,
-        ledgerPrices: [VERDICT_PRICE, VERDICT_PRICE],
+        attempts: [
+          { parts: [], failWith: 529 },
+          { parts: [], failWith: 529 },
+          { parts: [], failWith: 529 },
+        ],
+        outcome: 'model_error',
+        providerCalls: 3,
+        ledgerRows: [],
         audits: [],
       },
     ],
@@ -367,7 +378,7 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         attempts: [],
         outcome: 'rejects',
         providerCalls: 0,
-        ledgerPrices: [],
+        ledgerRows: [],
         audits: [deniedTitle('quota_exhausted')],
       },
     ],
@@ -379,13 +390,14 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         attempts: [],
         outcome: 'rejects',
         providerCalls: 0,
-        ledgerPrices: [],
+        ledgerRows: [],
         audits: [],
       },
     ],
   ])('%s', async (_, row) => {
     const verdictAsks: string[] = [];
-    const ledgerPrices: ModelPrice[] = [];
+    const ledgerRows: ModelCallRecord[] = [];
+    let sent: AgentTurnCall | undefined;
     const audits: AccessDeniedEntry[] = [];
     let providerCalls = 0;
     const cancel = new AbortController();
@@ -395,12 +407,13 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
       turnClient: {
         streamTurn: (call, options) => {
           providerCalls += 1;
+          sent = call;
           return port.streamTurn(call, options);
         },
       },
       ledger: {
         record: async (call) => {
-          ledgerPrices.push(call.price);
+          ledgerRows.push(call);
           return { callId: 'model-call-1', costUsd: 0 };
         },
       },
@@ -435,7 +448,7 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
               agentName: 'chat',
               model: 'anthropic/claude-turn',
               instructions: 'You are a chat.',
-              messages: [{ role: 'user', content: 'Hi' }],
+              messages: [{ role: 'user', content: 'Привет' }],
               tools: [],
               streamsText: false,
               signal: cancel.signal,
@@ -460,7 +473,25 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
       row.act === 'call' ? 'owner-1 anthropic/claude-turn' : 'owner-1 anthropic/claude-default',
     ]);
     expect(providerCalls).toBe(row.providerCalls);
-    expect(ledgerPrices).toEqual(row.ledgerPrices);
+    // The input of an estimate is the sent request in UTF-8 bytes, four to a token (these calls have no tools).
+    const sentBytes =
+      sent === undefined
+        ? 0
+        : Buffer.byteLength(sent.instructions, 'utf8') + Buffer.byteLength(JSON.stringify([sent.messages, []]), 'utf8');
+    expect(ledgerRows.map(({ price, usage }) => ({ price, usage }))).toEqual(
+      row.ledgerRows.map(({ price, estimatedOutputTokens }) => ({
+        price,
+        usage:
+          estimatedOutputTokens === undefined
+            ? LEDGER_USAGE
+            : {
+                inputTokens: Math.ceil(sentBytes / 4),
+                outputTokens: estimatedOutputTokens,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+              },
+      })),
+    );
     expect(audits).toEqual(row.audits);
   });
 });

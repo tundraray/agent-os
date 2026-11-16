@@ -85,8 +85,9 @@ async function register(
 
 /**
  * Connects the administrator's account on `server` as a browser would: `.../connect` → the fixture's
- * authorization address, which answers with a code at once → the API's return with the session cookie,
- * which must land on `?connected=1`. Redirects are read, not followed, so the cookie goes only to the API.
+ * authorization address, which answers with a code at once → the API's return address of this server
+ * (`/api/mcp/oauth/callback/<server>`, taken from the `Location`) with the session cookie, which must land on
+ * `?connected=1`. Redirects are read, not followed, so the cookie goes only to the API.
  */
 async function connectAdminAccount(
   api: string,

@@ -34,8 +34,10 @@ export function runName(base: string): string {
 export const LOGS_SERVER = runName('logs');
 export const BACKOFFICE_SERVER = runName('backoffice');
 
-/** The OAuth return address the tests register servers with; the tests never open it. */
-const MCP_REDIRECT_URL = 'http://localhost:3000/api/mcp/oauth/callback';
+/** The OAuth return address of `server` the tests register it with; the tests never open it. */
+function mcpRedirectUrl(server: string): string {
+  return `http://localhost:3000/api/mcp/oauth/callback/${encodeURIComponent(server)}`;
+}
 
 /** The registry part of the package the helpers need. */
 type McpOf = Pick<Agents, 'mcp'>;
@@ -46,8 +48,6 @@ export interface TestServer {
   readonly mode: McpServerMode;
   /** Required for `shared`. */
   readonly sharedToken?: string;
-  /** {@link MCP_REDIRECT_URL} by default. */
-  readonly redirectUrl?: string;
 }
 
 /** Deletes the server named `name` when the registry has it. */
@@ -75,7 +75,7 @@ async function registerServer(
   const common = {
     name: server.name,
     url: server.url,
-    redirectUrl: server.redirectUrl ?? MCP_REDIRECT_URL,
+    redirectUrl: mcpRedirectUrl(server.name),
   };
   if (server.mode === 'oauth')
     return agents.mcp.register({ ...common, mode: 'oauth' });

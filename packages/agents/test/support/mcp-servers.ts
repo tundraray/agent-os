@@ -32,10 +32,12 @@ export const BACKOFFICE_SERVER = runName('backoffice');
 export const TRACKER_SERVER = runName('tracker');
 
 /**
- * The OAuth return address the tests register and connect with. The tests never open it: `connectAccount`
- * reads the code from the authorization server's redirect.
+ * The OAuth return address of `server` the tests register and connect with. The tests never open it:
+ * `connectAccount` reads the code, and the server of the address, from the authorization server's redirect.
  */
-const MCP_REDIRECT_URL = 'http://localhost:3000/api/mcp/oauth/callback';
+function mcpRedirectUrl(server: string): string {
+  return `http://localhost:3000/api/mcp/oauth/callback/${encodeURIComponent(server)}`;
+}
 
 /** The registry part of the package the helpers need. */
 type McpOf = Pick<Agents, 'mcp'>;
@@ -46,8 +48,6 @@ export interface TestServer {
   readonly mode: McpServerMode;
   /** Required for `shared`. */
   readonly sharedToken?: string;
-  /** {@link MCP_REDIRECT_URL} by default. */
-  readonly redirectUrl?: string;
 }
 
 /** Deletes the server named `name` when the registry has it. */
@@ -65,7 +65,7 @@ export async function removeServer(agents: McpOf, name: string): Promise<void> {
  */
 export async function registerServer(agents: McpOf, server: TestServer): Promise<McpServerWrite> {
   await removeServer(agents, server.name);
-  const common = { name: server.name, url: server.url, redirectUrl: server.redirectUrl ?? MCP_REDIRECT_URL };
+  const common = { name: server.name, url: server.url, redirectUrl: mcpRedirectUrl(server.name) };
   if (server.mode === 'oauth') return agents.mcp.register({ ...common, mode: 'oauth' });
   if (server.sharedToken === undefined) throw new Error(`Shared server ${server.name} needs a shared token`);
   return agents.mcp.register({ ...common, mode: 'shared', sharedToken: server.sharedToken });
@@ -90,8 +90,8 @@ export async function registerFixtureServers(
 /**
  * Connects the account of `ownerId` on the `oauth` server `server` as a browser would: `beginConnect`, the
  * authorization address opened with `fixture_account` (the fixture signs that account in and redirects at
- * once; the redirect is read, not followed), then `finishConnect` with the redirect's `code`, `state` and
- * `iss`. With `isAdmin` the connection is the admin's account of the server.
+ * once; the redirect is read, not followed), then `finishConnect` with the server of the redirect's path and
+ * its `code`, `state` and `iss`. With `isAdmin` the connection is the admin's account of the server.
  */
 export async function connectAccount(
   harness: { readonly agents: McpOf },
@@ -104,7 +104,7 @@ export async function connectAccount(
     ownerId,
     server,
     target: isAdmin ? 'admin' : 'employee',
-    redirectUrl: MCP_REDIRECT_URL,
+    redirectUrl: mcpRedirectUrl(server),
   });
   if (begun.kind !== 'redirect') throw new Error(`Connecting ${ownerId} to ${server} was refused`);
   const authorizationUrl = new URL(begun.authorizationUrl);
@@ -114,10 +114,12 @@ export async function connectAccount(
   if (location === null) {
     throw new Error(`The authorization address answered ${response.status} without a redirect`);
   }
-  const back = new URL(location).searchParams;
+  const returned = new URL(location);
+  const back = returned.searchParams;
   return harness.agents.mcp.finishConnect({
     ownerId,
     isAdmin,
+    server: decodeURIComponent(returned.pathname.split('/').at(-1) ?? ''),
     state: back.get('state') ?? '',
     ...optionalParam(back, 'code'),
     ...optionalParam(back, 'iss'),

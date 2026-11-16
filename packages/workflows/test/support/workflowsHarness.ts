@@ -76,8 +76,8 @@ declare module 'vitest' {
  */
 export const LOGS_SERVER = `logs-t${inject('mcpRunId')}`;
 
-/** The OAuth return address a registration names; a shared-token server never uses it. */
-const MCP_REDIRECT_URL = 'http://localhost:3000/api/mcp/oauth/callback';
+/** The OAuth return address the registration of {@link LOGS_SERVER} names; a shared-token server never uses it. */
+const MCP_REDIRECT_URL = `http://localhost:3000/api/mcp/oauth/callback/${LOGS_SERVER}`;
 
 /** Turns of the test root: enough for any conversation of a test. */
 const ROOT_MAX_TURNS = 40;

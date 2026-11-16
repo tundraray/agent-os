@@ -18,7 +18,7 @@
 //   too. Only `AGENT_TURN_CLIENT` is the scripted model; MCP is the fixture PROCESS over HTTP with its authorization server (KD-7): its
 //   counters (`stats`: authorizations and code exchanges per account) are the proof that no code was exchanged. The test plays the browser
 //   (support/mcp-browser.ts): GET the connect route without following redirects, GET the authorization URL on the fixture, take
-//   `code`/`state`/`iss` from its 302 and GET `/api/mcp/oauth/callback` with a cookie (or none).
+//   `code`/`state`/`iss` from its 302 and GET that server's `/api/mcp/oauth/callback/<server>` with a cookie (or none).
 // Mock boundary: the model. Real: SessionGuard, `@AdminOnly`, `AuditLog`, controllers, `Agents.mcp`, Postgres, the fixture process.
 //
 // NOT here on purpose: the 401/closed-by-default proof of every new route (identity INT-1's route walk reads the router's own list, so the new
@@ -781,6 +781,29 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       // When: Аня's own return of that request comes after; Then: the request is spent, it fails the same way
       const anyaLate = await back(anya, anyaFirst);
       expect(anyaLate.headers.location).toBe(
+        `${web}/account?error=connect_failed`,
+      );
+      expect([
+        await ownersOn(BACKOFFICE_SERVER),
+        await exchangesOf('anya'),
+      ]).toEqual([[admin.id], 0]);
+      // When: Аня's own valid code and state of a new request come back at ANOTHER server's return address
+      const anyaElsewhere = await authorize(
+        await beginConnect(app, anya, employeeConnect(BACKOFFICE_SERVER)),
+        {
+          account: 'anya',
+        },
+      );
+      const elsewhere = await back(anya, {
+        ...anyaElsewhere,
+        server: LOGS_SERVER,
+      });
+      // Then: refused; the request is consumed, so its return at its own address fails too; nothing stored, no code exchanged
+      expect([elsewhere.status, elsewhere.headers.location]).toEqual([
+        302,
+        `${web}/account?error=connect_failed&server=${BACKOFFICE_SERVER}`,
+      ]);
+      expect((await back(anya, anyaElsewhere)).headers.location).toBe(
         `${web}/account?error=connect_failed`,
       );
       expect([

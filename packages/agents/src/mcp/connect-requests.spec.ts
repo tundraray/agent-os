@@ -50,7 +50,7 @@ describe('ConnectRequests', () => {
         server: 'sentry',
         target: 'employee',
         codeVerifier: 'verifier',
-        redirectUrl: 'https://agent-os.test/api/mcp/oauth/callback',
+        redirectUrl: 'https://agent-os.test/api/mcp/oauth/callback/backoffice',
         issuer: 'https://auth.sentry.test',
       });
       const presented = state === 'own' ? opened.state : 'not-a-state';

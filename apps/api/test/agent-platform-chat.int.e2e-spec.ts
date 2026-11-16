@@ -2470,8 +2470,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           messageId: null,
         });
 
-        // Then: after the three attempts the title stays empty, while the message itself was accepted and
-        // answered; each failed attempt reached the provider, so each is a ledger row without a task
+        // Then: after the three attempts the title stays empty and no ledger row is written for it (the
+        // provider rejected each attempt before any output), while the message itself was accepted and answered
         await titles.called(callsBeforeFailure + 3);
         await untilIdle(
           api,
@@ -2480,13 +2480,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'the answer despite the failed title',
         );
         expect((await api.getThread(failing.id)).title).toBeNull();
-        expect(
-          await waitFor(
-            () => ledgerCalls(harness, INT3.b.id),
-            (counts) => counts.withoutTask === 4,
-            'the ledger rows of the failed title attempts',
-          ),
-        ).toEqual({ agentCalls: 2, withoutTask: 4 });
+        expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
+          agentCalls: 2,
+          withoutTask: 1,
+        });
 
         // Case 3 - Given: the title model answers again; When: the next message is sent
         harness.model.completeText({ text: 'Failed then retried' });
@@ -2508,7 +2505,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
           agentCalls: 3,
-          withoutTask: 5,
+          withoutTask: 2,
         });
 
         // Case 4 - Given: the title call is held; When: the first message is sent
@@ -2540,13 +2537,13 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         await waitFor(
           () => ledgerCalls(harness, INT3.b.id),
-          (counts) => counts.withoutTask === 6,
+          (counts) => counts.withoutTask === 3,
           'the ledger row of the held title call',
         );
         expect((await api.getThread(renamed.id)).title).toBe(manualTitle);
         expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
           agentCalls: 4,
-          withoutTask: 6,
+          withoutTask: 3,
         });
 
         // Then: every title call was made from the conversation's first message, the retry included (Notes 5(в))

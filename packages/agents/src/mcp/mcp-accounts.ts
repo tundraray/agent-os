@@ -51,7 +51,7 @@ export interface McpConnectBegin {
   readonly ownerId: string;
   readonly server: string;
   readonly target: ConnectTarget;
-  /** `<public address>/api/mcp/oauth/callback`, built by the controller (ADR-0014). */
+  /** The server's own return address, `<public address>/api/mcp/oauth/callback/<server>`, built by the controller (ADR-0014). */
   readonly redirectUrl: string;
 }
 
@@ -64,6 +64,8 @@ export interface McpConnectReturn {
   readonly ownerId: string;
   /** The session's admin right at the moment of the return (DC-13). */
   readonly isAdmin: boolean;
+  /** The server of the return address the callback arrived at (its path). */
+  readonly server: string;
   readonly state: string;
   readonly code?: string;
   readonly iss?: string;
@@ -228,8 +230,9 @@ export class McpAccounts {
 
   /**
    * The return from the authorization server (DC-5, DC-13): the request is taken once and only by its own
-   * employee; an `error` of the authorization server, a missing or foreign `iss` (checked by the SDK before
-   * the code is redeemed), or an admin target without the admin right end it without an exchange. Otherwise
+   * employee; a return at another server's address than the request's, an `error` of the authorization
+   * server, a missing or foreign `iss` (checked by the SDK before the code is redeemed), or an admin target
+   * without the admin right end it without an exchange. Otherwise
    * the code is exchanged with the PKCE verifier and the account is stored.
    */
   async finish(input: McpConnectReturn): Promise<McpConnectFinish> {
@@ -248,11 +251,15 @@ export class McpAccounts {
       target: request.target,
       requestId: request.id,
     };
-    const ended = (outcome: McpConnectOutcome, reason?: string): McpConnectFinish => {
+    const ended = (outcome: McpConnectOutcome, reason?: string, details: LogFields = {}): McpConnectFinish => {
       if (outcome === 'connected') this.options.logger.info('mcp connect returned', { ...fields, outcome });
-      else this.options.logger.warn('mcp connect returned', { ...fields, outcome, reason });
+      else this.options.logger.warn('mcp connect returned', { ...fields, ...details, outcome, reason });
       return { outcome, request: { server: request.server, target: request.target } };
     };
+    // Each server has its own return address: a code that came back at another server's is not this request's.
+    if (input.server !== request.server) {
+      return ended('connect_failed', 'server_mismatch', { returnedAt: input.server });
+    }
     if (input.error !== undefined) return ended('connect_failed', `authorization_${input.error}`);
     if (request.target === 'admin' && !input.isAdmin) return ended('access_denied', 'not_admin');
     if (input.code === undefined) return ended('connect_failed', 'no_code');

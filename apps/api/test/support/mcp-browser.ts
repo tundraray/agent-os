@@ -8,8 +8,10 @@ import { apiRequest, type Session } from './session.js';
  * сотрудника»): redirects are read, never followed, so the session cookie goes only to the API.
  */
 
-/** What the authorization server put on its redirect back to the platform. */
+/** Where the authorization server redirected back to — the server of the return address — and with what. */
 export interface OAuthReturn {
+  /** The last segment of the return address: `/api/mcp/oauth/callback/<server>`. */
+  readonly server: string;
   readonly state?: string;
   readonly code?: string;
   readonly iss?: string;
@@ -57,9 +59,11 @@ export async function authorize(
       `The authorization address answered ${answer.status}: ${await answer.text()}`,
     );
   }
-  const back = new URL(location).searchParams;
+  const returned = new URL(location);
+  const back = returned.searchParams;
   const param = (name: keyof OAuthReturn) => back.get(name) ?? undefined;
   return {
+    server: decodeURIComponent(returned.pathname.split('/').at(-1) ?? ''),
     state: param('state'),
     code: param('code'),
     iss: param('iss'),
@@ -67,16 +71,21 @@ export async function authorize(
   };
 }
 
-/** `GET /api/mcp/oauth/callback` with `params`, as `session` or without a cookie (`null`). */
+/** `GET /api/mcp/oauth/callback/<server>` with the other `params`, as `session` or without a cookie (`null`). */
 export function returnTo(
   app: INestApplication<App>,
   session: Session | null,
-  params: OAuthReturn,
+  { server, ...params }: OAuthReturn,
 ): Promise<Response> {
   const query = new URLSearchParams(
     Object.entries(params).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
-  return apiRequest(app, session, 'get', `/mcp/oauth/callback?${query}`);
+  return apiRequest(
+    app,
+    session,
+    'get',
+    `/mcp/oauth/callback/${encodeURIComponent(server)}?${query}`,
+  );
 }

@@ -71,7 +71,7 @@ export interface McpServerRemoval {
   readonly after: null;
 }
 
-/** Registration as the admin sent it, with the OAuth return address the controller built. */
+/** Registration as the admin sent it, with the server's own OAuth return address the controller built. */
 export type McpServerRegistration = RegisterMcpServerBody & { readonly redirectUrl: string };
 
 /**
@@ -341,7 +341,7 @@ export class McpRegistry {
   /**
    * KD-4: the server answers a request without a token with 401; its protected-resource metadata names the
    * authorization server, whose metadata has a registration endpoint and PKCE `S256`; the platform registers
-   * as a public client with one return address. OAuth support is decided by the protected-resource metadata,
+   * as a public client with one return address, the server's own. OAuth support is decided by the protected-resource metadata,
    * never by a fallback to the server's origin.
    */
   private async registerOAuthClient(
