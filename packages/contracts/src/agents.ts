@@ -58,6 +58,7 @@ export const ToolOutcomeSchema = z.enum([
   'rejected',
   'interrupted',
   'unknown',
+  'auth_required',
 ]);
 export type ToolOutcome = z.infer<typeof ToolOutcomeSchema>;
 

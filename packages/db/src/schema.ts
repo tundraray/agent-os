@@ -9,6 +9,7 @@ import {
   IDLE_MINUTES_DEFAULT,
   IDLE_MINUTES_MAX,
   IDLE_MINUTES_MIN,
+  McpServerModeSchema,
   MessageStatusSchema,
   ProviderTypeSchema,
   TaskStatusSchema,
@@ -450,6 +451,73 @@ export const agentCodeCalls = app.table(
       'agent_code_calls_refusal_reason_check',
       isOneOf(t.refusalReason, ToolRefusalReasonSchema.options),
     ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// MCP registry and employee accounts (enterprise-access/design-mcp-connect.md, Data Model, KD-1).
+// Owned by the `agents` package (ADR-0014). Tokens and the client secret are stored as is.
+// ---------------------------------------------------------------------------------------------
+
+export const agentMcpServers = app.table(
+  'agent_mcp_servers',
+  {
+    /** Never changes after registration: tool names and call history carry it. */
+    name: text('name').primaryKey(),
+    url: text('url').notNull(),
+    mode: text('mode').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    /** Tools as the tool set is built from them without network; null until first listed. */
+    tools: jsonb('tools'),
+    /** Set exactly for mode `shared`. */
+    sharedToken: text('shared_token'),
+    /** Authorization server metadata found at registration (issuer and endpoints). */
+    oauthServer: jsonb('oauth_server'),
+    oauthClientId: text('oauth_client_id'),
+    /** Null when the authorization server issued no secret. */
+    oauthClientSecret: text('oauth_client_secret'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check('agent_mcp_servers_mode_check', isOneOf(t.mode, McpServerModeSchema.options)),
+    check(
+      'agent_mcp_servers_shared_token_check',
+      sql`(${t.mode} = ${literal(McpServerModeSchema.enum.shared)}) = (${t.sharedToken} is not null)`,
+    ),
+    /** Invariant 2: an enabled server always has its tool list. */
+    check('agent_mcp_servers_enabled_tools_check', sql`not ${t.enabled} or ${t.tools} is not null`),
+    check(
+      'agent_mcp_servers_oauth_client_check',
+      sql`${t.mode} <> ${literal(McpServerModeSchema.enum.oauth)} or ${t.oauthClientId} is not null`,
+    ),
+  ],
+);
+
+/** Personal credentials of an employee on a server; deleting the server deletes them (AC-13.6). */
+export const agentMcpAccounts = app.table(
+  'agent_mcp_accounts',
+  {
+    /** Employee id; text without FK (ADR-0012). */
+    ownerId: text('owner_id').notNull(),
+    server: text('server')
+      .notNull()
+      .references(() => agentMcpServers.name, { onDelete: 'cascade' }),
+    /** How the token was obtained; `oauth` is the only type so far. */
+    tokenType: text('token_type').notNull(),
+    accessToken: text('access_token').notNull(),
+    refreshToken: text('refresh_token'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    connectedAt: timestamp('connected_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    refreshedAt: timestamp('refreshed_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ownerId, t.server] }),
+    check('agent_mcp_accounts_token_type_check', isOneOf(t.tokenType, ['oauth'])),
   ],
 );
 

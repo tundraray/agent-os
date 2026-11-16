@@ -28,6 +28,8 @@ const MALFORMED_LINE = 'fixture fault: this line is not JSON\n';
 export interface FaultTransportOptions {
   schedule: FaultSchedule;
   log: CallLog;
+  /** The source this process serves, written into the call log. */
+  source: string;
   stdin?: Readable;
   stdout?: Writable;
 }
@@ -116,7 +118,7 @@ export class FaultTransport implements Transport {
     const params: Record<string, unknown> = request.params ?? {};
     const tool = typeof params.name === 'string' ? params.name : '';
     const args = isRecord(params.arguments) ? params.arguments : {};
-    const call = { tool, argsHash: argsHash(args) };
+    const call = { source: this.options.source, account: 'shared', tokenId: null, tool, argsHash: argsHash(args) };
     return this.options.log.record(call, (occurrence) => this.options.schedule.match({ ...call, occurrence }));
   }
 

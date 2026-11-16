@@ -174,6 +174,7 @@ const START_HIDDEN_OUTCOMES = new Set<ToolOutcome>(["success", "rejected"]);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
   "tool_error",
   "transport_failure",
+  "auth_required",
   "refused",
   "rejected",
   "interrupted",

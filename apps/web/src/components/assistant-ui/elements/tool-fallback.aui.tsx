@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useState } from "react";
+import Link from "next/link";
+import { memo, useState, type ReactNode } from "react";
 import {
   BanIcon,
   ChevronRightIcon,
@@ -10,6 +11,7 @@ import {
   CircleQuestionMarkIcon,
   CircleStopIcon,
   CircleXIcon,
+  KeyRoundIcon,
   UnplugIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +31,7 @@ import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
+import { ACCOUNT_PATH } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 import {
   CollapsibleRoot as Collapsible,
@@ -36,7 +39,7 @@ import {
   CollapsibleTrigger,
 } from "./collapsible-root";
 
-/** The ten outcomes of tool-call.md: the eight finished ones and two of an open call. */
+/** The eleven outcomes of tool-call.md: the nine finished ones and two of an open call. */
 type CallOutcome = ToolOutcome | "running" | "awaiting_confirmation";
 
 type OutcomeLook = { label: string; Icon: LucideIcon; tone: string; showsResult: boolean };
@@ -49,6 +52,7 @@ const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
   tool_error: { label: "ошибка инструмента", Icon: CircleXIcon, tone: "text-destructive", showsResult: false },
   transport_failure: { label: "нет связи с сервером", Icon: UnplugIcon, tone: "text-destructive", showsResult: false },
   refused: { label: "отказано", Icon: BanIcon, tone: "text-destructive", showsResult: false },
+  auth_required: { label: "нужен вход в аккаунт", Icon: KeyRoundIcon, tone: "text-warning", showsResult: false },
   awaiting_confirmation: { label: "ждёт подтверждения", ...agentStatusGlyph("awaiting_confirmation"), showsResult: false },
   rejected: { label: "отклонено", Icon: CircleMinusIcon, tone: "text-muted-foreground", showsResult: false },
   interrupted: { label: "прервано", Icon: CircleStopIcon, tone: "text-muted-foreground", showsResult: false },
@@ -116,6 +120,36 @@ function refusalOf(artifact: unknown): { text: string; hint: string | undefined 
   return text !== undefined ? { text, hint: undefined } : { text: PLATFORM_REFUSAL_TEXT, hint: code ?? undefined };
 }
 
+/**
+ * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
+ * sign in to the server's account; other outcomes have none.
+ */
+function reasonLine(
+  outcome: CallOutcome,
+  artifact: unknown,
+  server: string,
+): { content: ReactNode; hint: string | undefined } | null {
+  if (outcome === "refused") {
+    const refusal = refusalOf(artifact);
+    return { content: refusal.text, hint: refusal.hint };
+  }
+  if (outcome === "auth_required") {
+    return {
+      content: (
+        <>
+          Подключите аккаунт {server} в разделе «
+          <Link href={ACCOUNT_PATH} className="text-foreground underline underline-offset-2">
+            Мой доступ
+          </Link>
+          »
+        </>
+      ),
+      hint: undefined,
+    };
+  }
+  return null;
+}
+
 /** A result that is JSON text reads as its value; any other result stays as it is. */
 function parsedResult(result: unknown): unknown {
   if (typeof result !== "string") return result;
@@ -155,7 +189,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const at =
     textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
   const time = formatTime(at);
-  const refusal = outcome === "refused" ? refusalOf(artifact) : null;
+  const reason = reasonLine(outcome, artifact, server ?? toolName);
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =
@@ -209,13 +243,13 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           </span>
         ) : null}
       </CollapsibleTrigger>
-      {refusal !== null ? (
+      {reason !== null ? (
         <p
-          data-slot="tool-fallback-refusal"
-          title={refusal.hint}
+          data-slot="tool-fallback-reason"
+          title={reason.hint}
           className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4"
         >
-          {refusal.text}
+          {reason.content}
         </p>
       ) : null}
       <CollapsibleContent

@@ -29,6 +29,7 @@ if (callLogPath === undefined) {
   const transport = new FaultTransport({
     schedule: faultsPath === undefined ? FaultSchedule.empty() : FaultSchedule.fromFile(faultsPath),
     log: new CallLog(callLogPath),
+    source,
   });
   await new FixtureServer(dataset, source, (requestId) => transport.takeResultFault(requestId)).connect(
     transport,

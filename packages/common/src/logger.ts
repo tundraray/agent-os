@@ -51,6 +51,8 @@ const SECRET_FIELD_NAMES = new Set([
   'sessiontoken',
   'currentpassword',
   'newpassword',
+  'sharedtoken',
+  'tokens',
 ]);
 
 /** Whether a field of this name holds a secret (case-insensitive); the logger and the audit log redact it. */

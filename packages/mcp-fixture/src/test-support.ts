@@ -19,6 +19,12 @@ export const fixtureServerPath: string = fileURLToPath(new URL('./server.js', im
 /** One `tools/call` the fixture received, as its call log stores it. */
 export interface FixtureLogEntry {
   readonly seq: number;
+  /** The source that received the call (`logs`, `backoffice`, `tracker`). */
+  readonly source: string;
+  /** `shared` for the shared token (and stdio), the account name for an OAuth token of the fixture. */
+  readonly account: string;
+  /** Sequence number of the fixture's OAuth access token (not its value); null for `shared`. */
+  readonly tokenId: number | null;
   /** The tool's name on its server (`get_trace`, not `mcp__logs__get_trace`). */
   readonly tool: string;
   readonly argsHash: string;
@@ -105,9 +111,9 @@ export interface FixtureFiles {
   readonly dir: string;
   /** `FIXTURE_CALL_LOG`. */
   readonly callLog: string;
-  /** `FIXTURE_FAULTS`: read by a fixture process when it starts. */
+  /** `FIXTURE_FAULTS`: read by a stdio fixture process when it starts, by the HTTP process on every call. */
   readonly faults: string;
-  /** Replaces the fault rules; takes effect for processes started afterwards (write before `start`). */
+  /** Replaces the fault rules: for stdio processes started afterwards, for the HTTP process from the next call. */
   setFaults(rules: readonly FixtureFaultRule[]): void;
   /** A file latch in the test's directory. */
   latch(name: string): FileLatch;
