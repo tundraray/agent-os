@@ -51,18 +51,35 @@
 //   AC-24.1 INT-1 | AC-24.2 INT-1 | AC-25.1 INT-2 | AC-25.2 INT-2 (panel half: confirmed DELETE, list, notice; rights loss - `access`) | AC-25.3 INT-2
 //   AC-26.1 INT-3 | AC-26.3 INT-3 | AC-26.4 INT-3 | AC-27.1 INT-3 | AC-28.2 INT-2 | AC-29.2 INT-2 | NFR-02 (web half) INT-2 + INT-3 | NFR-05 not automated
 
-import { IdentityErrorCode } from '@agent-os/contracts';
+import {
+  AccessErrorCode,
+  IdentityErrorCode,
+  type AdminUserDetail,
+  type CatalogModel,
+  type CreateCatalogModelBody,
+  type CreateGrantBody,
+  type CreateLocalUserBody,
+  type Grant,
+  type RoleDetail,
+  type UpdateRoleBody,
+} from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
-import { trackRequests, type TrackedRequests } from '@/test/admin-support';
+import { expectNowhere, trackRequests, type TrackedRequests } from '@/test/admin-support';
 import {
+  adminUserDetail,
   adminUserPage,
   adminUserSummary,
+  catalogModel,
   currentUser,
   deferred,
   fixtureId,
+  grant,
+  mcpServerSummary,
+  mcpServerView,
+  roleDetail,
   roleSummary,
   threadList,
   threadSummary,
@@ -94,6 +111,254 @@ async function followLink(user: UserEvent, link: HTMLElement, setPathname: (path
   link.addEventListener('click', (event) => event.preventDefault());
   await user.click(link);
   setPathname(href ?? '');
+}
+
+// INT-2 support -----------------------------------------------------------------------------------------------------------------------------
+
+type Sent = { method: string; path: string; body: unknown };
+
+const isAdminRequest = (path: string): boolean => path.startsWith('/api/admin/');
+
+/** The changes (every method but GET) sent to `/api/admin/*` from request number `from` on, with their JSON bodies. */
+const changesSince = ({ requests }: TrackedRequests, from: number): Sent[] =>
+  requests
+    .slice(from)
+    .filter((request) => isAdminRequest(request.path) && request.method !== 'GET')
+    .map(({ method, path, body }) => ({ method, path, body }));
+
+/** The `/api/admin/*` reads («path?search») started after the last change since request number `from`. */
+function readsAfterChange({ requests }: TrackedRequests, from: number): string[] {
+  const recent = requests.slice(from);
+  const lastChange = recent.findLastIndex((request) => isAdminRequest(request.path) && request.method !== 'GET');
+  return recent
+    .slice(lastChange + 1)
+    .filter((request) => isAdminRequest(request.path) && request.method === 'GET')
+    .map((request) => `${request.path}${request.search}`);
+}
+
+/**
+ * Invariant 4 and «exactly the confirmed request»: since `from` the page sent exactly `sent` (method, path and body
+ * literally), and afterwards read `reread` again.
+ */
+async function expectSent(tracked: TrackedRequests, from: number, sent: Sent[], reread: string): Promise<void> {
+  await waitFor(() => expect(changesSince(tracked, from)).toEqual(sent));
+  await waitFor(() => expect(readsAfterChange(tracked, from)).toContain(reread));
+}
+
+const apiError = (status: number, errorCode: string, message: string, reason?: string): Response =>
+  HttpResponse.json({ statusCode: status, message, errorCode, ...(reason === undefined ? {} : { reason }) }, { status });
+
+const ANYA = fixtureId(2);
+const BORIS = fixtureId(3);
+const BUILTIN_ROLE = fixtureId(10);
+const SRE = fixtureId(100);
+const DUTY = fixtureId(101);
+const SONNET = 'anthropic/claude-sonnet-4-5';
+const HAIKU = 'anthropic/claude-haiku-4-5';
+/** Role grants of «SRE»: one tool the registry still has, one tool it no longer has, one server that is gone. */
+const SRE_TOOL_GRANT = fixtureId(200);
+const ORPHAN_TOOL_GRANT = fixtureId(201);
+const ORPHAN_SERVER_GRANT = fixtureId(202);
+
+const roleRef = (role: RoleDetail): { id: string; name: string } => ({ id: role.id, name: role.name });
+
+/**
+ * The admin API as an in-memory store behind MSW: every change answers from the store and every read returns
+ * the store, so what the screen shows after a change can only come from its new read. A refusal or a held answer
+ * is put in front of a route for one request with `server.use(..., { once: true })`.
+ */
+function adminBackend() {
+  const sre = roleDetail({ id: SRE, name: 'SRE' });
+  const duty = roleDetail({ id: DUTY, name: 'Дежурный' });
+  const builtin = roleDetail({ id: BUILTIN_ROLE, name: 'Супер-администратор', isAdmin: true, builtin: true });
+  const store = {
+    users: [
+      adminUserDetail({ id: ANYA, name: 'Аня Смирнова', email: 'anya@corp.example', roles: [roleRef(sre), roleRef(duty)] }),
+    ] as AdminUserDetail[],
+    // The server's order: by name.
+    roles: [sre, duty, builtin] as RoleDetail[],
+    grants: [
+      grant({ id: SRE_TOOL_GRANT, target: { kind: 'tool', server: 'sentry', tool: 'list_issues' } }),
+      grant({ id: ORPHAN_TOOL_GRANT, target: { kind: 'tool', server: 'sentry', tool: 'delete_issue' } }),
+      grant({ id: ORPHAN_SERVER_GRANT, target: { kind: 'server', server: 'gitlab' } }),
+    ] as Grant[],
+    models: [
+      catalogModel({
+        id: SONNET,
+        name: 'Claude Sonnet 4.5',
+        longContext: {
+          aboveInputTokens: 200_000,
+          prices: { inputUsdPerMTok: 6, outputUsdPerMTok: 22.5, cacheWriteUsdPerMTok: 7.5, cacheReadUsdPerMTok: 0.6 },
+        },
+      }),
+    ] as CatalogModel[],
+  };
+  let nextGrant = 300;
+
+  const user = (id: unknown) => store.users.find((entry) => entry.id === id);
+  const role = (id: unknown) => store.roles.find((entry) => entry.id === id);
+  const userNotFound = () => apiError(404, IdentityErrorCode.USER_NOT_FOUND, 'User not found');
+  const roleNotFound = () => apiError(404, IdentityErrorCode.ROLE_NOT_FOUND, 'Role not found');
+  // The summary schemas drop the detail's extra fields (`adminRight`, `members`).
+  const summaryOf = (detail: AdminUserDetail) => adminUserSummary(detail);
+  const modelName = (id: string): string => store.models.find((model) => model.id === id)?.name ?? '';
+  const withMemberCounts = (entry: RoleDetail): RoleDetail => {
+    const members = store.users
+      .filter((member) => member.roles.some((held) => held.id === entry.id))
+      .map(({ id, name, email }) => ({ id, name, email }));
+    return roleDetail({ ...entry, memberCount: members.length, members });
+  };
+
+  const handlers = [
+    http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
+    // Employees
+    http.get(`${API}/api/admin/users`, () => HttpResponse.json(adminUserPage(store.users.map(summaryOf)))),
+    http.post(`${API}/api/admin/users`, async ({ request }) => {
+      const body = (await request.json()) as CreateLocalUserBody;
+      const created = adminUserDetail({ id: BORIS, login: body.login, name: body.name, email: body.email, lastSignInAt: null });
+      store.users.push(created);
+      return HttpResponse.json(summaryOf(created), { status: 201 });
+    }),
+    http.get(`${API}/api/admin/users/:id`, ({ params }) => {
+      const found = user(params.id);
+      return found === undefined ? userNotFound() : HttpResponse.json(found);
+    }),
+    http.put(`${API}/api/admin/users/:id/password`, ({ params }) =>
+      user(params.id) === undefined ? userNotFound() : new HttpResponse(null, { status: 204 }),
+    ),
+    http.post(`${API}/api/admin/users/:id/:action`, ({ params }) => {
+      const found = user(params.id);
+      if (found === undefined) return userNotFound();
+      found.status = params.action === 'block' ? 'disabled' : 'active';
+      return HttpResponse.json(summaryOf(found));
+    }),
+    http.put(`${API}/api/admin/users/:id/admin`, async ({ params, request }) => {
+      const found = user(params.id);
+      if (found === undefined) return userNotFound();
+      const { enabled } = (await request.json()) as { enabled: boolean };
+      found.adminRight = { ...found.adminRight, personal: enabled };
+      return HttpResponse.json(found);
+    }),
+    http.put(`${API}/api/admin/users/:id/roles/:roleId`, ({ params }) => {
+      const found = user(params.id);
+      const assigned = role(params.roleId);
+      if (found === undefined) return userNotFound();
+      if (assigned === undefined) return roleNotFound();
+      found.roles = [...found.roles, roleRef(assigned)];
+      return HttpResponse.json(found);
+    }),
+    http.delete(`${API}/api/admin/users/:id/roles/:roleId`, ({ params }) => {
+      const found = user(params.id);
+      if (found === undefined) return userNotFound();
+      found.roles = found.roles.filter((held) => held.id !== params.roleId);
+      return HttpResponse.json(found);
+    }),
+    // Roles
+    http.get(`${API}/api/admin/roles`, () =>
+      HttpResponse.json(store.roles.map((entry) => roleSummary(withMemberCounts(entry)))),
+    ),
+    http.get(`${API}/api/admin/roles/:id`, ({ params }) => {
+      const found = role(params.id);
+      return found === undefined ? roleNotFound() : HttpResponse.json(withMemberCounts(found));
+    }),
+    http.patch(`${API}/api/admin/roles/:id`, async ({ params, request }) => {
+      const found = role(params.id);
+      if (found === undefined) return roleNotFound();
+      Object.assign(found, (await request.json()) as UpdateRoleBody);
+      return HttpResponse.json(withMemberCounts(found));
+    }),
+    http.delete(`${API}/api/admin/roles/:id`, ({ params }) => {
+      if (role(params.id) === undefined) return roleNotFound();
+      store.roles = store.roles.filter((entry) => entry.id !== params.id);
+      for (const member of store.users) member.roles = member.roles.filter((held) => held.id !== params.id);
+      return new HttpResponse(null, { status: 204 });
+    }),
+    // Rights
+    http.get(`${API}/api/admin/grants`, ({ request }) => {
+      const search = new URL(request.url).searchParams;
+      const holderId = search.get('roleId') ?? search.get('userId');
+      return HttpResponse.json(store.grants.filter((entry) => entry.holder.id === holderId));
+    }),
+    http.post(`${API}/api/admin/grants`, async ({ request }) => {
+      const body = (await request.json()) as CreateGrantBody;
+      const holderRole = role(body.roleId);
+      const sent = body.target;
+      const target = sent.kind === 'model' ? { ...sent, modelName: modelName(sent.model) } : sent;
+      const created = grant({
+        id: fixtureId((nextGrant += 1)),
+        holder: holderRole === undefined ? { kind: 'user', id: body.userId ?? '' } : { kind: 'role', ...roleRef(holderRole) },
+        effect: body.effect,
+        target,
+        quotaUsd: body.quotaUsd ?? null,
+      });
+      store.grants.push(created);
+      return HttpResponse.json(created, { status: 201 });
+    }),
+    http.patch(`${API}/api/admin/grants/:id`, async ({ params, request }) => {
+      const found = store.grants.find((entry) => entry.id === params.id);
+      if (found === undefined) return apiError(404, AccessErrorCode.GRANT_NOT_FOUND, 'Grant not found');
+      found.quotaUsd = ((await request.json()) as { quotaUsd: number | null }).quotaUsd;
+      return HttpResponse.json(found);
+    }),
+    http.delete(`${API}/api/admin/grants/:id`, ({ params }) => {
+      store.grants = store.grants.filter((entry) => entry.id !== params.id);
+      return new HttpResponse(null, { status: 204 });
+    }),
+    // The registry: `jira` still waits for the administrator's account, so it has no tools.
+    http.get(`${API}/api/admin/mcp-servers`, () =>
+      HttpResponse.json([
+        mcpServerSummary({ name: 'jira', status: 'awaiting_admin_account', toolCount: 0 }),
+        mcpServerSummary({ name: 'sentry', toolCount: 2 }),
+      ]),
+    ),
+    http.get(`${API}/api/admin/mcp-servers/:name`, ({ params }) =>
+      HttpResponse.json(
+        params.name === 'jira'
+          ? mcpServerView({ name: 'jira', status: 'awaiting_admin_account', tools: [] })
+          : mcpServerView({ name: 'sentry' }),
+      ),
+    ),
+    // Models
+    http.get(`${API}/api/admin/models`, () => HttpResponse.json(store.models)),
+    http.post(`${API}/api/admin/models`, async ({ request }) => {
+      const created = catalogModel((await request.json()) as CreateCatalogModelBody);
+      store.models.push(created);
+      return HttpResponse.json(created, { status: 201 });
+    }),
+    http.delete(`${API}/api/admin/models/:id`, ({ params }) => {
+      // The API removes the model's rights and denies with it.
+      const id = decodeURIComponent(String(params.id));
+      store.models = store.models.filter((model) => model.id !== id);
+      store.grants = store.grants.filter((entry) => entry.target.kind !== 'model' || entry.target.model !== id);
+      return new HttpResponse(null, { status: 204 });
+    }),
+  ];
+
+  return { store, handlers };
+}
+
+/** Opens a drop-down field of a form and returns its options as their text («list_issues читает уже есть»). */
+async function openSelect(user: UserEvent, scope: HTMLElement, label: string): Promise<HTMLElement[]> {
+  await user.click(within(scope).getByRole('combobox', { name: label }));
+  return screen.findAllByRole('option');
+}
+
+/** Chooses the option whose text starts with `option` in a drop-down field of a form. */
+async function chooseOption(user: UserEvent, scope: HTMLElement, label: string, option: string): Promise<void> {
+  const options = await openSelect(user, scope, label);
+  const chosen = options.find((candidate) => candidate.textContent?.startsWith(option) === true);
+  if (chosen === undefined) throw new Error(`«${label}» offers no «${option}»`);
+  await user.click(chosen);
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+}
+
+/** The cells of the table row whose first cell holds `text`, as their text. */
+function rowCells(table: HTMLElement, text: string): string[] {
+  const row = within(table)
+    .getAllByRole('row')
+    .find((candidate) => candidate.querySelector('td')?.textContent?.includes(text) === true);
+  if (row === undefined) throw new Error(`no row with «${text}»`);
+  return Array.from(row.querySelectorAll('td'), (cell) => cell.textContent ?? '');
 }
 
 describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
@@ -320,7 +585,536 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: employees, roles, rights and models screens, grant dialog (GR-01), adminApi (users, roles, grants, servers, models), useResource, DataTable, AdminForm, alert-dialog, toast, focus service, logger stand-in, MSW
   // @complexity: high
-  it.todo('INT-2 / UC-2..UC-6 / UC-E6 / UC-E9: local accounts and password reset, roles of an employee, the built-in role, rights and denies with their quotas, the model catalogue, and the confirmed destructive actions send exactly the confirmed request and show the server\'s refusal');
+  it('INT-2 / UC-2..UC-6 / UC-E6 / UC-E9: local accounts and password reset, roles of an employee, the built-in role, rights and denies with their quotas, the model catalogue, and the confirmed destructive actions send exactly the confirmed request and show the server\'s refusal', async () => {
+    // Arrange: an administrator, the admin API as a store (Аня with «SRE» and «Дежурный», three roles, the rights of
+    // «SRE», the registry with `jira` and `sentry`, the catalogue with Sonnet)
+    const { store, handlers } = adminBackend();
+    server.use(
+      http.get(`${API}/api/auth/me`, () =>
+        HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров', email: 'igor@corp.example' })),
+      ),
+      ...handlers,
+    );
+    const api = trackRequests(server);
+    const user = userEvent.setup();
+    const view = renderWithRuntime({ pathname: '/admin/users' });
+    const open = async (pathname: string, title: string): Promise<void> => {
+      view.setPathname(pathname);
+      expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
+    };
+    let mark = 0;
+
+    // Row 1 - a local account (AC-25.3)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Сотрудники' })).toBeInTheDocument();
+    expect(await screen.findByText('Аня Смирнова')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Завести учётную запись' }));
+    const accountDialog = await screen.findByRole('dialog', { name: 'Новая учётная запись' });
+    await user.type(within(accountDialog).getByLabelText('Логин'), 'anya');
+    await user.type(within(accountDialog).getByLabelText('Имя'), 'Борис Ким');
+    await user.type(within(accountDialog).getByLabelText('Почта'), 'boris@corp.example');
+    await user.type(within(accountDialog).getByLabelText('Начальный пароль'), 'Kh7short');
+    mark = api.requests.length;
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): a password of 8 characters sends nothing; the focus is on its field with the rule
+    const passwordField = within(accountDialog).getByLabelText('Начальный пароль');
+    await waitFor(() => expect(passwordField).toHaveFocus());
+    expect(within(accountDialog).getByText('Пароль — от 12 до 256 знаков')).toBeInTheDocument();
+    expect(changesSince(api, mark)).toEqual([]);
+
+    // Act (row 1): a valid password, but the login is taken
+    server.use(
+      http.post(`${API}/api/admin/users`, () => apiError(409, IdentityErrorCode.LOGIN_TAKEN, 'Login is taken'), {
+        once: true,
+      }),
+    );
+    const password = 'Kh7short-Start-2026';
+    await user.type(passwordField, '-Start-2026');
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): «Такой логин уже есть» at «Логин», every field kept
+    expect(await within(accountDialog).findByText('Такой логин уже есть')).toBeInTheDocument();
+    expect(within(accountDialog).getByLabelText('Логин')).toHaveAttribute('aria-invalid', 'true');
+    expect(within(accountDialog).getByLabelText('Имя')).toHaveValue('Борис Ким');
+    expect(within(accountDialog).getByLabelText('Почта')).toHaveValue('boris@corp.example');
+    expect(passwordField).toHaveValue(password);
+
+    // Act (row 1): another login
+    await user.clear(within(accountDialog).getByLabelText('Логин'));
+    await user.type(within(accountDialog).getByLabelText('Логин'), 'boris');
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): two POSTs with the typed fields, the list read again, the row «локальная» with the login, the toast names the login
+    const accountBody = { login: 'anya', name: 'Борис Ким', email: 'boris@corp.example', password };
+    await expectSent(
+      api,
+      mark,
+      [
+        { method: 'POST', path: '/api/admin/users', body: accountBody },
+        { method: 'POST', path: '/api/admin/users', body: { ...accountBody, login: 'boris' } },
+      ],
+      '/api/admin/users',
+    );
+    expect(await screen.findByText('Учётная запись boris заведена')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const users = screen.getByRole('table', { name: 'Сотрудники' });
+    expect(await within(users).findByText('boris · boris@corp.example')).toBeInTheDocument();
+    expect(rowCells(users, 'Борис Ким')[0]).toBe('Борис Кимлокальнаяboris · boris@corp.example');
+    expect(rowCells(users, 'Аня Смирнова')[0]).toBe('Аня Смирноваanya@corp.example');
+    expectNowhere(password);
+
+    // Row 2 - password reset of that employee (AC-25.3, NFR-02)
+    await followLink(user, within(users).getByRole('link', { name: /Борис Ким/ }), view.setPathname);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Борис Ким' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
+    let resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
+    const newPassword = 'Reset-Pass-4471x';
+    await user.type(within(resetDialog).getByLabelText('Новый пароль'), newPassword);
+    mark = api.requests.length;
+    await user.click(within(resetDialog).getByRole('button', { name: 'Сбросить' }));
+
+    // Assert (row 2): one PUT with the password, the notice, a new read; the password is nowhere afterwards
+    await expectSent(
+      api,
+      mark,
+      [{ method: 'PUT', path: `/api/admin/users/${BORIS}/password`, body: { password: newPassword } }],
+      `/api/admin/users/${BORIS}`,
+    );
+    expect(await screen.findByText('Пароль сброшен — передайте новый сотруднику')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expectNowhere(newPassword);
+    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
+    resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
+    expect(within(resetDialog).getByLabelText('Новый пароль')).toHaveValue('');
+    await user.click(within(resetDialog).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Row 3 - the roles of Аня (AC-25.1); she has no local account, so no «Сбросить пароль»
+    await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
+    const anyaRoles = await screen.findByRole('table', { name: 'Роли' });
+    expect(within(anyaRoles).getAllByRole('row').slice(1).map((row) => row.textContent)).toEqual([
+      'SREСнять роль',
+      'ДежурныйСнять роль',
+    ]);
+    expect(screen.queryByRole('button', { name: 'Сбросить пароль' })).toBeNull();
+    mark = api.requests.length;
+    await user.click(within(anyaRoles).getByRole('button', { name: 'Снять роль: Дежурный' }));
+    await expectSent(api, mark, [{ method: 'DELETE', path: `/api/admin/users/${ANYA}/roles/${DUTY}`, body: null }], `/api/admin/users/${ANYA}`);
+    await waitFor(() => expect(within(anyaRoles).queryByRole('button', { name: 'Снять роль: Дежурный' })).toBeNull());
+    expect(within(anyaRoles).getByRole('button', { name: 'Снять роль: SRE' })).toBeInTheDocument();
+
+    // Act (row 3): «Назначить роль» offers only the roles she lacks
+    await user.click(screen.getByRole('button', { name: 'Назначить роль' }));
+    const roleItems = await screen.findAllByRole('menuitem');
+    expect(roleItems.map((item) => item.textContent)).toEqual(['Дежурный', 'Супер-администратор']);
+    mark = api.requests.length;
+    await user.click(screen.getByRole('menuitem', { name: 'Дежурный' }));
+    await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/roles/${DUTY}`, body: null }], `/api/admin/users/${ANYA}`);
+    expect(await within(anyaRoles).findByRole('button', { name: 'Снять роль: Дежурный' })).toBeInTheDocument();
+
+    // Act (row 3): «Дать лично»
+    expect(screen.getByText('нет')).toBeInTheDocument();
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Дать лично' }));
+    await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/admin`, body: { enabled: true } }], `/api/admin/users/${ANYA}`);
+    expect(await screen.findByText('есть: лично')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Снять лично' })).toBeInTheDocument();
+
+    // Row 5 - a personal deny and a personal quota of Аня (AC-28.2, AC-29.2): a deny is sent as a deny, with no quota
+    expect(await screen.findByText('Прав и запретов нет')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Запрет' }));
+    const denyDialog = await screen.findByRole('dialog', { name: 'Добавить запрет' });
+    expect(within(denyDialog).queryByLabelText('Квота за месяц, $')).toBeNull();
+    await user.click(within(denyDialog).getByRole('radio', { name: 'Инструмент сервера' }));
+    await chooseOption(user, denyDialog, 'Сервер', 'sentry');
+    expect((await openSelect(user, denyDialog, 'Инструмент')).map((option) => option.textContent)).toEqual([
+      'list_issuesчитает',
+      'update_issueменяет',
+    ]);
+    await user.click(screen.getByRole('option', { name: /^update_issue/ }));
+    mark = api.requests.length;
+    await user.click(within(denyDialog).getByRole('button', { name: 'Добавить' }));
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'POST',
+          path: '/api/admin/grants',
+          body: { userId: ANYA, effect: 'deny', target: { kind: 'tool', server: 'sentry', tool: 'update_issue' } },
+        },
+      ],
+      `/api/admin/grants?userId=${ANYA}`,
+    );
+    const personal = await screen.findByRole('table', { name: 'Личные права и запреты' });
+    expect(rowCells(personal, 'sentry → update_issue')).toEqual(['sentry → update_issue', 'Запрет', '—', '']);
+
+    await user.click(screen.getByRole('button', { name: 'Право' }));
+    const personalAllow = await screen.findByRole('dialog', { name: 'Добавить право' });
+    await user.click(within(personalAllow).getByRole('radio', { name: 'Модель' }));
+    await chooseOption(user, personalAllow, 'Модель', 'Claude Sonnet 4.5');
+    await user.type(within(personalAllow).getByLabelText('Квота за месяц, $'), '30');
+    mark = api.requests.length;
+    await user.click(within(personalAllow).getByRole('button', { name: 'Добавить' }));
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'POST',
+          path: '/api/admin/grants',
+          body: { userId: ANYA, effect: 'allow', target: { kind: 'model', model: SONNET }, quotaUsd: 30 },
+        },
+      ],
+      `/api/admin/grants?userId=${ANYA}`,
+    );
+    expect(await within(personal).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
+    expect(rowCells(personal, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '30 $', '']);
+
+    // Row 9 - blocking: «Отмена» and Escape send nothing; the confirmation sends one POST while its button is unavailable
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Заблокировать' }));
+    let confirm = await screen.findByRole('alertdialog', { name: 'Заблокировать Аня Смирнова?' });
+    expect(within(confirm).getByText(
+      'Сеансы сотрудника закроются сразу, а работающие агенты закончатся на своём следующем шаге. Беседы и данные сохранятся.',
+    )).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Заблокировать' }));
+    await screen.findByRole('alertdialog', { name: 'Заблокировать Аня Смирнова?' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+
+    const blockAnswer = deferred();
+    server.use(
+      http.post(
+        `${API}/api/admin/users/:id/block`,
+        async ({ params }) => {
+          await blockAnswer.promise;
+          const found = store.users.find((entry) => entry.id === params.id);
+          if (found !== undefined) found.status = 'disabled';
+          return HttpResponse.json(adminUserSummary({ id: ANYA, status: 'disabled' }));
+        },
+        { once: true },
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Заблокировать' }));
+    confirm = await screen.findByRole('alertdialog', { name: 'Заблокировать Аня Смирнова?' });
+    const blockButton = within(confirm).getByRole('button', { name: 'Заблокировать' });
+    await user.click(blockButton);
+    await waitFor(() => expect(blockButton).toBeDisabled());
+    await user.click(blockButton);
+    blockAnswer.resolve();
+    await expectSent(api, mark, [{ method: 'POST', path: `/api/admin/users/${ANYA}/block`, body: null }], `/api/admin/users/${ANYA}`);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(await screen.findByRole('button', { name: 'Разблокировать' })).toBeInTheDocument();
+    expect(screen.getByText('Отключён')).toBeInTheDocument();
+
+    // Row 9 - a 404 of a page action: «Запись не найдена», no text at the action, the employee read again
+    server.use(
+      http.post(`${API}/api/admin/users/:id/unblock`, () => apiError(404, IdentityErrorCode.USER_NOT_FOUND, 'User not found'), {
+        once: true,
+      }),
+    );
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Разблокировать' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Запись не найдена' })).toBeInTheDocument();
+    await expectSent(api, mark, [{ method: 'POST', path: `/api/admin/users/${ANYA}/unblock`, body: null }], `/api/admin/users/${ANYA}`);
+    expect(screen.queryByText(/Не удалось сохранить/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Разблокировать' })).toBeNull();
+
+    // Row 4 - the built-in role (DC-5): first in the list, no «Переименовать» / «Удалить», its admin right cannot be switched off
+    await open('/admin/roles', 'Роли');
+    const roles = await screen.findByRole('table', { name: 'Роли' });
+    expect(within(roles).getAllByRole('row').slice(1).map((row) => row.textContent)).toEqual([
+      'Супер-администраторвстроенная0да',
+      'SRE1—',
+      'Дежурный1—',
+    ]);
+    await open(`/admin/roles/${BUILTIN_ROLE}`, 'Супер-администратор');
+    expect(screen.getByText('встроенная')).toBeInTheDocument();
+    const builtinSwitch = await screen.findByRole('switch', { name: 'Право администратора' });
+    expect(builtinSwitch).toBeChecked();
+    expect(builtinSwitch).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('button', { name: 'Действия: Супер-администратор' })).toBeNull();
+    expect(screen.queryByText('Переименовать')).toBeNull();
+    expect(screen.queryByText('Удалить')).toBeNull();
+
+    // Row 4: the switch of «Дежурный» sends `{ isAdmin }`
+    await open(`/admin/roles/${DUTY}`, 'Дежурный');
+    const dutySwitch = await screen.findByRole('switch', { name: 'Право администратора' });
+    expect(dutySwitch).not.toBeChecked();
+    mark = api.requests.length;
+    await user.click(dutySwitch);
+    await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/roles/${DUTY}`, body: { isAdmin: true } }], `/api/admin/roles/${DUTY}`);
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Право администратора' })).toBeChecked());
+
+    // Row 9 - deleting a role: «Отмена» sends nothing; `409 BUILTIN_ROLE` is shown in the dialog and the role is read again;
+    // the confirmed delete sends one DELETE, opens the list with the toast and the focus on its `h1`
+    mark = api.requests.length;
+    const openDelete = async (): Promise<HTMLElement> => {
+      await user.click(screen.getByRole('button', { name: 'Действия: Дежурный' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
+      return screen.findByRole('alertdialog', { name: 'Удалить роль «Дежурный»?' });
+    };
+    confirm = await openDelete();
+    expect(within(confirm).getByText('Сотрудники роли сразу потеряют её права.')).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+
+    server.use(
+      http.delete(`${API}/api/admin/roles/:id`, () => apiError(409, IdentityErrorCode.BUILTIN_ROLE, 'The built-in role cannot be changed'), {
+        once: true,
+      }),
+    );
+    confirm = await openDelete();
+    await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
+    expect(await within(confirm).findByText('Не удалось сохранить: The built-in role cannot be changed')).toBeInTheDocument();
+    await expectSent(api, mark, [{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }], `/api/admin/roles/${DUTY}`);
+    mark = api.requests.length;
+    await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/roles'));
+    expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }]);
+    expect(await screen.findByText('Роль удалена')).toBeInTheDocument();
+    view.setPathname('/admin/roles');
+    const rolesTitle = await screen.findByRole('heading', { level: 1, name: 'Роли' });
+    await waitFor(() => expect(rolesTitle).toHaveFocus());
+    await waitFor(() =>
+      expect(within(screen.getByRole('table', { name: 'Роли' })).getAllByRole('row').slice(1).map((row) => row.textContent)).toEqual([
+        'Супер-администраторвстроенная0да',
+        'SRE1—',
+      ]),
+    );
+    expect(readsAfterChange(api, mark)).toContain('/api/admin/roles');
+
+    // Row 5 - the rights of «SRE» (AC-28.2): a tool only from the server's record; `jira` without tools and the tool the
+    // role already has cannot be chosen; no field to type a tool name
+    await open(`/admin/roles/${SRE}`, 'SRE');
+    const sreGrants = await screen.findByRole('table', { name: 'Права' });
+    await waitFor(() => expect(rowCells(sreGrants, 'sentry → delete_issue')[0]).toBe('sentry → delete_issueНет в реестре'));
+    expect(rowCells(sreGrants, 'sentry → list_issues')).toEqual(['sentry → list_issues', 'Право', '—', '']);
+    expect(rowCells(sreGrants, 'gitlab')).toEqual(['gitlabНет в реестре', 'Право', '—', '']);
+
+    await user.click(screen.getByRole('button', { name: 'Добавить право' }));
+    const toolDialog = await screen.findByRole('dialog', { name: 'Добавить право' });
+    await user.click(within(toolDialog).getByRole('radio', { name: 'Инструмент сервера' }));
+    const serverOptions = await openSelect(user, toolDialog, 'Сервер');
+    expect(serverOptions.map((option) => option.textContent)).toEqual(['jira', 'sentry']);
+    expect(serverOptions[0]).toHaveAttribute('aria-disabled', 'true');
+    expect(serverOptions[1]).not.toHaveAttribute('aria-disabled', 'true');
+    await user.click(serverOptions[1] ?? toolDialog);
+    const toolOptions = await openSelect(user, toolDialog, 'Инструмент');
+    expect(toolOptions.map((option) => option.textContent)).toEqual(['list_issuesчитаетуже есть', 'update_issueменяет']);
+    expect(toolOptions[0]).toHaveAttribute('aria-disabled', 'true');
+    expect(readsAfterChange(api, 0)).toContain('/api/admin/mcp-servers/sentry');
+    await user.click(screen.getByRole('option', { name: /^update_issue/ }));
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(within(toolDialog).queryAllByRole('textbox')).toEqual([]);
+    mark = api.requests.length;
+    await user.click(within(toolDialog).getByRole('button', { name: 'Добавить' }));
+    await expectSent(
+      api,
+      mark,
+      [
+        {
+          method: 'POST',
+          path: '/api/admin/grants',
+          body: { roleId: SRE, effect: 'allow', target: { kind: 'tool', server: 'sentry', tool: 'update_issue' } },
+        },
+      ],
+      `/api/admin/grants?roleId=${SRE}`,
+    );
+    expect(await within(sreGrants).findByText('sentry → update_issue')).toBeInTheDocument();
+
+    // Row 5 and row 6 - a model with a quota of 50; each refusal of the server keeps the dialog open with its fields
+    // and changes no row (DC-12)
+    await user.click(screen.getByRole('button', { name: 'Добавить право' }));
+    const modelDialog = await screen.findByRole('dialog', { name: 'Добавить право' });
+    await user.click(within(modelDialog).getByRole('radio', { name: 'Модель' }));
+    await chooseOption(user, modelDialog, 'Модель', 'Claude Sonnet 4.5');
+    await user.type(within(modelDialog).getByLabelText('Квота за месяц, $'), '50');
+    const rightsBefore = sreGrants.textContent;
+    const refusals: Array<{ answer: () => Response; text: string }> = [
+      { answer: () => apiError(409, AccessErrorCode.GRANT_EXISTS, 'Grant exists'), text: 'Такое право уже есть' },
+      {
+        answer: () => apiError(422, AccessErrorCode.GRANT_TARGET_UNKNOWN, 'Model unknown', 'model_unknown'),
+        text: 'Этого сервера, инструмента или модели больше нет. Закройте окно и выберите цель снова.',
+      },
+      {
+        answer: () => apiError(422, AccessErrorCode.GRANT_INVALID, 'Quota not on a model allow', 'quota_not_on_model_allow'),
+        text: 'Так нельзя: запрет даётся только лично, а квота — только у разрешения модели.',
+      },
+      {
+        answer: () => apiError(422, AccessErrorCode.GRANT_INVALID, 'Quota out of range', 'quota_out_of_range'),
+        text: 'Квота — от 0,01 до 1 000 000 $, не больше двух знаков после запятой',
+      },
+    ];
+    mark = api.requests.length;
+    for (const refusal of refusals) {
+      server.use(http.post(`${API}/api/admin/grants`, refusal.answer, { once: true }));
+      await user.click(within(modelDialog).getByRole('button', { name: 'Добавить' }));
+      expect(await within(modelDialog).findByText(refusal.text)).toBeInTheDocument();
+      expect(within(modelDialog).getByRole('radio', { name: 'Модель' })).toBeChecked();
+      expect(within(modelDialog).getByRole('combobox', { name: 'Модель' })).toHaveTextContent('Claude Sonnet 4.5');
+      expect(within(modelDialog).getByLabelText('Квота за месяц, $')).toHaveValue('50');
+    }
+    expect(within(modelDialog).getByLabelText('Квота за месяц, $')).toHaveAttribute('aria-invalid', 'true');
+    expect(sreGrants.textContent).toBe(rightsBefore);
+    await user.click(within(modelDialog).getByRole('button', { name: 'Добавить' }));
+    const modelGrantBody = { roleId: SRE, effect: 'allow', target: { kind: 'model', model: SONNET }, quotaUsd: 50 };
+    await expectSent(
+      api,
+      mark,
+      refusals.concat(refusals.slice(0, 1)).map(() => ({ method: 'POST', path: '/api/admin/grants', body: modelGrantBody })),
+      `/api/admin/grants?roleId=${SRE}`,
+    );
+    expect(changesSince(api, mark)).toHaveLength(5);
+    expect(await within(sreGrants).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
+    expect(rowCells(sreGrants, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '50 $', '']);
+
+    // Row 5 (AC-29.2): reopening Аня and the role shows 30 and 50 as they were set
+    await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
+    const anyaRights = await screen.findByRole('table', { name: 'Личные права и запреты' });
+    expect(await within(anyaRights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
+    expect(rowCells(anyaRights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '30 $', '']);
+    await open(`/admin/roles/${SRE}`, 'SRE');
+    let rights = await screen.findByRole('table', { name: 'Права' });
+    expect(await within(rights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
+    expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '50 $', '']);
+
+    // Row 5 (DC-14): «Изменить квоту» 80, then an emptied field; the list shows what the new read returns
+    const modelGrant = store.grants.find((entry) => entry.holder.id === SRE && entry.target.kind === 'model');
+    const changeQuota = async (typed: string): Promise<void> => {
+      await user.click(within(rights).getByRole('button', { name: 'Действия: Claude Sonnet 4.5' }));
+      expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Изменить квоту', 'Убрать']);
+      await user.click(screen.getByRole('menuitem', { name: 'Изменить квоту' }));
+      const quotaDialog = await screen.findByRole('dialog', { name: 'Изменить квоту' });
+      await user.clear(within(quotaDialog).getByLabelText('Квота за месяц, $'));
+      if (typed !== '') await user.type(within(quotaDialog).getByLabelText('Квота за месяц, $'), typed);
+      mark = api.requests.length;
+      await user.click(within(quotaDialog).getByRole('button', { name: 'Сохранить' }));
+    };
+    await changeQuota('80');
+    await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/grants/${modelGrant?.id}`, body: { quotaUsd: 80 } }], `/api/admin/grants?roleId=${SRE}`);
+    await waitFor(() => expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '80 $', '']));
+    await changeQuota('');
+    await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/grants/${modelGrant?.id}`, body: { quotaUsd: null } }], `/api/admin/grants?roleId=${SRE}`);
+    await waitFor(() => expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', 'без квоты', '']));
+
+    // Row 7 and row 9 - an orphan (DC-13, UC-E9) has the single action «Убрать», which sends one DELETE without a dialog
+    await user.click(within(rights).getByRole('button', { name: 'Действия: sentry → delete_issue' }));
+    expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Убрать']);
+    mark = api.requests.length;
+    await user.click(screen.getByRole('menuitem', { name: 'Убрать' }));
+    await expectSent(api, mark, [{ method: 'DELETE', path: `/api/admin/grants/${ORPHAN_TOOL_GRANT}`, body: null }], `/api/admin/grants?roleId=${SRE}`);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(within(rights).queryByText('sentry → delete_issue')).toBeNull());
+
+    // Row 8 - the catalogue (AD-11): name, ID, four prices and the long-request prices as a nested row
+    await open('/admin/models', 'Модели');
+    const catalogue = await screen.findByRole('table', { name: 'Модели' });
+    expect(rowCells(catalogue, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5anthropic/claude-sonnet-4-5', '3 $', '15 $', '3,75 $', '0,3 $', '']);
+    expect(rowCells(catalogue, 'в Claude Sonnet 4.5: ')).toEqual([
+      'в Claude Sonnet 4.5: свыше 200 000 входных токенов',
+      '6 $',
+      '22,5 $',
+      '7,5 $',
+      '0,6 $',
+      '',
+    ]);
+
+    // Row 8: «Добавить модель» with comma prices; `409 MODEL_ID_TAKEN` is the error of «ID модели»
+    await user.click(screen.getByRole('button', { name: 'Добавить модель' }));
+    const addModel = await screen.findByRole('dialog', { name: 'Добавить модель' });
+    await user.type(within(addModel).getByLabelText('ID модели'), SONNET);
+    await user.type(within(addModel).getByLabelText('Название'), 'Claude Haiku 4.5');
+    await user.type(within(addModel).getByLabelText('Вход'), '1');
+    await user.type(within(addModel).getByLabelText('Выход'), '5');
+    await user.type(within(addModel).getByLabelText('Запись в кэш'), '1,25');
+    await user.type(within(addModel).getByLabelText('Чтение из кэша'), '0,1');
+    server.use(
+      http.post(`${API}/api/admin/models`, () => apiError(409, AccessErrorCode.MODEL_ID_TAKEN, 'Model id taken'), { once: true }),
+    );
+    mark = api.requests.length;
+    await user.click(within(addModel).getByRole('button', { name: 'Добавить модель' }));
+    expect(await within(addModel).findByText('Модель с таким ID уже есть в каталоге')).toBeInTheDocument();
+    expect(within(addModel).getByLabelText('ID модели')).toHaveAttribute('aria-invalid', 'true');
+    await user.clear(within(addModel).getByLabelText('ID модели'));
+    await user.type(within(addModel).getByLabelText('ID модели'), HAIKU);
+    await user.click(within(addModel).getByRole('button', { name: 'Добавить модель' }));
+    const haikuBody = {
+      name: 'Claude Haiku 4.5',
+      prices: { inputUsdPerMTok: 1, outputUsdPerMTok: 5, cacheWriteUsdPerMTok: 1.25, cacheReadUsdPerMTok: 0.1 },
+      longContext: null,
+    };
+    await expectSent(
+      api,
+      mark,
+      [
+        { method: 'POST', path: '/api/admin/models', body: { id: SONNET, ...haikuBody } },
+        { method: 'POST', path: '/api/admin/models', body: { id: HAIKU, ...haikuBody } },
+      ],
+      '/api/admin/models',
+    );
+    await waitFor(() =>
+      expect(rowCells(catalogue, 'Claude Haiku 4.5')).toEqual(['Claude Haiku 4.5anthropic/claude-haiku-4-5', '1 $', '5 $', '1,25 $', '0,1 $', '']),
+    );
+
+    // Row 8 and row 9 - «Убрать из каталога»: «Отмена» and Escape send nothing; the confirmation sends ONE DELETE with the
+    // id encoded while its button is unavailable; the list is read again without the model
+    mark = api.requests.length;
+    const openRemove = async (): Promise<HTMLElement> => {
+      await user.click(within(catalogue).getByRole('button', { name: 'Действия: Claude Sonnet 4.5' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Убрать из каталога' }));
+      return screen.findByRole('alertdialog', { name: 'Убрать модель «Claude Sonnet 4.5» из каталога?' });
+    };
+    confirm = await openRemove();
+    expect(
+      within(confirm).getByText(
+        'Все права и личные запреты на эту модель будут удалены. Агенты больше не смогут её выбрать, а работающие на ней завершатся сбоем «модель не подключена».',
+      ),
+    ).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await openRemove();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+
+    const removeAnswer = deferred();
+    server.use(
+      http.delete(
+        `${API}/api/admin/models/:id`,
+        async ({ params }) => {
+          await removeAnswer.promise;
+          const id = decodeURIComponent(String(params.id));
+          store.models = store.models.filter((model) => model.id !== id);
+          store.grants = store.grants.filter((entry) => entry.target.kind !== 'model' || entry.target.model !== id);
+          return new HttpResponse(null, { status: 204 });
+        },
+        { once: true },
+      ),
+    );
+    confirm = await openRemove();
+    const removeButton = within(confirm).getByRole('button', { name: 'Убрать из каталога' });
+    await user.click(removeButton);
+    await waitFor(() => expect(removeButton).toBeDisabled());
+    await user.click(removeButton);
+    removeAnswer.resolve();
+    await expectSent(api, mark, [{ method: 'DELETE', path: '/api/admin/models/anthropic%2Fclaude-sonnet-4-5', body: null }], '/api/admin/models');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(within(catalogue).queryByText('Claude Sonnet 4.5')).toBeNull());
+    expect(within(catalogue).getByText('Claude Haiku 4.5')).toBeInTheDocument();
+
+    // Row 8: a role page opened afterwards shows no right on the removed model (the server deleted it)
+    await open(`/admin/roles/${SRE}`, 'SRE');
+    rights = await screen.findByRole('table', { name: 'Права' });
+    expect(await within(rights).findByText('sentry → update_issue')).toBeInTheDocument();
+    expect(within(rights).queryByText('Claude Sonnet 4.5')).toBeNull();
+  }, 120_000);
 
   // INT-3 ---------------------------------------------------------------------------------------------------------------------------------
   // AC: AC-26.1 "Given администратор создаёт провайдера OIDC для Okta, when он открывает его, then видит данные Agent OS для Okta и может скопировать

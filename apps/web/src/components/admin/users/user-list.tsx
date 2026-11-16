@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
-import { IdentityValidationReason, type AdminUserSummary } from '@agent-os/contracts';
+import { IdentityValidationReason, type AdminUserSummary, type UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { AdminPageHeader } from '@/components/admin/admin-header';
 import { adminSectionTitle } from '@/components/admin/admin-sections';
 import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '@/components/admin/data-table';
 import { StateBadge } from '@/components/state-badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounced-value';
 import { usePagedResource, type Page } from '@/hooks/use-resource';
@@ -17,6 +18,7 @@ import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
 import { formatTime } from '@/lib/agents/format';
 import { adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
+import { AccountDialog } from './account-dialog';
 
 /** UXRD MC-22 (the list's labels). */
 const TEXT = {
@@ -30,6 +32,7 @@ const TEXT = {
   disabled: 'Отключён',
   never: 'никогда',
   noMatches: 'Никого не нашли',
+  create: 'Завести учётную запись',
   // Not in MC-22: the read failures follow the shell's «Не удалось загрузить …» texts, as in «Мой доступ».
   loadFailed: 'Не удалось загрузить сотрудников',
 } as const;
@@ -57,9 +60,22 @@ const loadMoreErrorText = (error: unknown): string =>
     ? ADMIN_TEXT.listChanged
     : TEXT.loadFailed;
 
+/** A non-empty `login` is a local account (design-admin.md, DC-4). */
+export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =>
+  user.login !== null && user.login !== '';
+
+/** «Включён» / «Отключён» of the list and the employee's page (MC-22). */
+export function UserStatusBadge({ status }: { status: UserStatus }) {
+  return status === 'active' ? (
+    <StateBadge state="ok">{TEXT.active}</StateBadge>
+  ) : (
+    <StateBadge state="off">{TEXT.disabled}</StateBadge>
+  );
+}
+
 function EmployeeCell({ user }: { user: AdminUserSummary }) {
-  // A non-empty `login` is a local account (design-admin.md, DC-4): the badge and the login before the email.
-  const local = user.login !== null && user.login !== '';
+  // A local account shows the badge and the login before the email.
+  const local = isLocalAccount(user);
   return (
     <div className="flex min-w-0 flex-col py-1.5">
       <span className="flex min-w-0 items-center gap-2">
@@ -83,15 +99,7 @@ function rowOf(user: AdminUserSummary): DataTableRow {
     href: adminRecordPath('users', user.id),
     cells: [
       <EmployeeCell key="employee" user={user} />,
-      user.status === 'active' ? (
-        <StateBadge key="status" state="ok">
-          {TEXT.active}
-        </StateBadge>
-      ) : (
-        <StateBadge key="status" state="off">
-          {TEXT.disabled}
-        </StateBadge>
-      ),
+      <UserStatusBadge key="status" status={user.status} />,
       <span key="roles" className="block truncate" title={roles}>
         {roles === '' ? EMPTY_VALUE : roles}
       </span>,
@@ -103,12 +111,14 @@ function rowOf(user: AdminUserSummary): DataTableRow {
 /**
  * UXRD AD-03: the employees in the server's order, 50 a page with «Показать ещё», searched by name, login and
  * email. The search reads 300 ms after the last keystroke, and an answer for an older text never shows (DC-3).
+ * «Завести учётную запись» opens AD-16; a created account reads the list again.
  */
 export function UserList() {
   const title = adminSectionTitle('users');
   const [query, setQuery] = useState('');
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
   const list = usePagedResource((cursor) => loadUsersPage(searched, cursor), searched);
+  const [creating, setCreating] = useState(false);
 
   const state: DataTableState =
     list.status === 'loading'
@@ -143,8 +153,12 @@ export function UserList() {
           placeholder={TEXT.search}
           className={cn(CONTROL_SIZE, 'w-72 max-w-full text-data md:text-data')}
         />
+        <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
+          {TEXT.create}
+        </Button>
       </AdminPageHeader>
       <DataTable caption={title} columns={COLUMNS} state={state} />
+      <AccountDialog open={creating} onOpenChange={setCreating} onCreated={list.reload} />
     </>
   );
 }
