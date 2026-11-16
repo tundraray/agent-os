@@ -2,8 +2,6 @@
 
 import { useId } from 'react';
 import type { SignInSettings } from '@agent-os/contracts';
-import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import {
@@ -14,8 +12,8 @@ import {
 } from '@/lib/admin/form-rules';
 import { apiBaseUrl } from '@/lib/config';
 import { cn } from '@/lib/utils';
-import { AdminForm, AdminTextField, CAPTION, CONTROL_SIZE, type AdminFormApi } from '../admin-form';
-import { DataTable } from '../data-table';
+import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
+import { DataTable, resourceTableState } from '../data-table';
 
 /** UXRD MC-33; «Сохранить» — MC-20. */
 const TEXT = {
@@ -69,15 +67,7 @@ export function SignInSettingsForm() {
         {TEXT.title}
       </h2>
       {data === undefined ? (
-        <DataTable
-          caption={TEXT.title}
-          columns={[]}
-          state={
-            settings.status === 'error'
-              ? { status: 'error', message: TEXT.loadFailed, onRetry: settings.reload }
-              : { status: 'loading' }
-          }
-        />
+        <DataTable caption={TEXT.title} columns={[]} state={resourceTableState(settings, TEXT.loadFailed)} />
       ) : (
         <>
           {/* Every save moves `updatedAt`: the new read starts the form from the values the server now holds. */}
@@ -103,8 +93,26 @@ export function SignInSettingsForm() {
                   value={form.values.publicUrl}
                   onChange={(value) => form.set('publicUrl', value)}
                 />
-                <HoursField form={form} name="idleHours" label={TEXT.idle} hint={TEXT.idleHint} />
-                <HoursField form={form} name="absoluteHours" label={TEXT.absolute} hint={TEXT.absoluteHint} />
+                <AdminTextField
+                  {...form.field('idleHours')}
+                  label={TEXT.idle}
+                  hint={TEXT.idleHint}
+                  inputMode="decimal"
+                  suffix={TEXT.hours}
+                  inputClassName="w-24"
+                  value={form.values.idleHours}
+                  onChange={(value) => form.set('idleHours', value)}
+                />
+                <AdminTextField
+                  {...form.field('absoluteHours')}
+                  label={TEXT.absolute}
+                  hint={TEXT.absoluteHint}
+                  inputMode="decimal"
+                  suffix={TEXT.hours}
+                  inputClassName="w-24"
+                  value={form.values.absoluteHours}
+                  onChange={(value) => form.set('absoluteHours', value)}
+                />
               </>
             )}
           </AdminForm>
@@ -112,46 +120,5 @@ export function SignInSettingsForm() {
         </>
       )}
     </section>
-  );
-}
-
-type HoursFieldProps = {
-  form: AdminFormApi<SignInSettingsValues>;
-  name: 'idleHours' | 'absoluteHours';
-  label: string;
-  hint: string;
-};
-
-/** A number of hours with the «часов» suffix after the input; otherwise laid out as `AdminTextField`. */
-function HoursField({ form, name, label, hint }: HoursFieldProps) {
-  const { id, error } = form.field(name);
-  const hintId = `${id}-hint`;
-  const errorId = `${id}-error`;
-  return (
-    <Field data-invalid={error !== undefined} className="gap-1.5">
-      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
-        {label}
-      </FieldLabel>
-      <div className="flex items-center gap-2">
-        <Input
-          id={id}
-          name={id}
-          inputMode="decimal"
-          autoComplete="off"
-          className={cn(CONTROL_SIZE, 'w-24 text-data md:text-data')}
-          value={form.values[name]}
-          aria-invalid={error !== undefined}
-          aria-describedby={error !== undefined ? `${hintId} ${errorId}` : hintId}
-          onChange={(event) => form.set(name, event.target.value)}
-        />
-        <span className="text-data text-muted-foreground">{TEXT.hours}</span>
-      </div>
-      <FieldDescription id={hintId} className={cn(CAPTION, 'text-muted-foreground')}>
-        {hint}
-      </FieldDescription>
-      <FieldError id={errorId} className={CAPTION}>
-        {error}
-      </FieldError>
-    </Field>
   );
 }

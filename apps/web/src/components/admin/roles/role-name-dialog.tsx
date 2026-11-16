@@ -6,7 +6,6 @@ import { ROLE_NAME_MAX_LENGTH } from '@agent-os/contracts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { adminApi } from '@/lib/admin/admin-api';
 import { roleNameRules } from '@/lib/admin/form-rules';
-import { focusShellTarget } from '@/lib/focus';
 import { adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminTextField } from '../admin-form';
 
@@ -57,7 +56,6 @@ export function RoleNameDialog({ open, onOpenChange, role, onRenamed }: RoleName
     }
     if (createdId.current === null) return;
     onOpenChange(false);
-    focusShellTarget('page-title');
     router.push(adminRecordPath('roles', createdId.current));
   };
 

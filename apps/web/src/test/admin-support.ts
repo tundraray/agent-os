@@ -111,26 +111,49 @@ function stringsOf(value: unknown, out: string[], seen: WeakSet<object>): string
 // ---------------------------------------------------------------------------------------------------
 // Secrets
 
+type NowhereOptions = {
+  /** The label of the one field allowed to still hold the value (a secret field after a refused save keeps what was typed). */
+  exceptInput?: string;
+  /** Spies whose call arguments are swept too: the router's `push` / `replace` and `location.assign`. */
+  spies?: ReadonlyArray<{ mock: { calls: ReadonlyArray<readonly unknown[]> } }>;
+};
+
 /**
- * Asserts that `value` appears nowhere the page or its logs keep it: the document text (toasts and the announcer
- * included), the value of every input and textarea, `document.title` and the logger stand-in's records. `exceptInput`
- * is the label of the one field allowed to still hold it (a secret field after a refused save keeps what was typed).
+ * Asserts that `value` appears nowhere the page or its logs keep it: the document's markup (text and every
+ * attribute, toasts and the announcer included), the value of every input and textarea, `document.title`, the
+ * tab's address, both web storages, the logger stand-in's records and the arguments the `spies` were called with.
  */
-export function expectNowhere(value: string, { exceptInput }: { exceptInput?: string } = {}): void {
+export function expectNowhere(value: string, { exceptInput, spies = [] }: NowhereOptions = {}): void {
   expect(value, 'expectNowhere needs a non-empty value').not.toBe('');
-  expect(document.body.textContent, 'document text').not.toContain(value);
   expect(document.title, 'document.title').not.toContain(value);
+  expect(window.location.href, 'the address').not.toContain(value);
 
   const allowed = exceptInput === undefined ? null : screen.getByLabelText(exceptInput);
+  // React mirrors a field's value into its `value` attribute, so the allowed field is cut out of the markup.
+  const markup = document.documentElement.outerHTML;
+  expect(allowed === null ? markup : markup.replace(allowed.outerHTML, ''), 'document markup').not.toContain(value);
   for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) {
     if (field === allowed) continue;
     const name = field.getAttribute('aria-label') ?? (field.id || field.name);
     expect(field.value, `value of the field «${name}»`).not.toContain(value);
   }
 
+  for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index) ?? '';
+      expect(`${key}=${storage.getItem(key)}`, name).not.toContain(value);
+    }
+  }
+
   for (const record of logRecords) {
     for (const text of stringsOf(record, [], new WeakSet())) {
       expect(text, `log record «${record.message}»`).not.toContain(value);
+    }
+  }
+
+  for (const spy of spies) {
+    for (const text of stringsOf(spy.mock.calls, [], new WeakSet())) {
+      expect(text, 'arguments of a navigation').not.toContain(value);
     }
   }
 }

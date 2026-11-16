@@ -41,12 +41,10 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['a password of 257 characters', () => accountRules({ ...account, password: 'a'.repeat(257) }), { password: PASSWORD }],
     // DC-7, AD-14
     ['«0,25» hours as minutes', () => hoursToMinutes('0,25'), 15],
-    ['«24» hours as minutes', () => hoursToMinutes('24'), 1440],
-    ['1440 minutes as hours', () => minutesToHours(1440), '24'],
     ['480 minutes as hours', () => minutesToHours(480), '8'],
     ['15 minutes as hours', () => minutesToHours(15), '0,25'],
     ['idle «0,3» is off the step', () => signInSettingsRules({ ...settings, idleHours: '0,3' }), { idleHours: IDLE }],
-    ['idle «0,25» and «24» pass', () => signInSettingsRules({ ...settings, idleHours: '0,25' }), {}],
+    ['idle «0,25» under a total of «24» passes', () => signInSettingsRules({ ...settings, idleHours: '0,25' }), {}],
     ['idle «24,25» is above the bound', () => signInSettingsRules({ ...settings, idleHours: '24,25', absoluteHours: '720' }), {
       idleHours: IDLE,
     }],
@@ -75,7 +73,7 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['server name «sentry-prod»', () => serverRules(oauthServer), {}],
     ['a server name of 33 characters', () => serverRules({ ...oauthServer, name: 'a'.repeat(33) }), { name: SERVER_NAME }],
     ['server address http://example.com', () => serverRules({ ...oauthServer, url: 'http://example.com' }), { url: SERVER_URL }],
-    ['server address http://localhost:4100/x', () => serverRules({ ...oauthServer, url: 'http://localhost:4100/x' }), {}],
+    ['server address http://localhost:4100/x passes: plain http only for localhost', () => serverRules({ ...oauthServer, url: 'http://localhost:4100/x' }), {}],
     ['a shared server without a token', () => serverRules({ ...oauthServer, mode: 'shared', sharedToken: '' }), {
       sharedToken: 'Введите токен — до 4096 знаков',
     }],

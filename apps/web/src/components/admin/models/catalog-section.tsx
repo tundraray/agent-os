@@ -14,7 +14,7 @@ import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { AdminPageHeader } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { ConfirmDialog } from '../confirm-dialog';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '../data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { MODEL_TEXT, ModelDialog, PRICES } from './model-dialog';
 
 /**
@@ -94,16 +94,10 @@ export function CatalogSection() {
     ],
   });
 
-  const state: DataTableState =
-    models.status === 'ready' && models.data !== undefined
-      ? {
-          status: 'ready',
-          rows: models.data.map(toRow),
-          empty: { Icon: BoxIcon, title: TEXT.empty, description: TEXT.emptyDescription },
-        }
-      : models.status === 'error'
-        ? { status: 'error', message: TEXT.loadFailed, onRetry: models.reload }
-        : { status: 'loading' };
+  const state = resourceTableState(models, TEXT.loadFailed, (data) => ({
+    rows: data.map(toRow),
+    empty: { Icon: BoxIcon, title: TEXT.empty, description: TEXT.emptyDescription },
+  }));
 
   const removed = removing.model;
 
@@ -136,6 +130,8 @@ export function CatalogSection() {
           confirmLabel={TEXT.remove}
           onConfirm={() => removeModel(removed)}
           logEvent="admin: model remove"
+          // The row and its «⋯», which opened the dialog, leave with the model.
+          focusTitleAfterConfirm
         />
       )}
     </>

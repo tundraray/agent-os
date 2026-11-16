@@ -126,6 +126,19 @@ describe('read on open (KD-4, DC-3, Invariant 4)', () => {
       },
     ],
     [
+      '«Показать ещё» pressed during a reload sends nothing, so the rows of the reload are shown',
+      async () => {
+        const reads = controlledReads<Page<string>>();
+        const { result } = renderHook(() => usePagedResource((cursor) => reads.read(cursor ?? 'first'), 'users'));
+        await reads.answer('first', { items: ['Аня'], nextCursor: 'c2' });
+        act(() => result.current.reload());
+        act(() => result.current.loadMore());
+        await reads.answer('first', { items: ['Аня', 'Борис'], nextCursor: 'c2' });
+        expect(reads.read.mock.calls.map(([cursor]) => cursor)).toEqual(['first', 'first']);
+        expect(result.current.items).toEqual(['Аня', 'Борис']);
+      },
+    ],
+    [
       'a search reads 300 ms after the last keystroke and shows the answer for «аня» even when «ан» answers later',
       async () => {
         vi.useFakeTimers();

@@ -8,12 +8,12 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
+import { isNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE, describeRefusal } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
+import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
@@ -56,8 +56,6 @@ const ROLE_COLUMNS: readonly DataTableColumn[] = [{ header: 'Роль' }];
 type ActionPlace = 'status' | 'assign' | 'admin' | `role:${string}`;
 
 type Failure = { place: ActionPlace; text: string };
-
-const isNotFound = (error: unknown): boolean => isApiRequestError(error) && error.kind === 'not_found';
 
 type UserPageProps = { id: string };
 
@@ -123,18 +121,7 @@ export function UserPage({ id }: UserPageProps) {
 
   if (gone || isNotFound(user.error)) return <ThreadNotice variant="record-not-found" section="users" />;
 
-  if (user.data === undefined) {
-    return (
-      <>
-        <AdminPageHeader title={adminSectionTitle('users')} />
-        <DataTable
-          caption={adminSectionTitle('users')}
-          columns={ROLE_COLUMNS}
-          state={user.status === 'error' ? { status: 'error', message: TEXT.loadFailed, onRetry: user.reload } : { status: 'loading' }}
-        />
-      </>
-    );
-  }
+  if (user.data === undefined) return <RecordPlaceholder section="users" resource={user} loadFailed={TEXT.loadFailed} />;
 
   const detail = user.data;
   const active = detail.status === 'active';
@@ -159,6 +146,8 @@ export function UserPage({ id }: UserPageProps) {
           label: TEXT.removeRole,
           onSelect: () => void act(place, 'admin: user role remove', () => adminApi.users.removeRole(id, role.id)),
           pending: pending === place,
+          // One page action at a time: the other rows wait for the read that follows it.
+          disabled: busy,
         },
       ],
       error: errorAt(place),

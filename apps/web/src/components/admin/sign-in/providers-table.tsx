@@ -6,10 +6,10 @@ import type { ProviderSummary, ProviderType } from '@agent-os/contracts';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { isApiRequestError } from '@/lib/api/api-request';
+import { rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { adminRecordPath } from '@/lib/shell-route';
 import { FormWarning } from '../admin-form';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '../data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 
 /** UXRD MC-27. */
@@ -59,12 +59,7 @@ type ProviderEnabledSwitchProps = {
  */
 export function ProviderEnabledSwitch({ provider, inTable, onChanged }: ProviderEnabledSwitchProps) {
   const save = async (enabled: boolean): Promise<void> => {
-    try {
-      await adminApi.providers.update(provider.id, { enabled });
-    } catch (error) {
-      if (isApiRequestError(error) && error.kind === 'not_found') onChanged();
-      throw error;
-    }
+    await rereadOnNotFound(onChanged)(() => adminApi.providers.update(provider.id, { enabled }));
     onChanged();
   };
 
@@ -119,16 +114,10 @@ export function ProvidersTable() {
     ],
   });
 
-  const state: DataTableState =
-    providers.data !== undefined
-      ? {
-          status: 'ready',
-          rows: [PASSWORD_ROW, ...providers.data.map(toRow)],
-          empty: { Icon: KeyRoundIcon, title: TEXT.empty, description: '' },
-        }
-      : providers.status === 'error'
-        ? { status: 'error', message: TEXT.loadFailed, onRetry: providers.reload }
-        : { status: 'loading' };
+  const state = resourceTableState(providers, TEXT.loadFailed, (data) => ({
+    rows: [PASSWORD_ROW, ...data.map(toRow)],
+    empty: { Icon: KeyRoundIcon, title: TEXT.empty, description: '' },
+  }));
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">

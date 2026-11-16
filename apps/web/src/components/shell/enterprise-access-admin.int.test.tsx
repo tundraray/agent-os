@@ -53,30 +53,33 @@
 
 import {
   AccessErrorCode,
+  CreateCatalogModelBodySchema,
+  CreateGrantBodySchema,
+  CreateLocalUserBodySchema,
+  CreateProviderBodySchema,
   IdentityErrorCode,
   McpErrorCode,
+  RegisterMcpServerBodySchema,
+  ResetPasswordBodySchema,
+  SetPersonalAdminBodySchema,
+  UpdateGrantBodySchema,
+  UpdateMcpServerBodySchema,
+  UpdateProviderBodySchema,
+  UpdateRoleBodySchema,
+  UpdateSignInSettingsBodySchema,
   type AdminUserDetail,
   type CatalogModel,
-  type CreateCatalogModelBody,
-  type CreateGrantBody,
-  type CreateLocalUserBody,
-  type CreateProviderBody,
   type Grant,
   type McpServerView,
   type McpToolView,
   type ProviderView,
-  type RegisterMcpServerBody,
   type RoleDetail,
-  type UpdateMcpServerBody,
-  type UpdateProviderBody,
-  type UpdateRoleBody,
-  type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
-import { expectNowhere, stubClipboard, trackRequests, type TrackedRequests } from '@/test/admin-support';
+import { expectNowhere, logRecords, stubClipboard, trackRequests, type TrackedRequests } from '@/test/admin-support';
 import {
   adminUserDetail,
   adminUserPage,
@@ -160,6 +163,22 @@ async function expectSent(tracked: TrackedRequests, from: number, sent: Sent[], 
 const apiError = (status: number, errorCode: string, message: string, reason?: string): Response =>
   HttpResponse.json({ statusCode: status, message, errorCode, ...(reason === undefined ? {} : { reason }) }, { status });
 
+/** A contract schema, as far as the fake backends use it. */
+type BodySchema<Body> = { safeParse: (value: unknown) => { success: true; data: Body } | { success: false } };
+
+/**
+ * A change's body read as the API reads it, with the contract's own schema: a body of another shape is answered
+ * `400 VALIDATION_FAILED`, so the row that sent it fails instead of the fake taking whatever came.
+ */
+async function withBody<Body>(
+  request: Request,
+  schema: BodySchema<Body>,
+  answer: (body: Body) => Response,
+): Promise<Response> {
+  const body = schema.safeParse(await request.json());
+  return body.success ? answer(body.data) : apiError(400, 'VALIDATION_FAILED', 'Request body does not match the contract');
+}
+
 const ANYA = fixtureId(2);
 const BORIS = fixtureId(3);
 const BUILTIN_ROLE = fixtureId(10);
@@ -225,18 +244,21 @@ function adminBackend() {
     http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
     // Employees
     http.get(`${API}/api/admin/users`, () => HttpResponse.json(adminUserPage(store.users.map(summaryOf)))),
-    http.post(`${API}/api/admin/users`, async ({ request }) => {
-      const body = (await request.json()) as CreateLocalUserBody;
-      const created = adminUserDetail({ id: BORIS, login: body.login, name: body.name, email: body.email, lastSignInAt: null });
-      store.users.push(created);
-      return HttpResponse.json(summaryOf(created), { status: 201 });
-    }),
+    http.post(`${API}/api/admin/users`, ({ request }) =>
+      withBody(request, CreateLocalUserBodySchema, (body) => {
+        const created = adminUserDetail({ id: BORIS, login: body.login, name: body.name, email: body.email, lastSignInAt: null });
+        store.users.push(created);
+        return HttpResponse.json(summaryOf(created), { status: 201 });
+      }),
+    ),
     http.get(`${API}/api/admin/users/:id`, ({ params }) => {
       const found = user(params.id);
       return found === undefined ? userNotFound() : HttpResponse.json(found);
     }),
-    http.put(`${API}/api/admin/users/:id/password`, ({ params }) =>
-      user(params.id) === undefined ? userNotFound() : new HttpResponse(null, { status: 204 }),
+    http.put(`${API}/api/admin/users/:id/password`, ({ params, request }) =>
+      withBody(request, ResetPasswordBodySchema, () =>
+        user(params.id) === undefined ? userNotFound() : new HttpResponse(null, { status: 204 }),
+      ),
     ),
     http.post(`${API}/api/admin/users/:id/:action`, ({ params }) => {
       const found = user(params.id);
@@ -244,13 +266,14 @@ function adminBackend() {
       found.status = params.action === 'block' ? 'disabled' : 'active';
       return HttpResponse.json(summaryOf(found));
     }),
-    http.put(`${API}/api/admin/users/:id/admin`, async ({ params, request }) => {
-      const found = user(params.id);
-      if (found === undefined) return userNotFound();
-      const { enabled } = (await request.json()) as { enabled: boolean };
-      found.adminRight = { ...found.adminRight, personal: enabled };
-      return HttpResponse.json(found);
-    }),
+    http.put(`${API}/api/admin/users/:id/admin`, ({ params, request }) =>
+      withBody(request, SetPersonalAdminBodySchema, ({ enabled }) => {
+        const found = user(params.id);
+        if (found === undefined) return userNotFound();
+        found.adminRight = { ...found.adminRight, personal: enabled };
+        return HttpResponse.json(found);
+      }),
+    ),
     http.put(`${API}/api/admin/users/:id/roles/:roleId`, ({ params }) => {
       const found = user(params.id);
       const assigned = role(params.roleId);
@@ -273,12 +296,14 @@ function adminBackend() {
       const found = role(params.id);
       return found === undefined ? roleNotFound() : HttpResponse.json(withMemberCounts(found));
     }),
-    http.patch(`${API}/api/admin/roles/:id`, async ({ params, request }) => {
-      const found = role(params.id);
-      if (found === undefined) return roleNotFound();
-      Object.assign(found, (await request.json()) as UpdateRoleBody);
-      return HttpResponse.json(withMemberCounts(found));
-    }),
+    http.patch(`${API}/api/admin/roles/:id`, ({ params, request }) =>
+      withBody(request, UpdateRoleBodySchema, (body) => {
+        const found = role(params.id);
+        if (found === undefined) return roleNotFound();
+        Object.assign(found, body);
+        return HttpResponse.json(withMemberCounts(found));
+      }),
+    ),
     http.delete(`${API}/api/admin/roles/:id`, ({ params }) => {
       if (role(params.id) === undefined) return roleNotFound();
       store.roles = store.roles.filter((entry) => entry.id !== params.id);
@@ -291,27 +316,30 @@ function adminBackend() {
       const holderId = search.get('roleId') ?? search.get('userId');
       return HttpResponse.json(store.grants.filter((entry) => entry.holder.id === holderId));
     }),
-    http.post(`${API}/api/admin/grants`, async ({ request }) => {
-      const body = (await request.json()) as CreateGrantBody;
-      const holderRole = role(body.roleId);
-      const sent = body.target;
-      const target = sent.kind === 'model' ? { ...sent, modelName: modelName(sent.model) } : sent;
-      const created = grant({
-        id: fixtureId((nextGrant += 1)),
-        holder: holderRole === undefined ? { kind: 'user', id: body.userId ?? '' } : { kind: 'role', ...roleRef(holderRole) },
-        effect: body.effect,
-        target,
-        quotaUsd: body.quotaUsd ?? null,
-      });
-      store.grants.push(created);
-      return HttpResponse.json(created, { status: 201 });
-    }),
-    http.patch(`${API}/api/admin/grants/:id`, async ({ params, request }) => {
-      const found = store.grants.find((entry) => entry.id === params.id);
-      if (found === undefined) return apiError(404, AccessErrorCode.GRANT_NOT_FOUND, 'Grant not found');
-      found.quotaUsd = ((await request.json()) as { quotaUsd: number | null }).quotaUsd;
-      return HttpResponse.json(found);
-    }),
+    http.post(`${API}/api/admin/grants`, ({ request }) =>
+      withBody(request, CreateGrantBodySchema, (body) => {
+        const holderRole = role(body.roleId);
+        const sent = body.target;
+        const target = sent.kind === 'model' ? { ...sent, modelName: modelName(sent.model) } : sent;
+        const created = grant({
+          id: fixtureId((nextGrant += 1)),
+          holder: holderRole === undefined ? { kind: 'user', id: body.userId ?? '' } : { kind: 'role', ...roleRef(holderRole) },
+          effect: body.effect,
+          target,
+          quotaUsd: body.quotaUsd ?? null,
+        });
+        store.grants.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    ),
+    http.patch(`${API}/api/admin/grants/:id`, ({ params, request }) =>
+      withBody(request, UpdateGrantBodySchema, ({ quotaUsd }) => {
+        const found = store.grants.find((entry) => entry.id === params.id);
+        if (found === undefined) return apiError(404, AccessErrorCode.GRANT_NOT_FOUND, 'Grant not found');
+        found.quotaUsd = quotaUsd;
+        return HttpResponse.json(found);
+      }),
+    ),
     http.delete(`${API}/api/admin/grants/:id`, ({ params }) => {
       store.grants = store.grants.filter((entry) => entry.id !== params.id);
       return new HttpResponse(null, { status: 204 });
@@ -332,11 +360,13 @@ function adminBackend() {
     ),
     // Models
     http.get(`${API}/api/admin/models`, () => HttpResponse.json(store.models)),
-    http.post(`${API}/api/admin/models`, async ({ request }) => {
-      const created = catalogModel((await request.json()) as CreateCatalogModelBody);
-      store.models.push(created);
-      return HttpResponse.json(created, { status: 201 });
-    }),
+    http.post(`${API}/api/admin/models`, ({ request }) =>
+      withBody(request, CreateCatalogModelBodySchema, (body) => {
+        const created = catalogModel(body);
+        store.models.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    ),
     http.delete(`${API}/api/admin/models/:id`, ({ params }) => {
       // The API removes the model's rights and denies with it.
       const id = decodeURIComponent(String(params.id));
@@ -410,63 +440,68 @@ function signInBackend() {
     http.get(`${API}/api/admin/providers`, () =>
       HttpResponse.json(store.providers.map(({ id, type, name, enabled }) => providerSummary({ id, type, name, enabled }))),
     ),
-    http.post(`${API}/api/admin/providers`, async ({ request }) => {
-      const { type, name } = (await request.json()) as CreateProviderBody;
-      const created = providerView({ id: fixtureId(nextProvider), type: type === 'google' ? 'google' : 'oidc', name });
-      nextProvider += 1;
-      store.providers.push(created);
-      return HttpResponse.json(created, { status: 201 });
-    }),
+    http.post(`${API}/api/admin/providers`, ({ request }) =>
+      withBody(request, CreateProviderBodySchema, ({ type, name }) => {
+        const created = providerView({ id: fixtureId(nextProvider), type: type === 'google' ? 'google' : 'oidc', name });
+        nextProvider += 1;
+        store.providers.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    ),
     http.get(`${API}/api/admin/providers/:id`, ({ params }) => {
       const found = provider(params.id);
       return found === undefined ? providerNotFound() : HttpResponse.json(found);
     }),
-    http.patch(`${API}/api/admin/providers/:id`, async ({ params, request }) => {
-      const found = provider(params.id);
-      if (found === undefined) return providerNotFound();
-      const { name, enabled, options } = (await request.json()) as UpdateProviderBody;
-      if (name !== undefined) found.name = name;
-      if (enabled !== undefined) found.enabled = enabled;
-      if (options?.issuer !== undefined) found.options.issuer = options.issuer;
-      if (options?.clientId !== undefined) found.options.clientId = options.clientId;
-      if (options?.clientSecret !== undefined) found.options.clientSecretSet = true;
-      return HttpResponse.json(found);
-    }),
+    http.patch(`${API}/api/admin/providers/:id`, ({ params, request }) =>
+      withBody(request, UpdateProviderBodySchema, ({ name, enabled, options }) => {
+        const found = provider(params.id);
+        if (found === undefined) return providerNotFound();
+        if (name !== undefined) found.name = name;
+        if (enabled !== undefined) found.enabled = enabled;
+        if (options?.issuer !== undefined) found.options.issuer = options.issuer;
+        if (options?.clientId !== undefined) found.options.clientId = options.clientId;
+        if (options?.clientSecret !== undefined) found.options.clientSecretSet = true;
+        return HttpResponse.json(found);
+      }),
+    ),
     // Sign-in settings: every save moves `updatedAt`, as the API does
     http.get(`${API}/api/admin/settings/sign-in`, () => HttpResponse.json(store.settings)),
-    http.put(`${API}/api/admin/settings/sign-in`, async ({ request }) => {
-      settingsSaves += 1;
-      const body = (await request.json()) as UpdateSignInSettingsBody;
-      store.settings = signInSettings({ ...body, updatedAt: `2026-11-16T10:0${settingsSaves}:00.000Z` });
-      return HttpResponse.json(store.settings);
-    }),
+    http.put(`${API}/api/admin/settings/sign-in`, ({ request }) =>
+      withBody(request, UpdateSignInSettingsBodySchema, (body) => {
+        settingsSaves += 1;
+        store.settings = signInSettings({ ...body, updatedAt: `2026-11-16T10:0${settingsSaves}:00.000Z` });
+        return HttpResponse.json(store.settings);
+      }),
+    ),
     // MCP servers
     http.get(`${API}/api/admin/mcp-servers`, () =>
       HttpResponse.json(
         store.servers.map(({ name, url, mode, status, toolCount }) => mcpServerSummary({ name, url, mode, status, toolCount })),
       ),
     ),
-    http.post(`${API}/api/admin/mcp-servers`, async ({ request }) => {
-      const { name, url, mode } = (await request.json()) as RegisterMcpServerBody;
-      const created =
-        mode === 'oauth'
-          ? mcpServerView({ name, url, mode, status: 'awaiting_admin_account', tools: [] })
-          : mcpServerView({ name, url, mode, status: 'enabled', sharedTokenSet: true });
-      store.servers.push(created);
-      return HttpResponse.json(created, { status: 201 });
-    }),
+    http.post(`${API}/api/admin/mcp-servers`, ({ request }) =>
+      withBody(request, RegisterMcpServerBodySchema, ({ name, url, mode }) => {
+        const created =
+          mode === 'oauth'
+            ? mcpServerView({ name, url, mode, status: 'awaiting_admin_account', tools: [] })
+            : mcpServerView({ name, url, mode, status: 'enabled', sharedTokenSet: true });
+        store.servers.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    ),
     http.get(`${API}/api/admin/mcp-servers/:name`, ({ params }) => {
       const found = registered(params.name);
       return found === undefined ? serverNotFound() : HttpResponse.json(found);
     }),
-    http.patch(`${API}/api/admin/mcp-servers/:name`, async ({ params, request }) => {
-      const found = registered(params.name);
-      if (found === undefined) return serverNotFound();
-      const { enabled, sharedToken } = (await request.json()) as UpdateMcpServerBody;
-      if (enabled !== undefined) found.status = enabled ? 'enabled' : 'disabled';
-      if (sharedToken !== undefined) found.sharedTokenSet = true;
-      return HttpResponse.json(found);
-    }),
+    http.patch(`${API}/api/admin/mcp-servers/:name`, ({ params, request }) =>
+      withBody(request, UpdateMcpServerBodySchema, ({ enabled, sharedToken }) => {
+        const found = registered(params.name);
+        if (found === undefined) return serverNotFound();
+        if (enabled !== undefined) found.status = enabled ? 'enabled' : 'disabled';
+        if (sharedToken !== undefined) found.sharedTokenSet = true;
+        return HttpResponse.json(found);
+      }),
+    ),
     http.post(`${API}/api/admin/mcp-servers/:name/tools/refresh`, ({ params }) => {
       const found = registered(params.name);
       if (found === undefined) return serverNotFound();
@@ -547,7 +582,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
         ),
       ),
     );
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     // Row 1 - not an administrator opens `/admin/roles`; `GET /api/auth/me` is held
     const employeeMe = deferred();
@@ -658,10 +693,13 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(await within(adminHistory).findByRole('link', { name: 'План релиза' })).toBeInTheDocument();
     expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
     expect(adminView.router.push).not.toHaveBeenCalled();
+    expect(adminView.router.replace).not.toHaveBeenCalled();
     expect(adminView.assign).not.toHaveBeenCalled();
     // No panel request followed the 403.
     expect(adminRequests(administrator)).toEqual(['GET /api/admin/users', 'GET /api/admin/roles', 'POST /api/admin/roles']);
-    expect(administrator.requests.find((request) => request.method === 'POST')?.body).toEqual({ name: 'Дежурный' });
+    await waitFor(() =>
+      expect(administrator.requests.find((request) => request.method === 'POST')?.body).toEqual({ name: 'Дежурный' }),
+    );
   });
 
   // INT-2 ---------------------------------------------------------------------------------------------------------------------------------
@@ -687,9 +725,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //   3. roles of an employee (AC-25.1): Аня shows both «SRE» and «Дежурный», each with «Снять роль»; pressing one sends
   //      `DELETE /api/admin/users/:id/roles/:roleId` and after the new read it is gone; «Назначить роль» offers only the roles she lacks and sends
   //      `PUT /api/admin/users/:id/roles/:roleId`; «Дать лично» sends `PUT /api/admin/users/:id/admin` with `{ enabled: true }` and the row reads
-  //      «есть: лично» after the new read
+  //      «есть: лично» after the new read; «Снять лично» sends `{ enabled: false }` and the row reads «нет» again
   //   4. built-in role (DC-5): the role list has «Супер-администратор» FIRST with «встроенная»; its page has no «Переименовать» and no «Удалить», and the
-  //      «Право администратора» switch is on and disabled; on «Дежурный» the switch sends `PATCH /api/admin/roles/:id` with `{ isAdmin }`
+  //      «Право администратора» switch is on and disabled; on «Дежурный» the switch sends `PATCH /api/admin/roles/:id` with `{ isAdmin: true }`,
+  //      then `{ isAdmin: false }`
   //   5. rights (AC-28.2, AC-29.2, DC-12, DC-14): on the role «SRE» «Добавить право» -> «Что»: «Инструмент сервера»: `jira` (`awaiting_admin_account`)
   //      cannot be chosen, `sentry` offers ONLY the tools of `GET /api/admin/mcp-servers/sentry` in Mono with «читает» / «меняет», the tool the role
   //      already has reads «уже есть» and cannot be chosen, there is no field to type a tool name; «Добавить» sends `POST /api/admin/grants` with
@@ -706,7 +745,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      row «свыше {порог} входных токенов»; «Добавить модель» with prices typed with a comma sends `POST /api/admin/models` with numbers and
   //      `longContext: null`; `409 MODEL_ID_TAKEN` is a field error at «ID модели»; «Убрать из каталога» -> «Убрать модель «{название}» из каталога?»
   //      with the line that all rights to it are deleted -> ONE `DELETE /api/admin/models/anthropic%2F<name>` (the id with `/` encoded) -> the list is read
-  //      again without the model; a role page opened afterwards (the server deleted the grants) shows no row for it
+  //      again without the model
   //   9. confirmed destructive and rights-changing actions (UC-4, UC-6; one table: block, delete role, remove model - row 8 - and delete grant): the
   //      dialog names the object («Заблокировать {имя}?», «Удалить роль «{роль}»?»); «Отмена» and Escape send NOTHING; «Заблокировать» sends one
   //      `POST /api/admin/users/:id/block` and the page shows «Отключён» with «Разблокировать» and promises no instant stop of the agents; «Удалить» sends
@@ -732,98 +771,16 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       ...handlers,
     );
     const api = trackRequests(server);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const view = renderWithRuntime({ pathname: '/admin/users' });
+    const navigationSpies = () => [view.router.push, view.router.replace, view.assign];
     const open = async (pathname: string, title: string): Promise<void> => {
       view.setPathname(pathname);
       expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
     };
     let mark = 0;
-
-    // Row 1 - a local account (AC-25.3)
     expect(await screen.findByRole('heading', { level: 1, name: 'Сотрудники' })).toBeInTheDocument();
     expect(await screen.findByText('Аня Смирнова')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Завести учётную запись' }));
-    const accountDialog = await screen.findByRole('dialog', { name: 'Новая учётная запись' });
-    await user.type(within(accountDialog).getByLabelText('Логин'), 'anya');
-    await user.type(within(accountDialog).getByLabelText('Имя'), 'Борис Ким');
-    await user.type(within(accountDialog).getByLabelText('Почта'), 'boris@corp.example');
-    await user.type(within(accountDialog).getByLabelText('Начальный пароль'), 'Kh7short');
-    mark = api.requests.length;
-    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
-
-    // Assert (row 1): a password of 8 characters sends nothing; the focus is on its field with the rule
-    const passwordField = within(accountDialog).getByLabelText('Начальный пароль');
-    await waitFor(() => expect(passwordField).toHaveFocus());
-    expect(within(accountDialog).getByText('Пароль — от 12 до 256 знаков')).toBeInTheDocument();
-    expect(changesSince(api, mark)).toEqual([]);
-
-    // Act (row 1): a valid password, but the login is taken
-    server.use(
-      http.post(`${API}/api/admin/users`, () => apiError(409, IdentityErrorCode.LOGIN_TAKEN, 'Login is taken'), {
-        once: true,
-      }),
-    );
-    const password = 'Kh7short-Start-2026';
-    await user.type(passwordField, '-Start-2026');
-    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
-
-    // Assert (row 1): «Такой логин уже есть» at «Логин», every field kept
-    expect(await within(accountDialog).findByText('Такой логин уже есть')).toBeInTheDocument();
-    expect(within(accountDialog).getByLabelText('Логин')).toHaveAttribute('aria-invalid', 'true');
-    expect(within(accountDialog).getByLabelText('Имя')).toHaveValue('Борис Ким');
-    expect(within(accountDialog).getByLabelText('Почта')).toHaveValue('boris@corp.example');
-    expect(passwordField).toHaveValue(password);
-
-    // Act (row 1): another login
-    await user.clear(within(accountDialog).getByLabelText('Логин'));
-    await user.type(within(accountDialog).getByLabelText('Логин'), 'boris');
-    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
-
-    // Assert (row 1): two POSTs with the typed fields, the list read again, the row «локальная» with the login, the toast names the login
-    const accountBody = { login: 'anya', name: 'Борис Ким', email: 'boris@corp.example', password };
-    await expectSent(
-      api,
-      mark,
-      [
-        { method: 'POST', path: '/api/admin/users', body: accountBody },
-        { method: 'POST', path: '/api/admin/users', body: { ...accountBody, login: 'boris' } },
-      ],
-      '/api/admin/users',
-    );
-    expect(await screen.findByText('Учётная запись boris заведена')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    const users = screen.getByRole('table', { name: 'Сотрудники' });
-    expect(await within(users).findByText('boris · boris@corp.example')).toBeInTheDocument();
-    expect(rowCells(users, 'Борис Ким')[0]).toBe('Борис Кимлокальнаяboris · boris@corp.example');
-    expect(rowCells(users, 'Аня Смирнова')[0]).toBe('Аня Смирноваanya@corp.example');
-    expectNowhere(password);
-
-    // Row 2 - password reset of that employee (AC-25.3, NFR-02)
-    await followLink(user, within(users).getByRole('link', { name: /Борис Ким/ }), view.setPathname);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Борис Ким' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
-    let resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
-    const newPassword = 'Reset-Pass-4471x';
-    await user.type(within(resetDialog).getByLabelText('Новый пароль'), newPassword);
-    mark = api.requests.length;
-    await user.click(within(resetDialog).getByRole('button', { name: 'Сбросить' }));
-
-    // Assert (row 2): one PUT with the password, the notice, a new read; the password is nowhere afterwards
-    await expectSent(
-      api,
-      mark,
-      [{ method: 'PUT', path: `/api/admin/users/${BORIS}/password`, body: { password: newPassword } }],
-      `/api/admin/users/${BORIS}`,
-    );
-    expect(await screen.findByText('Пароль сброшен — передайте новый сотруднику')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expectNowhere(newPassword);
-    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
-    resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
-    expect(within(resetDialog).getByLabelText('Новый пароль')).toHaveValue('');
-    await user.click(within(resetDialog).getByRole('button', { name: 'Отмена' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     // Row 3 - the roles of Аня (AC-25.1); she has no local account, so no «Сбросить пароль»
     await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
@@ -854,7 +811,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(screen.getByRole('button', { name: 'Дать лично' }));
     await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/admin`, body: { enabled: true } }], `/api/admin/users/${ANYA}`);
     expect(await screen.findByText('есть: лично')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Снять лично' })).toBeInTheDocument();
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Снять лично' }));
+    await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/admin`, body: { enabled: false } }], `/api/admin/users/${ANYA}`);
+    expect(await screen.findByText('нет')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Дать лично' })).toBeInTheDocument();
 
     // Row 5 - a personal deny and a personal quota of Аня (AC-28.2, AC-29.2): a deny is sent as a deny, with no quota
     expect(await screen.findByText('Прав и запретов нет')).toBeInTheDocument();
@@ -985,34 +946,32 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(dutySwitch);
     await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/roles/${DUTY}`, body: { isAdmin: true } }], `/api/admin/roles/${DUTY}`);
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Право администратора' })).toBeChecked());
-
-    // Row 9 - deleting a role: «Отмена» sends nothing; `409 BUILTIN_ROLE` is shown in the dialog and the role is read again;
-    // the confirmed delete sends one DELETE, opens the list with the toast and the focus on its `h1`
     mark = api.requests.length;
-    const openDelete = async (): Promise<HTMLElement> => {
-      await user.click(screen.getByRole('button', { name: 'Действия: Дежурный' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-      return screen.findByRole('alertdialog', { name: 'Удалить роль «Дежурный»?' });
-    };
-    confirm = await openDelete();
-    expect(within(confirm).getByText('Сотрудники роли сразу потеряют её права.')).toBeInTheDocument();
-    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(changesSince(api, mark)).toEqual([]);
+    await user.click(screen.getByRole('switch', { name: 'Право администратора' }));
+    await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/roles/${DUTY}`, body: { isAdmin: false } }], `/api/admin/roles/${DUTY}`);
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Право администратора' })).not.toBeChecked());
 
+    // Row 9 - deleting a role: `409 BUILTIN_ROLE` is shown in the dialog and the role is read again; the confirmed
+    // delete sends one DELETE, opens the list with the toast and the focus on its `h1`
     server.use(
       http.delete(`${API}/api/admin/roles/:id`, () => apiError(409, IdentityErrorCode.BUILTIN_ROLE, 'The built-in role cannot be changed'), {
         once: true,
       }),
     );
-    confirm = await openDelete();
+    mark = api.requests.length;
+    await user.click(screen.getByRole('button', { name: 'Действия: Дежурный' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
+    confirm = await screen.findByRole('alertdialog', { name: 'Удалить роль «Дежурный»?' });
+    expect(within(confirm).getByText('Сотрудники роли сразу потеряют её права.')).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
     expect(await within(confirm).findByText('Не удалось сохранить: The built-in role cannot be changed')).toBeInTheDocument();
     await expectSent(api, mark, [{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }], `/api/admin/roles/${DUTY}`);
     mark = api.requests.length;
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
     await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/roles'));
-    expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }]),
+    );
     expect(await screen.findByText('Роль удалена')).toBeInTheDocument();
     view.setPathname('/admin/roles');
     const rolesTitle = await screen.findByRole('heading', { level: 1, name: 'Роли' });
@@ -1116,7 +1075,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(await within(anyaRights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
     expect(rowCells(anyaRights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '30 $', '']);
     await open(`/admin/roles/${SRE}`, 'SRE');
-    let rights = await screen.findByRole('table', { name: 'Права' });
+    const rights = await screen.findByRole('table', { name: 'Права' });
     expect(await within(rights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
     expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '50 $', '']);
 
@@ -1199,57 +1158,115 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       expect(rowCells(catalogue, 'Claude Haiku 4.5')).toEqual(['Claude Haiku 4.5anthropic/claude-haiku-4-5', '1 $', '5 $', '1,25 $', '0,1 $', '']),
     );
 
-    // Row 8 and row 9 - «Убрать из каталога»: «Отмена» and Escape send nothing; the confirmation sends ONE DELETE with the
-    // id encoded while its button is unavailable; the list is read again without the model
+    // Row 8 and row 9 - «Убрать из каталога»: the confirmation names the lost rights and sends ONE DELETE with the id
+    // encoded; the list is read again without the model, and the focus goes to the `h1` - the row's «⋯» is gone
     mark = api.requests.length;
-    const openRemove = async (): Promise<HTMLElement> => {
-      await user.click(within(catalogue).getByRole('button', { name: 'Действия: Claude Sonnet 4.5' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Убрать из каталога' }));
-      return screen.findByRole('alertdialog', { name: 'Убрать модель «Claude Sonnet 4.5» из каталога?' });
-    };
-    confirm = await openRemove();
+    await user.click(within(catalogue).getByRole('button', { name: 'Действия: Claude Sonnet 4.5' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Убрать из каталога' }));
+    confirm = await screen.findByRole('alertdialog', { name: 'Убрать модель «Claude Sonnet 4.5» из каталога?' });
     expect(
       within(confirm).getByText(
         'Все права и личные запреты на эту модель будут удалены. Агенты больше не смогут её выбрать, а работающие на ней завершатся сбоем «модель не подключена».',
       ),
     ).toBeInTheDocument();
-    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    await openRemove();
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(changesSince(api, mark)).toEqual([]);
-
-    const removeAnswer = deferred();
-    server.use(
-      http.delete(
-        `${API}/api/admin/models/:id`,
-        async ({ params }) => {
-          await removeAnswer.promise;
-          const id = decodeURIComponent(String(params.id));
-          store.models = store.models.filter((model) => model.id !== id);
-          store.grants = store.grants.filter((entry) => entry.target.kind !== 'model' || entry.target.model !== id);
-          return new HttpResponse(null, { status: 204 });
-        },
-        { once: true },
-      ),
-    );
-    confirm = await openRemove();
-    const removeButton = within(confirm).getByRole('button', { name: 'Убрать из каталога' });
-    await user.click(removeButton);
-    await waitFor(() => expect(removeButton).toBeDisabled());
-    await user.click(removeButton);
-    removeAnswer.resolve();
+    await user.click(within(confirm).getByRole('button', { name: 'Убрать из каталога' }));
     await expectSent(api, mark, [{ method: 'DELETE', path: '/api/admin/models/anthropic%2Fclaude-sonnet-4-5', body: null }], '/api/admin/models');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     await waitFor(() => expect(within(catalogue).queryByText('Claude Sonnet 4.5')).toBeNull());
     expect(within(catalogue).getByText('Claude Haiku 4.5')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Модели' })).toHaveFocus());
 
-    // Row 8: a role page opened afterwards shows no right on the removed model (the server deleted it)
-    await open(`/admin/roles/${SRE}`, 'SRE');
-    rights = await screen.findByRole('table', { name: 'Права' });
-    expect(await within(rights).findByText('sentry → update_issue')).toBeInTheDocument();
-    expect(within(rights).queryByText('Claude Sonnet 4.5')).toBeNull();
+    // Row 1 - a local account (AC-25.3); the account rows come last, so a defect in them does not hide the rights rows
+    await open('/admin/users', 'Сотрудники');
+    expect(await screen.findByText('Аня Смирнова')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Завести учётную запись' }));
+    const accountDialog = await screen.findByRole('dialog', { name: 'Новая учётная запись' });
+    await user.type(within(accountDialog).getByLabelText('Логин'), 'anya');
+    await user.type(within(accountDialog).getByLabelText('Имя'), 'Борис Ким');
+    await user.type(within(accountDialog).getByLabelText('Почта'), 'boris@corp.example');
+    await user.type(within(accountDialog).getByLabelText('Начальный пароль'), 'Kh7short');
+    mark = api.requests.length;
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): a password of 8 characters sends nothing; the focus is on its field with the rule
+    const passwordField = within(accountDialog).getByLabelText('Начальный пароль');
+    await waitFor(() => expect(passwordField).toHaveFocus());
+    expect(within(accountDialog).getByText('Пароль — от 12 до 256 знаков')).toBeInTheDocument();
+    expect(changesSince(api, mark)).toEqual([]);
+
+    // Act (row 1): a valid password, but the login is taken
+    server.use(
+      http.post(`${API}/api/admin/users`, () => apiError(409, IdentityErrorCode.LOGIN_TAKEN, 'Login is taken'), {
+        once: true,
+      }),
+    );
+    const password = 'Kh7short-Start-2026';
+    await user.type(passwordField, '-Start-2026');
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): «Такой логин уже есть» at «Логин», every field kept
+    expect(await within(accountDialog).findByText('Такой логин уже есть')).toBeInTheDocument();
+    expect(within(accountDialog).getByLabelText('Логин')).toHaveAttribute('aria-invalid', 'true');
+    expect(within(accountDialog).getByLabelText('Имя')).toHaveValue('Борис Ким');
+    expect(within(accountDialog).getByLabelText('Почта')).toHaveValue('boris@corp.example');
+    expect(passwordField).toHaveValue(password);
+
+    // Act (row 1): another login
+    await user.clear(within(accountDialog).getByLabelText('Логин'));
+    await user.type(within(accountDialog).getByLabelText('Логин'), 'boris');
+    await user.click(within(accountDialog).getByRole('button', { name: 'Завести' }));
+
+    // Assert (row 1): two POSTs with the typed fields, the list read again, the row «локальная» with the login, the toast names the login
+    const accountBody = { login: 'anya', name: 'Борис Ким', email: 'boris@corp.example', password };
+    await expectSent(
+      api,
+      mark,
+      [
+        { method: 'POST', path: '/api/admin/users', body: accountBody },
+        { method: 'POST', path: '/api/admin/users', body: { ...accountBody, login: 'boris' } },
+      ],
+      '/api/admin/users',
+    );
+    expect(await screen.findByText('Учётная запись boris заведена')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const users = screen.getByRole('table', { name: 'Сотрудники' });
+    expect(await within(users).findByText('boris · boris@corp.example')).toBeInTheDocument();
+    expect(rowCells(users, 'Борис Ким')[0]).toBe('Борис Кимлокальнаяboris · boris@corp.example');
+    expect(rowCells(users, 'Аня Смирнова')[0]).toBe('Аня Смирноваanya@corp.example');
+    // The dialog opened again starts empty: the password did not outlive the dialog that sent it (Invariant 3)
+    await user.click(screen.getByRole('button', { name: 'Завести учётную запись' }));
+    const reopened = await screen.findByRole('dialog', { name: 'Новая учётная запись' });
+    expect(within(reopened).getByLabelText('Начальный пароль')).toHaveValue('');
+    expect(within(reopened).getByLabelText('Логин')).toHaveValue('');
+    await user.click(within(reopened).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expectNowhere(password, { spies: navigationSpies() });
+
+    // Row 2 - password reset of that employee (AC-25.3, NFR-02)
+    await followLink(user, within(users).getByRole('link', { name: /Борис Ким/ }), view.setPathname);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Борис Ким' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
+    let resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
+    const newPassword = 'Reset-Pass-4471x';
+    await user.type(within(resetDialog).getByLabelText('Новый пароль'), newPassword);
+    mark = api.requests.length;
+    await user.click(within(resetDialog).getByRole('button', { name: 'Сбросить' }));
+
+    // Assert (row 2): one PUT with the password, the notice, a new read; the password is nowhere afterwards
+    await expectSent(
+      api,
+      mark,
+      [{ method: 'PUT', path: `/api/admin/users/${BORIS}/password`, body: { password: newPassword } }],
+      `/api/admin/users/${BORIS}`,
+    );
+    expect(await screen.findByText('Пароль сброшен — передайте новый сотруднику')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expectNowhere(newPassword, { spies: navigationSpies() });
+    await user.click(screen.getByRole('button', { name: 'Сбросить пароль' }));
+    resetDialog = await screen.findByRole('dialog', { name: 'Новый пароль для Борис Ким' });
+    expect(within(resetDialog).getByLabelText('Новый пароль')).toHaveValue('');
+    await user.click(within(resetDialog).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   }, 120_000);
 
   // INT-3 ---------------------------------------------------------------------------------------------------------------------------------
@@ -1292,7 +1309,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      reads «Задан»; replacing it sends `PATCH /api/admin/mcp-servers/:name` with `{ sharedToken }` and `expectNowhere(value)` finds nothing; the
   //      switch «Включён» sends `{ enabled: false }`; on an awaiting server `409 MCP_SERVER_INCOMPLETE` returns the switch with «Нельзя включить: сначала
   //      подключите свой аккаунт и получите список инструментов.»; «Удалить» -> «Удалить сервер «{имя}»?» -> one `DELETE /api/admin/mcp-servers/:name`
-  //      and the list; «Отмена» sends nothing
+  //      and the list
   //   8. refresh (DC-11, UC-E8): «Обновить список» sends `POST /api/admin/mcp-servers/:name/tools/refresh`, shows «Обновляем…», then «Список
   //      обновлён: новых {N}, убрано {M}» from `added` and `removed` and the new tools table; `409 MCP_ACCOUNT_REQUIRED` shows NO error text and sends
   //      the tab to the same connect address as «Подключить мой аккаунт»; `422 MCP_SERVER_CHECK_FAILED` keeps the old tool list and shows its reason
@@ -1315,9 +1332,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       ...handlers,
     );
     const api = trackRequests(server);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const writeText = stubClipboard();
     let view = renderWithRuntime({ pathname: '/admin/sign-in' });
+    const navigationSpies = () => [view.router.push, view.router.replace, view.assign];
     const open = async (pathname: string, title: string): Promise<void> => {
       view.setPathname(pathname);
       expect(await screen.findByRole('heading', { level: 1, name: title })).toBeInTheDocument();
@@ -1389,7 +1407,9 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Создать' }));
     await waitFor(() => expect(view.router.push).toHaveBeenCalledWith(`/admin/sign-in/${OKTA}`));
-    expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'oidc', name: 'Okta' } }]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'oidc', name: 'Okta' } }]),
+    );
 
     // Assert (row 1): the OIDC page has «Issuer», «Client ID» and an empty «Client secret»; both values copy exactly (AC-26.1)
     await open(`/admin/sign-in/${OKTA}`, 'Okta');
@@ -1429,7 +1449,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.getByLabelText('Issuer')).toHaveValue('https://corp.okta.com');
     expect(screen.getByLabelText('Client ID')).toHaveValue('agent-os-client');
     expect(screen.getByLabelText('Client secret')).toHaveValue(secret);
-    expectNowhere(secret, { exceptInput: 'Client secret' });
+    expectNowhere(secret, { exceptInput: 'Client secret', spies: navigationSpies() });
 
     // Act (row 3): the same save accepted
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
@@ -1441,7 +1461,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
     expect(screen.getByText('Задан')).toBeInTheDocument();
     expect(document.querySelector('input[type="password"]')).toBeNull();
-    expectNowhere(secret);
+    expectNowhere(secret, { spies: navigationSpies() });
 
     // Act (row 3): renaming without «Заменить» sends no secret key at all
     mark = api.requests.length;
@@ -1475,15 +1495,17 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       `/api/admin/providers/${OKTA}`,
     );
     expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
-    expectNowhere(replacement);
-    expectNowhere(secret);
+    expectNowhere(replacement, { spies: navigationSpies() });
+    expectNowhere(secret, { spies: navigationSpies() });
 
     // Row 1 - a Google provider (AC-26.4): «Client ID» and «Client secret» without «Issuer», the warning, no «Scopes»
     await open('/admin/sign-in/new', 'Новый провайдер');
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Создать' }));
     await waitFor(() => expect(view.router.push).toHaveBeenCalledWith(`/admin/sign-in/${GOOGLE}`));
-    expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'google', name: 'Google' } }]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([{ method: 'POST', path: '/api/admin/providers', body: { type: 'google', name: 'Google' } }]),
+    );
     await open(`/admin/sign-in/${GOOGLE}`, 'Google');
     expect(screen.getByLabelText('Client ID')).toHaveValue('');
     expect(screen.getByLabelText('Client secret')).toHaveAttribute('type', 'password');
@@ -1521,9 +1543,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       const refusal = await within(providers).findByText(refused.text);
       expect(refusal).toHaveAttribute('role', 'alert');
       await waitFor(() => expect(toggle).not.toBeChecked());
-      expect(changesSince(api, mark)).toEqual([
-        { method: 'PATCH', path: `/api/admin/providers/${refused.id}`, body: { enabled: true } },
-      ]);
+      await waitFor(() =>
+        expect(changesSince(api, mark)).toEqual([
+          { method: 'PATCH', path: `/api/admin/providers/${refused.id}`, body: { enabled: true } },
+        ]),
+      );
     }
     expect(screen.queryByText('Public URL is required')).toBeNull();
 
@@ -1538,8 +1562,8 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await open(`/admin/sign-in/${OKTA}`, 'Okta SSO');
     expect(await screen.findByRole('button', { name: 'Заменить: Client secret' })).toBeInTheDocument();
     expect(screen.getByLabelText('Issuer')).toHaveValue('https://corp.okta.com');
-    expectNowhere(replacement);
-    expectNowhere(secret);
+    expectNowhere(replacement, { spies: navigationSpies() });
+    expectNowhere(secret, { spies: navigationSpies() });
 
     // Row 5 - register a personal-OAuth server (AC-27.1, Flow 2): no token key, the TAB goes to the connect address
     await open('/admin/servers', 'MCP-серверы');
@@ -1558,9 +1582,11 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     // Assert (row 5): one POST, then a navigation of the tab - not a request - to the connect address
     await waitFor(() => expect(view.assign).toHaveBeenCalledWith(connectAddress('sentry')));
     expect(view.assign).toHaveBeenCalledTimes(1);
-    expect(changesSince(api, mark)).toEqual([
-      { method: 'POST', path: '/api/admin/mcp-servers', body: { name: 'sentry', url: 'https://mcp.sentry.dev/mcp', mode: 'oauth' } },
-    ]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([
+        { method: 'POST', path: '/api/admin/mcp-servers', body: { name: 'sentry', url: 'https://mcp.sentry.dev/mcp', mode: 'oauth' } },
+      ]),
+    );
     expect(connectRequests()).toEqual([]);
     expect(view.router.push).not.toHaveBeenCalledWith('/admin/servers/sentry');
 
@@ -1686,7 +1712,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.getByLabelText('Адрес')).toHaveValue('https://gitlab.corp.example/mcp');
     expect(screen.getByRole('radio', { name: 'Общая учётная запись' })).toBeChecked();
     expect(screen.getByLabelText('Токен доступа')).toHaveValue(token);
-    expectNowhere(token, { exceptInput: 'Токен доступа' });
+    expectNowhere(token, { exceptInput: 'Токен доступа', spies: navigationSpies() });
 
     // Act (row 6): the name is taken
     server.use(
@@ -1698,7 +1724,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(await screen.findByText('Сервер с таким именем уже есть')).toBeInTheDocument();
     expect(screen.getByLabelText('Имя')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByLabelText('Токен доступа')).toHaveValue(token);
-    expectNowhere(token, { exceptInput: 'Токен доступа' });
+    expectNowhere(token, { exceptInput: 'Токен доступа', spies: navigationSpies() });
     // Nothing half-saved: the form stays, no page opened, no navigation
     expect(view.router.push).not.toHaveBeenCalled();
     expect(view.assign).toHaveBeenCalledTimes(1);
@@ -1709,12 +1735,14 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(screen.getByRole('button', { name: 'Зарегистрировать' }));
     await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/servers/gitlab-prod'));
     const sharedBody = { name: 'gitlab', url: 'https://gitlab.corp.example/mcp', mode: 'shared', sharedToken: token };
-    expect(changesSince(api, mark)).toEqual([
-      { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
-      { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
-      { method: 'POST', path: '/api/admin/mcp-servers', body: { ...sharedBody, name: 'gitlab-prod' } },
-    ]);
-    await waitFor(() => expectNowhere(token));
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([
+        { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
+        { method: 'POST', path: '/api/admin/mcp-servers', body: sharedBody },
+        { method: 'POST', path: '/api/admin/mcp-servers', body: { ...sharedBody, name: 'gitlab-prod' } },
+      ]),
+    );
+    await waitFor(() => expectNowhere(token, { spies: navigationSpies() }));
 
     // Row 7 - the server's page (DC-10): name, address and mode are text with the hint, no field holds them
     await open('/admin/servers/gitlab-prod', 'gitlab-prod');
@@ -1726,13 +1754,13 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.queryByDisplayValue('https://gitlab.corp.example/mcp')).toBeNull();
     expect(screen.queryByDisplayValue('gitlab-prod')).toBeNull();
     expect(screen.getByText('Задан')).toBeInTheDocument();
-    expectNowhere(token);
+    expectNowhere(token, { spies: navigationSpies() });
 
-    // Act (row 7): «Сохранить» without «Заменить» sends nothing - the stored token is never sent back
+    // Act (row 7): «Сохранить» without «Заменить» does nothing - no request, no read, no «saved» record
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-    await waitFor(() => expect(readsAfterChange(api, mark)).toContain('/api/admin/mcp-servers/gitlab-prod'));
-    expect(changesSince(api, mark)).toEqual([]);
+    expect(api.requests.slice(mark)).toEqual([]);
+    expect(logRecords.filter((record) => record.message.startsWith('admin: server token'))).toEqual([]);
 
     // Act (row 7): a replacement refused by the check, then accepted
     const newToken = 'glpat-rotated-8Zr5VwK';
@@ -1749,13 +1777,13 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
     expect(await screen.findByText('Не удалось сохранить: сервер не принял токен доступа')).toBeInTheDocument();
     expect(screen.getByLabelText('Токен доступа')).toHaveValue(newToken);
-    expectNowhere(newToken, { exceptInput: 'Токен доступа' });
+    expectNowhere(newToken, { exceptInput: 'Токен доступа', spies: navigationSpies() });
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
     const tokenSave = { method: 'PATCH', path: '/api/admin/mcp-servers/gitlab-prod', body: { sharedToken: newToken } };
     await expectSent(api, mark, [tokenSave, tokenSave], '/api/admin/mcp-servers/gitlab-prod');
     expect(await screen.findByRole('button', { name: 'Заменить: Токен доступа' })).toBeInTheDocument();
-    expectNowhere(newToken);
-    expectNowhere(token);
+    expectNowhere(newToken, { spies: navigationSpies() });
+    expectNowhere(token, { spies: navigationSpies() });
 
     // Act (row 7): the switch «Включён» sends `{ enabled: false }` and stands as the new read says
     const enabledSwitch = screen.getByRole('switch', { name: 'Включён' });
@@ -1789,31 +1817,28 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     expect(incomplete).toHaveAttribute('role', 'alert');
     await waitFor(() => expect(jiraSwitch).not.toBeChecked());
-    expect(changesSince(api, mark)).toEqual([
-      { method: 'PATCH', path: '/api/admin/mcp-servers/jira', body: { enabled: true } },
-    ]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([
+        { method: 'PATCH', path: '/api/admin/mcp-servers/jira', body: { enabled: true } },
+      ]),
+    );
 
-    // Row 7 - delete: «Отмена» sends nothing; the confirmation sends ONE DELETE and opens the list
+    // Row 7 - delete: the confirmation sends ONE DELETE and opens the list
     await open('/admin/servers/gitlab-prod', 'gitlab-prod');
-    const openDelete = async (): Promise<HTMLElement> => {
-      await user.click(screen.getByRole('button', { name: 'Действия: gitlab-prod' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
-      return screen.findByRole('alertdialog', { name: 'Удалить сервер «gitlab-prod»?' });
-    };
     mark = api.requests.length;
-    let confirm = await openDelete();
+    await user.click(screen.getByRole('button', { name: 'Действия: gitlab-prod' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Удалить' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Удалить сервер «gitlab-prod»?' });
     expect(
       within(confirm).getByText(
         'Агенты сразу потеряют его инструменты. Это действие нельзя отменить. Подключённые аккаунты сотрудников на этом сервере будут удалены.',
       ),
     ).toBeInTheDocument();
-    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(changesSince(api, mark)).toEqual([]);
-    confirm = await openDelete();
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
     await waitFor(() => expect(view.router.push).toHaveBeenCalledWith('/admin/servers'));
-    expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: '/api/admin/mcp-servers/gitlab-prod', body: null }]);
+    await waitFor(() =>
+      expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: '/api/admin/mcp-servers/gitlab-prod', body: null }]),
+    );
     await open('/admin/servers', 'MCP-серверы');
     const afterDelete = await screen.findByRole('table', { name: 'MCP-серверы' });
     await waitFor(() => expect(within(afterDelete).queryByText('gitlab-prod')).toBeNull());

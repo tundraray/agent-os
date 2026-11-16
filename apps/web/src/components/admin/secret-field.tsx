@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
-import { cn } from "cn";
+import { useEffect, useRef } from "react";
+import { NO_PASSWORD_MANAGER, RevealInput } from "@/components/password-field";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { CAPTION, CONTROL_SIZE } from "./admin-form";
 
 /** MC-28. */
@@ -38,7 +36,6 @@ type FocusTarget = "input" | "replace";
 export function SecretField({ id, label, isSet, value, onChange, error }: SecretFieldProps) {
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
-  const [shown, setShown] = useState(false);
   /** Where focus goes once the next commit has rendered it: the field after «Заменить», «Заменить» after the cancel. */
   const pendingFocus = useRef<FocusTarget | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,7 +64,6 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
             className={CONTROL_SIZE}
             aria-label={`${SECRET_TEXT.replace}: ${label}`}
             onClick={() => {
-              setShown(false);
               pendingFocus.current = "input";
               onChange("");
             }}
@@ -85,32 +81,24 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
         {label}
       </FieldLabel>
       <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Input
+        <div className="min-w-0 flex-1">
+          {/* Mounted with the replacement, so a new «Заменить» starts hidden again. */}
+          <RevealInput
+            {...NO_PASSWORD_MANAGER}
             ref={inputRef}
             id={id}
             name={id}
-            type={shown ? "text" : "password"}
             autoComplete="new-password"
             spellCheck={false}
             placeholder={SECRET_TEXT.placeholder}
-            className={cn(CONTROL_SIZE, "pr-9 font-mono text-mono-compact")}
+            compact
+            className="font-mono text-mono-compact"
+            showLabel={SECRET_TEXT.show}
             value={value ?? ""}
             aria-invalid={error !== undefined}
             aria-describedby={error !== undefined ? errorId : undefined}
             onChange={(event) => onChange(event.target.value)}
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="absolute top-1/2 right-1 -translate-y-1/2 pointer-coarse:size-11"
-            aria-label={SECRET_TEXT.show}
-            aria-pressed={shown}
-            onClick={() => setShown((current) => !current)}
-          >
-            {shown ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
-          </Button>
         </div>
         {isSet && (
           <Button

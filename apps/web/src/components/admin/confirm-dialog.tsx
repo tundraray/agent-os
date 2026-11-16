@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type RefObject } from "react";
+import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import {
   AlertDialog,
@@ -24,17 +24,30 @@ export type ConfirmDialogProps = {
   onConfirm: () => Promise<void>;
   /** Names the change in the log, e.g. «admin: user block». */
   logEvent: string;
-  /** Where focus goes after the dialog closes; by default the element that opened it. */
-  finalFocus?: RefObject<HTMLElement | null>;
+  /**
+   * The confirmed action removes the control that opened the dialog (a row, a record page): the closing
+   * dialog hands focus to the page `h1` instead. A cancelled dialog still returns it to that control.
+   */
+  focusTitleAfterConfirm?: boolean;
 };
 
 /**
  * The one confirmation of the panel's destructive actions (block, delete a role, a model, a server).
  * One request per confirmation: the button is unavailable while it runs; «Отмена» and Esc send nothing.
  */
-export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, onConfirm, logEvent, finalFocus }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  body,
+  confirmLabel,
+  onConfirm,
+  logEvent,
+  focusTitleAfterConfirm = false,
+}: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleFocus = useRef<HTMLElement | null>(null);
 
   const changeOpen = (next: boolean): void => {
     if (!next) setError(null);
@@ -45,8 +58,10 @@ export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, o
     if (pending) return;
     setError(null);
     setPending(true);
+    titleFocus.current = null;
     try {
       await onConfirm();
+      if (focusTitleAfterConfirm) titleFocus.current = document.querySelector('[data-shell-focus="page-title"]');
       changeOpen(false);
     } catch (cause) {
       setError(describeRefusal(cause, { logEvent })?.text ?? null);
@@ -57,7 +72,7 @@ export function ConfirmDialog({ open, onOpenChange, title, body, confirmLabel, o
 
   return (
     <AlertDialog open={open} onOpenChange={changeOpen}>
-      <AlertDialogContent finalFocus={finalFocus}>
+      <AlertDialogContent finalFocus={titleFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{body}</AlertDialogDescription>

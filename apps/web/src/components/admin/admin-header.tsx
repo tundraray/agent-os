@@ -4,8 +4,10 @@ import { useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { ChevronRightIcon } from 'lucide-react';
+import type { Resource } from '@/hooks/use-resource';
 import { adminPath, type AdminSection } from '@/lib/shell-route';
 import { adminSectionTitle } from './admin-sections';
+import { DataTable, resourceTableState } from './data-table';
 
 const ADMIN_HEADER_SLOT_ID = 'admin-header-slot';
 
@@ -78,5 +80,23 @@ export function AdminPageHeader({ title, parent, badge, children }: AdminPageHea
       {children !== undefined && <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>}
     </>,
     slot,
+  );
+}
+
+type RecordPlaceholderProps = {
+  section: AdminSection;
+  /** The record's read, not answered yet or failed. */
+  resource: Pick<Resource<unknown>, 'status' | 'reload'>;
+  loadFailed: string;
+};
+
+/** A record page until its record is read: the section's title over the table's Loading or its load error. */
+export function RecordPlaceholder({ section, resource, loadFailed }: RecordPlaceholderProps) {
+  const title = adminSectionTitle(section);
+  return (
+    <>
+      <AdminPageHeader title={title} />
+      <DataTable caption={title} columns={[]} state={resourceTableState({ ...resource, data: undefined }, loadFailed)} />
+    </>
   );
 }

@@ -26,6 +26,28 @@ export type AdminErrorContext = {
 
 const VALIDATION_FAILED = 'VALIDATION_FAILED';
 
+/** A 404: the record the request names, or a part of it, is gone. */
+export const isNotFound = (error: unknown): boolean => isApiRequestError(error) && error.kind === 'not_found';
+
+/**
+ * Wraps a screen's changes: a 404 (and whatever `also` names) reads the screen's resource again, so the
+ * screen shows what the server holds, and the refusal still reaches the control that sent the change.
+ */
+export const rereadOnNotFound =
+  (reload: () => void, also: (error: unknown) => boolean = () => false) =>
+  async <T>(request: () => Promise<T>): Promise<T> => {
+    try {
+      return await request();
+    } catch (error) {
+      if (isNotFound(error) || also(error)) reload();
+      throw error;
+    }
+  };
+
+/** «Показать ещё» with a cursor the server no longer accepts (plan Notes 6). */
+export const isListChanged = (error: unknown): boolean =>
+  isApiRequestError(error) && error.code === VALIDATION_FAILED && error.reason === IdentityValidationReason.INVALID_CURSOR;
+
 const PROVIDER_CHECK_FAILURES: ReadonlySet<string> = new Set(Object.values(ProviderCheckFailure));
 
 const isProviderCheckFailure = (reason: string | undefined): reason is ProviderCheckFailure =>
@@ -59,7 +81,7 @@ export function describeAdminError(error: unknown, context: AdminErrorContext = 
       return { target: 'id', text: ADMIN_TEXT.modelIdTaken };
     case VALIDATION_FAILED:
       if (reason === IdentityValidationReason.WEAK_PASSWORD) return { target: 'password', text: ADMIN_TEXT.passwordLength };
-      if (reason === IdentityValidationReason.INVALID_CURSOR) return form(ADMIN_TEXT.listChanged);
+      if (isListChanged(error)) return form(ADMIN_TEXT.listChanged);
       break;
     case AccessErrorCode.GRANT_EXISTS:
       if (context.grantEffect !== undefined) return form(GRANT_EXISTS_TEXT[context.grantEffect]);

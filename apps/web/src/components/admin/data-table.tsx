@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import type { ResourceStatus } from '@/hooks/use-resource';
 import { focusShellTarget } from '@/lib/focus';
 import { cn } from '@/lib/utils';
 
@@ -29,8 +30,6 @@ export type DataTableColumn = {
   header: string;
   /** `end` for numbers and money: right-aligned, tabular digits. */
   align?: 'start' | 'end';
-  /** Technical names: Mono 13 / 20. */
-  mono?: boolean;
 };
 
 export type DataTableAction = {
@@ -38,6 +37,8 @@ export type DataTableAction = {
   onSelect: () => void;
   /** The action is in progress: its control shows a spinner and the row's actions are unavailable. */
   pending?: boolean;
+  /** Unavailable while another action of the screen runs. */
+  disabled?: boolean;
 };
 
 export type DataTableRow = {
@@ -79,6 +80,22 @@ export type DataTableState =
       noMatches?: string;
       more?: DataTableMore;
     };
+
+type ReadyState = Extract<DataTableState, { status: 'ready' }>;
+
+/**
+ * A read as the table's state: the load error with «Повторить», Loading until the data are there, then
+ * `toReady(data)`. Without `toReady` — a placeholder that is replaced once the data arrive — it never reads ready.
+ */
+export function resourceTableState<T>(
+  resource: { status: ResourceStatus; data: T | undefined; reload: () => void },
+  loadFailedText: string,
+  toReady?: (data: T) => Omit<ReadyState, 'status'>,
+): DataTableState {
+  if (resource.status === 'error') return { status: 'error', message: loadFailedText, onRetry: resource.reload };
+  if (resource.status === 'loading' || resource.data === undefined || toReady === undefined) return { status: 'loading' };
+  return { status: 'ready', ...toReady(resource.data) };
+}
 
 type DataTableProps = {
   /** The table's name for screen readers (a hidden caption); Loading's `status` reads it too. */
@@ -124,11 +141,13 @@ function departureOf(before: readonly DataTableRow[], after: readonly DataTableR
 function nextShown(shown: Shown, rows: readonly DataTableRow[]): Shown {
   if (shown.rows === NO_ROWS || rows === NO_ROWS) return { rows, leaving: [], departure: null };
   const left = rowsThatLeft(shown.rows, rows);
-  if (left.length === 0) return { ...shown, rows };
+  // A row that is back while it still collapses is shown once, as the row it is now.
   const back = new Set(rows.map((row) => row.key));
-  const leaving = prefersReducedMotion()
-    ? []
-    : [...shown.leaving.filter((entry) => !back.has(entry.row.key)), ...left];
+  const stillLeaving = shown.leaving.some((entry) => back.has(entry.row.key))
+    ? shown.leaving.filter((entry) => !back.has(entry.row.key))
+    : shown.leaving;
+  if (left.length === 0) return { ...shown, rows, leaving: stillLeaving };
+  const leaving = prefersReducedMotion() ? [] : [...stillLeaving, ...left];
   return { rows, leaving, departure: departureOf(shown.rows, rows, left[0]) };
 }
 
@@ -228,8 +247,8 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
 const headClass = 'h-8 px-3 text-xs leading-4 font-medium text-muted-foreground';
 const cellClass = 'px-3 py-0 align-middle';
 
-const alignClass = (column: DataTableColumn | undefined): string =>
-  cn(column?.align === 'end' && 'text-right tabular-nums', column?.mono === true && 'font-mono text-mono-compact');
+const alignClass = (column: DataTableColumn | undefined): string | undefined =>
+  column?.align === 'end' ? 'text-right tabular-nums' : undefined;
 
 function HeaderRow({ columns, withActions }: { columns: readonly DataTableColumn[]; withActions: boolean }) {
   return (
@@ -358,36 +377,9 @@ function RowActions({
   actionsAs: 'buttons' | 'menu';
 }) {
   if (actions.length === 0) return null;
+  if (actionsAs === 'menu') return <ActionsMenu name={name} actions={actions} />;
+
   const busy = actions.some((action) => action.pending === true);
-
-  if (actionsAs === 'menu') {
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          disabled={busy}
-          render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="pointer-coarse:size-11"
-              aria-label={TEXT.menu(name)}
-              aria-haspopup="menu"
-            />
-          }
-        >
-          {busy ? <Spinner /> : <MoreHorizontalIcon aria-hidden />}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-auto min-w-40">
-          {actions.map((action) => (
-            <DropdownMenuItem key={action.label} onClick={action.onSelect} className="pointer-coarse:min-h-11">
-              {action.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
   return actions.map((action) => (
     <Button
       key={action.label}
@@ -395,13 +387,43 @@ function RowActions({
       size="sm"
       className="pointer-coarse:h-11"
       aria-label={TEXT.action(action.label, name)}
-      disabled={busy}
+      disabled={busy || action.disabled === true}
       onClick={action.onSelect}
     >
       {action.pending === true && <Spinner />}
       {action.label}
     </Button>
   ));
+}
+
+/** The «⋯» menu of a record's actions: in a table row and in a record page's header. */
+export function ActionsMenu({ name, actions }: { name: string; actions: readonly DataTableAction[] }) {
+  const busy = actions.some((action) => action.pending === true);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={busy}
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="pointer-coarse:size-11"
+            aria-label={TEXT.menu(name)}
+            aria-haspopup="menu"
+          />
+        }
+      >
+        {busy ? <Spinner /> : <MoreHorizontalIcon aria-hidden />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-40">
+        {actions.map((action) => (
+          <DropdownMenuItem key={action.label} onClick={action.onSelect} className="pointer-coarse:min-h-11">
+            {action.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function Spinner() {

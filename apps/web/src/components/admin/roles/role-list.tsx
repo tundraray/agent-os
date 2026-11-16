@@ -11,7 +11,7 @@ import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
 import { AdminPageHeader } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '../data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { RoleNameDialog } from './role-name-dialog';
 
 /** UXRD MC-26; «да» / «—» of «Администраторы» — plan Notes 6. */
@@ -59,16 +59,10 @@ export function RoleList() {
   const roles = useResource(adminApi.roles.list, 'roles');
   const [creating, setCreating] = useState(false);
 
-  const state: DataTableState =
-    roles.status === 'ready' && roles.data !== undefined
-      ? {
-          status: 'ready',
-          rows: builtinFirst(roles.data).map(toRow),
-          empty: { Icon: ShieldIcon, title: TEXT.empty, description: '' },
-        }
-      : roles.status === 'error'
-        ? { status: 'error', message: TEXT.loadFailed, onRetry: roles.reload }
-        : { status: 'loading' };
+  const state = resourceTableState(roles, TEXT.loadFailed, (data) => ({
+    rows: builtinFirst(data).map(toRow),
+    empty: { Icon: ShieldIcon, title: TEXT.empty, description: '' },
+  }));
 
   return (
     <>

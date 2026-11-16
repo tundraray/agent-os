@@ -92,6 +92,7 @@ export function AccountDialog({ open, onOpenChange, onCreated }: AccountDialogPr
                 {...form.field('password')}
                 label={TEXT.password}
                 autoComplete="new-password"
+                panel
                 value={form.values.password}
                 disabled={form.saving}
                 onChange={(value) => form.set('password', value)}

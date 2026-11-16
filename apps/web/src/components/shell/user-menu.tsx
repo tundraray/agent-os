@@ -32,7 +32,6 @@ import { describeApiError } from '@/lib/api/api-request';
 import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
-import { focusShellTarget } from '@/lib/focus';
 import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
 import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
@@ -205,9 +204,7 @@ export function UserMenu() {
               )}
             </DropdownMenuItem>
             {user?.isAdmin === true && (
-              <DropdownMenuItem
-                render={<Link href={adminPath('users')} onClick={() => focusShellTarget('page-title')} />}
-              >
+              <DropdownMenuItem render={<Link href={adminPath('users')} />}>
                 <ShieldCheckIcon aria-hidden />
                 Панель администратора
               </DropdownMenuItem>

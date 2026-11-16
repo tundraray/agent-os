@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { DialogClose, DialogFooter } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { describeAdminError, type AdminErrorContext, type AdminErrorText } from "@/lib/admin/admin-errors";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
@@ -18,7 +20,6 @@ export const FORM_TEXT = {
   saving: "Сохраняем…",
   saved: "Сохранено",
   cancel: "Отмена",
-  optional: "(необязательно)",
 } as const;
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
@@ -76,16 +77,15 @@ export type AdminTextFieldProps = {
   error: string | undefined;
   onChange: (value: string) => void;
   hint?: string;
-  optional?: boolean;
   /** Mono 13 / 20 for technical values: addresses, ids, tokens. */
   mono?: boolean;
-  type?: "text" | "email" | "url" | "password";
-  inputMode?: "text" | "decimal" | "numeric" | "email" | "url";
+  type?: "text" | "email" | "url";
+  inputMode?: "decimal" | "numeric" | "email" | "url";
   maxLength?: number;
-  autoComplete?: string;
-  placeholder?: string;
-  /** A `FormWarning` that belongs to this field. */
-  children?: ReactNode;
+  /** The unit after the input, e.g. «часов». */
+  suffix?: string;
+  /** The input's own width, e.g. `w-24` for a short number. */
+  inputClassName?: string;
 };
 
 /** One single-line field of a panel form: label, 28 px input, hint and field error (settings-form). */
@@ -96,40 +96,46 @@ export function AdminTextField({
   error,
   onChange,
   hint,
-  optional = false,
   mono = false,
   type = "text",
   inputMode,
   maxLength,
-  autoComplete = "off",
-  placeholder,
-  children,
+  suffix,
+  inputClassName,
 }: AdminTextFieldProps) {
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint !== undefined ? hintId : null, error !== undefined ? errorId : null]
     .filter((part) => part !== null)
     .join(" ");
+  const input = (
+    <Input
+      id={id}
+      name={id}
+      type={type}
+      inputMode={inputMode}
+      maxLength={maxLength}
+      autoComplete="off"
+      className={cn(CONTROL_SIZE, mono ? "font-mono text-mono-compact" : "text-data md:text-data", inputClassName)}
+      value={value}
+      aria-invalid={error !== undefined}
+      aria-describedby={describedBy === "" ? undefined : describedBy}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
         {label}
-        {optional && <span className="font-normal text-muted-foreground">{FORM_TEXT.optional}</span>}
       </FieldLabel>
-      <Input
-        id={id}
-        name={id}
-        type={type}
-        inputMode={inputMode}
-        maxLength={maxLength}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        className={cn(CONTROL_SIZE, mono ? "font-mono text-mono-compact" : "text-data md:text-data")}
-        value={value}
-        aria-invalid={error !== undefined}
-        aria-describedby={describedBy === "" ? undefined : describedBy}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      {suffix === undefined ? (
+        input
+      ) : (
+        <div className="flex items-center gap-2">
+          {input}
+          <span className="text-data text-muted-foreground">{suffix}</span>
+        </div>
+      )}
       {hint !== undefined && (
         <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
           {hint}
@@ -138,8 +144,57 @@ export function AdminTextField({
       <FieldError id={errorId} className={CAPTION}>
         {error}
       </FieldError>
-      {children}
     </Field>
+  );
+}
+
+export type AdminRadioOption<Value extends string> = {
+  value: Value;
+  label: string;
+  /** What the choice means, under its radio. */
+  hint?: string;
+};
+
+export type AdminRadioFieldProps<Value extends string> = {
+  label: string;
+  value: Value;
+  options: readonly AdminRadioOption<Value>[];
+  onChange: (value: Value) => void;
+};
+
+/** A one-of-several field of a panel form (settings-form, shadcn `radio-group`): legend, radios, a hint per choice. */
+export function AdminRadioField<Value extends string>({ label, value, options, onChange }: AdminRadioFieldProps<Value>) {
+  const id = useId();
+  const hintId = (option: AdminRadioOption<Value>): string => `${id}-${option.value}`;
+  return (
+    <FieldSet className="gap-1.5">
+      <FieldLegend id={id} variant="label" className="mb-0 text-data font-medium text-foreground">
+        {label}
+      </FieldLegend>
+      <RadioGroup
+        aria-labelledby={id}
+        value={value}
+        onValueChange={(next) => {
+          const chosen = options.find((option) => option.value === next);
+          if (chosen !== undefined) onChange(chosen.value);
+        }}
+        className="gap-2"
+      >
+        {options.map((option) => (
+          <div key={option.value} className="flex flex-col gap-0.5">
+            <Label className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
+              <RadioGroupItem value={option.value} aria-describedby={option.hint === undefined ? undefined : hintId(option)} />
+              {option.label}
+            </Label>
+            {option.hint !== undefined && (
+              <FieldDescription id={hintId(option)} className={cn(CAPTION, "pl-6 text-muted-foreground")}>
+                {option.hint}
+              </FieldDescription>
+            )}
+          </div>
+        ))}
+      </RadioGroup>
+    </FieldSet>
   );
 }
 
@@ -161,8 +216,10 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
   validate: (values: Values) => Partial<Record<string, string>>;
   onSubmit: (values: Values) => Promise<void>;
   submitLabel: string;
-  /** The submit button while the request runs, e.g. «Проверяем сервер…». */
-  savingLabel?: string;
+  /** The submit button while the request runs, e.g. «Проверяем сервер…»; a function when it depends on the values. */
+  savingLabel?: string | ((values: Values) => string);
+  /** False while the values hold nothing to send: the submit then does nothing at all. */
+  hasChange?: (values: Values) => boolean;
   /** The toast after a save; a page says «Сохранено» unless told otherwise, a dialog says nothing. */
   savedText?: string | null;
   /** After a successful save: the page returns to its record, the dialog's owner closes it. */
@@ -189,6 +246,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
   onSubmit,
   submitLabel,
   savingLabel = FORM_TEXT.saving,
+  hasChange,
   savedText = variant === "page" ? FORM_TEXT.saved : null,
   onSaved,
   onCancel,
@@ -220,7 +278,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (savingRef.current) return;
+    if (savingRef.current || hasChange?.(values) === false) return;
     setFormError(null);
     const checked = validate(values);
     if (Object.values(checked).some((text) => text !== undefined)) {
@@ -264,7 +322,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
   const submit = (
     <Button type="submit" size="sm" className={CONTROL_SIZE} disabled={saving}>
       {saving && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-      {saving ? savingLabel : submitLabel}
+      {saving ? (typeof savingLabel === "function" ? savingLabel(values) : savingLabel) : submitLabel}
     </Button>
   );
   const cancel =

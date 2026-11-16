@@ -1,24 +1,29 @@
 'use client';
 
-import { useId, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { CreateGrantBody, Grant, GrantEffect, GrantTargetBody, McpServerSummary } from '@agent-os/contracts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Field, FieldError, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantRules, quotaUsdOf, type GrantValues } from '@/lib/admin/form-rules';
 import { cn } from '@/lib/utils';
-import { AdminForm, AdminTextField, CAPTION, CONTROL_SIZE, type AdminFormApi } from '../admin-form';
+import {
+  AdminForm,
+  AdminRadioField,
+  AdminTextField,
+  CAPTION,
+  CONTROL_SIZE,
+  type AdminFormApi,
+  type AdminRadioOption,
+} from '../admin-form';
 
 /** UXRD MC-25 and MC-20 («уже есть»). */
 const TEXT = {
   addAllow: 'Добавить право',
   addDeny: 'Добавить запрет',
   what: 'Что',
-  kinds: { server: 'Сервер целиком', tool: 'Инструмент сервера', model: 'Модель' },
   quota: 'Квота за месяц, $',
   quotaHint: 'Пусто — без квоты',
   submit: 'Добавить',
@@ -33,11 +38,11 @@ const TEXT = {
 
 export type GrantHolderRef = { kind: 'role'; id: string } | { kind: 'user'; id: string };
 
-type Kind = GrantValues['kind'];
-
-const KINDS: readonly Kind[] = ['server', 'tool', 'model'];
-
-const isKind = (value: unknown): value is Kind => KINDS.some((kind) => kind === value);
+const KINDS: readonly AdminRadioOption<GrantValues['kind']>[] = [
+  { value: 'server', label: 'Сервер целиком' },
+  { value: 'tool', label: 'Инструмент сервера' },
+  { value: 'model', label: 'Модель' },
+];
 
 /** One key per target, so a grant and a dialog choice compare as text. */
 function targetKey(target: GrantTargetBody): string {
@@ -128,7 +133,12 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
     >
       {(form) => (
         <>
-          <KindField form={form} />
+          <AdminRadioField
+            label={TEXT.what}
+            value={form.values.kind}
+            options={KINDS}
+            onChange={(kind) => form.set('kind', kind)}
+          />
           {form.values.kind !== 'model' && <ServerField form={form} servers={servers} held={held} />}
           {form.values.kind === 'tool' && form.values.server !== '' && <ToolField form={form} held={held} />}
           {form.values.kind === 'model' && (
@@ -161,32 +171,6 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
 }
 
 type FormProps = { form: AdminFormApi<GrantValues> };
-
-function KindField({ form }: FormProps) {
-  const legendId = useId();
-  return (
-    <FieldSet className="gap-1.5">
-      <FieldLegend id={legendId} variant="label" className="mb-0 text-data font-medium text-foreground">
-        {TEXT.what}
-      </FieldLegend>
-      <RadioGroup
-        aria-labelledby={legendId}
-        value={form.values.kind}
-        onValueChange={(kind) => {
-          if (isKind(kind)) form.set('kind', kind);
-        }}
-        className="gap-2"
-      >
-        {KINDS.map((kind) => (
-          <Label key={kind} className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
-            <RadioGroupItem value={kind} />
-            {TEXT.kinds[kind]}
-          </Label>
-        ))}
-      </RadioGroup>
-    </FieldSet>
-  );
-}
 
 /** DC-12: a server without tools (always so while it awaits the admin's account) cannot be chosen. */
 function ServerField({ form, servers, held }: FormProps & { servers: readonly McpServerSummary[]; held: ReadonlySet<string> }) {

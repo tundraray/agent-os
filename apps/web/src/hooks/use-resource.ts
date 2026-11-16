@@ -114,9 +114,11 @@ type PageState<T> = {
   nextCursor: string | null;
   loadingMore: boolean;
   loadMoreError: unknown;
+  /** A `reload` is running: «Показать ещё» waits, its page would be appended to rows about to be replaced. */
+  reloading: boolean;
 };
 
-const emptyPages = { items: [], nextCursor: null, loadingMore: false, loadMoreError: undefined };
+const emptyPages = { items: [], nextCursor: null, loadingMore: false, loadMoreError: undefined, reloading: false };
 
 /** `useResource` for a cursor list: the first page on open and on `key` change, later pages by `loadMore`. */
 export function usePagedResource<T>(
@@ -151,7 +153,7 @@ export function usePagedResource<T>(
   const reload = useCallback(() => {
     setSnapshot((previous) =>
       previous.key === key && previous.status === 'ready'
-        ? previous
+        ? { ...previous, reloading: true }
         : { key, status: 'loading', error: undefined, ...emptyPages },
     );
     readFirst(key);
@@ -159,8 +161,8 @@ export function usePagedResource<T>(
 
   const current = snapshot.key === key ? snapshot : { status: 'loading' as const, error: undefined, ...emptyPages };
 
-  const { nextCursor, loadingMore } = current;
-  const canLoadMore = current.status === 'ready' && nextCursor !== null && !loadingMore;
+  const { nextCursor, loadingMore, reloading } = current;
+  const canLoadMore = current.status === 'ready' && nextCursor !== null && !loadingMore && !reloading;
   const loadMore = useCallback(() => {
     if (!canLoadMore || nextCursor === null) return;
     setSnapshot((previous) => ({ ...previous, loadingMore: true, loadMoreError: undefined }));

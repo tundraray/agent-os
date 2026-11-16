@@ -1,31 +1,37 @@
 'use client';
 
-import { useId } from 'react';
 import { useRouter } from 'next/navigation';
-import { PROVIDER_NAME_MAX_LENGTH, ProviderTypeSchema, type ProviderType } from '@agent-os/contracts';
-import { FieldDescription, FieldLegend, FieldSet } from '@/components/ui/field';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { PROVIDER_NAME_MAX_LENGTH, type ProviderType } from '@agent-os/contracts';
 import { adminApi } from '@/lib/admin/admin-api';
 import { providerRules } from '@/lib/admin/form-rules';
-import { cn } from '@/lib/utils';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminForm, AdminTextField, CAPTION, type AdminFormApi } from '../admin-form';
+import { AdminForm, AdminRadioField, AdminTextField, type AdminFormApi, type AdminRadioOption } from '../admin-form';
 import { AdminPageHeader } from '../admin-header';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL } from './providers-table';
 
 /** UXRD MC-27; the title is the UXRD's name of the screen. */
 const TEXT = {
   title: 'Новый провайдер',
-  oidcHint: 'Okta и любой корпоративный IdP по OIDC',
   create: 'Создать',
 } as const;
 
-const TYPES: readonly ProviderType[] = ['google', 'oidc'];
+const TYPES: readonly AdminRadioOption<ProviderType>[] = [
+  { value: 'google', label: PROVIDER_TYPE_LABEL.google },
+  { value: 'oidc', label: PROVIDER_TYPE_LABEL.oidc, hint: 'Okta и любой корпоративный IdP по OIDC' },
+];
 
 type NewProviderValues = { type: ProviderType; name: string };
 
 const INITIAL: NewProviderValues = { type: 'google', name: PROVIDER_TYPE_LABEL.google };
+
+/** The Google name is a default: it follows the type until the administrator types a name of their own. */
+function chooseType(form: AdminFormApi<NewProviderValues>, type: ProviderType): void {
+  form.set('type', type);
+  const { name } = form.values;
+  if (name.trim() === '' || name === PROVIDER_TYPE_LABEL.google) {
+    form.set('name', type === 'google' ? PROVIDER_TYPE_LABEL.google : '');
+  }
+}
 
 /**
  * UXRD «Новый провайдер»: the type and the button's name. «Создать» saves a disabled provider and opens its
@@ -54,7 +60,13 @@ export function NewProviderForm() {
       >
         {(form) => (
           <>
-            <TypeField form={form} />
+            <AdminRadioField
+              label={PROVIDER_TEXT.type}
+              value={form.values.type}
+              options={TYPES}
+              onChange={(type) => chooseType(form, type)}
+            />
+            {form.values.type === 'google' && <GoogleWarning />}
             <AdminTextField
               {...form.field('name')}
               label={PROVIDER_TEXT.name}
@@ -67,45 +79,5 @@ export function NewProviderForm() {
         )}
       </AdminForm>
     </>
-  );
-}
-
-function TypeField({ form }: { form: AdminFormApi<NewProviderValues> }) {
-  const legendId = useId();
-  const oidcHintId = useId();
-
-  const choose = (value: unknown): void => {
-    const type = ProviderTypeSchema.safeParse(value);
-    if (!type.success) return;
-    form.set('type', type.data);
-    // The Google name is a default: it follows the type until the administrator types a name of their own.
-    const { name } = form.values;
-    if (name.trim() === '' || name === PROVIDER_TYPE_LABEL.google) {
-      form.set('name', type.data === 'google' ? PROVIDER_TYPE_LABEL.google : '');
-    }
-  };
-
-  return (
-    <FieldSet className="gap-1.5">
-      <FieldLegend id={legendId} variant="label" className="mb-0 text-data font-medium text-foreground">
-        {PROVIDER_TEXT.type}
-      </FieldLegend>
-      <RadioGroup aria-labelledby={legendId} value={form.values.type} onValueChange={choose} className="gap-2">
-        {TYPES.map((type) => (
-          <div key={type} className="flex flex-col gap-0.5">
-            <Label className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
-              <RadioGroupItem value={type} aria-describedby={type === 'oidc' ? oidcHintId : undefined} />
-              {PROVIDER_TYPE_LABEL[type]}
-            </Label>
-            {type === 'oidc' && (
-              <FieldDescription id={oidcHintId} className={cn(CAPTION, 'pl-6 text-muted-foreground')}>
-                {TEXT.oidcHint}
-              </FieldDescription>
-            )}
-          </div>
-        ))}
-      </RadioGroup>
-      {form.values.type === 'google' && <GoogleWarning />}
-    </FieldSet>
   );
 }

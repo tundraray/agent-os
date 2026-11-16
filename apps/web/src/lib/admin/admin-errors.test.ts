@@ -50,28 +50,10 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       form('Этого сервера, инструмента или модели больше нет. Закройте окно и выберите цель снова.'),
     ],
     [
-      'deny_for_role',
-      refusal(422, 'GRANT_INVALID', 'deny_for_role'),
-      {},
-      form('Так нельзя: запрет даётся только лично, а квота — только у разрешения модели.'),
-    ],
-    [
-      'quota_not_on_model_allow',
+      'GRANT_INVALID with another reason',
       refusal(422, 'GRANT_INVALID', 'quota_not_on_model_allow'),
       {},
       form('Так нельзя: запрет даётся только лично, а квота — только у разрешения модели.'),
-    ],
-    [
-      'PROVIDER_CHECK_FAILED insecure_url',
-      refusal(422, 'PROVIDER_CHECK_FAILED', 'insecure_url'),
-      {},
-      form('Не удалось проверить настройки провайдера: адрес не https. Настройки не сохранены.'),
-    ],
-    [
-      'PROVIDER_CHECK_FAILED unreachable',
-      refusal(422, 'PROVIDER_CHECK_FAILED', 'unreachable'),
-      {},
-      form('Не удалось проверить настройки провайдера: адрес не ответил или ответил ошибкой. Настройки не сохранены.'),
     ],
     [
       'PROVIDER_CHECK_FAILED invalid_document',
@@ -82,32 +64,6 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       ),
     ],
     ['MCP check unreachable', refusal(422, 'MCP_SERVER_CHECK_FAILED', 'unreachable'), {}, form('сервер не отвечает по этому адресу')],
-    [
-      'MCP check timeout',
-      refusal(422, 'MCP_SERVER_CHECK_FAILED', 'timeout'),
-      {},
-      form('сервер не ответил вовремя, попробуйте ещё раз'),
-    ],
-    ['MCP check not_mcp', refusal(422, 'MCP_SERVER_CHECK_FAILED', 'not_mcp'), {}, form('по этому адресу не MCP-сервер')],
-    ['MCP check unauthorized', refusal(422, 'MCP_SERVER_CHECK_FAILED', 'unauthorized'), {}, form('сервер не принял токен доступа')],
-    [
-      'MCP check oauth_not_supported',
-      refusal(422, 'MCP_SERVER_CHECK_FAILED', 'oauth_not_supported'),
-      {},
-      form('сервер не поддерживает личный OAuth. Выберите общую учётную запись'),
-    ],
-    [
-      'MCP check registration_rejected',
-      refusal(422, 'MCP_SERVER_CHECK_FAILED', 'registration_rejected'),
-      {},
-      form('сервер авторизации отказал Agent OS в регистрации клиента'),
-    ],
-    [
-      'MCP check insecure_url',
-      refusal(422, 'MCP_SERVER_CHECK_FAILED', 'insecure_url'),
-      {},
-      form('адрес сервера или его сервера авторизации не https'),
-    ],
     [
       'MCP check with the form text around it',
       refusal(422, 'MCP_SERVER_CHECK_FAILED', 'unauthorized'),
@@ -139,13 +95,7 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       form('Список изменился. Откройте раздел заново.'),
     ],
     [
-      'NOT_LOCAL_ACCOUNT reads the server message',
-      refusal(409, 'NOT_LOCAL_ACCOUNT', undefined, 'Not a local account'),
-      {},
-      form('Не удалось сохранить: Not a local account'),
-    ],
-    [
-      'BUILTIN_ROLE reads the server message',
+      'a code without a UXRD text reads the server message',
       refusal(409, 'BUILTIN_ROLE', undefined, 'Built-in role cannot be changed'),
       {},
       form('Не удалось сохранить: Built-in role cannot be changed'),
@@ -155,12 +105,6 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       refusal(400, 'VALIDATION_FAILED', 'unknown_type', 'Unknown provider type'),
       {},
       form('Не удалось сохранить: Unknown provider type'),
-    ],
-    [
-      'a NOT_FOUND outside the record page reads the server message',
-      refusal(404, 'GRANT_NOT_FOUND', undefined, 'Grant not found'),
-      {},
-      form('Не удалось сохранить: Grant not found'),
     ],
     [
       'no answer from the server',

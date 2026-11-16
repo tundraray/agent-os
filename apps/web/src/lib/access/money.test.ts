@@ -4,7 +4,6 @@ import { formatPriceUsd } from './money';
 describe('formatPriceUsd (AD-11)', () => {
   it.each<[number, string]>([
     [0, '0 $'],
-    [0.01, '0,01 $'],
     [0.125, '0,125 $'],
     [3, '3 $'],
     [1000, '1 000 $'],

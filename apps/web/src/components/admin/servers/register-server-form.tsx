@@ -1,24 +1,14 @@
 'use client';
 
-import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  MCP_SERVER_NAME_MAX_LENGTH,
-  McpServerModeSchema,
-  type McpServerMode,
-  type RegisterMcpServerBody,
-} from '@agent-os/contracts';
+import { MCP_SERVER_NAME_MAX_LENGTH, type McpServerMode, type RegisterMcpServerBody } from '@agent-os/contracts';
 import { useShellServices } from '@/components/shell/shell-actions';
-import { FieldDescription, FieldLegend, FieldSet } from '@/components/ui/field';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { adminApi } from '@/lib/admin/admin-api';
 import { registerFailed } from '@/lib/admin/admin-texts';
 import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { cn } from '@/lib/utils';
-import { AdminForm, AdminTextField, CAPTION, type AdminFormApi } from '../admin-form';
+import { AdminForm, AdminRadioField, AdminTextField, FORM_TEXT, type AdminRadioOption } from '../admin-form';
 import { AdminPageHeader } from '../admin-header';
 import { SecretField } from '../secret-field';
 import { SERVER_MODE_LABEL, SERVER_TEXT } from './server-list';
@@ -34,13 +24,15 @@ const TEXT = {
   checking: 'Проверяем сервер…',
 } as const;
 
-/** MC-29: what each credentials mode means, under its radio. */
-const MODE_HINT: Readonly<Record<McpServerMode, string>> = {
-  shared: 'Один токен на всех: все вызовы идут с ним.',
-  oauth: 'Каждый сотрудник подключает свой аккаунт. Чтобы получить список инструментов, подключите свой.',
-};
-
-const MODES: readonly McpServerMode[] = ['shared', 'oauth'];
+/** MC-29: the credentials modes, each with what it means under its radio. */
+const MODES: readonly AdminRadioOption<McpServerMode>[] = [
+  { value: 'shared', label: SERVER_MODE_LABEL.shared, hint: 'Один токен на всех: все вызовы идут с ним.' },
+  {
+    value: 'oauth',
+    label: SERVER_MODE_LABEL.oauth,
+    hint: 'Каждый сотрудник подключает свой аккаунт. Чтобы получить список инструментов, подключите свой.',
+  },
+];
 
 type RegisterValues = {
   name: string;
@@ -67,8 +59,6 @@ function registerBodyOf({ name, url, mode, sharedToken }: RegisterValues): Regis
 export function RegisterServerForm() {
   const router = useRouter();
   const { navigate } = useShellServices();
-  // Mirrors the form's mode: the submit label is a prop of the form, chosen before its fields render.
-  const [mode, setMode] = useState<McpServerMode>(INITIAL.mode);
 
   const register = async (values: RegisterValues): Promise<void> => {
     const server = await adminApi.servers.register(registerBodyOf(values));
@@ -89,7 +79,7 @@ export function RegisterServerForm() {
         validate={({ sharedToken, ...values }) => serverRules({ ...values, sharedToken: sharedToken ?? '' })}
         onSubmit={register}
         submitLabel={TEXT.register}
-        savingLabel={mode === 'shared' ? TEXT.checking : undefined}
+        savingLabel={({ mode }) => (mode === 'shared' ? TEXT.checking : FORM_TEXT.saving)}
         savedText={null}
         onCancel={() => router.push(adminPath('servers'))}
         secretFields={['sharedToken']}
@@ -116,7 +106,16 @@ export function RegisterServerForm() {
               value={form.values.url}
               onChange={(value) => form.set('url', value)}
             />
-            <ModeField form={form} onModeChange={setMode} />
+            <AdminRadioField
+              label={SERVER_TEXT.credentials}
+              value={form.values.mode}
+              options={MODES}
+              onChange={(mode) => {
+                form.set('mode', mode);
+                // A typed token does not outlive its mode: it is not kept in the state of an OAuth registration.
+                form.set('sharedToken', '');
+              }}
+            />
             {form.values.mode === 'shared' && (
               <SecretField
                 {...form.field('sharedToken')}
@@ -130,44 +129,5 @@ export function RegisterServerForm() {
         )}
       </AdminForm>
     </>
-  );
-}
-
-function ModeField({
-  form,
-  onModeChange,
-}: {
-  form: AdminFormApi<RegisterValues>;
-  onModeChange: (mode: McpServerMode) => void;
-}) {
-  const legendId = useId();
-  const hintId = useId();
-
-  const choose = (value: unknown): void => {
-    const mode = McpServerModeSchema.safeParse(value);
-    if (!mode.success) return;
-    form.set('mode', mode.data);
-    onModeChange(mode.data);
-  };
-
-  return (
-    <FieldSet className="gap-1.5">
-      <FieldLegend id={legendId} variant="label" className="mb-0 text-data font-medium text-foreground">
-        {SERVER_TEXT.credentials}
-      </FieldLegend>
-      <RadioGroup aria-labelledby={legendId} value={form.values.mode} onValueChange={choose} className="gap-2">
-        {MODES.map((mode) => (
-          <div key={mode} className="flex flex-col gap-0.5">
-            <Label className="flex w-fit items-center gap-2 text-data font-normal text-foreground pointer-coarse:min-h-11">
-              <RadioGroupItem value={mode} aria-describedby={`${hintId}-${mode}`} />
-              {SERVER_MODE_LABEL[mode]}
-            </Label>
-            <FieldDescription id={`${hintId}-${mode}`} className={cn(CAPTION, 'pl-6 text-muted-foreground')}>
-              {MODE_HINT[mode]}
-            </FieldDescription>
-          </div>
-        ))}
-      </RadioGroup>
-    </FieldSet>
   );
 }

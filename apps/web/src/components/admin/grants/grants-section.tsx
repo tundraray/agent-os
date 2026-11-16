@@ -2,17 +2,18 @@
 
 import { useId, useState } from 'react';
 import { KeyRoundIcon } from 'lucide-react';
-import { AccessErrorCode, type Grant, type GrantEffect } from '@agent-os/contracts';
+import { AccessErrorCode, type Grant, type GrantEffect, type McpServerView } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { formatQuotaUsd } from '@/lib/access/money';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantTargetText, orphanGrantIds, serversToRead } from '@/lib/admin/grants';
-import { isApiRequestError } from '@/lib/api/api-request';
+import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CONTROL_SIZE, describeRefusal } from '../admin-form';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '../data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantDialog, type GrantHolderRef } from './grant-dialog';
 import { QuotaDialog } from './quota-dialog';
 
@@ -44,7 +45,18 @@ const isModelAllow = (grant: Grant): boolean => grant.effect === 'allow' && gran
 const holderQuery = (holder: GrantHolderRef): { roleId: string } | { userId: string } =>
   holder.kind === 'role' ? { roleId: holder.id } : { userId: holder.id };
 
-type RowState = { pendingId: string | null; errors: ReadonlyMap<string, string> };
+/** The grants whose «Убрать» is running, and the refusals shown under their rows. */
+type RowState = { pending: ReadonlySet<string>; errors: ReadonlyMap<string, string> };
+
+/** Each record on its own: one that fails to read is logged and left out, the others still tell their orphans. */
+async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
+  const reads = await Promise.allSettled(names.map((name) => adminApi.servers.get(name)));
+  return reads.flatMap((read, index) => {
+    if (read.status === 'fulfilled') return [read.value];
+    logger.error('admin: grants: server record read failed', { server: names[index], ...describeApiError(read.reason) });
+    return [];
+  });
+}
 
 /**
  * UXRD AD-04 «Личные права и запреты» and AD-06 «Права»: the holder's grants with GR-01 and «Изменить квоту».
@@ -57,12 +69,9 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
 
   // Design-admin «Права (GR-01, GR-02)»: the record of every server the holder has tool grants on, for its `tools`.
   const toRead = grants.data !== undefined && servers.data !== undefined ? serversToRead(grants.data, servers.data) : [];
-  const records = useResource(
-    () => Promise.all(toRead.map((name) => adminApi.servers.get(name))),
-    `records:${toRead.join('\n')}`,
-  );
+  const records = useResource(() => readRecords(toRead), `records:${toRead.join('\n')}`);
 
-  const [rowState, setRowState] = useState<RowState>({ pendingId: null, errors: new Map() });
+  const [rowState, setRowState] = useState<RowState>({ pending: new Set(), errors: new Map() });
   const [adding, setAdding] = useState(false);
   const [addEffect, setAddEffect] = useState<GrantEffect>('allow');
   const [quotaOpen, setQuotaOpen] = useState(false);
@@ -76,10 +85,18 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       return { ...current, errors };
     });
 
+  const setRowPending = (id: string, running: boolean): void =>
+    setRowState((current) => {
+      const pending = new Set(current.pending);
+      if (running) pending.add(id);
+      else pending.delete(id);
+      return { ...current, pending };
+    });
+
   /** UXRD Notes 9: «Убрать» sends at once, with no confirmation; the same dialog gives the grant back. */
   async function remove(grant: Grant): Promise<void> {
     setRowError(grant.id, null);
-    setRowState((current) => ({ ...current, pendingId: grant.id }));
+    setRowPending(grant.id, true);
     try {
       await adminApi.grants.remove(grant.id);
       grants.reload();
@@ -89,7 +106,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       if (isApiRequestError(error) && error.code === AccessErrorCode.GRANT_NOT_FOUND) grants.reload();
       else if (refusal !== null) setRowError(grant.id, refusal.text);
     } finally {
-      setRowState((current) => ({ ...current, pendingId: null }));
+      setRowPending(grant.id, false);
     }
   }
 
@@ -121,7 +138,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   const toRow = (grant: Grant): DataTableRow => {
     const orphan = orphans.has(grant.id);
     const target = grantTargetText(grant.target);
-    const removeAction = { label: TEXT.remove, onSelect: () => void remove(grant), pending: rowState.pendingId === grant.id };
+    const removeAction = { label: TEXT.remove, onSelect: () => void remove(grant), pending: rowState.pending.has(grant.id) };
     return {
       key: grant.id,
       name: target,
@@ -141,23 +158,22 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   };
 
   const title = holder.kind === 'role' ? TEXT.roleTitle : TEXT.userTitle;
-  const state: DataTableState =
-    ready && grants.data !== undefined
-      ? {
-          status: 'ready',
-          rows: grants.data.map(toRow),
-          empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? TEXT.emptyRole : TEXT.emptyUser, description: '' },
-        }
-      : grants.status === 'error' || servers.status === 'error'
-        ? {
-            status: 'error',
-            message: TEXT.loadFailed,
-            onRetry: () => {
-              grants.reload();
-              servers.reload();
-            },
-          }
-        : { status: 'loading' };
+  // The table waits for both reads: the registry tells which rows are orphans.
+  const state = resourceTableState(
+    {
+      status: grants.status === 'error' || servers.status === 'error' ? 'error' : ready ? 'ready' : 'loading',
+      data: grants.data,
+      reload: () => {
+        grants.reload();
+        servers.reload();
+      },
+    },
+    TEXT.loadFailed,
+    (data) => ({
+      rows: data.map(toRow),
+      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? TEXT.emptyRole : TEXT.emptyUser, description: '' },
+    }),
+  );
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">

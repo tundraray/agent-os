@@ -12,16 +12,15 @@ import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
+import { isNotFound } from '@/lib/admin/admin-errors';
 import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
 import { providerRules } from '@/lib/admin/form-rules';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { cn } from '@/lib/utils';
 import { adminPath } from '@/lib/shell-route';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
+import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
 import { CopyValue } from '../copy-value';
-import { DataTable } from '../data-table';
 import { SecretField } from '../secret-field';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL, ProviderEnabledSwitch } from './providers-table';
 
@@ -70,8 +69,6 @@ function updateBodyOf(type: ProviderView['type'], { name, issuer, clientId, clie
   return Object.keys(options).length === 0 ? { name: name.trim() } : { name: name.trim(), options };
 }
 
-const isNotFound = (error: unknown): boolean => isApiRequestError(error) && error.kind === 'not_found';
-
 const isPublicUrlRequired = (error: unknown): boolean =>
   isApiRequestError(error) && error.code === IdentityErrorCode.PUBLIC_URL_REQUIRED;
 
@@ -88,23 +85,12 @@ export function ProviderPage({ id }: { id: string }) {
   const data = provider.data;
   if (data === undefined) {
     return (
-      <>
-        <AdminPageHeader title={adminSectionTitle('sign-in')} />
-        <DataTable
-          caption={adminSectionTitle('sign-in')}
-          columns={[]}
-          state={
-            provider.status === 'error'
-              ? {
-                  status: 'error',
-                  // Notes 6: the provider's data are built from the public address, which cannot be derived here.
-                  message: isPublicUrlRequired(provider.error) ? ADMIN_TEXT.publicUrlRequired : TEXT.loadFailed,
-                  onRetry: provider.reload,
-                }
-              : { status: 'loading' }
-          }
-        />
-      </>
+      <RecordPlaceholder
+        section="sign-in"
+        resource={provider}
+        // Notes 6: the provider's data are built from the public address, which cannot be derived here.
+        loadFailed={isPublicUrlRequired(provider.error) ? ADMIN_TEXT.publicUrlRequired : TEXT.loadFailed}
+      />
     );
   }
 

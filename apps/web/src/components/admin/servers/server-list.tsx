@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { AdminPageHeader } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '../data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 
 /** UXRD MC-29. */
 const TEXT = {
@@ -78,16 +78,10 @@ const toRow = (server: McpServerSummary): DataTableRow => ({
 export function ServerList() {
   const servers = useResource(adminApi.servers.list, 'servers');
 
-  const state: DataTableState =
-    servers.data !== undefined
-      ? {
-          status: 'ready',
-          rows: servers.data.map(toRow),
-          empty: { Icon: ServerIcon, title: TEXT.empty, description: TEXT.emptyHint },
-        }
-      : servers.status === 'error'
-        ? { status: 'error', message: TEXT.loadFailed, onRetry: servers.reload }
-        : { status: 'loading' };
+  const state = resourceTableState(servers, TEXT.loadFailed, (data) => ({
+    rows: data.map(toRow),
+    empty: { Icon: ServerIcon, title: TEXT.empty, description: TEXT.emptyHint },
+  }));
 
   return (
     <>

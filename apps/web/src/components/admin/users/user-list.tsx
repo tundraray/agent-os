@@ -2,18 +2,18 @@
 
 import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
-import { IdentityValidationReason, type AdminUserSummary, type UserStatus } from '@agent-os/contracts';
+import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { AdminPageHeader } from '@/components/admin/admin-header';
 import { adminSectionTitle } from '@/components/admin/admin-sections';
-import { DataTable, type DataTableColumn, type DataTableRow, type DataTableState } from '@/components/admin/data-table';
+import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounced-value';
 import { usePagedResource, type Page } from '@/hooks/use-resource';
-import { isApiRequestError } from '@/lib/api/api-request';
 import { adminApi } from '@/lib/admin/admin-api';
+import { isListChanged } from '@/lib/admin/admin-errors';
 import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
 import { formatTime } from '@/lib/agents/format';
 import { adminRecordPath } from '@/lib/shell-route';
@@ -55,10 +55,7 @@ async function loadUsersPage(query: string, cursor: string | null): Promise<Page
  * A failed «Показать ещё»: a cursor the server no longer accepts reads the plan's Notes 6 text; any other
  * failure is a read failure, not a refused save, so it does not take `describeAdminError`'s «Не удалось сохранить».
  */
-const loadMoreErrorText = (error: unknown): string =>
-  isApiRequestError(error) && error.reason === IdentityValidationReason.INVALID_CURSOR
-    ? ADMIN_TEXT.listChanged
-    : TEXT.loadFailed;
+const loadMoreErrorText = (error: unknown): string => (isListChanged(error) ? ADMIN_TEXT.listChanged : TEXT.loadFailed);
 
 /** A non-empty `login` is a local account (design-admin.md, DC-4). */
 export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =>
@@ -120,27 +117,21 @@ export function UserList() {
   const list = usePagedResource((cursor) => loadUsersPage(searched, cursor), searched);
   const [creating, setCreating] = useState(false);
 
-  const state: DataTableState =
-    list.status === 'loading'
-      ? { status: 'loading' }
-      : list.status === 'error'
-        ? { status: 'error', message: TEXT.loadFailed, onRetry: list.reload }
+  const state = resourceTableState({ ...list, data: list.items }, TEXT.loadFailed, (items) => ({
+    rows: items.map(rowOf),
+    // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
+    // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
+    empty: { Icon: SearchXIcon, title: TEXT.noMatches, description: '' },
+    noMatches: TEXT.noMatches,
+    more:
+      list.nextCursor === null
+        ? undefined
         : {
-            status: 'ready',
-            rows: list.items.map(rowOf),
-            // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
-            // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
-            empty: { Icon: SearchXIcon, title: TEXT.noMatches, description: '' },
-            noMatches: TEXT.noMatches,
-            more:
-              list.nextCursor === null
-                ? undefined
-                : {
-                    onLoadMore: list.loadMore,
-                    loading: list.loadingMore,
-                    error: list.loadMoreError === undefined ? undefined : loadMoreErrorText(list.loadMoreError),
-                  },
-          };
+            onLoadMore: list.loadMore,
+            loading: list.loadingMore,
+            error: list.loadMoreError === undefined ? undefined : loadMoreErrorText(list.loadMoreError),
+          },
+  }));
 
   return (
     <>

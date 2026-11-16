@@ -16,6 +16,8 @@ export type SavingSwitchProps = {
   onSave: (checked: boolean) => Promise<void>;
   /** Names the change in the log, e.g. «admin: server enable». */
   logEvent: string;
+  /** The position cannot be changed here, e.g. the built-in role's admin right (DC-5). */
+  disabled?: boolean;
 };
 
 /**
@@ -23,7 +25,7 @@ export type SavingSwitchProps = {
  * unavailable until the answer; a refusal moves it back (the switch's own 150 ms transition) and names the
  * reason under it.
  */
-export function SavingSwitch({ label, labelHidden = false, checked, onSave, logEvent }: SavingSwitchProps) {
+export function SavingSwitch({ label, labelHidden = false, checked, onSave, logEvent, disabled = false }: SavingSwitchProps) {
   const id = useId();
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
@@ -56,13 +58,13 @@ export function SavingSwitch({ label, labelHidden = false, checked, onSave, logE
       <label className="flex w-fit items-center gap-2">
         <Switch
           checked={target ?? checked}
-          disabled={saving}
+          disabled={saving || disabled}
           aria-labelledby={labelId}
           aria-describedby={error !== null ? errorId : undefined}
           onCheckedChange={(next) => void save(next)}
           className="pointer-coarse:after:-inset-3"
         />
-        <span id={labelId} className={cn("text-data font-medium text-foreground", saving && "opacity-50", labelHidden && "sr-only")}>
+        <span id={labelId} className={cn("text-data font-medium text-foreground", (saving || disabled) && "opacity-50", labelHidden && "sr-only")}>
           {label}
         </span>
       </label>

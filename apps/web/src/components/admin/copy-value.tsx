@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId } from "react";
+import { useEffect, useId, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,8 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
   const labelId = useId();
   const { announcer } = useShellServices();
   const { isCopied, copyToClipboard } = useCopyToClipboard({ copiedDuration: COPIED_MS });
+  // Controlled from the first render: the tooltip is open on hover or focus and for the 2 s of «Скопировано».
+  const [hinted, setHinted] = useState(false);
 
   useEffect(() => {
     if (isCopied) announcer.getState().announce(COPY_TEXT.copied);
@@ -32,7 +34,7 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
           {value}
         </code>
         <TooltipProvider>
-          <Tooltip open={isCopied ? true : undefined}>
+          <Tooltip open={isCopied || hinted} onOpenChange={setHinted}>
             <TooltipTrigger
               render={
                 <Button

@@ -13,7 +13,6 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { focusShellTarget } from '@/lib/focus';
 import { parseShellRoute } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { ADMIN_SECTIONS } from './admin-sections';
@@ -36,23 +35,18 @@ type AdminSidebarNavProps = {
   loading: boolean;
   /** «К чату», the drawer's first stop. */
   backRef?: Ref<HTMLAnchorElement>;
-  /** A pick in the mobile drawer: the drawer closes and leaves the focus to the picked screen. */
+  /** A pick in the mobile drawer: the drawer closes and leaves the focus to the picked screen's `h1`. */
   onMobilePick: () => void;
 };
 
 /**
  * AD-01: «К чату», the «Панель» label and the five sections in place of «Новый чат», «Агенты» and the history.
- * The selected section is marked as the active thread (SB-06); a pick moves the focus to the section's `h1`.
+ * The selected section is marked as the active thread (SB-06).
  */
 export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebarNavProps) {
   const { isMobile } = useSidebar();
   const route = parseShellRoute(usePathname());
   const selected = route.kind === 'admin' ? route.section : undefined;
-
-  const onPick = (): void => {
-    if (isMobile) onMobilePick();
-    focusShellTarget('page-title');
-  };
 
   return (
     <>
@@ -90,7 +84,7 @@ export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebar
                     isActive={isActive}
                     tooltip={isMobile ? undefined : title}
                     className={itemClass(isMobile)}
-                    render={<Link href={path} aria-current={isActive ? 'page' : undefined} onClick={onPick} />}
+                    render={<Link href={path} aria-current={isActive ? 'page' : undefined} onClick={isMobile ? onMobilePick : undefined} />}
                   >
                     <Icon aria-hidden />
                     <span className="flex-1 truncate">{title}</span>
