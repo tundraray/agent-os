@@ -5,6 +5,7 @@ import { and, eq, gte, lt, sql } from 'drizzle-orm';
 import type { Clock } from './clock.js';
 import { RuntimeError } from './errors.js';
 import { type CallUsage, callCostUsd, type ModelPrices } from './model-cost.js';
+import { monthWindowUtc } from './month.js';
 
 /** One finished model call as the caller reports it. */
 export interface ModelCallRecord {
@@ -33,8 +34,6 @@ export interface TokenLedgerDeps {
   logger: Logger;
   prices: ModelPrices;
 }
-
-const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 /**
  * The token ledger (design-runtime.md, KD-5, Invariant 8): one row per finished model call, priced
@@ -87,21 +86,30 @@ export class TokenLedger {
    * `[start of the month UTC, start of the next)`. An empty month gives zeros.
    */
   async monthSpend(ownerId: string, month: string): Promise<MonthSpend> {
-    const { from, to } = monthWindowUtc(month);
     const [row] = await this.deps.db
       .select({
         costUsd: sql<string>`coalesce(sum(${runtimeModelCalls.costUsd}), 0)`,
         calls: sql<number>`count(*)::int`,
       })
       .from(runtimeModelCalls)
-      .where(
-        and(
-          eq(runtimeModelCalls.ownerId, ownerId),
-          gte(runtimeModelCalls.calledAt, from),
-          lt(runtimeModelCalls.calledAt, to),
-        ),
-      );
+      .where(ownerMonth(ownerId, month));
     return { costUsd: Number(row?.costUsd ?? 0), calls: row?.calls ?? 0 };
+  }
+
+  /**
+   * Spend of the owner over the month `YYYY-MM` split by model, in the window of
+   * {@link monthSpend}: model -> USD. A model with no call in the month is absent.
+   */
+  async monthSpendByModel(ownerId: string, month: string): Promise<ReadonlyMap<string, number>> {
+    const rows = await this.deps.db
+      .select({
+        model: runtimeModelCalls.model,
+        costUsd: sql<string>`sum(${runtimeModelCalls.costUsd})`,
+      })
+      .from(runtimeModelCalls)
+      .where(ownerMonth(ownerId, month))
+      .groupBy(runtimeModelCalls.model);
+    return new Map(rows.map((row) => [row.model, Number(row.costUsd)]));
   }
 
   /** The models with a price; the upper layer checks an agent's model against it. */
@@ -110,15 +118,12 @@ export class TokenLedger {
   }
 }
 
-function monthWindowUtc(month: string): { from: Date; to: Date } {
-  const match = MONTH_PATTERN.exec(month);
-  if (match === null) {
-    throw new Error(`Invalid month "${month}": expected YYYY-MM`);
-  }
-  const year = Number(match[1]);
-  const monthIndex = Number(match[2]) - 1;
-  return {
-    from: new Date(Date.UTC(year, monthIndex, 1)),
-    to: new Date(Date.UTC(year, monthIndex + 1, 1)),
-  };
+/** The owner's calls with `called_at` inside the UTC month `YYYY-MM`. */
+function ownerMonth(ownerId: string, month: string) {
+  const { from, to } = monthWindowUtc(month);
+  return and(
+    eq(runtimeModelCalls.ownerId, ownerId),
+    gte(runtimeModelCalls.calledAt, from),
+    lt(runtimeModelCalls.calledAt, to),
+  );
 }

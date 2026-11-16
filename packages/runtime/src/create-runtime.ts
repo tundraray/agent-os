@@ -48,8 +48,11 @@ export interface Runtime {
   readonly events: Pick<EventLog, 'listAfter'>;
   /** Consumers of outbox events. */
   readonly eventConsumers: EventConsumerRegistry;
-  /** The token ledger: the cost of each model call and an owner's spend per month. */
-  readonly ledger: Pick<TokenLedger, 'record' | 'monthSpend' | 'pricedModels'>;
+  /** The token ledger: the cost of each model call and an owner's spend per month, also by model. */
+  readonly ledger: Pick<
+    TokenLedger,
+    'record' | 'monthSpend' | 'monthSpendByModel' | 'pricedModels'
+  >;
   /**
    * Starts the workers — dispatcher, outbox relay, recovery sweeper — unless `RUNTIME_WORKERS`
    * is off.

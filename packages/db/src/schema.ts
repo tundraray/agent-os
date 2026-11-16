@@ -5,6 +5,8 @@ import {
   DecisionStatusSchema,
   DeliveryStatusSchema,
   EVENT_PAYLOAD_MAX_BYTES,
+  GrantEffectSchema,
+  GrantTargetKindSchema,
   HistoryEntryKindSchema,
   IDLE_MINUTES_DEFAULT,
   IDLE_MINUTES_MAX,
@@ -693,6 +695,110 @@ export const identitySettings = app.table(
     check(
       'identity_settings_idle_not_above_absolute_check',
       sql`${t.idleMinutes} <= ${t.absoluteMinutes}`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Access (enterprise-access/design-access.md, Data Model, KD-1, KD-3). Read and written only by the
+// `access` module of `apps/api` (ADR-0015). A grant names its MCP server and tool as text without
+// FK: the registry belongs to the `agents` package (ADR-0014).
+// ---------------------------------------------------------------------------------------------
+
+/** Price in USD per million tokens. */
+const usdPerMTok = (name: string) => numeric(name, { precision: 18, scale: 9, mode: 'number' });
+
+/** Model catalogue: a model is callable only when it is here. */
+export const accessModels = app.table(
+  'access_models',
+  {
+    /** Model ID as the provider knows it. */
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    inputUsdPerMTok: usdPerMTok('input_usd_per_mtok').notNull(),
+    outputUsdPerMTok: usdPerMTok('output_usd_per_mtok').notNull(),
+    cacheWriteUsdPerMTok: usdPerMTok('cache_write_usd_per_mtok').notNull(),
+    cacheReadUsdPerMTok: usdPerMTok('cache_read_usd_per_mtok').notNull(),
+    /** Long-context prices apply when the whole input of a call is above this; null — one price. */
+    longContextAboveInputTokens: integer('long_context_above_input_tokens'),
+    longContextInputUsdPerMTok: usdPerMTok('long_context_input_usd_per_mtok'),
+    longContextOutputUsdPerMTok: usdPerMTok('long_context_output_usd_per_mtok'),
+    longContextCacheWriteUsdPerMTok: usdPerMTok('long_context_cache_write_usd_per_mtok'),
+    longContextCacheReadUsdPerMTok: usdPerMTok('long_context_cache_read_usd_per_mtok'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    /** Null long-context prices pass: `null >= 0` is not false. */
+    check(
+      'access_models_prices_check',
+      sql`${t.inputUsdPerMTok} >= 0 and ${t.outputUsdPerMTok} >= 0
+        and ${t.cacheWriteUsdPerMTok} >= 0 and ${t.cacheReadUsdPerMTok} >= 0
+        and ${t.longContextInputUsdPerMTok} >= 0 and ${t.longContextOutputUsdPerMTok} >= 0
+        and ${t.longContextCacheWriteUsdPerMTok} >= 0 and ${t.longContextCacheReadUsdPerMTok} >= 0`,
+    ),
+    check(
+      'access_models_long_context_threshold_check',
+      sql`${t.longContextAboveInputTokens} > 0`,
+    ),
+    /** All five long-context columns are set or none; `or` keeps the CHECK out of `= ANY`. */
+    check(
+      'access_models_long_context_check',
+      sql`num_nulls(${t.longContextAboveInputTokens}, ${t.longContextInputUsdPerMTok},
+          ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
+          ${t.longContextCacheReadUsdPerMTok}) = 0
+        or num_nulls(${t.longContextAboveInputTokens}, ${t.longContextInputUsdPerMTok},
+          ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
+          ${t.longContextCacheReadUsdPerMTok}) = 5`,
+    ),
+  ],
+);
+
+/** A grant of a role or an employee on a server, a tool or a model; one per holder, effect, target. */
+export const accessGrants = app.table(
+  'access_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    effect: text('effect').notNull(),
+    targetKind: text('target_kind').notNull(),
+    server: text('server'),
+    tool: text('tool'),
+    model: text('model').references(() => accessModels.id, { onDelete: 'cascade' }),
+    /** Monthly quota of a model allow; null — no quota. */
+    quotaUsd: numeric('quota_usd', { precision: 12, scale: 2, mode: 'number' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('access_grants_holder_target_key')
+      .on(t.roleId, t.userId, t.effect, t.targetKind, t.server, t.tool, t.model)
+      .nullsNotDistinct(),
+    index('access_grants_role_idx').on(t.roleId),
+    index('access_grants_user_idx').on(t.userId),
+    check('access_grants_effect_check', isOneOf(t.effect, GrantEffectSchema.options)),
+    check('access_grants_target_kind_check', isOneOf(t.targetKind, GrantTargetKindSchema.options)),
+    check('access_grants_holder_check', sql`num_nonnulls(${t.roleId}, ${t.userId}) = 1`),
+    check(
+      'access_grants_target_check',
+      sql`(${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server)}
+          and ${t.server} is not null and ${t.tool} is null and ${t.model} is null)
+        or (${t.targetKind} = ${literal(GrantTargetKindSchema.enum.tool)}
+          and ${t.server} is not null and ${t.tool} is not null and ${t.model} is null)
+        or (${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)}
+          and ${t.server} is null and ${t.tool} is null and ${t.model} is not null)`,
+    ),
+    /** Invariant 2: a deny belongs only to an employee. */
+    check(
+      'access_grants_deny_holder_check',
+      sql`${t.effect} = ${literal(GrantEffectSchema.enum.allow)} or ${t.userId} is not null`,
+    ),
+    check(
+      'access_grants_quota_check',
+      sql`${t.quotaUsd} is null or (${t.effect} = ${literal(GrantEffectSchema.enum.allow)}
+        and ${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)})`,
     ),
   ],
 );

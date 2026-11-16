@@ -23,6 +23,8 @@ import { join } from 'node:path';
 import {
   DecisionStatusSchema,
   DeliveryStatusSchema,
+  GrantEffectSchema,
+  GrantTargetKindSchema,
   HistoryEntryKindSchema,
   McpServerModeSchema,
   MessageStatusSchema,
@@ -45,6 +47,8 @@ const ROW_TIMEOUT_MS = 120_000;
 /** Tables of the Data Models (agent-platform/design-runtime.md, design-agents.md, design-chat.md, agent-quality/design-lifecycle.md) plus the migration journal. */
 const APP_TABLES = [
   '__drizzle_migrations',
+  'access_grants',
+  'access_models',
   'agent_code_calls',
   'agent_mcp_accounts',
   'agent_mcp_servers',
@@ -239,6 +243,8 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
         identity_users_status_check: sorted(UserStatusSchema.options),
         identity_providers_type_check: sorted(ProviderTypeSchema.options),
         agent_mcp_servers_mode_check: sorted(McpServerModeSchema.options),
+        access_grants_effect_check: sorted(GrantEffectSchema.options),
+        access_grants_target_kind_check: sorted(GrantTargetKindSchema.options),
       });
     });
   });

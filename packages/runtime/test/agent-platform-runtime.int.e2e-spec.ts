@@ -1518,6 +1518,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   //   the task id, the model, the four token counts, the cost and the time; `callId`s are distinct.
   // - Row B "the month window": A also has calls at 2026-10-31T23:59:59Z, 2026-11-01T00:00:00Z, 2026-11-30T23:59:59Z and 2026-12-01T00:00:00Z; owner B has November calls. Then: `monthSpend(A, '2026-11')` equals the literal sum of A's calls from 2026-11-01T00:00:00Z
   //   through 2026-11-30T23:59:59Z, and its call count equals their number; October, December and B's rows are not in it; `monthSpend(A, '2026-09')` is `{ costUsd: 0, calls: 0 }`.
+  //   `monthSpendByModel(A, '2026-11')` holds each model's literal sum (AC-21.4, DC-9 of design-access.md), `'2026-09'` is empty, B's rows are not in A's map.
   // - Row C "unknown price": `record` for a model absent from the price table rejects with `UNKNOWN_MODEL_PRICE`; the ledger has no new row (row count before equals after); the in-memory log has an error entry naming the model; `pricedModels()` lists exactly the table's models.
   // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: the tree's tasks, messages, decisions and events are gone; the ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
   it('INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model\'s price', async () => {
@@ -1625,6 +1626,18 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
         costUsd: 0,
         calls: 0,
       });
+
+      // And: the month spend split by model holds each model's own sum, by the same window
+      expect(await harness.ledger.monthSpendByModel(ownerA, '2026-11')).toEqual(
+        new Map([
+          [TEST_MODEL_ONE, 0.002],
+          [TEST_MODEL_TWO, 0.006],
+        ]),
+      );
+      expect(await harness.ledger.monthSpendByModel(ownerA, '2026-09')).toEqual(new Map());
+      expect(await harness.ledger.monthSpendByModel(ownerB, '2026-11')).toEqual(
+        new Map([[TEST_MODEL_TWO, 0.006]]),
+      );
     } finally {
       await harness.close();
     }

@@ -20,7 +20,7 @@ import {
   type StopResponse,
   type WorkflowRunBrief,
 } from '@agent-os/contracts';
-import type { Runtime } from '@agent-os/runtime';
+import { monthOf, type Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
 import { AGENTS } from '../agents/agents.tokens.js';
 import { isUuid } from '../common/is-uuid.js';
@@ -46,9 +46,6 @@ const agentNotFound = () => httpError('AGENT_NOT_FOUND');
 
 /** A top agent of the list with the position the list order and its cursor read. */
 type ListedAgent = { readonly updatedAt: Date; readonly id: string; readonly node: AgentListNode };
-
-/** The current month `YYYY-MM` by UTC. */
-const utcMonth = (now: Date): string => now.toISOString().slice(0, 7);
 
 /**
  * The agent routes, decisions and spend (design-chat.md, Contract «Агенты», «Решения и расход», KD-7,
@@ -208,7 +205,7 @@ export class AgentControlService {
 
   /** The owner's spend in the current UTC month (AC-29.1). */
   async spend(ownerId: string): Promise<SpendResponse> {
-    const month = utcMonth(new Date());
+    const month = monthOf(new Date());
     const { costUsd } = await this.runtime.ledger.monthSpend(ownerId, month);
     return { month, costUsd };
   }

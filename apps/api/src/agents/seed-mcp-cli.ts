@@ -1,18 +1,19 @@
-import { text } from 'node:stream/consumers';
 import { parseArgs } from 'node:util';
-import {
-  McpErrorCode,
-  type ApiError,
-  type RegisterMcpServerBody,
-} from '@agent-os/contracts';
+import { McpErrorCode, type RegisterMcpServerBody } from '@agent-os/contracts';
 // A devDependency in `src` on purpose: this is a developer tool, never run in the production image.
 import { FIXTURE_SHARED_TOKEN } from '@agent-os/mcp-fixture';
-import { frontendOrigin, SESSION_COOKIE } from '../identity/session-cookie.js';
+import {
+  DEFAULT_API,
+  failure,
+  readPassword,
+  signIn,
+  stepFailed,
+  type AdminSession,
+} from '../common/admin-cli-client.js';
 import { createAppLogger } from '../logging/app-logger.js';
 
 const logger = createAppLogger(process.env);
 
-const DEFAULT_API = 'http://localhost:4000';
 const DEFAULT_FIXTURE = 'http://localhost:4100';
 
 /** The OAuth server whose account the administrator connects after registering it. */
@@ -45,11 +46,6 @@ function readArguments(): Arguments {
   return { login, api, fixture };
 }
 
-/** All of standard input without its trailing line break. */
-async function readPassword(): Promise<string> {
-  return (await text(process.stdin)).replace(/\r?\n$/, '');
-}
-
 /** The fixture's servers: `logs` and `tracker` with the shared token, `backoffice` with personal OAuth. */
 function fixtureServers(fixture: string): RegisterMcpServerBody[] {
   const shared = { mode: 'shared', sharedToken: FIXTURE_SHARED_TOKEN } as const;
@@ -64,13 +60,6 @@ function fixtureServers(fixture: string): RegisterMcpServerBody[] {
   ];
 }
 
-/** The failed step with the status and the API's error code; never a header or a cookie. */
-async function failure(step: string, response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => ({}))) as Partial<ApiError>;
-  const details = [body.errorCode, body.reason].filter(Boolean).join(' ');
-  return new Error(`${step} answered ${response.status} ${details}`.trim());
-}
-
 /** The `Location` of a redirect answer, or an error naming the step. */
 async function redirectOf(step: string, response: Response): Promise<URL> {
   const location = response.headers.get('location');
@@ -80,47 +69,20 @@ async function redirectOf(step: string, response: Response): Promise<URL> {
   return new URL(location);
 }
 
-/** A session of the administrator: `POST /api/auth/password`, the `Cookie` header value of its session. */
-async function signIn(
-  api: string,
-  login: string,
-  password: string,
-): Promise<string> {
-  const response = await fetch(`${api}/api/auth/password`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', origin: frontendOrigin() },
-    body: JSON.stringify({ login, password }),
-  });
-  if (response.status !== 204) throw await failure('Sign-in', response);
-  const session = response.headers
-    .getSetCookie()
-    .map((cookie) => cookie.split(';')[0] ?? '')
-    .find((pair) => pair.startsWith(`${SESSION_COOKIE}=`));
-  if (session === undefined) throw new Error('Sign-in set no session cookie');
-  return session;
-}
-
 /** Registers `server`; false when the name is already taken (409), so a repeated run skips it. */
 async function register(
-  api: string,
-  cookie: string,
+  session: AdminSession,
   server: RegisterMcpServerBody,
 ): Promise<boolean> {
-  const response = await fetch(`${api}/api/admin/mcp-servers`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      origin: frontendOrigin(),
-      cookie,
-    },
-    body: JSON.stringify(server),
-  });
-  if (response.status === 201) return true;
-  if (response.status === 409) {
-    const body = (await response.json()) as Partial<ApiError>;
-    if (body.errorCode === McpErrorCode.MCP_SERVER_NAME_TAKEN) return false;
-  }
-  throw await failure(`Registering ${server.name}`, response);
+  const answer = await session.request(
+    'POST',
+    '/api/admin/mcp-servers',
+    server,
+  );
+  if (answer.status === 201) return true;
+  if (answer.error?.errorCode === McpErrorCode.MCP_SERVER_NAME_TAKEN)
+    return false;
+  throw stepFailed(`Registering ${server.name}`, answer);
 }
 
 /**
@@ -169,12 +131,12 @@ async function connectAdminAccount(
 async function main(): Promise<void> {
   const { login, api, fixture } = readArguments();
   const password = await readPassword();
-  const cookie = await signIn(api, login, password);
+  const session = await signIn(api, login, password);
   for (const server of fixtureServers(fixture)) {
     const startedAt = Date.now();
-    const created = await register(api, cookie, server);
+    const created = await register(session, server);
     if (created && server.mode === 'oauth') {
-      await connectAdminAccount(api, cookie, server.name);
+      await connectAdminAccount(api, session.cookie, server.name);
     }
     logger.info(
       created ? 'MCP server seeded' : 'MCP server skipped: name taken',
