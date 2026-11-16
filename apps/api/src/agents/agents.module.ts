@@ -37,7 +37,7 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
 
 /**
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
- * design-chat.md «Сборка»): reads the settings and the servers file and assembles the package on the
+ * design-chat.md «Сборка»): reads the settings and assembles the package on the
  * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` (the one token tests replace) and
  * the `DeltaPublisher` as the `onTextDelta` hook. The `agent` handler and the `task.failed` consumer are
  * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own

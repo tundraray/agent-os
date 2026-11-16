@@ -8,21 +8,23 @@ import {
   CHILD_MODEL,
   CHILD_SCENARIO_ENV,
   type ChildScenario,
-  CODE_RUN_DEFINITION,
-  READ_RUN,
-  WRITE_RUN,
+  codeRunDefinition,
+  readRun,
+  type ScenarioServers,
+  writeRun,
 } from './codeRunChild.js';
 
 /**
  * Entry of the code-execution E2E-1 child process, run only compiled (`pnpm --filter @agent-os/agents
  * build:child` → `dist/test-child/`). It plays the API process: the composition root of `createRuntime`
  * + `createAgents` with the REAL code executor (`createCodeRunner`, the default of `createAgents`), the
- * scripted model and the MCP fixture servers, all from the packages' built `dist`. It reads its
- * environment — `DATABASE_URL`, the Runtime settings (workers on, short lease and reaper) and the
- * scenario (`CODE_RUN_CHILD_SCENARIO`: the agents settings and the servers file of the test) — and logs
- * every record as a JSON line to the console, which the harness parses. It creates no agents: the test
- * process does. IPC: `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` stops the workers,
- * closes the MCP processes and the pool, and exits 0. The test kills it from outside.
+ * scripted model and the MCP fixture servers the test registered in the database at its own fixture
+ * process, all from the packages' built `dist`. It reads its environment — `DATABASE_URL`, the Runtime
+ * settings (workers on, short lease and reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
+ * settings and the run's server names) — and logs every record as a JSON line to the console, which the
+ * harness parses. It creates no agents and registers no server: the test process does. IPC:
+ * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` stops the workers, the agents and the
+ * pool, and exits 0. The test kills it from outside.
  */
 
 /** Messages of the child to the harness. */
@@ -50,9 +52,9 @@ function readScenario(): ChildScenario {
  * The model of every run of the scenario, computed from the input so a fresh process continues where
  * the killed one stopped: no tool result yet → the `run_code` call; a tool result → the report.
  */
-function scenarioModel(): ScriptedModel {
+function scenarioModel(servers: ScenarioServers): ScriptedModel {
   const model = createScriptedModel();
-  for (const run of [READ_RUN, WRITE_RUN]) {
+  for (const run of [readRun(servers), writeRun(servers)]) {
     model.script({ task: run.task }, [], {
       thereafter: (messages) =>
         messages.some((message) => message.role === 'tool')
@@ -73,7 +75,7 @@ async function main(): Promise<void> {
   if (!connectionString) throw new Error('DATABASE_URL is not set');
   const scenario = readScenario();
   const runtimeConfig = parseRuntimeConfig(process.env);
-  const agentsConfig = parseAgentsConfig(scenario.variables, scenario.mcpServers);
+  const agentsConfig = parseAgentsConfig(scenario.variables);
   const logger = createLogger({ sinks: [consoleSink()], secrets: [], minLevel: 'info' });
   const database = createDatabase({ connectionString, poolMax: runtimeConfig.dbPoolMax });
   const runtime = createRuntime({
@@ -88,11 +90,11 @@ async function main(): Promise<void> {
     runtime,
     logger,
     config: agentsConfig,
-    turnClient: scenarioModel().turnClient,
+    turnClient: scenarioModel(scenario.servers).turnClient,
     // Every owner of these tests is active.
     ownerGate: { check: async () => {} },
   });
-  agents.definitions.register(CODE_RUN_DEFINITION);
+  agents.definitions.register(codeRunDefinition(scenario.servers));
   await agents.start();
 
   process.on('message', (message: HarnessMessage) => {

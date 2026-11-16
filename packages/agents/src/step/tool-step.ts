@@ -191,7 +191,8 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     };
 
     const definition = definitionOf(catalog, session);
-    const sessionTools = registry.sessionTools({
+    // Without the account filter: a call to a server whose account went away gets `auth_required` (C3).
+    const sessionTools = await registry.checkTools({
       definition,
       limits: session.limits,
       ownerId: session.ownerId,

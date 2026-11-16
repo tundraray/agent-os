@@ -12,7 +12,13 @@ import type { ScriptedModel } from '@agent-os/agents/testing';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
 import { createDatabase } from '@agent-os/db';
-import { createFixtureFiles, type FixtureFiles, fixtureServersFile } from '@agent-os/mcp-fixture';
+import {
+  createFixtureFiles,
+  FIXTURE_SHARED_TOKEN,
+  type FixtureFiles,
+  type FixtureProcess,
+  startFixtureProcess,
+} from '@agent-os/mcp-fixture';
 import {
   createRuntime,
   type ModelPrices,
@@ -22,6 +28,7 @@ import {
   type RuntimeConfig,
   systemClock,
 } from '@agent-os/runtime';
+import { inject } from 'vitest';
 import { createWorkflows, START_WORKFLOW_TOOL, type Workflows } from '@agent-os/workflows';
 import { SHIPPED_TEMPLATES } from '../../src/shipped-templates.js';
 import { databaseUrl } from './database-url.js';
@@ -30,8 +37,9 @@ import { databaseUrl } from './database-url.js';
  * Test assembly of the workflows part (design-workflows.md, Test Strategy): `createRuntime`, `createAgents`
  * and `createWorkflows` over their own pool, in the order of the composition root — create, register,
  * `agents.start()`, `runtime.start()`; stop in reverse. Postgres, the runtime, agents and workflows are
- * real; the model is the scripted double of `@agent-os/agents/testing` and MCP is the fixture of
- * `@agent-os/mcp-fixture` as real stdio processes. No logic of the double or of the fixture lives here.
+ * real; the model is the scripted double of `@agent-os/agents/testing` and MCP is the fixture process of
+ * `@agent-os/mcp-fixture` over HTTP, its `logs` source registered in the registry under the run's name
+ * {@link LOGS_SERVER}. No logic of the double or of the fixture lives here.
  */
 
 /** The deployment's default model (`AGENT_DEFAULT_MODEL`): the executors of the shipped template. */
@@ -54,8 +62,22 @@ const MODEL_PRICES: ModelPrices = parseModelPrices({
   },
 });
 
-/** Server id of the fixture's read-only payment logs in the harness's servers file. */
-const LOGS_SERVER = 'logs';
+declare module 'vitest' {
+  export interface ProvidedContext {
+    /** Six hex digits that end every MCP server name of this test run (`-t<runId>`). */
+    mcpRunId: string;
+  }
+}
+
+/**
+ * The run's server of the fixture's read-only payment logs. The tests run on the developer's database, whose
+ * registry has its own `logs` (`seed:mcp`): the run's servers are `<source>-t<runId>`, and the global setup
+ * deletes them after the run.
+ */
+export const LOGS_SERVER = `logs-t${inject('mcpRunId')}`;
+
+/** The OAuth return address a registration names; a shared-token server never uses it. */
+const MCP_REDIRECT_URL = 'http://localhost:3000/api/mcp/oauth/callback';
 
 /** Turns of the test root: enough for any conversation of a test. */
 const ROOT_MAX_TURNS = 40;
@@ -72,7 +94,7 @@ export interface WorkflowsHarnessOptions {
   readonly owners: readonly string[];
   /** Raw templates for `createWorkflows`; the shipped ones by default. */
   readonly templates?: readonly unknown[];
-  /** Fixture files whose fault rules (a held read) the test wrote before the MCP processes start; fresh ones by default. */
+  /** Fixture files whose fault rules (a held read) the test wrote; fresh ones by default. */
   readonly fixture?: FixtureFiles;
 }
 
@@ -84,9 +106,11 @@ export interface WorkflowsHarness {
   /** Name of the test root's definition: its only tool is `start_workflow`. */
   readonly rootDefinition: string;
   readonly fixture: FixtureFiles;
+  /** The harness's fixture process, writing into {@link fixture}. */
+  readonly fixtureProcess: FixtureProcess;
   /** Every record runtime, agents and workflows logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, closes the MCP processes, then the pool — each also when the one before fails. */
+  /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
   close(): Promise<void>;
 }
 
@@ -123,11 +147,12 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
       MCP_ACCESS_TABLE: JSON.stringify(
         Object.fromEntries(options.owners.map((ownerId) => [ownerId, [LOGS_SERVER]])),
       ),
+      NODE_ENV: 'test',
     },
-    fixtureServersFile(fixture, [{ id: LOGS_SERVER, source: 'logs' }]),
   );
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
+  const fixtureProcess = await startFixtureProcess(fixture);
   const database = createDatabase({
     connectionString: databaseUrl(),
     poolMax: runtimeConfig.dbPoolMax,
@@ -159,12 +184,17 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
       try {
         await agents.stop();
       } finally {
-        await database.close();
+        try {
+          await database.close();
+        } finally {
+          await fixtureProcess.stop();
+        }
       }
     }
   };
   try {
     await agents.start();
+    await registerLogsServer(agents, fixtureProcess);
   } catch (error) {
     await close();
     throw error;
@@ -178,9 +208,27 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     workflows,
     rootDefinition,
     fixture,
+    fixtureProcess,
     logs: sink.records,
     close,
   };
+}
+
+/**
+ * Points the run's {@link LOGS_SERVER} at this harness's fixture process: the row an earlier harness of the
+ * run left (its process stopped) is replaced.
+ */
+async function registerLogsServer(agents: Agents, fixtureProcess: FixtureProcess): Promise<void> {
+  if ((await agents.mcp.list()).some((server) => server.name === LOGS_SERVER)) {
+    await agents.mcp.remove(LOGS_SERVER);
+  }
+  await agents.mcp.register({
+    name: LOGS_SERVER,
+    url: fixtureProcess.sharedUrl('logs'),
+    mode: 'shared',
+    sharedToken: FIXTURE_SHARED_TOKEN,
+    redirectUrl: MCP_REDIRECT_URL,
+  });
 }
 
 /**

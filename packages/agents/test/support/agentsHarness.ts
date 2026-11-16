@@ -7,6 +7,7 @@ import {
   type AgentSessions,
   type AgentTurnMessage,
   createAgents,
+  type OwnerGate,
   parseAgentsConfig,
   secretValuesOf,
 } from '@agent-os/agents';
@@ -22,7 +23,13 @@ import {
   runtimeInbox,
   runtimeModelCalls,
 } from '@agent-os/db';
-import { createFixtureFiles, type FixtureFiles, fixtureServersFile } from '@agent-os/mcp-fixture';
+import {
+  createFixtureFiles,
+  type FixtureFiles,
+  type FixtureProcess,
+  type FixtureSource,
+  startFixtureProcess,
+} from '@agent-os/mcp-fixture';
 import type { ScriptedModel } from '@agent-os/agents/testing';
 import {
   createRuntime,
@@ -36,13 +43,16 @@ import {
 } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { databaseUrl } from './database-url.js';
+import { registerFixtureServers, removeServer, runName } from './mcp-servers.js';
 
 /**
  * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `createRuntime` and
  * `createAgents` over their own pool, without `apps/api`. Postgres, the runtime and every agents component
- * are real; the model is the scripted double under `ModelClient` (plan Notes 9) and MCP is the fixture as
- * real stdio processes. A second instance ("the restarted server") is a second harness over the same
- * database and the same fixture files.
+ * are real; the model is the scripted double under `ModelClient` (plan Notes 9) and MCP is the fixture
+ * process over HTTP, registered in the registry under the run's names (`mcp-servers.ts`). A second
+ * instance ("the restarted server") is a second harness over the same database and the same fixture
+ * files: it starts its own fixture process and points the run's registry rows at it; both processes
+ * write the same call log.
  */
 
 /** The deployment's default model (`AGENT_DEFAULT_MODEL`): input 1, output 5 USD per million tokens. */
@@ -66,9 +76,12 @@ const TEST_MODEL_PRICES: ModelPrices = parseModelPrices({
   },
 });
 
-/** Server ids of the fixture servers file: read-only payment logs and the back office with `create_incident_note`. */
-export const LOGS_SERVER = 'logs';
-export const BACKOFFICE_SERVER = 'backoffice';
+/** The fixture sources a harness registers unless told otherwise. */
+const DEFAULT_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice'];
+const ALL_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice', 'tracker'];
+
+/** Every owner of these tests is active unless a test passes its own gate. */
+const OPEN_GATE: OwnerGate = { check: async () => {} };
 
 /** A heartbeat that never comes within a test: the instance's lease is renewed only by the test. */
 const ZOMBIE_HEARTBEAT_MS = 600_000;
@@ -78,23 +91,6 @@ const SETTLE_POLL_MS = 25;
 
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
-
-/** Extra process variables per server id (a credential the script must not see). */
-export type ServerEnv = Readonly<Record<string, Readonly<Record<string, string>>>>;
-
-/** The servers file of a harness: both fixture servers, logging into the test's call log. */
-function fixtureServers(files: FixtureFiles, serverEnv: ServerEnv): unknown {
-  return fixtureServersFile(
-    files,
-    [
-      { id: LOGS_SERVER, source: 'logs' as const },
-      { id: BACKOFFICE_SERVER, source: 'backoffice' as const },
-    ].map((server) => {
-      const env = serverEnv[server.id];
-      return env === undefined ? server : { ...server, env };
-    }),
-  );
-}
 
 /** A definition name unique to one test: catalogs of other tests never meet it. */
 export function uniqueName(label: string): string {
@@ -120,7 +116,7 @@ export function testDefinition(
 
 export interface AgentsHarnessOptions {
   readonly model: ScriptedModel;
-  /** `MCP_ACCESS_TABLE` of the test: employee id → server ids. */
+  /** `MCP_ACCESS_TABLE` of the test: employee id → server names of the run (`mcp-servers.ts`). */
   readonly access: Readonly<Record<string, readonly string[]>>;
   /** Registered before `start()`. */
   readonly definitions?: readonly AgentDefinition[];
@@ -128,8 +124,14 @@ export interface AgentsHarnessOptions {
   readonly fixture?: FixtureFiles;
   /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` / `ANTHROPIC_API_KEY` variables over the harness defaults. */
   readonly variables?: Readonly<Record<string, string>>;
-  /** Extra process variables of the fixture servers, by server id; the logger hides their values. */
-  readonly serverEnv?: ServerEnv;
+  /**
+   * Sources whose run servers the harness registers at its fixture process's shared-token paths;
+   * `logs` and `backoffice` by default. `[]` registers nothing and deletes the run's servers an earlier
+   * harness of the file left (a test that registers its own).
+   */
+  readonly mcpServers?: readonly FixtureSource[];
+  /** The owner gate of `createAgents`; one that lets every owner through by default. */
+  readonly ownerGate?: OwnerGate;
   /** The code executor; the real one (`createCodeRunner`) by default. */
   readonly codeRunner?: CodeRunner;
   /** Runtime settings over the harness defaults (workers on, 6 slots, short polls and lease). */
@@ -145,9 +147,11 @@ export interface AgentsHarness {
   /** The Drizzle client of the harness's pool; the tests only read through it (and `expireLease`). */
   readonly db: Database;
   readonly fixture: FixtureFiles;
+  /** The harness's fixture process, writing into {@link fixture}. */
+  readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, closes the MCP processes, then the pool — each also when the one before fails. */
+  /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
   close(): Promise<void>;
 }
 
@@ -171,12 +175,13 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       AGENT_DEFAULT_MODEL: TEST_MODEL_DEFAULT,
       MCP_ACCESS_TABLE: JSON.stringify(options.access),
       MCP_CALL_TIMEOUT_MS: '90000',
+      NODE_ENV: 'test',
       ...options.variables,
     },
-    fixtureServers(fixture, options.serverEnv ?? {}),
   );
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: secretValuesOf(agentsConfig), minLevel: 'debug' });
+  const fixtureProcess = await startFixtureProcess(fixture);
   const database = createDatabase({
     connectionString: databaseUrl(),
     poolMax: runtimeConfig.dbPoolMax,
@@ -194,8 +199,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
-    // Every owner of these tests is active.
-    ownerGate: { check: async () => {} },
+    ownerGate: options.ownerGate ?? OPEN_GATE,
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
   for (const definition of options.definitions ?? []) agents.definitions.register(definition);
@@ -207,12 +211,21 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       try {
         await agents.stop();
       } finally {
-        await database.close();
+        try {
+          await database.close();
+        } finally {
+          await fixtureProcess.stop();
+        }
       }
     }
   };
   try {
     await agents.start();
+    const sources = options.mcpServers ?? DEFAULT_SOURCES;
+    if (sources.length === 0) {
+      for (const source of ALL_SOURCES) await removeServer(agents, runName(source));
+    }
+    await registerFixtureServers(agents, fixtureProcess, sources);
   } catch (error) {
     await close();
     throw error;
@@ -225,6 +238,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     sessions: agents.sessions,
     db: database.db,
     fixture,
+    fixtureProcess,
     logs: sink.records,
     close,
   };

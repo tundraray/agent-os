@@ -6,7 +6,7 @@ const CallLogEntrySchema = z.strictObject({
   seq: z.int().min(1),
   /** The source that received the call (`logs`, `backoffice`, `tracker`). */
   source: z.string(),
-  /** `shared` for the shared token (and stdio), the account name for a token of the fixture's authorization server. */
+  /** `shared` for the shared token, the account name for a token of the fixture's authorization server. */
   account: z.string(),
   /** Sequence number of the access token at the fixture's authorization server (not its value); null for `shared`. */
   tokenId: z.int().min(1).nullable(),

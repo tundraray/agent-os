@@ -416,6 +416,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         const attempt = await attemptOf(input, logger);
         if (typeof attempt !== 'number') return attempt;
         const registry = deps.registry();
+        const snapshot = await registry.definitionMcpTools(definition);
         return await runScript(
           {
             caller,
@@ -426,7 +427,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
             logger,
             codeScope: {
               caller,
-              snapshot: registry.definitionMcpTools(definition),
+              snapshot,
               runClass: args.class,
               ...(confirmedNames === undefined ? {} : { confirmedNames }),
               agentToolNames: registry.toolNames(),

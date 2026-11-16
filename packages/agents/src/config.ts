@@ -1,3 +1,4 @@
+import { McpServerNameSchema } from '@agent-os/contracts';
 import { z } from 'zod';
 
 /** An empty variable (`NAME=` in `.env`) means "not set": the default applies. */
@@ -8,9 +9,6 @@ const positiveInteger = (fallback: number) =>
 
 /** A model id the package resolves: only Anthropic models (`createResolveModel`). */
 export const MODEL_ID_PATTERN = /^anthropic\/[^/\s]+$/;
-
-/** Ids of servers and names of definitions: kebab-case. */
-export const KEBAB_CASE_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** Runtime settings of design-agents.md: env names and defaults. */
 const AgentsEnvSchema = z.object({
@@ -36,38 +34,14 @@ const AgentsEnvSchema = z.object({
   CODE_RUN_MAX_TOOL_CALLS: positiveInteger(50),
   CODE_RUN_MAX_CONCURRENT: positiveInteger(4),
   CODE_RUN_MAX_CONCURRENT_PER_USER: positiveInteger(2),
+  // Development is anything but `production`, unset included (plan Notes 10).
+  NODE_ENV: z.preprocess(unsetWhenEmpty, z.string().optional()),
 });
 
-/** One MCP server of the deployment's servers file (`MCP_SERVERS_FILE`); stdio only (KD-5). */
-const McpServerSchema = z.object({
-  id: z.string().regex(KEBAB_CASE_PATTERN, 'expected a kebab-case id'),
-  command: z.string().min(1),
-  args: z.array(z.string()),
-  env: z.record(z.string(), z.string()),
-});
+/** Keys are employee ids or `*`; values are registry server names, which are checked only for their form. */
+const AccessTableSchema = z.record(z.string().min(1), z.array(McpServerNameSchema));
 
-const McpServersFileSchema = z
-  .array(McpServerSchema)
-  .min(1, 'the servers file names no server')
-  .superRefine((servers, context) => {
-    const seen = new Set<string>();
-    servers.forEach((server, index) => {
-      if (seen.has(server.id)) {
-        context.addIssue({
-          code: 'custom',
-          path: [index, 'id'],
-          message: `server id ${server.id} repeats`,
-        });
-      }
-      seen.add(server.id);
-    });
-  });
-
-const AccessTableSchema = z.record(z.string().min(1), z.array(z.string()));
-
-export type McpServerConfig = z.infer<typeof McpServerSchema>;
-
-/** «Employee id → ids of the servers they may use» (KD-5); a missing row means no servers. */
+/** «Employee id → names of the servers they may use» (KD-5); a missing row means no servers. */
 export type McpAccessTable = ReadonlyMap<string, ReadonlySet<string>>;
 
 export interface AgentsConfig {
@@ -86,8 +60,8 @@ export interface AgentsConfig {
   readonly compactAtTokens: number;
   /** `MCP_CALL_TIMEOUT_MS`: limit of one MCP call. */
   readonly mcpCallTimeoutMs: number;
-  /** Content of `MCP_SERVERS_FILE`. */
-  readonly mcpServers: readonly McpServerConfig[];
+  /** `NODE_ENV` is not `production`: `http` server and authorization addresses pass the address rule. */
+  readonly allowHttpUrls: boolean;
   /** `MCP_ACCESS_TABLE`. */
   readonly mcpAccess: McpAccessTable;
   /** `CODE_RUN_*`; a run's result limit is `toolResultMaxBytes`. */
@@ -109,32 +83,21 @@ export interface CodeRunConfig {
 }
 
 /**
- * The secret values of the settings (FR-11): the provider key and every value of the servers'
- * environment. The logger redacts them, and `run_code` masks them in a run's output and result.
+ * The secret values of the settings (FR-11): the provider key. The logger redacts it, and `run_code` masks
+ * it in a run's output and result. MCP tokens live in the database, never in the settings.
  */
 export function secretValuesOf(config: AgentsConfig): string[] {
-  return [config.anthropicApiKey, ...config.mcpServers.flatMap((server) => Object.values(server.env))].filter(
-    (secret) => secret !== '',
-  );
+  return [config.anthropicApiKey].filter((secret) => secret !== '');
 }
 
 /**
  * Parses Runtime settings of the agents package. `variables` are the environment variables the
- * composition root hands over (ADR-0004: the package reads no environment), `mcpServers` the parsed
- * JSON of the servers file, which the application reads like the prices file. An invalid value, a
- * servers file without servers, a repeated server id, or an access row naming a server the file does
- * not hold throws, naming the variable — the start stops.
+ * composition root hands over, `NODE_ENV` among them (ADR-0004: the package reads no environment). An
+ * invalid value, or an access row with a server name that is not kebab-case, throws naming the variable —
+ * the start stops.
  */
-export function parseAgentsConfig(
-  variables: Readonly<Record<string, unknown>>,
-  mcpServers: unknown,
-): AgentsConfig {
+export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>): AgentsConfig {
   const env = parseOrThrow(AgentsEnvSchema, variables, 'Invalid agents settings');
-  const servers = parseOrThrow(
-    McpServersFileSchema,
-    mcpServers,
-    'Invalid agents settings — MCP_SERVERS_FILE',
-  );
   return {
     defaultModel: env.AGENT_DEFAULT_MODEL,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
@@ -144,11 +107,8 @@ export function parseAgentsConfig(
     toolResultMaxBytes: env.AGENT_TOOL_RESULT_MAX_BYTES,
     compactAtTokens: env.AGENT_COMPACT_AT_TOKENS,
     mcpCallTimeoutMs: env.MCP_CALL_TIMEOUT_MS,
-    mcpServers: servers,
-    mcpAccess: parseAccessTable(
-      env.MCP_ACCESS_TABLE,
-      new Set(servers.map((server) => server.id)),
-    ),
+    allowHttpUrls: env.NODE_ENV !== 'production',
+    mcpAccess: parseAccessTable(env.MCP_ACCESS_TABLE),
     codeRun: {
       timeoutMs: env.CODE_RUN_TIMEOUT_MS,
       memoryMb: env.CODE_RUN_MEMORY_MB,
@@ -169,25 +129,15 @@ function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, prefix: string): 
 }
 
 /** Unset means an empty table: nobody has servers. */
-function parseAccessTable(
-  value: string | undefined,
-  serverIds: ReadonlySet<string>,
-): McpAccessTable {
+function parseAccessTable(value: string | undefined): McpAccessTable {
   const table = new Map<string, ReadonlySet<string>>();
   if (value === undefined || value.trim() === '') return table;
   const rows = parseOrThrow(
     AccessTableSchema,
     parseJson(value),
-    'Invalid agents settings — MCP_ACCESS_TABLE, expected {"<employee id>": ["<server id>", …]}',
+    'Invalid agents settings — MCP_ACCESS_TABLE, expected {"<employee id>": ["<server name>", …]}',
   );
   for (const [ownerId, servers] of Object.entries(rows)) {
-    const unknown = servers.find((serverId) => !serverIds.has(serverId));
-    if (unknown !== undefined) {
-      throw new Error(
-        `Invalid agents settings — MCP_ACCESS_TABLE: employee ${ownerId} is given server ${unknown}, ` +
-          `which MCP_SERVERS_FILE does not hold (servers: ${[...serverIds].join(', ')})`,
-      );
-    }
     table.set(ownerId, new Set(servers));
   }
   return table;
@@ -198,7 +148,7 @@ function parseJson(value: string): unknown {
     return JSON.parse(value) as unknown;
   } catch (error) {
     throw new Error(
-      'Invalid agents settings — MCP_ACCESS_TABLE is not valid JSON: expected {"<employee id>": ["<server id>", …]}',
+      'Invalid agents settings — MCP_ACCESS_TABLE is not valid JSON: expected {"<employee id>": ["<server name>", …]}',
       { cause: error },
     );
   }

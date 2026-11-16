@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { parseAgentsConfig, type AgentsConfig } from '@agent-os/agents';
 
 /** The variables of Runtime settings (design-agents.md) that `parseAgentsConfig` checks. */
@@ -18,37 +16,19 @@ const AGENTS_VARIABLES = [
   'CODE_RUN_MAX_TOOL_CALLS',
   'CODE_RUN_MAX_CONCURRENT',
   'CODE_RUN_MAX_CONCURRENT_PER_USER',
+  // Development (`http` MCP addresses allowed) is anything but `production`.
+  'NODE_ENV',
 ] as const;
 
-/** `MCP_SERVERS_FILE` default, relative to the working directory of `apps/api`. */
-const DEFAULT_MCP_SERVERS_FILE = 'config/mcp-servers.json';
-
 /**
- * Reads the agents settings through `read` (the application's environment) and the servers file
- * (`MCP_SERVERS_FILE`, relative to `process.cwd()`), then parses both with `parseAgentsConfig`
- * (ADR-0004: only `apps/api` reads the environment and files). A missing or invalid file, or an invalid
- * value, throws naming the variable, which stops the start.
+ * Reads the agents settings through `read` (the application's environment) and parses them with
+ * `parseAgentsConfig` (ADR-0004: only `apps/api` reads the environment). An invalid value throws naming
+ * the variable, which stops the start.
  */
 export function readAgentsSettings(
   read: (name: string) => string | undefined,
 ): AgentsConfig {
-  const variables = Object.fromEntries(
-    AGENTS_VARIABLES.map((name) => [name, read(name)]),
-  );
   return parseAgentsConfig(
-    variables,
-    readMcpServersFile(read('MCP_SERVERS_FILE')),
+    Object.fromEntries(AGENTS_VARIABLES.map((name) => [name, read(name)])),
   );
-}
-
-function readMcpServersFile(file: string | undefined): unknown {
-  const path = resolve(process.cwd(), file || DEFAULT_MCP_SERVERS_FILE);
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as unknown;
-  } catch (error) {
-    throw new Error(
-      `Cannot load MCP servers (MCP_SERVERS_FILE) from ${path}`,
-      { cause: error },
-    );
-  }
 }

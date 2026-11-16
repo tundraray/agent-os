@@ -7,7 +7,11 @@ import { type AgentsConfig, secretValuesOf } from './config.js';
 import { checkCatalog, createCatalog, type DefinitionCatalog } from './definitions/catalog.js';
 import { GENERAL_PURPOSE } from './definitions/definition.js';
 import { createStopChildrenOnFailure } from './events/stop-children-on-failure.js';
-import { createMcpClients } from './mcp/mcp-clients.js';
+import { ConnectRequests } from './mcp/connect-requests.js';
+import { type AgentsMcp, createAgentsMcp } from './mcp/mcp.js';
+import { McpAccounts, type McpServerAllowed } from './mcp/mcp-accounts.js';
+import { McpClient } from './mcp/mcp-client.js';
+import { McpRegistry } from './mcp/mcp-registry.js';
 import type { AgentTurnModelClient } from './model/mastra-turn.js';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
@@ -19,6 +23,7 @@ import { createToolStep } from './step/tool-step.js';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index.js';
 import { createRunCodeTool } from './tools/builtin/run-code.js';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry.js';
+import { serverAllowed } from './tools/tool-access.js';
 import { createToolRunner } from './tools/tool-runner.js';
 
 export interface AgentsOptions {
@@ -54,6 +59,8 @@ export interface Agents {
   readonly tools: Pick<ToolRegistry, 'register'>;
   /** The agent operations. */
   readonly sessions: AgentSessions;
+  /** The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014). */
+  readonly mcp: AgentsMcp;
   /**
    * One call of `AGENT_DEFAULT_MODEL` outside any task, without tools (the conversation title): the
    * retries and cancel of an agent's call, a token ledger row without `taskId`, no text parts to the
@@ -61,31 +68,43 @@ export interface Agents {
    */
   completeText(request: CompleteTextRequest): Promise<string>;
   /**
-   * Registers `general-purpose`, closes registration, checks the catalog against the
-   * tools, the servers and `ledger.pricedModels()`, then starts the MCP servers. Called before the
-   * runtime workers start.
+   * Registers `general-purpose`, closes registration and checks the catalog against the tools, the form
+   * of server names and `ledger.pricedModels()`. Called before the runtime workers start; no MCP connection
+   * is opened (a connection lives for one call).
    */
   start(): Promise<void>;
-  /** Closes the MCP server processes. */
+  /** Logs the stop; nothing of MCP outlives a call, so nothing is closed. */
   stop(): Promise<void>;
 }
 
 /**
  * Builds the agents package from the database, the runtime, the logger and the parsed settings. The
  * `agent` task handler and the `task.failed` consumer are registered in the runtime at once (plan
- * Notes 8). In memory it keeps only the catalog, the tool registry with the MCP tool lists, and the MCP
- * processes (ADR-0001: Postgres owns the state).
+ * Notes 8). In memory it keeps only the catalog, the tool registry, the open MCP connection requests and
+ * the token refreshes in flight; the MCP registry and accounts are in Postgres (ADR-0001).
  */
 export function createAgents(options: AgentsOptions): Agents {
   const { database, runtime, config } = options;
   const logger = options.logger.child({ component: 'agents' });
 
   const catalog = createCatalog();
-  const serverIds = config.mcpServers.map((server) => server.id);
-  const mcpClients = createMcpClients({
-    servers: config.mcpServers,
-    logger: logger.child({ service: 'agents.mcp' }),
+  const mcpLogger = logger.child({ service: 'agents.mcp' });
+  const allowed: McpServerAllowed = (ownerId, server) => serverAllowed(config.mcpAccess, ownerId, server);
+  const mcpClient = new McpClient();
+  const accounts = new McpAccounts({
+    database,
+    requests: new ConnectRequests(),
+    serverAllowed: allowed,
+    logger: mcpLogger,
     callTimeoutMs: config.mcpCallTimeoutMs,
+    allowHttp: config.allowHttpUrls,
+  });
+  const mcpRegistry = new McpRegistry({
+    database,
+    client: mcpClient,
+    logger: mcpLogger,
+    callTimeoutMs: config.mcpCallTimeoutMs,
+    allowHttp: config.allowHttpUrls,
   });
   const startChildDeps = {
     catalog,
@@ -94,8 +113,10 @@ export function createAgents(options: AgentsOptions): Agents {
     pricedModels: () => runtime.ledger.pricedModels(),
   };
   const runner = createToolRunner({
-    mcpClients,
-    access: config.mcpAccess,
+    client: mcpClient,
+    accounts,
+    serverAllowed: allowed,
+    callTimeoutMs: config.mcpCallTimeoutMs,
     toolResultMaxBytes: config.toolResultMaxBytes,
     startChildFor: createStartChild(startChildDeps),
     ownerGate: options.ownerGate,
@@ -120,10 +141,9 @@ export function createAgents(options: AgentsOptions): Agents {
   const registry: ToolRegistry = createToolRegistry({
     builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks, database }),
     runCode,
-    mcpClients,
     catalog,
-    access: config.mcpAccess,
-    serverIds,
+    database,
+    serverAllowed: allowed,
   });
   const modelClient = createModelClient({
     turnClient: options.turnClient,
@@ -165,6 +185,7 @@ export function createAgents(options: AgentsOptions): Agents {
     definitions: { register: (definition) => catalog.register(definition) },
     tools: { register: (tool) => registry.register(tool) },
     sessions,
+    mcp: createAgentsMcp(mcpRegistry, accounts),
     completeText: (request) => modelClient.completeText(request),
     async start() {
       const startedAt = Date.now();
@@ -174,21 +195,18 @@ export function createAgents(options: AgentsOptions): Agents {
       checkCatalog({
         definitions: catalog.all(),
         toolNames: registry.toolNames(),
-        serverIds,
         pricedModels: runtime.ledger.pricedModels(),
         defaultModel: config.defaultModel,
       });
-      await mcpClients.start();
       logger.info('agents started', {
         definitions: catalog.all().map((definition) => definition.name),
         tools: registry.toolNames(),
-        servers: serverIds,
+        allowHttpUrls: config.allowHttpUrls,
         durationMs: Date.now() - startedAt,
       });
     },
     async stop() {
-      await mcpClients.stop();
-      logger.info('agents stopped', { servers: serverIds });
+      logger.info('agents stopped');
     },
   };
 }

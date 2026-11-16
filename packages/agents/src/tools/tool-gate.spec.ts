@@ -1,8 +1,8 @@
 import { RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
+import type { Database } from '@agent-os/db';
 import { z } from 'zod';
 import { createCatalog } from '../definitions/catalog.js';
 import type { AgentDefinition } from '../definitions/definition.js';
-import type { McpClients } from '../mcp/mcp-clients.js';
 import type { AgentTool, ToolCaller } from './tool.js';
 import { gateStart, type StartGateInput } from './tool-gate.js';
 import { createToolRegistry, type SessionTool } from './tool-registry.js';
@@ -68,20 +68,17 @@ const START_AGENT_CALL: CallCheckInput = {
   args: { description: 'gather', agent: 'general-purpose', prompt: 'look' },
 };
 
-const NO_SERVER_CALLS: McpClients = {
-  start: async () => {},
-  toolsOf: () => [],
-  call: async () => {
-    throw new Error('a check calls no server');
-  },
-  stop: async () => {},
+const NO_SERVER_CALLS = async (): Promise<never> => {
+  throw new Error('a check calls no server');
 };
 
 /** `ToolRunner.check` of a runner with the given access table; a check calls no server. */
 function checkCall(input: CallCheckInput) {
   const runner = createToolRunner({
-    mcpClients: NO_SERVER_CALLS,
-    access: new Map([[OWNER, new Set(input.ownerServers)]]),
+    client: { callTool: NO_SERVER_CALLS },
+    accounts: { credentialsFor: NO_SERVER_CALLS },
+    serverAllowed: (ownerId, server) => ownerId === OWNER && input.ownerServers.includes(server),
+    callTimeoutMs: 1000,
     toolResultMaxBytes: 1024,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
     ownerGate: { check: async () => {} },
@@ -112,22 +109,24 @@ const RUN_CODE_STUB: AgentTool = {
 };
 
 /** `check` of a `run_code` call against the set the registry builds for `NO_TOOLS`. */
-function checkRunCode(runClass: 'read' | 'write', script: string) {
+async function checkRunCode(runClass: 'read' | 'write', script: string): Promise<Gate> {
   const registry = createToolRegistry({
     builtins: [],
     runCode: RUN_CODE_STUB,
-    mcpClients: NO_SERVER_CALLS,
     catalog: createCatalog(),
-    access: new Map(),
-    serverIds: [],
+    // A definition that names no server reads nothing of the registry.
+    database: {} as Database,
+    serverAllowed: () => false,
   });
-  const sessionTools = registry.sessionTools({ definition: NO_TOOLS, limits: null, ownerId: OWNER });
-  return checkCall({
-    toolName: RUN_CODE_TOOL,
-    sessionTools,
-    ownerServers: [],
-    args: { description: 'Count errors', class: runClass, script },
-  });
+  const sessionTools = await registry.sessionTools({ definition: NO_TOOLS, limits: null, ownerId: OWNER });
+  return kindOf(
+    checkCall({
+      toolName: RUN_CODE_TOOL,
+      sessionTools,
+      ownerServers: [],
+      args: { description: 'Count errors', class: runClass, script },
+    }),
+  );
 }
 
 // code-execution AC-01.5, KD-9: direction-override and zero-width characters hide what a script does.
@@ -164,7 +163,7 @@ function kindOf(gate: { kind: string; reason?: string }): Gate {
 }
 
 describe('a tool call is refused with its reason or allowed', () => {
-  it.each<[string, () => Gate, Gate]>([
+  it.each<[string, () => Gate | Promise<Gate>, Gate]>([
     [
       'a tool outside the session set',
       () => kindOf(checkCall({ ...MCP_CALL, toolName: 'mcp__backoffice__create_incident_note' })),
@@ -189,31 +188,31 @@ describe('a tool call is refused with its reason or allowed', () => {
     ['an allowed built-in call', () => kindOf(checkCall(START_AGENT_CALL)), { kind: 'allowed' }],
     [
       'run_code in a session of a definition with tools: []',
-      () => kindOf(checkRunCode('read', 'return 1;')),
+      () => checkRunCode('read', 'return 1;'),
       { kind: 'allowed' },
     ],
     ...RUN_CLASSES.flatMap((runClass) =>
-      HIDDEN_CODE_POINTS.map((codePoint): [string, () => Gate, Gate] => [
+      HIDDEN_CODE_POINTS.map((codePoint): [string, () => Gate | Promise<Gate>, Gate] => [
         `run_code ${runClass} with U+${codePoint.toString(16).toUpperCase()} inside a string literal`,
-        () => kindOf(checkRunCode(runClass, `return "a${String.fromCodePoint(codePoint)}b";`)),
+        () => checkRunCode(runClass, `return "a${String.fromCodePoint(codePoint)}b";`),
         { kind: 'refused', reason: 'invalid_arguments' },
       ]),
     ),
-    ...RUN_CLASSES.map((runClass): [string, () => Gate, Gate] => [
+    ...RUN_CLASSES.map((runClass): [string, () => Gate | Promise<Gate>, Gate] => [
       `run_code ${runClass} with the character written as an escape`,
-      () => kindOf(checkRunCode(runClass, 'return "a\\u202Eb";')),
+      () => checkRunCode(runClass, 'return "a\\u202Eb";'),
       { kind: 'allowed' },
     ]),
     ...RUN_CLASSES.flatMap((runClass) =>
-      INLINE_LINE_BREAKS.map(([name, lineBreak]): [string, () => Gate, Gate] => [
+      INLINE_LINE_BREAKS.map(([name, lineBreak]): [string, () => Gate | Promise<Gate>, Gate] => [
         `run_code ${runClass} with ${name} after a // comment`,
-        () => kindOf(checkRunCode(runClass, `// count only${lineBreak}return 1;`)),
+        () => checkRunCode(runClass, `// count only${lineBreak}return 1;`),
         { kind: 'refused', reason: 'invalid_arguments' },
       ]),
     ),
-    ...RUN_CLASSES.map((runClass): [string, () => Gate, Gate] => [
+    ...RUN_CLASSES.map((runClass): [string, () => Gate | Promise<Gate>, Gate] => [
       `run_code ${runClass} with CRLF line ends`,
-      () => kindOf(checkRunCode(runClass, '// count only\r\nreturn 1;')),
+      () => checkRunCode(runClass, '// count only\r\nreturn 1;'),
       { kind: 'allowed' },
     ]),
     [
@@ -249,7 +248,7 @@ describe('a tool call is refused with its reason or allowed', () => {
       () => kindOf(gateStart({ ...START, model: { kind: 'refused', reason: 'unknown_model' } })),
       { kind: 'refused', reason: 'unknown_model' },
     ],
-  ])('%s', (_, gate, expected) => {
-    expect(gate()).toEqual(expected);
+  ])('%s', async (_, gate, expected) => {
+    expect(await gate()).toEqual(expected);
   });
 });

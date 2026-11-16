@@ -6,7 +6,7 @@
  */
 export const AGENTS = Symbol('AGENTS');
 
-/** Agents settings (`AgentsConfig`) read from the environment and the servers file by `readAgentsSettings`. */
+/** Agents settings (`AgentsConfig`) read from the environment by `readAgentsSettings`. */
 export const AGENTS_SETTINGS = Symbol('AGENTS_SETTINGS');
 
 /**

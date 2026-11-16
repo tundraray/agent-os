@@ -5,10 +5,6 @@ import { type AgentDefinition, GENERAL_PURPOSE } from './definitions/definition.
 // Runtime settings and the start check of the catalog (design-agents.md, «Сборка», «Определения»):
 // a wrong setting or catalog stops the start, naming the variable or the definition.
 
-const LOGS_SERVER = { id: 'logs', command: 'node', args: ['fixture.js'], env: { MODE: 'logs' } };
-const BACKOFFICE_SERVER = { id: 'backoffice', command: 'node', args: [], env: {} };
-const SERVERS = [LOGS_SERVER, BACKOFFICE_SERVER];
-
 const DEFAULT_MODEL = 'anthropic/claude-haiku-5-5';
 const BUILTIN_TOOLS = ['start_agent', 'message_agent', 'list_agents', 'stop_agent'];
 
@@ -26,29 +22,23 @@ const checkWith = (definitions: AgentDefinition[], overrides: { defaultModel?: s
   checkCatalog({
     definitions: [GENERAL_PURPOSE, ...definitions],
     toolNames: BUILTIN_TOOLS,
-    serverIds: ['logs', 'backoffice'],
     pricedModels: [DEFAULT_MODEL],
     defaultModel: overrides.defaultModel ?? DEFAULT_MODEL,
   });
 
 describe('agents configuration and catalog refuse to start naming the variable or the name', () => {
   it.each<[string, () => unknown, RegExp]>([
-    ['AGENT_MAX_DEPTH=0', () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }, SERVERS), /AGENT_MAX_DEPTH/],
+    ['AGENT_MAX_DEPTH=0', () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }), /AGENT_MAX_DEPTH/],
     [
       'CODE_RUN_MAX_CONCURRENT_PER_USER=0',
-      () => parseAgentsConfig({ CODE_RUN_MAX_CONCURRENT_PER_USER: '0' }, SERVERS),
+      () => parseAgentsConfig({ CODE_RUN_MAX_CONCURRENT_PER_USER: '0' }),
       /CODE_RUN_MAX_CONCURRENT_PER_USER/,
     ],
     [
-      'an access row names a server the servers file does not hold',
-      () => parseAgentsConfig({ MCP_ACCESS_TABLE: '{"emp-1":["logs","crm"]}' }, SERVERS),
-      /MCP_ACCESS_TABLE.*emp-1.*crm/,
-    ],
-    ['a servers file without servers', () => parseAgentsConfig({}, []), /MCP_SERVERS_FILE/],
-    [
-      'a repeated server id',
-      () => parseAgentsConfig({}, [LOGS_SERVER, LOGS_SERVER]),
-      /MCP_SERVERS_FILE.*logs/,
+      // design-mcp-connect.md DC-11: access rows name registry servers, checked only for their form
+      'an access row names a server that is not a registry name',
+      () => parseAgentsConfig({ MCP_ACCESS_TABLE: '{"emp-1":["logs","Crm_1"]}' }),
+      /MCP_ACCESS_TABLE.*emp-1/,
     ],
     [
       'a repeated definition name',
@@ -76,6 +66,12 @@ describe('agents configuration and catalog refuse to start naming the variable o
       /researcher.*planner/,
     ],
     [
+      // DC-11: a server the registry does not hold passes; a name of the wrong form does not
+      'a server name that is not a registry name',
+      () => checkWith([{ ...RESEARCHER, mcpServers: ['Logs_1'] }]),
+      /researcher.*Logs_1/,
+    ],
+    [
       'a definition model without a price',
       () => checkWith([{ ...RESEARCHER, model: 'anthropic/claude-opus-5-5' }]),
       /researcher.*claude-opus-5-5/,
@@ -99,7 +95,7 @@ describe('agents configuration and catalog refuse to start naming the variable o
       toolResultMaxBytes: 16_384,
       compactAtTokens: 200_000,
       mcpCallTimeoutMs: 60_000,
-      mcpServers: SERVERS,
+      allowHttpUrls: true,
       mcpAccess: new Map(),
       codeRun: {
         timeoutMs: 30_000,
@@ -110,9 +106,9 @@ describe('agents configuration and catalog refuse to start naming the variable o
       },
     };
 
-    const config = parseAgentsConfig({ AGENT_MAX_DEPTH: '', MCP_ACCESS_TABLE: '' }, SERVERS);
+    const config = parseAgentsConfig({ AGENT_MAX_DEPTH: '', MCP_ACCESS_TABLE: '' });
 
     expect(config).toEqual(expected);
-    expect(() => checkWith([RESEARCHER])).not.toThrow();
+    expect(() => checkWith([{ ...RESEARCHER, mcpServers: ['not-registered'] }])).not.toThrow();
   });
 });

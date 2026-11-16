@@ -1,4 +1,4 @@
-import { RUN_CODE_TOOL } from '@agent-os/contracts';
+import { McpServerNameSchema, RUN_CODE_TOOL } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import { ALL_SERVERS, type AgentDefinition, AgentDefinitionSchema } from './definition.js';
@@ -66,8 +66,6 @@ export interface CatalogCheckInput {
   readonly definitions: readonly AgentDefinition[];
   /** Names of the built-in and registered tools. */
   readonly toolNames: readonly string[];
-  /** Ids of the servers in `MCP_SERVERS_FILE`. */
-  readonly serverIds: readonly string[];
   /** `ledger.pricedModels()`. */
   readonly pricedModels: readonly string[];
   /** `AGENT_DEFAULT_MODEL`. */
@@ -75,9 +73,10 @@ export interface CatalogCheckInput {
 }
 
 /**
- * The start check of the catalog (Contract Definitions, `start()`): every tool, agent, server and model
- * a definition names exists, and no definition names `run_code` (code-execution DC-1; `register` already
- * refused a repeated name). The first problem throws, naming the definition
+ * The start check of the catalog (Contract Definitions, `start()`): every tool, agent and model a
+ * definition names exists, every server name has the registry's form — the registry itself changes at run
+ * time and a name it lacks gives no tools (design-mcp-connect.md DC-11) — and no definition names `run_code`
+ * (code-execution DC-1; `register` already refused a repeated name). The first problem throws, naming the definition
  * (or `AGENT_DEFAULT_MODEL`), and the start stops.
  */
 export function checkCatalog(input: CatalogCheckInput): void {
@@ -88,10 +87,9 @@ export function checkCatalog(input: CatalogCheckInput): void {
     );
   }
   const tools = new Set(input.toolNames);
-  const servers = new Set(input.serverIds);
   const names = new Set(input.definitions.map((definition) => definition.name));
   for (const definition of input.definitions) {
-    const problem = findProblem(definition, { tools, servers, names, priced });
+    const problem = findProblem(definition, { tools, names, priced });
     if (problem !== undefined) {
       throw new Error(`Definition ${definition.name}: ${problem}`);
     }
@@ -100,7 +98,6 @@ export function checkCatalog(input: CatalogCheckInput): void {
 
 interface Known {
   readonly tools: ReadonlySet<string>;
-  readonly servers: ReadonlySet<string>;
   readonly names: ReadonlySet<string>;
   readonly priced: ReadonlySet<string>;
 }
@@ -114,9 +111,9 @@ function findProblem(definition: AgentDefinition, known: Known): string | undefi
   const agent = definition.agents.find((name) => !known.names.has(name));
   if (agent !== undefined) return `unknown agent ${agent}`;
   const server = definition.mcpServers.find(
-    (id) => id !== ALL_SERVERS && !known.servers.has(id),
+    (name) => name !== ALL_SERVERS && !McpServerNameSchema.safeParse(name).success,
   );
-  if (server !== undefined) return `unknown MCP server ${server}`;
+  if (server !== undefined) return `MCP server name ${server} is not a registry name (kebab-case, 1–32 characters)`;
   if (definition.model !== undefined && !known.priced.has(definition.model)) {
     return `model ${definition.model} has no price in the prices file`;
   }

@@ -6,7 +6,7 @@ import { scriptValueOf, toOutcome } from './mcp-outcome.js';
 // DC-7, DC-8: a cut text ends with the cut note; only a success names readResult with its callId.
 
 const MAX_BYTES = 16;
-const CALL_ID = 'call-7';
+const CALL = { callId: 'call-7', server: 'backoffice' };
 
 function result(fields: Partial<CallToolResult>): McpCallResponse {
   return { kind: 'result', result: { content: [], ...fields } };
@@ -46,6 +46,12 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       { outcome: 'transport_failure', text: '', reason: 'protocol_error' },
     ],
     [
+      // design-mcp-connect.md KD-5: no usable account is its own outcome, with the page to fix it on
+      'no usable account of the owner is auth_required naming the server',
+      { kind: 'auth_required' } satisfies McpCallResponse,
+      { outcome: 'auth_required', text: 'Нужно подключить аккаунт backoffice на странице «Мой доступ»' },
+    ],
+    [
       'a text longer than the limit is cut at the limit with the number of cut bytes',
       result({ content: [{ type: 'text', text: 'abcdefghijklmnopqrstuvwxyz' }] }),
       {
@@ -68,7 +74,7 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       { outcome: 'tool_error', text: 'abcdefghijklmnop\nрезультат обрезан на 10 байт' },
     ],
   ] as const)('%s', (_case, response, expected) => {
-    expect(toOutcome(response, MAX_BYTES, CALL_ID)).toEqual(expected);
+    expect(toOutcome(response, MAX_BYTES, CALL)).toEqual(expected);
   });
 
   // «API скрипта»: callTool returns structuredContent, else the text parsed as JSON, else the text.

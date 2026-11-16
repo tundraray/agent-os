@@ -1,27 +1,21 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { argsHash } from './canonical-json.js';
-import type { FixtureSource } from './fixture-server.js';
 
 /**
- * Help for the tests that run the fixture as real stdio processes: the fixture files of one test (call
- * log, fault rules, file latches) in a temporary directory, the servers file entries that point the
- * fixture processes at them, and the readers of the call log — the evidence of what reached an MCP
- * server (the call is in the log before a `wait_for_file` rule holds it).
+ * Help for the tests that run the fixture process (`startFixtureProcess`): the fixture files of one test
+ * (call log, fault rules, file latches) in a temporary directory, and the readers of the call log — the
+ * evidence of what reached an MCP server (the call is in the log before a `wait_for_file` rule holds it).
  */
-
-/** Absolute path of the fixture process entry (`dist/server.js`), resolved next to this module. */
-export const fixtureServerPath: string = fileURLToPath(new URL('./server.js', import.meta.url));
 
 /** One `tools/call` the fixture received, as its call log stores it. */
 export interface FixtureLogEntry {
   readonly seq: number;
   /** The source that received the call (`logs`, `backoffice`, `tracker`). */
   readonly source: string;
-  /** `shared` for the shared token (and stdio), the account name for an OAuth token of the fixture. */
+  /** `shared` for the shared token, the account name for an OAuth token of the fixture. */
   readonly account: string;
   /** Sequence number of the fixture's OAuth access token (not its value); null for `shared`. */
   readonly tokenId: number | null;
@@ -92,18 +86,6 @@ export function holdCall(
 }
 
 /**
- * Kills the fixture process on the call of `tool` with `args` (`crash_process`): the call is in the log,
- * the process exits before answering, and the client sees its connection drop.
- */
-export function crashOn(
-  tool: string,
-  args: Readonly<Record<string, unknown>>,
-  occurrences: readonly number[] = [1],
-): FixtureFaultRule {
-  return { tool, argsHash: argsHash(args), occurrences, mode: 'crash_process' };
-}
-
-/**
  * The fixture files of one test, in a temporary directory: the call log every fixture process of the test
  * writes (also those of a second instance), the fault rules, and file latches.
  */
@@ -111,9 +93,9 @@ export interface FixtureFiles {
   readonly dir: string;
   /** `FIXTURE_CALL_LOG`. */
   readonly callLog: string;
-  /** `FIXTURE_FAULTS`: read by a stdio fixture process when it starts, by the HTTP process on every call. */
+  /** `FIXTURE_FAULTS`: read by the fixture process on every call. */
   readonly faults: string;
-  /** Replaces the fault rules: for stdio processes started afterwards, for the HTTP process from the next call. */
+  /** Replaces the fault rules from the fixture process's next call. */
   setFaults(rules: readonly FixtureFaultRule[]): void;
   /** A file latch in the test's directory. */
   latch(name: string): FileLatch;
@@ -133,41 +115,4 @@ export function createFixtureFiles(label = 'mcp-fixture'): FixtureFiles {
     setFaults,
     latch: (name) => fileLatch(dir, name),
   };
-}
-
-/** One server of a servers file the fixture serves: its id, what it serves and extra process variables. */
-export interface FixtureServerSpec {
-  readonly id: string;
-  readonly source: FixtureSource;
-  /** Extra variables of the server process (a credential the script must not see); the fixture ones win. */
-  readonly env?: Readonly<Record<string, string>>;
-}
-
-/** An entry of the deployment's servers file (`MCP_SERVERS_FILE`): a stdio command. */
-export interface FixtureServerEntry {
-  readonly id: string;
-  readonly command: string;
-  readonly args: string[];
-  readonly env: Record<string, string>;
-}
-
-/**
- * The servers file of a test: one fixture process per server, each started with `FIXTURE_SOURCE` and
- * logging into the test's call log under its fault rules. Throws when the fixture is not built.
- */
-export function fixtureServersFile(
-  files: FixtureFiles,
-  servers: readonly FixtureServerSpec[],
-): FixtureServerEntry[] {
-  if (!existsSync(fixtureServerPath)) {
-    throw new Error(
-      `MCP fixture is not built (${fixtureServerPath}): run pnpm --filter @agent-os/mcp-fixture build`,
-    );
-  }
-  return servers.map(({ id, source, env }) => ({
-    id,
-    command: process.execPath,
-    args: [fixtureServerPath],
-    env: { ...env, FIXTURE_SOURCE: source, FIXTURE_CALL_LOG: files.callLog, FIXTURE_FAULTS: files.faults },
-  }));
 }

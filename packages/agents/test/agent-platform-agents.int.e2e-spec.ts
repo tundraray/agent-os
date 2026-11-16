@@ -20,9 +20,9 @@
 //   and/or tool calls plus `usage`; the double records the input of every call (the messages as the provider would get them), which is the assertion surface for "the next model call sees X". The double sits INSIDE the wrapper, below its ledger write
 //   (KD-6: "сразу после ответа обёртка пишет вызов в журнал токенов"), so INT-1 row A can assert real ledger rows; if the plan puts the double above the ledger write, that one assertion moves out of this file. Answers may be gated (the call waits on a latch) so a
 //   step is held with its model call in flight.
-// - MCP is real: the `packages/mcp-fixture` stdio process started through `MCP_SERVERS_FILE` (`logs` read-only; `backoffice` with the new mutating `create_incident_note`), `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the
-//   evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
-// - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `createRuntime` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own MCP processes and reads everything
+// - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its `logs` (read-only) and `backoffice` (with the new mutating `create_incident_note`) registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
+//   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
+// - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `createRuntime` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
 //   else from the database; "lease expired" is the harness `expireLease`, a held handler of the first instance is the zombie.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test and a unique definition name per test (definitions are registered before `start()` into the test's own catalog); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on latches the double and the fixture wait on, and on rows. "Status within 5 s" (NFR-01) is asserted as: the status read right after the command returns, while the call is still held; the 5 s figure
@@ -73,11 +73,10 @@ import { randomUUID } from 'node:crypto';
 import { type AgentTurnMessage, GENERAL_PURPOSE } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
 import { createLatch, createScriptedModel, inputLines, type ScriptedToolCall } from '@agent-os/agents/testing';
-import { crashOn, createFixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
+import { argsHash, createFixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
-  BACKOFFICE_SERVER,
   type ChildNotice,
   childNoticesOf,
   closeAll,
@@ -87,7 +86,6 @@ import {
   historyLines,
   historyOf,
   historyRowVersionsOf,
-  LOGS_SERVER,
   ledgerRowsOf,
   TEST_MODEL_CHOSEN,
   testDefinition,
@@ -97,6 +95,7 @@ import {
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
+import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers.js';
 import { newUser } from './support/new-user.js';
 
 /** Bound of one in-process test; the rows settle far sooner. */
@@ -106,9 +105,9 @@ const TEST_TIMEOUT_MS = 120_000;
 const TRACE_A = { traceId: 'a'.repeat(32) };
 const TRACE_B = { traceId: 'b'.repeat(32) };
 /** `get_trace` of the `logs` server as the model names it. */
-const GET_TRACE = 'mcp__logs__get_trace';
+const GET_TRACE = `mcp__${LOGS_SERVER}__get_trace`;
 /** The fixture's mutating tool (the `backoffice` server) as the model names it, and its arguments. */
-const CREATE_INCIDENT_NOTE = 'mcp__backoffice__create_incident_note';
+const CREATE_INCIDENT_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
 const INCIDENT_NOTE = { orderId: 'ORD-1001', text: 'Customer charged twice' };
 /** A built-in call that needs no server: the agent's descendants. */
 const LIST_AGENTS: ScriptedToolCall = { tool: 'list_agents', args: {} };
@@ -382,7 +381,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: each child's history starts at its task and holds nothing of the root
       expect(historyLines(await historyOf(harness, childOneId, ownerId))).toEqual([
         'task: Child one task',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace success',
         'model_answer: report of child one []',
       ]);
@@ -410,7 +409,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'model_answer:  [start_agent, start_agent]',
         'tool_result: start_agent success',
         'tool_result: start_agent success',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace success',
         'child_report: child one completed',
         'model_answer: waiting for child two []',
@@ -422,8 +421,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'user: Coordinate the two children',
         'assistant:  [start_agent, start_agent]',
         'tool: start_agent, start_agent',
-        'assistant:  [mcp__logs__get_trace]',
-        'tool: mcp__logs__get_trace',
+        `assistant:  [mcp__${LOGS_SERVER}__get_trace]`,
+        `tool: mcp__${LOGS_SERVER}__get_trace`,
       ]);
       expect(thirdInput).toHaveLength(6);
       expect(thirdInput[5]).toContain(`<data source="child agent report" author="${childOneId}">`);
@@ -514,7 +513,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: the messages stand after the result in the order sent, and the next call sees all three
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         'task: Read the trace',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace success',
         'user_message: first message',
         'user_message: second message',
@@ -523,8 +522,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       ]);
       expect(inputLines(reader.calls[1]?.messages ?? [])).toEqual([
         'user: Read the trace',
-        'assistant:  [mcp__logs__get_trace]',
-        'tool: mcp__logs__get_trace',
+        `assistant:  [mcp__${LOGS_SERVER}__get_trace]`,
+        `tool: mcp__${LOGS_SERVER}__get_trace`,
         'user: first message',
         'user: second message',
         'user: third message',
@@ -1065,7 +1064,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: the open call is closed as interrupted, the text stands after it, the next model call has it
       expect(historyLines(await historyOf(harness, firstId, ownerId))).toEqual([
         'task: Read, then be interrupted with text',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace interrupted',
         'event: interrupted',
         'user_message: stop reading, answer now',
@@ -1073,8 +1072,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       ]);
       expect(inputLines(withText.calls[1]?.messages ?? [])).toEqual([
         'user: Read, then be interrupted with text',
-        'assistant:  [mcp__logs__get_trace]',
-        'tool: mcp__logs__get_trace',
+        `assistant:  [mcp__${LOGS_SERVER}__get_trace]`,
+        `tool: mcp__${LOGS_SERVER}__get_trace`,
         'user: [event] interrupted',
         'user: stop reading, answer now',
       ]);
@@ -1118,7 +1117,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitForTaskStatus(harness, secondId, ownerId, 'waiting');
       expect(historyLines(await historyOf(harness, secondId, ownerId))).toEqual([
         'task: Read, then be interrupted without text',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace interrupted',
         'event: interrupted',
       ]);
@@ -1136,7 +1135,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: the message cleared the mark and the agent continued with it
       expect(withoutText.calls).toHaveLength(2);
       expect(inputLines(withoutText.calls[1]?.messages ?? []).slice(-3)).toEqual([
-        'tool: mcp__logs__get_trace',
+        `tool: mcp__${LOGS_SERVER}__get_trace`,
         'user: [event] interrupted',
         'user: go on',
       ]);
@@ -1175,7 +1174,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: the call that may have reached the server is unknown, not interrupted, and was sent once
       expect(historyLines(await historyOf(harness, writerId, ownerId))).toEqual([
         'task: Write the note, then be interrupted',
-        'model_answer:  [backoffice/create_incident_note]',
+        `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note]`,
         'tool_result: create_incident_note unknown',
         'event: interrupted',
       ]);
@@ -1274,7 +1273,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         (await harness.sessions.confirmations(parentId, ownerId)).filter((c) => c.status === 'open').map(
           (request) => `${request.agentId} ${request.server}/${request.tool} ${JSON.stringify(request.args, Object.keys(INCIDENT_NOTE))}`,
         ),
-      ).toEqual([`${childId} backoffice/create_incident_note ${JSON.stringify(INCIDENT_NOTE)}`]);
+      ).toEqual([`${childId} ${BACKOFFICE_SERVER}/create_incident_note ${JSON.stringify(INCIDENT_NOTE)}`]);
 
       // When: R is stopped
       const stoppedIds = await harness.sessions.stop({ agentId: stoppedId, ownerId });
@@ -1303,14 +1302,14 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       ]);
       expect(historyLines(await historyOf(harness, childId, ownerId))).toEqual([
         'task: Child of the stopped agent',
-        'model_answer:  [backoffice/create_incident_note, logs/get_trace]',
+        `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note, ${LOGS_SERVER}/get_trace]`,
         'tool_result: create_incident_note interrupted',
         'tool_result: get_trace interrupted',
         'event: stopped_with_parent',
       ]);
       expect(historyLines(await historyOf(harness, grandchildId, ownerId))).toEqual([
         'task: Grandchild of the stopped agent',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace interrupted',
         'event: stopped_with_parent',
       ]);
@@ -1362,7 +1361,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @complexity: high
   //
   // Verification items (table-driven by row; every row reads the fixture journal and the `agent_tool_calls` rows of its agent):
-  // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): `MCP_ACCESS_TABLE` gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__logs__<read tool>`. Then: U1's model input lists the
+  // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): `MCP_ACCESS_TABLE` gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__${LOGS_SERVER}__<read tool>`. Then: U1's model input lists the
   //   `logs` tools and the call succeeds (outcome `success`, one journal entry); U2's model input does not list them, and the scripted forced call is refused: outcome `refused`, reason `no_access`, ZERO journal entries for U2, the refusal in U2's history. A second case in
   //   U1's run: a tool name not in the definition's `tools` gets `tool_not_in_definition` and no journal entry.
   // - Row B "read passes, mutating waits" (UC-3, AC-12.1, AC-12.2, NFR-07): the script calls the read tool, then `create_incident_note`. Then: the read call finishes with no decision requested; before any decision the journal has NO `create_incident_note` entry, the agent reads
@@ -1373,7 +1372,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Row E "step lost after the intent" (UC-E6, DC-5, AC-01.2): the agent has an open read call and a confirmed mutating call and a pending employee message; instance A starts the step, the mutating call reaches the fixture (held there by a latch, intent already written, state `sending`), then the lease
   //   expires and instance B takes the step. Then: the mutating call's outcome is `unknown`; the journal has AT MOST ONE `create_incident_note` entry (the zombie's own one) and instance B sent none; the open read call ran once more and has one result and one audit row; the message stands in the history once;
   //   after the latch is released the zombie's late result is not written; the agent finishes with a report.
-  // - Row F "server fails" (UC-E5, AC-11.2): the fixture's fault schedule drops the transport (process exit) on the agent's read call. Then: the call outcome is `transport_failure` with a reason in the history, the task is not `failed`, and the agent's next model input holds that result and it reaches its report.
+  // - Row F "server fails" (UC-E5, AC-11.2): the fixture's fault schedule drops the connection (`drop_connection`) on the agent's read call. Then: the call outcome is `transport_failure` with a reason in the history, the task is not `failed`, and the agent's next model input holds that result and it reaches its report.
   it('INT-3 A: a call to a server the owner may not use, or a tool outside the definition, is refused with its reason, shows in the history and never reaches the MCP server, while an allowed owner\'s call succeeds', async () => {
     // Given: the access table gives U1 the `logs` server and U2 nothing; both run a definition with every
     // server; U1's answer also names a tool its definition does not have
@@ -1415,21 +1414,22 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitForTaskStatus(harness, allowedId, allowedOwner, 'waiting');
       await waitForTaskStatus(harness, deniedId, deniedOwner, 'waiting');
 
-      // Then: U1's model was offered the `logs` tools and its read reached the server once
+      // Then: U1's model was offered the `logs` tools (the registry keeps a server's list by tool name) and its
+      // read reached the server once
       expect(allowed.calls[0]?.toolNames).toEqual([
         'run_code',
-        'mcp__logs__search_logs',
-        'mcp__logs__aggregate_logs',
-        'mcp__logs__get_trace',
+        `mcp__${LOGS_SERVER}__aggregate_logs`,
+        `mcp__${LOGS_SERVER}__get_trace`,
+        `mcp__${LOGS_SERVER}__search_logs`,
       ]);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A })).toHaveLength(1);
       expect(await auditLinesOf(harness, allowedId)).toEqual([
-        'logs/get_trace done success timed',
+        `${LOGS_SERVER}/get_trace done success timed`,
         'list_agents done refused tool_not_in_definition timed',
       ]);
       expect(historyLines(await historyOf(harness, allowedId, allowedOwner))).toEqual([
         'task: Read as an allowed owner',
-        'model_answer:  [logs/get_trace, list_agents]',
+        `model_answer:  [${LOGS_SERVER}/get_trace, list_agents]`,
         'tool_result: get_trace success',
         'tool_result: list_agents refused tool_not_in_definition',
         'model_answer: report of the allowed owner []',
@@ -1441,13 +1441,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(denied.calls[0]?.toolNames).toEqual(['run_code']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
-        'mcp__logs__get_trace done refused tool_not_in_definition timed',
+        `mcp__${LOGS_SERVER}__get_trace done refused tool_not_in_definition timed`,
       ]);
       expect((await toolCallRowsOf(harness.db, deniedId)).map((call) => call.args)).toEqual([TRACE_B]);
       expect(historyLines(await historyOf(harness, deniedId, deniedOwner))).toEqual([
         'task: Read as an owner without servers',
-        'model_answer:  [mcp__logs__get_trace]',
-        'tool_result: mcp__logs__get_trace refused tool_not_in_definition',
+        `model_answer:  [mcp__${LOGS_SERVER}__get_trace]`,
+        `tool_result: mcp__${LOGS_SERVER}__get_trace refused tool_not_in_definition`,
         'model_answer: report of the owner without servers []',
       ]);
       expect(toolOutputOf(denied.calls[1]?.messages ?? [], denied.calls[0]?.toolCallIds[0])).toContain(
@@ -1488,17 +1488,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       const requests = (await harness.sessions.confirmations(agentId, ownerId)).filter((c) => c.status === 'open');
       expect(
         requests.map((request) => `${request.agentId} ${request.description} ${request.kind} ${request.server}/${request.tool}`),
-      ).toEqual([`${agentId} writer agents.tool_confirmation backoffice/create_incident_note`]);
+      ).toEqual([`${agentId} writer agents.tool_confirmation ${BACKOFFICE_SERVER}/create_incident_note`]);
       expect(requests.map((request) => request.args)).toEqual([INCIDENT_NOTE]);
 
       // Then: the read call is closed, the mutating one awaits the decision
       expect(await auditLinesOf(harness, agentId)).toEqual([
-        'logs/get_trace done success timed',
-        'backoffice/create_incident_note awaiting_confirmation - untimed',
+        `${LOGS_SERVER}/get_trace done success timed`,
+        `${BACKOFFICE_SERVER}/create_incident_note awaiting_confirmation - untimed`,
       ]);
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         'task: Read, then write the note',
-        'model_answer:  [logs/get_trace, backoffice/create_incident_note]',
+        `model_answer:  [${LOGS_SERVER}/get_trace, ${BACKOFFICE_SERVER}/create_incident_note]`,
         'tool_result: get_trace success',
       ]);
     } finally {
@@ -1532,7 +1532,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         prompt: 'Write the note across a restart',
       });
 
-      // When: the first instance stops (its MCP processes closed) and a second one starts over the same database
+      // When: the first instance stops (its fixture process too) and a second one starts over the same database and the same registry rows
       await first.close();
       firstOpen = false;
       second = await createAgentsHarness(options);
@@ -1559,22 +1559,22 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(1);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note', args: INCIDENT_NOTE })).toHaveLength(1);
       expect(await auditLinesOf(second, agentId)).toEqual([
-        'logs/get_trace done success timed',
-        'backoffice/create_incident_note done success timed',
+        `${LOGS_SERVER}/get_trace done success timed`,
+        `${BACKOFFICE_SERVER}/create_incident_note done success timed`,
       ]);
 
       // Then: the agent continued with the result and reported
       expect(historyLines(await historyOf(second, agentId, ownerId))).toEqual([
         'task: Write the note across a restart',
-        'model_answer:  [logs/get_trace, backoffice/create_incident_note]',
+        `model_answer:  [${LOGS_SERVER}/get_trace, ${BACKOFFICE_SERVER}/create_incident_note]`,
         'tool_result: get_trace success',
         'tool_result: create_incident_note success',
         'model_answer: report after the note []',
       ]);
       expect(inputLines(writer.calls[1]?.messages ?? [])).toEqual([
         'user: Write the note across a restart',
-        'assistant:  [mcp__logs__get_trace, mcp__backoffice__create_incident_note]',
-        'tool: mcp__logs__get_trace, mcp__backoffice__create_incident_note',
+        `assistant:  [mcp__${LOGS_SERVER}__get_trace, mcp__${BACKOFFICE_SERVER}__create_incident_note]`,
+        `tool: mcp__${LOGS_SERVER}__get_trace, mcp__${BACKOFFICE_SERVER}__create_incident_note`,
       ]);
 
       // Then: a second approval sends nothing more
@@ -1619,8 +1619,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: nothing reached the server and the call is `rejected`
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toEqual([]);
       expect(await auditLinesOf(harness, agentId)).toEqual([
-        'logs/get_trace done success timed',
-        'backoffice/create_incident_note done rejected timed',
+        `${LOGS_SERVER}/get_trace done success timed`,
+        `${BACKOFFICE_SERVER}/create_incident_note done rejected timed`,
       ]);
 
       // Then: the next model call holds the rejection, and the agent went on to its report
@@ -1628,7 +1628,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(toolOutputOf(writer.calls[1]?.messages ?? [], noteCallId)).toContain('[rejected]');
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         'task: Write the note, then be rejected',
-        'model_answer:  [logs/get_trace, backoffice/create_incident_note]',
+        `model_answer:  [${LOGS_SERVER}/get_trace, ${BACKOFFICE_SERVER}/create_incident_note]`,
         'tool_result: get_trace success',
         'tool_result: create_incident_note rejected',
         'model_answer: report after the rejection []',
@@ -1708,14 +1708,14 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(1);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A })).toHaveLength(1);
       expect(await auditLinesOf(restarted, agentId)).toEqual([
-        'backoffice/create_incident_note done unknown timed',
-        'logs/get_trace done success timed',
+        `${BACKOFFICE_SERVER}/create_incident_note done unknown timed`,
+        `${LOGS_SERVER}/get_trace done success timed`,
       ]);
 
       // Then: the message stands in the history once, after the results; the agent reported
       const expectedHistory = [
         'task: Write the note, then lose the step',
-        'model_answer:  [backoffice/create_incident_note, logs/get_trace]',
+        `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note, ${LOGS_SERVER}/get_trace]`,
         'tool_result: create_incident_note unknown',
         'tool_result: get_trace success',
         'user_message: message before the loss',
@@ -1735,8 +1735,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
 
       // Then: its late result is not written: the same rows, the same history, still one call on the server
       expect(await auditLinesOf(restarted, agentId)).toEqual([
-        'backoffice/create_incident_note done unknown timed',
-        'logs/get_trace done success timed',
+        `${BACKOFFICE_SERVER}/create_incident_note done unknown timed`,
+        `${LOGS_SERVER}/get_trace done success timed`,
       ]);
       expect(historyLines(await historyOf(restarted, agentId, ownerId))).toEqual(expectedHistory);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(1);
@@ -1748,11 +1748,11 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-3 F: a failing MCP server becomes a transport_failure result in the history and the agent carries on', async () => {
-    // Given: the `logs` process exits on the agent's first read call; the agent reads again afterwards
+    // Given: the `logs` server drops the connection on the agent's first read call; the agent reads again afterwards
     const ownerId = newUser();
     const readerName = uniqueName('reader');
     const fixture = createFixtureFiles();
-    fixture.setFaults([crashOn('get_trace', TRACE_A)]);
+    fixture.setFaults([{ tool: 'get_trace', argsHash: argsHash(TRACE_A), occurrences: [1], mode: 'drop_connection' }]);
     const model = createScriptedModel();
     const reader = model.script({ task: 'Read from a failing server' }, [
       { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
@@ -1776,13 +1776,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await reader.called(3);
       await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
 
-      // Then: the call reached the server, which died on it; the call is a transport failure with its reason
+      // Then: the call reached the server, which dropped the connection on it; the call is a transport failure with its reason
       expect(
         fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A }).map((entry) => entry.mode),
-      ).toEqual(['crash_process']);
+      ).toEqual(['drop_connection']);
       expect(await auditLinesOf(harness, agentId)).toEqual([
-        'logs/get_trace done transport_failure timed',
-        'logs/get_trace done success timed',
+        `${LOGS_SERVER}/get_trace done transport_failure timed`,
+        `${LOGS_SERVER}/get_trace done success timed`,
       ]);
       expect(
         harness.logs
@@ -1796,9 +1796,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(toolOutputOf(reader.calls[1]?.messages ?? [], failedCallId)).toContain('[transport_failure]');
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         'task: Read from a failing server',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace transport_failure',
-        'model_answer:  [logs/get_trace]',
+        `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace success',
         'model_answer: report after the failure []',
       ]);

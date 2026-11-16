@@ -8,7 +8,6 @@ import { z } from 'zod';
 
 import { createCatalog } from './definitions/catalog.js';
 import type { AgentDefinition } from './definitions/definition.js';
-import type { McpClients } from './mcp/mcp-clients.js';
 import { createModelClient } from './model/model-client.js';
 import { OwnerDisabledError, type OwnerGate } from './owner-gate.js';
 import { createCompactionStep } from './step/compaction-step.js';
@@ -154,28 +153,35 @@ function refusedAgent() {
       return { kind: 'done', outcome: 'success', text: 'found' };
     },
   };
-  const mcpClients: McpClients = {
-    start: async () => {},
-    toolsOf: () => [],
-    call: async () => {
+  const client = {
+    callTool: async () => {
       toolRuns += 1;
-      return { kind: 'failure', reason: 'connection_lost' };
+      return { kind: 'failure', reason: 'connection_lost' } as const;
     },
-    stop: async () => {},
+  };
+  const accounts = {
+    credentialsFor: async () =>
+      ({
+        kind: 'ready',
+        url: 'http://localhost:4100/mcp',
+        auth: { mode: 'shared', token: async () => 'token' },
+        rejected: async () => {},
+      }) as const,
   };
   const catalog = createCatalog();
   catalog.register(DEFINITION);
   const registry = createToolRegistry({
     builtins: [lookup],
     runCode: { ...lookup, name: 'run_code' },
-    mcpClients,
     catalog,
-    access: new Map(),
-    serverIds: [],
+    database,
+    serverAllowed: () => false,
   });
   const runner = createToolRunner({
-    mcpClients,
-    access: new Map([[OWNER, new Set(['logs'])]]),
+    client,
+    accounts,
+    serverAllowed: (ownerId, server) => ownerId === OWNER && server === 'logs',
+    callTimeoutMs: 1000,
     toolResultMaxBytes: 1024,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
     ownerGate: REFUSING_GATE,

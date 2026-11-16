@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-import { KEBAB_CASE_PATTERN, MODEL_ID_PATTERN } from '../config.js';
+import { MODEL_ID_PATTERN } from '../config.js';
+
+/** Names of definitions: kebab-case. */
+const KEBAB_CASE_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** `mcpServers` value that gives a definition every server of the deployment. */
 export const ALL_SERVERS = '*';
@@ -25,7 +28,7 @@ export const AgentDefinitionSchema = z.object({
   prompt: z.string().min(1),
   /** Names of built-in and registered tools. */
   tools: z.array(z.string().min(1)),
-  /** Server ids of the deployment, or `['*']` for all of them. */
+  /** Registry server names, or `['*']` for every enabled one; a name the registry lacks gives no tools. */
   mcpServers: z
     .array(z.string().min(1))
     .refine(

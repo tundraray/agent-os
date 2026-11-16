@@ -5,8 +5,6 @@ import {
   Server,
   WebStandardStreamableHTTPServerTransport,
   type CallToolResult,
-  type RequestId,
-  type Transport,
 } from '@modelcontextprotocol/server';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -36,7 +34,7 @@ const WAIT_FOR_FILE_LIMIT_MS = 60_000;
 const SERVER_INFO = { name: 'agent-os-mcp-fixture', version: '1.0.0' };
 
 /**
- * What a fixture process serves (`FIXTURE_SOURCE`): the payment logs, the back office of the same dataset, or the
+ * What a fixture source serves: the payment logs, the back office of the same dataset, or the
  * tracker's tickets.
  */
 export const FixtureSourceSchema = z.enum(['logs', 'backoffice', 'tracker']);
@@ -47,9 +45,6 @@ const TOOLS: Readonly<Record<FixtureSource, readonly FixtureTool[]>> = {
   backoffice: [searchOrdersTool, getOrderTool, createIncidentNoteTool],
   tracker: [searchTicketsTool],
 };
-
-/** Result fault of the `tools/call` request with this `id`, if a fault rule matched it. */
-export type ResultFaultLookup = (requestId: RequestId) => ResultFaultRule | undefined;
 
 /**
  * MCP server over one synthetic dataset, serving its logs, its back office or the tracker, built on the low-level `Server` so the
@@ -63,16 +58,8 @@ export class FixtureServer {
   constructor(
     private dataset: LogDataset,
     private readonly source: FixtureSource,
-    private readonly resultFault: ResultFaultLookup = () => undefined,
   ) {
     this.tools = [...TOOLS[source]];
-  }
-
-  /** Closing the transport (stdin end-of-file on stdio) fires `onClose`. */
-  async connect(transport: Transport, onClose: () => void): Promise<void> {
-    const server = this.createServer(this.resultFault);
-    server.onclose = onClose;
-    await server.connect(transport);
   }
 
   /**
@@ -84,7 +71,7 @@ export class FixtureServer {
     request: Request,
     options: { parsedBody?: unknown; resultFault?: ResultFaultRule },
   ): Promise<Response> {
-    const server = this.createServer(() => options.resultFault);
+    const server = this.createServer(options.resultFault);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -102,7 +89,7 @@ export class FixtureServer {
     this.tools.push(tool);
   }
 
-  private createServer(resultFault: ResultFaultLookup): Server {
+  private createServer(resultFault: ResultFaultRule | undefined): Server {
     const server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
     server.setRequestHandler('tools/list', () => ({
       tools: this.tools.map((tool) => ({
@@ -113,8 +100,8 @@ export class FixtureServer {
         ...(tool.readOnly ? { annotations: { readOnlyHint: true } } : {}),
       })),
     }));
-    server.setRequestHandler('tools/call', (request, ctx) =>
-      this.callTool(server, request.params.name, request.params.arguments, resultFault(ctx.mcpReq.id)),
+    server.setRequestHandler('tools/call', (request) =>
+      this.callTool(server, request.params.name, request.params.arguments, resultFault),
     );
     server.setRequestHandler('resources/list', () => ({
       resources: [{ uri: SOURCE_INFO_URI, name: 'source-info', mimeType: 'application/json' }],

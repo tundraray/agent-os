@@ -14,7 +14,7 @@
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml (DATABASE_URL from apps/api/.env), migrations applied once by the global setup. The real `AppModule` boots in the process (`createTestApp`, rewritten for this part: no Mastra override), `RUNTIME_WORKERS` on, so the chat answers in the runtime workers, not in the HTTP request. No mock of Postgres, the runtime, agents, workflows, `LiveHub` or the controllers.
 // - The model is the only double: a scripted `ModelClient` at the boundary the agents package defines ("модель подменяется сценарием на границе `ModelClient`"), keyed by agent description. A scenario is a list of answers per agent: text parts (so `onTextDelta` is exercised with three parts) and/or tool calls plus `usage`; answers can be gated on a latch to hold a step with its model call in flight. The same double answers `agents.completeText` for the title (answers, fails, or waits per scenario).
-// - MCP is the real `packages/mcp-fixture` stdio process through `MCP_SERVERS_FILE` (`logs` read-only with a delayed read; `backoffice` with the mutating `create_incident_note`), `FIXTURE_CALL_LOG` is the evidence of what reached a server; `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
+// - MCP is the real `packages/mcp-fixture` HTTP process of `createTestApp({ mcpServers })`, registered under the run's names (`LOGS_SERVER` read-only with a delayed read; `BACKOFFICE_SERVER` with the mutating `create_incident_note`; test/support/mcp-servers.ts), `FIXTURE_CALL_LOG` is the evidence of what reached a server; `MCP_ACCESS_TABLE` per test maps the test's owners to servers.
 // - The SSE client is a small helper over a raw HTTP request to `GET /api/events` (EventSource is a browser API; the helper parses `event:`/`data:` lines and exposes "wait for the next event of type X" and the received list with arrival times). Requests are made with supertest; the user is a signed-in employee whose session cookie and the web's `Origin` go with every request (test/support/session.ts), and the session check is real.
 // - Isolation (project convention, no truncate): a unique employee per test (created through `POST /api/admin/users` by the file's administrator after the boot), a unique conversation per test; each test reads only its own data. `fileParallelism: false`. No sleeps for ordering and no latency assertions: tests synchronise on the double's latches, the fixture's latches, SSE events and rows. NFR-02 (a report in the open conversation within 2 s) is asserted as "the `tree` note arrives after the report row and before the test's own wait ends"; the p95 figure belongs to an on-demand script, not to this suite.
 // - Support to write alongside (test/support): createTestApp.ts (rewritten: `AppModule` with the scripted `ModelClient` and the fixture config), scriptedModel.ts (scenarios, latches, recorded inputs, title scenarios), sseClient.ts (parse, wait, record), fixtureLog.ts (read and filter the call log), api.ts (typed helpers over supertest validating bodies with the `packages/contracts` schemas: ConversationView, AgentPageView, AgentListPage, ApiErrorSchema).
@@ -75,6 +75,7 @@ import {
   waitFor,
 } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers.js';
 import {
   createEmployee,
   seedSuperAdmin,
@@ -89,11 +90,9 @@ import {
 /** Bound of one test; the rows and notes settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
 
-/** MCP servers of the fixture (`createTestApp`) and the tools as the model names them. */
-const LOGS_SERVER = 'logs';
-const BACKOFFICE_SERVER = 'backoffice';
-const GET_TRACE = 'mcp__logs__get_trace';
-const CREATE_INCIDENT_NOTE = 'mcp__backoffice__create_incident_note';
+/** The tools of the run's fixture servers (`createTestApp`) as the model names them. */
+const GET_TRACE = `mcp__${LOGS_SERVER}__get_trace`;
+const CREATE_INCIDENT_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
 const GENERAL_PURPOSE = 'general-purpose';
 const START_AGENT = 'start_agent';
 const START_WORKFLOW = 'start_workflow';
@@ -508,6 +507,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     harness = await createTestApp({
       workers: true,
       agentPageSize: 2,
+      mcpServers: ['logs', 'backoffice'],
       mcpAccess: { '*': [LOGS_SERVER, BACKOFFICE_SERVER] },
       faults: (files) => [
         holdCall('get_trace', TRACE_C, files.latch(FIXTURE_LATCHES.c)),
@@ -782,7 +782,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           description: 'incident writer',
           kind: AGENTS_TOOL_CONFIRMATION,
           tool: 'create_incident_note',
-          server: 'backoffice',
+          server: BACKOFFICE_SERVER,
           args: NOTE_B,
           status: 'open',
           resolution: null,
@@ -845,7 +845,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         const live = await reader.read();
         expect(linesOf(reader.entries)).toEqual([
           'task: INT-1 B: check the trace and have the incident noted',
-          'model_answer:  [logs/get_trace]',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
           'tool_result: get_trace success',
           'model_answer:  [start_agent]',
           'tool_result: start_agent success',
@@ -941,7 +941,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(linesOf(settled.entries)).toEqual([
           'task: INT-1 C: read the slow trace',
-          'model_answer:  [logs/get_trace]',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
           'tool_result: get_trace success',
           'user_message: INT-1 C: first while busy',
           'user_message: INT-1 C: second while busy',
@@ -950,7 +950,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(settled.pending).toEqual([]);
         // Then: the model's next input saw both messages after the result
         expect(inputLines(chat.calls[1]?.messages ?? []).slice(-3)).toEqual([
-          'tool: mcp__logs__get_trace',
+          `tool: mcp__${LOGS_SERVER}__get_trace`,
           'user: INT-1 C: first while busy',
           'user: INT-1 C: second while busy',
         ]);
@@ -1001,7 +1001,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(linesOf(continued.entries)).toEqual([
           'task: INT-1 D: read the first trace',
-          'model_answer:  [logs/get_trace]',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
           'tool_result: get_trace interrupted',
           'event: interrupted',
           'user_message: INT-1 D: look at the other trace instead',
@@ -1032,7 +1032,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(linesOf(interrupted.entries)).toEqual([
           'task: INT-1 D: read the second trace',
-          'model_answer:  [logs/get_trace]',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
           'tool_result: get_trace interrupted',
           'event: interrupted',
         ]);
@@ -1633,7 +1633,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           description: 'B helper',
           kind: AGENTS_TOOL_CONFIRMATION,
           tool: 'create_incident_note',
-          server: 'backoffice',
+          server: BACKOFFICE_SERVER,
           args: NOTE_INT2_B,
           status: 'open',
         });
@@ -1665,7 +1665,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(reader.agent).not.toHaveProperty('template');
         expect(linesOf(reader.entries)).toEqual([
           'task: INT-2 B: reader assignment',
-          'model_answer:  [logs/get_trace]',
+          `model_answer:  [${LOGS_SERVER}/get_trace]`,
           'tool_result: get_trace success',
           'user_message: INT-2 B: also check the queue',
           'model_answer:  [start_agent]',
@@ -1682,7 +1682,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           read?.kind === 'tool_result'
             ? [read.content.server, read.content.args]
             : null,
-        ).toEqual(['logs', TRACE_INT2_B]);
+        ).toEqual([LOGS_SERVER, TRACE_INT2_B]);
         expect([reader.pending, reader.decisions, reader.nextAfterSeq]).toEqual(
           [[], [], null],
         );

@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
-import { mcpToolName } from '../mcp/mcp-clients.js';
+import { mcpToolName } from '../mcp/mcp-tool.js';
 import type { ModelAnswer, ModelClient, ModelError } from '../model/model-client.js';
 import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
@@ -376,7 +376,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
     const view = await readSessionHistory(database, session);
     const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
-    const sessionTools = registry.sessionTools({
+    const sessionTools = await registry.sessionTools({
       definition,
       limits: session.limits,
       ownerId: session.ownerId,

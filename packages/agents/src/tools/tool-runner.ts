@@ -9,15 +9,14 @@ import {
 import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { McpAccessTable } from '../config.js';
-import type { McpClients } from '../mcp/mcp-clients.js';
+import type { McpAccounts, McpServerAllowed } from '../mcp/mcp-accounts.js';
+import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
-import { scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
+import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
 import { isOwnerDisabled, type OwnerGate } from '../owner-gate.js';
 import type { Session } from '../store/sessions.repository.js';
 import { toolCalls } from '../store/tool-calls.repository.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
-import { serverAllowed } from './tool-access.js';
 import { callTarget, callTargetOf, type SessionTool } from './tool-registry.js';
 
 /** One tool call of a model answer, as the model wrote it. */
@@ -53,7 +52,7 @@ export type CallCheck =
 export type ToolExecution =
   | {
       readonly kind: 'done';
-      readonly outcome: Extract<ToolOutcome, 'success' | 'empty' | 'tool_error' | 'transport_failure'>;
+      readonly outcome: McpOutcome;
       readonly text: string;
       /** Why an MCP call got no answer; only with `transport_failure`. */
       readonly failureReason?: McpFailureReason;
@@ -117,9 +116,14 @@ export interface StartChildScope {
 }
 
 export interface ToolRunnerOptions {
-  readonly mcpClients: McpClients;
-  /** `MCP_ACCESS_TABLE`: the same check `sessionTools` filters with (KD-5). */
-  readonly access: McpAccessTable;
+  /** Sends a call to its server with the credentials of the call (KD-3). */
+  readonly client: Pick<McpClient, 'callTool'>;
+  /** The credentials of the caller's owner, read just before the call (KD-5). */
+  readonly accounts: Pick<McpAccounts, 'credentialsFor'>;
+  /** The one access function: the same check `sessionTools` filters with. */
+  readonly serverAllowed: McpServerAllowed;
+  /** `MCP_CALL_TIMEOUT_MS`: bounds one call, the handshake included. */
+  readonly callTimeoutMs: number;
   /** `AGENT_TOOL_RESULT_MAX_BYTES`. */
   readonly toolResultMaxBytes: number;
   /** Binds `createStartChild` (T3.4) to the commit transaction and the caller; `createAgents` supplies it. */
@@ -179,7 +183,8 @@ export type ConfirmContext = Pick<StepContext, 'taskId' | 'signal' | 'logger' | 
 
 export interface ToolRunner {
   /**
-   * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's set, the owner may
+   * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's check set
+   * (`ToolRegistry.checkTools`: a disabled, removed or unnamed server's tool is not), the owner may
    * use its server — `serverAllowed`, as when the set was built — and the arguments of a built-in or
    * registered tool fit its schema. A refused call never reaches the server; allowed arguments are the
    * parsed ones.
@@ -303,6 +308,9 @@ function logCall(
   }
 }
 
+/** Outcomes whose text comes from the server; `auth_required` carries the platform's own text. */
+const HIDDEN_TEXT_OUTCOMES: ReadonlySet<ToolOutcome> = new Set(['tool_error', 'transport_failure']);
+
 /**
  * A call from code the server did not answer with a value: the script gets the outcome and reason
  * only, never the server's text, which may carry a secret; the full response goes to the run log as
@@ -313,7 +321,7 @@ function withoutServerText(
   call: LoggedCall,
   logger: Logger,
 ): CodeCallExecution {
-  if (execution.kind !== 'done' || execution.outcome === 'success' || execution.outcome === 'empty') {
+  if (execution.kind !== 'done' || !HIDDEN_TEXT_OUTCOMES.has(execution.outcome)) {
     return execution;
   }
   logger.warn('tool call from code failed; its response is hidden from the script', {
@@ -329,7 +337,7 @@ function withoutServerText(
 
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
-  const { mcpClients, access, toolResultMaxBytes, ownerGate } = options;
+  const { client, accounts, serverAllowed, callTimeoutMs, toolResultMaxBytes, ownerGate } = options;
 
   /** Asks `OwnerGate` for the caller's owner; a refusal is logged and thrown, so the call does not start. */
   async function admit(callId: string, caller: ToolCaller, logger: Logger): Promise<void> {
@@ -348,6 +356,30 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     }
   }
 
+  /**
+   * Sends one MCP call with the owner's credentials (KD-5): without an account the call is `auth_required`
+   * and reaches no server (DC-3); an `oauth` call that ends `auth_required` loses the account it used.
+   */
+  async function sendMcp(request: {
+    readonly server: string;
+    readonly tool: string;
+    readonly args: Readonly<Record<string, unknown>>;
+    readonly ownerId: string;
+    readonly signal: AbortSignal;
+  }): Promise<McpCallResponse> {
+    const credentials = await accounts.credentialsFor(request.server, request.ownerId);
+    if (credentials.kind !== 'ready') return credentials;
+    const response = await client.callTool({
+      url: credentials.url,
+      auth: credentials.auth,
+      timeoutMs: callTimeoutMs,
+      signal: request.signal,
+      request: { name: request.tool, arguments: request.args },
+    });
+    if (response.kind === 'auth_required') await credentials.rejected();
+    return response;
+  }
+
   async function callMcp(
     call: ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> },
     signal: AbortSignal,
@@ -355,10 +387,11 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
   ): Promise<Extract<ToolExecution, { kind: 'done' }> | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
+    const { server, tool } = call.tool.mcp;
     try {
-      const response = await mcpClients.call(call.tool.mcp.server, call.tool.mcp.tool, args, signal);
+      const response = await sendMcp({ server, tool, args, ownerId: call.caller.ownerId, signal });
       if (signal.aborted) return { kind: 'aborted' };
-      const result = toOutcome(response, maxBytes, call.callId);
+      const result = toOutcome(response, maxBytes, { callId: call.callId, server });
       const hasValue =
         response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
       return {
@@ -411,7 +444,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
   const check: ToolRunner['check'] = (requested, { sessionTools, caller }) => {
     const tool = sessionTools.find((candidate) => candidate.name === requested.toolName);
     if (tool === undefined) return { kind: 'refused', reason: 'tool_not_in_definition' };
-    if (tool.kind === 'mcp' && !serverAllowed(access, caller.ownerId, tool.mcp.server)) {
+    if (tool.kind === 'mcp' && !serverAllowed(caller.ownerId, tool.mcp.server)) {
       return { kind: 'refused', reason: 'no_access' };
     }
     const schema = tool.kind === 'agent' ? tool.inputSchema : MCP_ARGS_SCHEMA;

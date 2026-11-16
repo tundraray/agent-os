@@ -8,8 +8,8 @@ import { DatasetVersionSchema } from './versions.js';
  * HTTP process entry: `node dist/main.js --port <n>` (default 4100, `0` picks a free port) serves the three
  * sources, the fixture's authorization server and the test controls on `127.0.0.1`, and prints one line
  * `fixture listening <port>` once it listens. `FIXTURE_DATASET` (default `v1`), `FIXTURE_CALL_LOG` and
- * `FIXTURE_FAULTS` mean what they mean for the stdio entry; these are variables of the fixture process, not
- * an API. Under `NODE_ENV=production` the rules file is never read and `/_control/*` answers 404.
+ * `FIXTURE_FAULTS` (the call log and the fault rules of `test-support.ts`) are variables of the fixture
+ * process, not an API. Under `NODE_ENV=production` the rules file is never read and `/_control/*` answers 404.
  */
 const DEFAULT_PORT = 4100;
 const HOST = '127.0.0.1';

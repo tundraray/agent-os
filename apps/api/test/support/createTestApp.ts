@@ -1,5 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import { inspect } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -13,7 +12,9 @@ import {
   createFixtureFiles,
   type FixtureFaultRule,
   type FixtureFiles,
-  fixtureServersFile,
+  type FixtureProcess,
+  type FixtureSource,
+  startFixtureProcess,
 } from '@agent-os/mcp-fixture';
 import type { Runtime } from '@agent-os/runtime';
 import type { App } from 'supertest/types.js';
@@ -23,13 +24,15 @@ import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
 import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
+import { registerFixtureServers } from './mcp-servers.js';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
   model?: ScriptedModel;
   /**
-   * `MCP_ACCESS_TABLE`: employee id (or `*` for every employee) → MCP server ids; default — nobody has
-   * servers. Employees sign in after the boot, so a suite names `*` rather than their ids.
+   * `MCP_ACCESS_TABLE`: employee id (or `*` for every employee) → MCP server names of the run
+   * (`mcp-servers.ts`); default — nobody has servers. Employees sign in after the boot, so a suite names
+   * `*` rather than their ids.
    */
   mcpAccess?: Readonly<Record<string, readonly string[]>>;
   /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
@@ -37,9 +40,14 @@ export interface TestAppOptions {
   /** Replaces `AGENT_LIST_PAGE_SIZE` (the page of `GET /agents`), so a cursor walk shows over a few agents. */
   agentPageSize?: number;
   /**
-   * Fault rules of the fixture processes (`holdCall`, `crashOn`), written before the boot: the processes
-   * start with the app and read their rules once. Latches come from the given files (`files.latch(name)`;
-   * the same name later gives the same latch through `fixtureLog.latch(name)`).
+   * Starts a fixture process writing into `fixtureLog` and registers the run's server of each source at
+   * its shared-token path once the app is up; without it no fixture process runs.
+   */
+  mcpServers?: readonly FixtureSource[];
+  /**
+   * Fault rules of the fixture process (`holdCall`), written before the boot; the process reads them on
+   * every call. Latches come from the given files (`files.latch(name)`; the same name later gives the
+   * same latch through `fixtureLog.latch(name)`).
    */
   faults?: (files: FixtureFiles) => readonly FixtureFaultRule[];
   /** Issuers of the provider types fixed in code: `google` points at this issuer (the test issuer). */
@@ -52,8 +60,10 @@ export interface TestApp {
   /** Initialised app with `configureApp` applied: requests go to `/api/...`. */
   app: INestApplication<App>;
   model: ScriptedModel;
-  /** The fixture files of this app: the call log of the `logs` and `backoffice` servers, fault rules, latches. */
+  /** The fixture files of this app: the call log of its fixture process, fault rules, latches. */
   fixtureLog: FixtureFiles;
+  /** The fixture process started for `mcpServers`; reading it without that option throws. */
+  readonly fixture: FixtureProcess;
   /** The app's agents package (`AGENTS`), for reads the API does not offer. */
   agents: Agents;
   /** The app's runtime (`RUNTIME`). */
@@ -62,16 +72,16 @@ export interface TestApp {
   pool: DatabaseConnection['pool'];
   /** With `captureLog`: the console lines (logger records are JSON lines) from the boot until `close`; else empty. */
   log: readonly string[];
-  /** Closes the app and removes the fixture files. */
+  /** Closes the app, stops the fixture process and removes the fixture files. */
   close(): Promise<void>;
 }
 
 /**
  * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`) with only
  * `AGENT_TURN_CLIENT` replaced by the scripted double of `@agent-os/agents/testing` — no network,
- * no provider keys. The MCP servers are the fixture processes (`logs`, `backoffice`) writing into
- * this app's call log. `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS` are set for the
- * boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
+ * no provider keys. With `mcpServers` the MCP servers are one fixture process writing into this app's
+ * call log, registered in the registry under the run's names after the boot. `MCP_ACCESS_TABLE` and
+ * `RUNTIME_WORKERS` are set for the boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
  * helpers reach it as `http://localhost:<port>` (session.ts `apiOrigin`).
  */
 export async function createTestApp(
@@ -79,21 +89,13 @@ export async function createTestApp(
 ): Promise<TestApp> {
   const model = options.model ?? createScriptedModel();
   const fixtureLog = createFixtureFiles('api-e2e');
-  const serversFile = join(fixtureLog.dir, 'mcp-servers.json');
-  writeFileSync(
-    serversFile,
-    JSON.stringify(
-      fixtureServersFile(fixtureLog, [
-        { id: 'logs', source: 'logs' },
-        { id: 'backoffice', source: 'backoffice' },
-      ]),
-    ),
-    'utf8',
-  );
   if (options.faults) fixtureLog.setFaults(options.faults(fixtureLog));
+  const fixtureProcess =
+    options.mcpServers === undefined
+      ? undefined
+      : await startFixtureProcess(fixtureLog);
 
   const restoreEnv = setEnv({
-    MCP_SERVERS_FILE: serversFile,
     MCP_ACCESS_TABLE: JSON.stringify(options.mcpAccess ?? {}),
     ...(options.workers ? { RUNTIME_WORKERS: 'on' } : {}),
   });
@@ -120,27 +122,48 @@ export async function createTestApp(
     await app.listen(0, '127.0.0.1');
   } catch (error) {
     log?.restore();
+    await fixtureProcess?.stop();
     throw error;
   } finally {
     restoreEnv();
+  }
+
+  const agents = app.get<Agents>(AGENTS);
+  const close = async () => {
+    try {
+      await app.close();
+    } finally {
+      log?.restore();
+      await fixtureProcess?.stop();
+      rmSync(fixtureLog.dir, { recursive: true, force: true });
+    }
+  };
+  if (fixtureProcess !== undefined && options.mcpServers !== undefined) {
+    try {
+      await registerFixtureServers(agents, fixtureProcess, options.mcpServers);
+    } catch (error) {
+      await close();
+      throw error;
+    }
   }
 
   return {
     app,
     model,
     fixtureLog,
-    agents: app.get<Agents>(AGENTS),
+    get fixture(): FixtureProcess {
+      if (fixtureProcess === undefined) {
+        throw new Error(
+          'createTestApp started no fixture process: pass mcpServers',
+        );
+      }
+      return fixtureProcess;
+    },
+    agents,
     runtime: app.get<Runtime>(RUNTIME),
     pool: app.get<DatabaseConnection>(RUNTIME_DATABASE).pool,
     log: log?.lines ?? [],
-    close: async () => {
-      try {
-        await app.close();
-      } finally {
-        log?.restore();
-        rmSync(fixtureLog.dir, { recursive: true, force: true });
-      }
-    },
+    close,
   };
 }
 

@@ -4,7 +4,8 @@
 //
 // Harness: the child-process technique of `packages/runtime/test/agent-platform-runtime.e2e-spec.ts`. Here the child (`test/support/codeRunChildMain.ts`, compiled by `pnpm build:child`, started by
 // `test/support/codeRunChild.ts`) is an API-equivalent process with `createRuntime` + `createAgents` + the REAL `packages/code-runner` executor, a scripted model and the MCP fixture over real Postgres;
-// `FIXTURE_CALL_LOG` is the evidence of what reached a server across both processes. The test kills the child from outside while the fixture holds a call of the script (`holdCall`); a fresh child
+// the test process starts the fixture process (through its own harness, which registers the run's servers at it before the first child starts; the children only read the registry rows), so the
+// fixture outlives every killed child, and `FIXTURE_CALL_LOG` is the evidence of what reached a server across all processes. The test kills the child from outside while the fixture holds a call of the script (`holdCall`); a fresh child
 // without the hold continues. The test process itself only starts agents and decides requests (`createAgentsHarness` with the runtime workers off). Run with
 // `pnpm --filter @agent-os/agents test:e2e`, never in the default `vitest run`.
 //
@@ -28,35 +29,40 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
-  BACKOFFICE_SERVER,
   codeCallRowsOf,
   createAgentsHarness,
   historyLines,
   historyOf,
-  LOGS_SERVER,
   toolCallRowsOf,
   waitFor,
 } from './support/agentsHarness.js';
 import {
   type ChildScenario,
   childScenario,
-  CODE_RUN_DEFINITION,
+  codeRunDefinition,
   type CodeRunChild,
   CodeRunChildren,
   FIRST_NOTE,
-  READ_RUN,
+  readRun,
   type ScenarioRun,
   TRACE,
-  WRITE_RUN,
+  writeRun,
 } from './support/codeRunChild.js';
+import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers.js';
 import { newUser } from './support/new-user.js';
+
+/** The run's servers of the scenario; the test's harness registers them at its fixture process. */
+const SERVERS = { logs: LOGS_SERVER, backoffice: BACKOFFICE_SERVER };
+const CODE_RUN_DEFINITION = codeRunDefinition(SERVERS);
+const READ_RUN = readRun(SERVERS);
+const WRITE_RUN = writeRun(SERVERS);
 
 const TEST_TIMEOUT_MS = 300_000;
 /** How long a step may take to reach its point, a lost step included (lease 1 s, reaper 0.2 s). */
 const STEP_MS = 60_000;
 /** How long an executor may outlive its killed API process (it exits on the end of its stdin). */
 const EXECUTOR_EXIT_MS = 10_000;
-/** The latch of the held call; released when a test ends, so an orphaned fixture process answers and exits. */
+/** The latch of the held call; released when a test ends, so the fixture answers the call it still holds. */
 const HOLD = 'held-call';
 
 /** One test: an owner allowed both servers, the fixture files, the children and the test's own instance. */
@@ -83,7 +89,7 @@ async function openScene(holds: (latch: FileLatch) => FixtureFaultRule[]): Promi
     definitions: [CODE_RUN_DEFINITION],
     runtimeConfig: { workers: false },
   });
-  return { ownerId, fixture, scenario: childScenario(fixture, access), children, control };
+  return { ownerId, fixture, scenario: childScenario(access, SERVERS), children, control };
 }
 
 async function closeScene(scene: Scene): Promise<void> {
@@ -225,8 +231,8 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
           second.runLogs(callId, 'code run re-executed after a lost step').map((record) => record.fields.attempt),
         ).toEqual([2]);
         expect(await codeCallLines(scene, agentId)).toEqual([
-          '1/1 logs/get_trace interrupted',
-          '2/1 logs/get_trace success',
+          `1/1 ${LOGS_SERVER}/get_trace interrupted`,
+          `2/1 ${LOGS_SERVER}/get_trace success`,
         ]);
 
         // Then: the agent got the script's result as from an ordinary run and reported
@@ -266,8 +272,8 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
 
         // Then: both attempts' calls are interrupted, attempts stays 2, and the agent got the error and reported
         expect(await codeCallLines(scene, agentId)).toEqual([
-          '1/1 logs/get_trace interrupted',
-          '2/1 logs/get_trace interrupted',
+          `1/1 ${LOGS_SERVER}/get_trace interrupted`,
+          `2/1 ${LOGS_SERVER}/get_trace interrupted`,
         ]);
         expect(await runLine(scene, agentId)).toBe('run_code tool_error attempts 2 запуск дважды прерван рестартом');
         expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
@@ -320,7 +326,7 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
         expect(journalLines(scene)).toEqual(journalBeforeRestart);
 
         // Then: the run and its sent call end "исход неизвестен"; a write run counts no attempts
-        expect(await codeCallLines(scene, agentId)).toEqual(['1/1 backoffice/create_incident_note unknown']);
+        expect(await codeCallLines(scene, agentId)).toEqual([`1/1 ${BACKOFFICE_SERVER}/create_incident_note unknown`]);
         expect(await runLine(scene, agentId)).toBe('run_code unknown attempts 0 -');
         expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
           historyOfRun(WRITE_RUN, 'tool_result: run_code unknown'),

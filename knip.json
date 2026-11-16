@@ -36,8 +36,7 @@
     "packages/mcp-fixture": {
       "entry": [
         "src/index.ts",
-        "src/main.ts",
-        "src/server.ts"
+        "src/main.ts"
       ]
     },
     "packages/runtime": {

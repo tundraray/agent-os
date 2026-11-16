@@ -1,6 +1,7 @@
+import { McpServerModeSchema } from '@agent-os/contracts';
+import type { Database } from '@agent-os/db';
 import type { z } from 'zod';
 
-import type { McpAccessTable } from '../config.js';
 import type { DefinitionCatalog } from '../definitions/catalog.js';
 import {
   ALL_SERVERS,
@@ -8,11 +9,13 @@ import {
   type DefinitionHeader,
   START_AGENT_TOOL,
 } from '../definitions/definition.js';
-import type { McpClients, McpTool } from '../mcp/mcp-clients.js';
+import type { McpServerAllowed } from '../mcp/mcp-accounts.js';
+import { accountsOf } from '../mcp/mcp-accounts.repository.js';
+import { type McpServerRow, enabledServersWithTools, findServer } from '../mcp/mcp-servers.repository.js';
+import { type McpTool, storedMcpTools } from '../mcp/mcp-tool.js';
 import type { JsonSchemaObject } from '../model/mastra-turn.js';
 import { describeStartAgent } from './builtin/start-agent.js';
 import type { AgentTool, SessionLimits, ToolDisplay } from './tool.js';
-import { serverAllowed } from './tool-access.js';
 
 /**
  * A tool one session offers its model: its name, description and schema (an `AgentToolDefinition` of
@@ -64,19 +67,26 @@ export interface ToolRegistry {
   /** A built-in or registered tool, or `run_code`, by its name. */
   toolOf(name: string): AgentTool | undefined;
   /** How a call of this tool reads for the employee; empty for a tool that is not known now. */
-  display(tool: string, server: string | null): ToolDisplay;
+  display(tool: string, server: string | null): Promise<ToolDisplay>;
   /**
-   * The tools of one session (design-agents.md, «Инструменты»): the built-in and registered ones its
-   * definition names, `run_code` in every session (code-execution KD-3), then the MCP tools of its
-   * servers that the owner may use — the same `serverAllowed` the call checks (KD-5).
+   * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1): the
+   * built-in and registered ones its definition names, `run_code` in every session (code-execution KD-3),
+   * then the MCP tools of the definition's servers (`*` — all) that are enabled in the registry, that the
+   * owner may use (`serverAllowed`, as the call check) and, for an `oauth` server, that the owner has an
+   * account on. Read from the database on every call: nothing is kept between steps (Invariant 3).
    */
-  sessionTools(input: SessionToolsInput): SessionTool[];
+  sessionTools(input: SessionToolsInput): Promise<SessionTool[]>;
   /**
-   * The MCP tools of every server the definition names, before the owner's access filter: the snapshot
-   * a `run_code` run checks its calls against, so a server the owner may not use is `no_access`, not
-   * `tool_not_in_definition` (code-execution DC-6).
+   * The set a call is checked against: `sessionTools` without the account filter, so a call the model asked
+   * for before the account went away gets `auth_required`, not `tool_not_in_definition` (C3).
    */
-  definitionMcpTools(definition: AgentDefinition): SessionTool[];
+  checkTools(input: SessionToolsInput): Promise<SessionTool[]>;
+  /**
+   * The MCP tools of the definition's enabled servers, before the owner's access filter and without
+   * accounts: the snapshot a `run_code` run checks its calls against, so a server the owner may not use is
+   * `no_access`, not `tool_not_in_definition` (code-execution DC-6).
+   */
+  definitionMcpTools(definition: AgentDefinition): Promise<SessionTool[]>;
 }
 
 export interface ToolRegistryOptions {
@@ -84,18 +94,17 @@ export interface ToolRegistryOptions {
   readonly builtins: readonly AgentTool[];
   /** `run_code`: in every session, never named by a definition (code-execution KD-3, DC-1). */
   readonly runCode: AgentTool;
-  readonly mcpClients: McpClients;
   readonly catalog: DefinitionCatalog;
-  /** `MCP_ACCESS_TABLE`. */
-  readonly access: McpAccessTable;
-  /** Ids of the servers in `MCP_SERVERS_FILE`: what `mcpServers: ['*']` means. */
-  readonly serverIds: readonly string[];
+  /** The MCP registry and the accounts are read from it for every tool set (KD-2). */
+  readonly database: Database;
+  /** The one access function: the same in the tool set, in the call check and in the connections list. */
+  readonly serverAllowed: McpServerAllowed;
 }
 
 /** The registry of the tools a session may offer its model (C3, `ToolRunner` reads it). */
 export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
   const tools = new Map<string, AgentTool>();
-  const { runCode } = options;
+  const { runCode, database, serverAllowed } = options;
   let sealed = false;
 
   function add(tool: AgentTool): void {
@@ -130,28 +139,47 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
       : sessionToolOf(tool);
   }
 
+  /** The built-in and registered tools the definition names, then `run_code`. */
+  function agentTools(input: SessionToolsInput): SessionTool[] {
+    return [...input.definition.tools.map((name) => agentTool(name, input)), sessionToolOf(runCode)];
+  }
+
   function toolOf(name: string): AgentTool | undefined {
     return name === runCode.name ? runCode : tools.get(name);
   }
 
-  function definitionServers(definition: AgentDefinition): readonly string[] {
+  /** Enabled registry servers the definition names; a name the registry does not hold gives nothing (DC-11). */
+  function definitionServers(definition: AgentDefinition): Promise<McpServerRow[]> {
     const { mcpServers } = definition;
-    return mcpServers.includes(ALL_SERVERS) ? options.serverIds : mcpServers;
+    return enabledServersWithTools(database, mcpServers.includes(ALL_SERVERS) ? ALL_SERVERS : mcpServers);
   }
 
-  function mcpToolsOf(serverIds: readonly string[]): SessionTool[] {
-    return options.mcpClients.toolsOf(serverIds).map((mcp) => ({
-      kind: 'mcp',
-      name: mcp.name,
-      description: mcp.description,
-      inputSchema: mcp.inputSchema,
-      mcp,
-    }));
+  function mcpToolsOf(rows: readonly McpServerRow[]): SessionTool[] {
+    return rows.flatMap((row) =>
+      (storedMcpTools(row.tools) ?? []).map(
+        (mcp): SessionTool => ({
+          kind: 'mcp',
+          name: mcp.name,
+          description: mcp.description,
+          inputSchema: mcp.inputSchema,
+          mcp,
+        }),
+      ),
+    );
   }
 
-  function mcpTools(input: SessionToolsInput): SessionTool[] {
-    const servers = definitionServers(input.definition);
-    return mcpToolsOf(servers.filter((serverId) => serverAllowed(options.access, input.ownerId, serverId)));
+  /** The definition's enabled servers the owner may use. */
+  async function allowedServers(input: SessionToolsInput): Promise<McpServerRow[]> {
+    const rows = await definitionServers(input.definition);
+    return rows.filter((row) => serverAllowed(input.ownerId, row.name));
+  }
+
+  /** Keeps a shared server, and an `oauth` server only when the owner has an account on it. */
+  async function withAccounts(rows: McpServerRow[], ownerId: string): Promise<McpServerRow[]> {
+    const isOAuth = (row: McpServerRow) => row.mode === McpServerModeSchema.enum.oauth;
+    if (!rows.some(isOAuth)) return rows;
+    const connected = new Set((await accountsOf(database, ownerId)).map((account) => account.server));
+    return rows.filter((row) => !isOAuth(row) || connected.has(row.name));
   }
 
   return {
@@ -166,9 +194,11 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     },
     toolNames: () => [...tools.keys()],
     toolOf,
-    display(tool, server) {
+    async display(tool, server) {
       if (server !== null) {
-        return options.mcpClients.toolsOf([server]).find((mcp) => mcp.tool === tool)?.display ?? {};
+        const row = await findServer(database, server);
+        const listed = row === undefined ? null : storedMcpTools(row.tools);
+        return listed?.find((mcp) => mcp.tool === tool)?.display ?? {};
       }
       const { title, argLabels } = toolOf(tool) ?? {};
       return {
@@ -176,13 +206,13 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
         ...(argLabels === undefined ? {} : { argLabels }),
       };
     },
-    sessionTools(input) {
-      return [
-        ...input.definition.tools.map((name) => agentTool(name, input)),
-        sessionToolOf(runCode),
-        ...mcpTools(input),
-      ];
+    async sessionTools(input) {
+      const rows = await withAccounts(await allowedServers(input), input.ownerId);
+      return [...agentTools(input), ...mcpToolsOf(rows)];
     },
-    definitionMcpTools: (definition) => mcpToolsOf(definitionServers(definition)),
+    async checkTools(input) {
+      return [...agentTools(input), ...mcpToolsOf(await allowedServers(input))];
+    },
+    definitionMcpTools: async (definition) => mcpToolsOf(await definitionServers(definition)),
   };
 }

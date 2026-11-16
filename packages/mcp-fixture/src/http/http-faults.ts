@@ -8,10 +8,9 @@ export type HttpAnswer = Response | 'hang' | 'drop';
 const MALFORMED_BODY = 'fixture fault: this body is not JSON';
 
 /**
- * Applies a transport fault rule to one `tools/call` over HTTP, as the stdio transport did by message:
- * `hang` and `drop_connection` act before the server sees the call; the other modes let the server
- * answer (`serve`) and then hold back or replace its response. `crash_process` is stdio-only: the HTTP
- * process serves every test, so the rule answers 500 instead of killing it.
+ * Applies a transport fault rule to one `tools/call` over HTTP: `hang` and `drop_connection` act before
+ * the server sees the call; the other modes let the server answer (`serve`) and then hold back or replace
+ * its response.
  */
 export async function answerWithFault(
   fault: TransportFaultRule,
@@ -23,8 +22,6 @@ export async function answerWithFault(
       return 'hang';
     case 'drop_connection':
       return 'drop';
-    case 'crash_process':
-      return new Response('fixture fault: crash_process is not supported over HTTP', { status: 500 });
     case 'late_response': {
       const response = await serve();
       await sleep(fault.ms);

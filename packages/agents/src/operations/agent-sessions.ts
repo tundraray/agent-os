@@ -287,7 +287,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         args: row.args,
         // A stopped agent's open calls are shown closed (Flow 7): the stop records follow them.
         state: shownClosed ? ToolCallStateSchema.enum.done : ToolCallStateSchema.parse(row.state),
-        ...registry.display(row.tool, row.server),
+        ...(await registry.display(row.tool, row.server)),
       });
       byAnswer.set(row.answerSeq, calls);
     }
@@ -478,7 +478,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           // `AGENT_NOT_FOUND` for another owner's or no tree.
           await tree(rootId, ownerId);
           const decisions = await runtime.decisions.listTree(rootId, ownerId);
-          return decisions.map((decision): AgentConfirmation => {
+          return Promise.all(
+            decisions.map(async (decision): Promise<AgentConfirmation> => {
               const payload = ConfirmationPayloadSchema.parse(decision.payload);
               const resolved =
                 decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
@@ -498,9 +499,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
                     : { approve: resolved.approve, args: resolved.args ?? payload.args },
                 createdAt: decision.createdAt,
                 resolvedAt: decision.resolvedAt,
-                ...registry.display(payload.tool, payload.server),
+                ...(await registry.display(payload.tool, payload.server)),
               };
-            });
+            }),
+          );
         },
         (confirmations) => ({ confirmations: confirmations.length }),
       );

@@ -73,7 +73,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
     // History holds tool calls, and the provider takes them only with the tools defined.
-    const sessionTools = registry.sessionTools({
+    const sessionTools = await registry.sessionTools({
       definition,
       limits: session.limits,
       ownerId: session.ownerId,
