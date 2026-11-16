@@ -1,9 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
 import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
@@ -162,18 +159,6 @@ export async function ageSession(
     throw new Error(
       `No session row for the cookie (${moved.rowCount} rows moved)`,
     );
-}
-
-const ENV_FILE = fileURLToPath(new URL('../../.env', import.meta.url));
-
-/** `DATABASE_URL` as the app reads it: the process environment first, otherwise `apps/api/.env`. */
-export function testDatabaseUrl(): string {
-  const url =
-    process.env.DATABASE_URL ??
-    parseEnv(readFileSync(ENV_FILE, 'utf8')).DATABASE_URL;
-  if (!url)
-    throw new Error(`DATABASE_URL is not set (checked env and ${ENV_FILE})`);
-  return url;
 }
 
 /**

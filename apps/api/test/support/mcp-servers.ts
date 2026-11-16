@@ -1,8 +1,4 @@
-import type {
-  Agents,
-  McpConnectResult,
-  McpServerWrite,
-} from '@agent-os/agents';
+import type { Agents, McpServerWrite } from '@agent-os/agents';
 import { McpError } from '@agent-os/agents';
 import { McpErrorCode, type McpServerMode } from '@agent-os/contracts';
 import {
@@ -34,15 +30,11 @@ export function runName(base: string): string {
   return `${base}${RUN_SUFFIX}`;
 }
 
-/** The run's servers of the fixture sources: read-only payment logs, the back office with `create_incident_note`, the tracker. */
+/** The run's servers of the fixture sources: read-only payment logs, the back office with `create_incident_note`. */
 export const LOGS_SERVER = runName('logs');
 export const BACKOFFICE_SERVER = runName('backoffice');
-export const TRACKER_SERVER = runName('tracker');
 
-/**
- * The OAuth return address the tests register and connect with. The tests never open it: `connectAccount`
- * reads the code from the authorization server's redirect.
- */
+/** The OAuth return address the tests register servers with; the tests never open it. */
 const MCP_REDIRECT_URL = 'http://localhost:3000/api/mcp/oauth/callback';
 
 /** The registry part of the package the helpers need. */
@@ -75,7 +67,7 @@ async function removeServer(agents: McpOf, name: string): Promise<void> {
  * Registers `server` through the registry (the server check included), replacing a row of the same name
  * left by an earlier harness of the run, which may point at a stopped fixture process.
  */
-export async function registerServer(
+async function registerServer(
   agents: McpOf,
   server: TestServer,
 ): Promise<McpServerWrite> {
@@ -110,53 +102,4 @@ export async function registerFixtureServers(
       sharedToken: FIXTURE_SHARED_TOKEN,
     });
   }
-}
-
-/**
- * Connects the account of `ownerId` on the `oauth` server `server` as a browser would: `beginConnect`, the
- * authorization address opened with `fixture_account` (the fixture signs that account in and redirects at
- * once; the redirect is read, not followed), then `finishConnect` with the redirect's `code`, `state` and
- * `iss`. With `isAdmin` the connection is the admin's account of the server.
- */
-export async function connectAccount(
-  harness: { readonly agents: McpOf },
-  ownerId: string,
-  server: string,
-  options: { readonly account: string; readonly isAdmin?: boolean },
-): Promise<McpConnectResult> {
-  const isAdmin = options.isAdmin ?? false;
-  const begun = await harness.agents.mcp.beginConnect({
-    ownerId,
-    server,
-    target: isAdmin ? 'admin' : 'employee',
-    redirectUrl: MCP_REDIRECT_URL,
-  });
-  if (begun.kind !== 'redirect')
-    throw new Error(`Connecting ${ownerId} to ${server} was refused`);
-  const authorizationUrl = new URL(begun.authorizationUrl);
-  authorizationUrl.searchParams.set('fixture_account', options.account);
-  const response = await fetch(authorizationUrl, { redirect: 'manual' });
-  const location = response.headers.get('location');
-  if (location === null) {
-    throw new Error(
-      `The authorization address answered ${response.status} without a redirect`,
-    );
-  }
-  const back = new URL(location).searchParams;
-  return harness.agents.mcp.finishConnect({
-    ownerId,
-    isAdmin,
-    state: back.get('state') ?? '',
-    ...optionalParam(back, 'code'),
-    ...optionalParam(back, 'iss'),
-    ...optionalParam(back, 'error'),
-  });
-}
-
-function optionalParam<Name extends string>(
-  params: URLSearchParams,
-  name: Name,
-): Partial<Record<Name, string>> {
-  const value = params.get(name);
-  return value === null ? {} : ({ [name]: value } as Record<Name, string>);
 }

@@ -28,7 +28,7 @@ agent-os/
     runtime/          durable runtime без NestJS: createRuntime, порты, порт обработчика
     agents/           агенты поверх runtime: определения, сессии, инструменты, MCP: createAgents
     workflows/        шаблоны процессов (deep-research), инструмент start_workflow, чтение запуска: createWorkflows
-    mcp-fixture/      фикстурные MCP-серверы `logs` и `backoffice` для локального запуска и тестов
+    mcp-fixture/      HTTP-процесс с фикстурными MCP-серверами `logs`, `backoffice`, `tracker` для разработки и тестов
   infra/
     docker-compose.yml
     nginx.conf

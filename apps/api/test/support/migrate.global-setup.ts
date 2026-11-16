@@ -8,7 +8,7 @@ import type { TestProject } from 'vitest/node';
 const ENV_FILE = fileURLToPath(new URL('../../.env', import.meta.url));
 
 /** `DATABASE_URL` as the app sees it: the process environment first, otherwise `apps/api/.env`. */
-function databaseUrl(): string {
+export function databaseUrl(): string {
   const url =
     process.env.DATABASE_URL ??
     parseEnv(readFileSync(ENV_FILE, 'utf8')).DATABASE_URL;

@@ -65,10 +65,10 @@ import {
   insertEmployee,
   seedSuperAdmin,
   signInWithPassword,
-  testDatabaseUrl,
   type Method,
   type Session,
 } from './support/session.js';
+import { databaseUrl } from './support/migrate.global-setup.js';
 
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
@@ -132,7 +132,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
 
   beforeAll(async () => {
     database = createDatabase({
-      connectionString: testDatabaseUrl(),
+      connectionString: databaseUrl(),
       poolMax: 2,
     });
     const tag = randomUUID().slice(0, 8);

@@ -24,7 +24,7 @@ import { AGENTS } from './agents.tokens.js';
 import { mcpAnswer } from './mcp.errors.js';
 
 /** The audit object of a registry server (design-mcp-connect.md, «Реестр — для `admin`»). */
-export const MCP_SERVER_OBJECT_TYPE = 'mcp_server';
+const MCP_SERVER_OBJECT_TYPE = 'mcp_server';
 
 /** A registry write as `admin_change` on `mcp_server`, after the operation; `AuditLog` masks `sharedToken`. */
 export async function recordServerChange(
