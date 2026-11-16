@@ -1,6 +1,6 @@
 # Корпоративный вход и управление доступом — Design Document — admin
 
-**Status:** Approved · **Date:** 2026-11-15 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-identity.md](./design-identity.md), [design-mcp-connect.md](./design-mcp-connect.md), [design-access.md](./design-access.md)
+**Status:** Approved · **Date:** 2026-11-16 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-identity.md](./design-identity.md), [design-mcp-connect.md](./design-mcp-connect.md), [design-access.md](./design-access.md)
 
 ## Snapshot
 
@@ -8,7 +8,7 @@
 
 - **Не меняется**: операции администратора и их контракты в трёх дизайнах выше, страница входа, «Мой доступ» и отказы в беседе.
 - **Главный риск**: примитивы shadcn `base-nova` (таблица, выпадающий список, переключатель) могут не держать компактную плотность; запасной путь — свой примитив на `@base-ui/react` (Risks and Mitigation).
-- **Открытые вопросы**: [Open Questions](#open-questions).
+- **Открытые вопросы**: нет ([Open Questions](#open-questions)).
 
 ### Key Decisions
 
@@ -30,15 +30,13 @@
 
 #### KD-3: Один общий клиент API для всего веба; функции панели — модуль `lib/admin` поверх него; ошибка несёт `reason`
 
-Клиент чата `threadsApiClient` прячет отправку и разбор ответа внутри модуля, знает только `GET`, `POST`, `PATCH`, `DELETE` и отбрасывает поле `reason` тела ошибки. Панели нужны ещё `PUT` и `reason` у `PROVIDER_CHECK_FAILED`, `MCP_SERVER_CHECK_FAILED`, `GRANT_TARGET_UNKNOWN`, `GRANT_INVALID` и `VALIDATION_FAILED` (`weak_password`). Ядро запроса `apiRequest` живёт в `lib/api`: адрес API, cookie, тело JSON, разбор ответа схемой из `@agent-os/contracts`, ошибка `ApiRequestError` с видом, статусом, кодом, причиной и текстом сервера, один обработчик 401 из `identity` и один обработчик 403 `ADMIN_REQUIRED` (KD-2). `threadsApiClient`, клиенты `lib/mcp` и `lib/access` и новый `adminApi` — наборы функций поверх ядра; поле `reason` в `ApiErrorSchema` добавляет `identity`.
+Ядро запроса `apiRequest` в `lib/api` построила часть `identity`: адрес API, cookie, методы `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, тело JSON, разбор ответа схемой из `@agent-os/contracts`, ошибка `ApiRequestError` с видом, статусом, кодом, причиной (`reason`) и текстом сервера, один обработчик 401. Клиент чата `threadsApiClient` и клиенты `lib/mcp` и `lib/access` уже идут через это ядро. Панель добавляет в ядро только обработчик 403 `ADMIN_REQUIRED` (KD-2) и строит `adminApi` в `lib/admin` — ещё один набор функций поверх ядра.
 
 - **Второй клиент для панели** — не взят: обработчики 401 и 403 обходились бы, а одна логика жила бы в двух местах.
 
-Ядро и класс ошибки выносятся из `threads-api-client.ts` и `threads-api-error.ts` в этой части, и `lib/mcp` и `lib/access` переходят на ядро здесь же. Пять модулей, которые проверяют `ThreadsApiError` (`title-poller.ts`, `thread-list-adapter.ts`, `resolve-main-view.ts`, `feed-store.ts`, `thread-history-list.tsx`), меняют только импорт и имя класса; виды ошибки прежние, старое имя удаляется сразу.
-
 #### KD-4: Данные экрана читаются при открытии хуком `useResource`, списки по страницам — `usePagedResource`; после изменения экран читает данные заново; библиотеки кэша нет
 
-`uxrd.md` читает каждый раздел при открытии и не обновляет его вживую. Таблицы и страницы записей повторяют одну машину состояний: загрузка, готово, ошибка с «Повторить», «Показать ещё» со своей ошибкой подгрузки. Её держат два маленьких хука: они отбрасывают устаревший ответ при смене ключа и при уходе со страницы и пишут ошибку в лог. Изменение — вызов функции `adminApi`, затем `reload()` того ресурса, который изменение затронуло.
+`uxrd.md` читает каждый раздел при открытии и не обновляет его вживую. Таблицы и страницы записей повторяют одну машину состояний: загрузка, готово, ошибка с «Повторить», «Показать ещё» со своей ошибкой подгрузки. Её держат два маленьких хука. `apiRequest` не принимает сигнала отмены, поэтому хуки нумеруют чтения и применяют только ответ последнего, пока экран смонтирован; ответ на прежний ключ и после ухода со страницы отбрасывается, ошибка пишется в лог один раз. Новое чтение оставляет строки на экране до своего ответа, а «Показать ещё» ничего не отправляет, пока первая страница нового чтения не применена. Изменение — вызов функции `adminApi`, затем `reload()` того ресурса, который изменение затронуло.
 
 - **TanStack Query** — не взят: кэш между страницами и фоновое обновление здесь не нужны, а новая библиотека — новый образец для всего веба.
 - **Хранилище zustand на ресурс, как `agent-list-store`** — не взято: такие хранилища живут в сервисах оболочки, потому что их обновляет поток событий, а данные панели нужны одной странице.
@@ -78,11 +76,11 @@
 - Объяснение действующих прав сотрудника с источниками и разбивкой квоты: администратор читает роли сотрудника и права напрямую.
 - Группы IdP и их сопоставление с ролями: роли назначаются только в панели.
 - Страница входа, имя и почта в меню, «Выйти», переход на вход по 401, страница «Мой доступ» и смена своего пароля — `identity`; подключения на «Мой доступ» и точка на аватаре — `mcp-connect`; модели на «Мой доступ» и отказы в беседе — `access`. Эта часть добавляет в меню только пункт «Панель администратора».
-- Раскладка панели под телефон: ниже 1280 px таблицы прокручиваются внутри блока (`uxrd.md`, Responsive Behavior).
+- Отдельная раскладка панели под телефон: ниже 1280 px таблицы прокручиваются внутри блока, а ниже 768 px действия шапки встают своей строкой под заголовком (`uxrd.md`, Responsive Behavior).
 
 **Constraints**
 
-- PoC без совместимости: вынос ядра запроса и переименование класса ошибки делаются сразу во всех вызывающих (KD-3).
+- PoC без совместимости: ядро запроса одно на весь веб, второго клиента у панели нет (KD-3).
 - Новых зависимостей нет: примитивы `table`, `tabs`, `switch`, `radio-group`, `select`, `label`, `field`, `checkbox` добавляются в `components/ui` командой shadcn поверх `@base-ui/react` (`uxrd.md`, Component Inventory).
 - `apps/web` зависит только от `contracts` и `common` ([code system](../../code-system/README.md), Layer Map): схемы ответов панели — из `@agent-os/contracts`.
 - Логи — через `src/lib/logger.ts`: метод, путь, статус, код и причина ошибки; тела запросов и ответов в лог не попадают, поэтому пароли и секреты тоже.
@@ -91,25 +89,29 @@
 
 ## Building-block Inventory
 
-Follows the [code system](../../code-system/README.md). Поиск перед «new» шёл по `docs/code-system/`, `docs/design-system/components/` и `apps/web/src` (`components/ui`, `components/shell`, `components/agents`, `lib`, `hooks`; слова `admin`, `table`, `form`, `field`, `secret`, `badge`, `copy`): упоминаний `admin` в коде, таблиц, форм, поля секрета и меток состояния нет.
+Follows the [code system](../../code-system/README.md). Поиск перед «new» шёл по `docs/code-system/`, `docs/design-system/components/` и `apps/web/src` (`components/ui`, `components/shell`, `components/agents`, `lib`, `hooks`; слова `admin`, `table`, `form`, `field`, `secret`, `badge`, `copy`): упоминаний `admin` в коде, таблиц, форм и поля секрета нет.
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `ShellRoute`, `parseShellRoute`, `MainView`, `DocumentTitle`, пустая страница `/admin/[[...path]]` | [shell-route.md](../../code-system/patterns/shell-route.md) (KD-1) | extended | Вид `admin`, экран раздела, вкладка MC-18 и MC-19 |
-| `AppSidebar` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | В панели — «К чату», «Панель» и разделы вместо истории бесед |
-| `ChatHeaderView` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | Слот действий справа для основной кнопки раздела |
+| `ShellRoute`, `parseShellRoute`, `MainView`, `DocumentTitle`, пустая страница `/admin/[[...path]]` | [shell-route.md](../../code-system/patterns/shell-route.md) (KD-1) | extended | Вид `admin` и экран раздела; `DocumentTitle` оставляет вкладку панели её экрану |
+| `AppSidebar` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | В панели — «К чату», «Панель» и разделы вместо истории бесед (`AdminSidebarNav`) |
+| `ChatHeader` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | На адресе панели вместо заголовка — один слот `AdminHeaderSlot`; экран ставит в него `h1` и действия через `AdminPageHeader` |
+| `useDocumentTitle`, `pageTitle` | — | new | Вкладка панели (MC-18, MC-19): экран называет её сам, потому что знает имя записи |
 | `UserMenu` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | Пункт «Панель администратора» при `isAdmin` |
-| Значение `CurrentUser` | — | extended | Чтение `GET /api/auth/me` для меню становится общим значением оболочки с состоянием «неизвестно» и сбросом `isAdmin` |
+| Значение `CurrentUser` | — | extended | Общее значение оболочки из `identity`; панель добавляет сброс `isAdmin` (`revokeAdmin`) |
 | `ThreadNotice` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | Варианты `no-access` (AD-02) и `record-not-found` (AD-15) |
-| Ядро `apiRequest`, `ApiRequestError` в `lib/api` | [web-api-client.md](../../code-system/patterns/web-api-client.md) (KD-3) | extended | Вынесено из клиента чата; `PUT`, `reason`, обработчик 403 |
+| Ядро `apiRequest`, `ApiRequestError` в `lib/api` | [web-api-client.md](../../code-system/patterns/web-api-client.md) (KD-3) | extended | Построено `identity`; панель добавляет обработчик 403 `ADMIN_REQUIRED` (`setAdminRequiredHandler`) |
 | `adminApi` в `lib/admin` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | new | Операции администратора трёх частей |
-| Схемы ответов в `@agent-os/contracts` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | reused | Объявляет часть, которая отдаёт операцию ([Open Questions](#open-questions)) |
-| `useResource`, `usePagedResource` | [read-on-open.md](../../code-system/patterns/read-on-open.md) (KD-4) | new | Чтение при открытии |
-| `DataTable` | [data-table](../../design-system/components/data-table.md) | new | KD-5 |
-| `AdminForm`, `CopyValue` | [settings-form](../../design-system/components/settings-form.md) | new | KD-5 |
+| Схемы ответов в `@agent-os/contracts` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | reused | Объявлены частями, которые отдают операции; у строки каталога своей схемы нет, её разбирает `CreateCatalogModelBodySchema` |
+| `useResource`, `usePagedResource`, `useDebouncedValue` | [read-on-open.md](../../code-system/patterns/read-on-open.md) (KD-4) | new | Чтение при открытии; поиск сотрудников через 300 мс |
+| `DataTable`, `resourceTableState`, `ActionsMenu`, `RecordPlaceholder` | [data-table](../../design-system/components/data-table.md) | new | KD-5 |
+| `AdminForm`, `AdminTextField`, `AdminRadioField`, `CopyValue` | [settings-form](../../design-system/components/settings-form.md) | new | KD-5 |
+| `ConfirmDialog`, `SavingSwitch` | [settings-form](../../design-system/components/settings-form.md) | new | Подтверждение одним запросом; «Сохранение на месте» |
 | `SecretField` | [secret-field](../../design-system/components/secret-field.md) | new | Секрет провайдера и общий токен сервера |
-| `StateBadge` | [state-badge](../../design-system/components/state-badge.md) | new | Первая реализация спецификации |
-| Формат денег `lib/format/money.ts` | — | extended | `formatSpend` выносится из `spend.ts`; квота без лишних нулей, цена за миллион токенов |
+| `PasswordField`, `RevealInput` | [secret-field](../../design-system/components/secret-field.md) | extended | `PasswordField` из `identity`; поле с «Показать» вынесено в `RevealInput`, общий для `SecretField` и `PasswordField` |
+| `describeAdminError`, `isNotFound`, `rereadOnNotFound`, `isListChanged` в `lib/admin/admin-errors.ts`; тексты в `admin-texts.ts` | — | new | Отказ сервера → текст у поля или формы; 404 → новое чтение |
+| `StateBadge` | [state-badge](../../design-system/components/state-badge.md) | reused | Построен `mcp-connect` |
+| Формат денег `lib/access/money.ts` | — | extended | Новый `formatPriceUsd` — цена за миллион токенов; квота — готовый `formatQuotaUsd` из `access` |
 | `formatTime`, `useCopyToClipboard`, `focusShellTarget`, `Announcer`, `toast` | — | reused | Время таблиц, копирование, фокус `h1`, объявления, уведомления |
 | Токены Data и Mono 13 / 20 в `globals.css` | — | extended | KD-6 |
 
@@ -123,11 +125,12 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 
 ### FR-25: Сотрудники и роли
 
-- From the PRD: AC-25.2 — панель удаляет роль и возвращает к списку с уведомлением «Роль удалена»; что права пропадают у агентов, проверяет часть `access`. AC-25.3.
+- From the PRD: AC-25.1. AC-25.2 — панель удаляет роль и возвращает к списку с уведомлением «Роль удалена»; что права пропадают у агентов, проверяет часть `access`. AC-25.3.
 - Поиск сотрудников уходит через 300 мс после последнего ввода; ответ на прежний текст поиска на экран не попадает (DC-3).
 - Сотрудник с непустым `login` — локальная учётная запись: метка «локальная» в списке и «Сбросить пароль» на его странице. Пароль проверяется по длине из MC-22 и MC-23 до отправки, живёт только в поле диалога и после ответа стирается; уведомление называет только логин (DC-4).
 - Роли назначаются и снимаются только в панели. Встроенная роль (`builtin`) стоит в списке первой; у неё нет «Переименовать» и «Удалить», а переключатель права администратора включён и недоступен (DC-5).
 - «Заблокировать» после подтверждения отправляет блокировку, и страница показывает статус «Отключён»; работу агентов сотрудника экран не обещает остановить сразу (DC-6).
+- Право администратора даётся только после подтверждения — лично («Дать лично») и роли (переключатель «Право администратора»); диалог роли называет, сколько сотрудников станут администраторами. Снятие — одно нажатие без подтверждения (DC-15).
 
 ### FR-26: Авторизация
 
@@ -150,7 +153,8 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 
 ### FR-29: Модели, цены и квоты
 
-- Квоту права на модель администратор меняет полем «Изменить квоту» в правах роли или сотрудника: `PATCH /api/admin/grants/:id` с новой суммой или `null`, затем новое чтение прав. Так же поднимается исчерпанная квота (DC-14).
+- From the PRD: AC-29.2
+- Квоту права на модель администратор меняет полем «Изменить квоту» в правах роли или сотрудника: `PATCH /api/admin/grants/:id` с `quotaUsd` — суммой в долларах от 0,01 до 1 000 000, не больше двух знаков после запятой, — или `null`, затем новое чтение прав. Так же поднимается исчерпанная квота (DC-14).
 
 ### NFR-02, NFR-05
 
@@ -279,13 +283,15 @@ flowchart TB
 
 - `parseShellRoute` разбирает `/admin`, `/admin/users`, `/admin/users/<id>`, `/admin/roles`, `/admin/roles/<id>`, `/admin/sign-in`, `/admin/sign-in/new`, `/admin/sign-in/<id>`, `/admin/servers`, `/admin/register-server`, `/admin/servers/<имя>`, `/admin/models`. Регистрация сервера стоит вне `/admin/servers/…`, потому что сервер может называться `new`. `/admin` и неизвестный адрес под ним открывают «Сотрудники».
 - `AdminGate` стоит в `MainView` и в `AppSidebar`; его состояния — в [State Transitions and Invariants](#state-transitions-and-invariants).
-- Экран раздела — компонент `components/admin/…`: таблица или форма из блоков инвентаря, `h1` в шапке через слот `heading` и основная кнопка через новый слот действий `ChatHeaderView`. После перехода в раздел фокус идёт на `h1` (`focusShellTarget('page-title')`).
-- Пять потребителей `ShellRoute` учитывают вид `admin`: `main-view.tsx` и `app-sidebar.tsx` показывают экран и разделы, `chat-header.tsx` — заголовок и действия без кнопки рабочей области, `document-title.tsx` — вкладку «{раздел} — Панель — Agent OS», `chat-runtime-provider.tsx` не ищет на этих адресах беседу.
+- Экран раздела — компонент `components/admin/…`: таблица или форма из блоков инвентаря. Шапка оболочки на адресе панели ставит один пустой слот `AdminHeaderSlot`; экран рисует в него `h1`, метку состояния и свои действия через `AdminPageHeader` порталом, поэтому кнопки и диалоги шапки живут в состоянии экрана. Ниже 768 px действия встают отдельной строкой под заголовком.
+- Фокус на `h1` (`focusShellTarget('page-title')`) ставит один эффект в `AdminScreen` (`admin-screen.tsx`) при смене раздела, вида страницы или ключа записи — откуда бы страница ни открылась: из меню, сайдбара, строки, формы или после удаления записи.
+- Вкладку называет экран через `useDocumentTitle`: «{раздел} — Панель — Agent OS», на странице записи «{запись} — {раздел} — Панель — Agent OS», пока право неизвестно — «Панель — Agent OS», без права — «Нет доступа — Agent OS».
+- Потребители `ShellRoute` учитывают вид `admin`: `main-view.tsx` и `app-sidebar.tsx` показывают экран и разделы, `chat-header.tsx` — слот `AdminHeaderSlot` без кнопки рабочей области, `document-title.tsx` не трогает вкладку панели, ссылка пропуска в `chat-shell.tsx` ведёт на `h1` вместо поля сообщения, `chat-runtime-provider.tsx` не ищет на этих адресах беседу.
 
 **web — изменение и новое чтение.** Каждое изменение идёт одним путём: форма или кнопка → функция `adminApi` → обработка ошибки → `reload()` затронутых ресурсов → уведомление и фокус по `uxrd.md`, Accessibility.
 
-- Ошибки переводит в текст одна функция `describeAdminError`: код и `reason` → текст из `uxrd.md` (MC-22, MC-23, MC-25–MC-30, MC-33). Для кода или причины без текста UXRD ошибка формы называет причину словами сервера — полем `message`, как требует [settings-form](../../design-system/components/settings-form.md), Content Rules.
-- Уведомления — `toast` из `sonner`, как в оболочке (chat-shell UXRD, TST-01); объявления — единственная вежливая live-область оболочки.
+- Ошибки переводит в текст одна функция `describeAdminError(error, context?)`: код и `reason` → поле или форма и текст из `lib/admin/admin-texts.ts` (MC-20, MC-22, MC-23, MC-25–MC-27, MC-29, MC-30, MC-33); `ADMIN_REQUIRED` даёт `null`: экран сменяет «Нет доступа» по общему обработчику 403, а форма ничего не показывает. Свои тексты есть и у двух отказов без текста в UXRD: `PUBLIC_URL_REQUIRED` — «Сначала сохраните публичный адрес Agent OS в настройках входа.», `VALIDATION_FAILED` с `invalid_cursor` — «Список изменился. Откройте раздел заново.». Отказ без сети — «Не удалось сохранить: нет связи с сервером»; прочий код или причина — «Не удалось сохранить: {текст сервера}», как требует [settings-form](../../design-system/components/settings-form.md), Content Rules. `context` несёт то, чего в ошибке нет: вид права для `GRANT_EXISTS` («Такое право уже есть» или «Такой запрет уже есть») и рамку `checkFailed` вокруг причины `MCP_SERVER_CHECK_FAILED` — «Не удалось зарегистрировать: …» у регистрации, «Не удалось сохранить: …» у сохранения токена.
+- Уведомления — `toast` из `sonner`, как в оболочке (chat-shell UXRD, TST-01). Уведомление получают: заведение учётной записи (называет логин), сброс пароля, блокировка и разблокировка, удаление роли, добавление, правка и удаление модели, обновление списка инструментов и удаление сервера, сохранение формы-страницы («Сохранено»: провайдер, токен сервера, настройки входа). Переключатели, диалоги роли, права и квоты, назначение роли и личное право уведомления не дают: результат виден по новому чтению. Объявления — единственная вежливая live-область оболочки.
 - Ушедшую строку `DataTable` схлопывает и переводит фокус на следующую строку, без неё — на предыдущую, без строк — на `h1`.
 
 ### Runtime Flows
@@ -401,36 +407,51 @@ sequenceDiagram
 
 #### Ядро запроса и `CurrentUser` — для всего веба
 
-- **`apiRequest`** — отправляет запрос к `apiBaseUrl` с cookie, методом `GET`, `POST`, `PUT`, `PATCH` или `DELETE` и телом JSON; разбирает ответ схемой, которую передал вызывающий. Ответ 204 возвращается без тела. Ошибка — `ApiRequestError`.
-- **`ApiRequestError`** — `kind`: `not_found` (404), `http` (прочий отказ), `invalid_response` (тело не прошло схему), `network` (ответа нет); `status`; `code` — `errorCode` тела; `reason` и `message` тела.
-- **Обработчики 401 и 403 `ADMIN_REQUIRED`** — по одному на веб; оболочка регистрирует их в ядре при старте, поэтому `lib/api` не импортирует ни страницу входа, ни `CurrentUser`. Обработчик 403 сбрасывает `isAdmin`; вызывающий получает ту же ошибку и ничего не показывает сам.
-- **`CurrentUser` в вебе** — одно значение в сервисах оболочки: одно чтение `GET /api/auth/me` на загрузку страницы. Состояния — «неизвестно» и «прочитано» с `id`, `email`, `name`, `isAdmin`. `UserMenu` и `AdminGate` читают его; единственная запись — сброс `isAdmin` в `false` обработчиком 403.
-- **`describeApiError`** — строка для лога: метод, путь, статус, код, причина. Тела в ней нет.
+Ядро и `CurrentUser` построила часть `identity`; панель добавляет обработчик 403 и сброс `isAdmin`.
+
+- **`apiRequest`** — отправляет запрос к `apiBaseUrl` с cookie, методом `GET`, `POST`, `PUT`, `PATCH` или `DELETE` и телом JSON; разбирает ответ схемой, которую передал вызывающий. Без схемы (204) возвращает пустой результат. Сигнала отмены не принимает. Ошибка — `ApiRequestError`.
+- **`ApiRequestError`** — `kind`: `not_found` (404), `http` (прочий отказ), `invalid_response` (тело не прошло схему), `network` (ответа нет); `method`, `path` без строки запроса, `status`; `code` — `errorCode` тела; `reason` и `message` тела.
+- **Обработчики 401 и 403 `ADMIN_REQUIRED`** — по одному на веб; оболочка регистрирует их в ядре (`setUnauthorizedHandler`, `setAdminRequiredHandler`), поэтому `lib/api` не импортирует ни страницу входа, ни `CurrentUser`. Обработчик 403 вызывает `revokeAdmin()` у `CurrentUser`; вызывающий получает ту же ошибку и ничего не показывает сам.
+- **`CurrentUser` в вебе** — одно значение в сервисах оболочки: одно чтение `GET /api/auth/me` на загрузку страницы. Состояния — «неизвестно» и «прочитано» с `id`, `email`, `name`, `isAdmin`. `UserMenu` и `AdminGate` читают его; единственная запись панели — сброс `isAdmin` в `false` обработчиком 403.
+- **`describeApiError`** — поля для лога: вид, метод, путь, статус, код, причина. Тел в них нет.
 
 #### `adminApi`, хуки и блоки — для экранов панели
 
-- **`adminApi`** — по функции на операцию из контрактов выше, с её входом и схемой ответа: `users` (список, запись, заведение, сброс пароля, блокировка и разблокировка, личное право администратора, назначение и снятие роли), `roles`, `grants`, `providers`, `signInSettings`, `servers` (с адресом перехода «Подключить мой аккаунт» — функция возвращает адрес, а не делает запрос), `models`. Имя сервера и id модели идут в путь через `encodeURIComponent`.
-- **`useResource(load, key)`** — `status` (`loading`, `ready`, `error`), `data`, `error`, `reload()`; ответ на прежний `key` и после ухода со страницы отбрасывается, ошибка пишется в лог один раз. **`usePagedResource(loadPage, key)`** — то же с `items`, `nextCursor`, `loadMore()` и своей ошибкой подгрузки.
-- **`DataTable`** — колонки, строки с ключом, вид строки (ссылка или строка с действиями), вложенные строки, подпись для скринридера, состояние ресурса, тексты пустого состояния и «нет совпадений». **`AdminForm`** — значения, `validate`, `onSubmit`, вариант (страница или диалог). **`SecretField`** — подпись, «задан ли» (`options.clientSecretSet` или `sharedTokenSet`), значение замены; пока замены нет, секрет в отправку не входит.
+- **`adminApi`** — по функции на операцию из контрактов выше, с её входом и схемой ответа:
+  - `users` — список по страницам с `query`, запись, заведение, сброс пароля (`PUT /api/admin/users/:id/password`), блокировка и разблокировка, личное право администратора (`PUT /api/admin/users/:id/admin` с `enabled`), назначение и снятие роли (`PUT` и `DELETE /api/admin/users/:id/roles/:roleId`). Удаления сотрудника в API нет.
+  - `roles` — список, запись, создание, правка (`PATCH` с `name` или `isAdmin`), удаление. `grants` — права держателя, создание, `updateQuota` (`PATCH` с `quotaUsd`), удаление.
+  - `providers` — список, запись, создание, правка; удаления провайдера в API нет. `signInSettings` — чтение и `PUT`.
+  - `servers` — список, запись, регистрация, правка, `refreshTools` (`POST /api/admin/mcp-servers/:name/tools/refresh`), удаление и `connectUrl` — адрес перехода «Подключить мой аккаунт»: функция возвращает адрес, а не делает запрос.
+  - `models` — каталог, добавление, правка, удаление; строку каталога разбирает `CreateCatalogModelBodySchema`.
+  - Каждый сегмент пути после `/api/admin/` — имя сервера, id модели `anthropic/…` и прочие ключи — идёт через `encodeURIComponent`.
+- **`useResource(load, key)`** — `status` (`loading`, `ready`, `error`), `data`, `error` (исходная ошибка, чтобы экран отличил `not_found`), `reload()`. Только ответ последнего чтения доходит до экрана и только пока экран смонтирован; ошибка пишется в лог один раз. `reload()` оставляет данные на экране до нового ответа. **`usePagedResource(loadPage, key)`** — то же с `items`, `nextCursor`, `loadMore()`, `loadingMore` и своей ошибкой подгрузки `loadMoreError`; ошибка подгрузки оставляет загруженные строки, а во время `reload()` `loadMore()` ничего не отправляет.
+- **`DataTable`** — подпись для скринридера, колонки и состояние: загрузка, ошибка с «Повторить» или готово со строками, пустым состоянием, текстом «нет совпадений» и «Показать ещё». Строка — ключ, имя, ячейки, ссылка или действия (кнопками или меню «⋯», `actionsAs`), вложенные строки, ошибка под строкой. `resourceTableState` переводит ресурс в состояние таблицы; `ActionsMenu` — то же меню «⋯» в шапке записи; `RecordPlaceholder` — страница записи до её ответа: заголовок раздела над загрузкой или ошибкой.
+- **`AdminForm`** — вариант (страница или диалог), начальные значения, `validate`, `onSubmit`, подписи кнопки, `hasChange` (кнопка недоступна, пока отправлять нечего), текст уведомления `savedText`, `secretFields` (поля секрета очищаются после успешного сохранения), `errorContext` для `describeAdminError`, событие лога. Поля — `AdminTextField` (с `suffix` — единицей после поля, например часы у сроков входа) и `AdminRadioField`.
+- **`ConfirmDialog`** — заголовок, текст, кнопка, `onConfirm` (один запрос; диалог закрывается при успехе и остаётся открытым с причиной при отказе), `focusTitleAfterConfirm` — после действия, которое убирает открывший диалог контрол, фокус уходит на `h1`. **`SavingSwitch`** — «Сохранение на месте»: стоит в новом положении до ответа, отказ возвращает его и показывает причину; `disabled` и `confirmOn` — включение сначала спрашивает подтверждение.
+- **`SecretField`** — подпись, «задан ли» (`options.clientSecretSet` или `sharedTokenSet`), значение замены; пока замены нет, секрет в отправку не входит. `SecretField` и `PasswordField` стоят на одном поле с «Показать» `RevealInput`; оба в панели не отдают значение менеджерам паролей.
+- **`isNotFound`, `rereadOnNotFound`, `isListChanged`** (`lib/admin/admin-errors.ts`) — 404 ли это; обёртка изменения, после 404 которой ресурс экрана читается заново, а отказ всё равно доходит до контрола; отказ «Показать ещё» по устаревшему курсору.
 
 #### Как экраны раскладывают данные контрактов
 
-- **Сотрудники (AD-03, AD-16, AD-04)** — `GET /api/admin/users` с `query`; «локальная» и логин второй строкой при непустом `login`. «Завести учётную запись» — `POST /api/admin/users`, затем новое чтение; «Сбросить пароль» — `PUT /api/admin/users/:id/password`. Страница сотрудника — `GET /api/admin/users/:id` и `GET /api/admin/grants?userId=`: роли с «Снять роль» и «Назначить роль» (роли из `GET /api/admin/roles`, которых у сотрудника нет), личные права и запреты, «Право администратора» по `adminRight` с «Дать лично» или «Снять лично».
-- **Роли (AD-05, AD-06)** — `GET /api/admin/roles`, встроенная роль наверху; страница — `GET /api/admin/roles/:id` и `GET /api/admin/grants?roleId=`. Право администратора роли — переключатель «Сохранение на месте» (`PATCH` с `isAdmin`).
-- **Права (GR-01, GR-02)** — серверы из `GET /api/admin/mcp-servers`, инструменты — `tools` из `GET /api/admin/mcp-servers/:name` («читает» при `readOnly`), модели — `GET /api/admin/models`. Строка-сирота — право, чьего сервера нет в списке серверов или чьего инструмента нет в `tools` записи сервера; экран читает запись каждого сервера, на инструменты которого есть права. «Изменить квоту» — `PATCH /api/admin/grants/:id` (DC-14).
-- **Авторизация (AD-07, AD-14)** — постоянная строка «Логин и пароль» (в ответе её нет), затем `GET /api/admin/providers`. Новый провайдер — `POST` с `type` (`google` или `oidc`) и `name`, затем переход на его страницу. Страница — `ProviderView`: поля типа из `options` (AC-26.4), секрет — `SecretField`, «Данные для провайдера» — `CopyValue` на каждое значение `providerData`, у `google` — предупреждение MC-27. Настройки входа — `GET` и `PUT /api/admin/settings/sign-in` (DC-7).
-- **MCP-серверы (AD-08 — AD-10)** — `McpServerSummary` в таблице, `McpServerView` на странице; «Обновить список» показывает число новых и убранных по `added` и `removed`; у общей учётной записи токен меняется через `SecretField` и `PATCH` с `sharedToken` (DC-10).
-- **Модели (AD-11)** — `CatalogModel`; цены — `formatPrice`, цены длинных запросов — вложенной строкой при `longContext`.
+- **Сотрудники (AD-03, AD-16, AD-04)** — `GET /api/admin/users` с `query`; «локальная» и логин второй строкой при непустом `login`. «Завести учётную запись» — `POST /api/admin/users`, затем новое чтение; «Сбросить пароль» — `PUT /api/admin/users/:id/password`. Страница сотрудника — `GET /api/admin/users/:id` и `GET /api/admin/grants?userId=`: роли с «Снять роль» (`DELETE …/roles/:roleId`) и «Назначить роль» (`PUT …/roles/:roleId`; роли из `GET /api/admin/roles`, которых у сотрудника нет), личные права и запреты, «Право администратора» по `adminRight`. «Дать лично» — `PUT /api/admin/users/:id/admin` с `enabled: true` после подтверждения, «Снять лично» — с `enabled: false` одним нажатием (DC-15).
+- **Роли (AD-05, AD-06)** — `GET /api/admin/roles`, встроенная роль наверху; страница — `GET /api/admin/roles/:id` и `GET /api/admin/grants?roleId=`. Право администратора роли — `SavingSwitch` (`PATCH` с `isAdmin`): включение сначала спрашивает подтверждение с числом сотрудников роли, выключение сохраняется сразу (DC-15).
+- **Права (GR-01, GR-02)** — серверы из `GET /api/admin/mcp-servers`, инструменты — `tools` из `GET /api/admin/mcp-servers/:name` («читает» при `readOnly`), модели — `GET /api/admin/models`. Строка-сирота — право, чьего сервера нет в списке серверов или чьего инструмента нет в `tools` записи сервера; экран читает запись каждого сервера, на инструменты которого есть права. Квота — в долларах, поле «Квота за месяц, $» с двумя знаками; «Изменить квоту» — `PATCH /api/admin/grants/:id` (DC-14). «Убрать» отправляет `DELETE /api/admin/grants/:id` сразу, без подтверждения: тот же диалог возвращает право.
+- **Авторизация (AD-07, AD-14)** — постоянная строка «Логин и пароль» (в ответе её нет), затем `GET /api/admin/providers`. Новый провайдер — `POST` с `type` (`google` или `oidc`) и `name`, затем переход на его страницу; без сохранённого публичного адреса API отвечает 409 `PUBLIC_URL_REQUIRED`. Страница — `ProviderView`: поля типа из `options` (AC-26.4), Issuer — адрес `https://` или `http://localhost`, секрет — `SecretField`, «Данные для провайдера» — `CopyValue` на каждое значение `providerData`, у `google` — предупреждение MC-27. Настройки входа — `GET` и `PUT /api/admin/settings/sign-in` (DC-7).
+- **MCP-серверы (AD-08 — AD-10)** — `McpServerSummary` в таблице, `McpServerView` на странице. Адрес при регистрации — `https://` или `http://localhost`. «Обновить список» — `POST /api/admin/mcp-servers/:name/tools/refresh`, уведомление называет число новых и убранных по `added` и `removed`; у общей учётной записи токен меняется через `SecretField` и `PATCH` с `sharedToken` (DC-10). Подтверждение удаления говорит, что вместе с сервером удаляются подключённые аккаунты сотрудников.
+- **Модели (AD-11)** — `CatalogModel`, разобранный схемой `CreateCatalogModelBodySchema`; цены — `formatPriceUsd`, цены длинных запросов — вложенной строкой при `longContext`. Подтверждение «Убрать из каталога» говорит, что удаляются все права и личные запреты на модель, а агенты на ней завершатся сбоем.
 
 **Error handling**
 
 - `ADMIN_REQUIRED` (403) — экран AD-02 (DC-2).
-- `USER_NOT_FOUND`, `ROLE_NOT_FOUND`, `PROVIDER_NOT_FOUND`, `MCP_SERVER_NOT_FOUND`, `MODEL_NOT_FOUND`, `GRANT_NOT_FOUND` (404) — на странице записи: «Запись не найдена» (AD-15, MC-34); на действии в строке — ресурс экрана читается заново.
+- `USER_NOT_FOUND`, `ROLE_NOT_FOUND`, `PROVIDER_NOT_FOUND`, `MCP_SERVER_NOT_FOUND`, `MODEL_NOT_FOUND`, `GRANT_NOT_FOUND` (404) — на странице записи: «Запись не найдена» (AD-15, MC-34); на действии в строке — ресурс экрана читается заново (`rereadOnNotFound`).
 - `LOGIN_TAKEN`, `EMAIL_TAKEN`, `ROLE_NAME_TAKEN`, `MCP_SERVER_NAME_TAKEN`, `MODEL_ID_TAKEN`, `VALIDATION_FAILED` с `weak_password` — ошибки полей с текстами MC-22, MC-23, MC-26, MC-29, MC-30.
 - `PROVIDER_INCOMPLETE`, `MCP_SERVER_INCOMPLETE` (409) — отказ переключателя с текстом MC-27 или MC-29 (DC-8).
 - `PROVIDER_CHECK_FAILED`, `MCP_SERVER_CHECK_FAILED` (с `reason`), `GRANT_EXISTS`, `GRANT_TARGET_UNKNOWN`, `GRANT_INVALID` — ошибка формы с текстом причины из MC-27, MC-29 или MC-25.
 - `MCP_ACCOUNT_REQUIRED` (409) — переход на подключение аккаунта (DC-11).
-- `NOT_LOCAL_ACCOUNT`, `BUILTIN_ROLE` (409) и прочий `VALIDATION_FAILED` — экран эти действия не предлагает; пришедший ответ — ошибка формы словами сервера, и запись читается заново.
+- `PUBLIC_URL_REQUIRED` (409) на создании провайдера — ошибка формы «Сначала сохраните публичный адрес Agent OS в настройках входа.».
+- `VALIDATION_FAILED` с `invalid_cursor` на «Показать ещё» — ошибка подгрузки «Список изменился. Откройте раздел заново.», загруженные строки остаются.
+- `NOT_LOCAL_ACCOUNT`, `BUILTIN_ROLE` (409) и прочий `VALIDATION_FAILED` — экран эти действия не предлагает; пришедший ответ — «Не удалось сохранить: {текст сервера}», а `BUILTIN_ROLE` ещё и перечитывает роль.
+- Нет сети — «Не удалось сохранить: нет связи с сервером».
 
 **Runtime settings**
 
@@ -468,12 +489,27 @@ stateDiagram-v2
 
 1. Запрос `/api/admin/…` уходит только в состоянии «администратор».
 2. В состоянии «нет доступа» на экране нет данных панели, а в меню нет пункта «Панель администратора».
-3. Секрет провайдера, общий токен сервера и пароль есть только в поле до отправки и не попадают в лог, уведомление, заголовок вкладки или текст ошибки.
+3. Секрет провайдера, общий токен сервера и пароль живут только в своём поле: после отказа введённое остаётся для исправления, после успешного сохранения поле очищается. В лог, уведомление, заголовок вкладки, адрес, хранилище браузера и текст ошибки они не попадают.
 4. После любого изменения экран показывает данные нового чтения, а не склейку ответа изменения со старым списком.
 
 ## Test Strategy
 
-Интеграционных проверок экранов три, по одной на группу: охрана панели (UC-E1, UC-E2), сотрудники, роли и права с изменением прав (UC-1 — UC-6), авторизация и MCP-серверы (UC-7 — UC-11, UC-E3). Остальное проверяют таблицы случаев у чистых функций — разбор адреса, перевод ошибок в текст, часы и минуты, правила полей, поиск строк-сирот — и L1-сценарии в браузере.
+Интеграционных проверок три, все в `components/shell/enterprise-access-admin.int.test.tsx`, каждая — таблица строк внутри настоящей оболочки:
+
+- **INT-1** — охрана панели: UC-1, UC-E1, UC-E2.
+- **INT-2** — сотрудники, роли, права и каталог: UC-2 — UC-6, UC-11, UC-E6, строка-сирота из UC-E9.
+- **INT-3** — авторизация и MCP-серверы: UC-7 — UC-10, UC-E3, UC-E4, UC-E5, UC-E8.
+
+Сеть подменяют MSW-бэкенды в самом файле. Каждый разбирает тело запроса схемой контрактов (`CreateGrantBodySchema`, `UpdateMcpServerBodySchema` и другие) и на тело не по схеме отвечает 400 `VALIDATION_FAILED`, так что неверная отправка роняет строку. Проверка `expectNowhere(value)` из `src/test/admin-support.ts` ищет секрет или пароль везде, где страница может его оставить: текст и атрибуты документа, значения полей, заголовок вкладки, адрес, оба хранилища браузера, записи лога и аргументы переходов.
+
+Остальное проверяют таблицы случаев рядом с кодом:
+
+- `shell-route.test.ts` — адреса панели; `api-request.test.ts` — `reason`, обработчики 401 и 403.
+- `use-resource.test.tsx` — ответ на прежний ключ, ошибка в логе один раз, перечитывание со строками на экране, ошибка «Показать ещё», «Показать ещё» во время перечитывания, поиск через 300 мс с устаревшим ответом (UC-E9).
+- `admin-errors.test.ts` — `describeAdminError` по кодам и причинам; `form-rules.test.ts` — правила полей, часы и минуты (UC-E7); `grants.test.ts` — строки-сироты; `money.test.ts` — `formatPriceUsd`.
+- `data-table.test.tsx` — фокус после ушедшей строки; `admin-form.test.tsx` — фокус на первой ошибке, блокировка на время сохранения, отказ сервера над действиями.
+
+Плотность, токены, контраст и порядок фокуса (UC-N1) — L1-сценарии в браузере.
 
 ### Main Use Cases
 
@@ -485,10 +521,10 @@ stateDiagram-v2
   - Given: в списке нет логина `boris`
   - When: администратор заводит учётную запись `boris` с именем, почтой и паролем из 12 знаков; затем на странице Бориса сбрасывает пароль
   - Then: ушёл `POST /api/admin/users`, список перечитан, у Бориса метка «локальная»; уведомление называет логин, не пароль; сброс отправил `PUT /api/admin/users/:id/password`, поле очищено; у сотрудника без `login` кнопки «Сбросить пароль» нет
-- **UC-3: Роль, право и запрет** — covers AC-28.2, DC-12, DC-14
+- **UC-3: Роль, право, запрет и квоты** — covers AC-28.2, AC-29.2, DC-12, DC-14
   - Given: роль «SRE», сервер `sentry` с двумя инструментами, сервер `jira` в статусе «Ждёт аккаунта администратора», модель Sonnet
-  - When: администратор назначает Ане роль «SRE»; даёт роли право на `sentry` и на Sonnet с квотой 50; ставит Ане личный запрет на `update_issue`; меняет квоту Sonnet на 80
-  - Then: в GR-01 `jira` недоступен, инструменты — только из списка `sentry`; ушли `PUT …/roles/:roleId`, три `POST /api/admin/grants` и `PATCH /api/admin/grants/:id` с 80; после каждого шага права перечитаны и показывают новое
+  - When: администратор даёт роли право на инструмент `sentry` и на Sonnet с квотой 50 $; ставит Ане личный запрет на `update_issue` и личную квоту 30 $; снова открывает роль и Аню; меняет квоту роли на 80 $, затем очищает поле
+  - Then: в GR-01 `jira` недоступен, инструменты — только из списка `sentry`; ушли `POST /api/admin/grants` с `quotaUsd: 50` и запрет с `effect: 'deny'`; роль и Аня показывают 50 $ и 30 $; ушли `PATCH /api/admin/grants/:id` с `quotaUsd: 80`, затем с `quotaUsd: null`; после каждого шага права перечитаны и показывают новое
 - **UC-4: Удаление роли** — covers AC-25.2
   - Given: роль «Дежурный»
   - When: администратор выбирает «Удалить» и подтверждает
@@ -517,6 +553,10 @@ stateDiagram-v2
   - Given: сервер `incidents` с общей учётной записью
   - When: администратор заменяет токен доступа и выключает сервер
   - Then: имя, адрес и режим только читаются; ушли `PATCH` с `sharedToken` и `PATCH` с `enabled: false`; поле секрета снова «Задан»
+- **UC-11: Роли сотрудника и право администратора** — covers AC-25.1, DC-15
+  - Given: у Ани роли «SRE» и «Дежурный», есть ещё роль, которой у неё нет; роль «Дежурный» без права администратора
+  - When: администратор открывает Аню, снимает одну роль и назначает другую; жмёт «Дать лично», затем «Снять лично»; на роли «Дежурный» включает право администратора, затем выключает
+  - Then: видны обе роли, у каждой «Снять роль»; ушли `DELETE` и `PUT /api/admin/users/:id/roles/:roleId`; «Дать лично» и включение у роли сначала спрашивают, «Отмена» и Esc ничего не отправляют, подтверждение отправляет `PUT /api/admin/users/:id/admin` с `enabled: true` и `PATCH /api/admin/roles/:id` с `isAdmin: true`; снятие и выключение уходят сразу
 
 ### Error and Edge Use Cases
 
@@ -530,8 +570,8 @@ stateDiagram-v2
   - Then: на том же адресе экран «Нет доступа», обычный сайдбар, пункта панели в меню нет
 - **UC-E3: Секрет провайдера не возвращается** — covers NFR-02
   - Given: у провайдера OIDC `options.clientSecretSet: true`
-  - When: администратор меняет название и сохраняет; затем жмёт «Заменить», вводит секрет и сохраняет
-  - Then: поле показывает «Задан» без ввода; первый `PATCH` без `clientSecret`, второй — с ним; после сохранения снова «Задан», значения нет ни в поле, ни в логе, ни в уведомлении
+  - When: администратор меняет название и сохраняет; затем жмёт «Заменить», вводит секрет и сохраняет — сначала с отказом сервера, потом успешно
+  - Then: поле показывает «Задан» без ввода; первый `PATCH` без `clientSecret`, следующие — с ним; после отказа секрет есть только в своём поле; после успеха снова «Задан», и `expectNowhere` не находит значения нигде
 - **UC-E4: Включение провайдера без настроек** — covers DC-8
   - Given: провайдер без полных настроек
   - When: администратор включает переключатель в таблице
@@ -581,7 +621,7 @@ stateDiagram-v2
 
 - **Authentication & Authorization**: права проверяет API (`@AdminOnly()`). Веб не показывает панель без `isAdmin` и не шлёт её запросов (KD-2), но на это не полагается: подделанный `isAdmin` в браузере даёт только 403. Изменяющие запросы идут с cookie и проверяются по `Origin` на сервере.
 - **Input Validation**: формы проверяют поля до отправки для подсказок человеку; окончательная проверка — сервер, его отказ показывается ошибкой формы. Имя сервера и id модели кодируются в пути. Ответы разбираются схемами `@agent-os/contracts`; тело не по схеме — ошибка `invalid_response`, а не частичный показ.
-- **Sensitive Data Handling**: секрет провайдера и общий токен сервера уходят только в теле `POST` или `PATCH` при замене и не возвращаются (`options.clientSecretSet`, `sharedTokenSet`). Пароль уходит только в теле `POST /api/admin/users` или `PUT …/password`, поле очищается после ответа, уведомление называет только логин. Лог веба пишет только `describeApiError`, без тел (NFR-02).
+- **Sensitive Data Handling**: секрет провайдера и общий токен сервера уходят только в теле `POST` или `PATCH` при замене и не возвращаются (`options.clientSecretSet`, `sharedTokenSet`). Пароль уходит только в теле `POST /api/admin/users` или `PUT …/password`, поле очищается после ответа, уведомление называет только логин. Поля секрета и пароля в панели помечены для менеджеров паролей как «не сохранять» (`NO_PASSWORD_MANAGER`), чтобы чужой секрет не лёг в хранилище администратора. Лог веба пишет только `describeApiError`, без тел (NFR-02).
 
 ## Risks and Mitigation
 
@@ -591,7 +631,7 @@ stateDiagram-v2
 
 ## Open Questions
 
-- Схемы ответов администратора (`AdminUserSummary` и страница сотрудников, `ProviderView`, `SignInSettings`, `McpServerView`, `CatalogModel`, `Grant` и прочие) в дизайнах описаны словами, но не сказано, что они объявлены в `@agent-os/contracts`, и не назван ключ списка в странице сотрудников. Не блокирует: часть, которая строит операцию, объявляет схему в `@agent-os/contracts`, а панель её использует; уточняют владельцы трёх дизайнов.
+Открытых вопросов нет. Схемы ответов администратора объявлены в `@agent-os/contracts` частями, которые отдают операции; у строки каталога своей схемы нет, и `adminApi` разбирает её схемой `CreateCatalogModelBodySchema`.
 
 ## Appendix: Fact Disposition
 
@@ -600,16 +640,16 @@ stateDiagram-v2
 | Одна оболочка, неизвестный адрес — новый чат, `apps/web/src/lib/shell-route.ts` (FA-01) | transform | KD-1: вид `admin`, пустая страница `/admin/[[...path]]` |
 | Сайдбар из примитивов, образец пункта `AgentsNavItem`, `app-sidebar.tsx` (FA-02) | transform | KD-1: разделы панели тем же образцом |
 | Меню показывает `DEV_USER`, `user-menu.tsx` (FA-03) | out-of-scope | Имя и «Выйти» — `identity`; здесь только пункт «Панель администратора» |
-| Один клиент с приватными `send` и `parse`, нет `PUT`, `reason` теряется, `threads-api-client.ts` (FA-04) | transform | KD-3: ядро `apiRequest` в `lib/api` |
+| Один клиент с приватными `send` и `parse`, нет `PUT`, `reason` теряется, `threads-api-client.ts` (FA-04) | transform | KD-3: ядро `apiRequest` в `lib/api` построила `identity`; панель добавляет обработчик 403 |
 | Хранилища zustand и кэш промиса, `agent-list-store.ts`, `spend.ts` (FA-05) | transform | KD-4: хуки чтения при открытии |
 | Форм и библиотеки форм нет, `package.json` (FA-06) | transform | KD-5: `AdminForm` на примитивах `Field` |
 | Нет примитивов таблицы, вкладок, переключателя, радиогруппы, списка, подписи, флажка, `components/ui` (FA-07) | transform | Constraints; Risks and Mitigation |
-| Схем ответов администратора в контрактах нет, `packages/contracts/src` (FA-08) | out-of-scope | Open Questions |
+| Схем ответов администратора в контрактах нет, `packages/contracts/src` (FA-08) | out-of-scope | Схемы объявили части-владельцы; Open Questions |
 | Токенов ролей Data и Mono 13 / 20 нет, `globals.css` (FA-09) | transform | KD-6 |
 | Механизма плотности нет, `button.tsx`, `input.tsx` (FA-10) | transform | KD-6: размеры в `AdminForm` и `DataTable` |
 | Фокус только `composer` и `page-title`, одна live-область, `focus.ts`, `announcer.tsx` (FA-11) | transform | C3 · web: `h1` через `page-title`, фокус строки в `DataTable` |
 | Обвязка тестов — только `ChatShell`, `src/test` (FA-12) | transform | Test Strategy: экраны проверяются внутри оболочки (KD-1) |
-| Русский текст прямо в компонентах, приватный `formatSpend`, `spend.ts` (FA-13) | transform | Building-block Inventory: `lib/format/money.ts` |
+| Русский текст прямо в компонентах, приватный `formatSpend`, `spend.ts` (FA-13) | transform | Building-block Inventory: `formatPriceUsd` в `lib/access/money.ts`; тексты панели — `lib/admin/admin-texts.ts` |
 | `ThreadNotice` — закрытый набор вариантов, `thread-notice.tsx` (FA-14) | transform | Варианты `no-access` и `record-not-found` |
 | Next 16 с `cacheComponents`, пустые страницы под динамическими сегментами, `next.config.ts` (FA-15) | transform | KD-1: одна пустая страница с необязательным catch-all |
 | Расхождения UXRD и контрактов (FA-16) | transform | Contract Definitions; оставшиеся — в отчёте владельцу UXRD |
@@ -628,3 +668,4 @@ stateDiagram-v2
 | 1.2 | 2026-11-15 | Раздел «Авторизация» с провайдерами и публичным адресом; локальные учётные записи и сброс пароля; встроенная роль; «Мой доступ» — у `identity` |
 | 1.3 | 2026-11-15 | Сокращение: без пауз по квоте, SCIM, SAML, Facebook, GitHub, групп IdP, последнего администратора и объяснения действующих прав; квота меняется полем права; одна форма настроек входа; у сервера меняются только включение и общий токен; три интеграционных проверки |
 | 1.4 | 2026-11-15 | Данные провайдера OIDC без claim групп; число созданных прав в UC-3; разблокировка в `adminApi.users` |
+| 1.5 | 2026-11-16 | Сверка с построенным кодом: ядро запроса и `CurrentUser` — от `identity`, деньги — `lib/access/money.ts`; один слот шапки `AdminHeaderSlot` и вкладка через `useDocumentTitle`; поколения чтений в `useResource`; общие блоки и `describeAdminError` как построены; маршруты, квоты в долларах, схема каталога; подтверждение права администратора (DC-15), уведомления, секреты и `http://localhost`; Test Strategy по INT-1 — INT-3, UC-11, AC-25.1 и AC-29.2; открытых вопросов нет |
