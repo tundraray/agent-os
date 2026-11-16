@@ -29,9 +29,14 @@ export const MODEL_TEXT = {
   id: 'ID модели',
   name: 'Название',
   priceUnit: '$ за 1 млн токенов',
+  // Not in MC-30: the second group of prices needs a name of its own for a screen reader.
+  longPriceUnit: '$ за 1 млн токенов для длинных запросов',
   longContext: 'Другие цены для длинных запросов',
   threshold: 'Порог, входных токенов',
   save: 'Сохранить',
+  // Not in MC-30: the notices of a save, after «Роль удалена».
+  added: 'Модель добавлена',
+  saved: 'Модель сохранена',
 } as const;
 
 const NO_PRICES: PriceTexts = {
@@ -88,6 +93,8 @@ const bodyOf = ({ name, prices, longContext }: ModelValues) => ({
 });
 
 type PriceGroupProps = {
+  /** The group's name: the unit, and for the second group what its prices are for. */
+  legend: string;
   form: AdminFormApi<ModelValues>;
   prices: PriceTexts;
   /** `''` for the ordinary prices, `long.` for the long-request ones: the error keys of `modelRules`. */
@@ -96,10 +103,10 @@ type PriceGroupProps = {
 };
 
 /** The four prices of a model, ordinary or for long requests: one group of fields under the unit. */
-function PriceGroup({ form, prices, errorPrefix, onChange }: PriceGroupProps) {
+function PriceGroup({ legend, form, prices, errorPrefix, onChange }: PriceGroupProps) {
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className={cn(CAPTION, 'mb-2 text-muted-foreground')}>{MODEL_TEXT.priceUnit}</legend>
+      <legend className={cn(CAPTION, 'mb-2 text-muted-foreground')}>{legend}</legend>
       <div className="grid grid-cols-2 gap-4">
         {PRICES.map(({ field, label }) => {
           const key = `${errorPrefix}${field}`;
@@ -152,6 +159,7 @@ function ModelFields({ form, adding }: { form: AdminFormApi<ModelValues>; adding
         onChange={(value) => form.set('name', value)}
       />
       <PriceGroup
+        legend={MODEL_TEXT.priceUnit}
         form={form}
         prices={values.prices}
         errorPrefix=""
@@ -181,6 +189,7 @@ function ModelFields({ form, adding }: { form: AdminFormApi<ModelValues>; adding
             }}
           />
           <PriceGroup
+            legend={MODEL_TEXT.longPriceUnit}
             form={form}
             prices={long.prices}
             errorPrefix="long."
@@ -240,6 +249,7 @@ export function ModelDialog({ open, onOpenChange, model, reload }: ModelDialogPr
           validate={modelRules}
           onSubmit={submit}
           submitLabel={adding ? MODEL_TEXT.add : MODEL_TEXT.save}
+          savedText={adding ? MODEL_TEXT.added : MODEL_TEXT.saved}
           onSaved={saved}
           logEvent={adding ? 'admin: model create' : 'admin: model update'}
         >

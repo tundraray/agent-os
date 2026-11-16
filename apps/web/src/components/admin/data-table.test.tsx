@@ -55,4 +55,12 @@ describe('DataTable', () => {
       await waitFor(() => expect(target).toHaveFocus());
     },
   );
+
+  // jsdom measures nothing: the cell's wrapper must state the content's width, or the button is clipped to 0 px.
+  it('keeps a row action button in a wrapper as wide as its content', () => {
+    render(<Screen names={['А']} />);
+
+    const cell = screen.getByRole('button', { name: 'Убрать: А' }).closest('td');
+    expect(cell?.firstElementChild).toHaveClass('min-w-max');
+  });
 });

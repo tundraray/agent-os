@@ -29,6 +29,7 @@ import { SERVER_MODE_LABEL, ServerStatusBadge } from './server-list';
 /** UXRD MC-29; «Сохранить», «Удалить» — MC-20. */
 const TEXT = {
   enabled: 'Включён',
+  disabled: 'Выключен',
   refresh: 'Обновить список',
   refreshing: 'Обновляем…',
   refreshed: (added: number, removed: number) => `Список обновлён: новых ${added}, убрано ${removed}`,
@@ -52,9 +53,16 @@ const TEXT = {
   tools: 'Инструменты',
   noTools: 'Инструментов пока нет',
   loadFailed: 'Не удалось загрузить сервер',
+  // Not in the UXRD: the notice of a delete, after «Роль удалена».
+  removed: 'Сервер удалён',
 } as const;
 
-const TOOL_COLUMNS: readonly DataTableColumn[] = [{ header: TEXT.tool }, { header: TEXT.description }, { header: TEXT.action }];
+/** The tool's name keeps its width; the long description is the column that gives way. */
+const TOOL_COLUMNS: readonly DataTableColumn[] = [
+  { header: TEXT.tool, shrinks: false },
+  { header: TEXT.description, shrinks: true },
+  { header: TEXT.action },
+];
 
 const isAccountRequired = (error: unknown): boolean =>
   isApiRequestError(error) && error.code === McpErrorCode.MCP_ACCOUNT_REQUIRED;
@@ -69,7 +77,10 @@ const toToolRow = (tool: McpToolView): DataTableRow => ({
           {tool.title}
         </span>
       )}
-      <span className={cn('truncate font-mono text-mono-compact', tool.title !== null && 'text-muted-foreground')}>
+      <span
+        className={cn('truncate font-mono text-mono-compact', tool.title !== null && 'text-muted-foreground')}
+        title={tool.name}
+      >
         {tool.name}
       </span>
     </span>,
@@ -153,6 +164,7 @@ export function ServerPage({ name }: { name: string }) {
 
   const remove = async (): Promise<void> => {
     await change(() => adminApi.servers.remove(name));
+    toast.success(TEXT.removed);
     router.push(adminPath('servers'));
   };
 
@@ -169,6 +181,7 @@ export function ServerPage({ name }: { name: string }) {
         {/* Under the header, as on a provider's page: a refusal reads under the switch, which the header would clip. */}
         <SavingSwitch
           label={TEXT.enabled}
+          labelOff={TEXT.disabled}
           checked={data.status === 'enabled'}
           onSave={saveEnabled}
           logEvent="admin: server enable"
@@ -189,7 +202,7 @@ export function ServerPage({ name }: { name: string }) {
             state={{
               status: 'ready',
               rows: data.tools.map(toToolRow),
-              empty: { Icon: WrenchIcon, title: TEXT.noTools, description: '' },
+              empty: { Icon: WrenchIcon, title: TEXT.noTools },
             }}
           />
         </div>
@@ -244,8 +257,8 @@ type SharedTokenFormProps = {
 
 /**
  * UXRD AD-10 «Токен доступа» with its own «Сохранить» (settings-form «Сохранение на месте»): a replacement
- * goes in a `PATCH` with `sharedToken` only; without one «Сохранить» does nothing — there is nothing to replace,
- * and the stored token is never sent back (Contract `SecretField`). A refused replacement stays in the field; a
+ * goes in a `PATCH` with `sharedToken` only; until one is typed «Сохранить» is unavailable — there is nothing to
+ * replace, and the stored token is never sent back (Contract `SecretField`). A refused replacement stays in the field; a
  * kept one is emptied, and the field reads «Задан» again.
  */
 function SharedTokenForm({ isSet, onSave, onSaved }: SharedTokenFormProps) {
@@ -253,7 +266,7 @@ function SharedTokenForm({ isSet, onSave, onSaved }: SharedTokenFormProps) {
     <AdminForm<{ sharedToken: string | undefined }>
       variant="page"
       initialValues={{ sharedToken: undefined }}
-      hasChange={({ sharedToken }) => sharedToken !== undefined}
+      hasChange={({ sharedToken }) => sharedToken !== undefined && sharedToken !== ''}
       validate={({ sharedToken }) => sharedTokenRules({ sharedToken: sharedToken ?? '' })}
       onSubmit={async ({ sharedToken }) => {
         await onSave(sharedToken ?? '');

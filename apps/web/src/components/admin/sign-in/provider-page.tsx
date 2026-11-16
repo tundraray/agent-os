@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   IdentityErrorCode,
@@ -79,6 +79,8 @@ const isPublicUrlRequired = (error: unknown): boolean =>
 export function ProviderPage({ id }: { id: string }) {
   const router = useRouter();
   const provider = useResource(() => adminApi.providers.get(id), `provider:${id}`);
+  /** Counts the saved settings: each one gives the switch a fresh start, without the refusal of an older enable. */
+  const [saves, setSaves] = useState(0);
 
   if (isNotFound(provider.error)) return <ThreadNotice variant="record-not-found" section="sign-in" />;
 
@@ -104,7 +106,7 @@ export function ProviderPage({ id }: { id: string }) {
         badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? TEXT.on : TEXT.off}</StateBadge>}
       />
       <div className="flex max-w-160 flex-col gap-6">
-        <ProviderEnabledSwitch provider={data} inTable={false} onChanged={provider.reload} />
+        <ProviderEnabledSwitch key={saves} provider={data} inTable={false} onChanged={provider.reload} />
         {data.type === 'google' && <GoogleWarning />}
 
         <AdminForm
@@ -115,7 +117,10 @@ export function ProviderPage({ id }: { id: string }) {
             await adminApi.providers.update(id, updateBodyOf(data.type, values));
           }}
           submitLabel={TEXT.save}
-          onSaved={provider.reload}
+          onSaved={() => {
+            setSaves((count) => count + 1);
+            provider.reload();
+          }}
           onCancel={() => router.push(adminPath('sign-in'))}
           secretFields={['clientSecret']}
           logEvent="admin: provider save"

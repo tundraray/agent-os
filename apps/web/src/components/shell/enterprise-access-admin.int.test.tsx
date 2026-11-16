@@ -907,6 +907,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(await screen.findByRole('button', { name: 'Разблокировать' })).toBeInTheDocument();
     expect(screen.getByText('Отключён')).toBeInTheDocument();
+    expect(await screen.findByText('Сотрудник заблокирован')).toBeInTheDocument();
 
     // Row 9 - a 404 of a page action: «Запись не найдена», no text at the action, the employee read again
     server.use(
@@ -1157,6 +1158,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await waitFor(() =>
       expect(rowCells(catalogue, 'Claude Haiku 4.5')).toEqual(['Claude Haiku 4.5anthropic/claude-haiku-4-5', '1 $', '5 $', '1,25 $', '0,1 $', '']),
     );
+    expect(await screen.findByText('Модель добавлена')).toBeInTheDocument();
 
     // Row 8 and row 9 - «Убрать из каталога»: the confirmation names the lost rights and sends ONE DELETE with the id
     // encoded; the list is read again without the model, and the focus goes to the `h1` - the row's «⋯» is gone
@@ -1173,6 +1175,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await expectSent(api, mark, [{ method: 'DELETE', path: '/api/admin/models/anthropic%2Fclaude-sonnet-4-5', body: null }], '/api/admin/models');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     await waitFor(() => expect(within(catalogue).queryByText('Claude Sonnet 4.5')).toBeNull());
+    expect(await screen.findByText('Модель убрана из каталога')).toBeInTheDocument();
     expect(within(catalogue).getByText('Claude Haiku 4.5')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Модели' })).toHaveFocus());
 
@@ -1756,8 +1759,9 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.getByText('Задан')).toBeInTheDocument();
     expectNowhere(token, { spies: navigationSpies() });
 
-    // Act (row 7): «Сохранить» without «Заменить» does nothing - no request, no read, no «saved» record
+    // Act (row 7): «Сохранить» without a typed replacement is unavailable - no request, no read, no «saved» record
     mark = api.requests.length;
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
     expect(api.requests.slice(mark)).toEqual([]);
     expect(logRecords.filter((record) => record.message.startsWith('admin: server token'))).toEqual([]);
@@ -1796,12 +1800,13 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       [{ method: 'PATCH', path: '/api/admin/mcp-servers/gitlab-prod', body: { enabled: false } }],
       '/api/admin/mcp-servers/gitlab-prod',
     );
-    await waitFor(() => expect(screen.getByRole('switch', { name: 'Включён' })).not.toBeChecked());
-    expect(screen.getByText('Выключен')).toBeInTheDocument();
+    // The label beside the switch follows its position, like the badge in the header
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Выключен' })).not.toBeChecked());
+    expect(screen.getAllByText('Выключен')).toHaveLength(2);
 
     // Row 7 - enabling a server still waiting for the administrator's account: `409 MCP_SERVER_INCOMPLETE` puts the switch back
     await open('/admin/servers/jira', 'jira');
-    const jiraSwitch = screen.getByRole('switch', { name: 'Включён' });
+    const jiraSwitch = screen.getByRole('switch', { name: 'Выключен' });
     expect(jiraSwitch).not.toBeChecked();
     server.use(
       http.patch(
@@ -1839,6 +1844,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await waitFor(() =>
       expect(changesSince(api, mark)).toEqual([{ method: 'DELETE', path: '/api/admin/mcp-servers/gitlab-prod', body: null }]),
     );
+    expect(await screen.findByText('Сервер удалён')).toBeInTheDocument();
     await open('/admin/servers', 'MCP-серверы');
     const afterDelete = await screen.findByRole('table', { name: 'MCP-серверы' });
     await waitFor(() => expect(within(afterDelete).queryByText('gitlab-prod')).toBeNull());

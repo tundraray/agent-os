@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { BoxIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { AccessErrorCode, type CatalogModel, type PriceRates } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
@@ -33,6 +34,8 @@ const TEXT = {
   emptyDescription: 'Добавьте модель, чтобы агенты могли работать.',
   // Not in the UXRD: the read failure follows the shell's «Не удалось …» texts, as in «Роли».
   loadFailed: 'Не удалось загрузить каталог моделей',
+  // Not in MC-30: the notice of a removal, after «Роль удалена».
+  removed: 'Модель убрана из каталога',
 } as const;
 
 const COLUMNS: readonly DataTableColumn[] = [
@@ -41,6 +44,15 @@ const COLUMNS: readonly DataTableColumn[] = [
 ];
 
 const priceCells = (prices: PriceRates): string[] => PRICES.map(({ field }) => formatPriceUsd(prices[field]));
+
+/** One line of text in a column that gives way: cut at the end, whole in the tooltip. */
+function Truncated({ text }: { text: string }) {
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}
 
 /** A dialog keeps its model while it closes, so its content does not change during the exit animation. */
 type DialogState = { open: boolean; model: CatalogModel | null };
@@ -63,6 +75,7 @@ export function CatalogSection() {
     } finally {
       models.reload();
     }
+    toast.success(TEXT.removed);
   };
 
   const toRow = (model: CatalogModel): DataTableRow => ({
@@ -85,7 +98,10 @@ export function CatalogSection() {
         : [
             {
               key: `${model.id}:long`,
-              cells: [TEXT.above(model.longContext.aboveInputTokens), ...priceCells(model.longContext.prices)],
+              cells: [
+                <Truncated key="above" text={TEXT.above(model.longContext.aboveInputTokens)} />,
+                ...priceCells(model.longContext.prices),
+              ],
             },
           ],
     actions: [

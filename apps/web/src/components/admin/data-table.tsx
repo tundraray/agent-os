@@ -30,6 +30,12 @@ export type DataTableColumn = {
   header: string;
   /** `end` for numbers and money: right-aligned, tabular digits. */
   align?: 'start' | 'end';
+  /**
+   * A column of long text: it gives way to the others down to 160 px, and its cells truncate (the cell brings
+   * its own `truncate` and `title`). The other columns keep the width of their content, so a narrow area scrolls
+   * the table inside its block. By default only the first column shrinks.
+   */
+  shrinks?: boolean;
 };
 
 export type DataTableAction = {
@@ -58,7 +64,7 @@ export type DataTableRow = {
   error?: string;
 };
 
-export type DataTableEmpty = { Icon: LucideIcon; title: string; description: string };
+export type DataTableEmpty = { Icon: LucideIcon; title: string; description?: string };
 
 /** Partial: passed while the list has a next page. */
 export type DataTableMore = {
@@ -215,7 +221,8 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
 
   return (
     <div className="flex flex-col">
-      <Table className="text-data text-foreground">
+      {/* `mb-px`: the table's scroll container would cut the last row's 3 px focus ring by its last pixel. */}
+      <Table className="mb-px text-data text-foreground">
         <TableCaption className="sr-only">{caption}</TableCaption>
         <HeaderRow columns={columns} withActions={hasActions} />
         <TableBody ref={bodyRef}>
@@ -250,6 +257,8 @@ const cellClass = 'px-3 py-0 align-middle';
 const alignClass = (column: DataTableColumn | undefined): string | undefined =>
   column?.align === 'end' ? 'text-right tabular-nums' : undefined;
 
+const shrinks = (columns: readonly DataTableColumn[], index: number): boolean => columns[index]?.shrinks ?? index === 0;
+
 function HeaderRow({ columns, withActions }: { columns: readonly DataTableColumn[]; withActions: boolean }) {
   return (
     <TableHeader>
@@ -273,11 +282,29 @@ type RowGroupProps = {
   leaving: boolean;
 };
 
-/** Cell content that collapses with its row: a 150 ms height and fade, instant under reduced motion. */
-function Collapsible({ children, className }: { children: ReactNode; className?: string }) {
+type CollapsibleProps = {
+  children: ReactNode;
+  /** The cell may get narrower than its content, down to 160 px; otherwise it is never narrower than its content. */
+  shrinks?: boolean;
+  className?: string;
+};
+
+/**
+ * Cell content that collapses with its row: a 150 ms height and fade, instant under reduced motion. The clipping
+ * `overflow-hidden` gives the content a zero minimum width, so the wrapper states the cell's width itself; a cell
+ * that keeps its content's width clips only while its row leaves, which leaves a button's focus ring whole.
+ */
+function Collapsible({ children, shrinks = false, className }: CollapsibleProps) {
   return (
-    <div className="grid grid-rows-[1fr] transition-[grid-template-rows,opacity] duration-(--duration-fast) group-data-leaving/row:grid-rows-[0fr] group-data-leaving/row:opacity-0 motion-reduce:transition-none">
-      <div className={cn('min-h-0 overflow-hidden', className)}>{children}</div>
+    <div
+      className={cn(
+        'grid grid-rows-[1fr] transition-[grid-template-rows,opacity] duration-(--duration-fast) group-data-leaving/row:grid-rows-[0fr] group-data-leaving/row:opacity-0 motion-reduce:transition-none',
+        shrinks ? 'min-w-40' : 'min-w-max',
+      )}
+    >
+      <div className={cn('min-h-0', shrinks ? 'overflow-hidden' : 'group-data-leaving/row:overflow-hidden', className)}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -304,7 +331,7 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
       >
         {row.cells.map((cell, index) => (
           <TableCell key={columns[index]?.header ?? index} className={cn(cellClass, alignClass(columns[index]))}>
-            <Collapsible>
+            <Collapsible shrinks={shrinks(columns, index)}>
               {index === 0 && row.href !== undefined ? <RowLink href={row.href}>{cell}</RowLink> : cell}
             </Collapsible>
           </TableCell>
@@ -331,7 +358,7 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
               key={columns[index]?.header ?? index}
               className={cn(cellClass, alignClass(columns[index]), index === 0 && 'pl-9')}
             >
-              <Collapsible>
+              <Collapsible shrinks={shrinks(columns, index)}>
                 {index === 0 && <span className="sr-only">{TEXT.nestedIn(row.name)}</span>}
                 {cell}
               </Collapsible>
@@ -342,8 +369,8 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
       ))}
       {row.error !== undefined && (
         <TableRow {...groupProps} className="border-border hover:bg-transparent">
-          <TableCell colSpan={columnCount} className="px-3 pb-1.5">
-            <Collapsible>
+          <TableCell colSpan={columnCount} className="px-3 pb-1.5 whitespace-normal">
+            <Collapsible shrinks>
               <p role="alert" className="text-xs leading-4 font-medium text-destructive">
                 {row.error}
               </p>
@@ -477,7 +504,7 @@ function EmptyTable({ Icon, title, description }: DataTableEmpty) {
     <div className="flex flex-col items-center gap-1 py-12 text-center">
       <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />
       <p className="text-sm leading-5 font-medium text-foreground">{title}</p>
-      <p className="text-xs leading-4 text-muted-foreground">{description}</p>
+      {description !== undefined && <p className="text-xs leading-4 text-muted-foreground">{description}</p>}
     </div>
   );
 }

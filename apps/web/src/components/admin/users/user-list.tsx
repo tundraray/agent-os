@@ -42,7 +42,7 @@ const EMPTY_VALUE = '—';
 const COLUMNS: readonly DataTableColumn[] = [
   { header: TEXT.employee },
   { header: TEXT.status },
-  { header: TEXT.roles },
+  { header: TEXT.roles, shrinks: true },
   { header: TEXT.lastSignIn },
 ];
 
@@ -73,6 +73,7 @@ export function UserStatusBadge({ status }: { status: UserStatus }) {
 function EmployeeCell({ user }: { user: AdminUserSummary }) {
   // A local account shows the badge and the login before the email.
   const local = isLocalAccount(user);
+  const contact = local ? `${user.login} · ${user.email}` : user.email;
   return (
     <div className="flex min-w-0 flex-col py-1.5">
       <span className="flex min-w-0 items-center gap-2">
@@ -81,8 +82,8 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
         </span>
         {local && <StateBadge variant="source">{TEXT.local}</StateBadge>}
       </span>
-      <span className="truncate text-xs leading-4 text-muted-foreground">
-        {local ? `${user.login} · ${user.email}` : user.email}
+      <span className="truncate text-xs leading-4 text-muted-foreground" title={contact}>
+        {contact}
       </span>
     </div>
   );
@@ -121,7 +122,7 @@ export function UserList() {
     rows: items.map(rowOf),
     // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
     // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
-    empty: { Icon: SearchXIcon, title: TEXT.noMatches, description: '' },
+    empty: { Icon: SearchXIcon, title: TEXT.noMatches },
     noMatches: TEXT.noMatches,
     more:
       list.nextCursor === null
@@ -142,7 +143,7 @@ export function UserList() {
           onChange={(event) => setQuery(event.target.value)}
           aria-label={TEXT.search}
           placeholder={TEXT.search}
-          className={cn(CONTROL_SIZE, 'w-72 max-w-full text-data md:text-data')}
+          className={cn(CONTROL_SIZE, 'min-w-0 flex-1 text-data md:w-72 md:flex-none md:text-data')}
         />
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
           {TEXT.create}

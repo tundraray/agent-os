@@ -218,7 +218,7 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
   submitLabel: string;
   /** The submit button while the request runs, e.g. «Проверяем сервер…»; a function when it depends on the values. */
   savingLabel?: string | ((values: Values) => string);
-  /** False while the values hold nothing to send: the submit then does nothing at all. */
+  /** False while the values hold nothing to send: the submit button is then unavailable. */
   hasChange?: (values: Values) => boolean;
   /** The toast after a save; a page says «Сохранено» unless told otherwise, a dialog says nothing. */
   savedText?: string | null;
@@ -320,7 +320,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
   };
 
   const submit = (
-    <Button type="submit" size="sm" className={CONTROL_SIZE} disabled={saving}>
+    <Button type="submit" size="sm" className={CONTROL_SIZE} disabled={saving || hasChange?.(values) === false}>
       {saving && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
       {saving ? (typeof savingLabel === "function" ? savingLabel(values) : savingLabel) : submitLabel}
     </Button>

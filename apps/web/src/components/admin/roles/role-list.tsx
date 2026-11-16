@@ -61,7 +61,7 @@ export function RoleList() {
 
   const state = resourceTableState(roles, TEXT.loadFailed, (data) => ({
     rows: builtinFirst(data).map(toRow),
-    empty: { Icon: ShieldIcon, title: TEXT.empty, description: '' },
+    empty: { Icon: ShieldIcon, title: TEXT.empty },
   }));
 
   return (

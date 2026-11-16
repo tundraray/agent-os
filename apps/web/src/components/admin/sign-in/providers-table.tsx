@@ -17,6 +17,7 @@ const TEXT = {
   title: 'Способы входа',
   button: 'Кнопка',
   enabled: 'Включено',
+  disabled: 'Выключено',
   password: 'Логин и пароль',
   builtin: 'встроенный',
   alwaysOn: 'Всегда включён',
@@ -66,6 +67,7 @@ export function ProviderEnabledSwitch({ provider, inTable, onChanged }: Provider
   return (
     <SavingSwitch
       label={inTable ? `${TEXT.enabled}: ${provider.name}` : TEXT.enabled}
+      labelOff={TEXT.disabled}
       labelHidden={inTable}
       checked={provider.enabled}
       onSave={save}
@@ -116,7 +118,7 @@ export function ProvidersTable() {
 
   const state = resourceTableState(providers, TEXT.loadFailed, (data) => ({
     rows: [PASSWORD_ROW, ...data.map(toRow)],
-    empty: { Icon: KeyRoundIcon, title: TEXT.empty, description: '' },
+    empty: { Icon: KeyRoundIcon, title: TEXT.empty },
   }));
 
   return (

@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactNode } from 'react';
 import { LoaderCircleIcon, ShieldIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { IdentityErrorCode, type AdminUserDetail } from '@agent-os/contracts';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,9 @@ const TEXT = {
   loadFailed: 'Не удалось загрузить сотрудника',
   // Not in the UXRD, which draws no empty state for the employee's roles.
   noRoles: 'Ролей нет',
+  // Not in the UXRD: the notices of a status change, after «Роль удалена».
+  blocked: 'Сотрудник заблокирован',
+  unblocked: 'Сотрудник разблокирован',
 } as const;
 
 const blockTitle = (name: string): string => `Заблокировать ${name}?`;
@@ -87,13 +91,19 @@ export function UserPage({ id }: UserPageProps) {
     return false;
   };
 
-  /** An action on the page itself: its refusal is text at the action. */
-  async function act(place: ActionPlace, logEvent: string, request: () => Promise<unknown>): Promise<void> {
+  /** An action on the page itself: its refusal is text at the action, its success a notice when it has `doneText`. */
+  async function act(
+    place: ActionPlace,
+    logEvent: string,
+    request: () => Promise<unknown>,
+    doneText?: string,
+  ): Promise<void> {
     setFailure(null);
     setPending(place);
     try {
       await request();
       logger.info(`${logEvent}: saved`, { userId: id });
+      if (doneText !== undefined) toast.success(doneText);
     } catch (error) {
       const refusal = describeRefusal(error, { logEvent });
       if (showsText(error) && refusal !== null) setFailure({ place, text: refusal.text });
@@ -161,7 +171,8 @@ export function UserPage({ id }: UserPageProps) {
         parent="users"
         badge={
           <>
-            <span className="min-w-0 truncate text-xs leading-4 text-muted-foreground" title={detail.email}>
+            {/* The email gives way before the name does: the title stays readable in a narrow header. */}
+            <span className="min-w-0 shrink-[100] truncate text-xs leading-4 text-muted-foreground" title={detail.email}>
               {detail.email}
             </span>
             <UserStatusBadge status={detail.status} />
@@ -180,7 +191,7 @@ export function UserPage({ id }: UserPageProps) {
           onClick={
             active
               ? () => setBlocking(true)
-              : () => void act('status', 'admin: user unblock', () => adminApi.users.unblock(id))
+              : () => void act('status', 'admin: user unblock', () => adminApi.users.unblock(id), TEXT.unblocked)
           }
         >
           {active ? TEXT.block : TEXT.unblock}
@@ -200,7 +211,7 @@ export function UserPage({ id }: UserPageProps) {
             state={{
               status: 'ready',
               rows: detail.roles.map(roleRow),
-              empty: { Icon: ShieldIcon, title: TEXT.noRoles, description: '' },
+              empty: { Icon: ShieldIcon, title: TEXT.noRoles },
             }}
           />
           <div className="flex flex-col items-start gap-1.5">
@@ -258,7 +269,10 @@ export function UserPage({ id }: UserPageProps) {
         title={blockTitle(detail.name)}
         body={TEXT.blockBody}
         confirmLabel={TEXT.block}
-        onConfirm={() => track(() => adminApi.users.block(id))}
+        onConfirm={async () => {
+          await track(() => adminApi.users.block(id));
+          toast.success(TEXT.blocked);
+        }}
         logEvent="admin: user block"
       />
       {isLocalAccount(detail) && (

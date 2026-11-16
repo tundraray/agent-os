@@ -8,6 +8,11 @@ import { CAPTION, describeRefusal } from "./admin-form";
 export type SavingSwitchProps = {
   /** The switch's accessible name, e.g. «Включено: {название}» in a table row. */
   label: string;
+  /**
+   * The label while the switch stands off, for a `label` that reads as the on state («Включён» / «Выключен»):
+   * the text beside the switch is then true in both positions.
+   */
+  labelOff?: string;
   /** In a table row the column header names the switch, so the label is read but not shown. */
   labelHidden?: boolean;
   /** The saved position, read from the resource. */
@@ -25,7 +30,15 @@ export type SavingSwitchProps = {
  * unavailable until the answer; a refusal moves it back (the switch's own 150 ms transition) and names the
  * reason under it.
  */
-export function SavingSwitch({ label, labelHidden = false, checked, onSave, logEvent, disabled = false }: SavingSwitchProps) {
+export function SavingSwitch({
+  label,
+  labelOff = label,
+  labelHidden = false,
+  checked,
+  onSave,
+  logEvent,
+  disabled = false,
+}: SavingSwitchProps) {
   const id = useId();
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
@@ -53,20 +66,25 @@ export function SavingSwitch({ label, labelHidden = false, checked, onSave, logE
     }
   }
 
+  const shown = target ?? checked;
+
   return (
     <div className="flex flex-col gap-1">
       <label className="flex w-fit items-center gap-2">
         <Switch
-          checked={target ?? checked}
+          checked={shown}
           disabled={saving || disabled}
-          aria-labelledby={labelId}
+          aria-label={labelHidden ? label : undefined}
+          aria-labelledby={labelHidden ? undefined : labelId}
           aria-describedby={error !== null ? errorId : undefined}
           onCheckedChange={(next) => void save(next)}
           className="pointer-coarse:after:-inset-3"
         />
-        <span id={labelId} className={cn("text-data font-medium text-foreground", (saving || disabled) && "opacity-50", labelHidden && "sr-only")}>
-          {label}
-        </span>
+        {!labelHidden && (
+          <span id={labelId} className={cn("text-data font-medium text-foreground", (saving || disabled) && "opacity-50")}>
+            {shown ? label : labelOff}
+          </span>
+        )}
       </label>
       {error !== null && (
         <p id={errorId} role="alert" className={cn(CAPTION, "text-destructive")}>

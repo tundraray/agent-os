@@ -115,6 +115,15 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
     setAdding(true);
   };
 
+  /**
+   * Closed without a new grant: the rights are read again, because a refused «уже есть» means the list on
+   * screen is behind the server.
+   */
+  const changeAdding = (open: boolean): void => {
+    setAdding(open);
+    if (!open) grants.reload();
+  };
+
   const openQuota = (grant: Grant): void => {
     setQuotaGrant(grant);
     setQuotaOpen(true);
@@ -171,7 +180,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
     TEXT.loadFailed,
     (data) => ({
       rows: data.map(toRow),
-      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? TEXT.emptyRole : TEXT.emptyUser, description: '' },
+      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? TEXT.emptyRole : TEXT.emptyUser },
     }),
   );
 
@@ -201,7 +210,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       <DataTable caption={title} columns={COLUMNS} state={state} actionsAs="menu" />
       <GrantDialog
         open={adding}
-        onOpenChange={setAdding}
+        onOpenChange={changeAdding}
         holder={holder}
         effect={addEffect}
         grants={grants.data ?? []}

@@ -145,7 +145,7 @@ function MembersSection({ members }: { members: RoleDetail['members'] }) {
       <DataTable
         caption={TEXT.members}
         columns={MEMBER_COLUMNS}
-        state={{ status: 'ready', rows, empty: { Icon: UsersIcon, title: TEXT.noMembers, description: '' } }}
+        state={{ status: 'ready', rows, empty: { Icon: UsersIcon, title: TEXT.noMembers } }}
       />
     </section>
   );

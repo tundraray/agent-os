@@ -66,7 +66,8 @@ export function ChatHeaderView({
   return (
     <header
       data-scrolled={scrolled ? '' : undefined}
-      className="bg-background flex h-(--header-height) shrink-0 items-center gap-1 border-b border-transparent px-2 md:px-3 data-scrolled:border-border"
+      // A panel screen's actions take a second line below 768 px; every other heading fills one line.
+      className="bg-background flex min-h-(--header-height) shrink-0 flex-wrap items-center gap-x-1 border-b border-transparent px-2 md:flex-nowrap md:px-3 data-scrolled:border-border"
     >
       <WithTooltip label={`Меню · ${sidebarShortcut}`}>
         <Button
