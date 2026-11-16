@@ -152,16 +152,39 @@ export async function allowRole(
 }
 
 /**
- * Deletes the rows a suite made, by id: models (their grants go by cascade) and roles (their members and grants go
- * by cascade).
+ * Deletes the rows a suite made, by id: models (their grants go by cascade), roles (their members and grants go
+ * by cascade) and employees with what they own — conversations, agent trees, ledger rows, audit records, sessions,
+ * role memberships and personal grants. Run it after the app is closed, so no worker writes behind it.
  */
 export async function removeRunRows(
   pool: DatabaseConnection['pool'],
   rows: {
     readonly models: readonly string[];
     readonly roles: readonly string[];
+    readonly users?: readonly string[];
   },
 ): Promise<void> {
+  const users = rows.users ?? [];
+  await pool.query(
+    'DELETE FROM app.chat_conversations WHERE owner_id = ANY($1::text[])',
+    [users],
+  );
+  await pool.query(
+    'DELETE FROM app.runtime_tasks WHERE owner_id = ANY($1::text[])',
+    [users],
+  );
+  await pool.query(
+    'DELETE FROM app.runtime_model_calls WHERE owner_id = ANY($1::text[])',
+    [users],
+  );
+  await pool.query(
+    'DELETE FROM app.audit_events WHERE actor = ANY($1::text[]) OR object_id = ANY($1::text[])',
+    [users],
+  );
+  await pool.query(
+    'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
+    [users],
+  );
   await pool.query('DELETE FROM app.access_models WHERE id = ANY($1::text[])', [
     rows.models,
   ]);
@@ -169,4 +192,50 @@ export async function removeRunRows(
     'DELETE FROM app.identity_roles WHERE id = ANY($1::uuid[]) AND NOT builtin',
     [rows.roles],
   );
+}
+
+/** One `access_denied` (or other) audit record as the assertions read it. */
+export interface AuditRecord {
+  readonly actor: string;
+  readonly objectId: string | null;
+  readonly outcome: string;
+  readonly reason: string | null;
+}
+
+/**
+ * The audit records of `kind` and `objectType` whose actor is one of `actors`, in the order written. The kind
+ * `access_denied` is shared with the administrator-route refusals of identity, so rows of tools and models are
+ * told apart by `objectType`.
+ */
+export async function auditOf(
+  pool: DatabaseConnection['pool'],
+  filter: {
+    readonly kind: string;
+    readonly objectType: string;
+    readonly actors: readonly string[];
+  },
+): Promise<AuditRecord[]> {
+  const { rows } = await pool.query<AuditRecord>(
+    `SELECT actor, object_id AS "objectId", outcome, reason FROM app.audit_events
+      WHERE kind = $1 AND object_type = $2 AND actor = ANY($3::text[]) ORDER BY at, id`,
+    [filter.kind, filter.objectType, filter.actors],
+  );
+  return rows;
+}
+
+/**
+ * The cost in USD of each model call an agent of `ownerId` made on `model`, by time (`runtime_model_calls`). Calls
+ * outside a task (the conversation title) are left out: their cost is a line of its own.
+ */
+export async function spendOf(
+  pool: DatabaseConnection['pool'],
+  ownerId: string,
+  model: string,
+): Promise<number[]> {
+  const { rows } = await pool.query<{ costUsd: string }>(
+    `SELECT cost_usd AS "costUsd" FROM app.runtime_model_calls
+      WHERE owner_id = $1 AND model = $2 AND task_id IS NOT NULL ORDER BY called_at, call_id`,
+    [ownerId, model],
+  );
+  return rows.map((row) => Number(row.costUsd));
 }

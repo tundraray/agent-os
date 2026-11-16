@@ -8,7 +8,7 @@ import type { NewHistoryEntry } from '../store/history.repository.js';
 import type { Session } from '../store/sessions.repository.js';
 import { type ToolCallEnding, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { toolResults } from '../store/tool-results.repository.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
+import { callTargetOf, type ToolRegistry } from '../tools/tool-registry.js';
 import {
   callerOf,
   isInCommit,
@@ -263,8 +263,10 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         );
         if (check.kind === 'refused') {
           // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
-          if (check.reason === 'no_access' && call.server !== null) {
-            await audit(toolDeniedEntry(session.ownerId, call.server, call.tool));
+          // The row keeps the name as asked when the offered set lacked the tool, so the pair comes from the check's set.
+          const target = callTargetOf(sessionTools, requestedName(call));
+          if (check.reason === 'no_access' && target.server !== null) {
+            await audit(toolDeniedEntry(session.ownerId, target.server, target.tool));
           }
           ctx.logger.info('tool call refused', {
             callId: call.callId,

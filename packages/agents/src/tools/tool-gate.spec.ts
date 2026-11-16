@@ -310,13 +310,14 @@ const CHANGING_TOOL: SessionTool = {
 
 const AGENT_DEFINITION: AgentDefinition = { ...NO_TOOLS, name: 'helper', mcpServers: ['logs'] };
 
+/** The denied tool was not offered, so the model step stored the name as asked, without a server. */
 const OPEN_PURGE: ToolCallRow = {
   taskId: CALLER.agentId,
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
-  tool: 'purge',
-  server: 'logs',
+  tool: 'mcp__logs__purge',
+  server: null,
   args: {},
   state: 'requested',
   outcome: null,
