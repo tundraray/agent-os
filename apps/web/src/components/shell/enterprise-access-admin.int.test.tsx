@@ -724,10 +724,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      record of the logger stand-in
   //   3. roles of an employee (AC-25.1): Аня shows both «SRE» and «Дежурный», each with «Снять роль»; pressing one sends
   //      `DELETE /api/admin/users/:id/roles/:roleId` and after the new read it is gone; «Назначить роль» offers only the roles she lacks and sends
-  //      `PUT /api/admin/users/:id/roles/:roleId`; «Дать лично» sends `PUT /api/admin/users/:id/admin` with `{ enabled: true }` and the row reads
+  //      `PUT /api/admin/users/:id/roles/:roleId`; «Дать лично» asks first («Отмена» sends nothing), «Дать право» sends `PUT /api/admin/users/:id/admin` with `{ enabled: true }` and the row reads
   //      «есть: лично» after the new read; «Снять лично» sends `{ enabled: false }` and the row reads «нет» again
   //   4. built-in role (DC-5): the role list has «Супер-администратор» FIRST with «встроенная»; its page has no «Переименовать» and no «Удалить», and the
-  //      «Право администратора» switch is on and disabled; on «Дежурный» the switch sends `PATCH /api/admin/roles/:id` with `{ isAdmin: true }`,
+  //      «Право администратора» switch is on and disabled; on «Дежурный» the switch asks first (Escape sends nothing, it stays off), «Дать право» sends `PATCH /api/admin/roles/:id` with `{ isAdmin: true }`,
   //      then `{ isAdmin: false }`
   //   5. rights (AC-28.2, AC-29.2, DC-12, DC-14): on the role «SRE» «Добавить право» -> «Что»: «Инструмент сервера»: `jira` (`awaiting_admin_account`)
   //      cannot be chosen, `sentry` offers ONLY the tools of `GET /api/admin/mcp-servers/sentry` in Mono with «читает» / «меняет», the tool the role
@@ -809,10 +809,23 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.getByText('нет')).toBeInTheDocument();
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Дать лично' }));
+    let confirm = await screen.findByRole('alertdialog', { name: 'Дать Аня Смирнова право администратора?' });
+    expect(within(confirm).getByText(
+      'Сотрудник сможет управлять учётными записями, ролями, правами, способами входа, MCP-серверами и моделями.',
+    )).toBeInTheDocument();
+    await user.click(within(confirm).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+    expect(screen.getByText('нет')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Дать лично' })).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: 'Дать лично' }));
+    confirm = await screen.findByRole('alertdialog', { name: 'Дать Аня Смирнова право администратора?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Дать право' }));
     await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/admin`, body: { enabled: true } }], `/api/admin/users/${ANYA}`);
     expect(await screen.findByText('есть: лично')).toBeInTheDocument();
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Снять лично' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     await expectSent(api, mark, [{ method: 'PUT', path: `/api/admin/users/${ANYA}/admin`, body: { enabled: false } }], `/api/admin/users/${ANYA}`);
     expect(await screen.findByText('нет')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Дать лично' })).toBeInTheDocument();
@@ -871,7 +884,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     // Row 9 - blocking: «Отмена» and Escape send nothing; the confirmation sends one POST while its button is unavailable
     mark = api.requests.length;
     await user.click(screen.getByRole('button', { name: 'Заблокировать' }));
-    let confirm = await screen.findByRole('alertdialog', { name: 'Заблокировать Аня Смирнова?' });
+    confirm = await screen.findByRole('alertdialog', { name: 'Заблокировать Аня Смирнова?' });
     expect(within(confirm).getByText(
       'Сеансы сотрудника закроются сразу, а работающие агенты закончатся на своём следующем шаге. Беседы и данные сохранятся.',
     )).toBeInTheDocument();
@@ -945,10 +958,21 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(dutySwitch).not.toBeChecked();
     mark = api.requests.length;
     await user.click(dutySwitch);
+    confirm = await screen.findByRole('alertdialog', { name: 'Дать роли «Дежурный» право администратора?' });
+    expect(within(confirm).getByText('Все сотрудники роли станут администраторами: 1.')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(changesSince(api, mark)).toEqual([]);
+    expect(dutySwitch).not.toBeChecked();
+    await waitFor(() => expect(dutySwitch).toHaveFocus());
+    await user.click(dutySwitch);
+    confirm = await screen.findByRole('alertdialog', { name: 'Дать роли «Дежурный» право администратора?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Дать право' }));
     await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/roles/${DUTY}`, body: { isAdmin: true } }], `/api/admin/roles/${DUTY}`);
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Право администратора' })).toBeChecked());
     mark = api.requests.length;
     await user.click(screen.getByRole('switch', { name: 'Право администратора' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/roles/${DUTY}`, body: { isAdmin: false } }], `/api/admin/roles/${DUTY}`);
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Право администратора' })).not.toBeChecked());
 

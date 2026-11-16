@@ -36,6 +36,10 @@ const TEXT = {
   adminNone: 'нет',
   grantPersonal: 'Дать лично',
   revokePersonal: 'Снять лично',
+  // Not in the UXRD: the owner's decision — giving the admin right is confirmed.
+  grantBody:
+    'Сотрудник сможет управлять учётными записями, ролями, правами, способами входа, MCP-серверами и моделями.',
+  grantConfirm: 'Дать право',
   // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
   loadFailed: 'Не удалось загрузить сотрудника',
   // Not in the UXRD, which draws no empty state for the employee's roles.
@@ -46,6 +50,9 @@ const TEXT = {
 } as const;
 
 const blockTitle = (name: string): string => `Заблокировать ${name}?`;
+const grantTitle = (name: string): string => `Дать ${name} право администратора?`;
+
+const PERSONAL_ADMIN_LOG_EVENT = 'admin: user personal admin';
 
 /** MC-24: the personal right first, then the roles that give it, then «нет». */
 function adminRightText({ personal, roles }: AdminUserDetail['adminRight']): string {
@@ -77,6 +84,7 @@ export function UserPage({ id }: UserPageProps) {
   const [pending, setPending] = useState<ActionPlace | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [blocking, setBlocking] = useState(false);
+  const [granting, setGranting] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   /**
@@ -252,8 +260,10 @@ export function UserPage({ id }: UserPageProps) {
             <ActionButton
               disabled={busy}
               pending={pending === 'admin'}
-              onClick={() =>
-                void act('admin', 'admin: user personal admin', () => adminApi.users.setPersonalAdmin(id, !personalAdmin))
+              onClick={
+                personalAdmin
+                  ? () => void act('admin', PERSONAL_ADMIN_LOG_EVENT, () => adminApi.users.setPersonalAdmin(id, false))
+                  : () => setGranting(true)
               }
             >
               {personalAdmin ? TEXT.revokePersonal : TEXT.grantPersonal}
@@ -274,6 +284,15 @@ export function UserPage({ id }: UserPageProps) {
           toast.success(TEXT.blocked);
         }}
         logEvent="admin: user block"
+      />
+      <ConfirmDialog
+        open={granting}
+        onOpenChange={setGranting}
+        title={grantTitle(detail.name)}
+        body={TEXT.grantBody}
+        confirmLabel={TEXT.grantConfirm}
+        onConfirm={() => track(() => adminApi.users.setPersonalAdmin(id, true))}
+        logEvent={PERSONAL_ADMIN_LOG_EVENT}
       />
       {isLocalAccount(detail) && (
         <ResetPasswordDialog

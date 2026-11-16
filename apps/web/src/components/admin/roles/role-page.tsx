@@ -30,11 +30,20 @@ const TEXT = {
   removeTitle: (role: string) => `Удалить роль «${role}»?`,
   removeBody: 'Сотрудники роли сразу потеряют её права.',
   removed: 'Роль удалена',
+  // Not in the UXRD: the owner's decision — giving the admin right is confirmed.
+  grantAdminTitle: (role: string) => `Дать роли «${role}» право администратора?`,
+  grantAdminBody: (members: number) =>
+    members > 0
+      ? `Все сотрудники роли станут администраторами: ${members}.`
+      : 'Сейчас в роли нет сотрудников; каждый, кого в неё добавят, станет администратором.',
+  grantAdmin: 'Дать право',
   // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
   loadFailed: 'Не удалось загрузить роль',
   // Not in the UXRD, which draws no empty state for the members.
   noMembers: 'В роли нет сотрудников',
 } as const;
+
+const ADMIN_RIGHT_LOG_EVENT = 'admin: role admin right';
 
 const MEMBER_COLUMNS: readonly DataTableColumn[] = [{ header: TEXT.member }];
 
@@ -51,6 +60,7 @@ export function RolePage({ id }: { id: string }) {
   const role = useResource(() => adminApi.roles.get(id), `role:${id}`);
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [grantingAdmin, setGrantingAdmin] = useState(false);
 
   if (isNotFound(role.error)) return <ThreadNotice variant="record-not-found" section="roles" />;
   const data = role.data;
@@ -94,7 +104,8 @@ export function RolePage({ id }: { id: string }) {
           checked={data.builtin || data.isAdmin}
           disabled={data.builtin}
           onSave={saveAdmin}
-          logEvent="admin: role admin right"
+          logEvent={ADMIN_RIGHT_LOG_EVENT}
+          confirmOn={() => setGrantingAdmin(true)}
         />
         <GrantsSection holder={{ kind: 'role', id }} />
         <MembersSection members={data.members} />
@@ -116,6 +127,15 @@ export function RolePage({ id }: { id: string }) {
             onConfirm={remove}
             logEvent="admin: role delete"
             focusTitleAfterConfirm
+          />
+          <ConfirmDialog
+            open={grantingAdmin}
+            onOpenChange={setGrantingAdmin}
+            title={TEXT.grantAdminTitle(data.name)}
+            body={TEXT.grantAdminBody(data.members.length)}
+            confirmLabel={TEXT.grantAdmin}
+            onConfirm={() => saveAdmin(true)}
+            logEvent={ADMIN_RIGHT_LOG_EVENT}
           />
         </>
       )}

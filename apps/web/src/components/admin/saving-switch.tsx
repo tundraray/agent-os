@@ -21,6 +21,11 @@ export type SavingSwitchProps = {
   onSave: (checked: boolean) => Promise<void>;
   /** Names the change in the log, e.g. «admin: server enable». */
   logEvent: string;
+  /**
+   * Switching on needs a confirmation: called in place of the save, the switch stays off. The caller asks and
+   * saves by itself; the re-read resource then moves the switch.
+   */
+  confirmOn?: () => void;
   /** The position cannot be changed here, e.g. the built-in role's admin right (DC-5). */
   disabled?: boolean;
 };
@@ -37,6 +42,7 @@ export function SavingSwitch({
   checked,
   onSave,
   logEvent,
+  confirmOn,
   disabled = false,
 }: SavingSwitchProps) {
   const id = useId();
@@ -54,6 +60,10 @@ export function SavingSwitch({
 
   async function save(next: boolean): Promise<void> {
     setError(null);
+    if (next && confirmOn !== undefined) {
+      confirmOn();
+      return;
+    }
     setTarget(next);
     setSaving(true);
     try {

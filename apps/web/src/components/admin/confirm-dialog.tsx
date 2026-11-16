@@ -20,7 +20,7 @@ export type ConfirmDialogProps = {
   title: string;
   body: string;
   confirmLabel: string;
-  /** The destructive request; the dialog closes when it resolves and stays open with the reason when it rejects. */
+  /** The confirmed request; the dialog closes when it resolves and stays open with the reason when it rejects. */
   onConfirm: () => Promise<void>;
   /** Names the change in the log, e.g. «admin: user block». */
   logEvent: string;
@@ -32,7 +32,8 @@ export type ConfirmDialogProps = {
 };
 
 /**
- * The one confirmation of the panel's destructive actions (block, delete a role, a model, a server).
+ * The one confirmation of the panel's destructive actions (block, delete a role, a model, a server) and of
+ * giving the admin right.
  * One request per confirmation: the button is unavailable while it runs; «Отмена» and Esc send nothing.
  */
 export function ConfirmDialog({
