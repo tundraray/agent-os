@@ -1228,7 +1228,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         () =>
           harness.log.filter(
             (line) =>
-              line.includes('thread title not generated') &&
+              line.includes('thread title refused by the access gate') &&
               line.includes(borisThread),
           ),
         (lines) => lines.length === 1,

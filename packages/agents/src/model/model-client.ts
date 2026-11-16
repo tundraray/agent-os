@@ -4,6 +4,7 @@ import {
   type AccessAudit,
   type AccessDeniedEntry,
   type AccessGate,
+  ModelRefusedError,
   type ModelVerdict,
   OwnerDisabledError,
 } from '../access-gate.js';
@@ -136,7 +137,8 @@ export interface ModelClient {
    * One call of `AGENT_DEFAULT_MODEL` without tools and outside any task: the same verdict, retries
    * and cancel as `call`, a ledger row without `taskId`, no text parts to the hook. A provider that
    * keeps failing rejects with an error that names the status. A refused call rejects before the call:
-   * a disabled owner with `OwnerDisabledError`, any other refusal after its `access_denied` record.
+   * a disabled owner with `OwnerDisabledError`, any other refusal with `ModelRefusedError` after its
+   * `access_denied` record.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
 }
@@ -385,7 +387,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
       if (verdict.kind === 'refused') {
         if (verdict.reason === 'owner_disabled') throw new OwnerDisabledError(request.ownerId);
         await deps.audit(modelDeniedEntry(request.ownerId, model, verdict));
-        throw new Error(modelRefusalMessage(request.ownerId, model, verdict));
+        throw new ModelRefusedError(verdict.reason, modelRefusalMessage(request.ownerId, model, verdict));
       }
       const result = await generate({
         call: {

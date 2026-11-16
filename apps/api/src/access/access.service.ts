@@ -31,7 +31,11 @@ import {
   RUNTIME_DATABASE,
 } from '../runtime/runtime.tokens.js';
 import { accessError } from './access.errors.js';
-import { effectiveAccess, type EffectiveAccess } from './effective-access.js';
+import {
+  effectiveAccess,
+  type EffectiveAccess,
+  type GrantRow,
+} from './effective-access.js';
 import { grantRules, type GrantRuleInput } from './grant-rules.js';
 import {
   deleteGrant,
@@ -109,15 +113,18 @@ export class AccessService implements AccessGate {
     if (!(await this.identity.isActive(ownerId))) {
       this.logger.info('tool access checked', {
         ownerId,
-        verdict: 'owner_disabled',
+        ownerActive: false,
         durationMs: Date.now() - startedAt,
       });
       return { kind: 'owner_disabled' };
     }
-    const access = await this.accessOf(ownerId);
+    const grants = await this.grantRowsOf(ownerId);
+    const access = effectiveAccess(grants);
+    // Not a verdict on any tool: the owner is active and this many grants were read; pairs are refused one by one.
     this.logger.info('tool access checked', {
       ownerId,
-      verdict: 'allowed',
+      ownerActive: true,
+      grantsRead: grants.length,
       durationMs: Date.now() - startedAt,
     });
     return {
@@ -362,9 +369,14 @@ export class AccessService implements AccessGate {
 
   /** The employee's rights now: his roles, then their grants and his own in one query. */
   private async accessOf(ownerId: string): Promise<EffectiveAccess> {
-    if (!isUuid(ownerId)) return effectiveAccess([]);
+    return effectiveAccess(await this.grantRowsOf(ownerId));
+  }
+
+  /** The grants of the employee's roles and his own. */
+  private async grantRowsOf(ownerId: string): Promise<GrantRow[]> {
+    if (!isUuid(ownerId)) return [];
     const roleIds = await this.identity.rolesOf(ownerId);
-    return effectiveAccess(await grantsOf(this.db, roleIds, ownerId));
+    return grantsOf(this.db, roleIds, ownerId);
   }
 
   /** Spend on one model this month; read at each check, no cache (KD-1). */

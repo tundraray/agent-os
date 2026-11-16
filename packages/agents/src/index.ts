@@ -1,9 +1,11 @@
-export type {
-  AccessAudit,
-  AccessDeniedEntry,
-  AccessGate,
-  ModelVerdict,
-  ToolAccess,
+export {
+  type AccessAudit,
+  type AccessDeniedEntry,
+  type AccessGate,
+  ModelRefusedError,
+  type ModelVerdict,
+  OwnerDisabledError,
+  type ToolAccess,
 } from './access-gate.js';
 export type { AgentView } from './agent-view.js';
 export { type AgentsConfig, parseAgentsConfig, secretValuesOf } from './config.js';

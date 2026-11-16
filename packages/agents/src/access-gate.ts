@@ -57,3 +57,15 @@ export class OwnerDisabledError extends Error {
     super(`Owner ${ownerId} is disabled or unknown`);
   }
 }
+
+/** A model call outside any task refused by the gate for a reason other than a disabled owner; the call does not start. */
+export class ModelRefusedError extends Error {
+  override readonly name = 'ModelRefusedError';
+
+  constructor(
+    readonly reason: ModelRefusalReason,
+    message: string,
+  ) {
+    super(message);
+  }
+}
