@@ -17,7 +17,7 @@ import type { AnnouncerStore } from "@/lib/live/announcer-store";
 import type { logger as appLogger } from "@/lib/logger";
 import type { HistoryStatus, ShellStatusStore } from "@/lib/threads/shell-status-store";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
-import { describeThreadsError, isThreadsApiError } from "@/lib/threads/threads-api-error";
+import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 
 import {
   applyDraftPart,
@@ -188,7 +188,7 @@ export function createFeedStore({
     try {
       result = await readToEnd(refreshing ? before.lastSeq : 0);
     } catch (error) {
-      const description = describeThreadsError(error);
+      const description = describeApiError(error);
       if (description.kind === "not_found") {
         logger.warn("feed view not found", { ...description, ...ids });
         setHistory("not_found");
@@ -238,9 +238,9 @@ export function createFeedStore({
     try {
       return await run();
     } catch (error) {
-      const description = describeThreadsError(error);
+      const description = describeApiError(error);
       logger.warn(`feed command ${name} failed`, { ...description, ...ids, ...extra });
-      if (isThreadsApiError(error) && error.kind === "not_found") {
+      if (isApiRequestError(error) && error.kind === "not_found") {
         if (error.code === "THREAD_NOT_FOUND") setHistory("deleted");
         if (error.code === "AGENT_NOT_FOUND") set({ loadError: "not_found" });
         // The decision is gone with its conversation: the re-read shows «не найдено» (Flow 2).

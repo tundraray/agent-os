@@ -1,8 +1,27 @@
+export {
+  type AccessAudit,
+  type AccessDeniedEntry,
+  type AccessGate,
+  ModelRefusedError,
+  type ModelVerdict,
+  OwnerDisabledError,
+  type ToolAccess,
+} from './access-gate.js';
 export type { AgentView } from './agent-view.js';
 export { type AgentsConfig, parseAgentsConfig, secretValuesOf } from './config.js';
 export { type Agents, createAgents } from './create-agents.js';
 export { type AgentDefinition, GENERAL_PURPOSE } from './definitions/definition.js';
 export { AgentsError } from './errors.js';
+export type { AgentsMcp, McpConnectResult } from './mcp/mcp.js';
+export type { McpConnectBegin, McpConnectReturn, McpConnectStart } from './mcp/mcp-accounts.js';
+export { McpError, type McpRefusalCode } from './mcp/mcp-errors.js';
+export type {
+  McpServerAuditState,
+  McpServerRegistration,
+  McpServerRemoval,
+  McpServerWrite,
+  McpToolsRefresh,
+} from './mcp/mcp-registry.js';
 export {
   type AgentTurnMessage,
   type AgentTurnModelClient,

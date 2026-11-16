@@ -74,6 +74,7 @@
 | Ошибка инструмента | `CircleX`, `--destructive` | Блока результата нет. У запуска кода — любая ошибка запуска, включая превышенный предел; вывода скрипта тоже нет |
 | Нет связи с сервером | `Unplug`, `--destructive` | Блока результата нет |
 | Отказано | `Ban`, `--destructive` | Платформа не исполнила вызов: нет права, инструмент вне набора агента или превышен предел платформы. Под заголовком — строка причины (Caption, `--muted-foreground`, agent-platform UXRD, MC-22), видна и в свёрнутом блоке; блока результата нет |
+| Нужен вход в аккаунт | `KeyRound`, `--warning` | Сервер требует личный аккаунт сотрудника, а токен не обновился. Под заголовком — строка причины со ссылкой на «Мой доступ» (enterprise-access UXRD, MC-10), видна и в свёрнутом блоке; блока результата нет |
 | Ждёт подтверждения | `Hand`, `--approval` | Сразу под блоком — карточка решения ([decision-card](./decision-card.md)) |
 | Отклонено | `CircleMinus`, `--muted-foreground` | Сотрудник отклонил действие; блока результата нет |
 | Прервано | `CircleStop`, `--muted-foreground` | Вызов отменён прерыванием; блока результата нет |
@@ -108,3 +109,4 @@
 
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — лента беседы и страница агента.
 - [docs/features/code-execution/uxrd.md](../../features/code-execution/uxrd.md) — запуск кода в истории (CE-03).
+- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — отказы по правам и модели, исход «нужен вход в аккаунт».

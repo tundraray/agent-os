@@ -7,9 +7,11 @@ import {
   type RunCodeArgs,
   RunCodeArgsSchema,
   RunCodeConfirmationContentSchema,
+  ToolOutcomeSchema,
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
+import { OwnerDisabledError } from '../../access-gate.js';
 import type { CodeRunConfig } from '../../config.js';
 import { type DefinitionCatalog, definitionOf } from '../../definitions/catalog.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
@@ -251,10 +253,22 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     }
 
     const signal = AbortSignal.any([run.codeScope.signal, runSignal]);
-    const execution = await deps.runner.callFromCode(
-      { name: request.name, args: request.args },
-      { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
-    );
+    const execution = await deps.runner
+      .callFromCode(
+        { name: request.name, args: request.args },
+        { ...run.codeScope, signal, logger: run.logger.child({ attempt: run.attempt, seq }) },
+      )
+      .catch(async (error: unknown) => {
+        // The gate refused a disabled owner before the call started (KD-4): `interrupted` even in a `write`
+        // run, never `unknown`. The rejection still ends the run; the agent fails at its next model call.
+        if (error instanceof OwnerDisabledError) {
+          await codeCalls.close(deps.database, key, {
+            outcome: ToolOutcomeSchema.enum.interrupted,
+            finishedAt: new Date(),
+          });
+        }
+        throw error;
+      });
     if (execution.kind === 'aborted') {
       // A record that the call was cancelled, not a new action: its own transaction, no `guard` (Flow 4).
       await codeCalls.close(deps.database, key, {
@@ -402,6 +416,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         const attempt = await attemptOf(input, logger);
         if (typeof attempt !== 'number') return attempt;
         const registry = deps.registry();
+        const snapshot = await registry.definitionMcpTools(definition);
         return await runScript(
           {
             caller,
@@ -412,7 +427,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
             logger,
             codeScope: {
               caller,
-              snapshot: registry.definitionMcpTools(definition),
+              snapshot,
               runClass: args.class,
               ...(confirmedNames === undefined ? {} : { confirmedNames }),
               agentToolNames: registry.toolNames(),

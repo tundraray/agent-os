@@ -128,7 +128,7 @@ describe('Scaffold localisation (UXRD 10.2): key screens carry no English string
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
-    await user.click(screen.getByRole('button', { name: 'Меню пользователя dev-user' }));
+    await user.click(await screen.findByRole('button', { name: 'Меню пользователя Аня Смирнова' }));
     expect(await screen.findByRole('menuitemradio', { name: 'Системная' })).toBeInTheDocument();
     expect(englishLeaks()).toEqual([]);
   });

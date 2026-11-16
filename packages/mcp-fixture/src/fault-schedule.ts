@@ -17,7 +17,6 @@ function rule<Mode extends string, Params extends z.ZodRawShape>(mode: Mode, par
 /** Modes the transport applies: the request never reaches the server, or its response is replaced by `id`. */
 const TRANSPORT_FAULT_RULES = [
   rule('drop_connection', {}),
-  rule('crash_process', {}),
   rule('hang', {}),
   rule('late_response', { ms: z.int().min(1) }),
   rule('jsonrpc_error', { code: z.int(), message: z.string().min(1).optional() }),

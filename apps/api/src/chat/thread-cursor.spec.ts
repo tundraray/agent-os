@@ -1,4 +1,3 @@
-import { BadRequestException } from '@nestjs/common';
 import {
   decodeThreadCursor,
   encodeThreadCursor,
@@ -90,7 +89,6 @@ describe('encodeThreadCursor / decodeThreadCursor', () => {
       thrown = error;
     }
 
-    expect(thrown).toBeInstanceOf(BadRequestException);
     expect(thrown).toMatchObject({
       response: {
         statusCode: 400,

@@ -4,8 +4,6 @@ export type AgentsErrorCode =
   | 'AGENT_NOT_FOUND'
   /** No definition with this name is in the catalog. */
   | 'UNKNOWN_DEFINITION'
-  /** The chosen model has no price in the deployment's prices file. */
-  | 'UNKNOWN_MODEL'
   /** The new agent would be deeper than `AGENT_MAX_DEPTH`. */
   | 'DEPTH_LIMIT'
   /** A restart from scratch of an agent that is still working. */

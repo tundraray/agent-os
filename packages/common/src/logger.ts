@@ -45,7 +45,20 @@ const SECRET_FIELD_NAMES = new Set([
   'authorization',
   'cookie',
   'dsn',
+  'clientsecret',
+  'idtoken',
+  'codeverifier',
+  'sessiontoken',
+  'currentpassword',
+  'newpassword',
+  'sharedtoken',
+  'tokens',
 ]);
+
+/** Whether a field of this name holds a secret (case-insensitive); the logger and the audit log redact it. */
+export function isSecretFieldName(name: string): boolean {
+  return SECRET_FIELD_NAMES.has(name.toLowerCase());
+}
 
 /**
  * The logger's redaction by value outside the log: replaces every occurrence of a secret at least
@@ -99,10 +112,39 @@ function expandErrorField(fields: LogFields): LogFields {
   return { ...fields, error: expandError(fields.error, new Set()) };
 }
 
+/** How the message of Drizzle's `DrizzleQueryError` starts. */
+const FAILED_QUERY = 'Failed query: ';
+
+/**
+ * A failed database query (Drizzle's `DrizzleQueryError`: `query`, `params` and the message
+ * `Failed query: …\nparams: …`) carries the bound values — password and token hashes, client secrets.
+ * Returns an error with the query text only, the same stack frames and the same cause (the driver
+ * error); any other value as it is. Every logged error passes here.
+ */
+export function withoutQueryParams<T>(error: T): T | Error {
+  if (!(error instanceof Error) || !('params' in error) || !('query' in error)) return error;
+  const header = `${error.name}: ${error.message}`;
+  const frames = error.stack?.startsWith(header) ? error.stack.slice(header.length) : '';
+  const safe = new Error(`${FAILED_QUERY}${String(error.query)}`, { cause: error.cause });
+  safe.name = error.name;
+  safe.stack = `${safe.name}: ${safe.message}${frames}`;
+  return safe;
+}
+
+/**
+ * The same for a message that is already text (a Sentry event of an error the SDK captured by itself):
+ * a failed query's message without its `\nparams: …` tail; any other text as it is.
+ */
+export function withoutQueryParamsText(message: string): string {
+  if (!message.startsWith(FAILED_QUERY)) return message;
+  return message.split('\nparams: ', 1)[0] ?? message;
+}
+
 /** Expands any thrown value into `{ name, message, stack, cause }`, following the cause chain. */
-function expandError(value: unknown, seen: Set<unknown>): LogFields {
+function expandError(thrown: unknown, seen: Set<unknown>): LogFields {
+  const value = withoutQueryParams(thrown);
   if (!(value instanceof Error)) return { message: String(value) };
-  seen.add(value);
+  seen.add(thrown).add(value);
   const expanded: LogFields = { name: value.name, message: value.message, stack: value.stack };
   if (value.cause !== undefined && !seen.has(value.cause)) {
     expanded.cause = expandError(value.cause, seen);
@@ -122,7 +164,7 @@ function cleanValue(value: unknown, mask: Mask, seen: WeakSet<object>): unknown 
   if (Array.isArray(value)) return value.map((item) => cleanValue(item, mask, seen));
   const cleaned: LogFields = {};
   for (const [key, item] of Object.entries(value)) {
-    cleaned[key] = SECRET_FIELD_NAMES.has(key.toLowerCase()) ? REDACTED : cleanValue(item, mask, seen);
+    cleaned[key] = isSecretFieldName(key) ? REDACTED : cleanValue(item, mask, seen);
   }
   return cleaned;
 }

@@ -1,5 +1,5 @@
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
-import { mcpToolName } from '../mcp/mcp-clients.js';
+import { mcpToolName } from '../mcp/mcp-tool.js';
 import type { AgentToolCall, AgentToolResult, AgentTurnMessage } from './mastra-turn.js';
 
 /** The preamble of the instructions: text inside an envelope is data, never instructions (Security «Input Validation»). */

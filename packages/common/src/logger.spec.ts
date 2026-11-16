@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createLogger, sentrySink, type LogLevel, type Logger, type SentrySdk } from './index.js';
+import {
+  createLogger,
+  sentrySink,
+  withoutQueryParamsText,
+  type LogLevel,
+  type Logger,
+  type SentrySdk,
+} from './index.js';
 import { memorySink, type MemorySink } from './testing.js';
 
 // DC-11 / UC-9: the logger redacts, expands and truncates before both sinks.
@@ -116,6 +123,43 @@ describe('logger redacts, expands and truncates before both sinks', () => {
 
     const [captured] = sentry.captureException.mock.calls[0]!;
     expect((captured as Error).message).toBe('token [redacted] rejected');
+  });
+
+  // Security: a failed query's parameters (password hashes, tokens, client secrets) never reach a sink.
+  it('logs a failed query (DrizzleQueryError shape) with its query text and cause, without its params', () => {
+    const { memory, sentry, logger } = setup();
+    class QueryError extends Error {
+      constructor(
+        readonly query: string,
+        readonly params: unknown[],
+        cause: Error,
+      ) {
+        super(
+          `Failed query: ${query}
+params: ${params.join(',')}`,
+          { cause },
+        );
+      }
+    }
+    const param = 'client-secret-value-42';
+    const query = 'update "identity_providers" set "options" = $1';
+
+    const failure = new QueryError(query, [param, 7], new Error('deadlock detected'));
+
+    logger.error('provider update failed', { error: failure });
+
+    const { fields } = only(memory);
+    expect(JSON.stringify(fields)).not.toContain(param);
+    expect(fields.error).toMatchObject({
+      name: 'Error',
+      message: `Failed query: ${query}`,
+      cause: { message: 'deadlock detected' },
+    });
+    expect((fields.error as { stack: string }).stack).toContain('logger.spec.ts');
+    const [captured] = sentry.captureException.mock.calls[0]!;
+    expect(String((captured as Error).stack)).not.toContain(param);
+    // The message as text: what Sentry's `beforeSend` cuts for an error the SDK captured by itself.
+    expect(withoutQueryParamsText(failure.message)).toBe(`Failed query: ${query}`);
   });
 
   it('expands a non-Error thrown value into a message', () => {

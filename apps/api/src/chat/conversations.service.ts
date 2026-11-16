@@ -13,6 +13,7 @@ import {
 import { RuntimeError, type Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
 import { AGENTS } from '../agents/agents.tokens.js';
+import { isUuid } from '../common/is-uuid.js';
 import { RUNTIME } from '../runtime/runtime.tokens.js';
 import { WORKFLOWS } from '../workflows/workflows.tokens.js';
 import { CHAT_DEFINITION } from './chat-definition.js';
@@ -32,11 +33,6 @@ import { TitleService } from './title.service.js';
 
 /** The root's description: the first characters of the first message (code points, never half a pair). */
 const ROOT_DESCRIPTION_LENGTH = 80;
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Whether `id` can be a row id; anything else answers as a missing conversation (plan rule 11). */
-export const isUuid = (id: string): boolean => UUID.test(id);
 
 /** A cursor of a previous page; a well-formed cursor must still name a row id (`INVALID_CURSOR`). */
 export function decodeRowCursor(cursor: string): ThreadCursor {

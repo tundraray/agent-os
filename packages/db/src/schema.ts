@@ -1,13 +1,24 @@
 import {
+  ABSOLUTE_MINUTES_DEFAULT,
+  ABSOLUTE_MINUTES_MAX,
+  ABSOLUTE_MINUTES_MIN,
   DecisionStatusSchema,
   DeliveryStatusSchema,
   EVENT_PAYLOAD_MAX_BYTES,
+  GrantEffectSchema,
+  GrantTargetKindSchema,
   HistoryEntryKindSchema,
+  IDLE_MINUTES_DEFAULT,
+  IDLE_MINUTES_MAX,
+  IDLE_MINUTES_MIN,
+  McpServerModeSchema,
   MessageStatusSchema,
+  ProviderTypeSchema,
   TaskStatusSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  UserStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import { type SQL, sql } from 'drizzle-orm';
@@ -51,6 +62,10 @@ const literal = (value: string): SQL =>
 /** `column IN (...)` over the values of a contract enum. */
 const isOneOf = (column: AnyPgColumn, values: readonly string[]): SQL =>
   sql`${column} in (${sql.join(values.map(literal), sql`, `)})`;
+
+/** `column BETWEEN min AND max` over code constants. */
+const isWithin = (column: AnyPgColumn, min: number, max: number): SQL =>
+  sql`${column} between ${sql.raw(String(min))} and ${sql.raw(String(max))}`;
 
 // ---------------------------------------------------------------------------------------------
 // Runtime tables (agent-platform/design-runtime.md, Data Model).
@@ -442,6 +457,73 @@ export const agentCodeCalls = app.table(
 );
 
 // ---------------------------------------------------------------------------------------------
+// MCP registry and employee accounts (enterprise-access/design-mcp-connect.md, Data Model, KD-1).
+// Owned by the `agents` package (ADR-0014). Tokens and the client secret are stored as is.
+// ---------------------------------------------------------------------------------------------
+
+export const agentMcpServers = app.table(
+  'agent_mcp_servers',
+  {
+    /** Never changes after registration: tool names and call history carry it. */
+    name: text('name').primaryKey(),
+    url: text('url').notNull(),
+    mode: text('mode').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    /** Tools as the tool set is built from them without network; null until first listed. */
+    tools: jsonb('tools'),
+    /** Set exactly for mode `shared`. */
+    sharedToken: text('shared_token'),
+    /** Authorization server metadata found at registration (issuer and endpoints). */
+    oauthServer: jsonb('oauth_server'),
+    oauthClientId: text('oauth_client_id'),
+    /** Null when the authorization server issued no secret. */
+    oauthClientSecret: text('oauth_client_secret'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check('agent_mcp_servers_mode_check', isOneOf(t.mode, McpServerModeSchema.options)),
+    check(
+      'agent_mcp_servers_shared_token_check',
+      sql`(${t.mode} = ${literal(McpServerModeSchema.enum.shared)}) = (${t.sharedToken} is not null)`,
+    ),
+    /** Invariant 2: an enabled server always has its tool list. */
+    check('agent_mcp_servers_enabled_tools_check', sql`not ${t.enabled} or ${t.tools} is not null`),
+    check(
+      'agent_mcp_servers_oauth_client_check',
+      sql`${t.mode} <> ${literal(McpServerModeSchema.enum.oauth)} or ${t.oauthClientId} is not null`,
+    ),
+  ],
+);
+
+/** Personal credentials of an employee on a server; deleting the server deletes them (AC-13.6). */
+export const agentMcpAccounts = app.table(
+  'agent_mcp_accounts',
+  {
+    /** Employee id; text without FK (ADR-0012). */
+    ownerId: text('owner_id').notNull(),
+    server: text('server')
+      .notNull()
+      .references(() => agentMcpServers.name, { onDelete: 'cascade' }),
+    /** How the token was obtained; `oauth` is the only type so far. */
+    tokenType: text('token_type').notNull(),
+    accessToken: text('access_token').notNull(),
+    refreshToken: text('refresh_token'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    connectedAt: timestamp('connected_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    refreshedAt: timestamp('refreshed_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ownerId, t.server] }),
+    check('agent_mcp_accounts_token_type_check', isOneOf(t.tokenType, ['oauth'])),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
 // Chat conversations (agent-platform/design-chat.md, Data Model, KD-1). No FK to the root task:
 // the row is locked during the tree's deletion and removed after the tree.
 // ---------------------------------------------------------------------------------------------
@@ -469,3 +551,274 @@ export const chatConversations = app.table(
     ),
   ],
 );
+
+// ---------------------------------------------------------------------------------------------
+// Identity (enterprise-access/design-identity.md, Data Model). Read only by the `identity` module
+// of `apps/api`. Email and login are stored normalized (trimmed, lower case), so a plain unique
+// index makes them unique regardless of case. Owner columns of `runtime` and `agents` stay text
+// without FK (ADR-0012).
+// ---------------------------------------------------------------------------------------------
+
+export const identityUsers = app.table(
+  'identity_users',
+  {
+    /** Issued by the server, never taken from a provider (Invariant 3). */
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    /** Empty string when there is no name. */
+    name: text('name').notNull().default(''),
+    /** Login of a local account; null for provider-only accounts. */
+    login: text('login'),
+    /** argon2id hash with its parameters; null for provider-only accounts. */
+    passwordHash: text('password_hash'),
+    status: text('status').notNull().default(UserStatusSchema.enum.active),
+    /** Personal admin right, besides admin roles. */
+    isAdmin: boolean('is_admin').notNull().default(false),
+    lastSignInAt: timestamp('last_sign_in_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('identity_users_email_idx').on(t.email),
+    uniqueIndex('identity_users_login_idx').on(t.login),
+    check('identity_users_status_check', isOneOf(t.status, UserStatusSchema.options)),
+  ],
+);
+
+export const identityRoles = app.table(
+  'identity_roles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    isAdmin: boolean('is_admin').notNull().default(false),
+    /** The built-in «Супер-администратор»: created by the migration, never changed (KD-6). */
+    builtin: boolean('builtin').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('identity_roles_name_idx').on(sql`lower(${t.name})`)],
+);
+
+export const identityRoleMembers = app.table(
+  'identity_role_members',
+  {
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.roleId, t.userId] }),
+    index('identity_role_members_user_idx').on(t.userId),
+  ],
+);
+
+export const identityProviders = app.table(
+  'identity_providers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Never changes after creation. */
+    type: text('type').notNull(),
+    name: text('name').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    /** Grows with every change of the provider. */
+    version: integer('version').notNull().default(1),
+    /** Settings of the type, the client secret included as is (KD-7). */
+    options: jsonb('options').notNull().default({}),
+    /** Orders the providers. */
+    createdAt: createdAt(),
+  },
+  (t) => [check('identity_providers_type_check', isOneOf(t.type, ProviderTypeSchema.options))],
+);
+
+/** One-time sign-in request; the row is deleted at the first return from the provider. */
+export const identityLoginRequests = app.table('identity_login_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  state: text('state').notNull().unique('identity_login_requests_state_key'),
+  providerId: uuid('provider_id')
+    .notNull()
+    .references(() => identityProviders.id, { onDelete: 'cascade' }),
+  nonce: text('nonce').notNull(),
+  /** PKCE verifier. */
+  codeVerifier: text('code_verifier').notNull(),
+  /** Web path to return to after sign-in. */
+  next: text('next').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+});
+
+/** Session of an employee; its limits are computed from the settings, not stored (KD-2). */
+export const identitySessions = app.table(
+  'identity_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** SHA-256 of the session token; the token itself is never stored. */
+    tokenHash: text('token_hash').notNull().unique('identity_sessions_token_hash_key'),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => identityUsers.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Why the session was ended (`account_disabled`, DC-9); null while it is live. */
+    endedReason: text('ended_reason'),
+  },
+  (t) => [index('identity_sessions_user_idx').on(t.userId)],
+);
+
+/** The single row of the part's settings (SignInSettings); the migration creates it. */
+export const identitySettings = app.table(
+  'identity_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** Public address without `/api`; null until saved. */
+    publicUrl: text('public_url'),
+    idleMinutes: integer('idle_minutes').notNull().default(IDLE_MINUTES_DEFAULT),
+    absoluteMinutes: integer('absolute_minutes').notNull().default(ABSOLUTE_MINUTES_DEFAULT),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id or `system`; null while the defaults stand. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    check('identity_settings_single_row_check', sql`${t.id}`),
+    check(
+      'identity_settings_idle_minutes_check',
+      isWithin(t.idleMinutes, IDLE_MINUTES_MIN, IDLE_MINUTES_MAX),
+    ),
+    check(
+      'identity_settings_absolute_minutes_check',
+      isWithin(t.absoluteMinutes, ABSOLUTE_MINUTES_MIN, ABSOLUTE_MINUTES_MAX),
+    ),
+    check(
+      'identity_settings_idle_not_above_absolute_check',
+      sql`${t.idleMinutes} <= ${t.absoluteMinutes}`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Access (enterprise-access/design-access.md, Data Model, KD-1, KD-3). Read and written only by the
+// `access` module of `apps/api` (ADR-0015). A grant names its MCP server and tool as text without
+// FK: the registry belongs to the `agents` package (ADR-0014).
+// ---------------------------------------------------------------------------------------------
+
+/** Price in USD per million tokens. */
+const usdPerMTok = (name: string) => numeric(name, { precision: 18, scale: 9, mode: 'number' });
+
+/** Model catalogue: a model is callable only when it is here. */
+export const accessModels = app.table(
+  'access_models',
+  {
+    /** Model ID as the provider knows it. */
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    inputUsdPerMTok: usdPerMTok('input_usd_per_mtok').notNull(),
+    outputUsdPerMTok: usdPerMTok('output_usd_per_mtok').notNull(),
+    cacheWriteUsdPerMTok: usdPerMTok('cache_write_usd_per_mtok').notNull(),
+    cacheReadUsdPerMTok: usdPerMTok('cache_read_usd_per_mtok').notNull(),
+    /** Long-context prices apply when the whole input of a call is above this; null — one price. */
+    longContextAboveInputTokens: integer('long_context_above_input_tokens'),
+    longContextInputUsdPerMTok: usdPerMTok('long_context_input_usd_per_mtok'),
+    longContextOutputUsdPerMTok: usdPerMTok('long_context_output_usd_per_mtok'),
+    longContextCacheWriteUsdPerMTok: usdPerMTok('long_context_cache_write_usd_per_mtok'),
+    longContextCacheReadUsdPerMTok: usdPerMTok('long_context_cache_read_usd_per_mtok'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    /** Null long-context prices pass: `null >= 0` is not false. */
+    check(
+      'access_models_prices_check',
+      sql`${t.inputUsdPerMTok} >= 0 and ${t.outputUsdPerMTok} >= 0
+        and ${t.cacheWriteUsdPerMTok} >= 0 and ${t.cacheReadUsdPerMTok} >= 0
+        and ${t.longContextInputUsdPerMTok} >= 0 and ${t.longContextOutputUsdPerMTok} >= 0
+        and ${t.longContextCacheWriteUsdPerMTok} >= 0 and ${t.longContextCacheReadUsdPerMTok} >= 0`,
+    ),
+    check(
+      'access_models_long_context_threshold_check',
+      sql`${t.longContextAboveInputTokens} > 0`,
+    ),
+    /** All five long-context columns are set or none; `or` keeps the CHECK out of `= ANY`. */
+    check(
+      'access_models_long_context_check',
+      sql`num_nulls(${t.longContextAboveInputTokens}, ${t.longContextInputUsdPerMTok},
+          ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
+          ${t.longContextCacheReadUsdPerMTok}) = 0
+        or num_nulls(${t.longContextAboveInputTokens}, ${t.longContextInputUsdPerMTok},
+          ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
+          ${t.longContextCacheReadUsdPerMTok}) = 5`,
+    ),
+  ],
+);
+
+/** A grant of a role or an employee on a server, a tool or a model; one per holder, effect, target. */
+export const accessGrants = app.table(
+  'access_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    effect: text('effect').notNull(),
+    targetKind: text('target_kind').notNull(),
+    server: text('server'),
+    tool: text('tool'),
+    model: text('model').references(() => accessModels.id, { onDelete: 'cascade' }),
+    /** Monthly quota of a model allow; null — no quota. */
+    quotaUsd: numeric('quota_usd', { precision: 12, scale: 2, mode: 'number' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('access_grants_holder_target_key')
+      .on(t.roleId, t.userId, t.effect, t.targetKind, t.server, t.tool, t.model)
+      .nullsNotDistinct(),
+    index('access_grants_role_idx').on(t.roleId),
+    index('access_grants_user_idx').on(t.userId),
+    check('access_grants_effect_check', isOneOf(t.effect, GrantEffectSchema.options)),
+    check('access_grants_target_kind_check', isOneOf(t.targetKind, GrantTargetKindSchema.options)),
+    check('access_grants_holder_check', sql`num_nonnulls(${t.roleId}, ${t.userId}) = 1`),
+    check(
+      'access_grants_target_check',
+      sql`(${t.targetKind} = ${literal(GrantTargetKindSchema.enum.server)}
+          and ${t.server} is not null and ${t.tool} is null and ${t.model} is null)
+        or (${t.targetKind} = ${literal(GrantTargetKindSchema.enum.tool)}
+          and ${t.server} is not null and ${t.tool} is not null and ${t.model} is null)
+        or (${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)}
+          and ${t.server} is null and ${t.tool} is null and ${t.model} is not null)`,
+    ),
+    /** Invariant 2: a deny belongs only to an employee. */
+    check(
+      'access_grants_deny_holder_check',
+      sql`${t.effect} = ${literal(GrantEffectSchema.enum.allow)} or ${t.userId} is not null`,
+    ),
+    check(
+      'access_grants_quota_check',
+      sql`${t.quotaUsd} is null or (${t.effect} = ${literal(GrantEffectSchema.enum.allow)}
+        and ${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)})`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Audit (enterprise-access/design-identity.md, KD-7). Written only by `AuditLog` of `apps/api`;
+// kinds are open: every part adds its own.
+// ---------------------------------------------------------------------------------------------
+
+export const auditEvents = app.table('audit_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(),
+  /** Employee id or `system`. */
+  actor: text('actor').notNull(),
+  objectType: text('object_type'),
+  objectId: text('object_id'),
+  /** Secrets and passwords are already masked by `AuditLog`. */
+  before: jsonb('before'),
+  after: jsonb('after'),
+  outcome: text('outcome').notNull(),
+  reason: text('reason'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+});

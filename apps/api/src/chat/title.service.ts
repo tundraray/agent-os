@@ -1,5 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Agents } from '@agent-os/agents';
+import {
+  type Agents,
+  ModelRefusedError,
+  OwnerDisabledError,
+} from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import { AGENTS } from '../agents/agents.tokens.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
@@ -23,11 +27,19 @@ export type EnsureTitleRequest = {
   readonly firstText?: string;
 };
 
+/** Why the access gate refused the title call; `undefined` for any other error, which is a failure. */
+function refusalReason(error: unknown): string | undefined {
+  if (error instanceof OwnerDisabledError) return 'owner_disabled';
+  if (error instanceof ModelRefusedError) return error.reason;
+  return undefined;
+}
+
 /**
  * The automatic title of a conversation (design-chat.md, DC-2, KD-6): one `agents.completeText` call
  * over the first message, the title rules, and a write only into an empty title. It runs in the
  * background of a send whose conversation has no title yet, at most once at a time per conversation
- * in this process; a failure or an empty answer leaves the title empty, and the next send retries.
+ * in this process; a failure, a refusal of the access gate (one `info` record with the reason) or an
+ * empty answer leaves the title empty, and the next send retries.
  */
 @Injectable()
 export class TitleService {
@@ -85,6 +97,16 @@ export class TitleService {
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
+      const reason = refusalReason(error);
+      if (reason !== undefined) {
+        this.logger.info('thread title refused by the access gate', {
+          threadId,
+          ownerId,
+          reason,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
       this.logger.warn('thread title not generated', {
         threadId,
         error,

@@ -10,7 +10,6 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
@@ -29,9 +28,8 @@ import {
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import type { AuthedRequest } from '../auth/auth.types.js';
-import { SessionGuard } from '../auth/session.guard.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
+import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { type Command, runCommand } from './chat.errors.js';
 import { ConversationsService } from './conversations.service.js';
@@ -43,7 +41,6 @@ import { interruptTextOf } from './interrupt-body.js';
  * duration; a malformed, missing or foreign `threadId` answers the same 404 `THREAD_NOT_FOUND`.
  */
 @Controller('threads')
-@UseGuards(SessionGuard)
 export class ThreadsController {
   private readonly logger: Logger;
 

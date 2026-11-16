@@ -1,24 +1,52 @@
 import {
   AGENTS_TOOL_CONFIRMATION,
+  AdminUserDetailSchema,
+  AdminUserPageSchema,
+  AdminUserSummarySchema,
   AgentListPageSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
   AgentViewSchema,
   ConfirmationSchema,
   ConversationViewSchema,
+  CreateCatalogModelBodySchema,
+  CurrentUserSchema,
+  GrantSchema,
   HistoryEntrySchema,
+  McpServerSummarySchema,
+  McpServerViewSchema,
   PendingMessageSchema,
+  ProviderSummarySchema,
+  ProviderViewSchema,
+  RoleDetailSchema,
+  RoleSummarySchema,
+  SignInSettingsSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
+  type AdminUserDetail,
+  type AdminUserPage,
+  type AdminUserSummary,
   type AgentListNode,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
   type AgentView,
+  type CatalogModel,
   type Confirmation,
   type ConversationView,
+  type CurrentUser,
+  type Grant,
   type HistoryEntry,
+  type McpServerSummary,
+  type McpServerView,
+  type McpToolView,
   type PendingMessage,
+  type ProviderOptionsView,
+  type ProviderSummary,
+  type ProviderView,
+  type RoleDetail,
+  type RoleSummary,
+  type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
@@ -38,6 +66,18 @@ export function threadSummary(overrides: Partial<ThreadSummary> & Pick<ThreadSum
 /** Body of GET /api/threads; validated by ThreadListResponseSchema. */
 export function threadList(threads: ThreadSummary[], nextCursor: string | null = null): ThreadListResponse {
   return ThreadListResponseSchema.parse({ threads, nextCursor });
+}
+
+/** Body of GET /api/auth/me: an employee with a local password, not an administrator. */
+export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
+  return CurrentUserSchema.parse({
+    id: fixtureId(1),
+    email: 'anya@corp.example',
+    name: 'Аня Смирнова',
+    isAdmin: false,
+    hasPassword: true,
+    ...overrides,
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -219,6 +259,142 @@ export function agentListPage(
       threadTitle,
     })),
     nextCursor,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Admin panel fixtures: each one passes its `@agent-os/contracts` schema.
+
+/** A UUID the contracts accept, distinct per `n`: `fixtureId(2)` = '00000000-0000-4000-8000-000000000002'. */
+export function fixtureId(n: number): string {
+  return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+}
+
+/** Public address of the API in the panel fixtures (sign-in settings, provider return addresses). */
+const FIXTURE_PUBLIC_URL = 'https://agent-os.corp.example';
+
+/** Row of GET /api/admin/users: an active provider-only account without roles. */
+export function adminUserSummary(
+  overrides: Partial<AdminUserSummary> & Pick<AdminUserSummary, 'id'>,
+): AdminUserSummary {
+  return AdminUserSummarySchema.parse({
+    email: 'anya@corp.example',
+    name: 'Аня Смирнова',
+    login: null,
+    status: 'active',
+    lastSignInAt: FIXTURE_TIME,
+    roles: [],
+    ...overrides,
+  });
+}
+
+/** Body of GET /api/admin/users. */
+export function adminUserPage(users: AdminUserSummary[], nextCursor: string | null = null): AdminUserPage {
+  return AdminUserPageSchema.parse({ users, nextCursor });
+}
+
+/** GET /api/admin/users/:id: no admin right by default. */
+export function adminUserDetail(
+  overrides: Partial<AdminUserDetail> & Pick<AdminUserDetail, 'id'>,
+): AdminUserDetail {
+  const { adminRight = { personal: false, roles: [] }, ...summary } = overrides;
+  return AdminUserDetailSchema.parse({ ...adminUserSummary(summary), adminRight });
+}
+
+/** Row of GET /api/admin/roles: an ordinary role «SRE» without members. */
+export function roleSummary(overrides: Partial<RoleSummary> & Pick<RoleSummary, 'id'>): RoleSummary {
+  return RoleSummarySchema.parse({ name: 'SRE', memberCount: 0, isAdmin: false, builtin: false, ...overrides });
+}
+
+/** GET /api/admin/roles/:id; `memberCount` follows `members` unless given. */
+export function roleDetail(overrides: Partial<RoleDetail> & Pick<RoleDetail, 'id'>): RoleDetail {
+  const { members = [], ...summary } = overrides;
+  return RoleDetailSchema.parse({ ...roleSummary({ memberCount: members.length, ...summary }), members });
+}
+
+/** Row of GET /api/admin/grants: role «SRE» (`fixtureId(100)`) may call `sentry` / `list_issues`, no quota. */
+export function grant(overrides: Partial<Grant> & Pick<Grant, 'id'>): Grant {
+  return GrantSchema.parse({
+    holder: { kind: 'role', id: fixtureId(100), name: 'SRE' },
+    effect: 'allow',
+    target: { kind: 'tool', server: 'sentry', tool: 'list_issues' },
+    quotaUsd: null,
+    createdAt: FIXTURE_TIME,
+    ...overrides,
+  });
+}
+
+/** Row of GET /api/admin/providers: a disabled OIDC provider «Okta». */
+export function providerSummary(overrides: Partial<ProviderSummary> & Pick<ProviderSummary, 'id'>): ProviderSummary {
+  return ProviderSummarySchema.parse({ type: 'oidc', name: 'Okta', enabled: false, ...overrides });
+}
+
+/**
+ * GET /api/admin/providers/:id: nothing filled in yet; `options` overrides merge into the empty settings, the return
+ * address is built from the provider id as the API builds it.
+ */
+export function providerView(
+  overrides: Partial<Omit<ProviderView, 'options'>> & Pick<ProviderView, 'id'> & { options?: Partial<ProviderOptionsView> },
+): ProviderView {
+  const { options, complete = false, providerData, ...summary } = overrides;
+  return ProviderViewSchema.parse({
+    ...providerSummary(summary),
+    complete,
+    options: { clientId: null, issuer: null, clientSecretSet: false, ...options },
+    providerData: providerData ?? {
+      redirectUri: `${FIXTURE_PUBLIC_URL}/api/auth/oauth/${summary.id}/callback`,
+      scopes: 'openid email profile',
+    },
+  });
+}
+
+/** GET /api/admin/settings/sign-in: the saved address and the default limits (8 h idle, 24 h total). */
+export function signInSettings(overrides: Partial<SignInSettings> = {}): SignInSettings {
+  return SignInSettingsSchema.parse({
+    publicUrl: FIXTURE_PUBLIC_URL,
+    idleMinutes: 480,
+    absoluteMinutes: 1440,
+    updatedAt: null,
+    ...overrides,
+  });
+}
+
+/** Row of GET /api/admin/mcp-servers: an enabled personal-OAuth server without tools. */
+export function mcpServerSummary(
+  overrides: Partial<McpServerSummary> & Pick<McpServerSummary, 'name'>,
+): McpServerSummary {
+  return McpServerSummarySchema.parse({
+    url: `https://${overrides.name}.example/mcp`,
+    mode: 'oauth',
+    status: 'enabled',
+    toolCount: 0,
+    ...overrides,
+  });
+}
+
+/** Tools of a server view by default: one that reads and one that changes. */
+const FIXTURE_TOOLS: McpToolView[] = [
+  { name: 'list_issues', title: 'List issues', description: 'Список задач', readOnly: true },
+  { name: 'update_issue', title: 'Update issue', description: 'Изменяет задачу', readOnly: false },
+];
+
+/** GET /api/admin/mcp-servers/:name: `list_issues` (reads) and `update_issue` (changes); `toolCount` follows `tools`. */
+export function mcpServerView(overrides: Partial<McpServerView> & Pick<McpServerView, 'name'>): McpServerView {
+  const { tools = FIXTURE_TOOLS, sharedTokenSet = false, ...summary } = overrides;
+  return McpServerViewSchema.parse({
+    ...mcpServerSummary({ toolCount: tools.length, ...summary }),
+    sharedTokenSet,
+    tools,
+  });
+}
+
+/** Row of GET /api/admin/models (the create body's fields): one price, no long-context rates. */
+export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id'>): CatalogModel {
+  return CreateCatalogModelBodySchema.parse({
+    name: 'Claude Sonnet 4.5',
+    prices: { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheWriteUsdPerMTok: 3.75, cacheReadUsdPerMTok: 0.3 },
+    longContext: null,
+    ...overrides,
   });
 }
 

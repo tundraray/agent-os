@@ -35,20 +35,22 @@ import {
   type ThreadSummary,
   type WorkflowRunBrief,
 } from '@agent-os/contracts';
-import request, { type Response } from 'supertest';
+import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
+import { apiRequest, type Method, type Session } from './session.js';
+
+export type { Method } from './session.js';
 
 /**
  * Typed helpers over supertest for the chat API (design-chat.md, Contract Definitions): every request
- * carries the employee as `x-user-id` (SessionGuard is real), every success body is parsed with its
- * `packages/contracts` schema (time fields are ISO strings), and an unexpected status fails with the body.
+ * carries the employee's session cookie and the web's `Origin` (session.ts; the session check is real),
+ * every success body is parsed with its `packages/contracts` schema (time fields are ISO strings), and an
+ * unexpected status fails with the body.
  */
 
 /** Poll interval of {@link waitFor}. */
 const POLL_MS = 50;
-
-export type Method = 'get' | 'post' | 'patch' | 'delete';
 
 /** Fails unless the response has `status`; returns the body parsed with `schema`. */
 export async function expectBody<T>(
@@ -75,7 +77,6 @@ export function expectError(
 
 /** The API as one employee sees it. */
 export interface ChatApi {
-  readonly ownerId: string;
   /** A request under `/api` as this employee; the body, when given, is sent as JSON. */
   raw(method: Method, path: string, body?: object): Promise<Response>;
 
@@ -102,7 +103,10 @@ export interface ChatApi {
   restartAgent(agentId: string): Promise<RestartResponse>;
 
   /** `POST /decisions/:id`, 200. */
-  decide(decisionId: string, decision: DecisionRequest): Promise<DecisionResponse>;
+  decide(
+    decisionId: string,
+    decision: DecisionRequest,
+  ): Promise<DecisionResponse>;
   spend(): Promise<SpendResponse>;
 }
 
@@ -117,30 +121,54 @@ function cursorQuery(cursor: string | undefined): string {
   return cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
 }
 
-export function chatApi(app: INestApplication<App>, ownerId: string): ChatApi {
-  const raw = (method: Method, path: string, body?: object): Promise<Response> => {
-    const test = request(app.getHttpServer())[method](`/api${path}`).set('x-user-id', ownerId);
-    return body === undefined ? test : test.send(body);
-  };
-  const ok = <T>(status: number, schema: z.ZodType<T>, method: Method, path: string, body?: object) =>
-    expectBody(raw(method, path, body), status, schema);
+export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
+  const raw = (
+    method: Method,
+    path: string,
+    body?: object,
+  ): Promise<Response> => apiRequest(app, session, method, path, body);
+  const ok = <T>(
+    status: number,
+    schema: z.ZodType<T>,
+    method: Method,
+    path: string,
+    body?: object,
+  ) => expectBody(raw(method, path, body), status, schema);
 
   return {
-    ownerId,
     raw,
-    listThreads: (cursor) => ok(200, ThreadListResponseSchema, 'get', `/threads${cursorQuery(cursor)}`),
+    listThreads: (cursor) =>
+      ok(
+        200,
+        ThreadListResponseSchema,
+        'get',
+        `/threads${cursorQuery(cursor)}`,
+      ),
     createThread: () => ok(201, ThreadSummarySchema, 'post', '/threads'),
-    getThread: (threadId) => ok(200, ThreadSummarySchema, 'get', `/threads/${threadId}`),
+    getThread: (threadId) =>
+      ok(200, ThreadSummarySchema, 'get', `/threads/${threadId}`),
     renameThread: (threadId, title) =>
       ok(200, ThreadSummarySchema, 'patch', `/threads/${threadId}`, { title }),
     deleteThread: async (threadId) => {
       await ok(204, NoBodySchema, 'delete', `/threads/${threadId}`);
     },
     history: (threadId, afterSeq) =>
-      ok(200, ConversationViewSchema, 'get', `/threads/${threadId}/history${afterSeqQuery(afterSeq)}`),
-    threadAgents: (threadId) => ok(200, AgentTreeSchema, 'get', `/threads/${threadId}/agents`),
+      ok(
+        200,
+        ConversationViewSchema,
+        'get',
+        `/threads/${threadId}/history${afterSeqQuery(afterSeq)}`,
+      ),
+    threadAgents: (threadId) =>
+      ok(200, AgentTreeSchema, 'get', `/threads/${threadId}/agents`),
     send: (threadId, text) =>
-      ok(202, SendMessageResponseSchema, 'post', `/threads/${threadId}/messages`, { text }),
+      ok(
+        202,
+        SendMessageResponseSchema,
+        'post',
+        `/threads/${threadId}/messages`,
+        { text },
+      ),
     interrupt: (threadId, text) =>
       ok(
         200,
@@ -150,15 +178,33 @@ export function chatApi(app: INestApplication<App>, ownerId: string): ChatApi {
         text === undefined ? undefined : { text },
       ),
 
-    agentList: (cursor) => ok(200, AgentListPageSchema, 'get', `/agents${cursorQuery(cursor)}`),
+    agentList: (cursor) =>
+      ok(200, AgentListPageSchema, 'get', `/agents${cursorQuery(cursor)}`),
     awaiting: () => ok(200, AwaitingCountSchema, 'get', '/agents/awaiting'),
     agentPage: (agentId, afterSeq) =>
-      ok(200, AgentPageViewSchema, 'get', `/agents/${agentId}/history${afterSeqQuery(afterSeq)}`),
+      ok(
+        200,
+        AgentPageViewSchema,
+        'get',
+        `/agents/${agentId}/history${afterSeqQuery(afterSeq)}`,
+      ),
     inherited: (agentId, afterSeq) =>
-      ok(200, InheritedHistorySchema, 'get', `/agents/${agentId}/inherited${afterSeqQuery(afterSeq)}`),
-    run: (agentId) => ok(200, WorkflowRunBriefSchema, 'get', `/agents/${agentId}/run`),
+      ok(
+        200,
+        InheritedHistorySchema,
+        'get',
+        `/agents/${agentId}/inherited${afterSeqQuery(afterSeq)}`,
+      ),
+    run: (agentId) =>
+      ok(200, WorkflowRunBriefSchema, 'get', `/agents/${agentId}/run`),
     sendToAgent: (agentId, text) =>
-      ok(202, SendMessageResponseSchema, 'post', `/agents/${agentId}/messages`, { text }),
+      ok(
+        202,
+        SendMessageResponseSchema,
+        'post',
+        `/agents/${agentId}/messages`,
+        { text },
+      ),
     interruptAgent: (agentId, text) =>
       ok(
         200,
@@ -167,11 +213,19 @@ export function chatApi(app: INestApplication<App>, ownerId: string): ChatApi {
         `/agents/${agentId}/interrupt`,
         text === undefined ? undefined : { text },
       ),
-    stopAgent: (agentId) => ok(200, StopResponseSchema, 'post', `/agents/${agentId}/stop`),
-    restartAgent: (agentId) => ok(201, RestartResponseSchema, 'post', `/agents/${agentId}/restart`),
+    stopAgent: (agentId) =>
+      ok(200, StopResponseSchema, 'post', `/agents/${agentId}/stop`),
+    restartAgent: (agentId) =>
+      ok(201, RestartResponseSchema, 'post', `/agents/${agentId}/restart`),
 
     decide: (decisionId, decision) =>
-      ok(200, DecisionResponseSchema, 'post', `/decisions/${decisionId}`, decision),
+      ok(
+        200,
+        DecisionResponseSchema,
+        'post',
+        `/decisions/${decisionId}`,
+        decision,
+      ),
     spend: () => ok(200, SpendResponseSchema, 'get', '/spend'),
   };
 }
@@ -187,7 +241,9 @@ export async function waitFor<T>(
   let value = await read();
   while (!done(value)) {
     if (Date.now() >= deadline) {
-      throw new Error(`Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(value)}`);
+      throw new Error(
+        `Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(value)}`,
+      );
     }
     await delay(POLL_MS);
     value = await read();

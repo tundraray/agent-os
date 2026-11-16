@@ -21,15 +21,17 @@ import { ShellActionsProvider } from './shell-actions';
 type ChatRuntimeProviderProps = {
   /** Opens the live stream; only the test harness passes one (jsdom has no `EventSource`). */
   openEventSource?: OpenEventSource;
+  /** Whole-tab navigation of the shell services; only the test harness passes one (jsdom does not navigate). */
+  location?: Pick<Location, 'assign'>;
   children: ReactNode;
 };
 
 /** The only place the assistant-ui runtime and the live stream are created; the open thread is controlled by the URL. */
-export function ChatRuntimeProvider({ openEventSource, children }: ChatRuntimeProviderProps) {
+export function ChatRuntimeProvider({ openEventSource, location, children }: ChatRuntimeProviderProps) {
   const router = useRouter();
   const route = parseShellRoute(usePathname());
   const threadId = route.kind === 'chat' ? route.threadId : undefined;
-  const [services] = useState(() => createShellServices({ openEventSource }));
+  const [services] = useState(() => createShellServices({ openEventSource, location }));
   // TH-03 starter suggestions feed `ThreadPrimitive.Suggestions` through the provider's root scope.
   const config = useMemo(
     () => AuiConfig({ ...services.auiConfig, suggestions: Suggestions(WELCOME_SUGGESTIONS) }),
@@ -67,8 +69,8 @@ export function ChatRuntimeProvider({ openEventSource, children }: ChatRuntimePr
 
 /**
  * The stream follows the screen (design-web.md, KD-2): `thread:<id>` once `/chat/<id>` has its item
- * open, `agent:<id>` on an agent page, no target on `/` and `/agents`. While the URL thread is still
- * opening the current stream stays, except on the first mount, which opens the stream at once.
+ * open, `agent:<id>` on an agent page, no target on `/`, `/agents` and `/account`. While the URL thread
+ * is still opening the current stream stays, except on the first mount, which opens the stream at once.
  * `watch` closes the previous source before opening the next one (Invariant 1).
  */
 function useLiveWatch(live: LiveStore): void {
@@ -77,7 +79,7 @@ function useLiveWatch(live: LiveStore): void {
     (s) => selectMainItem(s)?.remoteId);
   const target = ((): LiveTarget | null | undefined => {
     if (route.kind === 'agent') return `agent:${route.agentId}`;
-    if (route.kind === 'agents' || route.threadId === undefined) return null;
+    if (route.kind !== 'chat' || route.threadId === undefined) return null;
     return mainRemoteId === route.threadId ? `thread:${route.threadId}` : undefined;
   })();
   const started = useRef(false);

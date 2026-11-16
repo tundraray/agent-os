@@ -2,7 +2,7 @@ import type { RemoteThreadListAdapter } from "@assistant-ui/react";
 import type { ThreadSummary } from "@agent-os/contracts";
 import { logger } from "@/lib/logger";
 import type { ThreadsApiClient } from "./threads-api-client";
-import { describeThreadsError, isThreadsApiError } from "./threads-api-error";
+import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import type { ShellStatusStore } from "./shell-status-store";
 import { createTitlePollStream } from "./title-poller";
 
@@ -50,7 +50,7 @@ export function createThreadListAdapter({
       } catch (error) {
         logger.error("[web-shell] thread list load failed", {
           nextPage: isNextPage,
-          ...describeThreadsError(error),
+          ...describeApiError(error),
         });
         if (isNextPage) status.getState().setLoadMoreFailed(true);
         throw error;
@@ -72,7 +72,7 @@ export function createThreadListAdapter({
       } catch (error) {
         logger.error("[web-shell] thread rename failed", {
           remoteId,
-          ...describeThreadsError(error),
+          ...describeApiError(error),
         });
         notify.renameFailed();
         throw error;
@@ -83,10 +83,10 @@ export function createThreadListAdapter({
         await api.deleteThread(remoteId);
       } catch (error) {
         // 404: the thread is already gone (AC-16.3) — the user's intent is fulfilled.
-        if (!(isThreadsApiError(error) && error.kind === "not_found")) {
+        if (!(isApiRequestError(error) && error.kind === "not_found")) {
           logger.error("[web-shell] thread delete failed", {
             remoteId,
-            ...describeThreadsError(error),
+            ...describeApiError(error),
           });
           notify.deleteFailed();
           throw error;

@@ -1,4 +1,9 @@
-import { AGENTS_HISTORY_APPENDED, CHILD_FINISHED_KIND, HistoryEventSchema } from '@agent-os/contracts';
+import {
+  AgentFailureReasonSchema,
+  AGENTS_HISTORY_APPENDED,
+  CHILD_FINISHED_KIND,
+  HistoryEventSchema,
+} from '@agent-os/contracts';
 import { agentToolCalls, type Database } from '@agent-os/db';
 import {
   isFinished,
@@ -10,10 +15,19 @@ import {
 } from '@agent-os/runtime';
 import { eq } from 'drizzle-orm';
 
+import type { AccessAudit } from '../access-gate.js';
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
-import { mcpToolName } from '../mcp/mcp-clients.js';
-import type { ModelAnswer, ModelClient, ModelError } from '../model/model-client.js';
+import { mcpToolName } from '../mcp/mcp-tool.js';
+import {
+  type ModelAnswer,
+  type ModelClient,
+  modelDeniedEntry,
+  type ModelError,
+  type ModelRefusal,
+  modelRefusalMessage,
+  refusalFields,
+} from '../model/model-client.js';
 import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
@@ -34,7 +48,7 @@ const STEP_KIND = 'model';
 const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
-export const FAILURE_REASONS = { turnLimit: 'turn_limit', modelError: 'model_error' } as const;
+export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
 
 /**
  * What the handler (T4.4) writes before the step's own entries — a continuation (Flow 6, Flow 7) or
@@ -159,7 +173,7 @@ export function failResult(input: {
   readonly reason: string;
   readonly message: string;
   /** Writes the entries before the event and returns them. */
-  readonly writeEntries: (tx: RuntimeTx) => Promise<readonly NewHistoryEntry[]>;
+  readonly writeEntries: (tx: RuntimeTx, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
   readonly patch: SessionPatch;
 }): StepResult {
   const { ctx, reason, message } = input;
@@ -168,7 +182,7 @@ export function failResult(input: {
     reason,
     message,
     commit: async (tx, effects) => {
-      const entries = await input.writeEntries(tx);
+      const entries = await input.writeEntries(tx, effects);
       await appendWithEvent(tx, effects, ctx.taskId, [...entries, failedEvent(reason)]);
       await sessions.update(tx, ctx.taskId, {
         ...input.patch,
@@ -177,6 +191,36 @@ export function failResult(input: {
       });
     },
   };
+}
+
+/**
+ * `AccessGate` refused the agent's call (KD-4, KD-5, DC-3): no call started, and the agent fails with the
+ * verdict's reason by `failResult`, as on `model_error` — no pause. Every reason but `owner_disabled` is
+ * written to the audit first (KD-6, plan Notes 3): a failing hook rejects, and the runtime repeats the step.
+ */
+export async function refusedResult(input: {
+  readonly ctx: StepContext;
+  readonly stepKind: string;
+  readonly startedAt: number;
+  /** The model of the refused call (the session's). */
+  readonly model: string;
+  readonly refusal: ModelRefusal;
+  readonly audit: AccessAudit;
+  readonly writeEntries: (tx: RuntimeTx, effects: StepEffects) => Promise<readonly NewHistoryEntry[]>;
+  readonly patch: SessionPatch;
+}): Promise<StepResult> {
+  const { ctx, model, refusal } = input;
+  if (refusal.reason !== FAILURE_REASONS.owner_disabled) {
+    await input.audit(modelDeniedEntry(ctx.ownerId, model, refusal));
+  }
+  logStep(ctx, input.stepKind, input.startedAt, 'fail', { model, ...refusalFields(refusal) });
+  return failResult({
+    ctx,
+    reason: refusal.reason,
+    message: `Agent ${ctx.taskId}: ${modelRefusalMessage(ctx.ownerId, model, refusal)}`,
+    writeEntries: input.writeEntries,
+    patch: input.patch,
+  });
 }
 
 /** Logs the end of a step (rule 3 of the plan). */
@@ -223,6 +267,8 @@ export interface ModelStepDeps {
   readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
+  /** Gets the `access_denied` record of a refused model call (KD-6). */
+  readonly audit: AccessAudit;
   /** Children of the agent: the end of a turn waits for the unfinished ones (DC-3). */
   readonly tasks: Pick<Runtime['tasks'], 'listTree'>;
   /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
@@ -268,7 +314,8 @@ function newToolCalls(
  * - The turn limit spent → `fail` `turn_limit`, the delivered messages written before the `failed` event.
  * - Otherwise the delivered messages go to history before the call, and the model of the session
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
- *   `model_error`. Both failures close the session and reset the turn counter (DC-1).
+ *   `model_error`; a call `AccessGate` refused → `fail` with the verdict's reason, the model not called.
+ *   Each failure closes the session and resets the turn counter (DC-1).
  * - An answer with calls is written with its open calls (`requested`): `continue`, the tool step runs
  *   them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
  *   `complete` with `{ report }`, the session closed and its counter reset.
@@ -276,7 +323,7 @@ function newToolCalls(
  *   `agents.history_appended`.
  */
 export function createModelStep(deps: ModelStepDeps): ModelStep {
-  const { database, catalog, registry, modelClient } = deps;
+  const { database, catalog, registry, modelClient, audit } = deps;
 
   /** The last report of `finalAgent` among the session's child reports, the delivered ones included (DC-4). */
   async function finalAgentReport(
@@ -331,10 +378,10 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
     // The definition's `maxTurns` is spent: the step fails instead of calling the model.
     if (turns >= definition.maxTurns) {
-      logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turnLimit, turns });
+      logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turn_limit, turns });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.turnLimit,
+        reason: FAILURE_REASONS.turn_limit,
         message: `Agent ${definition.name} used all ${definition.maxTurns} turns of its assignment`,
         writeEntries: writeStepEntries,
         patch: basePatch,
@@ -343,7 +390,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
     const view = await readSessionHistory(database, session);
     const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
-    const sessionTools = registry.sessionTools({
+    const sessionTools = await registry.sessionTools({
       definition,
       limits: session.limits,
       ownerId: session.ownerId,
@@ -369,14 +416,26 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     );
     if (result === undefined) return { outcome: 'continue' };
 
+    if (result.kind === 'not_started') {
+      return refusedResult({
+        ctx,
+        stepKind: STEP_KIND,
+        startedAt,
+        model: session.model,
+        refusal: result.verdict,
+        audit,
+        writeEntries: writeStepEntries,
+        patch: basePatch,
+      });
+    }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         statusCode: result.error.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeStepEntries,
         patch: basePatch,

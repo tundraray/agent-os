@@ -1,28 +1,49 @@
 // KD-3 (offset), Flow 1 Failure handling (a retry starts the parts again at offset 0), Invariant 4 (a
 // `completeText` call is a ledger row without `taskId`), Contract «Расширения нижних пакетов» (a failing
-// hook is logged and does not break the step). The port and the ledger are doubles; the clock fires the
-// retry pause at once.
+// hook is logged and does not break the step); an answered attempt is one ledger row, an attempt cut by a
+// cancel or failed after its answer began is one with an estimate from UTF-8 bytes, and an attempt the provider
+// rejected before any output is none. The port and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
-import type { Clock, ModelCallRecord } from '@agent-os/runtime';
-import type { AgentTurnModelClient } from './mastra-turn.js';
+import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
+import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
+import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn.js';
 import { createModelClient, type TextDelta } from './model-client.js';
 
-/** One attempt of the port: its text parts, then the provider status it fails with, if any. */
+/** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
 interface PortAttempt {
   readonly parts: readonly string[];
   readonly failWith?: number;
+  readonly cancelled?: true;
 }
 
 const LEDGER_USAGE = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
-function portDouble(attempts: readonly PortAttempt[]): AgentTurnModelClient {
+/** The price the allowing gate double answers with; the ledger row must carry it unchanged. */
+const VERDICT_PRICE: ModelPrice = {
+  inputUsdPerMTok: 3,
+  outputUsdPerMTok: 15,
+  cacheReadUsdPerMTok: 0.3,
+  cacheWriteUsdPerMTok: 3.75,
+};
+
+/** A gate that allows every model at `VERDICT_PRICE`; the model client asks only about models. */
+const ALLOWING_GATE: Pick<AccessGate, 'model'> = {
+  model: async () => ({ kind: 'allowed', price: VERDICT_PRICE }),
+};
+
+/** `cancel` aborts the call's signal: a `cancelled` attempt calls it after its parts and rejects as the port does. */
+function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () => {}): AgentTurnModelClient {
   let calls = 0;
   return {
-    async streamTurn(_call, { onText }) {
+    async streamTurn(_call, { onText, signal }) {
       const attempt = attempts[calls];
       calls += 1;
       if (attempt === undefined) throw new Error(`No attempt ${calls} in the port double`);
       for (const part of attempt.parts) onText(part);
+      if (attempt.cancelled) {
+        cancel();
+        signal.throwIfAborted();
+      }
       if (attempt.failWith !== undefined) {
         const error = new Error(`provider status ${attempt.failWith}`);
         error.name = 'AI_APICallError';
@@ -51,9 +72,11 @@ interface Row {
   readonly text: string;
   readonly deltas: readonly Pick<TextDelta, 'offset' | 'text'>[];
   readonly pauses: readonly number[];
-  readonly ledgerRow: ModelCallRecord;
+  readonly ledgerRows: readonly ModelCallRecord[];
   readonly hookWarnings: number;
 }
+
+const TURN_ROW = { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', price: VERDICT_PRICE };
 
 describe('ModelClient streams text parts with running offsets, restarts them on a retry, and survives a failing hook', () => {
   it.each<[string, Row]>([
@@ -70,24 +93,32 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 7, text: 'world' },
         ],
         pauses: [],
-        ledgerRow: { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', usage: LEDGER_USAGE },
+        ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 0,
       },
     ],
     [
-      'an attempt that streamed a part and failed is retried after the pause from offset 0',
+      'an attempt that streamed a part and failed is retried after the pause from offset 0, and both attempts are ledger rows',
       {
         act: 'call',
-        attempts: [{ parts: ['Stale'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
+        attempts: [{ parts: ['Старт'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
         hookFails: false,
         text: 'Fresh answer',
         deltas: [
-          { offset: 0, text: 'Stale' },
+          { offset: 0, text: 'Старт' },
           { offset: 0, text: 'Fresh' },
           { offset: 5, text: ' answer' },
         ],
         pauses: [1000],
-        ledgerRow: { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', usage: LEDGER_USAGE },
+        // The attempt failed after its answer began, so it is a row too: the request as input (an estimate),
+        // the 5 streamed Cyrillic characters as 10 bytes — 3 tokens, not the 2 of a character count.
+        ledgerRows: [
+          {
+            ...TURN_ROW,
+            usage: { inputTokens: expect.any(Number), outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          },
+          { ...TURN_ROW, usage: LEDGER_USAGE },
+        ],
         hookWarnings: 0,
       },
     ],
@@ -103,7 +134,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 1, text: 'b' },
         ],
         pauses: [],
-        ledgerRow: { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', usage: LEDGER_USAGE },
+        ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 2,
       },
     ],
@@ -116,7 +147,9 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         text: 'Title',
         deltas: [],
         pauses: [],
-        ledgerRow: { ownerId: 'owner-1', model: 'anthropic/claude-default', usage: LEDGER_USAGE },
+        ledgerRows: [
+          { ownerId: 'owner-1', model: 'anthropic/claude-default', price: VERDICT_PRICE, usage: LEDGER_USAGE },
+        ],
         hookWarnings: 0,
       },
     ],
@@ -144,6 +177,8 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       },
       config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
       logger,
+      access: ALLOWING_GATE,
+      audit: async () => {},
       onTextDelta: (delta) => {
         deltas.push(delta);
         if (row.hookFails) throw new Error('notify is down');
@@ -167,7 +202,10 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
               signal: new AbortController().signal,
               logger,
             })
-            .then((result) => (result.kind === 'answer' ? result.text : `model_error ${result.error.statusCode}`))
+            .then((result) => {
+              if (result.kind === 'answer') return result.text;
+              return result.kind === 'model_error' ? `model_error ${result.error.statusCode}` : result.kind;
+            })
         : await client.completeText({
             ownerId: 'owner-1',
             system: 'Write a title.',
@@ -182,7 +220,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       expect(delta).toMatchObject({ ownerId: 'owner-1', rootId: 'root-1', agentId: 'agent-1' });
     }
     expect(pauses).toEqual(row.pauses);
-    expect(ledgerRows).toStrictEqual([row.ledgerRow]);
+    expect(ledgerRows).toStrictEqual(row.ledgerRows);
     const hookWarnings = logger.warn.mock.calls.filter(([message]) => message === 'text delta hook failed');
     expect(hookWarnings).toHaveLength(row.hookWarnings);
     for (const [, fields] of hookWarnings) {
@@ -206,6 +244,8 @@ describe('ModelClient instructions', () => {
       ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
       config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
       logger,
+      access: ALLOWING_GATE,
+      audit: async () => {},
     });
 
     await client.call({
@@ -229,5 +269,229 @@ describe('ModelClient instructions', () => {
     expect(sent[0]).toContain('more than three or four tool calls');
     expect(sent[0]).toContain('callTool under the same names as in your tool list (mcp__<server>__<tool>)');
     expect(sent[0]).toContain('to see the message, call that tool directly');
+  });
+});
+
+interface VerdictRow {
+  readonly act: 'call' | 'completeText';
+  readonly verdict: ModelVerdict;
+  /** Provider attempts; a refused call makes none. */
+  readonly attempts: readonly PortAttempt[];
+  /** The result kind of `call` (with the refusal reason), or `completeText`'s text or `rejects`. */
+  readonly outcome: string;
+  readonly providerCalls: number;
+  /**
+   * The ledger rows: the price and the usage — the provider's (`LEDGER_USAGE`), or for an unfinished attempt
+   * the output tokens of its estimate; the input tokens of an estimate are counted from the sent request.
+   */
+  readonly ledgerRows: readonly { readonly price: ModelPrice; readonly estimatedOutputTokens?: number }[];
+  readonly audits: readonly AccessDeniedEntry[];
+}
+
+const QUOTA_REFUSAL: ModelVerdict = {
+  kind: 'refused',
+  reason: 'quota_exhausted',
+  spentUsd: 20,
+  quotaUsd: 20,
+  month: '2026-11',
+};
+
+const OTHER_PRICE: ModelPrice = {
+  inputUsdPerMTok: 1,
+  outputUsdPerMTok: 5,
+  cacheReadUsdPerMTok: 0.1,
+  cacheWriteUsdPerMTok: 1.25,
+};
+
+function deniedTitle(reason: string): AccessDeniedEntry {
+  return {
+    kind: 'access_denied',
+    actor: 'owner-1',
+    objectType: 'model',
+    objectId: 'anthropic/claude-default',
+    outcome: 'rejected',
+    reason,
+  };
+}
+
+// UC-6, DC-7, KD-3, KD-4.
+describe('the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict\'s price, an attempt the provider rejected before any output is not, retries do not ask again, and a refused title calls the audit hook once', () => {
+  it.each<[string, VerdictRow]>([
+    [
+      'a refused call does not start: no provider call and no ledger row',
+      {
+        act: 'call',
+        verdict: QUOTA_REFUSAL,
+        attempts: [],
+        outcome: 'not_started quota_exhausted',
+        providerCalls: 0,
+        ledgerRows: [],
+        audits: [],
+      },
+    ],
+    [
+      "a call cancelled in the middle of its answer rejects and leaves exactly one ledger row at the verdict's price, estimated from UTF-8 bytes",
+      {
+        act: 'call',
+        verdict: { kind: 'allowed', price: OTHER_PRICE },
+        // 12 characters, 23 bytes: 6 tokens, where a character count would give 3.
+        attempts: [{ parts: ['половина', ' отв'], cancelled: true }],
+        outcome: 'rejects',
+        providerCalls: 1,
+        ledgerRows: [{ price: OTHER_PRICE, estimatedOutputTokens: 6 }],
+        audits: [],
+      },
+    ],
+    [
+      "an allowed call is recorded at the verdict's price",
+      {
+        act: 'call',
+        verdict: { kind: 'allowed', price: OTHER_PRICE },
+        attempts: [{ parts: ['ok'] }],
+        outcome: 'answer',
+        providerCalls: 1,
+        ledgerRows: [{ price: OTHER_PRICE }],
+        audits: [],
+      },
+    ],
+    [
+      'a 529 on all three attempts does not ask the gate again and leaves no ledger row: the provider rejected each before any output',
+      {
+        act: 'call',
+        verdict: { kind: 'allowed', price: VERDICT_PRICE },
+        attempts: [
+          { parts: [], failWith: 529 },
+          { parts: [], failWith: 529 },
+          { parts: [], failWith: 529 },
+        ],
+        outcome: 'model_error',
+        providerCalls: 3,
+        ledgerRows: [],
+        audits: [],
+      },
+    ],
+    [
+      'a title refused for the spent quota rejects and calls the audit hook once',
+      {
+        act: 'completeText',
+        verdict: QUOTA_REFUSAL,
+        attempts: [],
+        outcome: 'rejects',
+        providerCalls: 0,
+        ledgerRows: [],
+        audits: [deniedTitle('quota_exhausted')],
+      },
+    ],
+    [
+      'a title of a disabled owner rejects without the audit hook',
+      {
+        act: 'completeText',
+        verdict: { kind: 'refused', reason: 'owner_disabled' },
+        attempts: [],
+        outcome: 'rejects',
+        providerCalls: 0,
+        ledgerRows: [],
+        audits: [],
+      },
+    ],
+  ])('%s', async (_, row) => {
+    const verdictAsks: string[] = [];
+    const ledgerRows: ModelCallRecord[] = [];
+    let sent: AgentTurnCall | undefined;
+    const audits: AccessDeniedEntry[] = [];
+    let providerCalls = 0;
+    const cancel = new AbortController();
+    const port = portDouble(row.attempts, () => cancel.abort(new Error('the step was cancelled')));
+    const logger = loggerDouble();
+    const client = createModelClient({
+      turnClient: {
+        streamTurn: (call, options) => {
+          providerCalls += 1;
+          sent = call;
+          return port.streamTurn(call, options);
+        },
+      },
+      ledger: {
+        record: async (call) => {
+          ledgerRows.push(call);
+          return { callId: 'model-call-1', costUsd: 0 };
+        },
+      },
+      config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
+      logger,
+      access: {
+        model: async (ownerId, model) => {
+          verdictAsks.push(`${ownerId} ${model}`);
+          return row.verdict;
+        },
+      },
+      audit: async (entry) => {
+        audits.push(entry);
+      },
+      clock: {
+        now: () => new Date(0),
+        random: () => 0,
+        setTimer: (_ms, callback) => {
+          queueMicrotask(callback);
+          return () => {};
+        },
+      },
+    });
+
+    const outcome =
+      row.act === 'call'
+        ? await client
+            .call({
+              ownerId: 'owner-1',
+              rootId: 'root-1',
+              taskId: 'agent-1',
+              agentName: 'chat',
+              model: 'anthropic/claude-turn',
+              instructions: 'You are a chat.',
+              messages: [{ role: 'user', content: 'Привет' }],
+              tools: [],
+              streamsText: false,
+              signal: cancel.signal,
+              logger,
+            })
+            .then(
+              (result) => (result.kind === 'not_started' ? `not_started ${result.verdict.reason}` : result.kind),
+              () => 'rejects',
+            )
+        : await client
+            .completeText({
+              ownerId: 'owner-1',
+              system: 'Write a title.',
+              prompt: 'Hi',
+              maxOutputTokens: 64,
+              signal: new AbortController().signal,
+            })
+            .catch(() => 'rejects');
+
+    expect(outcome).toBe(row.outcome);
+    expect(verdictAsks).toEqual([
+      row.act === 'call' ? 'owner-1 anthropic/claude-turn' : 'owner-1 anthropic/claude-default',
+    ]);
+    expect(providerCalls).toBe(row.providerCalls);
+    // The input of an estimate is the sent request in UTF-8 bytes, four to a token (these calls have no tools).
+    const sentBytes =
+      sent === undefined
+        ? 0
+        : Buffer.byteLength(sent.instructions, 'utf8') + Buffer.byteLength(JSON.stringify([sent.messages, []]), 'utf8');
+    expect(ledgerRows.map(({ price, usage }) => ({ price, usage }))).toEqual(
+      row.ledgerRows.map(({ price, estimatedOutputTokens }) => ({
+        price,
+        usage:
+          estimatedOutputTokens === undefined
+            ? LEDGER_USAGE
+            : {
+                inputTokens: Math.ceil(sentBytes / 4),
+                outputTokens: estimatedOutputTokens,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+              },
+      })),
+    );
+    expect(audits).toEqual(row.audits);
   });
 });

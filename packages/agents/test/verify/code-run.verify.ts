@@ -5,7 +5,7 @@
 // (docs/features/code-execution/code-execution/20261114-feature-code-execution/analysis/spike-node-permissions.md).
 //
 // UC-N1 runs the whole path of the assembled feature: the agents harness (real Postgres, runtime, agents and executor process), the MCP
-// fixture as a real stdio process, the scripted model asking for one `run_code`. UC-N2 measures the executor alone through `createCodeRunner`.
+// fixture process over HTTP with the run's `logs` server in the registry, the scripted model asking for one `run_code`. UC-N2 measures the executor alone through `createCodeRunner`.
 
 import { parseAgentsConfig } from '@agent-os/agents';
 import { createScriptedModel } from '@agent-os/agents/testing';
@@ -16,12 +16,12 @@ import { describe, expect, it } from 'vitest';
 import {
   createAgentsHarness,
   historyOf,
-  LOGS_SERVER,
   runLogsOf,
   testDefinition,
   uniqueName,
   waitForTaskStatus,
 } from '../support/agentsHarness.js';
+import { LOGS_SERVER } from '../support/mcp-servers.js';
 import { newUser } from '../support/new-user.js';
 
 /** NFR-01: a run over 5 MB of data ends within 30 s. */
@@ -57,6 +57,8 @@ function p95(values: readonly number[]): number {
   return sorted[Math.ceil(sorted.length * 0.95) - 1] ?? Number.NaN;
 }
 
+const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
+
 /** The UC-N1 script: every page of {@link WINDOW} through `search_logs`, errors grouped by service. */
 const GROUPING_SCRIPT = [
   `const query = ${JSON.stringify(WINDOW)};`,
@@ -66,7 +68,7 @@ const GROUPING_SCRIPT = [
   'let bytes = 0;',
   'let cursor = null;',
   'do {',
-  '  const page = await callTool("mcp__logs__search_logs", cursor === null ? query : { ...query, cursor });',
+  `  const page = await callTool("${SEARCH_LOGS}", cursor === null ? query : { ...query, cursor });`,
   '  pages += 1;',
   '  records += page.records.length;',
   '  bytes += JSON.stringify(page).length;',
@@ -143,9 +145,8 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
   it(
     'runs 50 empty scripts in a row on the real executor and measures from run to result',
     async () => {
-      // Given: the executor with its production flags and the run limits at their defaults (design Runtime settings;
-      // the servers file is required by the parser and unused here)
-      const defaults = parseAgentsConfig({}, [{ id: 'unused', command: 'unused', args: [], env: {} }]);
+      // Given: the executor with its production flags and the run limits at their defaults (design Runtime settings)
+      const defaults = parseAgentsConfig({});
       const runner = createCodeRunner({ maxConcurrent: defaults.codeRun.maxConcurrent, logger });
       const limits = {
         timeoutMs: defaults.codeRun.timeoutMs,

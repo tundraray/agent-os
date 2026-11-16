@@ -22,11 +22,8 @@ export type {
   TaskHandler,
 } from './handler.registry.js';
 export type { NewMessage } from './inbox.js';
-export {
-  type CallUsage,
-  type ModelPrices,
-  parseModelPrices,
-} from './model-cost.js';
+export type { CallUsage, ModelPrice } from './model-cost.js';
+export { monthOf } from './month.js';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
 export type { RuntimeTx } from './runtime-tx.js';
 export type { InterruptMessage, InterruptOutcome, Task } from './task-control.js';

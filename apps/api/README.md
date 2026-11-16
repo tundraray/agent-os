@@ -1,6 +1,6 @@
 # api
 
-NestJS server of Agent OS: the chat API (`/api/threads`, `/api/agents`, `/api/decisions`, `/api/spend`), the live stream (`GET /api/events`, SSE) and the runtime workers that run the agents. Agents come from `packages/agents` on top of `packages/runtime`; the fixture MCP servers come from `packages/mcp-fixture`.
+NestJS server of Agent OS: the chat API (`/api/threads`, `/api/agents`, `/api/decisions`, `/api/spend`), the live stream (`GET /api/events`, SSE) and the runtime workers that run the agents. Agents come from `packages/agents` on top of `packages/runtime`; the MCP servers they call are rows of the registry in the database, reached over HTTP.
 
 ## How to run locally
 
@@ -8,38 +8,51 @@ Run from the repository root, in this order:
 
 ```bash
 pnpm install
-pnpm db:up                                   # Postgres 16 from infra/docker-compose.yml
+pnpm db:up                                   # Postgres 16 from infra/docker-compose.yml (POSTGRES_PORT=5433 pnpm db:up when 5432 is taken)
 cp apps/api/.env.example apps/api/.env       # then set ANTHROPIC_API_KEY in apps/api/.env
 pnpm turbo build --filter=api...             # api and every package it uses, the MCP fixture included
 pnpm --filter api db:migrate                 # applies the migrations; the app only checks them
+printf '%s' '<password>' | pnpm --filter api identity:super-admin --login admin --name Admin --email admin@example.com
 pnpm --filter api start:dev                  # http://localhost:4000/api
 ```
+
+MCP servers for local runs, in two more terminals once the API is up:
+
+```bash
+pnpm --filter @agent-os/mcp-fixture start    # the fixture MCP servers on http://localhost:4100
+printf '%s' '<password>' | pnpm --filter api seed:mcp --login admin
+```
+
+The MCP servers live in the registry in the database; the administrator manages it under `/api/admin/mcp-servers`. `seed:mcp` is a client of the running API: it signs in as the administrator (password on standard input), registers the fixture's `logs` and `tracker` (shared token) and `backoffice` (personal OAuth) and connects the administrator's account on `backoffice`. A repeated run skips the names already taken. Each `oauth` server has its own OAuth return address, `<public address>/api/mcp/oauth/callback/<server name>`, and the registration registers the platform's client at the authorization server with exactly that address. A server registered before the address became per-server holds a client with the old shared address (`/api/mcp/oauth/callback`), which no route answers any more: delete it and register it again (for the seeded `backoffice`: delete it in the admin panel, then run `seed:mcp` again). `--api` (default `http://localhost:4000`) and `--fixture` (default `http://localhost:4100`) change the addresses. The fixture is a developer tool: the production image does not carry it.
 
 What `apps/api/.env` needs:
 
 - `DATABASE_URL` — required; the example matches `infra/docker-compose.yml`. If host port 5432 is taken, run `POSTGRES_PORT=5433 pnpm db:up` and use port 5433 here.
 - `ANTHROPIC_API_KEY` — the server starts without it, but every model call is refused.
-- Everything else has a working default in `.env.example`: `AGENT_DEFAULT_MODEL=anthropic/claude-haiku-5-5` (the chat's model; it must be in `config/model-prices.json`), `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` (files in `config/`, relative to `apps/api`; a missing or invalid file stops the start), `MCP_ACCESS_TABLE` (grants `dev-user` the fixture servers `logs`, `backoffice` and `tracker`; empty gives nobody any server), `SENTRY_DSN` (optional), `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `MCP_CALL_TIMEOUT_MS`, and the `run_code` limits `CODE_RUN_TIMEOUT_MS` (30000), `CODE_RUN_MEMORY_MB` (512), `CODE_RUN_MAX_TOOL_CALLS` (50), `CODE_RUN_MAX_CONCURRENT` (4, per API process) and `CODE_RUN_MAX_CONCURRENT_PER_USER` (2, per employee and API process). An invalid value stops the start naming the variable.
+- Everything else has a working default in `.env.example`: `AGENT_DEFAULT_MODEL=anthropic/claude-haiku-5-5` (the chat's model; it must be in the model catalogue in the database, which `seed:access` fills with the developer's prices), `SENTRY_DSN` (optional), `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `MCP_CALL_TIMEOUT_MS`, and the `run_code` limits `CODE_RUN_TIMEOUT_MS` (30000), `CODE_RUN_MEMORY_MB` (512), `CODE_RUN_MAX_TOOL_CALLS` (50), `CODE_RUN_MAX_CONCURRENT` (4, per API process) and `CODE_RUN_MAX_CONCURRENT_PER_USER` (2, per employee and API process). An invalid value stops the start naming the variable.
+- Rights to MCP servers, their tools and models are grants in the database, set in the admin panel; there is no environment variable for them. `seed:access` gives the built-in role the servers `logs`, `backoffice`, `tracker` and both developer models.
 
-The fixture servers are started by the api itself (`node ../../packages/mcp-fixture/dist/server.js`), so `packages/mcp-fixture` must be built: the `pnpm turbo build --filter=api...` step does it (`pnpm --filter @agent-os/mcp-fixture build` builds it alone).
-
-There is no login yet: outside `NODE_ENV=production` every request runs as `dev-user`; the `x-user-id` header names another employee (not one starting with `system:`).
+Every request except sign-in and `GET /api/health` needs a session: an employee signs in by login and password (`POST /api/auth/password`, 204 and the `aos_session` cookie) or through a sign-in provider the administrator set up. The first account is the super-administrator, made by the operator command `identity:super-admin` above: it takes `--login`, `--name` and `--email` and reads the password (12 characters or more) from standard input, never from the arguments. Run again with the same login, it sets the new password, turns the account on, ends its sessions and gives it the administrator role back. Every request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`), the sign-in included, must carry `Origin: <FRONTEND_ORIGIN>` (`http://localhost:3000` by default). With `FRONTEND_ORIGIN` on `https` the cookies are `Secure`.
 
 ### Check with curl
 
 ```bash
+# 0. Sign in; the session cookie goes to cookies.txt and every later call sends it with -b
+curl -s -c cookies.txt -H 'Origin: http://localhost:3000' -X POST http://localhost:4000/api/auth/password \
+  -H 'Content-Type: application/json' -d '{"login":"admin","password":"<password>"}'
+
 # 1. A new conversation; the answer carries its id
-curl -s -X POST http://localhost:4000/api/threads
+curl -s -b cookies.txt -H 'Origin: http://localhost:3000' -X POST http://localhost:4000/api/threads
 
 # 2. In a second terminal: the live stream of that conversation
-curl -N "http://localhost:4000/api/events?watch=thread:<id>"
+curl -N -b cookies.txt "http://localhost:4000/api/events?watch=thread:<id>"
 
 # 3. A message: 202, then the stream shows `ready`, `delta` (the answer's text parts) and `tree`
-curl -s -X POST http://localhost:4000/api/threads/<id>/messages \
+curl -s -b cookies.txt -H 'Origin: http://localhost:3000' -X POST http://localhost:4000/api/threads/<id>/messages \
   -H 'Content-Type: application/json' -d '{"text":"Hello"}'
 
 # 4. The stored history
-curl -s http://localhost:4000/api/threads/<id>/history
+curl -s -b cookies.txt http://localhost:4000/api/threads/<id>/history
 ```
 
 Each message is a paid model call on `ANTHROPIC_API_KEY`.
@@ -51,7 +64,7 @@ Tests: `pnpm --filter api test` (unit) and `pnpm --filter api test:e2e` (needs P
 ### e2e tests and the database
 
 - The e2e suites run against the Postgres in `DATABASE_URL` (process environment first, otherwise `apps/api/.env`). The app refuses to start on pending migrations, so the suite's global setup (`test/support/migrate.global-setup.ts`) applies them once before any test file boots the app, through the same `applyMigrations` from `@agent-os/db` as `pnpm db:migrate`.
-- The suites replace the model client with the test double and set their own `MCP_SERVERS_FILE`, `MCP_ACCESS_TABLE` and `RUNTIME_WORKERS`; they make no paid calls.
+- The suites replace the model client with the test double and start their own fixture process (`createTestApp({ mcpServers })`), register its servers under per-run names and set their own `RUNTIME_WORKERS`, and give their employees rights to the run's model and servers in the database; they make no paid calls.
 - Migration tests live in `packages/db`.
 - Run Postgres suites one at a time, never in parallel against the same database: runtime workers (relay, reaper) touch rows of other tests.
 
@@ -74,11 +87,11 @@ docker run -p 4000:4000 \
   agent-os-api:local
 ```
 
-- `DATABASE_URL` is required. `ANTHROPIC_API_KEY` is passed at run time and never baked into the image; without it the server starts, but every model call is refused. The other variables of `.env.example` (`FRONTEND_ORIGIN`, `PORT`, `SENTRY_DSN`, `LOG_LEVEL`, `MCP_ACCESS_TABLE`, `RUNTIME_*`, `AGENT_*`, `CODE_RUN_*`) are optional and passed the same way. The image carries `config/` and the fixture MCP servers, so `MODEL_PRICES_FILE` and `MCP_SERVERS_FILE` keep their defaults.
-- The image sets `NODE_ENV=development`, because there is no login yet: every request runs as `dev-user`, and the `x-user-id` header names another employee. Anyone who can reach the port can act as any employee, so do not expose it outside a trusted network. With `-e NODE_ENV=production` every request is answered 401 `Authentication is not configured`.
-- The server runs as the user `node` under `tini` (the image's entrypoint), which passes signals to Node and reaps the child processes of code runs and MCP servers. No `--init` is needed.
+- `DATABASE_URL` is required. `ANTHROPIC_API_KEY` is passed at run time and never baked into the image; without it the server starts, but every model call is refused. The other variables of `.env.example` (`FRONTEND_ORIGIN`, `PORT`, `SENTRY_DSN`, `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `CODE_RUN_*`) are optional and passed the same way. Model prices live in the model catalogue in the database, not in the image. It does not carry the MCP fixture: the administrator registers real MCP servers in the registry, and under `NODE_ENV=production` (set in the image) a server or authorization address must be `https`.
+- Every request needs a session, as in local runs. Make the super-administrator once against the same database: `docker run --rm -i -e DATABASE_URL=... agent-os-api:local node dist/identity/super-admin-cli.js --login admin --name Admin --email admin@example.com`, with the password on standard input.
+- The server runs as the user `node` under `tini` (the image's entrypoint), which passes signals to Node and reaps the child processes of code runs. No `--init` is needed.
 - CI (`.github/workflows/docker.yml`) builds the image on every push to `main` and pushes it to `ghcr.io/<owner>/<repo>-api` with the tags `latest` and `sha-<short sha>`.
 
 ## Observability
 
-Logs go through the logger of `@agent-os/common` to the console and, when `SENTRY_DSN` is set, to Sentry (`src/instrument.ts`, `src/logging/app-logger.ts`). `LOG_LEVEL` sets the lowest level. Secrets — `ANTHROPIC_API_KEY`, `SENTRY_DSN`, the database password and the MCP servers' environment values — are redacted.
+Logs go through the logger of `@agent-os/common` to the console and, when `SENTRY_DSN` is set, to Sentry (`src/instrument.ts`, `src/logging/app-logger.ts`). `LOG_LEVEL` sets the lowest level. Secrets — `ANTHROPIC_API_KEY`, `SENTRY_DSN`, the database password, and fields named like a token, password or key — are redacted.

@@ -29,7 +29,7 @@ import { interruptText } from '../step/deliver.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
 import { history } from '../store/history.repository.js';
 import { type Session, type SessionInput, sessions } from '../store/sessions.repository.js';
-import { sessionInputOf, type StartChildDeps } from '../tools/builtin/start-child.js';
+import { type SessionInputDeps, sessionInputOf } from '../tools/builtin/start-child.js';
 import type { SessionLimits, ToolDisplay } from '../tools/tool.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { stopEntries } from './stop-entries.js';
@@ -137,9 +137,9 @@ export interface AgentSessions {
 
 export interface AgentSessionsDeps {
   readonly database: Database;
-  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions' | 'ledger'>;
+  readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions'>;
   readonly catalog: DefinitionCatalog;
-  readonly registry: Pick<ToolRegistry, 'toolOf' | 'display'>;
+  readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
   readonly config: Pick<AgentsConfig, 'maxDepth' | 'defaultModel'>;
   readonly logger: Logger;
 }
@@ -180,11 +180,10 @@ function agentNotFound(id: string): AgentsError {
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   const { database, runtime, catalog, registry, config } = deps;
   const logger = deps.logger.child({ service: 'agents.sessions' });
-  const startDeps: StartChildDeps = {
+  const startDeps: SessionInputDeps = {
     catalog,
     maxDepth: config.maxDepth,
     defaultModel: config.defaultModel,
-    pricedModels: () => runtime.ledger.pricedModels(),
   };
 
   async function logged<T>(
@@ -278,7 +277,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         and(eq(agentToolCalls.taskId, agentId), inArray(agentToolCalls.answerSeq, [...answerSeqs])),
       )
       .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
-    for (const row of rows) {
+    const displays = await registry.displays(rows);
+    for (const [index, row] of rows.entries()) {
       const calls = byAnswer.get(row.answerSeq) ?? [];
       calls.push({
         callId: row.callId,
@@ -287,7 +287,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         args: row.args,
         // A stopped agent's open calls are shown closed (Flow 7): the stop records follow them.
         state: shownClosed ? ToolCallStateSchema.enum.done : ToolCallStateSchema.parse(row.state),
-        ...registry.display(row.tool, row.server),
+        ...displays[index],
       });
       byAnswer.set(row.answerSeq, calls);
     }
@@ -478,29 +478,31 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           // `AGENT_NOT_FOUND` for another owner's or no tree.
           await tree(rootId, ownerId);
           const decisions = await runtime.decisions.listTree(rootId, ownerId);
-          return decisions.map((decision): AgentConfirmation => {
-              const payload = ConfirmationPayloadSchema.parse(decision.payload);
-              const resolved =
-                decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
-              return {
-                decisionId: decision.decisionId,
-                agentId: decision.taskId,
-                description: payload.description,
-                kind: decision.kind,
-                tool: payload.tool,
-                server: payload.server,
-                args: payload.args,
-                content: payload.content,
-                status: decision.status,
-                resolution:
-                  resolved === null
-                    ? null
-                    : { approve: resolved.approve, args: resolved.args ?? payload.args },
-                createdAt: decision.createdAt,
-                resolvedAt: decision.resolvedAt,
-                ...registry.display(payload.tool, payload.server),
-              };
-            });
+          const requests = decisions.map((decision) => ({
+            decision,
+            payload: ConfirmationPayloadSchema.parse(decision.payload),
+          }));
+          const displays = await registry.displays(requests.map(({ payload }) => payload));
+          return requests.map(({ decision, payload }, index): AgentConfirmation => {
+            const resolved =
+              decision.status === 'resolved' ? ConfirmationResolutionSchema.parse(decision.resolution) : null;
+            return {
+              decisionId: decision.decisionId,
+              agentId: decision.taskId,
+              description: payload.description,
+              kind: decision.kind,
+              tool: payload.tool,
+              server: payload.server,
+              args: payload.args,
+              content: payload.content,
+              status: decision.status,
+              resolution:
+                resolved === null ? null : { approve: resolved.approve, args: resolved.args ?? payload.args },
+              createdAt: decision.createdAt,
+              resolvedAt: decision.resolvedAt,
+              ...displays[index],
+            };
+          });
         },
         (confirmations) => ({ confirmations: confirmations.length }),
       );

@@ -4,8 +4,7 @@ import { createDatabase, type Database } from '@agent-os/db';
 import {
   type Clock,
   createRuntime,
-  type ModelPrices,
-  parseModelPrices,
+  type ModelPrice,
   parseRuntimeConfig,
   type Runtime,
   type RuntimeConfig,
@@ -23,30 +22,31 @@ import { ensureHandlerRowsTable } from './testHandlers.js';
  * a second harness over the same database.
  */
 
-/** A priced model of {@link TEST_MODEL_PRICES}: input 1, output 5 USD per million tokens. */
-export const TEST_MODEL_ONE = 'test/model-one';
-/** A priced model of {@link TEST_MODEL_PRICES}: input 3, output 15 USD per million tokens. */
-export const TEST_MODEL_TWO = 'test/model-two';
-
-/**
- * The prices of every harness: two models with different input and output prices, all rates exact
- * in binary so that hand-computed costs are literal. Expected costs are computed from these
- * numbers by hand, never by the cost rule.
+/*
+ * Two test models with different input and output prices, all rates exact in binary so that
+ * hand-computed costs are literal. A call to the ledger carries its model's price (ADR-0015).
+ * Expected costs are computed from these numbers by hand, never by the cost rule.
  */
-export const TEST_MODEL_PRICES: ModelPrices = parseModelPrices({
-  [TEST_MODEL_ONE]: {
-    inputUsdPerMTok: 1,
-    outputUsdPerMTok: 5,
-    cacheWriteUsdPerMTok: 1.25,
-    cacheReadUsdPerMTok: 0.125,
-  },
-  [TEST_MODEL_TWO]: {
-    inputUsdPerMTok: 3,
-    outputUsdPerMTok: 15,
-    cacheWriteUsdPerMTok: 3.75,
-    cacheReadUsdPerMTok: 0.375,
-  },
-});
+
+/** A test model priced at {@link TEST_MODEL_ONE_PRICE}. */
+export const TEST_MODEL_ONE = 'test/model-one';
+/** Input 1, output 5 USD per million tokens. */
+export const TEST_MODEL_ONE_PRICE: ModelPrice = {
+  inputUsdPerMTok: 1,
+  outputUsdPerMTok: 5,
+  cacheWriteUsdPerMTok: 1.25,
+  cacheReadUsdPerMTok: 0.125,
+};
+
+/** A test model priced at {@link TEST_MODEL_TWO_PRICE}. */
+export const TEST_MODEL_TWO = 'test/model-two';
+/** Input 3, output 15 USD per million tokens. */
+export const TEST_MODEL_TWO_PRICE: ModelPrice = {
+  inputUsdPerMTok: 3,
+  outputUsdPerMTok: 15,
+  cacheWriteUsdPerMTok: 3.75,
+  cacheReadUsdPerMTok: 0.375,
+};
 
 /** A clock whose `now` the test sets; timers and randomness are the system's. */
 export interface SettableClock extends Clock {
@@ -122,7 +122,6 @@ export async function createRuntimeHarness(
     config,
     logger,
     clock: options.clock ?? systemClock,
-    modelPrices: TEST_MODEL_PRICES,
   });
   for (const handler of options.handlers) runtime.handlers.register(handler);
   if (options.startWorkers ?? true) runtime.start();

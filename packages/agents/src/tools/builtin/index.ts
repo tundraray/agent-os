@@ -1,5 +1,3 @@
-import type { Database } from '@agent-os/db';
-
 import type { AgentTool } from '../tool.js';
 import { type BuiltinTasks, createListAgentsTool } from './list-agents.js';
 import { createMessageAgentTool } from './message-agent.js';
@@ -11,7 +9,6 @@ export { createStartChild, type StartChildDeps } from './start-child.js';
 
 export interface BuiltinToolsDeps extends StartChildDeps {
   readonly tasks: BuiltinTasks;
-  readonly database: Database;
 }
 
 /**

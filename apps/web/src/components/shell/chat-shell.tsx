@@ -8,6 +8,9 @@ import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
+import { redirectToLogin } from '@/lib/auth/session-redirect';
+import type { FocusTarget } from '@/lib/focus';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { Announcer } from './announcer';
@@ -33,17 +36,27 @@ type ChatShellProps = {
   defaultSidebarOpen: boolean;
   /** Opens the live stream; the `(chat)` layout leaves it out, only the test harness passes one. */
   openEventSource?: OpenEventSource;
+  /** Whole-tab navigation of the shell services; the `(chat)` layout leaves it out, only the test harness passes one. */
+  location?: Pick<Location, 'assign'>;
   children: ReactNode;
 };
 
 /** SH-01: sidebar (built-in or drawer) and the main area, on the full height of the dynamic viewport. */
-export function ChatShell({ defaultSidebarOpen, openEventSource, children }: ChatShellProps) {
+export function ChatShell({ defaultSidebarOpen, openEventSource, location, children }: ChatShellProps) {
+  // Every 401 inside the shell leaves for /login (DC-13). The handler is checked when a response
+  // arrives, so the requests children start in their own effects are covered too.
+  useEffect(() => {
+    setUnauthorizedHandler((code) => redirectToLogin(code));
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   return (
     <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
-      <ChatRuntimeProvider openEventSource={openEventSource}>
+      <ChatRuntimeProvider openEventSource={openEventSource} location={location}>
+        <AdminRightWatch />
         <ShellAnnouncer />
         <GlobalShortcuts />
-        <SkipToComposerLink />
+        <SkipLink />
         <AppSidebar />
         <ShellMain>{children}</ShellMain>
         <CloseDrawerOnDesktop />
@@ -154,22 +167,41 @@ function RouteFeedProvider({ route, children }: { route: ShellRoute; children: R
   );
 }
 
-const focusComposer = (event: MouseEvent<HTMLAnchorElement>): void => {
-  event.preventDefault();
-  document.querySelector<HTMLElement>('[data-shell-focus="composer"]')?.focus();
-};
+/**
+ * First stop in the Tab order; visible only while focused. The panel has no composer: there it leads to the
+ * screen's `h1`.
+ */
+function SkipLink() {
+  const panel = parseShellRoute(usePathname()).kind === 'admin';
+  const target: FocusTarget = panel ? 'page-title' : 'composer';
+  const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    event.preventDefault();
+    document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`)?.focus();
+  };
 
-/** First stop in the Tab order; visible only while focused. */
-function SkipToComposerLink() {
   return (
     <a
-      href="#composer"
-      onClick={focusComposer}
+      href={panel ? '#page-title' : '#composer'}
+      onClick={onClick}
       className="bg-background text-foreground focus-visible:ring-ring sr-only z-50 rounded-md px-3 py-2 text-sm font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus-visible:ring-3"
     >
-      Перейти к сообщению
+      {panel ? 'Перейти к содержимому' : 'Перейти к сообщению'}
     </a>
   );
+}
+
+/**
+ * Any 403 `ADMIN_REQUIRED` inside the shell takes the administrator right away from the shared
+ * `CurrentUser` (KD-2), so the panel, its sidebar and its menu item disappear at once. Mounted inside
+ * the runtime provider because it needs the shell services; `lib/api` never imports `CurrentUser`.
+ */
+function AdminRightWatch() {
+  const { currentUser } = useShellServices();
+  useEffect(() => {
+    setAdminRequiredHandler(() => currentUser.revokeAdmin());
+    return () => setAdminRequiredHandler(null);
+  }, [currentUser]);
+  return null;
 }
 
 /** The shell's only polite live region (design-web.md, «Доступность»). */

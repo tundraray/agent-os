@@ -14,13 +14,13 @@
 // Environment (Design Doc "Test Strategy"):
 // - Postgres 16 from infra/docker-compose.yml, migrations applied once by the global setup. Real `createRuntime` and real `createAgents` over a real pool. No mock of Postgres, of the runtime or of any agents component.
 // - The model is the only double: a scripted `ModelClient` double at the wrapper boundary ("модель подменяется на границе `ModelClient` сценарием ответов"); it records the input of every call, which is the assertion surface for "the next model call sees X".
-// - MCP is real: the `packages/mcp-fixture` stdio process (`logs` read-only with `search_logs` over a week of logs and a result larger than the slice; `backoffice` with `create_incident_note` and `close_ticket`; `tracker`). `FIXTURE_CALL_LOG` (JSONL journal) is the
+// - MCP is real: the `packages/mcp-fixture` HTTP process each harness starts, its sources registered in the registry under the run's names (`LOGS_SERVER`, `BACKOFFICE_SERVER` of
+//   test/support/mcp-servers.ts; `logs` read-only with `search_logs` over a week of logs and a result larger than the slice; `backoffice` with `create_incident_note` and `close_ticket`; `tracker`). `FIXTURE_CALL_LOG` (JSONL journal) is the
 //   evidence of what reached a server: "the server received nothing" is an empty filtered journal, never a mock's call count.
 // - The executor is the real `packages/code-runner` process with production limits shortened through the `CODE_RUN_*` settings; only INT-4 row C substitutes the `CodeRunner` (a double that holds each run until the test releases it), because that row proves the
 //   admission rule, not the engine.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test, a unique definition name per test; each test reads only its own tree. `fileParallelism: false`. No sleeps for ordering: latches the double and the fixture wait on, and rows.
-// - Support (test/support): `agentsHarness.ts` takes a `CodeRunner` override, the servers' extra variables (`serverEnv`) and the `CODE_RUN_*` settings through `variables`, and hides the provider key and the
-//   servers' variables in its logger as `apps/api` does; the journal is read with `fixtureCallsOf` of `@agent-os/mcp-fixture`, the model is `createScriptedModel` of `@agent-os/agents/testing`.
+// - Support (test/support): `agentsHarness.ts` takes a `CodeRunner` override and the `CODE_RUN_*` settings through `variables`, and hides the provider key in its logger as `apps/api` does; the journal is read with `fixtureCallsOf` of `@agent-os/mcp-fixture`, the model is `createScriptedModel` of `@agent-os/agents/testing`.
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
 //   INT-4 unique defect: a run that goes on calling tools after the employee pressed "interrupt" or "stop" (a side effect the employee already refused), and a limit slot that is never freed (the employee is locked out of code until restart). INT-1..INT-3 never
@@ -42,7 +42,8 @@
 // AC -> proving test:
 // - AC-01.1, AC-03.2, AC-03.5, AC-04.1, AC-04.2, AC-05.1, AC-08.1, AC-08.2, AC-09.1, DC-2 (wiring), DC-7: INT-1 row A
 // - AC-07.4, AC-10.4 (the model sees the error text), DC-11, DC-12: INT-1 row B
-// - AC-10.3: INT-1 row C; AC-11.1 (a credential that reached the script is masked in the run log, the stored output and the result), AC-02.2 (in the log half): INT-1 row D
+// - AC-10.3: INT-1 row C. INT-1 row D (a server credential in the script's env masked in the run log, AC-11.1, AC-02.2 in the log half) is dropped by mcp-connect: MCP credentials are no
+//   longer settings, `secretValuesOf` carries only `ANTHROPIC_API_KEY` (design-mcp-connect.md, Security Considerations)
 // - AC-05.2, AC-05.3, AC-05.4, AC-05.6, AC-03.7, DC-9, DC-10, DC-16, FR-11: INT-2 rows A-E (AC-05.7 once in row A over the unit table)
 // - AC-03.1, AC-03.3, AC-03.4, AC-03.6, AC-05.5, AC-04.3, AC-06.2, DC-5, DC-6, DC-8: INT-3 rows A-C
 // - AC-10.1: INT-4 rows A, B; AC-07.6, DC-18: INT-4 row C
@@ -58,7 +59,6 @@ import {
 } from '@agent-os/agents/testing';
 import type { CodeRunner, RunOutcome } from '@agent-os/code-runner';
 import {
-  argsHash,
   createFixtureFiles,
   type FixtureFiles,
   fixtureCallsOf,
@@ -69,13 +69,11 @@ import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
   type AgentsHarnessOptions,
-  BACKOFFICE_SERVER,
   closeAll,
   codeCallRowsOf,
   createAgentsHarness,
   historyLines,
   historyOf,
-  LOGS_SERVER,
   runLogsOf,
   testDefinition,
   toolCallRowsOf,
@@ -84,16 +82,17 @@ import {
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
+import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers.js';
 import { newUser } from './support/new-user.js';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
 
-// A read-class script of INT-1 A reads the full result of a direct `mcp__logs__search_logs` (500 records, more than the slice) by `callId`.
+// A read-class script of INT-1 A reads the full result of a direct `mcp__${LOGS_SERVER}__search_logs` (500 records, more than the slice) by `callId`.
 // The fixture's `totalMatched` is the literal the script's count is compared with.
 
 /** `search_logs` as the model and a script name it. */
-const SEARCH_LOGS = 'mcp__logs__search_logs';
+const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
 /** A quarter of an hour of the fixture's week: 629 records, so the first page (500, the default `pageSize`) is not all of them. */
 const WINDOW = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:00.000Z' } as const;
 /** The fixture's `totalMatched` for {@link WINDOW}: 500 on the first page and 129 on the second. */
@@ -144,7 +143,7 @@ interface Reader {
 async function startReader(
   model: ScriptedModel,
   prompt: string,
-  options: Pick<AgentsHarnessOptions, 'variables' | 'serverEnv' | 'fixture'> = {},
+  options: Pick<AgentsHarnessOptions, 'variables' | 'fixture'> = {},
 ): Promise<Reader> {
   const ownerId = newUser();
   const definition = uniqueName('reader');
@@ -202,7 +201,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   // AC-08.1: "Given запуск закончился успешно, when сотрудник открывает историю агента, then видит время, описание, класс запуска и исход, как у любого вызова ... и вывод скрипта, а полный текст скрипта раскрывается одним действием."
   // AC-08.2: "Given скрипт печатал по ходу работы и вернул значение, when модель делает следующий ход, then из этого запуска она получает только возвращённое значение, без вывода скрипта."
   // AC-09.1: "Given запуск упал на вызове инструмента, when разработчик ищет запуск в логах по его идентификатору, then находит начало, каждый вызов из кода с исходом и длительностью, вывод скрипта и причину сбоя."
-  // Behavior: the agent calls `search_logs` directly (500 records, answer larger than the slice) -> the scenario calls `run_code` class `read`; the script reads that result by `callId`, takes page two through `callTool("mcp__logs__search_logs", ...)`, prints the
+  // Behavior: the agent calls `search_logs` directly (500 records, answer larger than the slice) -> the scenario calls `run_code` class `read`; the script reads that result by `callId`, takes page two through `callTool("mcp__${LOGS_SERVER}__search_logs", ...)`, prints the
   //   count and returns errors per service -> the model gets only the returned value, the history carries the value and the `output`, the audit has one run row and one from-code row linked to it, the log has start, call with outcome and duration, output and end under one `runId`
   // Catches: a run whose pieces work alone but not chained - `readResult` returning the 16 KiB slice instead of the full result (the count is not `totalMatched`), the script output reaching the model, a from-code call row not linked to its run row, or a run missing from the log
   // @category: core-functionality
@@ -228,7 +227,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
 
       // Then: the model saw the slice ending with the cut mark that names the direct call's callId (AC-04.1, DC-7)
       const seenSlice = toolOutputOf(script.calls[1]?.messages ?? [], searchCallId);
-      expect(seenSlice.startsWith('<data source="tool search_logs" author="logs">\n')).toBe(true);
+      expect(seenSlice.startsWith(`<data source="tool search_logs" author="${LOGS_SERVER}">\n`)).toBe(true);
       expect(seenSlice.endsWith(
         `\nрезультат обрезан на ${CUT_BYTES} байт; полный — \`readResult(&quot;${searchCallId}&quot;)\` в \`run_code\`\n</data>`,
       )).toBe(true);
@@ -246,8 +245,8 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       );
       expect(inputLines(lastInput)).toEqual([
         `user: ${prompt}`,
-        'assistant:  [mcp__logs__search_logs]',
-        'tool: mcp__logs__search_logs',
+        `assistant:  [mcp__${LOGS_SERVER}__search_logs]`,
+        `tool: mcp__${LOGS_SERVER}__search_logs`,
         'assistant:  [run_code]',
         'tool: run_code',
       ]);
@@ -258,7 +257,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       const history = await historyOf(harness, agentId, ownerId);
       expect(historyLines(history)).toEqual([
         `task: ${prompt}`,
-        'model_answer:  [logs/search_logs]',
+        `model_answer:  [${LOGS_SERVER}/search_logs]`,
         'tool_result: search_logs success',
         'model_answer:  [run_code]',
         'tool_result: run_code success',
@@ -278,7 +277,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       ]);
       const codeRows = await codeCallRowsOf(harness.db, agentId, runCallId);
       expect(codeRows.map((row) => `${row.runCallId} ${row.attempt} ${row.seq} ${row.server}/${row.tool} ${row.outcome}`)).toEqual([
-        `${runCallId} 1 1 logs/search_logs success`,
+        `${runCallId} 1 1 ${LOGS_SERVER}/search_logs success`,
       ]);
       expect(codeRows[0]?.args).toEqual({ ...WINDOW, cursor: expect.any(String) });
       expect(codeRows[0]?.finishedAt).not.toBeNull();
@@ -314,7 +313,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
     const model = createScriptedModel();
     const refusedInARow = [
       'for (let call = 1; call <= 51; call += 1) {',
-      '  try { await callTool("mcp__logs__no_such_tool", {}); } catch (refusal) { console.log(refusal.reason); }',
+      `  try { await callTool("mcp__${LOGS_SERVER}__no_such_tool", {}); } catch (refusal) { console.log(refusal.reason); }`,
       '}',
       'return "51 вызов прошёл";',
     ].join('\n');
@@ -355,7 +354,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       );
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         `task: ${prompt}`,
-        'model_answer:  [logs/search_logs]',
+        `model_answer:  [${LOGS_SERVER}/search_logs]`,
         'tool_result: search_logs success',
         'model_answer:  [run_code]',
         'tool_result: run_code tool_error',
@@ -375,13 +374,13 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       // Then: refusals count as calls: exactly 50 audit rows and the 51st request never ran (DC-11)
       const refusedRows = await codeCallRowsOf(harness.db, agentId, refusedRunId);
       expect(refusedRows.map((row) => `${row.seq} ${row.tool} ${row.outcome} ${row.refusalReason}`)).toEqual(
-        Array.from({ length: 50 }, (_, index) => `${index + 1} mcp__logs__no_such_tool refused tool_not_in_definition`),
+        Array.from({ length: 50 }, (_, index) => `${index + 1} mcp__${LOGS_SERVER}__no_such_tool refused tool_not_in_definition`),
       );
 
       // Then: a burst of 100 parallel calls got no further than 50, on the server as in the audit
       const burstRows = await codeCallRowsOf(harness.db, agentId, burstRunId);
       expect(burstRows.map((row) => `${row.server}/${row.tool} ${row.outcome}`)).toEqual(
-        Array.from({ length: 50 }, () => 'logs/search_logs success'),
+        Array.from({ length: 50 }, () => `${LOGS_SERVER}/search_logs success`),
       );
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs', args: ONE_RECORD })).toHaveLength(50);
 
@@ -438,140 +437,13 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       await harness.close();
     }
   }, TEST_TIMEOUT_MS);
-
-  // AC-11.1: "Given вызов инструмента из кода шёл с учётными данными MCP-сервера, when разработчик читает записи лога этого запуска, включая вывод скрипта, и историю вызова, then ключей, токенов и учётных данных платформы там нет."
-  // AC-02.2 (log half): "... значение не появляется ни в итоге, ни в ошибке, ни в выводе скрипта."
-  // Behavior: an MCP server whose servers-file entry has an env variable with a credential, and which answers the script's call with a tool error carrying that value (fixture `tool_error` rule);
-  //   the script prints everything it can reach about its environment and the server's answer, and returns that answer -> the script got the outcome only, no server text; the run log
-  //   has one warning with the server's full response, the value masked; the value is in no log record, stored output, result, history entry or model input; the provider key, which the script tries to read, is nowhere
-  // Scope (design "Security Considerations", Sensitive Data Handling): the executor gets no secrets; `run_code` masks the settings' secrets (the provider key, the servers' variables) BY VALUE
-  //   with the `common` logger's masker in the run's output and result before they are stored or given to the model, and the logger masks the log. What the script gets stays unmasked.
-  // Catches: a credential that a server echoes to the script stored in the history (output or result) or given to the model, and one written to the run's log through the script's output
-
-  // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), logger, MCP fixture servers file, agent history
-  // @complexity: medium
-  it('INT-1 row D: AC-11.1 a server credential that reached the script is masked in the run log, the stored output and the result, and never reaches the model; the provider key is nowhere', async () => {
-    // Given: the `logs` server runs with a credential in its environment and answers the script's call with a tool error
-    // that carries it; the deployment has a provider key. One script prints all it can reach about its environment and
-    // the server's answer, a second one fails with an exception about it
-    const serverCredential = 'logs-server-token-7f3c9a1e5b2d4086';
-    const providerKey = 'sk-ant-e2e-provider-key-0c5d8b2a91f4';
-    const prompt = 'Show what a script can see';
-    const fixture = createFixtureFiles('code-execution');
-    fixture.setFaults([
-      {
-        tool: 'search_logs',
-        argsHash: argsHash(ONE_RECORD),
-        occurrences: 'all',
-        mode: 'tool_error',
-        message: `access denied for LOGS_API_TOKEN=${serverCredential}`,
-      },
-    ]);
-    const model = createScriptedModel();
-    const inspecting = [
-      'const reach = {};',
-      'for (const name of ["process", "require", "Deno", "Bun", "env", "LOGS_API_TOKEN", "ANTHROPIC_API_KEY"]) {',
-      '  reach[name] = typeof globalThis[name];',
-      '}',
-      'console.log("globals:", Object.getOwnPropertyNames(globalThis).sort().join(","));',
-      'console.log("reach:", reach);',
-      'let environment = "";',
-      'try { environment = JSON.stringify(process.env); } catch (error) { environment = String(error); }',
-      'console.log("process.env:", environment);',
-      'let answer = "";',
-      `try { answer = await callTool("${SEARCH_LOGS}", ${JSON.stringify(ONE_RECORD)}); }`,
-      'catch (error) { answer = error.outcome + " " + error.reason + " [" + error.text + "]"; }',
-      'console.log("ответ сервера:", answer);',
-      'return { reach, answer };',
-    ].join('\n');
-    const failing = 'throw new Error("globals: " + Object.getOwnPropertyNames(globalThis).join(","));';
-    const script = model.script({ task: prompt }, [
-      { calls: [runCode('Что видит скрипт', inspecting)] },
-      { calls: [runCode('Ошибка с окружением', failing)] },
-      { text: 'Окружение показано' },
-    ]);
-    const reader = await startReader(model, prompt, {
-      fixture,
-      serverEnv: { [LOGS_SERVER]: { LOGS_API_TOKEN: serverCredential } },
-      variables: { ANTHROPIC_API_KEY: providerKey },
-    });
-    const { harness, ownerId, agentId } = reader;
-    try {
-      // When: both runs go
-      await untilTurnEnds(reader, script, 3);
-      const [inspectingRunId, failingRunId] = answerCallIds(script);
-      if (inspectingRunId === undefined || failingRunId === undefined) throw new Error('the model made no two runs');
-
-      // Then: the first script reached the server that holds the credential, and printed its answer
-      expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs', args: ONE_RECORD })).toHaveLength(1);
-      const history = await historyOf(harness, agentId, ownerId);
-      const runs = history.flatMap((entry) =>
-        entry.kind === 'tool_result' && entry.content.tool === 'run_code' ? [entry.content] : [],
-      );
-      expect(runs.map((run) => `${run.outcome} ${run.output === null ? 'no output' : 'output'}`)).toEqual([
-        'success output',
-        'tool_error no output',
-      ]);
-
-      // Then: the script got the server's failure as its outcome only, with no server text (owner decision 2026-11-14):
-      // it printed and returned exactly that
-      const output = runs.map((run) => run.output ?? '').join('\n');
-      const result = runs.map((run) => run.text ?? '').join('\n');
-      expect(output).toContain('ответ сервера: tool_error null []');
-      expect((JSON.parse(runs[0]?.text ?? '') as { answer: unknown }).answer).toBe('tool_error null []');
-
-      // Then: the run log has exactly one warning for that call, carrying the server's full response with the credential
-      // masked by the logger (AC-11.1, FR-11)
-      const runLogs = [...runLogsOf(harness, inspectingRunId), ...runLogsOf(harness, failingRunId)];
-      const warnings = runLogs.filter((record) => record.level === 'warn');
-      expect(warnings.map((record) => [record.message, record.fields.seq, record.fields.attempt, record.fields])).toEqual([
-        [
-          'tool call from code failed; its response is hidden from the script',
-          1,
-          1,
-          expect.objectContaining({
-            tool: 'search_logs',
-            server: LOGS_SERVER,
-            outcome: 'tool_error',
-            reason: null,
-            response: 'access denied for LOGS_API_TOKEN=[redacted]',
-          }),
-        ],
-      ]);
-
-      // Then: neither the credential nor the provider key the script tried to read is anywhere: run log, stored output,
-      // result, history, model input (AC-11.1, AC-02.2, Invariant 7); the server's message is nowhere but that warning
-      const everywhere = {
-        runLog: JSON.stringify(runLogs),
-        output,
-        result,
-        history: JSON.stringify(history),
-        modelInput: JSON.stringify(model.calls),
-      };
-      for (const secret of [serverCredential, providerKey]) {
-        for (const [place, text] of Object.entries(everywhere)) {
-          expect([place, text.includes(secret)]).toEqual([place, false]);
-        }
-      }
-      const besideTheWarning = {
-        ...everywhere,
-        runLog: JSON.stringify(runLogs.filter((record) => record.level !== 'warn')),
-      };
-      for (const [place, text] of Object.entries(besideTheWarning)) {
-        expect([place, text.includes('access denied')]).toEqual([place, false]);
-      }
-    } finally {
-      await harness.close();
-    }
-  }, TEST_TIMEOUT_MS);
 });
 
 // INT-2 and INT-3: a write run of three incident notes on the back office, the employee's one decision, and calls from
 // code against the rights. The note ids are the fixture's: the first 12 hex digits of `argsHash` of each note's arguments.
 
 /** The changing tool of the back office as the model and a script name it. */
-const CREATE_NOTE = 'mcp__backoffice__create_incident_note';
+const CREATE_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
 /** The order every note of a write script is about. */
 const NOTE_ORDER = 'ord-int2';
 /** The texts of the three notes a write script creates, in order. */
@@ -703,7 +575,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // AC-05.2: "Given агент объявил класс `write`, when запуск начинается, then скрипт не выполняется, а сотрудник видит запрос: какой агент просит, что запуск изменяющий, и описание. Код скрипта в запросе свёрнут ... раскрытый текст полон и совпадает с тем, что ..."
   // AC-05.3: "Given запрос на изменяющий запуск ждёт, when сотрудник подтверждает, then скрипт выполняется один раз, и его изменяющие вызовы исполняются без новых запросов."
   // AC-05.7 (once, over the unit table): "... в запросе есть список «Может вызвать» ровно из этих трёх инструментов ..."
-  // Behavior: a `write` run whose script calls `mcp__backoffice__create_incident_note` three times -> before the decision the fixture journal is empty and the request carries the agent, the description, the class, the full script and the one-item "Может вызвать" list ("меняет") -> approve -> three calls, no new request, the result
+  // Behavior: a `write` run whose script calls `mcp__${BACKOFFICE_SERVER}__create_incident_note` three times -> before the decision the fixture journal is empty and the request carries the agent, the description, the class, the full script and the one-item "Может вызвать" list ("меняет") -> approve -> three calls, no new request, the result
   // Catches: a mutating call reaching the server before the employee decided, a request that does not carry the list or the full script the employee will confirm, a confirmed script that asks again for each call
   // @category: core-functionality
   // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), agent_tool_calls
@@ -772,9 +644,9 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
       }
       expect(runStarts(harness, runCallId)).toHaveLength(1);
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentId, runCallId))).toEqual([
-        '1 backoffice/create_incident_note success null',
-        '2 backoffice/create_incident_note success null',
-        '3 backoffice/create_incident_note success null',
+        `1 ${BACKOFFICE_SERVER}/create_incident_note success null`,
+        `2 ${BACKOFFICE_SERVER}/create_incident_note success null`,
+        `3 ${BACKOFFICE_SERVER}/create_incident_note success null`,
       ]);
       const requests = await harness.sessions.confirmations(agentId, ownerId);
       expect(requests.map((decided) => `${decided.decisionId} ${decided.status} ${decided.resolution?.approve}`)).toEqual([
@@ -942,7 +814,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   }, TEST_TIMEOUT_MS);
 
   // AC-03.7: "Given идёт подтверждённый запуск `write`, when скрипт вызывает инструмент агента, чьё имя не написано в тексте скрипта, например собрано из частей во время запуска, then MCP-сервер не получает вызова, скрипт получает отказ, причина которого называет инструмент и то, что его нет в подтверждённом ..."
-  // Behavior: a confirmed script makes three note calls, then calls `mcp__logs__search_logs` by a name built from two parts -> refusal `not_in_confirmed_script` naming the tool, audit row "отказ", the journal has three calls and no `search_logs`, the log's run start carries "подтверждён" and the code hash
+  // Behavior: a confirmed script makes three note calls, then calls `mcp__${LOGS_SERVER}__search_logs` by a name built from two parts -> refusal `not_in_confirmed_script` naming the tool, audit row "отказ", the journal has three calls and no `search_logs`, the log's run start carries "подтверждён" and the code hash
   // Catches: a confirmed script reaching a tool the employee never saw in the "Может вызвать" list (the confirmation covers more than what was shown)
   // @category: core-functionality
   // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", agent_tool_calls, MCP fixture, logger
@@ -951,7 +823,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
     // Given: a write script that creates the three notes, then calls `search_logs` by a name built from two parts at run time
     const prompt = 'Write three notes, then read the logs by a built name';
     const script = notesScript([
-      'const name = "mcp__logs__" + "search_logs";',
+      `const name = "mcp__${LOGS_SERVER}__" + "search_logs";`,
       ...caughtAs('refusal', `callTool(name, ${JSON.stringify(ONE_RECORD)})`),
       'return { noteIds, refusal };',
     ]);
@@ -977,15 +849,15 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
       expect(returnedBy(await historyOf(harness, agentId, ownerId), runCallId)).toEqual({
         noteIds: NOTE_IDS,
         refusal:
-          'refused not_in_confirmed_script mcp__logs__search_logs: инструмента нет в подтверждённом коде (not_in_confirmed_script, запуск write)',
+          `refused not_in_confirmed_script mcp__${LOGS_SERVER}__search_logs: инструмента нет в подтверждённом коде (not_in_confirmed_script, запуск write)`,
       });
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs' })).toEqual([]);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(3);
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentId, runCallId))).toEqual([
-        '1 backoffice/create_incident_note success null',
-        '2 backoffice/create_incident_note success null',
-        '3 backoffice/create_incident_note success null',
-        '4 logs/search_logs refused not_in_confirmed_script',
+        `1 ${BACKOFFICE_SERVER}/create_incident_note success null`,
+        `2 ${BACKOFFICE_SERVER}/create_incident_note success null`,
+        `3 ${BACKOFFICE_SERVER}/create_incident_note success null`,
+        `4 ${LOGS_SERVER}/search_logs refused not_in_confirmed_script`,
       ]);
 
       // Then: the log's run start is marked confirmed and carries the SHA-256 of the code (FR-11)
@@ -1023,9 +895,9 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
     const requests = [
       ['start_agent', { agent: definition, description: 'вложенный агент', prompt: 'Сделай что-нибудь' }],
       ['run_code', { description: 'вложенный запуск', class: 'read', script: 'return 1;' }],
-      ['mcp__logs__no_such_tool', {}],
-      ['mcp__tracker__search_tickets', {}],
-      ['mcp__backoffice__search_orders', { ...WINDOW }],
+      [`mcp__${LOGS_SERVER}__no_such_tool`, {}],
+      [`mcp__${TRACKER_SERVER}__search_tickets`, {}],
+      [`mcp__${BACKOFFICE_SERVER}__search_orders`, { ...WINDOW }],
     ];
     const refusing = [
       `const requests = ${JSON.stringify(requests)};`,
@@ -1081,25 +953,24 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       expect(returnedBy(await historyOf(harness, agentA, employeeA), runA)).toEqual([
         'refused not_callable_from_code start_agent: отказ not_callable_from_code (запуск read)',
         'refused not_callable_from_code run_code: отказ not_callable_from_code (запуск read)',
-        'refused tool_not_in_definition mcp__logs__no_such_tool: отказ tool_not_in_definition (запуск read)',
-        'refused tool_not_in_definition mcp__tracker__search_tickets: отказ tool_not_in_definition (запуск read)',
-        // the run's text is masked by value (FR-11): the fixture server's env value FIXTURE_SOURCE=backoffice is a secret like any other
-        'refused no_access mcp__[redacted]__search_orders: отказ no_access (запуск read)',
+        `refused tool_not_in_definition mcp__${LOGS_SERVER}__no_such_tool: отказ tool_not_in_definition (запуск read)`,
+        `refused tool_not_in_definition mcp__${TRACKER_SERVER}__search_tickets: отказ tool_not_in_definition (запуск read)`,
+        `refused no_access mcp__${BACKOFFICE_SERVER}__search_orders: отказ no_access (запуск read)`,
       ]);
       expect(resultEntryOf(await historyOf(harness, agentW, employeeW), runW).text).toBe(
-        'refused changing_in_read_run mcp__[redacted]__create_incident_note: инструмент не помечен читающим, а запуск read только читает (changing_in_read_run)',
+        `refused changing_in_read_run mcp__${BACKOFFICE_SERVER}__create_incident_note: инструмент не помечен читающим, а запуск read только читает (changing_in_read_run)`,
       );
 
       // Then: every refusal has its audit row "отказ" with the reason
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentA, runA))).toEqual([
         '1 start_agent refused not_callable_from_code',
         '2 run_code refused not_callable_from_code',
-        '3 mcp__logs__no_such_tool refused tool_not_in_definition',
-        '4 mcp__tracker__search_tickets refused tool_not_in_definition',
-        '5 backoffice/search_orders refused no_access',
+        `3 mcp__${LOGS_SERVER}__no_such_tool refused tool_not_in_definition`,
+        `4 mcp__${TRACKER_SERVER}__search_tickets refused tool_not_in_definition`,
+        `5 ${BACKOFFICE_SERVER}/search_orders refused no_access`,
       ]);
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentW, runW))).toEqual([
-        '1 backoffice/create_incident_note refused changing_in_read_run',
+        `1 ${BACKOFFICE_SERVER}/create_incident_note refused changing_in_read_run`,
       ]);
 
       // Then: no call reached any server, no agent was started and no run was nested
@@ -1147,7 +1018,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       // would have been refused no_access before the server (Invariant 1)
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs', args: foreignArgs })).toHaveLength(2);
       const codeRows = await codeCallRowsOf(harness.db, agentId, runCallId);
-      expect(codeCallLines(codeRows)).toEqual(['1 logs/search_logs tool_error null']);
+      expect(codeCallLines(codeRows)).toEqual([`1 ${LOGS_SERVER}/search_logs tool_error null`]);
       expect(codeRows[0]?.args).toEqual(foreignArgs);
 
       // Then: the direct call got the server's own refusal of the extra key; the script got the same outcome class, with
@@ -1256,14 +1127,14 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       const secondRunId = toolCallIdOf(secondScript, 1);
 
       // Then: the first run was still going: its call from code had no outcome yet (AC-06.2)
-      expect(codeCallLines(await codeCallRowsOf(harness.db, firstId, firstRunId))).toEqual(['1 logs/search_logs null null']);
+      expect(codeCallLines(await codeCallRowsOf(harness.db, firstId, firstRunId))).toEqual([`1 ${LOGS_SERVER}/search_logs null null`]);
 
       // Then: the failed direct call kept no full result (DC-8), and every id that is not the run's own successful
       // result answered the same "результат не найден"; the run read its own result and saw no global of the first run
       const secondHistory = await historyOf(harness, secondId, employeeA);
       expect(historyLines(secondHistory)).toEqual([
         `task: ${promptSecond}`,
-        'model_answer:  [logs/search_logs, logs/search_logs]',
+        `model_answer:  [${LOGS_SERVER}/search_logs, ${LOGS_SERVER}/search_logs]`,
         'tool_result: search_logs success',
         'tool_result: search_logs tool_error',
         'model_answer:  [run_code]',
@@ -1427,9 +1298,9 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
         'run_code done interrupted',
       ]);
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentId, runCallId))).toEqual([
-        '1 logs/search_logs success null',
-        '2 logs/search_logs success null',
-        '3 logs/search_logs interrupted null',
+        `1 ${LOGS_SERVER}/search_logs success null`,
+        `2 ${LOGS_SERVER}/search_logs success null`,
+        `3 ${LOGS_SERVER}/search_logs interrupted null`,
       ]);
 
       // When: the server answers the held call late, and a message makes the agent go on
@@ -1485,7 +1356,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
         (rows) => rows.every((row) => row.outcome !== null),
         'the open audit row of the stopped run to close',
       );
-      expect(codeCallLines(closedCalls)).toEqual(['1 backoffice/create_incident_note unknown null']);
+      expect(codeCallLines(closedCalls)).toEqual([`1 ${BACKOFFICE_SERVER}/create_incident_note unknown null`]);
       expect((await toolCallRowsOf(harness.db, agentId)).map((row) => `${row.tool} ${row.state} ${row.outcome}`)).toEqual([
         'run_code sending null',
       ]);
@@ -1504,7 +1375,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
       // Then: no call reached the server after the command: the second and third notes never went out (AC-10.1)
       expect(readFixtureLog(fixture.callLog)).toHaveLength(1);
       expect(codeCallLines(await codeCallRowsOf(harness.db, agentId, runCallId))).toEqual([
-        '1 backoffice/create_incident_note unknown null',
+        `1 ${BACKOFFICE_SERVER}/create_incident_note unknown null`,
       ]);
     } finally {
       firstNoteHeld.release();

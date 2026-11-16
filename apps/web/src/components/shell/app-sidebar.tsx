@@ -17,6 +17,8 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { useAdminRight } from '@/components/admin/admin-gate';
+import { AdminSidebarNav } from '@/components/admin/admin-sidebar-nav';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useAwaitingCount } from '@/lib/agents/awaiting-count';
@@ -42,12 +44,18 @@ const focusMenuButton = (): HTMLElement | null =>
 
 /**
  * SB-01: the built-in sidebar (256 px or the 48 px icon strip) at ≥ 768 px and the modal drawer SB-13 below.
- * The thread list mounts inside `nav «История бесед»`; the icon strip shows no list.
+ * The thread list mounts inside `nav «История бесед»`; the icon strip shows no list. On a panel address the
+ * panel's sections take the place of «Новый чат», «Агенты» and the list, unless the employee has no right
+ * there (AD-02 keeps the ordinary sidebar).
  */
 export function AppSidebar() {
   const { newChat } = useShellActions();
   const { isMobile, state, setOpenMobile } = useSidebar();
+  const route = parseShellRoute(usePathname());
+  const adminRight = useAdminRight();
+  const panel = route.kind === 'admin' && adminRight !== 'denied';
   const newChatRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLAnchorElement>(null);
   // Set when the drawer closes because a thread or SB-03 was picked: that action focuses its own target
   // (HD-03 or the composer, UXRD 7.4), so the drawer must not pull focus back to «Меню» after its exit transition.
   const actionOwnsFocus = useRef(false);
@@ -62,6 +70,12 @@ export function AppSidebar() {
     return false;
   };
 
+  // A pick that focuses its own target (an agent page's or a panel section's h1) closes the drawer.
+  const onMobilePick = (): void => {
+    actionOwnsFocus.current = true;
+    setOpenMobile(false);
+  };
+
   const onHistoryClick = (event: MouseEvent<HTMLElement>): void => {
     if (isMobile && event.target instanceof Element && event.target.closest(`[${THREAD_LINK_ATTRIBUTE}]`) !== null) {
       actionOwnsFocus.current = true;
@@ -69,7 +83,7 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar id={SIDEBAR_ID} collapsible="icon" initialFocus={newChatRef} finalFocus={finalFocus}>
+    <Sidebar id={SIDEBAR_ID} collapsible="icon" initialFocus={panel ? backRef : newChatRef} finalFocus={finalFocus}>
       <SidebarHeader className={cn('gap-1', isMobile && 'pt-[max(0.5rem,env(safe-area-inset-top))]')}>
         <SidebarMenu>
           <SidebarMenuItem className="flex items-center gap-1">
@@ -93,40 +107,41 @@ export function AppSidebar() {
               </Button>
             )}
           </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              ref={newChatRef}
-              variant="outline"
-              tooltip={isMobile ? undefined : `Новый чат · ${newChatShortcut}`}
-              aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
-              className={cn(pressable, isMobile ? 'h-11' : 'h-9')}
-              onClick={() => {
-                if (isMobile) {
-                  actionOwnsFocus.current = true;
-                  setOpenMobile(false);
-                }
-                newChat();
-              }}
-            >
-              <SquarePenIcon aria-hidden />
-              <span>Новый чат</span>
-              {showShortcutHint && (
-                <span aria-hidden className="text-muted-foreground ml-auto text-xs">
-                  {newChatShortcut.replaceAll('+', ' ')}
-                </span>
-              )}
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <AgentsNavItem
-            onMobilePick={() => {
-              actionOwnsFocus.current = true;
-              setOpenMobile(false);
-            }}
-          />
+          {!panel && (
+            <>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  ref={newChatRef}
+                  variant="outline"
+                  tooltip={isMobile ? undefined : `Новый чат · ${newChatShortcut}`}
+                  aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
+                  className={cn(pressable, isMobile ? 'h-11' : 'h-9')}
+                  onClick={() => {
+                    if (isMobile) onMobilePick();
+                    newChat();
+                  }}
+                >
+                  <SquarePenIcon aria-hidden />
+                  <span>Новый чат</span>
+                  {showShortcutHint && (
+                    <span aria-hidden className="text-muted-foreground ml-auto text-xs">
+                      {newChatShortcut.replaceAll('+', ' ')}
+                    </span>
+                  )}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <AgentsNavItem onMobilePick={onMobilePick} />
+            </>
+          )}
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {!isStrip && (
+        {panel && (
+          <nav aria-label="Панель" className="p-2">
+            <AdminSidebarNav loading={adminRight === 'unknown'} backRef={backRef} onMobilePick={onMobilePick} />
+          </nav>
+        )}
+        {!panel && !isStrip && (
           <nav aria-label="История бесед" className="flex min-h-0 flex-1 flex-col" onClick={onHistoryClick}>
             <ThreadHistoryList />
           </nav>

@@ -1,0 +1,37 @@
+'use client';
+
+import { useEffect } from 'react';
+import { focusShellTarget } from '@/lib/focus';
+import type { AdminPage, AdminSection } from '@/lib/shell-route';
+import { CatalogSection } from './models/catalog-section';
+import { RolesSection } from './roles/roles-section';
+import { ServersSection } from './servers/servers-section';
+import { SignInSection } from './sign-in/sign-in-section';
+import { UsersSection } from './users/users-section';
+
+type AdminScreenProps = { section: AdminSection; page: AdminPage };
+
+/**
+ * The section screen of a panel address; mounted by `AdminGate` for an administrator only. Every panel page
+ * opened — from the menu, the sidebar, a row, a form or a deleted record — gets the focus on its `h1` (UXRD
+ * Accessibility), here and nowhere else.
+ */
+export function AdminScreen({ section, page }: AdminScreenProps) {
+  const pageKey = page.kind === 'record' ? page.key : null;
+  useEffect(() => {
+    focusShellTarget('page-title');
+  }, [section, page.kind, pageKey]);
+
+  switch (section) {
+    case 'users':
+      return <UsersSection page={page} />;
+    case 'roles':
+      return <RolesSection page={page} />;
+    case 'models':
+      return <CatalogSection />;
+    case 'sign-in':
+      return <SignInSection page={page} />;
+    case 'servers':
+      return <ServersSection page={page} />;
+  }
+}

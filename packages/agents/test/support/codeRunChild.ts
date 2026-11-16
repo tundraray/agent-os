@@ -8,8 +8,6 @@ import { fileURLToPath } from 'node:url';
 import type { AgentDefinition } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
 import type { RunCodeArgs } from '@agent-os/contracts';
-import { type FixtureFiles, type FixtureServerEntry, fixtureServersFile } from '@agent-os/mcp-fixture';
-import { BACKOFFICE_SERVER, LOGS_SERVER, testDefinition } from './agentsHarness.js';
 import type { ChildMessage, HarnessMessage } from './codeRunChildMain.js';
 import { databaseUrl } from './database-url.js';
 
@@ -19,7 +17,10 @@ import { databaseUrl } from './database-url.js';
  * build older than its sources is refused before anything is spawned. The test never talks to the
  * agents inside a child: it starts one, kills it from outside while a call of the script is held on
  * the MCP fixture, starts a fresh one over the same database and fixture files, and reads the rows and
- * the child's log. One scenario serves every row: one definition, a read run and a write run.
+ * the child's log. One scenario serves every row: one definition, a read run and a write run, over the
+ * run's servers that the test registered at its own fixture process before the first child starts (a
+ * child registers nothing: the registry rows are in the database). The module is compiled into the
+ * child, so it takes the run's server names as values and imports no vitest helper.
  */
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -47,16 +48,31 @@ const KILL_MATRIX_SETTINGS: Readonly<Record<string, string>> = {
   DB_POOL_MAX: '4',
 };
 
+/** The run's names of the two fixture servers of the scenario. */
+export interface ScenarioServers {
+  readonly logs: string;
+  readonly backoffice: string;
+}
+
 /** The one definition of the scenario: both fixture servers. */
-export const CODE_RUN_DEFINITION: AgentDefinition = testDefinition('code-run-restart', {
-  mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER],
-});
+export function codeRunDefinition(servers: ScenarioServers): AgentDefinition {
+  const name = 'code-run-restart';
+  return {
+    name,
+    description: `Test agent ${name}`,
+    prompt: 'You are a test agent.',
+    tools: [],
+    mcpServers: [servers.logs, servers.backoffice],
+    agents: [],
+    maxTurns: 20,
+  };
+}
 
 /** The trace the read script reads (`get_trace` of the `logs` server). */
 export const TRACE = { traceId: 'a'.repeat(32) };
 /** The two notes the write script creates, in order (`create_incident_note` of the `backoffice` server). */
 export const FIRST_NOTE = { orderId: 'ORD-1001', text: 'first note of the run' };
-const SECOND_NOTE ={ orderId: 'ORD-1001', text: 'second note of the run' };
+const SECOND_NOTE = { orderId: 'ORD-1001', text: 'second note of the run' };
 
 /** One run of the scenario: the agent's task, its `run_code` call and the report after the result. */
 export interface ScenarioRun {
@@ -68,54 +84,62 @@ export interface ScenarioRun {
 }
 
 /** A `read` run: one call of `get_trace`, then the literal result `trace read`. */
-export const READ_RUN: ScenarioRun = {
-  task: 'Read the trace in code',
-  description: 'code reader',
-  args: {
-    description: 'Read one trace',
-    class: 'read',
-    script: [`await callTool("mcp__logs__get_trace", ${JSON.stringify(TRACE)});`, 'return "trace read";'].join('\n'),
-  },
-  report: 'report of the read run',
-};
-
-/** A `write` run: two notes, one after the other, then the literal result `notes created`. */
-export const WRITE_RUN: ScenarioRun = {
-  task: 'Write two notes in code',
-  description: 'code writer',
-  args: {
-    description: 'Create two incident notes',
-    class: 'write',
-    script: [
-      `await callTool("mcp__backoffice__create_incident_note", ${JSON.stringify(FIRST_NOTE)});`,
-      `await callTool("mcp__backoffice__create_incident_note", ${JSON.stringify(SECOND_NOTE)});`,
-      'return "notes created";',
-    ].join('\n'),
-  },
-  report: 'report of the write run',
-};
-
-/** What a child gets from the test: the agents settings and the servers file, both over the test's fixture files. */
-export interface ChildScenario {
-  readonly variables: Readonly<Record<string, string>>;
-  readonly mcpServers: readonly FixtureServerEntry[];
+export function readRun(servers: ScenarioServers): ScenarioRun {
+  const getTrace = `mcp__${servers.logs}__get_trace`;
+  return {
+    task: 'Read the trace in code',
+    description: 'code reader',
+    args: {
+      description: 'Read one trace',
+      class: 'read',
+      script: [`await callTool("${getTrace}", ${JSON.stringify(TRACE)});`, 'return "trace read";'].join('\n'),
+    },
+    report: 'report of the read run',
+  };
 }
 
-/** The scenario of a test: its access table, and the fixture servers logging into its call log under its fault rules. */
+/** A `write` run: two notes, one after the other, then the literal result `notes created`. */
+export function writeRun(servers: ScenarioServers): ScenarioRun {
+  const createNote = `mcp__${servers.backoffice}__create_incident_note`;
+  return {
+    task: 'Write two notes in code',
+    description: 'code writer',
+    args: {
+      description: 'Create two incident notes',
+      class: 'write',
+      script: [
+        `await callTool("${createNote}", ${JSON.stringify(FIRST_NOTE)});`,
+        `await callTool("${createNote}", ${JSON.stringify(SECOND_NOTE)});`,
+        'return "notes created";',
+      ].join('\n'),
+    },
+    report: 'report of the write run',
+  };
+}
+
+/**
+ * What a child gets from the test: the agents settings, the server rights of its access gate double
+ * (`{ <owner id> | '*': [<server>, …] }`) and the run's names of the scenario's servers.
+ */
+export interface ChildScenario {
+  readonly variables: Readonly<Record<string, string>>;
+  readonly access: Readonly<Record<string, readonly string[]>>;
+  readonly servers: ScenarioServers;
+}
+
+/** The scenario of a test: its server rights and the run's servers it registered. */
 export function childScenario(
-  fixture: FixtureFiles,
   access: Readonly<Record<string, readonly string[]>>,
+  servers: ScenarioServers,
 ): ChildScenario {
   return {
     variables: {
       AGENT_DEFAULT_MODEL: CHILD_MODEL,
-      MCP_ACCESS_TABLE: JSON.stringify(access),
       MCP_CALL_TIMEOUT_MS: '90000',
+      NODE_ENV: 'test',
     },
-    mcpServers: fixtureServersFile(fixture, [
-      { id: LOGS_SERVER, source: 'logs' },
-      { id: BACKOFFICE_SERVER, source: 'backoffice' },
-    ]),
+    access,
+    servers,
   };
 }
 
@@ -287,7 +311,7 @@ export class CodeRunChild {
     }
   }
 
-  /** Stops the child over IPC (workers, MCP processes, pool) and waits for exit 0. */
+  /** Stops the child over IPC (workers, agents, pool) and waits for exit 0. */
   async stop(): Promise<void> {
     if (!this.running) return;
     const message: HarnessMessage = { kind: 'stop' };

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { MenuIcon, PanelLeftIcon, PanelLeftOpenIcon, PanelRightIcon, SquarePenIcon } from 'lucide-react';
+import { AdminHeaderSlot } from '@/components/admin/admin-header';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
-import { parseShellRoute } from '@/lib/shell-route';
+import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
@@ -65,7 +66,8 @@ export function ChatHeaderView({
   return (
     <header
       data-scrolled={scrolled ? '' : undefined}
-      className="bg-background flex h-(--header-height) shrink-0 items-center gap-1 border-b border-transparent px-2 md:px-3 data-scrolled:border-border"
+      // A panel screen's actions take a second line below 768 px; every other heading fills one line.
+      className="bg-background flex min-h-(--header-height) shrink-0 flex-wrap items-center gap-x-1 border-b border-transparent px-2 md:flex-nowrap md:px-3 data-scrolled:border-border"
     >
       <WithTooltip label={`Меню · ${sidebarShortcut}`}>
         <Button
@@ -162,8 +164,9 @@ type ChatHeaderProps = {
 
 /**
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
- * `/agents` → «Агенты» (MC-4); an agent page → `AgentHeader` (AV-01), which needs `AgentFeedProvider`
- * above; neither has the workspace button.
+ * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
+ * which needs `AgentFeedProvider` above; a panel address → the slot its section screen fills (AD-01);
+ * none of them has the workspace button.
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();
@@ -173,8 +176,8 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
 
   return (
     <ChatHeaderView
-      title={route.kind === 'agents' ? AGENTS_TITLE : title}
-      heading={route.kind === 'agent' ? <AgentHeader /> : undefined}
+      title={ROUTE_TITLES[route.kind] ?? title}
+      heading={routeHeading(route)}
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}
@@ -184,8 +187,17 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
   );
 }
 
-/** MC-4: the «Агенты» page heading. */
-const AGENTS_TITLE: HeaderTitle = { kind: 'text', text: 'Агенты', pending: false };
+function routeHeading(route: ShellRoute): ReactNode {
+  if (route.kind === 'agent') return <AgentHeader />;
+  if (route.kind === 'admin') return <AdminHeaderSlot />;
+  return undefined;
+}
+
+/** Fixed page headings: «Агенты» (agent-platform MC-4), «Мой доступ» (enterprise-access MC-7). */
+const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
+  agents: { kind: 'text', text: 'Агенты', pending: false },
+  account: { kind: 'text', text: 'Мой доступ', pending: false },
+};
 
 /**
  * `/` → hidden. `/chat/<id>` → empty on TH-06 / TH-07; loading while the main view is switching or until

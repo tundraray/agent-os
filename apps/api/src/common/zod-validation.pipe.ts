@@ -1,9 +1,6 @@
-import {
-  BadRequestException,
-  type ArgumentMetadata,
-  type PipeTransform,
-} from '@nestjs/common';
+import type { ArgumentMetadata, PipeTransform } from '@nestjs/common';
 import type { ZodType, z } from 'zod';
+import { apiError } from './api-error.js';
 
 /**
  * Validates a route argument against a zod schema from `@agent-os/contracts`.
@@ -21,13 +18,12 @@ export class ZodValidationPipe<T extends ZodType> implements PipeTransform<
     if (result.success) {
       return result.data;
     }
-    throw new BadRequestException({
-      statusCode: 400,
-      error: 'Bad Request',
-      errorCode: 'VALIDATION_FAILED',
-      message: result.error.issues.map(
+    throw apiError(
+      400,
+      'VALIDATION_FAILED',
+      result.error.issues.map(
         (issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`,
       ),
-    });
+    );
   }
 }

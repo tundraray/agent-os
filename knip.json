@@ -11,6 +11,9 @@
       "entry": [
         "src/main.ts",
         "src/runtime/migrate-cli.ts",
+        "src/identity/super-admin-cli.ts",
+        "src/agents/seed-mcp-cli.ts",
+        "src/access/seed-access-cli.ts",
         "test/verify/**/*.verify.ts"
       ],
       "ignoreDependencies": ["@nestjs/mau"]
@@ -35,7 +38,7 @@
     "packages/mcp-fixture": {
       "entry": [
         "src/index.ts",
-        "src/server.ts"
+        "src/main.ts"
       ]
     },
     "packages/runtime": {

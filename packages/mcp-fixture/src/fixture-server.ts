@@ -3,9 +3,8 @@ import {
   ProtocolErrorCode,
   ResourceNotFoundError,
   Server,
+  WebStandardStreamableHTTPServerTransport,
   type CallToolResult,
-  type RequestId,
-  type Transport,
 } from '@modelcontextprotocol/server';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -35,7 +34,7 @@ const WAIT_FOR_FILE_LIMIT_MS = 60_000;
 const SERVER_INFO = { name: 'agent-os-mcp-fixture', version: '1.0.0' };
 
 /**
- * What a fixture process serves (`FIXTURE_SOURCE`): the payment logs, the back office of the same dataset, or the
+ * What a fixture source serves: the payment logs, the back office of the same dataset, or the
  * tracker's tickets.
  */
 export const FixtureSourceSchema = z.enum(['logs', 'backoffice', 'tracker']);
@@ -47,9 +46,6 @@ const TOOLS: Readonly<Record<FixtureSource, readonly FixtureTool[]>> = {
   tracker: [searchTicketsTool],
 };
 
-/** Result fault of the `tools/call` request with this `id`, if a fault rule matched it. */
-export type ResultFaultLookup = (requestId: RequestId) => ResultFaultRule | undefined;
-
 /**
  * MCP server over one synthetic dataset, serving its logs, its back office or the tracker, built on the low-level `Server` so the
  * fixture controls every result byte: tools have no `outputSchema`, results are canonical JSON. Reading tools are
@@ -57,16 +53,45 @@ export type ResultFaultLookup = (requestId: RequestId) => ResultFaultRule | unde
  * reports the dataset's snapshot.
  */
 export class FixtureServer {
-  private readonly server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
-  private readonly tools: readonly FixtureTool[];
+  private readonly tools: FixtureTool[];
 
   constructor(
     private dataset: LogDataset,
     private readonly source: FixtureSource,
-    private readonly resultFault: ResultFaultLookup = () => undefined,
   ) {
-    this.tools = TOOLS[source];
-    this.server.setRequestHandler('tools/list', () => ({
+    this.tools = [...TOOLS[source]];
+  }
+
+  /**
+   * Answers one Streamable HTTP request without a session: a fresh transport and protocol server per request
+   * over this source's state (dataset, added tools), JSON responses instead of an SSE stream. `resultFault`
+   * applies to the `tools/call` the request carries.
+   */
+  async handleHttp(
+    request: Request,
+    options: { parsedBody?: unknown; resultFault?: ResultFaultRule },
+  ): Promise<Response> {
+    const server = this.createServer(options.resultFault);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    try {
+      return await transport.handleRequest(request, { parsedBody: options.parsedBody });
+    } finally {
+      await server.close();
+    }
+  }
+
+  /** Lists `tool` from now on, next to the source's own tools. */
+  addTool(tool: FixtureTool): void {
+    this.tools.push(tool);
+  }
+
+  private createServer(resultFault: ResultFaultRule | undefined): Server {
+    const server = new Server(SERVER_INFO, { capabilities: { tools: {}, resources: {} } });
+    server.setRequestHandler('tools/list', () => ({
       tools: this.tools.map((tool) => ({
         name: tool.name,
         title: tool.title,
@@ -75,13 +100,13 @@ export class FixtureServer {
         ...(tool.readOnly ? { annotations: { readOnlyHint: true } } : {}),
       })),
     }));
-    this.server.setRequestHandler('tools/call', (request, ctx) =>
-      this.callTool(request.params.name, request.params.arguments, this.resultFault(ctx.mcpReq.id)),
+    server.setRequestHandler('tools/call', (request) =>
+      this.callTool(server, request.params.name, request.params.arguments, resultFault),
     );
-    this.server.setRequestHandler('resources/list', () => ({
+    server.setRequestHandler('resources/list', () => ({
       resources: [{ uri: SOURCE_INFO_URI, name: 'source-info', mimeType: 'application/json' }],
     }));
-    this.server.setRequestHandler('resources/read', (request) => {
+    server.setRequestHandler('resources/read', (request) => {
       if (request.params.uri !== SOURCE_INFO_URI) {
         throw new ResourceNotFoundError(request.params.uri);
       }
@@ -92,6 +117,7 @@ export class FixtureServer {
       };
       return { contents: [{ uri: SOURCE_INFO_URI, mimeType: 'application/json', text: canonicalJson(info) }] };
     });
+    return server;
   }
 
   /** Items the source serves: log records, distinct orders or tickets. */
@@ -106,13 +132,12 @@ export class FixtureServer {
     }
   }
 
-  /** Closing the transport (stdin end-of-file on stdio) fires `onClose`. */
-  async connect(transport: Transport, onClose: () => void): Promise<void> {
-    this.server.onclose = onClose;
-    await this.server.connect(transport);
-  }
-
-  private async callTool(name: string, args: unknown, fault: ResultFaultRule | undefined): Promise<CallToolResult> {
+  private async callTool(
+    server: Server,
+    name: string,
+    args: unknown,
+    fault: ResultFaultRule | undefined,
+  ): Promise<CallToolResult> {
     const tool = this.tools.find((candidate) => candidate.name === name);
     if (tool === undefined) {
       throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool: ${name}`);
@@ -143,7 +168,7 @@ export class FixtureServer {
     if (typeof result === 'string') {
       return toolError(result);
     }
-    return this.server.projectCallToolResult(jsonResult(result), undefined);
+    return server.projectCallToolResult(jsonResult(result), undefined);
   }
 }
 
@@ -153,7 +178,7 @@ function flipped(dataset: LogDataset, version: DatasetVersion | undefined): LogD
 }
 
 /** True once the file at `path` exists; false when it does not appear within `WAIT_FOR_FILE_LIMIT_MS`. */
-async function waitForFile(path: string): Promise<boolean> {
+export async function waitForFile(path: string): Promise<boolean> {
   const deadline = Date.now() + WAIT_FOR_FILE_LIMIT_MS;
   while (!existsSync(path)) {
     if (Date.now() >= deadline) {

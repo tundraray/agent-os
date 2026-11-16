@@ -3,16 +3,18 @@ import type { Logger } from '@agent-os/common';
 import { type Database, runtimeModelCalls } from '@agent-os/db';
 import { and, eq, gte, lt, sql } from 'drizzle-orm';
 import type { Clock } from './clock.js';
-import { RuntimeError } from './errors.js';
-import { type CallUsage, callCostUsd, type ModelPrices } from './model-cost.js';
+import { type CallUsage, callCostUsd, type ModelPrice } from './model-cost.js';
+import { monthWindowUtc } from './month.js';
 
 /** One finished model call as the caller reports it. */
 export interface ModelCallRecord {
   ownerId: string;
   /** The task that made the call; absent for a call outside a task. */
   taskId?: string;
-  /** `<provider/model>`, a key of the prices file. */
+  /** `<provider/model>`, an id of the model catalogue. */
   model: string;
+  /** The model's price that came with the access verdict for this call (ADR-0015). */
+  price: ModelPrice;
   usage: CallUsage;
 }
 
@@ -31,33 +33,22 @@ export interface TokenLedgerDeps {
   db: Database;
   clock: Clock;
   logger: Logger;
-  prices: ModelPrices;
 }
-
-const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 /**
  * The token ledger (design-runtime.md, KD-5, Invariant 8): one row per finished model call, priced
- * at its own model's price. It only records — nothing is reserved or refused for budget. A row is
- * written by its own short statement outside fencing, since the money is spent even when the step
- * is lost, and rows outlive the deletion of their task tree.
+ * at the price the call carries (ADR-0015: the runtime keeps no price table). It only records —
+ * nothing is reserved or refused for budget. A row is written by its own short statement outside
+ * fencing, since the money is spent even when the step is lost, and rows outlive the deletion of
+ * their task tree.
  */
 export class TokenLedger {
   constructor(private readonly deps: TokenLedgerDeps) {}
 
-  /** Records a finished call; throws `UNKNOWN_MODEL_PRICE` and writes nothing without a price. */
+  /** Records a finished call at the price of its record. */
   async record(call: ModelCallRecord): Promise<RecordedCall> {
-    const { db, clock, logger, prices } = this.deps;
-    const price = prices.get(call.model);
-    if (price === undefined) {
-      logger.error('model call not recorded: no price for the model', {
-        model: call.model,
-        ownerId: call.ownerId,
-        taskId: call.taskId,
-      });
-      throw new RuntimeError('UNKNOWN_MODEL_PRICE', `No price is configured for model ${call.model}`);
-    }
-    const costUsd = callCostUsd(price, call.usage);
+    const { db, clock, logger } = this.deps;
+    const costUsd = callCostUsd(call.price, call.usage);
     const callId = randomUUID();
     await db.insert(runtimeModelCalls).values({
       callId,
@@ -87,38 +78,39 @@ export class TokenLedger {
    * `[start of the month UTC, start of the next)`. An empty month gives zeros.
    */
   async monthSpend(ownerId: string, month: string): Promise<MonthSpend> {
-    const { from, to } = monthWindowUtc(month);
     const [row] = await this.deps.db
       .select({
         costUsd: sql<string>`coalesce(sum(${runtimeModelCalls.costUsd}), 0)`,
         calls: sql<number>`count(*)::int`,
       })
       .from(runtimeModelCalls)
-      .where(
-        and(
-          eq(runtimeModelCalls.ownerId, ownerId),
-          gte(runtimeModelCalls.calledAt, from),
-          lt(runtimeModelCalls.calledAt, to),
-        ),
-      );
+      .where(ownerMonth(ownerId, month));
     return { costUsd: Number(row?.costUsd ?? 0), calls: row?.calls ?? 0 };
   }
 
-  /** The models with a price; the upper layer checks an agent's model against it. */
-  pricedModels(): string[] {
-    return [...this.deps.prices.keys()];
+  /**
+   * Spend of the owner over the month `YYYY-MM` split by model, in the window of
+   * {@link monthSpend}: model -> USD. A model with no call in the month is absent.
+   */
+  async monthSpendByModel(ownerId: string, month: string): Promise<ReadonlyMap<string, number>> {
+    const rows = await this.deps.db
+      .select({
+        model: runtimeModelCalls.model,
+        costUsd: sql<string>`sum(${runtimeModelCalls.costUsd})`,
+      })
+      .from(runtimeModelCalls)
+      .where(ownerMonth(ownerId, month))
+      .groupBy(runtimeModelCalls.model);
+    return new Map(rows.map((row) => [row.model, Number(row.costUsd)]));
   }
 }
 
-function monthWindowUtc(month: string): { from: Date; to: Date } {
-  const match = MONTH_PATTERN.exec(month);
-  if (match === null) {
-    throw new Error(`Invalid month "${month}": expected YYYY-MM`);
-  }
-  const year = Number(match[1]);
-  const monthIndex = Number(match[2]) - 1;
-  return {
-    from: new Date(Date.UTC(year, monthIndex, 1)),
-    to: new Date(Date.UTC(year, monthIndex + 1, 1)),
-  };
+/** The owner's calls with `called_at` inside the UTC month `YYYY-MM`. */
+function ownerMonth(ownerId: string, month: string) {
+  const { from, to } = monthWindowUtc(month);
+  return and(
+    eq(runtimeModelCalls.ownerId, ownerId),
+    gte(runtimeModelCalls.calledAt, from),
+    lt(runtimeModelCalls.calledAt, to),
+  );
 }

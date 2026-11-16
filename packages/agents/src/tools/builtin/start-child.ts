@@ -1,5 +1,8 @@
 import { AGENT_TASK_TYPE } from '@agent-os/contracts';
 
+import type { Database } from '@agent-os/db';
+
+import type { AccessAudit, AccessGate } from '../../access-gate.js';
 import type { DefinitionCatalog } from '../../definitions/catalog.js';
 import { AgentsError } from '../../errors.js';
 import { chooseModel } from '../../model/model-choice.js';
@@ -7,15 +10,23 @@ import { type SessionInput, sessions } from '../../store/sessions.repository.js'
 import type { StartChild, StartChildRequest } from '../tool.js';
 import type { StartChildScope } from '../tool-runner.js';
 
-/** What a start needs to check its request and choose the model. */
-export interface StartChildDeps {
+/** What the session input of a new agent needs: the catalog, the depth limit and the default model. */
+export interface SessionInputDeps {
   readonly catalog: DefinitionCatalog;
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
   /** `AGENT_DEFAULT_MODEL`. */
   readonly defaultModel: string;
-  /** `ledger.pricedModels()` of the runtime. */
-  readonly pricedModels: () => readonly string[];
+}
+
+/** What a start inside a step needs: the session input, and the gate `start_agent` checks the model with. */
+export interface StartChildDeps extends SessionInputDeps {
+  /** `start_agent` reads the caller's session before the commit: a fork runs on the caller's model. */
+  readonly database: Database;
+  /** `start_agent` asks it about the child's model (design-access.md KD-4). */
+  readonly access: Pick<AccessGate, 'model'>;
+  /** Gets the `access_denied` record of a start refused for its model (KD-6). */
+  readonly audit: AccessAudit;
 }
 
 /**
@@ -37,12 +48,12 @@ export function createStartChild(deps: StartChildDeps): (scope: StartChildScope)
 
 /**
  * The session input of a new agent, for the `start` operation and the spawn helper alike: the
- * definition is in the catalog (`UNKNOWN_DEFINITION`), a child is not deeper than `AGENT_MAX_DEPTH`
- * (`DEPTH_LIMIT`) and the chosen model has a price (`UNKNOWN_MODEL`). `parentDepth` — `null` for a
- * root session.
+ * definition is in the catalog (`UNKNOWN_DEFINITION`) and a child is not deeper than `AGENT_MAX_DEPTH`
+ * (`DEPTH_LIMIT`); the model is chosen by `chooseModel` and checked at its calls (KD-4). `parentDepth` —
+ * `null` for a root session.
  */
 export function sessionInputOf(
-  deps: StartChildDeps,
+  deps: SessionInputDeps,
   parentDepth: number | null,
   request: StartChildRequest,
 ): SessionInput {
@@ -56,23 +67,15 @@ export function sessionInputOf(
       `A child of an agent at depth ${parentDepth} is deeper than AGENT_MAX_DEPTH ${deps.maxDepth}`,
     );
   }
-  const choice = chooseModel({
-    launchModel: request.model ?? null,
-    definitionModel: definition.model ?? null,
-    defaultModel: deps.defaultModel,
-    pricedModels: deps.pricedModels(),
-  });
-  if (choice.kind === 'refused') {
-    throw new AgentsError(
-      'UNKNOWN_MODEL',
-      `Model ${request.model ?? definition.model ?? deps.defaultModel} has no price in the prices file`,
-    );
-  }
   return {
     definition: definition.name,
     description: request.description,
     prompt: request.prompt,
-    model: choice.model,
+    model: chooseModel({
+      launchModel: request.model ?? null,
+      definitionModel: definition.model ?? null,
+      defaultModel: deps.defaultModel,
+    }),
     ...(request.limits === undefined ? {} : { limits: request.limits }),
     ...(request.forkedFrom === undefined ? {} : { forkedFrom: request.forkedFrom }),
   };

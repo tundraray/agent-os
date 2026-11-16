@@ -4,6 +4,12 @@ import type { FaultMode } from './fault-schedule.js';
 
 const CallLogEntrySchema = z.strictObject({
   seq: z.int().min(1),
+  /** The source that received the call (`logs`, `backoffice`, `tracker`). */
+  source: z.string(),
+  /** `shared` for the shared token, the account name for a token of the fixture's authorization server. */
+  account: z.string(),
+  /** Sequence number of the access token at the fixture's authorization server (not its value); null for `shared`. */
+  tokenId: z.int().min(1).nullable(),
   tool: z.string(),
   argsHash: z.string(),
   occurrence: z.int().min(1),
@@ -12,6 +18,15 @@ const CallLogEntrySchema = z.strictObject({
   pid: z.int(),
 });
 type CallLogEntry = z.infer<typeof CallLogEntrySchema>;
+
+/** One `tools/call` as it reached a source: who called it and with what. */
+export interface LoggedCall {
+  source: string;
+  account: string;
+  tokenId: number | null;
+  tool: string;
+  argsHash: string;
+}
 
 /**
  * JSONL journal of `tools/call` requests (`FIXTURE_CALL_LOG`), shared by every fixture process started with the
@@ -26,7 +41,7 @@ export class CallLog {
    * crash right after it still leaves the line in the file.
    */
   record<Fault extends { mode: FaultMode }>(
-    call: { tool: string; argsHash: string },
+    call: LoggedCall,
     decide: (occurrence: number) => Fault | undefined,
   ): Fault | undefined {
     const entries = this.read();
@@ -35,6 +50,9 @@ export class CallLog {
     const fault = decide(occurrence);
     const entry: CallLogEntry = {
       seq: entries.length + 1,
+      source: call.source,
+      account: call.account,
+      tokenId: call.tokenId,
       tool: call.tool,
       argsHash: call.argsHash,
       occurrence,

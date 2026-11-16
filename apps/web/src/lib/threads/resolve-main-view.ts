@@ -1,5 +1,5 @@
 import type { HistoryStatus } from './shell-status-store';
-import { isThreadsApiError } from './threads-api-error';
+import { isApiRequestError } from '@/lib/api/api-request';
 
 export type { HistoryStatus };
 
@@ -23,7 +23,7 @@ export type MainView =
 /** Decides what the main area shows: the feed (TH-01..05), its skeleton while switching, TH-06 or TH-07. */
 export function resolveMainView({ routeThreadId, mainRemoteId, switchError, historyStatus }: MainViewInput): MainView {
   if (switchError !== undefined && switchError.threadId === routeThreadId) {
-    const notFound = isThreadsApiError(switchError.error) && switchError.error.kind === 'not_found';
+    const notFound = isApiRequestError(switchError.error) && switchError.error.kind === 'not_found';
     return notFound ? { kind: 'not-found' } : { kind: 'load-error', retry: 'switch' };
   }
   // A direct link or a click: the runtime has not opened the URL thread yet — skeleton, never the welcome.

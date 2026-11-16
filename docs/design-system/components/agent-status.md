@@ -34,8 +34,7 @@
 | Статус | Иконка | Цвет иконки и метки | Как ведёт себя |
 |---|---|---|---|
 | Работает | `LoaderCircle`, вращение | `--info` | Вращается, пока статус «Работает»; все такие иконки на экране вращаются в одной фазе |
-| Ждёт подтверждения | `Hand` | `--approval` | Статична: агент ждёт человека |
-| Прерван | `CirclePause` | `--muted-foreground` | Статична |
+| Ждёт подтверждения | `Hand` | `--approval` | Статична: агент ждёт человека || Прерван | `CirclePause` | `--muted-foreground` | Статична |
 | Завершён | `CircleCheck` | `--success` | Статична |
 | Сбой | `CircleX` | `--destructive` | Статична; причина — в строке события и в отчёте |
 | Остановлен | `CircleStop` | `--muted-foreground` | Статична |
@@ -63,3 +62,4 @@
 ## Used In
 
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — список агентов, страница агента, лента беседы.
+- [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — «Остановлен» с причиной «квота исчерпана» (QS-01).

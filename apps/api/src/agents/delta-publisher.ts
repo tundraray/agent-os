@@ -87,7 +87,7 @@ export class DeltaPublisher implements OnModuleDestroy {
       .catch((error: unknown) => {
         this.deps.logger.warn('text delta notify failed', {
           agentId: delta.agentId,
-          error: error instanceof Error ? error.message : String(error),
+          error,
         });
       });
   }

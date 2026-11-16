@@ -2,20 +2,22 @@ import { ToolCallStateSchema, ToolOutcomeSchema } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
+import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate.js';
 import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import type { Session } from '../store/sessions.repository.js';
 import { type ToolCallEnding, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { toolResults } from '../store/tool-results.repository.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
+import { callTargetOf, type ToolRegistry } from '../tools/tool-registry.js';
 import {
   callerOf,
   isInCommit,
   type ToolExecution,
   type ToolRunner,
+  toolDeniedEntry,
 } from '../tools/tool-runner.js';
 import { entriesOf, toolResultEntry } from './deliver.js';
-import { appendWithEvent, logStep, requestedName } from './model-step.js';
+import { appendWithEvent, logStep, refusedResult, requestedName } from './model-step.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';
@@ -50,8 +52,12 @@ type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<ToolCallRow | un
 
 export interface ToolStepDeps {
   readonly catalog: DefinitionCatalog;
-  readonly registry: ToolRegistry;
+  readonly registry: Pick<ToolRegistry, 'checkTools'>;
   readonly runner: ToolRunner;
+  /** Asked once per step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
+  readonly access: Pick<AccessGate, 'tools'>;
+  /** Gets the `access_denied` record of each `no_access` the step's check decides (KD-6). */
+  readonly audit: AccessAudit;
 }
 
 /**
@@ -121,6 +127,20 @@ async function closeExecuted(
   return closed;
 }
 
+/** Runs the closings in call order and returns their `tool_result` entries. */
+async function closeAll(
+  closings: readonly Closing[],
+  tx: RuntimeTx,
+  effects: StepEffects,
+): Promise<NewHistoryEntry[]> {
+  const results: NewHistoryEntry[] = [];
+  for (const closing of closings) {
+    const closed = await closing(tx, effects);
+    if (closed !== undefined) results.push(toolResultEntry(closed));
+  }
+  return results;
+}
+
 /**
  * The commit of the step: the closings in call order, their `tool_result` entries, then the entries of
  * the messages the step delivers (KD-1: a message stands after the results of its answer), and
@@ -133,11 +153,7 @@ function commitOf(
   afterClosings?: (tx: RuntimeTx) => Promise<void>,
 ): NonNullable<StepResult['commit']> {
   return async (tx, effects) => {
-    const results: NewHistoryEntry[] = [];
-    for (const closing of closings) {
-      const closed = await closing(tx, effects);
-      if (closed !== undefined) results.push(toolResultEntry(closed));
-    }
+    const results = await closeAll(closings, tx, effects);
     if (afterClosings !== undefined) await afterClosings(tx);
     await appendWithEvent(tx, effects, ctx.taskId, [
       ...results,
@@ -149,8 +165,11 @@ function commitOf(
 /**
  * Builds the tool step (design-agents.md: KD-1, KD-4, Flow 1, Flow 5, DC-5, DC-6, Invariants 1–3).
  *
- * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2). It is
- *   `sending` only when a step was lost after the intent; an interrupt or a stop closes it elsewhere.
+ * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2), also when the
+ *   owner is disabled. It is `sending` only when a step was lost after the intent; an interrupt or a stop
+ *   closes it elsewhere.
+ * - The gate is asked once before the calls: a disabled owner fails the agent with `owner_disabled` and no
+ *   call starts; a pair it does not allow is `no_access` before any confirmation, with one audit record.
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
  *   a call needing confirmation without a decision ends the step with `await_decision`, the ready
  *   results committed and the call marked awaiting, the rest waiting; a rejected one is `rejected`; a
@@ -159,9 +178,11 @@ function commitOf(
  *   step's signal; an `in_commit` call runs in the commit.
  * - The signal aborted around a call, or the intent fenced: `continue` without writes — the runtime
  *   rejects the result of a step that is no longer current.
+ * - The gate refused the owner at a call's admission (KD-4): that call and the rest do not start; the
+ *   calls that ran are closed and the agent fails with `owner_disabled`.
  */
 export function createToolStep(deps: ToolStepDeps): ToolStep {
-  const { catalog, registry, runner } = deps;
+  const { catalog, registry, runner, access, audit } = deps;
 
   return async function toolStep(ctx, session, openCalls) {
     const stepStartedAt = Date.now();
@@ -178,7 +199,9 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     };
 
     const definition = definitionOf(catalog, session);
-    const sessionTools = registry.sessionTools({
+    // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
+    // whose account went away gets `auth_required` (C3, DC-2).
+    const sessionTools = await registry.checkTools({
       definition,
       limits: session.limits,
       ownerId: session.ownerId,
@@ -190,141 +213,187 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
       logStep(ctx, STEP_KIND, stepStartedAt, 'continue', { calls: closings.length });
       return { outcome: 'continue', commit: commitOf(ctx, closings) };
     };
+    /** The agent fails with `owner_disabled`: the calls that ran are closed, the rest never start (KD-5). */
+    const ownerDisabled = (): Promise<StepResult> =>
+      refusedResult({
+        ctx,
+        stepKind: STEP_KIND,
+        startedAt: stepStartedAt,
+        model: session.model,
+        refusal: { kind: 'refused', reason: 'owner_disabled' },
+        audit,
+        writeEntries: async (tx, effects) => [
+          ...(await closeAll(closings, tx, effects)),
+          ...(await entriesOf(tx, ctx.messages)),
+        ],
+        patch: {},
+      });
 
+    // Before the gate, so a disabled owner's exit closes them too: a call left in `sending` precedes every
+    // other open call of its answer.
     for (const call of openCalls) {
-      if (call.state === sending) {
-        // The intent is written and no result came back: the call may have reached its server.
-        ctx.logger.warn('tool call in sending without a result closed as unknown', {
-          callId: call.callId,
-          tool: call.tool,
-          server: call.server,
-          args: call.args,
-          outcome: unknown,
-          reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
-        });
-        closings.push(close(call, { outcome: unknown }));
-        continue;
-      }
-      if (ctx.signal.aborted) return abandon('signal aborted before the call');
+      if (call.state !== sending) continue;
+      // The intent is written and no result came back: the call may have reached its server.
+      ctx.logger.warn('tool call in sending without a result closed as unknown', {
+        callId: call.callId,
+        tool: call.tool,
+        server: call.server,
+        args: call.args,
+        outcome: unknown,
+        reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
+      });
+      closings.push(close(call, { outcome: unknown }));
+    }
 
-      const check = runner.check(
-        { callId: call.callId, toolName: requestedName(call), args: call.args },
-        { sessionTools, caller },
-      );
-      if (check.kind === 'refused') {
-        ctx.logger.info('tool call refused', {
-          callId: call.callId,
-          tool: call.tool,
-          server: call.server,
-          args: call.args,
-          outcome: refused,
-          reason: check.reason,
-          durationMs: 0,
-        });
-        closings.push(close(call, { outcome: refused, refusalReason: check.reason }));
-        continue;
-      }
-      const resolved = check.call;
+    const toolAccess = await access.tools(session.ownerId);
+    if (toolAccess.kind === 'owner_disabled') {
+      ctx.logger.warn('access gate refused the tool step', {
+        ownerId: session.ownerId,
+        agentId: ctx.taskId,
+        calls: openCalls.length,
+        reason: 'owner_disabled',
+      });
+      return ownerDisabled();
+    }
+    const { allows } = toolAccess;
 
-      if (runner.needsConfirmation(resolved)) {
-        const callDecision = decision?.callId === call.callId ? decision : undefined;
-        if (callDecision === undefined) {
-          if (call.state === awaitingConfirmation) {
-            throw new Error(
-              `Call ${call.callId} of agent ${ctx.taskId} awaits confirmation, but the step got no decision for it`,
-            );
+    const runCalls = async (): Promise<StepResult> => {
+      for (const call of openCalls) {
+        if (call.state === sending) continue;
+        if (ctx.signal.aborted) return abandon('signal aborted before the call');
+
+        const check = runner.check(
+          { callId: call.callId, toolName: requestedName(call), args: call.args },
+          { sessionTools, caller, allows },
+        );
+        if (check.kind === 'refused') {
+          // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
+          // The row keeps the name as asked when the offered set lacked the tool, so the pair comes from the check's set.
+          const target = callTargetOf(sessionTools, requestedName(call));
+          if (check.reason === 'no_access' && target.server !== null) {
+            await audit(toolDeniedEntry(session.ownerId, target.server, target.tool));
           }
-          const request = runner.confirmationRequest(resolved, session, sessionTools);
-          ctx.logger.info('tool call awaits confirmation', {
+          ctx.logger.info('tool call refused', {
             callId: call.callId,
             tool: call.tool,
             server: call.server,
             args: call.args,
-            outcome: null,
-            reason: 'awaiting_confirmation',
-          });
-          logStep(ctx, STEP_KIND, stepStartedAt, 'await_decision', { calls: closings.length });
-          return {
-            outcome: 'await_decision',
-            kind: request.kind,
-            payload: request.payload,
-            commit: commitOf(ctx, closings, async (tx) => {
-              const moved = await toolCalls.markAwaiting(tx, {
-                taskId: ctx.taskId,
-                callId: call.callId,
-              });
-              if (moved === undefined) {
-                throw new Error(`Call ${call.callId} of agent ${ctx.taskId} was no longer requested`);
-              }
-            }),
-          };
-        }
-
-        if (!callDecision.approve) {
-          ctx.logger.info('tool call rejected by the employee', {
-            callId: call.callId,
-            tool: call.tool,
-            server: call.server,
-            args: call.args,
-            outcome: rejected,
-            reason: 'rejected',
+            outcome: refused,
+            reason: check.reason,
             durationMs: 0,
           });
-          closings.push(close(call, { outcome: rejected }));
+          closings.push(close(call, { outcome: refused, refusalReason: check.reason }));
+          continue;
+        }
+        const resolved = check.call;
+
+        if (runner.needsConfirmation(resolved)) {
+          const callDecision = decision?.callId === call.callId ? decision : undefined;
+          if (callDecision === undefined) {
+            if (call.state === awaitingConfirmation) {
+              throw new Error(
+                `Call ${call.callId} of agent ${ctx.taskId} awaits confirmation, but the step got no decision for it`,
+              );
+            }
+            const request = runner.confirmationRequest(resolved, session, sessionTools);
+            ctx.logger.info('tool call awaits confirmation', {
+              callId: call.callId,
+              tool: call.tool,
+              server: call.server,
+              args: call.args,
+              outcome: null,
+              reason: 'awaiting_confirmation',
+            });
+            logStep(ctx, STEP_KIND, stepStartedAt, 'await_decision', { calls: closings.length });
+            return {
+              outcome: 'await_decision',
+              kind: request.kind,
+              payload: request.payload,
+              commit: commitOf(ctx, closings, async (tx) => {
+                const moved = await toolCalls.markAwaiting(tx, {
+                  taskId: ctx.taskId,
+                  callId: call.callId,
+                });
+                if (moved === undefined) {
+                  throw new Error(`Call ${call.callId} of agent ${ctx.taskId} was no longer requested`);
+                }
+              }),
+            };
+          }
+
+          if (!callDecision.approve) {
+            ctx.logger.info('tool call rejected by the employee', {
+              callId: call.callId,
+              tool: call.tool,
+              server: call.server,
+              args: call.args,
+              outcome: rejected,
+              reason: 'rejected',
+              durationMs: 0,
+            });
+            closings.push(close(call, { outcome: rejected }));
+            continue;
+          }
+
+          const startedAt = new Date();
+          const send = await runner.sendConfirmed(
+            resolved,
+            ctx,
+            callDecision.args,
+            callDecision.confirmed,
+          );
+          if (send.kind === 'not_sent') {
+            if (send.reason === 'fenced') return abandon('intent fenced');
+            // The call is no longer awaiting: nothing is sent; what is ready is committed.
+            return done();
+          }
+          if (send.kind === 'in_commit') {
+            const { commit } = send;
+            closings.push(async (tx, effects) => {
+              const callStartedAt = new Date();
+              const execution = await commit(tx, effects);
+              if (execution.kind === 'not_sent') return undefined;
+              return closeExecuted(tx, call, {
+                execution,
+                startedAt: callStartedAt,
+                finishedAt: new Date(),
+              });
+            });
+            return done();
+          }
+          const { execution } = send;
+          if (execution.kind === 'aborted') return abandon('signal aborted during the confirmed call');
+          const finishedAt = new Date();
+          closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
+          // The confirmed result is committed before anything else of the answer runs (KD-1).
+          return done();
+        }
+
+        if (isInCommit(resolved)) {
+          const run = await runner.planInCommit(resolved, ctx.logger);
+          closings.push(async (tx, effects) => {
+            const startedAt = new Date();
+            const execution = await run(tx, effects);
+            return closeExecuted(tx, call, { execution, startedAt, finishedAt: new Date() });
+          });
           continue;
         }
 
         const startedAt = new Date();
-        const send = await runner.sendConfirmed(
-          resolved,
-          ctx,
-          callDecision.args,
-          callDecision.confirmed,
-        );
-        if (send.kind === 'not_sent') {
-          if (send.reason === 'fenced') return abandon('intent fenced');
-          // The call is no longer awaiting: nothing is sent; what is ready is committed.
-          return done();
-        }
-        if (send.kind === 'in_commit') {
-          const { commit } = send;
-          closings.push(async (tx, effects) => {
-            const callStartedAt = new Date();
-            const execution = await commit(tx, effects);
-            if (execution.kind === 'not_sent') return undefined;
-            return closeExecuted(tx, call, {
-              execution,
-              startedAt: callStartedAt,
-              finishedAt: new Date(),
-            });
-          });
-          return done();
-        }
-        const { execution } = send;
-        if (execution.kind === 'aborted') return abandon('signal aborted during the confirmed call');
+        const execution = await runner.runOutside(resolved, ctx);
+        if (execution.kind === 'aborted') return abandon('signal aborted during the call');
         const finishedAt = new Date();
         closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
-        // The confirmed result is committed before anything else of the answer runs (KD-1).
-        return done();
       }
 
-      if (isInCommit(resolved)) {
-        const run = runner.planInCommit(resolved, ctx.logger);
-        closings.push(async (tx, effects) => {
-          const startedAt = new Date();
-          const execution = await run(tx, effects);
-          return closeExecuted(tx, call, { execution, startedAt, finishedAt: new Date() });
-        });
-        continue;
-      }
+      return done();
+    };
 
-      const startedAt = new Date();
-      const execution = await runner.runOutside(resolved, ctx);
-      if (execution.kind === 'aborted') return abandon('signal aborted during the call');
-      const finishedAt = new Date();
-      closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
+    try {
+      return await runCalls();
+    } catch (error) {
+      if (!(error instanceof OwnerDisabledError)) throw error;
+      return ownerDisabled();
     }
-
-    return done();
   };
 }

@@ -26,7 +26,10 @@
     "test:verify": "pnpm --filter \"api^...\" build && vitest run --config ./vitest.config.verify.ts",
     "dev": "nest start --watch --exec \"node --disable-sigusr1\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:migrate": "node --env-file-if-exists=.env dist/runtime/migrate-cli.js"
+    "db:migrate": "node --env-file-if-exists=.env dist/runtime/migrate-cli.js",
+    "identity:super-admin": "node --env-file-if-exists=.env dist/identity/super-admin-cli.js",
+    "seed:mcp": "node --env-file-if-exists=.env dist/agents/seed-mcp-cli.js",
+    "seed:access": "node --env-file-if-exists=.env dist/access/seed-access-cli.js"
   },
   "dependencies": {
     "@agent-os/agents": "workspace:*",
@@ -43,6 +46,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "drizzle-orm": "0.45.4",
+    "openid-client": "^6.8.9",
     "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

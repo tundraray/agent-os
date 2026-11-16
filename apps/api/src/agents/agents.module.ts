@@ -10,6 +10,7 @@ import {
   createMastraTurnClient,
   createResolveModel,
   secretValuesOf,
+  type AccessAudit,
   type Agents,
   type AgentsConfig,
   type AgentTurnModelClient,
@@ -17,6 +18,10 @@ import {
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock, Runtime } from '@agent-os/runtime';
+import { AccessModule } from '../access/access.module.js';
+import { AccessService } from '../access/access.service.js';
+import { AuditLog } from '../audit/audit-log.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
 import { RuntimeModule } from '../runtime/runtime.module.js';
 import {
@@ -24,6 +29,7 @@ import {
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
 } from '../runtime/runtime.tokens.js';
+import { AdminMcpServersController } from './admin-mcp-servers.controller.js';
 import { readAgentsSettings } from './agents-settings.js';
 import {
   AGENT_TURN_CLIENT,
@@ -32,21 +38,45 @@ import {
   DELTA_PUBLISHER,
 } from './agents.tokens.js';
 import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
+import { McpConnectionsController } from './mcp-connections.controller.js';
+
+/**
+ * The agents' audit hook (design-access.md KD-6): an `access_denied` record by its own insert, outside any
+ * transaction. A failed write is logged with the record and thrown, so the step that refused is repeated
+ * (plan Notes 3) — a refusal is never left out of the audit silently.
+ */
+function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
+  return async (entry) => {
+    try {
+      await auditLog.record(null, entry);
+    } catch (error) {
+      logger.error('access_denied audit record not written', {
+        ...entry,
+        error,
+      });
+      throw error;
+    }
+  };
+}
 
 /**
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
- * design-chat.md «Сборка»): reads the settings and the servers file and assembles the package on the
+ * design-chat.md «Сборка»): reads the settings and assembles the package on the
  * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` (the one token tests replace) and
- * the `DeltaPublisher` as the `onTextDelta` hook. The `agent` handler and the `task.failed` consumer are
+ * the `DeltaPublisher` as the `onTextDelta` hook, `AccessService` as the `AccessGate` port and `AuditLog` behind
+ * the `audit` hook (design-access.md KD-1, KD-6). The `agent` handler and the `task.failed` consumer are
  * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own
  * factories injecting `AGENTS`.
  *
- * Phases: `onModuleInit` — `start()` (catalog check, MCP servers), before `RuntimeModule` starts the
+ * Phases: `onModuleInit` — `start()` (catalog check), before `RuntimeModule` starts the
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
+ *
+ * Its controllers are the HTTP layer of `Agents.mcp`: an employee's MCP accounts and the admin's registry.
  */
 @Module({
-  imports: [RuntimeModule],
+  imports: [RuntimeModule, IdentityModule, AccessModule],
+  controllers: [McpConnectionsController, AdminMcpServersController],
   providers: [
     {
       provide: AGENTS_SETTINGS,
@@ -92,15 +122,23 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
         database: DatabaseConnection,
         turnClient: AgentTurnModelClient,
         deltaPublisher: DeltaPublisher,
+        access: AccessService,
+        auditLog: AuditLog,
+        appLogger: Logger,
       ): Agents =>
         createAgents({
           database: database.db,
           runtime,
-          // The application logger plus the agents settings' secrets (the provider key, the servers'
-          // environment values) — the same list `run_code` masks in a run's output and result.
+          // The application logger plus the agents settings' secret (the provider key) — the same
+          // list `run_code` masks in a run's output and result.
           logger: createAppLogger(process.env, secretValuesOf(settings)),
           config: settings,
           turnClient,
+          access,
+          audit: accessAudit(
+            auditLog,
+            appLogger.child({ service: 'agents.audit' }),
+          ),
           onTextDelta: (delta) => deltaPublisher.publish(delta),
         }),
       inject: [
@@ -109,6 +147,9 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
         RUNTIME_DATABASE,
         AGENT_TURN_CLIENT,
         DELTA_PUBLISHER,
+        AccessService,
+        AuditLog,
+        APP_LOGGER,
       ],
     },
   ],

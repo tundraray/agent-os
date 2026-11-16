@@ -8,7 +8,6 @@ import { EventConsumerRegistry } from './event-consumer.registry.js';
 import { EventLog } from './event-log.js';
 import { HandlerRegistry } from './handler.registry.js';
 import { Inbox } from './inbox.js';
-import type { ModelPrices } from './model-cost.js';
 import { OutboxRelay } from './outbox.relay.js';
 import { RecoverySweeper } from './recovery.sweeper.js';
 import { RunningTaskRegistry } from './running-task.registry.js';
@@ -26,8 +25,6 @@ export interface RuntimeOptions {
   config: RuntimeConfig;
   logger: Logger;
   clock: Clock;
-  /** Parsed by `parseModelPrices`: the prices of the token ledger. */
-  modelPrices: ModelPrices;
 }
 
 /**
@@ -48,8 +45,8 @@ export interface Runtime {
   readonly events: Pick<EventLog, 'listAfter'>;
   /** Consumers of outbox events. */
   readonly eventConsumers: EventConsumerRegistry;
-  /** The token ledger: the cost of each model call and an owner's spend per month. */
-  readonly ledger: Pick<TokenLedger, 'record' | 'monthSpend' | 'pricedModels'>;
+  /** The token ledger: the cost of each model call and an owner's spend per month, also by model. */
+  readonly ledger: Pick<TokenLedger, 'record' | 'monthSpend' | 'monthSpendByModel'>;
   /**
    * Starts the workers — dispatcher, outbox relay, recovery sweeper — unless `RUNTIME_WORKERS`
    * is off.
@@ -68,7 +65,7 @@ export interface Runtime {
  * and knows nothing about Nest.
  */
 export function createRuntime(options: RuntimeOptions): Runtime {
-  const { database, config, logger: rootLogger, clock, modelPrices } = options;
+  const { database, config, logger: rootLogger, clock } = options;
   const { db, pool } = database;
   const logger = rootLogger.child({ component: 'runtime' });
   // A pooled client has no `error` listener while it is checked out, so a session the server ends
@@ -149,7 +146,6 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     db,
     clock,
     logger: logger.child({ service: 'ledger' }),
-    prices: modelPrices,
   });
 
   let workersStarted = false;

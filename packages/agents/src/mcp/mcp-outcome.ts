@@ -4,7 +4,16 @@ import type { McpCallResponse } from './mcp-client.js';
 import type { McpFailureReason } from './mcp-failure.js';
 
 /** The outcomes an MCP response can have; refusals, rejections and interruptions are decided elsewhere. */
-export type McpOutcome = Extract<ToolOutcome, 'success' | 'empty' | 'tool_error' | 'transport_failure'>;
+export type McpOutcome = Extract<
+  ToolOutcome,
+  'success' | 'empty' | 'tool_error' | 'transport_failure' | 'auth_required'
+>;
+
+/** The call a response belongs to: its id names the full result, its server the account to connect. */
+export interface McpOutcomeCall {
+  readonly callId: string;
+  readonly server: string;
+}
 
 export interface McpOutcomeResult {
   readonly outcome: McpOutcome;
@@ -48,8 +57,19 @@ function truncate(text: string, maxBytes: number, callId: string | undefined): s
   return `${bytes.subarray(0, cut).toString('utf8')}\n${cutNote(bytes.length - cut, callId)}`;
 }
 
-/** Turns an MCP response into exactly one outcome of the call (design-agents.md, Flow 1, Failure handling). */
-export function toOutcome(response: McpCallResponse, maxBytes: number, callId: string): McpOutcomeResult {
+/** What the model reads when the owner has no usable account on the server (KD-5). */
+function authRequiredText(server: string): string {
+  return `Нужно подключить аккаунт ${server} на странице «Мой доступ»`;
+}
+
+/**
+ * Turns an MCP response into exactly one outcome of the call (design-agents.md, Flow 1, Failure handling;
+ * design-mcp-connect.md KD-5 for `auth_required`).
+ */
+export function toOutcome(response: McpCallResponse, maxBytes: number, call: McpOutcomeCall): McpOutcomeResult {
+  if (response.kind === 'auth_required') {
+    return { outcome: 'auth_required', text: authRequiredText(call.server) };
+  }
   if (response.kind === 'failure') {
     return { outcome: 'transport_failure', text: '', reason: response.reason };
   }
@@ -60,7 +80,7 @@ export function toOutcome(response: McpCallResponse, maxBytes: number, callId: s
   if (isEmpty(result)) {
     return { outcome: 'empty', text: '' };
   }
-  return { outcome: 'success', text: truncate(resultText(result), maxBytes, callId) };
+  return { outcome: 'success', text: truncate(resultText(result), maxBytes, call.callId) };
 }
 
 /**

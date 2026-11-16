@@ -1,13 +1,9 @@
 {
+  "extends": "./tsconfig.build.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "declaration": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "skipLibCheck": true
+    "noEmit": true,
+    "rootDir": "."
   },
-  "include": ["src"]
+  "include": ["src", "vitest.config.ts"],
+  "exclude": []
 }

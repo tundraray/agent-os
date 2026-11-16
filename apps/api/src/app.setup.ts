@@ -1,4 +1,5 @@
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
+import { frontendOrigin } from './identity/session-cookie.js';
 
 /**
  * HTTP surface shared by `main.ts` and the e2e test app: global `/api` prefix,
@@ -7,7 +8,7 @@ import { type INestApplication, ValidationPipe } from '@nestjs/common';
 export function configureApp(app: INestApplication): void {
   app.setGlobalPrefix('api');
   app.enableCors({
-    origin: process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000',
+    origin: frontendOrigin(),
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

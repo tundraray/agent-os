@@ -1,5 +1,4 @@
 import type { ToolRefusalReason } from '@agent-os/contracts';
-import type { ModelChoice } from '../model/model-choice.js';
 import { FORK_AGENT, type SessionLimits } from './tool.js';
 
 type Refused<Reason extends ToolRefusalReason> = { readonly kind: 'refused'; readonly reason: Reason };
@@ -17,24 +16,20 @@ export interface StartGateInput {
   readonly depth: number;
   /** `AGENT_MAX_DEPTH`. */
   readonly maxDepth: number;
-  /** The child's model by `chooseModel`; for `fork`, the caller's model. */
-  readonly model: ModelChoice;
 }
 
-export type StartGate =
-  | { readonly kind: 'allowed'; readonly model: string }
-  | Refused<'not_allowed' | 'depth_limit' | 'unknown_model'>;
+export type StartGate = { readonly kind: 'allowed' } | Refused<'not_allowed' | 'depth_limit'>;
 
 /**
  * Whether `start_agent` may start the child (Flow 2, Failure handling; DC-4, AC-10.2, AC-10.3): the
- * agent is in the caller's list and within its count, the child is not deeper than `maxDepth`, and the
- * model has a price. A session started with limits may not fork. A refused start creates no task.
+ * agent is in the caller's list and within its count, and the child is not deeper than `maxDepth`. A
+ * session started with limits may not fork. A refused start creates no task; the model is checked by
+ * the access gate after this (design-access.md KD-4).
  */
 export function gateStart(input: StartGateInput): StartGate {
   if (!startAllowed(input)) return { kind: 'refused', reason: 'not_allowed' };
   if (input.depth + 1 > input.maxDepth) return { kind: 'refused', reason: 'depth_limit' };
-  if (input.model.kind === 'refused') return { kind: 'refused', reason: 'unknown_model' };
-  return { kind: 'allowed', model: input.model.model };
+  return { kind: 'allowed' };
 }
 
 function startAllowed(input: StartGateInput): boolean {

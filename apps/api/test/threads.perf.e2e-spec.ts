@@ -4,16 +4,21 @@
 // `chat_conversations` created through `POST /threads`; the former `/messages` measurement is removed (the route is gone).
 //
 // Method (unchanged): 5 warm-up + 50 sequential requests, durations sorted ascending,
-// p95 = durations[ceil(0.95 * n) - 1] = durations[47] for n = 50. Local Postgres (`pnpm db:up`), a fresh `newUser()` owner,
+// p95 = durations[ceil(0.95 * n) - 1] = durations[47] for n = 50. Local Postgres (`pnpm db:up`), a fresh employee (`createEmployee`),
 // one `createTestApp()` without runtime workers, scripted model double; no network.
 
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { THREAD_PAGE_SIZE, ThreadListResponseSchema } from '@agent-os/contracts';
+import {
+  THREAD_PAGE_SIZE,
+  ThreadListResponseSchema,
+} from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chatApi } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { newUser } from './support/new-user.js';
+import { removeRunRows } from './support/access.js';
+import { createEmployee, seedSuperAdmin } from './support/session.js';
 
 const WARM_UP_REQUESTS = 5;
 const TIMED_REQUESTS = 50;
@@ -26,13 +31,25 @@ const CONVERSATIONS = 200;
 const PERF_TEST_TIMEOUT_MS = 120_000;
 
 let harness: TestApp;
+/** The administrator the case makes; deleted in `afterAll`. */
+let adminId: string | undefined;
 
 beforeAll(async () => {
   harness = await createTestApp();
 });
 
 afterAll(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness === undefined) return;
+  try {
+    if (adminId !== undefined)
+      await removeRunRows(harness.pool, {
+        models: [],
+        roles: [],
+        users: [adminId],
+      });
+  } finally {
+    await harness.close();
+  }
 });
 
 /**
@@ -62,19 +79,32 @@ describe('agent-platform / chat - conversation list performance (local Postgres)
   it(
     'GET /threads answers with p95 <= 300 ms for an owner with 200 conversations',
     async () => {
-      const api = chatApi(harness.app, newUser());
-      for (let index = 0; index < CONVERSATIONS; index += 1) await api.createThread();
+      const admin = await seedSuperAdmin(
+        harness.app,
+        `e2e-admin-${randomUUID()}`,
+      );
+      adminId = admin.id;
+      const api = chatApi(
+        harness.app,
+        await createEmployee(harness.app, admin),
+      );
+      for (let index = 0; index < CONVERSATIONS; index += 1)
+        await api.createThread();
 
       const durations = await measureSequential(
         () => api.raw('get', '/threads'),
         (response) => {
           expect(response.status).toBe(200);
-          expect(ThreadListResponseSchema.parse(response.body).threads).toHaveLength(THREAD_PAGE_SIZE);
+          expect(
+            ThreadListResponseSchema.parse(response.body).threads,
+          ).toHaveLength(THREAD_PAGE_SIZE);
         },
       );
 
       expect(durations).toHaveLength(TIMED_REQUESTS);
-      expect(durations[P95_INDEX], 'list p95, ms').toBeLessThanOrEqual(LIST_P95_BUDGET_MS);
+      expect(durations[P95_INDEX], 'list p95, ms').toBeLessThanOrEqual(
+        LIST_P95_BUDGET_MS,
+      );
     },
     PERF_TEST_TIMEOUT_MS,
   );

@@ -2,14 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { chatConversations, type DatabaseConnection, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import type { Executor } from '../common/executor.js';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
 import type { ThreadCursor } from './thread-cursor.js';
 
 /** A row of `chat_conversations`. */
 export type Conversation = typeof chatConversations.$inferSelect;
-
-/** A transaction of the caller or the plain client: both run the same queries. */
-export type Executor = Database | RuntimeTx;
 
 /**
  * Times are written truncated to milliseconds: the list cursor keeps `updatedAt` in ms, so the order

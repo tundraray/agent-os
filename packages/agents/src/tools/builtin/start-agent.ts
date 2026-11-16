@@ -1,9 +1,11 @@
 import type { RuntimeTx } from '@agent-os/runtime';
 import { z } from 'zod';
 
+import { OwnerDisabledError } from '../../access-gate.js';
 import { type DefinitionHeader, START_AGENT_TOOL } from '../../definitions/definition.js';
-import { chooseModel, type ModelChoice } from '../../model/model-choice.js';
-import { type Session, sessions } from '../../store/sessions.repository.js';
+import { chooseModel } from '../../model/model-choice.js';
+import { modelDeniedEntry } from '../../model/model-client.js';
+import { type Session, sessions, type StoreReader } from '../../store/sessions.repository.js';
 import { toolCalls } from '../../store/tool-calls.repository.js';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool.js';
 import { gateStart } from '../tool-gate.js';
@@ -53,14 +55,40 @@ export function describeStartAgent(headers: readonly DefinitionHeader[]): string
   ].join('\n');
 }
 
+/** Why `start_agent` refuses a child's model: the call's reason has no `no_models_allowed` (plan Notes 10). */
+type ModelStartRefusal = 'model_not_connected' | 'model_not_allowed';
+
+/** The child's model and the gate's answer about it, asked before the commit; `null` — no such definition. */
+type ModelCheck = { readonly model: string; readonly refusal: ModelStartRefusal | undefined } | null;
+
 /**
- * `start_agent` in the commit transaction (Flow 2; DC-4, KD-7): the caller's list and counts, the depth
- * and the model are checked by `gateStart`; a refusal is the call's result and creates no task.
- * Otherwise the child is started by the spawn helper and its `agentId` is the result of the same step.
- * A fork gets the caller's definition and model and a link to the caller's history through the last
- * entry before the answer that holds this call.
+ * The child's model by the access gate (design-access.md KD-4): a model out of the catalogue is
+ * `model_not_connected`, one the owner may not use `model_not_allowed`; a spent quota is not checked here — the
+ * child fails at its first call. A disabled owner rejects with `OwnerDisabledError`, as at the call admission.
+ * The runner logs the refused call with its reason.
  */
-export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<StartAgentArgs> {
+async function modelRefusal(
+  deps: StartChildDeps,
+  ownerId: string,
+  model: string,
+): Promise<ModelStartRefusal | undefined> {
+  const verdict = await deps.access.model(ownerId, model);
+  if (verdict.kind === 'allowed' || verdict.reason === 'quota_exhausted') return undefined;
+  if (verdict.reason === 'owner_disabled') throw new OwnerDisabledError(ownerId);
+  await deps.audit(modelDeniedEntry(ownerId, model, verdict));
+  return verdict.reason === 'model_not_connected' ? 'model_not_connected' : 'model_not_allowed';
+}
+
+/**
+ * `start_agent` (Flow 2; DC-4, KD-7). Before the commit, `prepare` asks the access gate about the child's
+ * model and writes the audit record of a refusal, so no gate or audit query runs while the commit transaction
+ * is open (design-access.md KD-4). In the commit the caller's list and counts and the depth are checked by
+ * `gateStart`, then the prepared answer about the model is applied; a refusal is the call's result and
+ * creates no task. Otherwise the child is started by the spawn helper and its `agentId` is the result of the
+ * same step. A fork gets the caller's definition and model and a link to the caller's history through the
+ * last entry before the answer that holds this call.
+ */
+export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<StartAgentArgs, ModelCheck> {
   return {
     name: START_AGENT_TOOL,
     title: 'Запустить агента',
@@ -68,7 +96,20 @@ export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<St
     description: describeStartAgent([]),
     argsSchema: StartAgentArgsSchema,
     mode: 'in_commit',
-    async execute({ callId, args, caller, tx, startChild }) {
+    async prepare({ args, caller }) {
+      const isFork = args.agent === FORK_AGENT;
+      const childDefinition = deps.catalog.get(args.agent);
+      if (!isFork && childDefinition === undefined) return null;
+      const model = isFork
+        ? (await callerSession(deps.database, caller)).model
+        : chooseModel({
+            launchModel: args.model ?? null,
+            definitionModel: childDefinition?.model ?? null,
+            defaultModel: deps.defaultModel,
+          });
+      return { model, refusal: await modelRefusal(deps, caller.ownerId, model) };
+    },
+    async execute({ callId, args, caller, tx, startChild, prepared }) {
       const session = await callerSession(tx, caller);
       const callerDefinition = deps.catalog.get(session.definition);
       if (callerDefinition === undefined) {
@@ -78,14 +119,6 @@ export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<St
       const childDefinition = isFork ? callerDefinition : deps.catalog.get(args.agent);
       if (childDefinition === undefined) return { kind: 'refused', reason: 'not_allowed' };
 
-      const model: ModelChoice = isFork
-        ? { kind: 'chosen', model: session.model }
-        : chooseModel({
-            launchModel: args.model ?? null,
-            definitionModel: childDefinition.model ?? null,
-            defaultModel: deps.defaultModel,
-            pricedModels: deps.pricedModels(),
-          });
       const gate = gateStart({
         agent: args.agent,
         definitionAgents: callerDefinition.agents,
@@ -93,15 +126,19 @@ export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<St
         startedCount: await toolCalls.startedCount(tx, caller.agentId, args.agent),
         depth: caller.depth,
         maxDepth: deps.maxDepth,
-        model,
       });
       if (gate.kind === 'refused') return gate;
+      if (prepared == null) {
+        throw new Error(`start_agent of agent ${caller.agentId} runs without the model check of its prepare`);
+      }
+      const { model, refusal } = prepared;
+      if (refusal !== undefined) return { kind: 'refused', reason: refusal };
 
       const { agentId } = await startChild({
         definition: childDefinition.name,
         description: args.description,
         prompt: args.prompt,
-        model: gate.model,
+        model,
         ...(isFork
           ? { forkedFrom: { agentId: caller.agentId, throughSeq: await seqBeforeAnswer(tx, caller, callId) } }
           : {}),
@@ -116,8 +153,8 @@ export function createStartAgentTool(deps: StartChildDeps): InCommitAgentTool<St
   };
 }
 
-async function callerSession(tx: RuntimeTx, caller: ToolCaller): Promise<Session> {
-  const session = await sessions.get(tx, caller.agentId);
+async function callerSession(reader: StoreReader, caller: ToolCaller): Promise<Session> {
+  const session = await sessions.get(reader, caller.agentId);
   if (session === undefined) {
     throw new Error(`Agent ${caller.agentId} calls start_agent without a session`);
   }

@@ -21,7 +21,7 @@ import {
 
 import { logger } from "@/lib/logger";
 import type { ShellServices } from "@/lib/threads/shell-services";
-import { describeThreadsError } from "@/lib/threads/threads-api-error";
+import { describeApiError } from "@/lib/api/api-request";
 
 import type { FeedState, FeedStore } from "./feed-store";
 import { toFeed } from "./to-feed";
@@ -113,7 +113,7 @@ export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime 
       try {
         ({ remoteId: created } = await aui.threadListItem.initialize());
       } catch (error) {
-        logger.error("[web-shell] thread create failed", describeThreadsError(error));
+        logger.error("[web-shell] thread create failed", describeApiError(error));
         // The library returns the text to the composer for this error only.
         throw new MessageNotSentError();
       }
