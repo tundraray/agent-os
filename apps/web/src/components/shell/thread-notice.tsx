@@ -2,9 +2,9 @@
 
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
-import { SquarePenIcon } from 'lucide-react';
+import { SearchXIcon, ShieldOffIcon, SquarePenIcon, type LucideIcon } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { AGENTS_PATH } from '@/lib/shell-route';
+import { adminPath, AGENTS_PATH, type AdminSection } from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
 
 export type ThreadNoticeProps =
@@ -17,7 +17,11 @@ export type ThreadNoticeProps =
   /** MC-15: the agent page of a foreign, deleted or missing agent. */
   | { variant: 'agent-not-found' }
   /** MC-16: the agent page could not be read. */
-  | { variant: 'agent-load-error'; onRetry: () => void };
+  | { variant: 'agent-load-error'; onRetry: () => void }
+  /** AD-02 (MC-19): a panel address opened without the administrator right. */
+  | { variant: 'no-access' }
+  /** AD-15 (MC-34): a panel record that does not exist; «К списку» opens its section's list. */
+  | { variant: 'record-not-found'; section: AdminSection };
 
 type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
@@ -42,11 +46,19 @@ const COPY = {
     title: 'Не удалось загрузить агента',
     description: 'Проверьте подключение и попробуйте ещё раз.',
   },
+  'no-access': {
+    title: 'Нет доступа',
+    description: 'Панель администратора открыта только администраторам Agent OS.',
+  },
+  'record-not-found': {
+    title: 'Запись не найдена',
+    description: 'Возможно, её удалили, или ссылка указана неверно.',
+  },
 } as const satisfies Record<ThreadNoticeProps['variant'], { title: string; description: string }>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
- * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3).
+ * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3), the panel with MC-19 and MC-34.
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
 export function ThreadNotice(props: ThreadNoticeProps) {
@@ -69,6 +81,22 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Button>
         </NoticeScreen>
       );
+    case 'no-access':
+      return (
+        <NoticeScreen variant={props.variant} Icon={ShieldOffIcon}>
+          <Link href="/" className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+            В чат
+          </Link>
+        </NoticeScreen>
+      );
+    case 'record-not-found':
+      return (
+        <NoticeScreen variant={props.variant} Icon={SearchXIcon}>
+          <Link href={adminPath(props.section)} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+            К списку
+          </Link>
+        </NoticeScreen>
+      );
     case 'not-found':
     case 'load-error': {
       const canRetry = props.variant === 'load-error' && props.onRetry !== undefined;
@@ -85,8 +113,15 @@ export function ThreadNotice(props: ThreadNoticeProps) {
   }
 }
 
+type NoticeScreenProps = {
+  variant: ScreenVariant;
+  /** 24 px above the heading (the panel's AD-02, AD-15). */
+  Icon?: LucideIcon;
+  children: ReactNode;
+};
+
 /** The full-area notice: its h1 takes focus (tabIndex −1), its actions sit under the reason. */
-function NoticeScreen({ variant, children }: { variant: ScreenVariant; children: ReactNode }) {
+function NoticeScreen({ variant, Icon, children }: NoticeScreenProps) {
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const { title, description } = COPY[variant];
@@ -100,6 +135,7 @@ function NoticeScreen({ variant, children }: { variant: ScreenVariant; children:
       aria-labelledby={headingId}
       className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center"
     >
+      {Icon !== undefined && <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />}
       <h1 ref={headingRef} id={headingId} tabIndex={-1} className="text-xl font-semibold outline-none">
         {title}
       </h1>

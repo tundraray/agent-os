@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { MenuIcon, PanelLeftIcon, PanelLeftOpenIcon, PanelRightIcon, SquarePenIcon } from 'lucide-react';
+import { AdminHeaderSlot } from '@/components/admin/admin-header';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
@@ -163,7 +164,8 @@ type ChatHeaderProps = {
 /**
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
  * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
- * which needs `AgentFeedProvider` above; none of them has the workspace button.
+ * which needs `AgentFeedProvider` above; a panel address → the slot its section screen fills (AD-01);
+ * none of them has the workspace button.
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();
@@ -174,7 +176,7 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
   return (
     <ChatHeaderView
       title={ROUTE_TITLES[route.kind] ?? title}
-      heading={route.kind === 'agent' ? <AgentHeader /> : undefined}
+      heading={routeHeading(route)}
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
       onToggleWorkspace={onToggleWorkspace}
@@ -182,6 +184,12 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
       scrolled={scrolled}
     />
   );
+}
+
+function routeHeading(route: ShellRoute): ReactNode {
+  if (route.kind === 'agent') return <AgentHeader />;
+  if (route.kind === 'admin') return <AdminHeaderSlot />;
+  return undefined;
 }
 
 /** Fixed page headings: «Агенты» (agent-platform MC-4), «Мой доступ» (enterprise-access MC-7). */

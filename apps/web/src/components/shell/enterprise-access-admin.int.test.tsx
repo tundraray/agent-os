@@ -51,7 +51,50 @@
 //   AC-24.1 INT-1 | AC-24.2 INT-1 | AC-25.1 INT-2 | AC-25.2 INT-2 (panel half: confirmed DELETE, list, notice; rights loss - `access`) | AC-25.3 INT-2
 //   AC-26.1 INT-3 | AC-26.3 INT-3 | AC-26.4 INT-3 | AC-27.1 INT-3 | AC-28.2 INT-2 | AC-29.2 INT-2 | NFR-02 (web half) INT-2 + INT-3 | NFR-05 not automated
 
-import { describe, it } from 'vitest';
+import { IdentityErrorCode } from '@agent-os/contracts';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent, { type UserEvent } from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, it, vi } from 'vitest';
+import { trackRequests, type TrackedRequests } from '@/test/admin-support';
+import {
+  adminUserPage,
+  adminUserSummary,
+  currentUser,
+  deferred,
+  fixtureId,
+  roleSummary,
+  threadList,
+  threadSummary,
+} from '@/test/fixtures';
+import { server } from '@/test/msw-server';
+import { renderWithRuntime } from '@/test/render-with-runtime';
+
+vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
+
+const API = 'http://api.test';
+
+/** `/api/admin/*` requests as «METHOD path», in the order they started. */
+const adminRequests = ({ requests }: TrackedRequests): string[] =>
+  requests.filter((request) => request.path.startsWith('/api/admin/')).map((request) => `${request.method} ${request.path}`);
+
+/** Opens the user menu, reads its items (the theme radios aside) and closes it again. */
+async function userMenuItems(user: UserEvent): Promise<string[]> {
+  await user.click(screen.getByRole('button', { name: /^Меню пользователя/ }));
+  const items = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  return items;
+}
+
+/** next/navigation is emulated: a link click must not make jsdom follow the href; the test sets the pathname. */
+async function followLink(user: UserEvent, link: HTMLElement, setPathname: (pathname: string) => void): Promise<void> {
+  const href = link.getAttribute('href');
+  expect(href).not.toBeNull();
+  link.addEventListener('click', (event) => event.preventDefault());
+  await user.click(link);
+  setPathname(href ?? '');
+}
 
 describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // INT-1 ---------------------------------------------------------------------------------------------------------------------------------
@@ -77,7 +120,148 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: parseShellRoute, AdminGate, CurrentUser store, AppSidebar, UserMenu, MainView, ThreadNotice, apiRequest 403 handler, adminApi, MSW, next/navigation mock
   // @complexity: medium
-  it.todo('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its five sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place');
+  it('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its five sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place', async () => {
+    // Arrange: the conversation list both employees have, the panel's reads and the refused «Создать роль»
+    let threadReads = 0;
+    server.use(
+      http.get(`${API}/api/threads`, () => {
+        threadReads += 1;
+        return HttpResponse.json(threadList([threadSummary({ id: 'a', title: 'План релиза' })]));
+      }),
+      http.get(`${API}/api/admin/users`, () =>
+        HttpResponse.json(
+          adminUserPage([adminUserSummary({ id: fixtureId(2), name: 'Борис Ким', email: 'boris@corp.example' })]),
+        ),
+      ),
+      http.get(`${API}/api/admin/roles`, () =>
+        HttpResponse.json([
+          roleSummary({ id: fixtureId(10), name: 'Супер-администратор', isAdmin: true, builtin: true, memberCount: 1 }),
+          roleSummary({ id: fixtureId(100), name: 'SRE' }),
+        ]),
+      ),
+      http.post(`${API}/api/admin/roles`, () =>
+        HttpResponse.json(
+          { statusCode: 403, message: 'Administrator right required', errorCode: IdentityErrorCode.ADMIN_REQUIRED },
+          { status: 403 },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+
+    // Row 1 - not an administrator opens `/admin/roles`; `GET /api/auth/me` is held
+    const employeeMe = deferred();
+    server.use(
+      http.get(`${API}/api/auth/me`, async () => {
+        await employeeMe.promise;
+        return HttpResponse.json(currentUser({ isAdmin: false }));
+      }),
+    );
+    const employee = trackRequests(server);
+    const employeeView = renderWithRuntime({ pathname: '/admin/roles' });
+
+    // Assert (row 1, «Право ещё не известно»): the table's Loading named «Роли», five skeleton rows in place of the sections
+    expect(await screen.findByRole('status', { name: 'Роли' })).toBeInTheDocument();
+    const unknownNav = screen.getByRole('navigation', { name: 'Панель' });
+    expect(unknownNav.querySelectorAll('[data-slot="sidebar-menu-skeleton"]')).toHaveLength(5);
+    expect(within(unknownNav).getAllByRole('link').map((link) => link.textContent)).toEqual(['К чату']);
+    await waitFor(() => expect(employee.requests.map((request) => request.path)).toContain('/api/auth/me'));
+    expect(employee.adminCount()).toBe(0);
+
+    // Act (row 1): `me` answers «not an administrator»
+    employeeMe.resolve();
+
+    // Assert (row 1): «Нет доступа» with «В чат», the ordinary sidebar with the conversations, no panel item in the menu
+    expect(await screen.findByRole('heading', { level: 1, name: 'Нет доступа' })).toBeInTheDocument();
+    expect(screen.getByText('Панель администратора открыта только администраторам Agent OS.')).toBeInTheDocument();
+    const toChat = screen.getByRole('link', { name: 'В чат' });
+    expect(toChat).toHaveAttribute('href', '/');
+    expect(screen.queryByRole('status', { name: 'Роли' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Панель' })).toBeNull();
+    const employeeHistory = screen.getByRole('navigation', { name: 'История бесед' });
+    expect(await within(employeeHistory).findByRole('link', { name: 'План релиза' })).toHaveAttribute('href', '/chat/a');
+    expect(screen.getByRole('link', { name: 'Агенты' })).toBeInTheDocument();
+    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+
+    // Act (row 1): «В чат»
+    await followLink(user, toChat, employeeView.setPathname);
+
+    // Assert (row 1): the chat opens in place - no reload of the tab, no second read of the list - and no panel request was ever sent
+    await waitFor(() => expect(document.title).toBe('Новый чат — Agent OS'));
+    expect(within(screen.getByRole('navigation', { name: 'История бесед' })).getByRole('link', { name: 'План релиза' })).toBeInTheDocument();
+    expect(threadReads).toBe(1);
+    expect(employeeView.assign).not.toHaveBeenCalled();
+    expect(employee.adminCount()).toBe(0);
+    employeeView.unmount();
+
+    // Row 2 - an administrator on `/` chooses «Панель администратора» in the menu; `me` is held to mark when it answered
+    threadReads = 0;
+    const adminMe = deferred();
+    let meAnsweredAfter = -1;
+    server.use(
+      http.get(`${API}/api/auth/me`, async () => {
+        await adminMe.promise;
+        meAnsweredAfter = administrator.requests.length;
+        return HttpResponse.json(currentUser({ isAdmin: true, name: 'Игорь Петров', email: 'igor@corp.example' }));
+      }),
+    );
+    const administrator = trackRequests(server);
+    const adminView = renderWithRuntime({ pathname: '/' });
+    await waitFor(() => expect(administrator.requests.map((request) => request.path)).toContain('/api/auth/me'));
+    adminMe.resolve();
+
+    // Act (row 2)
+    await user.click(await screen.findByRole('button', { name: 'Меню пользователя Игорь Петров' }));
+    await followLink(user, await screen.findByRole('menuitem', { name: 'Панель администратора' }), adminView.setPathname);
+
+    // Assert (row 2): «Сотрудники» with its h1 focused and its tab title; «К чату», «Панель» and exactly the five sections
+    const usersTitle = await screen.findByRole('heading', { level: 1, name: 'Сотрудники' });
+    await waitFor(() => expect(usersTitle).toHaveFocus());
+    await waitFor(() => expect(document.title).toBe('Сотрудники — Панель — Agent OS'));
+    const panelNav = screen.getByRole('navigation', { name: 'Панель' });
+    expect(within(panelNav).getByText('Панель')).toBeInTheDocument();
+    expect(within(panelNav).getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'К чату',
+      'Сотрудники',
+      'Роли',
+      'Авторизация',
+      'MCP-серверы',
+      'Модели',
+    ]);
+    expect(within(panelNav).getByRole('link', { name: 'Сотрудники' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('navigation', { name: 'История бесед' })).toBeNull();
+    expect(await screen.findByText('Борис Ким')).toBeInTheDocument();
+    // The first panel request is the employees' list, and it started only after `me` had answered.
+    expect(adminRequests(administrator)).toEqual(['GET /api/admin/users']);
+    expect(meAnsweredAfter).toBeGreaterThan(0);
+    expect(administrator.requests.findIndex((request) => request.path === '/api/admin/users')).toBeGreaterThanOrEqual(
+      meAnsweredAfter,
+    );
+
+    // Act (row 3): «Роли», then «Создать роль» «Дежурный»; the API has withdrawn the right
+    await followLink(user, within(panelNav).getByRole('link', { name: 'Роли' }), adminView.setPathname);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Роли' })).toBeInTheDocument();
+    expect(await screen.findByText('SRE')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Создать роль' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Создать роль' });
+    await user.type(within(dialog).getByLabelText('Название роли'), 'Дежурный');
+    await user.click(within(dialog).getByRole('button', { name: 'Создать роль' }));
+
+    // Assert (row 3): the same address shows «Нет доступа», the ordinary sidebar and a menu without the panel item; no role is left
+    expect(await screen.findByRole('heading', { level: 1, name: 'Нет доступа' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByText('SRE')).toBeNull();
+    expect(screen.queryByText('Супер-администратор')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Панель' })).toBeNull();
+    const adminHistory = screen.getByRole('navigation', { name: 'История бесед' });
+    expect(await within(adminHistory).findByRole('link', { name: 'План релиза' })).toBeInTheDocument();
+    expect(await userMenuItems(user)).toEqual(['Мой доступ', 'Выйти']);
+    expect(adminView.router.push).not.toHaveBeenCalled();
+    expect(adminView.assign).not.toHaveBeenCalled();
+    // No panel request followed the 403.
+    expect(adminRequests(administrator)).toEqual(['GET /api/admin/users', 'GET /api/admin/roles', 'POST /api/admin/roles']);
+    expect(administrator.requests.find((request) => request.method === 'POST')?.body).toEqual({ name: 'Дежурный' });
+  });
 
   // INT-2 ---------------------------------------------------------------------------------------------------------------------------------
   // AC: AC-25.1 "Given администратор назначил Ане роли «SRE» и «Дежурный», when он открывает Аню, then видит обе роли и может снять каждую";

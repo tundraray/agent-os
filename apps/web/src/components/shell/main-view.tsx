@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { AccountScreen } from '@/components/account/account-screen';
+import { AdminGate } from '@/components/admin/admin-gate';
 import { AgentScreen } from '@/components/agents/agent-screen';
 import { AgentsScreen } from '@/components/agents/agents-screen';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
@@ -44,7 +45,8 @@ const DELETED_THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, Del
 /**
  * The main area by route: `/agents` — the agent tree (Screen 2); `/agents/<id>` — the agent page (Screen 3)
  * under the shell's `AgentFeedProvider`; `/account` — «Мой доступ»; a conversation — the feed (its skeleton
- * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07.
+ * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07;
+ * `/admin/…` — the panel behind `AdminGate`.
  */
 export function MainView() {
   const route = parseShellRoute(usePathname());
@@ -53,6 +55,7 @@ export function MainView() {
   if (route.kind === 'agents') return <AgentsScreen store={services.agentList} />;
   if (route.kind === 'agent') return <AgentScreen />;
   if (route.kind === 'account') return <AccountScreen currentUser={services.currentUser} />;
+  if (route.kind === 'admin') return <AdminGate route={route} />;
   return <ConversationView />;
 }
 

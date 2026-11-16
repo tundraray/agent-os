@@ -10,6 +10,7 @@ import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
+import type { FocusTarget } from '@/lib/focus';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { Announcer } from './announcer';
@@ -55,7 +56,7 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
         <AdminRightWatch />
         <ShellAnnouncer />
         <GlobalShortcuts />
-        <SkipToComposerLink />
+        <SkipLink />
         <AppSidebar />
         <ShellMain>{children}</ShellMain>
         <CloseDrawerOnDesktop />
@@ -166,20 +167,25 @@ function RouteFeedProvider({ route, children }: { route: ShellRoute; children: R
   );
 }
 
-const focusComposer = (event: MouseEvent<HTMLAnchorElement>): void => {
-  event.preventDefault();
-  document.querySelector<HTMLElement>('[data-shell-focus="composer"]')?.focus();
-};
+/**
+ * First stop in the Tab order; visible only while focused. The panel has no composer: there it leads to the
+ * screen's `h1`.
+ */
+function SkipLink() {
+  const panel = parseShellRoute(usePathname()).kind === 'admin';
+  const target: FocusTarget = panel ? 'page-title' : 'composer';
+  const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    event.preventDefault();
+    document.querySelector<HTMLElement>(`[data-shell-focus="${target}"]`)?.focus();
+  };
 
-/** First stop in the Tab order; visible only while focused. */
-function SkipToComposerLink() {
   return (
     <a
-      href="#composer"
-      onClick={focusComposer}
+      href={panel ? '#page-title' : '#composer'}
+      onClick={onClick}
       className="bg-background text-foreground focus-visible:ring-ring sr-only z-50 rounded-md px-3 py-2 text-sm font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus-visible:ring-3"
     >
-      Перейти к сообщению
+      {panel ? 'Перейти к содержимому' : 'Перейти к сообщению'}
     </a>
   );
 }

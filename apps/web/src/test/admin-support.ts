@@ -1,6 +1,6 @@
 import type { LogFields, Logger, LogLevel } from '@agent-os/common';
 import { screen } from '@testing-library/react';
-import type { SetupServerApi } from 'msw/node';
+import type { SetupServer } from 'msw/node';
 import { afterEach, expect, onTestFinished, vi, type Mock } from 'vitest';
 
 // Test support of the admin panel's integration tests (design-admin.md, Test Strategy). This module must not import
@@ -38,7 +38,7 @@ async function readBody(request: Request): Promise<unknown> {
  * Records every request the page starts during the current test. It listens to MSW's `request:start`, which also fires
  * for a request without a handler: a screen could swallow the unhandled-request error, the counter still sees it.
  */
-export function trackRequests(server: SetupServerApi): TrackedRequests {
+export function trackRequests(server: SetupServer): TrackedRequests {
   const requests: RecordedRequest[] = [];
   const listener = ({ request }: { request: Request }): void => {
     const url = new URL(request.url);

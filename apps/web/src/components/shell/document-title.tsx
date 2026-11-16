@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
+import { adminSectionTitle } from '@/components/admin/admin-sections';
 import { useFeedSelector } from '@/lib/feed/feed-context';
 import { selectAgent } from '@/lib/feed/to-feed';
 import { parseShellRoute } from '@/lib/shell-route';
@@ -17,7 +18,8 @@ const APP_NAME = 'Agent OS';
  * TH-06 → «Беседа не найдена — Agent OS»; TH-07 → «Agent OS»; the open thread → «{Название} — Agent OS»
  * or «Новая беседа — Agent OS». `/agents` → «Агенты — Agent OS» (MC-4); an agent page → «{название} —
  * Agent OS» (MC-8), «Агент не найден — Agent OS» (MC-15), «Agent OS» on a failed read. `/account` →
- * «Мой доступ — Agent OS» (enterprise-access MC-7). While the URL
+ * «Мой доступ — Agent OS» (enterprise-access MC-7); a panel address → «{раздел} — Панель — Agent OS» (MC-18).
+ * While the URL
  * thread or agent is still resolving the previous title stays. Renders nothing; on an agent page it
  * reads the agent's store from `AgentFeedProvider`.
  */
@@ -32,6 +34,7 @@ export function DocumentTitle() {
   const title = ((): string | undefined => {
     if (route.kind === 'agents') return `Агенты — ${APP_NAME}`;
     if (route.kind === 'account') return `Мой доступ — ${APP_NAME}`;
+    if (route.kind === 'admin') return `${adminSectionTitle(route.section)} — Панель — ${APP_NAME}`;
     if (route.kind === 'agent') {
       if (agentLoadError === 'not_found') return `Агент не найден — ${APP_NAME}`;
       if (agentLoadError !== null) return APP_NAME;

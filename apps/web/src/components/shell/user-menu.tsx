@@ -8,6 +8,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  ShieldCheckIcon,
   SunIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -31,7 +32,8 @@ import { describeApiError } from '@/lib/api/api-request';
 import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
-import { ACCOUNT_PATH } from '@/lib/shell-route';
+import { focusShellTarget } from '@/lib/focus';
+import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
 import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';
@@ -88,7 +90,8 @@ function menuLabel(name: string | null, needsAuth: number): string {
 
 /**
  * UM-01 (SB-11) + TM-01 + SP-01: the signed-in employee's block at the bottom of the sidebar with the
- * month's spend under the name; its menu holds the name and email, «Мой доступ», the theme and «Выйти».
+ * month's spend under the name; its menu holds the name and email, «Мой доступ», «Панель администратора»
+ * for an administrator only (MC-6), the theme and «Выйти».
  * Servers waiting for the employee's sign-in put a `--warning` dot on the avatar (also in the strip) and
  * the dot with their count next to «Мой доступ».
  */
@@ -201,6 +204,14 @@ export function UserMenu() {
                 </span>
               )}
             </DropdownMenuItem>
+            {user?.isAdmin === true && (
+              <DropdownMenuItem
+                render={<Link href={adminPath('users')} onClick={() => focusShellTarget('page-title')} />}
+              >
+                <ShieldCheckIcon aria-hidden />
+                Панель администратора
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup
               value={theme ?? 'system'}
