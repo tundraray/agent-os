@@ -215,24 +215,6 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     ['the model step of a disabled owner', { kind: 'refused', reason: 'owner_disabled' }, modelStep, []],
     ['the model step on a spent quota', QUOTA, modelStep, [deniedModel('quota_exhausted')]],
     [
-      'the model step on a model not allowed',
-      { kind: 'refused', reason: 'model_not_allowed' },
-      modelStep,
-      [deniedModel('model_not_allowed')],
-    ],
-    [
-      'the model step on a model out of the catalogue',
-      { kind: 'refused', reason: 'model_not_connected' },
-      modelStep,
-      [deniedModel('model_not_connected')],
-    ],
-    [
-      'the model step of an owner with no models',
-      { kind: 'refused', reason: 'no_models_allowed' },
-      modelStep,
-      [deniedModel('no_models_allowed')],
-    ],
-    [
       'the compaction step on a spent quota',
       QUOTA,
       (agent) => agent.compactionStep(agent.ctx, SESSION),

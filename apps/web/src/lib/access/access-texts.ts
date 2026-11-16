@@ -1,6 +1,6 @@
 import type { MyModel, MyModels, ToolRefusalReason } from '@agent-os/contracts';
 import { failureReasonText, formatModel } from '@/lib/agents/format';
-import { formatQuotaUsd, formatUsd, monthName } from './money';
+import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from './money';
 
 /**
  * Texts of the access refusals and failures (enterprise-access UXRD, MC-10, MC-11, MC-14, MC-17): one
@@ -9,6 +9,9 @@ import { formatQuotaUsd, formatUsd, monthName } from './money';
  */
 
 const ASK_ADMIN = 'Обратитесь к администратору Agent OS.';
+
+/** MC-9 and MC-11: the employee is allowed no model — the empty «Модели и расход» and the reply error. */
+export const NO_MODELS_ALLOWED = `Вам не разрешена ни одна модель. ${ASK_ADMIN}`;
 
 /**
  * MC-10: the refusal line of a tool-call block; `model` is the `model` argument of `start_agent`, absent
@@ -42,7 +45,7 @@ const REPLY_FAILED = 'Не удалось получить ответ.';
  * other error of a reply; `model` is the root's model ID, null only while the conversation has no root.
  */
 export function chatFailureText(reason: string | null, model: string | null): string {
-  if (reason === 'no_models_allowed') return `Вам не разрешена ни одна модель. ${ASK_ADMIN}`;
+  if (reason === 'no_models_allowed') return NO_MODELS_ALLOWED;
   if (model === null) return REPLY_FAILED;
   if (reason === 'model_not_allowed') return `Модель ${formatModel(model)} вам не разрешена. ${ASK_ADMIN}`;
   if (reason === 'model_not_connected') return `Модель ${formatModel(model)} не подключена. ${ASK_ADMIN}`;
@@ -55,7 +58,7 @@ export function chatFailureText(reason: string | null, model: string | null): st
  * hit, and the line reads without them.
  */
 export function quotaRowOf(models: MyModels, model: string, at: string): MyModel | null {
-  if (models.month !== new Date(at).toISOString().slice(0, 7)) return null;
+  if (models.month !== utcMonthOf(new Date(at))) return null;
   return models.models.find((row) => row.model === model && row.exhausted) ?? null;
 }
 

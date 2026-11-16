@@ -1,5 +1,7 @@
 import { AGENT_TASK_TYPE } from '@agent-os/contracts';
 
+import type { Database } from '@agent-os/db';
+
 import type { AccessAudit, AccessGate } from '../../access-gate.js';
 import type { DefinitionCatalog } from '../../definitions/catalog.js';
 import { AgentsError } from '../../errors.js';
@@ -19,6 +21,8 @@ export interface SessionInputDeps {
 
 /** What a start inside a step needs: the session input, and the gate `start_agent` checks the model with. */
 export interface StartChildDeps extends SessionInputDeps {
+  /** `start_agent` reads the caller's session before the commit: a fork runs on the caller's model. */
+  readonly database: Database;
   /** `start_agent` asks it about the child's model (design-access.md KD-4). */
   readonly access: Pick<AccessGate, 'model'>;
   /** Gets the `access_denied` record of a start refused for its model (KD-6). */

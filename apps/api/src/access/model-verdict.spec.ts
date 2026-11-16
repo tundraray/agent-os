@@ -1,9 +1,32 @@
+import type { ModelVerdict } from '@agent-os/agents';
+import type { CatalogModel } from '@agent-os/contracts';
 import { effectiveAccess, type GrantRow } from './effective-access.js';
-import { modelVerdict, type ModelVerdict } from './model-verdict.js';
+import { modelVerdict } from './model-verdict.js';
 
 const A = 'anthropic/a';
 const B = 'anthropic/b';
 const MONTH = '2026-11';
+
+const PRICES = {
+  inputUsdPerMTok: 1,
+  outputUsdPerMTok: 5,
+  cacheWriteUsdPerMTok: 1.25,
+  cacheReadUsdPerMTok: 0.1,
+};
+const LONG_PRICES = {
+  inputUsdPerMTok: 2,
+  outputUsdPerMTok: 7.5,
+  cacheWriteUsdPerMTok: 2.5,
+  cacheReadUsdPerMTok: 0.2,
+};
+/** The catalogue row of `A` with one price. */
+const MODEL_A: CatalogModel = {
+  id: A,
+  name: 'A',
+  prices: PRICES,
+  longContext: null,
+};
+const ALLOWED: ModelVerdict = { kind: 'allowed', price: PRICES };
 
 const allowA20: GrantRow = {
   id: 'g1',
@@ -33,7 +56,8 @@ const allowServer: GrantRow = {
 type Row = {
   name: string;
   active: boolean;
-  catalogued: boolean;
+  /** `null` — the model is outside the catalogue. */
+  catalogued: CatalogModel | null;
   grants: GrantRow[];
   spentUsd: number;
   expected: ModelVerdict;
@@ -45,7 +69,7 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'a disabled employee is refused even for a model outside the catalogue',
       active: false,
-      catalogued: false,
+      catalogued: null,
       grants: [allowA20],
       spentUsd: 0,
       expected: { kind: 'refused', reason: 'owner_disabled' },
@@ -53,7 +77,7 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'a model outside the catalogue is not connected',
       active: true,
-      catalogued: false,
+      catalogued: null,
       grants: [allowA20],
       spentUsd: 0,
       expected: { kind: 'refused', reason: 'model_not_connected' },
@@ -61,7 +85,7 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'no model allowed at all',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowServer],
       spentUsd: 0,
       expected: { kind: 'refused', reason: 'no_models_allowed' },
@@ -69,7 +93,7 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'another model allowed',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowB],
       spentUsd: 0,
       expected: { kind: 'refused', reason: 'model_not_allowed' },
@@ -77,7 +101,7 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'spend equal to the quota',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowA20],
       spentUsd: 20,
       expected: {
@@ -91,32 +115,45 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
     {
       name: 'spend a cent below the quota',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowA20],
       spentUsd: 19.99,
-      expected: { kind: 'allowed' },
+      expected: ALLOWED,
     },
     {
       name: 'no spend this month under a quota',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowA20],
       spentUsd: 0,
-      expected: { kind: 'allowed' },
+      expected: ALLOWED,
     },
     {
       name: 'any spend without a limit',
       active: true,
-      catalogued: true,
+      catalogued: MODEL_A,
       grants: [allowANoQuota],
       spentUsd: 1_000_000,
-      expected: { kind: 'allowed' },
+      expected: ALLOWED,
+    },
+    {
+      name: 'a long-context tier of the catalogue is the price tier above its input size',
+      active: true,
+      catalogued: {
+        ...MODEL_A,
+        longContext: { aboveInputTokens: 200_000, prices: LONG_PRICES },
+      },
+      grants: [allowANoQuota],
+      spentUsd: 0,
+      expected: {
+        kind: 'allowed',
+        price: { ...PRICES, above: { ...LONG_PRICES, inputTokens: 200_000 } },
+      },
     },
   ])('$name', ({ active, catalogued, grants, spentUsd, expected }) => {
     const verdict = modelVerdict({
       active,
-      catalogued,
-      model: A,
+      catalogued: catalogued ?? undefined,
       access: effectiveAccess(grants),
       spentUsd,
       month: MONTH,

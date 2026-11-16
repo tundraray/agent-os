@@ -537,6 +537,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   let harness: TestApp;
   /** The run's role of the file's employees; deleted with the model in `afterAll`. */
   let roleId: string | undefined;
+  /** The file's administrator; deleted in `afterAll`. */
+  let adminId: string | undefined;
 
   beforeAll(async () => {
     harness = await createTestApp({
@@ -562,6 +564,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.app,
       `e2e-admin-${randomUUID()}`,
     );
+    adminId = admin.id;
     // The file's model and rights: the run's model and role, never the developer's catalogue or rights.
     await addModel(harness.app, admin, {
       id: DEFAULT_MODEL,
@@ -608,6 +611,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       await removeRunRows(harness.pool, {
         models: [DEFAULT_MODEL],
         roles: roleId === undefined ? [] : [roleId],
+        users: adminId === undefined ? [] : [adminId],
       });
     } finally {
       await harness.close();
@@ -2466,8 +2470,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           messageId: null,
         });
 
-        // Then: after the three attempts the title stays empty and no ledger row is written for it, while
-        // the message itself was accepted and answered
+        // Then: after the three attempts the title stays empty, while the message itself was accepted and
+        // answered; each failed attempt reached the provider, so each is a ledger row without a task
         await titles.called(callsBeforeFailure + 3);
         await untilIdle(
           api,
@@ -2476,10 +2480,13 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'the answer despite the failed title',
         );
         expect((await api.getThread(failing.id)).title).toBeNull();
-        expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
-          agentCalls: 2,
-          withoutTask: 1,
-        });
+        expect(
+          await waitFor(
+            () => ledgerCalls(harness, INT3.b.id),
+            (counts) => counts.withoutTask === 4,
+            'the ledger rows of the failed title attempts',
+          ),
+        ).toEqual({ agentCalls: 2, withoutTask: 4 });
 
         // Case 3 - Given: the title model answers again; When: the next message is sent
         harness.model.completeText({ text: 'Failed then retried' });
@@ -2501,7 +2508,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
           agentCalls: 3,
-          withoutTask: 2,
+          withoutTask: 5,
         });
 
         // Case 4 - Given: the title call is held; When: the first message is sent
@@ -2533,13 +2540,13 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         await waitFor(
           () => ledgerCalls(harness, INT3.b.id),
-          (counts) => counts.withoutTask === 3,
+          (counts) => counts.withoutTask === 6,
           'the ledger row of the held title call',
         );
         expect((await api.getThread(renamed.id)).title).toBe(manualTitle);
         expect(await ledgerCalls(harness, INT3.b.id)).toEqual({
           agentCalls: 4,
-          withoutTask: 3,
+          withoutTask: 6,
         });
 
         // Then: every title call was made from the conversation's first message, the retry included (Notes 5(в))

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AccessGate, ToolAccess } from '@agent-os/agents';
+import type { AccessGate, ModelVerdict, ToolAccess } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import type {
   CatalogModel,
@@ -14,9 +14,11 @@ import type { Database, DatabaseConnection } from '@agent-os/db';
 import {
   monthOf,
   type Clock,
-  type ModelPrice,
   type Runtime,
+  type RuntimeTx,
 } from '@agent-os/runtime';
+import { AuditLog } from '../audit/audit-log.js';
+import type { Executor } from '../common/executor.js';
 import { isUuid } from '../common/is-uuid.js';
 import { IdentityDirectory } from '../identity/identity-directory.js';
 import { identityError } from '../identity/identity.errors.js';
@@ -40,11 +42,7 @@ import {
   updateGrantQuota,
   type GrantHolderQuery,
 } from './grants.repository.js';
-import {
-  modelVerdict,
-  quotaExhausted,
-  type ModelVerdict,
-} from './model-verdict.js';
+import { modelVerdict, quotaExhausted } from './model-verdict.js';
 import {
   deleteModel,
   findModel,
@@ -53,18 +51,6 @@ import {
   updateModel,
 } from './models.repository.js';
 
-/** The answer of `AccessGate.model`: an allowed call carries the catalogue price (KD-3). */
-export type ModelAccessVerdict =
-  | { readonly kind: 'allowed'; readonly price: ModelPrice }
-  | Exclude<ModelVerdict, { kind: 'allowed' }>;
-
-/** A catalogue or grant write: the answer, and «было»/«стало» for `admin_change`. */
-export interface AccessChange<T> {
-  readonly view: T;
-  readonly before: T | null;
-  readonly after: T | null;
-}
-
 /** A server or tool target of a grant. */
 export type McpGrantTarget = Exclude<GrantTargetBody, { kind: 'model' }>;
 
@@ -72,19 +58,6 @@ export type McpGrantTarget = Exclude<GrantTargetBody, { kind: 'model' }>;
 export type McpTargetCheck = (
   target: McpGrantTarget,
 ) => Promise<'server_unknown' | 'tool_unknown' | null>;
-
-/** Catalogue prices as the token ledger takes them: `above` is the long-context tier. */
-function priceOf(model: CatalogModel): ModelPrice {
-  const { longContext } = model;
-  if (longContext === null) return { ...model.prices };
-  return {
-    ...model.prices,
-    above: {
-      ...longContext.prices,
-      inputTokens: longContext.aboveInputTokens,
-    },
-  };
-}
 
 /** The holder of a grant body; the schema lets exactly one of `roleId` and `userId` through. */
 function holderOfBody(body: CreateGrantBody): GrantHolderQuery {
@@ -102,11 +75,18 @@ function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
   return { ...holder, effect: grant.effect, target: grant.target, quotaUsd };
 }
 
+async function grantOr404(executor: Executor, id: string): Promise<Grant> {
+  const grant = isUuid(id) ? await findGrant(executor, id) : undefined;
+  if (grant === undefined) throw accessError('GRANT_NOT_FOUND');
+  return grant;
+}
+
 /**
  * Rights, quotas and the model catalogue (design-access.md, C3 api, KD-1..KD-3). Answers the agents'
  * checks (`tools`, `model`), "My access" and the admin operations. Every answer reads the employee
- * first (`isActive`), then his roles, his rights in one query and — only for a model with a quota —
- * the month's spend, without a cache; the rules are `effectiveAccess` and `modelVerdict` alone.
+ * (`isActive`), his roles with his rights in one query and — only for a model with a quota — the
+ * month's spend, without a cache; the rules are `effectiveAccess` and `modelVerdict` alone. An admin
+ * write and its `admin_change` record are one transaction.
  */
 @Injectable()
 export class AccessService implements AccessGate {
@@ -117,6 +97,7 @@ export class AccessService implements AccessGate {
     @Inject(RUNTIME) private readonly runtime: Runtime,
     @Inject(RUNTIME_CLOCK) private readonly clock: Clock,
     private readonly identity: IdentityDirectory,
+    private readonly auditLog: AuditLog,
     @Inject(APP_LOGGER) private readonly logger: Logger,
   ) {
     this.db = database.db;
@@ -143,34 +124,32 @@ export class AccessService implements AccessGate {
       kind: 'allowed',
       allows: (server, tool) => {
         const allowed = access.tool(server, tool);
-        this.logger.info('tool pair checked', {
-          ownerId,
-          server,
-          tool,
-          verdict: allowed ? 'allowed' : 'refused',
-        });
+        if (!allowed) {
+          this.logger.info('tool pair refused', { ownerId, server, tool });
+        }
         return allowed;
       },
     };
   }
 
   /** Whether the employee may call the model now, with its price (design-access.md, «Как AccessGate решает»). */
-  async model(ownerId: string, model: string): Promise<ModelAccessVerdict> {
+  async model(ownerId: string, model: string): Promise<ModelVerdict> {
     const startedAt = Date.now();
     const month = monthOf(this.clock.now());
-    const active = await this.identity.isActive(ownerId);
-    const catalogued = active ? await findModel(this.db, model) : undefined;
-    const access = active ? await this.accessOf(ownerId) : effectiveAccess([]);
+    const [active, catalogued, access] = await Promise.all([
+      this.identity.isActive(ownerId),
+      findModel(this.db, model),
+      this.accessOf(ownerId),
+    ]);
     const modelAccess = access.model(model);
     const quotaUsd = modelAccess.allowed ? modelAccess.quotaUsd : null;
     const spentUsd =
-      catalogued !== undefined && quotaUsd !== null
+      active && catalogued !== undefined && quotaUsd !== null
         ? await this.spentOn(ownerId, model, month)
         : 0;
     const verdict = modelVerdict({
       active,
-      catalogued: catalogued !== undefined,
-      model,
+      catalogued,
       access,
       spentUsd,
       month,
@@ -186,10 +165,7 @@ export class AccessService implements AccessGate {
         : [],
       durationMs: Date.now() - startedAt,
     });
-    if (verdict.kind === 'refused') return verdict;
-    if (catalogued === undefined)
-      throw new Error(`model ${model} allowed without a catalogue row`);
-    return { kind: 'allowed', price: priceOf(catalogued) };
+    return verdict;
   }
 
   /** "My access": the models allowed to the employee now, by name, with the month's spend (DC-9). */
@@ -236,28 +212,43 @@ export class AccessService implements AccessGate {
 
   /** 409 MODEL_ID_TAKEN. */
   async createModel(
+    actorId: string,
     body: CreateCatalogModelBody,
-  ): Promise<AccessChange<CatalogModel>> {
-    const created = await insertModel(this.db, body);
-    if (created === undefined) throw accessError('MODEL_ID_TAKEN');
-    return { view: created, before: null, after: created };
+  ): Promise<CatalogModel> {
+    const created = await this.db.transaction(async (tx) => {
+      const model = await insertModel(tx, body);
+      if (model === undefined) throw accessError('MODEL_ID_TAKEN');
+      await this.audit(tx, actorId, 'model', model.id, null, model);
+      return model;
+    });
+    this.logChange(actorId, 'model', created.id, 'create');
+    return created;
   }
 
   /** 404 MODEL_NOT_FOUND. */
   async updateModel(
+    actorId: string,
     id: string,
     body: UpdateCatalogModelBody,
-  ): Promise<AccessChange<CatalogModel>> {
-    const change = await this.db.transaction((tx) => updateModel(tx, id, body));
-    if (change === undefined) throw accessError('MODEL_NOT_FOUND');
-    return { view: change.after, ...change };
+  ): Promise<CatalogModel> {
+    const updated = await this.db.transaction(async (tx) => {
+      const change = await updateModel(tx, id, body);
+      if (change === undefined) throw accessError('MODEL_NOT_FOUND');
+      await this.audit(tx, actorId, 'model', id, change.before, change.after);
+      return change.after;
+    });
+    this.logChange(actorId, 'model', id, 'update');
+    return updated;
   }
 
   /** The model's grants go by cascade. 404 MODEL_NOT_FOUND. */
-  async deleteModel(id: string): Promise<AccessChange<CatalogModel>> {
-    const deleted = await deleteModel(this.db, id);
-    if (deleted === undefined) throw accessError('MODEL_NOT_FOUND');
-    return { view: deleted, before: deleted, after: null };
+  async deleteModel(actorId: string, id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const deleted = await deleteModel(tx, id);
+      if (deleted === undefined) throw accessError('MODEL_NOT_FOUND');
+      await this.audit(tx, actorId, 'model', id, deleted, null);
+    });
+    this.logChange(actorId, 'model', id, 'delete');
   }
 
   // ---------- Admin: grants ----------
@@ -273,9 +264,10 @@ export class AccessService implements AccessGate {
    * ROLE_NOT_FOUND/USER_NOT_FOUND, 422 GRANT_TARGET_UNKNOWN, 409 GRANT_EXISTS.
    */
   async createGrant(
+    actorId: string,
     body: CreateGrantBody,
     mcpTargetCheck: McpTargetCheck,
-  ): Promise<AccessChange<Grant>> {
+  ): Promise<Grant> {
     const rules = grantRules(body);
     if (rules.kind === 'invalid')
       throw accessError('GRANT_INVALID', rules.reason);
@@ -287,31 +279,83 @@ export class AccessService implements AccessGate {
           : null
         : await mcpTargetCheck(body.target);
     if (unknown !== null) throw accessError('GRANT_TARGET_UNKNOWN', unknown);
-    const id = await insertGrant(this.db, body);
-    if (id === undefined) throw accessError('GRANT_EXISTS');
-    const created = await this.grantOr404(id);
-    return { view: created, before: null, after: created };
+    const created = await this.db.transaction(async (tx) => {
+      const id = await insertGrant(tx, body);
+      if (id === undefined) throw accessError('GRANT_EXISTS');
+      const grant = await grantOr404(tx, id);
+      await this.audit(tx, actorId, 'grant', id, null, grant);
+      return grant;
+    });
+    this.logChange(actorId, 'grant', created.id, 'create');
+    return created;
   }
 
   /** `null` removes the quota. 404 GRANT_NOT_FOUND, 422 GRANT_INVALID. */
   async updateGrantQuota(
+    actorId: string,
     id: string,
     quotaUsd: number | null,
-  ): Promise<AccessChange<Grant>> {
-    const before = await this.grantOr404(id);
-    const rules = grantRules(ruleInputOf(before, quotaUsd));
-    if (rules.kind === 'invalid')
-      throw accessError('GRANT_INVALID', rules.reason);
-    await updateGrantQuota(this.db, id, quotaUsd);
-    const after = await this.grantOr404(id);
-    return { view: after, before, after };
+  ): Promise<Grant> {
+    const updated = await this.db.transaction(async (tx) => {
+      const before = await grantOr404(tx, id);
+      const rules = grantRules(ruleInputOf(before, quotaUsd));
+      if (rules.kind === 'invalid')
+        throw accessError('GRANT_INVALID', rules.reason);
+      await updateGrantQuota(tx, id, quotaUsd);
+      const after = await grantOr404(tx, id);
+      await this.audit(tx, actorId, 'grant', id, before, after);
+      return after;
+    });
+    this.logChange(actorId, 'grant', id, 'update');
+    return updated;
   }
 
   /** 404 GRANT_NOT_FOUND. */
-  async deleteGrant(id: string): Promise<AccessChange<Grant>> {
-    const before = await this.grantOr404(id);
-    await deleteGrant(this.db, id);
-    return { view: before, before, after: null };
+  async deleteGrant(actorId: string, id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const before = await grantOr404(tx, id);
+      await deleteGrant(tx, id);
+      await this.audit(tx, actorId, 'grant', id, before, null);
+    });
+    this.logChange(actorId, 'grant', id, 'delete');
+  }
+
+  /**
+   * `admin_change` with «было» and «стало» in the transaction of the write it records (design-access.md,
+   * Contract «Операции администратора»), as identity does: a write without its record is rolled back.
+   */
+  private audit(
+    tx: RuntimeTx,
+    actorId: string,
+    objectType: 'model' | 'grant',
+    objectId: string,
+    before: CatalogModel | Grant | null,
+    after: CatalogModel | Grant | null,
+  ): Promise<void> {
+    return this.auditLog.record(tx, {
+      kind: 'admin_change',
+      actor: actorId,
+      objectType,
+      objectId,
+      before,
+      after,
+      outcome: 'ok',
+    });
+  }
+
+  private logChange(
+    actorId: string,
+    objectType: 'model' | 'grant',
+    objectId: string,
+    action: 'create' | 'update' | 'delete',
+  ): void {
+    this.logger.info('access changed', {
+      actorId,
+      objectType,
+      objectId,
+      action,
+      outcome: 'ok',
+    });
   }
 
   // ---------- Reads ----------
@@ -331,12 +375,6 @@ export class AccessService implements AccessGate {
   ): Promise<number> {
     const spend = await this.runtime.ledger.monthSpendByModel(ownerId, month);
     return spend.get(model) ?? 0;
-  }
-
-  private async grantOr404(id: string): Promise<Grant> {
-    const grant = isUuid(id) ? await findGrant(this.db, id) : undefined;
-    if (grant === undefined) throw accessError('GRANT_NOT_FOUND');
-    return grant;
   }
 
   private async holderOr404(holder: GrantHolderQuery): Promise<void> {

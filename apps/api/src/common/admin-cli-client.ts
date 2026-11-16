@@ -10,6 +10,15 @@ import { frontendOrigin, SESSION_COOKIE } from '../identity/session-cookie.js';
 
 export const DEFAULT_API = 'http://localhost:4000';
 
+/**
+ * The fixture servers of the developer's registry: `seed:mcp` registers them — `shared` with the shared
+ * token, `oauth` with personal OAuth — and `seed:access` allows them to the built-in role.
+ */
+export const SEED_MCP_SERVERS = {
+  shared: ['logs', 'tracker'],
+  oauth: 'backoffice',
+} as const;
+
 /** All of standard input without its trailing line break: the password never comes from the arguments. */
 export async function readPassword(): Promise<string> {
   return (await text(process.stdin)).replace(/\r?\n$/, '');

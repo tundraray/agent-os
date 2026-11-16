@@ -128,7 +128,8 @@ export type ModelCallResult = ModelAnswer | ModelError | ModelNotStarted;
 export interface ModelClient {
   /**
    * Asks `AccessGate.model` once, before the first attempt: a refusal gives `not_started` with the
-   * verdict and the model is not called; provider retries are not checked again.
+   * verdict and the model is not called; provider retries are not checked again. Every attempt that
+   * reached the provider is a ledger row, also one a cancel or a provider error cut short.
    */
   call(request: ModelCallRequest): Promise<ModelCallResult>;
   /**
@@ -185,15 +186,55 @@ interface Attempt {
   readonly logger: Logger;
   /** A fresh receiver of text parts per attempt, so a retry starts its offsets again at 0. */
   readonly onText: () => (text: string) => void;
+  /** Writes the ledger row of one attempt at the verdict's price. */
+  readonly record: (usage: CallUsage) => Promise<{ readonly callId: string }>;
 }
 
-/** The answer of the provider, or its final error after the retries. */
-type Generated = { readonly kind: 'generated'; readonly generation: AgentTurnGeneration; readonly durationMs: number } | ModelError;
+/** The answer of the provider with the id of its ledger row, or the provider's final error after the retries. */
+type Generated =
+  | {
+      readonly kind: 'generated';
+      readonly generation: AgentTurnGeneration;
+      readonly callId: string;
+      readonly durationMs: number;
+    }
+  | ModelError;
+
+/** Characters per token of the usage estimate of an attempt that did not finish. */
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * The characters of a request: the instructions, the messages and the tools with the JSON Schemas of the
+ * MCP ones. A built-in tool's zod schema is not serialized, so it counts by its name and description.
+ */
+function requestChars(call: AgentTurnCall): number {
+  const tools = call.tools.map(({ name, description, inputSchema }) => [
+    name,
+    description,
+    '_zod' in inputSchema ? null : inputSchema,
+  ]);
+  return call.instructions.length + JSON.stringify([call.messages, tools]).length;
+}
+
+/**
+ * The usage of an attempt cut by a cancel or a provider error: the provider reports usage only when the
+ * stream finishes, so the row is an estimate — the whole request as uncached input, the streamed text as output.
+ */
+function estimatedUsage(sentChars: number, streamedChars: number): CallUsage {
+  return {
+    inputTokens: Math.ceil(sentChars / CHARS_PER_TOKEN),
+    outputTokens: Math.ceil(streamedChars / CHARS_PER_TOKEN),
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
+}
 
 /**
  * The model wrapper of KD-6 and KD-3: one streamed request through the turn client, up to two retries
- * of a provider error with pauses of 1000 and 3000 ms, a cancel that is never retried, and the token
- * ledger row written right after the answer — by its own statement, so it stays when the step is lost.
+ * of a provider error with pauses of 1000 and 3000 ms, a cancel that is never retried, and one token
+ * ledger row per attempt — by its own statement, so it stays when the step is lost. An answered attempt
+ * is recorded with the provider's usage; an attempt cut by a cancel or a provider error with an estimate,
+ * so a call interrupted before its answer ends still counts against the quota.
  * Each text part of an agent's answer goes to `onTextDelta` with its running `offset`; a retry starts
  * the parts again at offset 0.
  */
@@ -210,20 +251,43 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
     return verdict;
   }
 
-  /** Runs the attempts until an answer, a final provider error, or a cancel (thrown). */
+  /**
+   * Runs the attempts until an answer, a final provider error, or a cancel (thrown). Every attempt whose
+   * request went out leaves one ledger row; an error that is neither a cancel nor the provider's (the
+   * request was never sent) leaves none.
+   */
   async function generate(attempt: Attempt): Promise<Generated> {
+    const sentChars = requestChars(attempt.call);
     for (let retries = 0; ; retries += 1) {
       attempt.signal.throwIfAborted();
       const startedAt = clock.now().getTime();
+      const onText = attempt.onText();
+      let streamedChars = 0;
+      let generation: AgentTurnGeneration;
       try {
-        const generation = await turnClient.streamTurn(attempt.call, {
+        generation = await turnClient.streamTurn(attempt.call, {
           signal: attempt.signal,
-          onText: attempt.onText(),
+          onText: (text) => {
+            streamedChars += text.length;
+            onText(text);
+          },
         });
-        return { kind: 'generated', generation, durationMs: clock.now().getTime() - startedAt };
       } catch (error) {
-        attempt.signal.throwIfAborted();
         const providerError = classifyRejection(error);
+        if (attempt.signal.aborted || providerError !== null) {
+          const usage = estimatedUsage(sentChars, streamedChars);
+          const { callId } = await attempt.record(usage);
+          attempt.logger.warn('unfinished model attempt recorded with estimated usage', {
+            model: attempt.call.model,
+            callId,
+            ...usage,
+            estimated: true,
+            aborted: attempt.signal.aborted,
+            attempt: retries + 1,
+            durationMs: clock.now().getTime() - startedAt,
+          });
+        }
+        attempt.signal.throwIfAborted();
         if (providerError === null) throw error;
         attempt.logger.warn('model call failed', {
           model: attempt.call.model,
@@ -236,7 +300,10 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
           return { kind: 'model_error', error: providerError };
         }
         await pause(clock, providerRetryDelayMs(retries + 1), attempt.signal);
+        continue;
       }
+      const { callId } = await attempt.record(generation.usage);
+      return { kind: 'generated', generation, callId, durationMs: clock.now().getTime() - startedAt };
     }
   }
 
@@ -281,17 +348,18 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         signal: request.signal,
         logger: request.logger,
         onText: deltaReceiver(request),
+        record: (usage) =>
+          ledger.record({
+            ownerId: request.ownerId,
+            taskId: request.taskId,
+            model: request.model,
+            price: verdict.price,
+            usage,
+          }),
       });
       if (result.kind === 'model_error') return result;
-      const { generation, durationMs } = result;
+      const { generation, callId, durationMs } = result;
       const { usage } = generation;
-      const { callId } = await ledger.record({
-        ownerId: request.ownerId,
-        taskId: request.taskId,
-        model: request.model,
-        price: verdict.price,
-        usage,
-      });
       request.logger.info('model call answered', {
         model: request.model,
         callId,
@@ -332,22 +400,16 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         signal: request.signal,
         logger,
         onText: () => () => {},
+        record: (usage) => ledger.record({ ownerId: request.ownerId, model, price: verdict.price, usage }),
       });
       if (result.kind === 'model_error') {
         const status = result.error.statusCode === null ? 'no status' : `status ${result.error.statusCode}`;
         throw new Error(`Model ${model} kept failing on completeText (${status})`);
       }
-      const { usage } = result.generation;
-      const { callId } = await ledger.record({
-        ownerId: request.ownerId,
-        model,
-        price: verdict.price,
-        usage,
-      });
       logger.info('model text completed', {
         model,
-        callId,
-        ...usage,
+        callId: result.callId,
+        ...result.generation.usage,
         durationMs: result.durationMs,
       });
       return result.generation.text;

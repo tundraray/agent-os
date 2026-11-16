@@ -1,4 +1,4 @@
-import type { AgentStatus } from "@agent-os/contracts";
+import { AgentFailureReasonSchema, type AgentFailureReason, type AgentStatus } from "@agent-os/contracts";
 import { pluralRu } from "@/lib/i18n/plural-ru";
 
 /**
@@ -18,10 +18,10 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
 };
 
 /**
- * Failure reasons MC-14 and MC-18 (and enterprise-access MC-14) name; every other one reads «ошибка
- * платформы» (KD-6).
+ * Failure reasons MC-14 and MC-18 (and enterprise-access MC-14) name — every reason an agent fails with
+ * by itself, so a new one does not compile without its words; every other one reads «ошибка платформы» (KD-6).
  */
-const NAMED_FAILURE_REASON: Record<string, string> = {
+const NAMED_FAILURE_REASON: Record<AgentFailureReason, string> = {
   turn_limit: "исчерпан предел ходов",
   model_error: "ошибка модели",
   owner_disabled: "сотрудник отключён",
@@ -36,8 +36,8 @@ const NAMED_FAILURE_REASON: Record<string, string> = {
  * show as the hint when the words do not name it (KD-6).
  */
 export function failureReasonText(reason: string | null): { text: string; hint: string | null } {
-  const named = reason === null ? undefined : NAMED_FAILURE_REASON[reason];
-  if (named !== undefined) return { text: named, hint: null };
+  const named = AgentFailureReasonSchema.safeParse(reason);
+  if (named.success) return { text: NAMED_FAILURE_REASON[named.data], hint: null };
   return { text: "ошибка платформы", hint: reason };
 }
 

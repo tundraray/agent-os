@@ -25,6 +25,7 @@ import {
   expectBody,
   expectError,
 } from './support/api.js';
+import { removeRunRows } from './support/access.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
   createEmployee,
@@ -54,7 +55,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness === undefined) return;
+  try {
+    if (admin !== undefined)
+      await removeRunRows(harness.pool, {
+        models: [],
+        roles: [],
+        users: [admin.id],
+      });
+  } finally {
+    await harness.close();
+  }
 });
 
 /** The API as a fresh employee. */

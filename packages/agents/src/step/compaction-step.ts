@@ -134,12 +134,12 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         statusCode: result.error.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeFailureEntries,
         patch: { ...prelude?.patch },

@@ -43,7 +43,7 @@
 //   - `no_access` for an employee with NO right on a server, at every door: mcp-connect INT-1 row 6 and agent-platform-agents INT-3 A (adapted to
 //       the gate double). INT-1 here starts from tool-level rows - a personal deny, a personal right on one tool, a removal at run time, a workflow.
 //   - NFR-03 for this part's routes (`/api/admin/...`, `GET /api/access/models`): the route walk of identity INT-1 takes the new routes from the
-//       router.
+//       router (no session -> 401). An employee without the admin right on this part's admin routes is step 1 of INT-1 here.
 //   - The cost of a conversation title entering spend: agent-platform-chat INT-3 B (adapted: its employee gets a right to the default model
 //       through `grantTo`). Spend endpoint `GET /spend`: agent-platform-chat INT-2 E (adapted: the model's price comes from `addModel`).
 //
@@ -51,7 +51,7 @@
 //   - UC-4 `apps/api/src/access/effective-access.spec.ts`, one table over `effectiveAccess`: AC-16.1, AC-16.2, AC-17.1, AC-17.2, AC-17.3, AC-21.1
 //       (quotas 50 + 20 + personal 30 = 100), AC-21.2, AC-21.5 (one grant without a quota removes the limit, also when added later), DC-1 (a tool
 //       absent from the registry list gives nothing).
-//   - UC-5 `apps/api/src/access/access.service.spec.ts`, the verdict order table: AC-16.3 (`no_models_allowed`), AC-20.2, AC-21.4 (prior-month spend
+//   - UC-5 `apps/api/src/access/model-verdict.spec.ts`, the verdict order table: AC-16.3 (`no_models_allowed`), AC-20.2, AC-21.4 (prior-month spend
 //       does not count), `owner_disabled` -> `model_not_connected` -> `model_not_allowed` / `no_models_allowed` -> `quota_exhausted` -> `allowed`
 //       with the catalogue price; spend equal to the quota is exhausted, one cent below is not.
 //   - UC-6 `model-client.spec.ts`: DC-7 (the title's `completeText` makes no call and calls the hook once on a refusal), verdict `allowed` passes
@@ -516,7 +516,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   1. DC-2, before any right exists: `POST /api/admin/grants` for a deny to a role -> 422 `GRANT_INVALID`; a quota on a server right -> 422
   //      `GRANT_INVALID`; a right on tool `ghost_tool` of `backoffice` and a right on a model outside the catalogue -> 422 `GRANT_TARGET_UNKNOWN`
   //      both; the same personal right created twice -> 201 then 409 `GRANT_EXISTS`. The `access_grants` count after the step equals the
-  //      successful creations only (nothing half saved). The step removes its one right.
+  //      successful creations only (nothing half saved). The step removes its one right. An employee without the admin right then calls
+  //      `POST /api/admin/grants` and `PATCH /api/admin/models/:id` -> 403 `ADMIN_REQUIRED` both, no grant saved, the model unchanged.
   //   2. Setup: role `sre` holds the right to server `backoffice`; Аня is in `sre` and has a personal deny of `create_incident_note`; Борис has a
   //      personal right on the tool `logs/get_trace`, a personal deny of the server `logs`, and a personal right on the one tool
   //      `tracker/search_tickets` with no right on the server; Глеб has a role right on `logs` and a personal right on the mutating tool
@@ -669,6 +670,36 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(await holderGrants()).toBe(1);
       await removeGrant(once.id);
       expect(await holderGrants()).toBe(0);
+      // An employee without the admin right on this part's admin routes: 403, and neither a grant nor a model changes
+      const asEmployee = [
+        await expectError(
+          apiRequest(harness.app, anya, 'post', '/admin/grants', twice),
+          403,
+        ),
+        await expectError(
+          apiRequest(
+            harness.app,
+            anya,
+            'patch',
+            `/admin/models/${encodeURIComponent(MODEL_A)}`,
+            { name: 'renamed by an employee' },
+          ),
+          403,
+        ),
+      ];
+      expect(asEmployee.map((error) => error.errorCode)).toEqual([
+        'ADMIN_REQUIRED',
+        'ADMIN_REQUIRED',
+      ]);
+      expect(await holderGrants()).toBe(0);
+      const catalogue = await expectBody(
+        adminRequest('get', '/admin/models'),
+        200,
+        z.array(CreateCatalogModelBodySchema),
+      );
+      expect(catalogue.find((model) => model.id === MODEL_A)?.name).toBe(
+        MODEL_A,
+      );
 
       // 2. Setup: `sre` holds `backoffice`, Аня is in it with a personal deny of `create_incident_note`; Борис has a
       //    personal right on `logs/get_trace`, a personal deny of `logs` and a personal right on `tracker/search_tickets`;
@@ -1355,25 +1386,28 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   the agent ends `failed` with `quota_exhausted` -> the employee's own message after a raise continues the conversation -> history, ledger, audit,
   //   `GET /api/access/models`.
   // Steps (`A` is 1 and 5 USD per million tokens and the app's default model, `B` is 3 and 15; Аня's quota on A is two rights, a role `duty` with
-  //   0,004 USD and a personal one with 0,006 USD, so the sum is 0,01 USD; her right on B has no quota; Борис has a personal right on A with its own
-  //   quota 0,01 USD; the call that stays in flight is 5000 input and 500 output tokens = 0,0075 USD):
-  //   1. AC-21.1, AC-23.1, DC-9, before any call: `GET /api/access/models` for Аня parses with `MyModels`: A `quotaUsd` 0,01 (the sum of the role's and
-  //      the personal grant), `spentUsd` 0, `remainingUsd` 0,01, `exhausted` false; B `quotaUsd` and `remainingUsd` null (without a limit), `exhausted`
-  //      false; a model she is not allowed is absent from the list.
+  //   0,01 USD and a personal one with 0,03 USD, so the sum is 0,04 USD; her right on B has its own quota of 1 USD; Борис has a personal right on A
+  //   with its own quota 0,01 USD; the call that stays in flight is 10 000 input and 1 000 output tokens = 0,015 USD):
+  //   1. AC-21.1, AC-23.1, DC-9, before any call: `GET /api/access/models` for Аня parses with `MyModels`: A `quotaUsd` 0,04 (the sum of the role's and
+  //      the personal grant), `spentUsd` 0, `remainingUsd` 0,04, `exhausted` false; B `quotaUsd` and `remainingUsd` 1, `exhausted` false; a model she
+  //      is not allowed is absent from the list. Then one ledger row of 0,01 USD for Аня on A is written straight into the table, as a call another
+  //      process recorded: the check must read the spend from the ledger.
   //   2. AC-21.3, AC-22.2: Аня's main chat and a background agent of the same conversation, both on A, each hold a call in flight on a latch (spend was
-  //      0 < 0,01, so both calls start); an agent of Ани in another conversation works on B. The latch is released -> both results stand in the
-  //      histories and her spend on A reads 0,015 USD; the next model call of each agent on A is not made (the counter shows no new call).
+  //      0,01 < 0,04, so both calls start); an agent of Ани in another conversation works on B. The latch is released -> both results stand in the
+  //      histories and her spend on A reads 0,04 USD; the next model call of each agent on A is not made (the counter shows no new call).
   //   3. AC-22.1, AC-22.7, KD-5: the main chat and the background agent are each `failed` with `quota_exhausted`; the background agent's parent has one
   //      `child_finished` with the reason; the conversation view carries the reason; the audit holds one `access_denied` per ended agent (objectType
-  //      `model`, the model, the reason `quota_exhausted`); the agent on B takes its next step and finishes its turn. `GET /api/access/models`: A
-  //      `spentUsd` 0,015, `remainingUsd` 0, `exhausted` true; B unchanged.
+  //      `model`, the model, the reason `quota_exhausted`); the agent on B makes one more model call after A is exhausted - it goes through, costs
+  //      0,0045 USD against B only - and finishes its turn. `GET /api/access/models`: A `spentUsd` 0,04, `remainingUsd` 0, `exhausted` true; B
+  //      `spentUsd` 0,0045, `remainingUsd` 0,9955.
   //   4. Isolation between employees: Борис's agent on A works and finishes while Аня's A is exhausted; his `GET /api/access/models` reads A `spentUsd` 0,
   //      `remainingUsd` 0,01 (Аня's spend is not his), and nothing of his is refused.
   //   5. AC-22.11, DC-9: Аня writes to the failed main chat while the quota is still exhausted -> no model call (the counter unchanged), the chat is
   //      `failed` with `quota_exhausted` again, one more `access_denied`; the page and the check agree - the same row said `exhausted` true.
-  //   6. AC-22.3: the administrator `PATCH`es the personal grant's quota to 1 USD (the sum is 1,004) -> the response is 200 and the row reads the new
-  //      quota; Аня writes to the main chat -> the model is called, the answer arrives and the chat ends its turn as after any message; her spend on A
-  //      is 0,015 USD plus the cost of that call and `GET /api/access/models` reads `exhausted` false with the remaining amount from those numbers.
+  //   6. AC-22.3: the administrator `PATCH`es the personal grant's quota to 1 USD (the sum is 1,01) -> the response is 200 and the row reads the new
+  //      quota; Аня writes to the main chat -> the model is called with the earlier history of the conversation, the answer arrives and the chat ends
+  //      its turn as after any message; her spend on A is 0,04 USD plus the cost of that call (0,0015) and `GET /api/access/models` reads `exhausted`
+  //      false with the remaining amount from those numbers.
   // Catches: the quota checked against a stale or per-process spend, so an agent runs one call too many or ends one call early; the in-flight calls
   //   lost from the spend or blocked by the first one's end; a quota that counts only the personal grant or only the role's; spend summed over all
   //   employees so Борис is stopped by Аня's calls (isolation, money); an agent on another model ended with no reason or ended by an exhausted model
@@ -1383,22 +1417,23 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // @dependency: AccessService, effectiveAccess, TokenLedger.monthSpendByModel, ModelClient, ModelStep, AdminAccessController, MyAccessController, AuditLog, runtime workers, scripted model, Postgres
   // @complexity: high
   // Implementation (task T3.3, plan Notes 7 and 8; where the comment above differs, the task's text and the built code decide):
-  //   a quota is whole cents from 0,01 (grant-rules: `quota_out_of_range` below it or with sub-cent digits), so the amounts of
-  //   the comment (0,004 / 0,006, a call of 0,0075) cannot be granted; the same story runs at whole cents: Аня's quota on `A` is
-  //   the role `duty` 0,01 USD plus a personal 0,02 USD = 0,03 USD, the call held in flight is 10 000 input and 1 000 output
-  //   tokens = 0,015 USD at 1 / 5, so the two held calls spend exactly the quota. Аня gets `A` ONLY through `duty` and the
-  //   personal grant (a grant without a quota would lift the limit, AC-21.5); her `B` (the case's own model at 3 / 15) has no
-  //   quota; Борис has a personal `A` with 0,01 USD. Every other call of the case - the titles, the call that starts the
-  //   background agent, the calls of Борис and of the other conversation - is zero tokens (Notes 7). Both held calls start
-  //   while the spend is 0 and stay in flight together; the main chat's latch opens first and the background agent's only once
+  //   a quota is whole cents from 0,01 (grant-rules: `quota_out_of_range` below it or with sub-cent digits). Аня's quota on `A`
+  //   is the role `duty` 0,01 USD plus a personal 0,03 USD = 0,04 USD; the ledger row written through the pool is 0,01 USD and
+  //   the call held in flight is 10 000 input and 1 000 output tokens = 0,015 USD at 1 / 5, so the row and the two held calls
+  //   spend exactly the quota - a spend counted in the process would stop at 0,03 and let one more call through. Аня gets `A`
+  //   ONLY through `duty` and the personal grant (a grant without a quota would lift the limit, AC-21.5); her `B` (the case's
+  //   own model at 3 / 15) has a quota of 1 USD; Борис has a personal `A` with 0,01 USD. Every other call of the case - the
+  //   titles, the call that starts the background agent, the calls of Борис and the first calls of the other conversation -
+  //   is zero tokens (Notes 7). Both held calls start while the spend is 0,01 and stay in flight together; the main chat's latch opens first and the background agent's only once
   //   the main call's ledger row is written, so the background agent's next check reads both costs (the order of the two
   //   ledger writes is not left to the scheduler). The agent on `B` in the other conversation is held on its own latch until
-  //   `A` is exhausted: its report then wakes its root on `A`, which ends `quota_exhausted` too. Step 6: `PATCH` of the
+  //   `A` is exhausted; its held answer asks a tool, so its next call (1000 / 100 tokens = 0,0045 USD at 3 / 15) starts after
+  //   that, and its report then wakes its root on `A`, which ends `quota_exhausted` too. Step 6: `PATCH` of the
   //   personal grant to 1 USD (sum 1,01), and the continuation call is 1000 / 100 tokens = 0,0015 USD.
   it(
     'INT-3: quotas of a role and of the employee add up, calls in flight finish and count, the next call of an exhausted model ends that agent with quota_exhausted, other agents and other employees go on, and a message after a raise continues the conversation',
     async () => {
-      // Given: Аня's `A` = `duty` 0,01 + personal 0,02; her `B` without a quota; Борис's `A` = personal 0,01
+      // Given: Аня's `A` = `duty` 0,01 + personal 0,03; her `B` with a quota of 1; Борис's `A` = personal 0,01
       const modelB = await catalogueModel('quota-b', PRICES_3_15);
       const anya = await employee('int3-anya');
       const boris = await employee('int3-boris');
@@ -1414,12 +1449,14 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         { userId: anya.id },
         'allow',
         { kind: 'model', model: MODEL_A },
-        0.02,
+        0.03,
       );
-      await grant({ userId: anya.id }, 'allow', {
-        kind: 'model',
-        model: modelB,
-      });
+      await grant(
+        { userId: anya.id },
+        'allow',
+        { kind: 'model', model: modelB },
+        1,
+      );
       await grant(
         { userId: boris.id },
         'allow',
@@ -1441,23 +1478,30 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           model: MODEL_A,
           name: MODEL_A,
           spentUsd: 0,
-          quotaUsd: 0.03,
-          remainingUsd: 0.03,
+          quotaUsd: 0.04,
+          remainingUsd: 0.04,
           exhausted: false,
         },
         {
           model: modelB,
           name: modelB,
           spentUsd: 0,
-          quotaUsd: null,
-          remainingUsd: null,
+          quotaUsd: 1,
+          remainingUsd: 1,
           exhausted: false,
         },
       ]);
+      // 0,01 USD of Аня on `A` that this process did not record: only a spend read from the ledger counts it
+      await harness.pool.query(
+        `INSERT INTO app.runtime_model_calls
+           (call_id, owner_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, called_at)
+         VALUES ($1, $2, $3, 10000, 0, 0, 0, 0.01, now())`,
+        [randomUUID(), anya.id, MODEL_A],
+      );
 
       // 2. AC-21.3, AC-22.2: in another conversation Аня's root on `A` starts an agent on `B`, whose call is held; in the main
       //    conversation the chat starts a background agent on `A`, and both hold a call of 0,015 USD in flight - each started
-      //    at a spend of 0 below the quota of 0,03
+      //    at a spend of 0,01 below the quota of 0,04
       const otherTask = 'INT-3 step 2: start an agent on B';
       const onB = 'INT-3 step 2: the agent on B';
       const bHeld = createLatch();
@@ -1465,8 +1509,14 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         { calls: [startAgent('agent on B', onB, modelB)], usage: ZERO_TOKENS },
         { text: 'the agent on B works', usage: ZERO_TOKENS },
       ]);
+      // The held answer asks a tool, so the agent on `B` makes one more model call, after `A` is exhausted
       const bScript = harness.model.script({ task: onB }, [
-        { text: 'B is done', usage: ZERO_TOKENS, latch: bHeld },
+        {
+          calls: [{ tool: 'list_agents', args: {} }],
+          usage: ZERO_TOKENS,
+          latch: bHeld,
+        },
+        { text: 'B is done', usage: SMALL_CALL },
       ]);
       const otherThread = await startConversation(anyaApi, otherTask);
       await bHeld.reached(1);
@@ -1514,8 +1564,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       backgroundHeld.open();
 
       // 3. AC-22.1, AC-22.7, KD-5: both results stand and cost 0,015 USD each; the background agent's next call is not made, it
-      //    ends `quota_exhausted` and its report wakes the main chat, whose call is not made either; the agent on `B` takes its
-      //    next step and finishes, and its report ends its root on `A` the same way - one record per ended agent
+      //    ends `quota_exhausted` and its report wakes the main chat, whose call is not made either; the agent on `B` makes its
+      //    next call after that - it goes through and counts against `B` only - and finishes, and its report ends its root on
+      //    `A` the same way - one record per ended agent
       const ended = await waitFor(
         () => anyaApi.history(mainThread),
         (view) => view.chat.status === 'failed' && reportsOf(view).length === 1,
@@ -1548,8 +1599,10 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         'quota_exhausted',
       ]);
       expect(agentNamed(other.agents, 'agent on B').status).toBe('completed');
-      expect(bScript.calls).toHaveLength(1);
-      expect(harness.model.calls.length).toBe(callsInFlight);
+      expect(bScript.calls).toHaveLength(2);
+      expect(harness.model.calls.length).toBe(callsInFlight + 1);
+      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([0, 0.0045]);
+      expect(await paidCalls()).toEqual([0.015, 0.015]);
       expect(await deniedAudit('model', { anya })).toEqual([
         `anya ${MODEL_A} rejected quota_exhausted`,
         `anya ${MODEL_A} rejected quota_exhausted`,
@@ -1561,25 +1614,25 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         MyModelsSchema,
       );
       expect(quotaRefusals(anya.id)).toEqual([
-        { spentUsd: 0.03, quotaUsd: 0.03, month },
-        { spentUsd: 0.03, quotaUsd: 0.03, month },
-        { spentUsd: 0.03, quotaUsd: 0.03, month },
+        { spentUsd: 0.04, quotaUsd: 0.04, month },
+        { spentUsd: 0.04, quotaUsd: 0.04, month },
+        { spentUsd: 0.04, quotaUsd: 0.04, month },
       ]);
       expect(await myModels(anya)).toEqual([
         {
           model: MODEL_A,
           name: MODEL_A,
-          spentUsd: 0.03,
-          quotaUsd: 0.03,
+          spentUsd: 0.04,
+          quotaUsd: 0.04,
           remainingUsd: 0,
           exhausted: true,
         },
         {
           model: modelB,
           name: modelB,
-          spentUsd: 0,
-          quotaUsd: null,
-          remainingUsd: null,
+          spentUsd: 0.0045,
+          quotaUsd: 1,
+          remainingUsd: 0.9955,
           exhausted: false,
         },
       ]);
@@ -1639,8 +1692,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect((await myModels(anya))[0]).toEqual({
         model: MODEL_A,
         name: MODEL_A,
-        spentUsd: 0.03,
-        quotaUsd: 0.03,
+        spentUsd: 0.04,
+        quotaUsd: 0.04,
         remainingUsd: 0,
         exhausted: true,
       });
@@ -1665,23 +1718,35 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         'the continuation',
       );
       expect(continued.calls).toHaveLength(1);
+      // The continued call carries the conversation so far, not only the new message
+      const seen = (continued.calls[0]?.messages ?? []).flatMap((message) =>
+        message.role === 'tool' ? [] : [`${message.role}: ${message.content}`],
+      );
+      expect(seen).toEqual(
+        expect.arrayContaining([
+          `user: ${mainTask}`,
+          'assistant: the main answer',
+          `user: ${stillExhausted}`,
+        ]),
+      );
+      expect(seen.at(-1)).toBe(`user: ${continueTask}`);
       expect(harness.model.calls.length).toBe(callsBeforeMessage + 1);
       expect(await paidCalls()).toEqual([0.015, 0.015, 0.0015]);
       expect(await myModels(anya)).toEqual([
         {
           model: MODEL_A,
           name: MODEL_A,
-          spentUsd: 0.0315,
+          spentUsd: 0.0415,
           quotaUsd: 1.01,
-          remainingUsd: 0.9785,
+          remainingUsd: 0.9685,
           exhausted: false,
         },
         {
           model: modelB,
           name: modelB,
-          spentUsd: 0,
-          quotaUsd: null,
-          remainingUsd: null,
+          spentUsd: 0.0045,
+          quotaUsd: 1,
+          remainingUsd: 0.9955,
           exhausted: false,
         },
       ]);

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { MyModel, MyModels } from '@agent-os/contracts';
-import { failureReasonText } from '@/lib/agents/format';
 import { chatFailureText, quotaFailureText, quotaRowOf, refusalText } from './access-texts';
 
 const SONNET: MyModel = {
@@ -44,11 +43,6 @@ describe('access texts (MC-10, MC-11, MC-14, QS-01)', () => {
       expected: 'Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS.',
     },
     { where: 'chat reply error', text: chatFailureText('model_error', 'anthropic/claude-sonnet-5-5'), expected: 'Не удалось получить ответ.' },
-    { where: 'event line / report', text: failureReasonText('quota_exhausted').text, expected: 'квота исчерпана' },
-    { where: 'event line / report', text: failureReasonText('model_not_allowed').text, expected: 'модель не разрешена' },
-    { where: 'event line / report', text: failureReasonText('model_not_connected').text, expected: 'модель не подключена' },
-    { where: 'event line / report', text: failureReasonText('no_models_allowed').text, expected: 'не разрешена ни одна модель' },
-    { where: 'event line / report', text: failureReasonText('owner_disabled').text, expected: 'сотрудник отключён' },
     {
       where: 'quota failure line',
       text: quotaFailureText(SONNET, '2026-11'),

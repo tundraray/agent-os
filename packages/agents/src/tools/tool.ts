@@ -59,13 +59,15 @@ export type ToolRunResult =
   | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
 
 /** Input of a tool executed inside the commit transaction of the step: no external calls. */
-export interface InCommitToolInput<Args> {
+export interface InCommitToolInput<Args, Prepared = unknown> {
   readonly callId: string;
   readonly args: Args;
   readonly caller: ToolCaller;
   readonly tx: RuntimeTx;
   readonly effects: StepEffects;
   readonly startChild: StartChild;
+  /** What the tool's `prepare` answered before the commit; absent for a tool without one. */
+  readonly prepared?: Prepared;
 }
 
 /** Input of a tool executed outside a transaction: it may call an external system. */
@@ -117,9 +119,14 @@ interface AgentToolBase<Args> {
 }
 
 /** Runs in the commit transaction of the step, with its `tx`, `effects` and the spawn helper. */
-export interface InCommitAgentTool<Args> extends AgentToolBase<Args> {
+export interface InCommitAgentTool<Args, Prepared = unknown> extends AgentToolBase<Args> {
   readonly mode: 'in_commit';
-  execute(input: InCommitToolInput<Args>): Promise<ToolRunResult>;
+  /**
+   * Runs before the commit transaction opens and hands its answer to `execute`: what must not be asked
+   * while the transaction holds a connection — the access gate (design-access.md KD-4).
+   */
+  prepare?(input: { readonly args: Args; readonly caller: ToolCaller }): Promise<Prepared>;
+  execute(input: InCommitToolInput<Args, Prepared>): Promise<ToolRunResult>;
 }
 
 /** Runs outside a transaction. */

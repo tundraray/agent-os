@@ -165,8 +165,9 @@ function commitOf(
 /**
  * Builds the tool step (design-agents.md: KD-1, KD-4, Flow 1, Flow 5, DC-5, DC-6, Invariants 1–3).
  *
- * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2). It is
- *   `sending` only when a step was lost after the intent; an interrupt or a stop closes it elsewhere.
+ * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2), also when the
+ *   owner is disabled. It is `sending` only when a step was lost after the intent; an interrupt or a stop
+ *   closes it elsewhere.
  * - The gate is asked once before the calls: a disabled owner fails the agent with `owner_disabled` and no
  *   call starts; a pair it does not allow is `no_access` before any confirmation, with one audit record.
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
@@ -228,6 +229,22 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         patch: {},
       });
 
+    // Before the gate, so a disabled owner's exit closes them too: a call left in `sending` precedes every
+    // other open call of its answer.
+    for (const call of openCalls) {
+      if (call.state !== sending) continue;
+      // The intent is written and no result came back: the call may have reached its server.
+      ctx.logger.warn('tool call in sending without a result closed as unknown', {
+        callId: call.callId,
+        tool: call.tool,
+        server: call.server,
+        args: call.args,
+        outcome: unknown,
+        reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
+      });
+      closings.push(close(call, { outcome: unknown }));
+    }
+
     const toolAccess = await access.tools(session.ownerId);
     if (toolAccess.kind === 'owner_disabled') {
       ctx.logger.warn('access gate refused the tool step', {
@@ -242,19 +259,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
 
     const runCalls = async (): Promise<StepResult> => {
       for (const call of openCalls) {
-        if (call.state === sending) {
-          // The intent is written and no result came back: the call may have reached its server.
-          ctx.logger.warn('tool call in sending without a result closed as unknown', {
-            callId: call.callId,
-            tool: call.tool,
-            server: call.server,
-            args: call.args,
-            outcome: unknown,
-            reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
-          });
-          closings.push(close(call, { outcome: unknown }));
-          continue;
-        }
+        if (call.state === sending) continue;
         if (ctx.signal.aborted) return abandon('signal aborted before the call');
 
         const check = runner.check(

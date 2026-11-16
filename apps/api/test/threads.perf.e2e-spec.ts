@@ -17,6 +17,7 @@ import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chatApi } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { removeRunRows } from './support/access.js';
 import { createEmployee, seedSuperAdmin } from './support/session.js';
 
 const WARM_UP_REQUESTS = 5;
@@ -30,13 +31,25 @@ const CONVERSATIONS = 200;
 const PERF_TEST_TIMEOUT_MS = 120_000;
 
 let harness: TestApp;
+/** The administrator the case makes; deleted in `afterAll`. */
+let adminId: string | undefined;
 
 beforeAll(async () => {
   harness = await createTestApp();
 });
 
 afterAll(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness === undefined) return;
+  try {
+    if (adminId !== undefined)
+      await removeRunRows(harness.pool, {
+        models: [],
+        roles: [],
+        users: [adminId],
+      });
+  } finally {
+    await harness.close();
+  }
 });
 
 /**
@@ -70,6 +83,7 @@ describe('agent-platform / chat - conversation list performance (local Postgres)
         harness.app,
         `e2e-admin-${randomUUID()}`,
       );
+      adminId = admin.id;
       const api = chatApi(
         harness.app,
         await createEmployee(harness.app, admin),

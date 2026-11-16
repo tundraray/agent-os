@@ -6,6 +6,7 @@ import {
   DEFAULT_API,
   failure,
   readPassword,
+  SEED_MCP_SERVERS,
   signIn,
   stepFailed,
   type AdminSession,
@@ -15,9 +16,6 @@ import { createAppLogger } from '../logging/app-logger.js';
 const logger = createAppLogger(process.env);
 
 const DEFAULT_FIXTURE = 'http://localhost:4100';
-
-/** The OAuth server whose account the administrator connects after registering it. */
-const OAUTH_SERVER = 'backoffice';
 
 interface Arguments {
   login: string;
@@ -49,14 +47,14 @@ function readArguments(): Arguments {
 /** The fixture's servers: `logs` and `tracker` with the shared token, `backoffice` with personal OAuth. */
 function fixtureServers(fixture: string): RegisterMcpServerBody[] {
   const shared = { mode: 'shared', sharedToken: FIXTURE_SHARED_TOKEN } as const;
+  const { oauth } = SEED_MCP_SERVERS;
   return [
-    { name: 'logs', url: `${fixture}/logs/mcp`, ...shared },
-    { name: 'tracker', url: `${fixture}/tracker/mcp`, ...shared },
-    {
-      name: OAUTH_SERVER,
-      url: `${fixture}/backoffice/oauth/mcp`,
-      mode: 'oauth',
-    },
+    ...SEED_MCP_SERVERS.shared.map((name) => ({
+      name,
+      url: `${fixture}/${name}/mcp`,
+      ...shared,
+    })),
+    { name: oauth, url: `${fixture}/${oauth}/oauth/mcp`, mode: 'oauth' },
   ];
 }
 

@@ -251,7 +251,10 @@ export interface ToolRunner {
    * text is not returned.
    */
   callFromCode(request: CodeCallRequest, scope: CodeCallScope): Promise<CodeCallExecution>;
-  /** The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper; the gate is asked first. */
+  /**
+   * The closure an `in_commit` tool runs in `commit(tx, effects)`, with the spawn helper. The gate is asked and
+   * the tool's `prepare` runs first, outside the transaction.
+   */
   planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
   /**
    * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
@@ -494,7 +497,17 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     return ctx.signal.aborted ? { kind: 'aborted' } : result;
   }
 
-  function runInCommit(call: InCommitCall, tx: RuntimeTx, effects: StepEffects): Promise<ToolExecution> {
+  /** The tool's `prepare`, run before the commit transaction opens. */
+  function prepareInCommit(call: InCommitCall): Promise<unknown> {
+    return call.tool.tool.prepare?.({ args: call.args, caller: call.caller }) ?? Promise.resolve(undefined);
+  }
+
+  function runInCommit(
+    call: InCommitCall,
+    prepared: unknown,
+    tx: RuntimeTx,
+    effects: StepEffects,
+  ): Promise<ToolExecution> {
     return call.tool.tool.execute({
       callId: call.callId,
       args: call.args,
@@ -502,6 +515,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       tx,
       effects,
       startChild: options.startChildFor({ tx, effects, caller: call.caller }),
+      prepared,
     });
   }
 
@@ -611,9 +625,10 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
 
     async planInCommit(call, logger) {
       const refusal = await admit(call, logger);
+      const prepared = refusal === undefined ? await prepareInCommit(call) : undefined;
       return async (tx, effects) => {
         const startedAt = Date.now();
-        const execution = refusal ?? (await runInCommit(call, tx, effects));
+        const execution = refusal ?? (await runInCommit(call, prepared, tx, effects));
         logCall(logger, loggedCall(call), execution, startedAt);
         return execution;
       };
@@ -633,6 +648,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
         ...(editedArgs === undefined ? {} : { args: editedArgs }),
       };
       if (isInCommit(call)) {
+        const inCommit = { ...call, args: sent.args };
+        const prepared = await prepareInCommit(inCommit);
         return {
           kind: 'in_commit',
           commit: async (tx, effects) => {
@@ -641,7 +658,7 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
             const execution: ToolExecution | NotSent =
               intent === undefined
                 ? { kind: 'not_sent', reason: 'not_awaiting' }
-                : await runInCommit({ ...call, args: sent.args }, tx, effects);
+                : await runInCommit(inCommit, prepared, tx, effects);
             logCall(ctx.logger, loggedCall(sent), execution, startedAt);
             return execution;
           },

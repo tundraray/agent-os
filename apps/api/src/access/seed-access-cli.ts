@@ -8,6 +8,7 @@ import {
 import {
   DEFAULT_API,
   readPassword,
+  SEED_MCP_SERVERS,
   signIn,
   stepFailed,
   type AdminSession,
@@ -50,12 +51,12 @@ const MODELS: CreateCatalogModelBody[] = [
   },
 ];
 
-/** The servers `seed:mcp` registers. */
-const SEED_MCP_SERVERS = ['logs', 'tracker', 'backoffice'];
-
 /** What the built-in role is allowed: the `seed:mcp` servers and both models, without a quota. */
 const TARGETS: GrantTargetBody[] = [
-  ...SEED_MCP_SERVERS.map((server) => ({ kind: 'server' as const, server })),
+  ...[...SEED_MCP_SERVERS.shared, SEED_MCP_SERVERS.oauth].map((server) => ({
+    kind: 'server' as const,
+    server,
+  })),
   ...MODELS.map((model) => ({ kind: 'model' as const, model: model.id })),
 ];
 

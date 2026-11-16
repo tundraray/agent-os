@@ -108,6 +108,7 @@ export function createAgents(options: AgentsOptions): Agents {
     allowHttp: config.allowHttpUrls,
   });
   const startChildDeps = {
+    database,
     catalog,
     maxDepth: config.maxDepth,
     defaultModel: config.defaultModel,
@@ -141,7 +142,7 @@ export function createAgents(options: AgentsOptions): Agents {
     maskSecrets: createSecretMasker(secretValuesOf(config)),
   });
   const registry: ToolRegistry = createToolRegistry({
-    builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks, database }),
+    builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks }),
     runCode,
     catalog,
     database,

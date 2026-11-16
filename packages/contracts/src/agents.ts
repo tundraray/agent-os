@@ -78,6 +78,21 @@ export const ToolRefusalReasonSchema = z.enum([
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 
+/**
+ * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal
+ * of the access gate. The runtime's own reasons are `RuntimeFailureReason`.
+ */
+export const AgentFailureReasonSchema = z.enum([
+  'turn_limit',
+  'model_error',
+  'owner_disabled',
+  'quota_exhausted',
+  'model_not_connected',
+  'model_not_allowed',
+  'no_models_allowed',
+]);
+export type AgentFailureReason = z.infer<typeof AgentFailureReasonSchema>;
+
 /** Built-in tool that runs a model-written script (design-code-execution.md, RunCodeArgs). */
 export const RUN_CODE_TOOL = 'run_code';
 

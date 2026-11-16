@@ -193,7 +193,8 @@ async function readTextParts(textStream: AsyncIterable<string>, onText: (text: s
  * body with the prompt. Each part of `textStream` goes to `onText`; the text, tool calls and usage come
  * from the output's promises. A provider error ends `textStream` without an exception: Mastra keeps it
  * as the output's `error` (what `generate` throws after reading the whole stream), so it is thrown here
- * and `ModelClient` retries it. The system block carries the cache mark, so the tools and instructions
+ * and `ModelClient` retries it. A cancel ends the stream the same quiet way, with the finish reason
+ * `aborted` and no usage, so it is thrown too. The system block carries the cache mark, so the tools and instructions
  * before it are cached.
  */
 export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnModelClient {
@@ -221,6 +222,8 @@ export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnMod
         output.usage,
         output.finishReason,
       ]);
+      // Mastra ends a cancelled stream as an answer without usage; it is not one, so the cancel is thrown.
+      if (finishReason === 'aborted') signal.throwIfAborted();
       return {
         finishReason,
         text,

@@ -85,7 +85,8 @@ type QuotaRead = { status: "loading" } | { status: "ready"; row: MyModel | null;
 
 /**
  * QS-01 (enterprise-access UXRD, KD-4): the quota failure with the model, the spend and the quota of the
- * month from the employee's row of that model, read once when the line is shown, and the hint under it.
+ * month from the employee's row of that model, read when the line is shown (one read for the lines of a
+ * feed shown together), and the hint under it.
  * Without the row, or when the read fails, the line reads «Сбой: квота исчерпана». The line announces
  * itself politely where it stands (MC-17), once the text is known.
  */
@@ -95,7 +96,7 @@ function QuotaFailureLine({ data }: { data: EventPartData }) {
 
   useEffect(() => {
     let current = true;
-    accessApi.models().then(
+    accessApi.modelsForFeed().then(
       (models) => {
         if (!current) return;
         const row = model === null ? null : quotaRowOf(models, model, createdAt);

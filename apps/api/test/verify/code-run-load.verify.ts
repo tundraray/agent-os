@@ -125,6 +125,7 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
         defaultModel: DEFAULT_MODEL,
       });
       let roleId: string | undefined;
+      let adminId: string | undefined;
       try {
         const loopTask = 'UC-N3: run the endless loop';
         const heapTask = 'UC-N3: grow the heap';
@@ -148,6 +149,7 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
           harness.app,
           `verify-admin-${randomUUID()}`,
         );
+        adminId = admin.id;
         await addModel(harness.app, admin, {
           id: DEFAULT_MODEL,
           ...HAIKU_TEST_PRICES,
@@ -233,6 +235,7 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
           await removeRunRows(harness.pool, {
             models: [DEFAULT_MODEL],
             roles: roleId === undefined ? [] : [roleId],
+            users: adminId === undefined ? [] : [adminId],
           });
         } finally {
           await harness.close();

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  type AccessDeniedEntry,
   type AgentDefinition,
   type AgentHistoryEntry,
   type Agents,
@@ -147,8 +146,6 @@ export interface AgentsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Every `access_denied` record the agents handed to the audit hook, in order. */
-  readonly audits: readonly AccessDeniedEntry[];
   /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
   close(): Promise<void>;
 }
@@ -189,7 +186,6 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     logger,
     clock: systemClock,
   });
-  const audits: AccessDeniedEntry[] = [];
   const agents = createAgents({
     database: database.db,
     runtime,
@@ -201,9 +197,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       prices: TEST_MODEL_PRICES,
       ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
     }),
-    audit: async (entry) => {
-      audits.push(entry);
-    },
+    audit: async () => {},
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
   for (const definition of options.definitions ?? []) agents.definitions.register(definition);
@@ -244,7 +238,6 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     fixture,
     fixtureProcess,
     logs: sink.records,
-    audits,
     close,
   };
 }

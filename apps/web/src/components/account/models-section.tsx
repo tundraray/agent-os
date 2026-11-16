@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
-import { formatQuotaUsd, formatUsd, monthName } from "@/lib/access/money";
+import { NO_MODELS_ALLOWED } from "@/lib/access/access-texts";
+import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from "@/lib/access/money";
 import { describeApiError } from "@/lib/api/api-request";
 import { logger } from "@/lib/logger";
 
@@ -20,7 +21,7 @@ const TEXT = {
   remaining: "Остаток",
   noLimit: "без предела",
   exhausted: "Квота исчерпана",
-  empty: "Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS.",
+  empty: NO_MODELS_ALLOWED,
   // Not in MC-9: the read failure follows the shell's «Не удалось …» texts, as in «Подключения».
   loadFailed: "Не удалось загрузить модели",
   retry: "Повторить",
@@ -30,9 +31,6 @@ const EMPTY_VALUE = "—";
 const SKELETON_WIDTHS = ["w-full", "w-5/6", "w-2/3", "w-3/4", "w-1/2", "w-4/5"] as const;
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready"; data: MyModels };
-
-/** The API's month is the UTC month; the title shows it before the answer arrives. */
-const currentUtcMonth = (): string => new Date().toISOString().slice(0, 7);
 
 /** Cells after the name, in column order; an exhausted quota reads remaining «0,00 $» whatever the API rounds to. */
 function valuesOf(row: MyModel): { spent: string; quota: string; remaining: string } {
@@ -73,7 +71,7 @@ export function ModelsSection() {
     };
   }, [attempt]);
 
-  const title = TEXT.title(load.status === "ready" ? load.data.month : currentUtcMonth());
+  const title = TEXT.title(load.status === "ready" ? load.data.month : utcMonthOf(new Date()));
 
   return (
     <section aria-labelledby={headingId} className="flex max-w-160 flex-col gap-4">

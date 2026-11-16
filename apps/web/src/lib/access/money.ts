@@ -16,6 +16,11 @@ const MONTH_NAMES = [
 /** U+202F, the digit-group separator agent-platform MC-2 asks for. */
 const NARROW_NO_BREAK_SPACE = ' ';
 
+/** The UTC month `YYYY-MM` of a moment: the month the API counts spend and quotas in. */
+export function utcMonthOf(at: Date): string {
+  return at.toISOString().slice(0, 7);
+}
+
 /** `2026-11` → «ноябрь», for «… за {месяц}». */
 export function monthName(month: string): string {
   return MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? month;

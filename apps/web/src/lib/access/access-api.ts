@@ -6,4 +6,17 @@ async function models(): Promise<MyModels> {
   return apiRequest({ path: "/api/access/models", schema: MyModelsSchema });
 }
 
-export const accessApi = { models };
+let feedRead: Promise<MyModels> | null = null;
+
+/**
+ * `models` for the quota lines of a feed: the lines shown together share one read while it is in flight;
+ * a line shown later reads again, so it never gets amounts older than itself.
+ */
+function modelsForFeed(): Promise<MyModels> {
+  feedRead ??= models().finally(() => {
+    feedRead = null;
+  });
+  return feedRead;
+}
+
+export const accessApi = { models, modelsForFeed };

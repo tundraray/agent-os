@@ -1,4 +1,9 @@
-import { AGENTS_HISTORY_APPENDED, CHILD_FINISHED_KIND, HistoryEventSchema } from '@agent-os/contracts';
+import {
+  AgentFailureReasonSchema,
+  AGENTS_HISTORY_APPENDED,
+  CHILD_FINISHED_KIND,
+  HistoryEventSchema,
+} from '@agent-os/contracts';
 import { agentToolCalls, type Database } from '@agent-os/db';
 import {
   isFinished,
@@ -43,15 +48,7 @@ const STEP_KIND = 'model';
 const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
-export const FAILURE_REASONS = {
-  turnLimit: 'turn_limit',
-  modelError: 'model_error',
-  ownerDisabled: 'owner_disabled',
-  quotaExhausted: 'quota_exhausted',
-  modelNotConnected: 'model_not_connected',
-  modelNotAllowed: 'model_not_allowed',
-  noModelsAllowed: 'no_models_allowed',
-} as const;
+export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
 
 /**
  * What the handler (T4.4) writes before the step's own entries — a continuation (Flow 6, Flow 7) or
@@ -213,7 +210,7 @@ export async function refusedResult(input: {
   readonly patch: SessionPatch;
 }): Promise<StepResult> {
   const { ctx, model, refusal } = input;
-  if (refusal.reason !== FAILURE_REASONS.ownerDisabled) {
+  if (refusal.reason !== FAILURE_REASONS.owner_disabled) {
     await input.audit(modelDeniedEntry(ctx.ownerId, model, refusal));
   }
   logStep(ctx, input.stepKind, input.startedAt, 'fail', { model, ...refusalFields(refusal) });
@@ -381,10 +378,10 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
     // The definition's `maxTurns` is spent: the step fails instead of calling the model.
     if (turns >= definition.maxTurns) {
-      logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turnLimit, turns });
+      logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turn_limit, turns });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.turnLimit,
+        reason: FAILURE_REASONS.turn_limit,
         message: `Agent ${definition.name} used all ${definition.maxTurns} turns of its assignment`,
         writeEntries: writeStepEntries,
         patch: basePatch,
@@ -433,12 +430,12 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         statusCode: result.error.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.modelError,
+        reason: FAILURE_REASONS.model_error,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeStepEntries,
         patch: basePatch,

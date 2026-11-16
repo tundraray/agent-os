@@ -38,14 +38,21 @@ import {
   toHistoryEntry,
   toPending,
 } from './conversation-view.js';
-import { type Conversation, ConversationsRepository } from './conversations.repository.js';
+import {
+  type Conversation,
+  ConversationsRepository,
+} from './conversations.repository.js';
 import { decodeRowCursor, toThreadSummary } from './conversations.service.js';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor.js';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');
 
 /** A top agent of the list with the position the list order and its cursor read. */
-type ListedAgent = { readonly updatedAt: Date; readonly id: string; readonly node: AgentListNode };
+type ListedAgent = {
+  readonly updatedAt: Date;
+  readonly id: string;
+  readonly node: AgentListNode;
+};
 
 /**
  * The agent routes, decisions and spend (design-chat.md, Contract «Агенты», «Решения и расход», KD-7,
@@ -80,7 +87,10 @@ export class AgentControlService {
       ...(position === undefined ? {} : { cursor: position }),
       size: this.pageSize,
     });
-    return { agents: page.threads.map((listed) => listed.node), nextCursor: page.nextCursor };
+    return {
+      agents: page.threads.map((listed) => listed.node),
+      nextCursor: page.nextCursor,
+    };
   }
 
   /** NV-01: open decision requests across all the owner's conversations. */
@@ -92,28 +102,44 @@ export class AgentControlService {
         const confirmations = await unlessDeleted(
           this.agents.sessions.confirmations(rootId, ownerId),
         );
-        return confirmations.filter((confirmation) => confirmation.status === 'open').length;
+        return confirmations.filter(
+          (confirmation) => confirmation.status === 'open',
+        ).length;
       }),
     );
     return { count: counts.reduce((sum, count) => sum + count, 0) };
   }
 
   /** `AgentPageView`: the agent with its conversation, a page of its history, its queue, own requests and subtree. */
-  async history(agentId: string, ownerId: string, afterSeq: number): Promise<AgentPageView> {
+  async history(
+    agentId: string,
+    ownerId: string,
+    afterSeq: number,
+  ): Promise<AgentPageView> {
     const view = await this.agent(agentId, ownerId);
     const conversation = await this.conversations.findByRoot(view.rootId);
-    if (conversation === undefined || conversation.ownerId !== ownerId) throw agentNotFound();
+    if (conversation === undefined || conversation.ownerId !== ownerId)
+      throw agentNotFound();
     const [views, entries, messages, confirmations] = await Promise.all([
       this.agents.sessions.list(view.rootId, ownerId),
-      this.agents.sessions.history({ agentId, ownerId, afterSeq, limit: HISTORY_PAGE_SIZE }),
+      this.agents.sessions.history({
+        agentId,
+        ownerId,
+        afterSeq,
+        limit: HISTORY_PAGE_SIZE,
+      }),
       this.runtime.inbox.listPending(agentId, ownerId),
       this.agents.sessions.confirmations(view.rootId, ownerId),
     ]);
     const templates = templateTitles(this.workflows);
     // design v1.2 (A-2): the parent's description, unless the parent is the conversation's root.
-    const parent = views.find((candidate) => candidate.agentId === view.parentId);
+    const parent = views.find(
+      (candidate) => candidate.agentId === view.parentId,
+    );
     const parentDescription =
-      parent === undefined || parent.parentId === null ? undefined : parent.description;
+      parent === undefined || parent.parentId === null
+        ? undefined
+        : parent.description;
     return {
       agent: {
         ...toAgentView(view, templates),
@@ -132,7 +158,11 @@ export class AgentControlService {
   }
 
   /** AV-05: the fork parent's entries through `throughSeq`; empty for an agent that is not a fork. */
-  async inherited(agentId: string, ownerId: string, afterSeq: number): Promise<InheritedHistory> {
+  async inherited(
+    agentId: string,
+    ownerId: string,
+    afterSeq: number,
+  ): Promise<InheritedHistory> {
     const { forkedFrom } = await this.agent(agentId, ownerId);
     if (forkedFrom === null) return { entries: [], nextAfterSeq: null };
     const page = await this.agents.sessions.history({
@@ -146,7 +176,10 @@ export class AgentControlService {
       .map(toHistoryEntry);
     const last = page.at(-1);
     // A full page that ends before the fork point has more to read; anything else is read through.
-    const more = nextAfterSeqOf(page) !== null && last !== undefined && last.seq < forkedFrom.throughSeq;
+    const more =
+      nextAfterSeqOf(page) !== null &&
+      last !== undefined &&
+      last.seq < forkedFrom.throughSeq;
     return { entries, nextAfterSeq: more ? last.seq : null };
   }
 
@@ -158,13 +191,21 @@ export class AgentControlService {
   }
 
   /** A message to the agent; to a finished agent it continues with its history. */
-  async send(agentId: string, ownerId: string, text: string): Promise<{ messageId: string }> {
+  async send(
+    agentId: string,
+    ownerId: string,
+    text: string,
+  ): Promise<{ messageId: string }> {
     await this.agent(agentId, ownerId);
     return this.agents.sessions.send({ agentId, ownerId, text });
   }
 
   /** As the conversation's interrupt (FR-16): `not_active` with a text still sends the text. */
-  async interrupt(agentId: string, ownerId: string, text?: string): Promise<InterruptResponse> {
+  async interrupt(
+    agentId: string,
+    ownerId: string,
+    text?: string,
+  ): Promise<InterruptResponse> {
     await this.agent(agentId, ownerId);
     const outcome = await this.agents.sessions.interrupt({
       agentId,
@@ -172,7 +213,11 @@ export class AgentControlService {
       ...(text === undefined ? {} : { text }),
     });
     if (outcome === 'interrupted' || text === undefined) return { outcome };
-    const { messageId } = await this.agents.sessions.send({ agentId, ownerId, text });
+    const { messageId } = await this.agents.sessions.send({
+      agentId,
+      ownerId,
+      text,
+    });
     return { outcome: 'not_active', messageId };
   }
 
@@ -214,7 +259,10 @@ export class AgentControlService {
    * The common step of every agent operation (DC-3): the owner's agent that is not a conversation's
    * root; a malformed, missing, foreign or root id is `AGENT_NOT_FOUND`.
    */
-  private async agent(agentId: string, ownerId: string): Promise<AgentsAgentView> {
+  private async agent(
+    agentId: string,
+    ownerId: string,
+  ): Promise<AgentsAgentView> {
     if (!isUuid(agentId)) throw agentNotFound();
     const view = await this.agents.sessions.get(agentId, ownerId);
     if (view.parentId === null) throw agentNotFound();
@@ -228,7 +276,9 @@ export class AgentControlService {
     templates: TemplateTitles,
   ): Promise<ListedAgent[]> {
     if (row.rootId === null) return [];
-    const views = await unlessDeleted(this.agents.sessions.list(row.rootId, ownerId));
+    const views = await unlessDeleted(
+      this.agents.sessions.list(row.rootId, ownerId),
+    );
     const threadTitle = toThreadSummary(row).title;
     return toAgentTree(views, templates, row.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),
@@ -246,7 +296,8 @@ async function unlessDeleted<T>(read: Promise<T[]>): Promise<T[]> {
   try {
     return await read;
   } catch (error) {
-    if (error instanceof AgentsError && error.code === 'AGENT_NOT_FOUND') return [];
+    if (error instanceof AgentsError && error.code === 'AGENT_NOT_FOUND')
+      return [];
     throw error;
   }
 }

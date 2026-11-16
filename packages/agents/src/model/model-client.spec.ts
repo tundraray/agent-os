@@ -1,17 +1,18 @@
 // KD-3 (offset), Flow 1 Failure handling (a retry starts the parts again at offset 0), Invariant 4 (a
 // `completeText` call is a ledger row without `taskId`), Contract «Расширения нижних пакетов» (a failing
-// hook is logged and does not break the step). The port and the ledger are doubles; the clock fires the
-// retry pause at once.
+// hook is logged and does not break the step); every attempt that reached the provider is one ledger row,
+// an unfinished one with an estimate. The port and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
 import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
 import type { AgentTurnModelClient } from './mastra-turn.js';
 import { createModelClient, type TextDelta } from './model-client.js';
 
-/** One attempt of the port: its text parts, then the provider status it fails with, if any. */
+/** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
 interface PortAttempt {
   readonly parts: readonly string[];
   readonly failWith?: number;
+  readonly cancelled?: true;
 }
 
 const LEDGER_USAGE = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 };
@@ -29,14 +30,19 @@ const ALLOWING_GATE: Pick<AccessGate, 'model'> = {
   model: async () => ({ kind: 'allowed', price: VERDICT_PRICE }),
 };
 
-function portDouble(attempts: readonly PortAttempt[]): AgentTurnModelClient {
+/** `cancel` aborts the call's signal: a `cancelled` attempt calls it after its parts and rejects as the port does. */
+function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () => {}): AgentTurnModelClient {
   let calls = 0;
   return {
-    async streamTurn(_call, { onText }) {
+    async streamTurn(_call, { onText, signal }) {
       const attempt = attempts[calls];
       calls += 1;
       if (attempt === undefined) throw new Error(`No attempt ${calls} in the port double`);
       for (const part of attempt.parts) onText(part);
+      if (attempt.cancelled) {
+        cancel();
+        signal.throwIfAborted();
+      }
       if (attempt.failWith !== undefined) {
         const error = new Error(`provider status ${attempt.failWith}`);
         error.name = 'AI_APICallError';
@@ -65,9 +71,11 @@ interface Row {
   readonly text: string;
   readonly deltas: readonly Pick<TextDelta, 'offset' | 'text'>[];
   readonly pauses: readonly number[];
-  readonly ledgerRow: ModelCallRecord;
+  readonly ledgerRows: readonly ModelCallRecord[];
   readonly hookWarnings: number;
 }
+
+const TURN_ROW = { ownerId: 'owner-1', taskId: 'agent-1', model: 'anthropic/claude-turn', price: VERDICT_PRICE };
 
 describe('ModelClient streams text parts with running offsets, restarts them on a retry, and survives a failing hook', () => {
   it.each<[string, Row]>([
@@ -84,18 +92,12 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 7, text: 'world' },
         ],
         pauses: [],
-        ledgerRow: {
-          ownerId: 'owner-1',
-          taskId: 'agent-1',
-          model: 'anthropic/claude-turn',
-          price: VERDICT_PRICE,
-          usage: LEDGER_USAGE,
-        },
+        ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 0,
       },
     ],
     [
-      'an attempt that streamed a part and failed is retried after the pause from offset 0',
+      'an attempt that streamed a part and failed is retried after the pause from offset 0, and both attempts are ledger rows',
       {
         act: 'call',
         attempts: [{ parts: ['Stale'], failWith: 503 }, { parts: ['Fresh', ' answer'] }],
@@ -107,13 +109,14 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 5, text: ' answer' },
         ],
         pauses: [1000],
-        ledgerRow: {
-          ownerId: 'owner-1',
-          taskId: 'agent-1',
-          model: 'anthropic/claude-turn',
-          price: VERDICT_PRICE,
-          usage: LEDGER_USAGE,
-        },
+        // The failed attempt is a row too: the request as input (an estimate), the 5 streamed characters as 2 tokens.
+        ledgerRows: [
+          {
+            ...TURN_ROW,
+            usage: { inputTokens: expect.any(Number), outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          },
+          { ...TURN_ROW, usage: LEDGER_USAGE },
+        ],
         hookWarnings: 0,
       },
     ],
@@ -129,13 +132,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           { offset: 1, text: 'b' },
         ],
         pauses: [],
-        ledgerRow: {
-          ownerId: 'owner-1',
-          taskId: 'agent-1',
-          model: 'anthropic/claude-turn',
-          price: VERDICT_PRICE,
-          usage: LEDGER_USAGE,
-        },
+        ledgerRows: [{ ...TURN_ROW, usage: LEDGER_USAGE }],
         hookWarnings: 2,
       },
     ],
@@ -148,7 +145,9 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
         text: 'Title',
         deltas: [],
         pauses: [],
-        ledgerRow: { ownerId: 'owner-1', model: 'anthropic/claude-default', price: VERDICT_PRICE, usage: LEDGER_USAGE },
+        ledgerRows: [
+          { ownerId: 'owner-1', model: 'anthropic/claude-default', price: VERDICT_PRICE, usage: LEDGER_USAGE },
+        ],
         hookWarnings: 0,
       },
     ],
@@ -219,7 +218,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
       expect(delta).toMatchObject({ ownerId: 'owner-1', rootId: 'root-1', agentId: 'agent-1' });
     }
     expect(pauses).toEqual(row.pauses);
-    expect(ledgerRows).toStrictEqual([row.ledgerRow]);
+    expect(ledgerRows).toStrictEqual(row.ledgerRows);
     const hookWarnings = logger.warn.mock.calls.filter(([message]) => message === 'text delta hook failed');
     expect(hookWarnings).toHaveLength(row.hookWarnings);
     for (const [, fields] of hookWarnings) {
@@ -298,14 +297,6 @@ const OTHER_PRICE: ModelPrice = {
   cacheWriteUsdPerMTok: 1.25,
 };
 
-const REFUSAL_REASONS = [
-  'owner_disabled',
-  'quota_exhausted',
-  'model_not_connected',
-  'model_not_allowed',
-  'no_models_allowed',
-] as const;
-
 function deniedTitle(reason: string): AccessDeniedEntry {
   return {
     kind: 'access_denied',
@@ -318,20 +309,32 @@ function deniedTitle(reason: string): AccessDeniedEntry {
 }
 
 // UC-6, DC-7, KD-3, KD-4.
-describe('the model verdict comes before the first attempt: a refusal makes no call, an allowed call is recorded at the verdict\'s price, retries do not ask again, and a refused title calls the audit hook once', () => {
+describe('the model verdict comes before the first attempt: a refusal makes no call, every attempt that reached the provider is recorded at the verdict\'s price, retries do not ask again, and a refused title calls the audit hook once', () => {
   it.each<[string, VerdictRow]>([
-    ...REFUSAL_REASONS.map((reason): [string, VerdictRow] => [
-      `a call refused with ${reason} does not start and calls no provider`,
+    [
+      'a refused call does not start: no provider call and no ledger row',
       {
         act: 'call',
-        verdict: reason === 'quota_exhausted' ? QUOTA_REFUSAL : { kind: 'refused', reason },
+        verdict: QUOTA_REFUSAL,
         attempts: [],
-        outcome: `not_started ${reason}`,
+        outcome: 'not_started quota_exhausted',
         providerCalls: 0,
         ledgerPrices: [],
         audits: [],
       },
-    ]),
+    ],
+    [
+      "a call cancelled in the middle of its answer rejects and leaves exactly one ledger row at the verdict's price",
+      {
+        act: 'call',
+        verdict: { kind: 'allowed', price: OTHER_PRICE },
+        attempts: [{ parts: ['half an ans'], cancelled: true }],
+        outcome: 'rejects',
+        providerCalls: 1,
+        ledgerPrices: [OTHER_PRICE],
+        audits: [],
+      },
+    ],
     [
       "an allowed call is recorded at the verdict's price",
       {
@@ -345,14 +348,14 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
       },
     ],
     [
-      'a 529 retry does not ask the gate again',
+      'a 529 retry does not ask the gate again, and each attempt is a ledger row',
       {
         act: 'call',
         verdict: { kind: 'allowed', price: VERDICT_PRICE },
         attempts: [{ parts: [], failWith: 529 }, { parts: ['ok'] }],
         outcome: 'answer',
         providerCalls: 2,
-        ledgerPrices: [VERDICT_PRICE],
+        ledgerPrices: [VERDICT_PRICE, VERDICT_PRICE],
         audits: [],
       },
     ],
@@ -366,18 +369,6 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         providerCalls: 0,
         ledgerPrices: [],
         audits: [deniedTitle('quota_exhausted')],
-      },
-    ],
-    [
-      'a title on a model not allowed rejects and calls the audit hook once',
-      {
-        act: 'completeText',
-        verdict: { kind: 'refused', reason: 'model_not_allowed' },
-        attempts: [],
-        outcome: 'rejects',
-        providerCalls: 0,
-        ledgerPrices: [],
-        audits: [deniedTitle('model_not_allowed')],
       },
     ],
     [
@@ -397,7 +388,8 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
     const ledgerPrices: ModelPrice[] = [];
     const audits: AccessDeniedEntry[] = [];
     let providerCalls = 0;
-    const port = portDouble(row.attempts);
+    const cancel = new AbortController();
+    const port = portDouble(row.attempts, () => cancel.abort(new Error('the step was cancelled')));
     const logger = loggerDouble();
     const client = createModelClient({
       turnClient: {
@@ -446,11 +438,12 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
               messages: [{ role: 'user', content: 'Hi' }],
               tools: [],
               streamsText: false,
-              signal: new AbortController().signal,
+              signal: cancel.signal,
               logger,
             })
-            .then((result) =>
-              result.kind === 'not_started' ? `not_started ${result.verdict.reason}` : result.kind,
+            .then(
+              (result) => (result.kind === 'not_started' ? `not_started ${result.verdict.reason}` : result.kind),
+              () => 'rejects',
             )
         : await client
             .completeText({
