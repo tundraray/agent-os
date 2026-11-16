@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { McpConnection } from '@agent-os/contracts';
 import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -37,6 +38,9 @@ function renderUserMenu(assign: (url: string) => void = vi.fn()) {
 }
 
 const MENU_BUTTON = 'Меню пользователя Аня Смирнова';
+
+const SENTRY: McpConnection = { server: 'sentry', url: 'https://mcp.sentry.dev/mcp', status: 'needs_auth' };
+const JIRA: McpConnection = { server: 'jira', url: 'https://jira.example.com/mcp', status: 'connected' };
 
 const isDark = (): boolean => document.documentElement.classList.contains('dark');
 
@@ -102,6 +106,30 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
 
     await user.click(within(menu).getByRole('menuitem', { name: 'Выйти' }));
     await waitFor(() => expect(steps).toEqual(['sign-out', 'assign /login?reason=signed_out']));
+  });
+
+  // AC-14.1, UM-01, MC-6: only `needs_auth` rows count; the count goes to the trigger's name and next to «Мой доступ».
+  it.each([
+    { name: 'nothing waits → no count', list: [JIRA], label: MENU_BUTTON, count: null },
+    { name: 'one needs_auth → dot and «1»', list: [SENTRY, JIRA], label: `${MENU_BUTTON}, нужна аутентификация: 1`, count: '1' },
+  ] as const)('$name', async ({ list, label, count }) => {
+    let served = false;
+    server.use(
+      http.get(`${apiBaseUrl}/api/mcp/connections`, () => {
+        served = true;
+        return HttpResponse.json([...list]);
+      }),
+    );
+    const user = userEvent.setup();
+    renderUserMenu();
+
+    // The «nothing» row must look after the read, not before it.
+    await waitFor(() => expect(served).toBe(true));
+    const trigger = await screen.findByRole('button', { name: label });
+    await user.click(trigger);
+    const access = within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Мой доступ' });
+    if (count === null) expect(access).toHaveTextContent(/^Мой доступ$/);
+    else expect(access).toHaveTextContent(`Мой доступ${count}`);
   });
 
   it('without a name the block shows the email up to «@»', async () => {

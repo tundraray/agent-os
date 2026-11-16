@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import {
   ChevronUpIcon,
@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { describeApiError } from '@/lib/api/api-request';
 import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
+import { mcpApi } from '@/lib/mcp/mcp-api';
 import { ACCOUNT_PATH } from '@/lib/shell-route';
 import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
@@ -54,8 +55,39 @@ function spendText(spend: SpendState): string {
 }
 
 /**
+ * UM-01: how many personal-OAuth servers still wait for the employee's sign-in, read once when the shell
+ * mounts. A failed read shows nothing, as if none were waiting.
+ */
+function useNeedsAuthCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let current = true;
+    mcpApi.connections().then(
+      (connections) => {
+        if (current) setCount(connections.filter((row) => row.status === 'needs_auth').length);
+      },
+      (error: unknown) => {
+        if (current) logger.error('user menu: mcp connections read failed', describeApiError(error));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+  return count;
+}
+
+/** MC-6: the trigger's name for a screen reader. */
+function menuLabel(name: string | null, needsAuth: number): string {
+  const base = name === null ? 'Меню пользователя' : `Меню пользователя ${name}`;
+  return needsAuth > 0 ? `${base}, нужна аутентификация: ${needsAuth}` : base;
+}
+
+/**
  * UM-01 (SB-11) + TM-01 + SP-01: the signed-in employee's block at the bottom of the sidebar with the
  * month's spend under the name; its menu holds the name and email, «Мой доступ», the theme and «Выйти».
+ * Servers waiting for the employee's sign-in put a `--warning` dot on the avatar (also in the strip) and
+ * the dot with their count next to «Мой доступ».
  */
 export function UserMenu() {
   const { theme, setTheme } = useTheme();
@@ -63,6 +95,7 @@ export function UserMenu() {
   const isStrip = !isMobile && state === 'collapsed';
   const spend = useSpend();
   const spendId = useId();
+  const needsAuth = useNeedsAuthCount();
   const { currentUser } = useShellServices();
   const user = useStore(currentUser, (current) => current.user);
   const name = user === null ? null : displayName(user);
@@ -101,7 +134,7 @@ export function UserMenu() {
                         ),
                       }
                 }
-                aria-label={name === null ? 'Меню пользователя' : `Меню пользователя ${name}`}
+                aria-label={menuLabel(name, needsAuth)}
                 aria-describedby={spendId}
                 className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
               />
@@ -109,6 +142,7 @@ export function UserMenu() {
           >
             <Avatar aria-hidden className={cn('ml-0.5', isStrip ? 'size-8' : 'size-7')}>
               <AvatarFallback className="text-xs font-medium">{name === null ? '' : initialsOf(name)}</AvatarFallback>
+              {needsAuth > 0 && <span className="absolute top-0 right-0 size-1.5 rounded-full bg-warning" />}
             </Avatar>
             <span className="flex min-w-0 flex-1 flex-col">
               {/* Same fixed-height box for the skeleton and the name: the block does not shift once read. */}
@@ -156,6 +190,13 @@ export function UserMenu() {
             <DropdownMenuItem render={<Link href={ACCOUNT_PATH} />}>
               <KeyRoundIcon aria-hidden />
               Мой доступ
+              {/* The trigger's name already tells a screen reader the count. */}
+              {needsAuth > 0 && (
+                <span aria-hidden className="ml-auto flex items-center gap-1.5 text-warning tabular-nums">
+                  <span className="size-1.5 rounded-full bg-warning" />
+                  {needsAuth}
+                </span>
+              )}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuRadioGroup
