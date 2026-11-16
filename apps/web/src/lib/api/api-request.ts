@@ -1,5 +1,5 @@
 import type { ZodType } from "zod";
-import { ApiErrorSchema } from "@agent-os/contracts";
+import { ApiErrorSchema, IdentityErrorCode } from "@agent-os/contracts";
 import { apiBaseUrl } from "@/lib/config";
 
 export type ApiMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -68,12 +68,25 @@ export const describeApiError = (
     : { kind: "unknown", method: undefined, path: undefined, status: undefined, code: undefined, reason: undefined };
 
 export type UnauthorizedHandler = (code: string | undefined) => void;
+export type AdminRequiredHandler = () => void;
 
 let unauthorizedHandler: UnauthorizedHandler | null = null;
+let adminRequiredHandler: AdminRequiredHandler | null = null;
 
 /** Every 401 goes to this handler with its `errorCode` before the caller gets the error; `null` removes it. */
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   unauthorizedHandler = handler;
+}
+
+/** Every 403 `ADMIN_REQUIRED` goes to this handler before the caller gets the error; `null` removes it. */
+export function setAdminRequiredHandler(handler: AdminRequiredHandler | null): void {
+  adminRequiredHandler = handler;
+}
+
+/** One handler per web for the answers every caller shares: 401 and 403 `ADMIN_REQUIRED`. */
+function notifySharedHandlers(status: number, code: string | undefined): void {
+  if (status === 401) unauthorizedHandler?.(code);
+  else if (status === 403 && code === IdentityErrorCode.ADMIN_REQUIRED) adminRequiredHandler?.();
 }
 
 type ApiRequestInput<T> = {
@@ -107,7 +120,7 @@ export async function apiRequest<T>({
   }
   if (!response.ok) {
     const details = await errorDetailsOf(response);
-    if (response.status === 401) unauthorizedHandler?.(details.code);
+    notifySharedHandlers(response.status, details.code);
     throw new ApiRequestError({
       kind: response.status === 404 ? "not_found" : "http",
       ...where,

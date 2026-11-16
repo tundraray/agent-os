@@ -35,12 +35,14 @@ export type ShellServices = {
   readonly agentList: AgentListStore;
   listAdapter: ReturnType<typeof createThreadListAdapter>;
   auiConfig: AuiConfig;
+  /** Loads `url` in the whole tab (a page outside the shell, an OAuth connect redirect). */
+  navigate: (url: string) => void;
 };
 
 export type CreateShellServicesOptions = {
   /** Opens the live stream; a test passes its own source (jsdom has no `EventSource`). */
   openEventSource?: OpenEventSource;
-  /** The page navigation «Выйти» uses; a test passes its own (jsdom does not navigate). */
+  /** The page navigation «Выйти» and `navigate` use; a test passes its own (jsdom does not navigate). */
   location?: Pick<Location, 'assign'>;
 };
 
@@ -136,5 +138,7 @@ export function createShellServices({ openEventSource, location }: CreateShellSe
     },
     listAdapter,
     auiConfig: AuiConfig({}),
+    // `window` is read at the call: the services are also built during server rendering.
+    navigate: (url) => (location ?? window.location).assign(url),
   };
 }

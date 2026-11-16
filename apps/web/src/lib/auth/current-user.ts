@@ -12,6 +12,11 @@ export type CurrentUserStore = StoreApi<CurrentUserState> & {
   load: () => void;
   /** Ends the session, then loads the login page in full, so no store of this session survives. */
   signOut: () => Promise<void>;
+  /**
+   * The API answered 403 `ADMIN_REQUIRED`: the read employee loses `isAdmin`. The only write after the
+   * read; idempotent, because several requests in flight may get the 403 at once.
+   */
+  revokeAdmin: () => void;
 };
 
 type CurrentUserDeps = {
@@ -40,6 +45,11 @@ export function createCurrentUserStore({ read, endSession, location, logger }: C
     signOut: async (): Promise<void> => {
       await endSession();
       (location ?? window.location).assign(loginPath({ reason: "signed_out" }));
+    },
+    revokeAdmin: (): void => {
+      const { user } = state.getState();
+      if (user === null || !user.isAdmin) return;
+      state.setState({ user: { ...user, isAdmin: false } });
     },
   });
 }

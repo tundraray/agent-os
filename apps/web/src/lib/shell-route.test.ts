@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentPath, parseShellRoute, threadPath } from './shell-route';
+import { adminNewPath, adminPath, adminRecordPath, agentPath, parseShellRoute, threadPath } from './shell-route';
 
 describe('lib/shell-route', () => {
   it.each([
@@ -41,5 +41,44 @@ describe('lib/shell-route', () => {
   ])('builds $path for agent id "$id" and parses it back to the same id', ({ id, path }) => {
     expect(agentPath(id)).toBe(path);
     expect(parseShellRoute(agentPath(id))).toEqual({ kind: 'agent', agentId: id });
+  });
+
+  const usersList = { kind: 'admin', section: 'users', page: { kind: 'list' } };
+  it.each([
+    { pathname: '/admin', expected: usersList },
+    { pathname: '/admin/', expected: usersList },
+    { pathname: '/admin/users', expected: usersList },
+    { pathname: '/admin/users/u1', expected: { kind: 'admin', section: 'users', page: { kind: 'record', key: 'u1' } } },
+    { pathname: '/admin/roles', expected: { kind: 'admin', section: 'roles', page: { kind: 'list' } } },
+    { pathname: '/admin/roles/r1', expected: { kind: 'admin', section: 'roles', page: { kind: 'record', key: 'r1' } } },
+    { pathname: '/admin/sign-in', expected: { kind: 'admin', section: 'sign-in', page: { kind: 'list' } } },
+    { pathname: '/admin/sign-in/new', expected: { kind: 'admin', section: 'sign-in', page: { kind: 'new' } } },
+    { pathname: '/admin/sign-in/p1', expected: { kind: 'admin', section: 'sign-in', page: { kind: 'record', key: 'p1' } } },
+    { pathname: '/admin/servers', expected: { kind: 'admin', section: 'servers', page: { kind: 'list' } } },
+    { pathname: '/admin/register-server', expected: { kind: 'admin', section: 'servers', page: { kind: 'new' } } },
+    { pathname: '/admin/servers/new', expected: { kind: 'admin', section: 'servers', page: { kind: 'record', key: 'new' } } },
+    { pathname: '/admin/servers/my%20srv%2F1', expected: { kind: 'admin', section: 'servers', page: { kind: 'record', key: 'my srv/1' } } },
+    { pathname: '/admin/models', expected: { kind: 'admin', section: 'models', page: { kind: 'list' } } },
+    { pathname: '/admin/models/x', expected: usersList },
+    { pathname: '/admin/users/a/b', expected: usersList },
+    { pathname: '/admin/unknown', expected: usersList },
+    { pathname: '/administrator', expected: { kind: 'chat' } },
+  ])(
+    'panel addresses: every address of C3 opens its section and page, /admin/servers/new is the server named new while /admin/register-server is the form, /admin and unknown addresses under it open «Сотрудники», keys are percent-decoded: $pathname',
+    ({ pathname, expected }) => {
+      expect(parseShellRoute(pathname)).toEqual(expected);
+    },
+  );
+
+  it('builds panel addresses that parse back to the same section and page', () => {
+    expect(adminPath('roles')).toBe('/admin/roles');
+    expect(adminRecordPath('servers', 'my srv/1')).toBe('/admin/servers/my%20srv%2F1');
+    expect(parseShellRoute(adminRecordPath('servers', 'new'))).toEqual({
+      kind: 'admin',
+      section: 'servers',
+      page: { kind: 'record', key: 'new' },
+    });
+    expect(adminNewPath('sign-in')).toBe('/admin/sign-in/new');
+    expect(adminNewPath('servers')).toBe('/admin/register-server');
   });
 });

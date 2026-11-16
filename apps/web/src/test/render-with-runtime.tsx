@@ -60,6 +60,8 @@ vi.mock('next/navigation', async (importOriginal) => {
 export type RenderWithRuntimeOptions = {
   /** Initial `usePathname()` value, e.g. '/' or '/chat/a'. */
   pathname: string;
+  /** Query of the tab's address, e.g. '?connected=1': `window.location` is `pathname + search` before the first render. */
+  search?: string;
   /** Answer of `(pointer: fine)` / `(pointer: coarse)`; default 'fine'. */
   pointer?: TestMedia['pointer'];
   /** Viewport width in CSS px; default 1280 (desktop). */
@@ -80,15 +82,18 @@ export type RenderWithRuntimeResult = RenderResult & {
   setPathname: (pathname: string) => void;
   /** The live stream's source: what the shell opened, and the frames the test pushes through it. */
   live: TestLiveSource;
+  /** Spy standing in for `location.assign`: the same-tab navigations the shell made (jsdom does not navigate). */
+  assign: Mock<Location['assign']>;
 };
 
 /**
  * Mounts the shell as the `(chat)` layout does — ChatShell with its ChatRuntimeProvider — plus the app-wide
- * `<Toaster />`, against the MSW server. Only the network (MSW), the live event source and `next/navigation`
- * are emulated.
+ * `<Toaster />`, against the MSW server. Only the network (MSW), the live event source, `next/navigation`
+ * and the same-tab navigation (`location.assign`) are emulated.
  */
 export function renderWithRuntime({
   pathname,
+  search = '',
   pointer = 'fine',
   width = 1280,
   colorScheme = 'light',
@@ -100,10 +105,12 @@ export function renderWithRuntime({
   const router = createRouterSpy();
   navigation.state.router = router;
   navigation.setPathname(pathname);
+  window.history.replaceState(null, '', pathname + search);
+  const assign = vi.fn<Location['assign']>();
 
   const result = render(
     <>
-      <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open}>
+      <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open} location={{ assign }}>
         {null}
       </ChatShell>
       <Toaster />
@@ -114,6 +121,7 @@ export function renderWithRuntime({
     ...result,
     router,
     live: liveSource,
+    assign,
     setPathname: (next) => {
       act(() => {
         navigation.setPathname(next);

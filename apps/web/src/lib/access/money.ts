@@ -34,8 +34,18 @@ export function formatUsd(usd: number): string {
   return `${groupDigits(whole)},${cents} $`;
 }
 
+/** Dollars to at most `digits` decimals without trailing zeros, after a comma, digit groups split by U+202F. */
+function formatTrimmedUsd(usd: number, digits: number): string {
+  const [whole = '0', fraction = ''] = usd.toFixed(digits).replace(/\.?0+$/, '').split('.');
+  return `${groupDigits(whole)}${fraction === '' ? '' : `,${fraction}`} $`;
+}
+
 /** A quota «без лишних нулей» (enterprise-access UXRD, Content): `100 $`, `100,5 $`. */
 export function formatQuotaUsd(usd: number): string {
-  const [whole = '0', cents = ''] = usd.toFixed(2).replace(/\.?0+$/, '').split('.');
-  return `${groupDigits(whole)}${cents === '' ? '' : `,${cents}`} $`;
+  return formatTrimmedUsd(usd, 2);
+}
+
+/** A catalogue price per million tokens (AD-11): every significant digit up to nine decimals — `3 $`, `0,125 $`. */
+export function formatPriceUsd(usd: number): string {
+  return formatTrimmedUsd(usd, 9);
 }

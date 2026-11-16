@@ -21,15 +21,17 @@ import { ShellActionsProvider } from './shell-actions';
 type ChatRuntimeProviderProps = {
   /** Opens the live stream; only the test harness passes one (jsdom has no `EventSource`). */
   openEventSource?: OpenEventSource;
+  /** Whole-tab navigation of the shell services; only the test harness passes one (jsdom does not navigate). */
+  location?: Pick<Location, 'assign'>;
   children: ReactNode;
 };
 
 /** The only place the assistant-ui runtime and the live stream are created; the open thread is controlled by the URL. */
-export function ChatRuntimeProvider({ openEventSource, children }: ChatRuntimeProviderProps) {
+export function ChatRuntimeProvider({ openEventSource, location, children }: ChatRuntimeProviderProps) {
   const router = useRouter();
   const route = parseShellRoute(usePathname());
   const threadId = route.kind === 'chat' ? route.threadId : undefined;
-  const [services] = useState(() => createShellServices({ openEventSource }));
+  const [services] = useState(() => createShellServices({ openEventSource, location }));
   // TH-03 starter suggestions feed `ThreadPrimitive.Suggestions` through the provider's root scope.
   const config = useMemo(
     () => AuiConfig({ ...services.auiConfig, suggestions: Suggestions(WELCOME_SUGGESTIONS) }),

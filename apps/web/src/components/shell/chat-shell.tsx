@@ -8,7 +8,7 @@ import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { setUnauthorizedHandler } from '@/lib/api/api-request';
+import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
 import type { OpenEventSource } from '@/lib/live/live-store';
 import { parseShellRoute, type ShellRoute } from '@/lib/shell-route';
@@ -35,11 +35,13 @@ type ChatShellProps = {
   defaultSidebarOpen: boolean;
   /** Opens the live stream; the `(chat)` layout leaves it out, only the test harness passes one. */
   openEventSource?: OpenEventSource;
+  /** Whole-tab navigation of the shell services; the `(chat)` layout leaves it out, only the test harness passes one. */
+  location?: Pick<Location, 'assign'>;
   children: ReactNode;
 };
 
 /** SH-01: sidebar (built-in or drawer) and the main area, on the full height of the dynamic viewport. */
-export function ChatShell({ defaultSidebarOpen, openEventSource, children }: ChatShellProps) {
+export function ChatShell({ defaultSidebarOpen, openEventSource, location, children }: ChatShellProps) {
   // Every 401 inside the shell leaves for /login (DC-13). The handler is checked when a response
   // arrives, so the requests children start in their own effects are covered too.
   useEffect(() => {
@@ -49,7 +51,8 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, children }: Cha
 
   return (
     <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
-      <ChatRuntimeProvider openEventSource={openEventSource}>
+      <ChatRuntimeProvider openEventSource={openEventSource} location={location}>
+        <AdminRightWatch />
         <ShellAnnouncer />
         <GlobalShortcuts />
         <SkipToComposerLink />
@@ -179,6 +182,20 @@ function SkipToComposerLink() {
       Перейти к сообщению
     </a>
   );
+}
+
+/**
+ * Any 403 `ADMIN_REQUIRED` inside the shell takes the administrator right away from the shared
+ * `CurrentUser` (KD-2), so the panel, its sidebar and its menu item disappear at once. Mounted inside
+ * the runtime provider because it needs the shell services; `lib/api` never imports `CurrentUser`.
+ */
+function AdminRightWatch() {
+  const { currentUser } = useShellServices();
+  useEffect(() => {
+    setAdminRequiredHandler(() => currentUser.revokeAdmin());
+    return () => setAdminRequiredHandler(null);
+  }, [currentUser]);
+  return null;
 }
 
 /** The shell's only polite live region (design-web.md, «Доступность»). */
