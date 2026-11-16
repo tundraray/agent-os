@@ -1,9 +1,10 @@
-import { HttpException } from '@nestjs/common';
+import type { HttpException } from '@nestjs/common';
 import type {
   IdentityErrorCode,
   IdentityValidationReason,
   ProviderCheckFailure,
 } from '@agent-os/contracts';
+import { apiError } from '../common/api-error.js';
 
 /** HTTP status and constant message of each identity error code (design-identity.md, Error handling). */
 const ANSWERS: Record<IdentityErrorCode, { status: number; message: string }> =
@@ -31,33 +32,6 @@ const ANSWERS: Record<IdentityErrorCode, { status: number; message: string }> =
       message: 'Set the public address in the sign-in settings',
     },
   };
-
-const STATUS_NAMES: Record<number, string> = {
-  400: 'Bad Request',
-  401: 'Unauthorized',
-  403: 'Forbidden',
-  404: 'Not Found',
-  409: 'Conflict',
-  422: 'Unprocessable Entity',
-};
-
-function apiError(
-  status: number,
-  errorCode: string,
-  message: string,
-  reason: string | undefined,
-): HttpException {
-  const body = {
-    statusCode: status,
-    error: STATUS_NAMES[status],
-    errorCode,
-    message,
-  };
-  return new HttpException(
-    reason === undefined ? body : { ...body, reason },
-    status,
-  );
-}
 
 /** The answer of an identity error code, body `ApiErrorSchema`; `reason` only for PROVIDER_CHECK_FAILED. */
 export function identityError(

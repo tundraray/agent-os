@@ -12,8 +12,8 @@
 //   same Postgres as the command. The command is the compiled entry of `pnpm --filter api identity:super-admin` (precondition: `pnpm
 //   --filter api build`) spawned as a child process the way the package script runs it, with the app's `DATABASE_URL`; the test writes
 //   the password to its standard input and reads its exit code, output and stderr. The test uses a login no other test uses, so the
-//   database does not have to be empty. The case takes its role assignments back and blocks the employee it made (plan rule 11: there is
-//   no API to delete an account, so Игорь stays as an active account without roles).
+//   database does not have to be empty. `afterAll` deletes the two accounts the case made (plan rule 11; there is no API to delete an
+//   account, so the rows are deleted in the database, and their role assignments and sessions go by cascade).
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +27,6 @@ import {
   CurrentUserSchema,
   RoleDetailSchema,
   RoleListSchema,
-  type RoleSummary,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SYSTEM_ACTOR } from '../src/audit/audit-log.js';
@@ -37,8 +36,6 @@ import {
   apiRequest,
   createEmployee,
   signInWithPassword,
-  type Method,
-  type Session,
 } from './support/session.js';
 
 /** Bound of one test: two argon2id hashes in child processes and a few requests. */
@@ -77,6 +74,9 @@ function assertCommandBuilt(): void {
 const ADMIN_ROUTE = '/admin/roles';
 
 let harness: TestApp;
+
+/** The accounts this file created; `afterAll` deletes exactly these rows. */
+const createdUserIds: string[] = [];
 
 interface CommandRun {
   exitCode: number | null;
@@ -182,6 +182,11 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
+    // Only the rows this run made: their sessions and role assignments go by cascade.
+    await harness?.pool.query(
+      'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
+      [createdUserIds],
+    );
     await harness?.close();
   }, TEST_TIMEOUT_MS);
 
@@ -236,203 +241,173 @@ describe('enterprise-access / identity - E2E (operator command + real Postgres)'
         status: 'active',
       });
       if (account === undefined) throw new Error(`No account for ${login}`);
+      createdUserIds.push(account.id);
       expect(created.stdout).toContain('Super-administrator created');
       expect(created.stdout).toContain(account.id);
       expectNoSecretsIn(created, [firstPassword, account.passwordHash]);
 
-      let igor: Session | undefined;
-      let employee: Session | undefined;
-      let builtinRole: RoleSummary | undefined;
-      try {
-        // Step 2 - Then: Игорь signs in as an administrator, the built-in role is his, and the audit
-        // holds the command's change with actor `system`
-        igor = await signInWithPassword(app, login, firstPassword);
-        expect(igor.id).toBe(account.id);
-        const me = await expectBody(
-          apiRequest(app, igor, 'get', '/auth/me'),
-          200,
-          CurrentUserSchema,
-        );
-        expect(me.isAdmin).toBe(true);
-        const roles = await expectBody(
-          apiRequest(app, igor, 'get', ADMIN_ROUTE),
-          200,
-          RoleListSchema,
-        );
-        builtinRole = roles.find((role) => role.builtin);
-        if (builtinRole === undefined)
-          throw new Error('No built-in role in GET /admin/roles');
-        const builtin = { id: builtinRole.id, name: builtinRole.name };
-        const igorView = await expectBody(
-          apiRequest(app, igor, 'get', `/admin/users/${igor.id}`),
-          200,
-          AdminUserDetailSchema,
-        );
-        expect(igorView).toMatchObject({
-          status: 'active',
-          adminRight: { roles: [builtin] },
-        });
-        const { rows: audit } = await harness.pool.query<{
-          before: unknown;
-          after: unknown;
-        }>(
-          `SELECT before, after FROM app.audit_events
-            WHERE kind = 'admin_change' AND actor = $1 AND object_type = 'user' AND object_id = $2
-            ORDER BY at, id`,
-          [SYSTEM_ACTOR, igor.id],
-        );
-        expect(audit).toEqual([
-          {
-            before: null,
-            after: expect.objectContaining({ login, builtinRole: true }),
-          },
-        ]);
+      // Step 2 - Then: Игорь signs in as an administrator, the built-in role is his, and the audit
+      // holds the command's change with actor `system`
+      let igor = await signInWithPassword(app, login, firstPassword);
+      expect(igor.id).toBe(account.id);
+      const me = await expectBody(
+        apiRequest(app, igor, 'get', '/auth/me'),
+        200,
+        CurrentUserSchema,
+      );
+      expect(me.isAdmin).toBe(true);
+      const roles = await expectBody(
+        apiRequest(app, igor, 'get', ADMIN_ROUTE),
+        200,
+        RoleListSchema,
+      );
+      const builtinRole = roles.find((role) => role.builtin);
+      if (builtinRole === undefined)
+        throw new Error('No built-in role in GET /admin/roles');
+      const builtin = { id: builtinRole.id, name: builtinRole.name };
+      const igorView = await expectBody(
+        apiRequest(app, igor, 'get', `/admin/users/${igor.id}`),
+        200,
+        AdminUserDetailSchema,
+      );
+      expect(igorView).toMatchObject({
+        status: 'active',
+        adminRight: { roles: [builtin] },
+      });
+      const { rows: audit } = await harness.pool.query<{
+        before: unknown;
+        after: unknown;
+      }>(
+        `SELECT before, after FROM app.audit_events
+          WHERE kind = 'admin_change' AND actor = $1 AND object_type = 'user' AND object_id = $2
+          ORDER BY at, id`,
+        [SYSTEM_ACTOR, igor.id],
+      );
+      expect(audit).toEqual([
+        {
+          before: null,
+          after: expect.objectContaining({ login, builtinRole: true }),
+        },
+      ]);
 
-        // Step 3 (DC-15) - When: delete, rename and take the admin right off the built-in role;
-        // Then: 409 BUILTIN_ROLE each, and the role is unchanged
-        const builtinPath = `/admin/roles/${builtin.id}`;
+      // Step 3 (DC-15) - When: delete, rename and take the admin right off the built-in role;
+      // Then: 409 BUILTIN_ROLE each, and the role is unchanged
+      const builtinPath = `/admin/roles/${builtin.id}`;
+      await expectRefusal(
+        apiRequest(app, igor, 'delete', builtinPath),
+        409,
+        'BUILTIN_ROLE',
+      );
+      for (const change of [
+        { name: `e2e-renamed-${randomUUID()}` },
+        { isAdmin: false },
+      ]) {
         await expectRefusal(
-          apiRequest(app, igor, 'delete', builtinPath),
+          apiRequest(app, igor, 'patch', builtinPath, change),
           409,
           'BUILTIN_ROLE',
         );
-        for (const change of [
-          { name: `e2e-renamed-${randomUUID()}` },
-          { isAdmin: false },
-        ]) {
-          await expectRefusal(
-            apiRequest(app, igor, 'patch', builtinPath, change),
-            409,
-            'BUILTIN_ROLE',
-          );
-        }
-        expect(
-          await expectBody(
-            apiRequest(app, igor, 'get', builtinPath),
-            200,
-            RoleDetailSchema,
-          ),
-        ).toMatchObject({ name: builtin.name, isAdmin: true, builtin: true });
-
-        // Step 4 - Assigning the built-in role to another employee gives him the admin right, as any role
-        employee = await createEmployee(app, igor);
-        await expectBody(
-          apiRequest(
-            app,
-            igor,
-            'put',
-            `/admin/users/${employee.id}/roles/${builtin.id}`,
-          ),
-          200,
-          AdminUserDetailSchema,
-        );
-        await expectBody(
-          apiRequest(app, employee, 'get', ADMIN_ROUTE),
-          200,
-          RoleListSchema,
-        );
-
-        // Step 5 (AC-32.2) - Given: Игорь is blocked and his password is lost; When: the operator runs the
-        // command again with a new one; Then: the same account is enabled, only the new password works,
-        // and he is an administrator again
-        expect(
-          await expectBody(
-            apiRequest(app, employee, 'post', `/admin/users/${igor.id}/block`),
-            200,
-            AdminUserSummarySchema,
-          ),
-        ).toMatchObject({ status: 'disabled' });
-        await expectSignInRefused(login, firstPassword, 'ACCOUNT_DISABLED');
-
-        const repaired = await runSuperAdminCommand(
-          igorArgs(login),
-          newPassword,
-        );
-        expect(repaired.exitCode).toBe(0);
-        const repairedRows = await accountRows(login);
-        expect(repairedRows).toEqual([
-          {
-            id: account.id,
-            status: 'active',
-            passwordHash: expect.any(String),
-          },
-        ]);
-        expect(repaired.stdout).toContain('Super-administrator repaired');
-        // The repair ends the account's sessions, as a password reset does.
-        expect(
-          (
-            await harness.pool.query(
-              'SELECT 1 FROM app.identity_sessions WHERE user_id = $1',
-              [account.id],
-            )
-          ).rowCount,
-        ).toBe(0);
-        expectNoSecretsIn(repaired, [
-          newPassword,
-          repairedRows[0]?.passwordHash ?? '',
-        ]);
-
-        await expectSignInRefused(login, firstPassword, 'INVALID_CREDENTIALS');
-        igor = await signInWithPassword(app, login, newPassword);
-        expect(igor.id).toBe(account.id);
-        expect(
-          (
-            await expectBody(
-              apiRequest(app, igor, 'get', '/auth/me'),
-              200,
-              CurrentUserSchema,
-            )
-          ).isAdmin,
-        ).toBe(true);
-
-        // Step 6 - Taking the built-in role back from the employee takes his admin right, as any role
-        await expectBody(
-          apiRequest(
-            app,
-            igor,
-            'delete',
-            `/admin/users/${employee.id}/roles/${builtin.id}`,
-          ),
-          200,
-          AdminUserDetailSchema,
-        );
-        await expectRefusal(
-          apiRequest(app, employee, 'get', ADMIN_ROUTE),
-          403,
-          'ADMIN_REQUIRED',
-        );
-
-        // No password reached the app's log either (the sign-ins carried both).
-        expect(
-          harness.log.filter(
-            (line) =>
-              line.includes(firstPassword) || line.includes(newPassword),
-          ),
-        ).toEqual([]);
-      } finally {
-        // Plan rule 11: the case takes back what it can - the employee is blocked and both role
-        // assignments go; there is no API to delete an account. Игорь stays active: once his role is
-        // gone he has no right to block himself, and blocking first would end the session that takes
-        // the role off. Best effort: the statuses are not asserted (after a failure while Игорь is
-        // blocked every call answers 401), so the test's own failure is the one reported.
-        if (igor !== undefined && builtinRole !== undefined) {
-          const cleanup: (readonly [Method, string])[] = [
-            ...(employee === undefined
-              ? []
-              : ([
-                  [
-                    'delete',
-                    `/admin/users/${employee.id}/roles/${builtinRole.id}`,
-                  ],
-                  ['post', `/admin/users/${employee.id}/block`],
-                ] as const)),
-            ['delete', `/admin/users/${igor.id}/roles/${builtinRole.id}`],
-          ];
-          for (const [method, path] of cleanup) {
-            await apiRequest(app, igor, method, path).catch(() => undefined);
-          }
-        }
       }
+      expect(
+        await expectBody(
+          apiRequest(app, igor, 'get', builtinPath),
+          200,
+          RoleDetailSchema,
+        ),
+      ).toMatchObject({ name: builtin.name, isAdmin: true, builtin: true });
+
+      // Step 4 - Assigning the built-in role to another employee gives him the admin right, as any role
+      const employee = await createEmployee(app, igor);
+      createdUserIds.push(employee.id);
+      await expectBody(
+        apiRequest(
+          app,
+          igor,
+          'put',
+          `/admin/users/${employee.id}/roles/${builtin.id}`,
+        ),
+        200,
+        AdminUserDetailSchema,
+      );
+      await expectBody(
+        apiRequest(app, employee, 'get', ADMIN_ROUTE),
+        200,
+        RoleListSchema,
+      );
+
+      // Step 5 (AC-32.2) - Given: Игорь is blocked and his password is lost; When: the operator runs the
+      // command again with a new one; Then: the same account is enabled, only the new password works,
+      // and he is an administrator again
+      expect(
+        await expectBody(
+          apiRequest(app, employee, 'post', `/admin/users/${igor.id}/block`),
+          200,
+          AdminUserSummarySchema,
+        ),
+      ).toMatchObject({ status: 'disabled' });
+      await expectSignInRefused(login, firstPassword, 'ACCOUNT_DISABLED');
+
+      const repaired = await runSuperAdminCommand(igorArgs(login), newPassword);
+      expect(repaired.exitCode).toBe(0);
+      const repairedRows = await accountRows(login);
+      expect(repairedRows).toEqual([
+        {
+          id: account.id,
+          status: 'active',
+          passwordHash: expect.any(String),
+        },
+      ]);
+      expect(repaired.stdout).toContain('Super-administrator repaired');
+      // The repair ends the account's sessions, as a password reset does.
+      expect(
+        (
+          await harness.pool.query(
+            'SELECT 1 FROM app.identity_sessions WHERE user_id = $1',
+            [account.id],
+          )
+        ).rowCount,
+      ).toBe(0);
+      expectNoSecretsIn(repaired, [
+        newPassword,
+        repairedRows[0]?.passwordHash ?? '',
+      ]);
+
+      await expectSignInRefused(login, firstPassword, 'INVALID_CREDENTIALS');
+      igor = await signInWithPassword(app, login, newPassword);
+      expect(igor.id).toBe(account.id);
+      expect(
+        (
+          await expectBody(
+            apiRequest(app, igor, 'get', '/auth/me'),
+            200,
+            CurrentUserSchema,
+          )
+        ).isAdmin,
+      ).toBe(true);
+
+      // Step 6 - Taking the built-in role back from the employee takes his admin right, as any role
+      await expectBody(
+        apiRequest(
+          app,
+          igor,
+          'delete',
+          `/admin/users/${employee.id}/roles/${builtin.id}`,
+        ),
+        200,
+        AdminUserDetailSchema,
+      );
+      await expectRefusal(
+        apiRequest(app, employee, 'get', ADMIN_ROUTE),
+        403,
+        'ADMIN_REQUIRED',
+      );
+
+      // No password reached the app's log either (the sign-ins carried both).
+      expect(
+        harness.log.filter(
+          (line) => line.includes(firstPassword) || line.includes(newPassword),
+        ),
+      ).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );

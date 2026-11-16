@@ -15,8 +15,8 @@
 //   block or a sign-out (they live until they drop and the reconnect gets 401), so no skeleton asserts stream closure; session lifetimes and `publicUrl` are `SignInSettings` (`/api/admin/settings/sign-in`, defaults 480 /
 //   1440 min); provider secrets are stored as they are but never returned, logged or left unmasked in the audit; passwords and the session
 //   token are hashes; there is no dev sign-in, no SAML, no SCIM, no GitHub or Facebook, no last-administrator rule, no `stopOwner`.
-// Placement notes (v2.2): AC-06.1 is asserted in INT-3 row 3; AC-06.2 is `provenAt: unit` here (`IdentityDirectory.rolesOf` reads the
-//   assignments at call time) and its end effect on a running agent is proven by the `access` part (FR-18); AC-11.1 is asserted in INT-1
+// Placement notes (v2.2): AC-06.1 is asserted in INT-3 row 3; the identity half of AC-06.2 (`IdentityDirectory.rolesOf` reads the
+//   assignments at call time) is asserted in INT-1 row 3 and its end effect on a running agent is proven by the `access` part (FR-18); AC-11.1 is asserted in INT-1
 //   row 3. AC-01.5, AC-03.2 and AC-03.3 are manual in the design; their INT-3 rows (steps 2 and 11) cost nothing extra and may be dropped
 //   if the skeleton grows. AC-04.3 stays with INT-4 of agent-platform-chat.int.e2e-spec.ts (same defect, adapted to the cookie helper), not
 //   a second isolation test in UC-2.
@@ -42,8 +42,8 @@
 //     (`insecure_url`, `unreachable`, `invalid_document`) with a fake fetch, public URL derivation from the first request (AC-03.4 rule)
 //   - `SignInSettings` bounds (idle 15..1440, absolute 60..43200, idle not above absolute)
 //   - AuditLog redaction (`secret_changed`, `password_changed`) over the logger's list of secret names
-//   - OwnerGate.check (disabled or unknown owner refuses the call with OWNER_DISABLED, the base-agent check of DC-8)
-//   - IdentityDirectory.rolesOf reads assignments at call time (AC-06.2)
+//   - OwnerGate.check (a refused owner starts no model or tool call, the base-agent check of DC-8); the real gate over the
+//     database, for a blocked and for an unknown owner, is INT-2 row 5
 //   - web (no integration skeleton - the units below catch what a jsdom journey would): the single 401 handler and its reason mapping
 //     (AUTH_REQUIRED -> expired, ACCOUNT_DISABLED -> disabled, `next` carry-over), the API client wrapper sending every 401 to it, the live
 //     store asking `GET /api/auth/me` after a dropped stream, the login form (form only without providers, divider and buttons with them,
@@ -51,6 +51,7 @@
 //     section following `hasPassword`. The real-browser journey is the part's manual L1 checklist.
 
 import { randomUUID } from 'node:crypto';
+import { OwnerDisabledError } from '@agent-os/agents';
 import { createLatch } from '@agent-os/agents/testing';
 import {
   AdminUserDetailSchema,
@@ -66,6 +67,8 @@ import {
 } from '@agent-os/contracts';
 import request, { type Response, type Test } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { IdentityDirectory } from '../src/identity/identity-directory.js';
+import { IdentityOwnerGate } from '../src/identity/identity-owner-gate.js';
 import {
   SESSION_COOKIE,
   frontendOrigin,
@@ -76,7 +79,7 @@ import {
   ageSession,
   apiOrigin,
   apiRequest,
-  createEmployee,
+  createEmployee as createUntrackedEmployee,
   seedSuperAdmin,
   sessionCookieOf,
   signInWithPassword,
@@ -112,6 +115,23 @@ const ADMIN_ROUTE = '/admin/settings/sign-in';
 let harness: TestApp;
 let provider: TestProvider;
 let admin: Session;
+
+/** The employees and providers this file created; `afterAll` deletes exactly these rows. */
+const createdUserIds = new Set<string>();
+const createdProviderIds = new Set<string>();
+
+/** Remembers the employee for the cleanup. */
+function tracked<T extends { id: string }>(employee: T): T {
+  createdUserIds.add(employee.id);
+  return employee;
+}
+
+/** `createEmployee` of support/session.ts, remembered for the cleanup. */
+async function createEmployee(
+  ...args: Parameters<typeof createUntrackedEmployee>
+): Promise<Session> {
+  return tracked(await createUntrackedEmployee(...args));
+}
 
 /** One route as the router holds it. */
 interface RegisteredRoute {
@@ -295,6 +315,7 @@ async function withGoogleProvider(
       ProviderViewSchema,
     );
     providerId = created.id;
+    createdProviderIds.add(created.id);
     await expectBody(
       providerAdmin('patch', `/${providerId}`, { enabled: true }),
       200,
@@ -376,7 +397,7 @@ async function signInThroughProvider(
     200,
     CurrentUserSchema,
   );
-  return { id: me.id, cookie };
+  return tracked({ id: me.id, cookie });
 }
 
 /** The `app` tables and their text columns (json and arrays read as text) that hold any of `values`. */
@@ -461,10 +482,21 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       providerEndpoints: { google: provider.issuer },
       captureLog: true,
     });
-    admin = await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`);
+    admin = tracked(
+      await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`),
+    );
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
+    // Only the rows this run made: their sessions, role assignments and sign-in requests go by cascade.
+    await harness?.pool.query(
+      'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
+      [[...createdUserIds]],
+    );
+    await harness?.pool.query(
+      'DELETE FROM app.identity_providers WHERE id = ANY($1::uuid[])',
+      [[...createdProviderIds]],
+    );
     await harness?.close();
     await provider?.close();
   }, TEST_TIMEOUT_MS);
@@ -638,6 +670,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
           personal: false,
           roles: [roleRef],
         });
+        // AC-06.2 (the identity half): the rights check reads the assignment at its next call, no cache.
+        const directory = app.get(IdentityDirectory);
+        expect(await directory.rolesOf(employee.id)).toEqual([role.id]);
         await expectBody(
           apiRequest(app, employee, 'get', ADMIN_ROUTE),
           200,
@@ -659,6 +694,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
           403,
           'ADMIN_REQUIRED',
         );
+        expect(await directory.rolesOf(employee.id)).toEqual([]);
 
         // The employee's creation is an `admin_change` on him too, with no `before`.
         const roleChanges = (await auditRows('admin_change', admin.id)).filter(
@@ -789,7 +825,13 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         200,
         CurrentUserSchema,
       );
-      // The check above recorded a fresh request time: move it back.
+      // The check above recorded a fresh request time (her only session): move it back.
+      const { rows: seen } = await pool.query<{ fresh: boolean }>(
+        `SELECT last_seen_at > now() - interval '5 minutes' AS fresh
+           FROM app.identity_sessions WHERE user_id = $1`,
+        [anya.id],
+      );
+      expect(seen).toEqual([{ fresh: true }]);
       await ageSession(pool, anya.cookie, anyaAge);
       try {
         const shortened = {
@@ -914,6 +956,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         status: 'active',
         roles: [],
       });
+      createdUserIds.add(created.id);
       const boris = await signInWithPassword(app, login, initialPassword);
       const me = await expectBody(
         apiRequest(app, boris, 'get', '/auth/me'),
@@ -1129,6 +1172,14 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         ]);
         expect(chatScript.calls).toHaveLength(1);
         expect(harness.model.calls).toHaveLength(modelCallsAtBlock);
+
+        // DC-8: an owner nobody knows - no such employee, or an id left by the old stub - is refused
+        // by the same check as the blocked one
+        for (const unknownOwner of [randomUUID(), 'dev-user']) {
+          await expect(
+            app.get(IdentityOwnerGate).check(unknownOwner),
+          ).rejects.toBeInstanceOf(OwnerDisabledError);
+        }
       } finally {
         modelHeld.open();
       }
@@ -1353,6 +1404,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
           ProviderViewSchema,
         );
         oktaId = okta.id;
+        createdProviderIds.add(okta.id);
         expect((await getSettings()).publicUrl).toBe(apiAddress);
         expect(okta).toEqual({
           id: okta.id,
@@ -1564,7 +1616,9 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
             200,
             CurrentUserSchema,
           );
-          providerSessions.push({ id: replayer.id, cookie: replayCookie });
+          providerSessions.push(
+            tracked({ id: replayer.id, cookie: replayCookie }),
+          );
           expectProviderRefusal(
             await returnFromProvider(accepted, accepted.loginCookie),
             okta.id,

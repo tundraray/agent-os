@@ -23,16 +23,23 @@ const noEmailText = (providerName: string | undefined): string =>
 export const signInFailedText = (providerName: string | undefined): string =>
   `Не удалось войти${providerName === undefined ? "" : ` через ${providerName}`}. Попробуйте ещё раз или обратитесь к администратору Agent OS.`;
 
-const SIGN_IN_ERROR_VIEW: Record<SignInError, (providerName: string | undefined) => LoginReasonView> = {
-  cancelled: () => ({ text: LOGIN_TEXT.cancelled, tone: "error" }),
-  failed: (name) => ({ text: signInFailedText(name), tone: "error" }),
-  no_email: (name) => ({ text: noEmailText(name), tone: "error" }),
-  account_disabled: () => ({ text: LOGIN_TEXT.accountDisabled, tone: "error" }),
-  provider_unavailable: (name) => ({ text: signInFailedText(name), tone: "error" }),
+/** Text of each provider sign-in error; a function is a text that names the provider. */
+const SIGN_IN_ERROR_TEXT: Record<SignInError, string | ((providerName: string | undefined) => string)> = {
+  cancelled: LOGIN_TEXT.cancelled,
+  failed: signInFailedText,
+  no_email: noEmailText,
+  account_disabled: LOGIN_TEXT.accountDisabled,
+  provider_unavailable: signInFailedText,
 };
 
 /** `reason` of /login: the 401 handler sets `expired` or `disabled`, «Выйти» sets `signed_out`. */
-export type LoginReason = "expired" | "disabled" | "signed_out";
+const QUERY_REASON_VIEW = {
+  expired: { text: LOGIN_TEXT.sessionExpired, tone: "neutral" },
+  signed_out: { text: LOGIN_TEXT.signedOut, tone: "neutral" },
+  disabled: { text: LOGIN_TEXT.accountDisabled, tone: "error" },
+} as const satisfies Record<string, LoginReasonView>;
+
+export type LoginReason = keyof typeof QUERY_REASON_VIEW;
 
 /** The only way the /login address is built (design-identity.md, Contract «Вход и сеанс»). */
 export function loginPath({ reason, next }: { reason: LoginReason; next?: string }): string {
@@ -41,17 +48,16 @@ export function loginPath({ reason, next }: { reason: LoginReason; next?: string
   return `/login?${query.toString()}`;
 }
 
-const QUERY_REASON_VIEW: Readonly<Record<LoginReason, LoginReasonView>> = {
-  expired: { text: LOGIN_TEXT.sessionExpired, tone: "neutral" },
-  signed_out: { text: LOGIN_TEXT.signedOut, tone: "neutral" },
-  disabled: { text: LOGIN_TEXT.accountDisabled, tone: "error" },
-};
-
 const isLoginReason = (value: string): value is LoginReason => Object.hasOwn(QUERY_REASON_VIEW, value);
+
+const signInErrorText = (error: string | undefined) => {
+  const parsed = SignInErrorSchema.safeParse(error);
+  return parsed.success ? SIGN_IN_ERROR_TEXT[parsed.data] : undefined;
+};
 
 /** Whether the reason of `error` names the provider, so the page waits for the provider list before showing it. */
 export const signInErrorNamesProvider = (error: string | undefined): boolean =>
-  error === "failed" || error === "no_email" || error === "provider_unavailable";
+  typeof signInErrorText(error) === "function";
 
 /**
  * LG-02 text for the query of /login: `error` (return from a provider) wins over `reason` (401 handler,
@@ -66,8 +72,10 @@ export function loginReasonOf({
   error: string | undefined;
   providerName: string | undefined;
 }): LoginReasonView | null {
-  const signInError = SignInErrorSchema.safeParse(error);
-  if (signInError.success) return SIGN_IN_ERROR_VIEW[signInError.data](providerName);
+  const errorText = signInErrorText(error);
+  if (errorText !== undefined) {
+    return { text: typeof errorText === "function" ? errorText(providerName) : errorText, tone: "error" };
+  }
   if (reason !== undefined && isLoginReason(reason)) return QUERY_REASON_VIEW[reason];
   return null;
 }

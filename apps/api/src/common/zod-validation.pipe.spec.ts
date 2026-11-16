@@ -1,14 +1,14 @@
-import { BadRequestException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 import { z } from 'zod';
 import { ZodValidationPipe } from './zod-validation.pipe.js';
 
 const metadata = { type: 'body' } as const;
 
-const captureBadRequest = (run: () => unknown): BadRequestException => {
+const captureBadRequest = (run: () => unknown): HttpException => {
   try {
     run();
   } catch (error) {
-    if (error instanceof BadRequestException) {
+    if (error instanceof HttpException) {
       return error;
     }
     throw error;

@@ -110,6 +110,9 @@ function expandErrorField(fields: LogFields): LogFields {
   return { ...fields, error: expandError(fields.error, new Set()) };
 }
 
+/** How the message of Drizzle's `DrizzleQueryError` starts. */
+const FAILED_QUERY = 'Failed query: ';
+
 /**
  * A failed database query (Drizzle's `DrizzleQueryError`: `query`, `params` and the message
  * `Failed query: …\nparams: …`) carries the bound values — password and token hashes, client secrets.
@@ -120,10 +123,19 @@ export function withoutQueryParams<T>(error: T): T | Error {
   if (!(error instanceof Error) || !('params' in error) || !('query' in error)) return error;
   const header = `${error.name}: ${error.message}`;
   const frames = error.stack?.startsWith(header) ? error.stack.slice(header.length) : '';
-  const safe = new Error(`Failed query: ${String(error.query)}`, { cause: error.cause });
+  const safe = new Error(`${FAILED_QUERY}${String(error.query)}`, { cause: error.cause });
   safe.name = error.name;
   safe.stack = `${safe.name}: ${safe.message}${frames}`;
   return safe;
+}
+
+/**
+ * The same for a message that is already text (a Sentry event of an error the SDK captured by itself):
+ * a failed query's message without its `\nparams: …` tail; any other text as it is.
+ */
+export function withoutQueryParamsText(message: string): string {
+  if (!message.startsWith(FAILED_QUERY)) return message;
+  return message.split('\nparams: ', 1)[0] ?? message;
 }
 
 /** Expands any thrown value into `{ name, message, stack, cause }`, following the cause chain. */

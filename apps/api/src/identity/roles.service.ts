@@ -19,27 +19,22 @@ import { identityError } from './identity.errors.js';
 import {
   addRoleMember,
   deleteRole,
-  findRoleById,
   insertRole,
   removeRoleMember,
   roleMembers,
   roleSummaries,
   updateRole,
   type RoleRow,
+  type RoleWithCount,
 } from './roles.repository.js';
-import { findUserById, rolesOfUsers, takenField } from './users.repository.js';
-import { checkUserId, UsersService } from './users.service.js';
+import { rolesOfUsers, takenField } from './users.repository.js';
+import { roleRefs, UsersService } from './users.service.js';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
 const roleState = (role: Pick<RoleRow, 'name' | 'isAdmin'>) => ({
   name: role.name,
   isAdmin: role.isAdmin,
 });
-
-/** A role id from a route that is not a UUID answers 404 ROLE_NOT_FOUND like a missing one. */
-function checkRoleId(roleId: string): void {
-  if (!isUuid(roleId)) throw identityError('ROLE_NOT_FOUND');
-}
 
 /** A unique violation of the role name (ignoring case) is 409 ROLE_NAME_TAKEN; anything else goes up. */
 function roleNameTaken(error: unknown): never {
@@ -72,10 +67,8 @@ export class RolesService {
 
   /** One role with its employees. 404 ROLE_NOT_FOUND. */
   async detail(roleId: string): Promise<RoleDetail> {
-    checkRoleId(roleId);
-    const [role] = await roleSummaries(this.db, roleId);
-    if (role === undefined) throw identityError('ROLE_NOT_FOUND');
-    return { ...role, members: await roleMembers(this.db, roleId) };
+    const role = await this.findOr404(roleId);
+    return { ...role, members: await roleMembers(this.db, role.id) };
   }
 
   /** A role without the admin right and without employees. 409 ROLE_NAME_TAKEN. */
@@ -193,9 +186,7 @@ export class RolesService {
     change: 'assign' | 'unassign',
   ): Promise<AdminUserDetail> {
     const startedAt = Date.now();
-    checkUserId(userId);
-    if ((await findUserById(this.db, userId)) === undefined)
-      throw identityError('USER_NOT_FOUND');
+    await this.users.findOr404(userId);
     const role = await this.findOr404(roleId);
     const changed = await this.db.transaction(async (tx) => {
       const before = await this.roleRefsOf(tx, userId);
@@ -232,8 +223,7 @@ export class RolesService {
     executor: Executor,
     userId: string,
   ): Promise<{ id: string; name: string }[]> {
-    const roles = await rolesOfUsers(executor, [userId]);
-    return roles.map(({ id, name }) => ({ id, name }));
+    return roleRefs(await rolesOfUsers(executor, [userId]));
   }
 
   private recordRoleChange(
@@ -269,9 +259,9 @@ export class RolesService {
     return identityError('BUILTIN_ROLE');
   }
 
-  private async findOr404(roleId: string): Promise<RoleRow> {
-    checkRoleId(roleId);
-    const role = await findRoleById(this.db, roleId);
+  /** The role with its employee count, or 404 ROLE_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
+  private async findOr404(roleId: string): Promise<RoleWithCount> {
+    const [role] = isUuid(roleId) ? await roleSummaries(this.db, roleId) : [];
     if (role === undefined) throw identityError('ROLE_NOT_FOUND');
     return role;
   }

@@ -101,17 +101,6 @@ export async function roleMembers(
     .orderBy(asc(identityUsers.name), asc(identityUsers.id));
 }
 
-export async function findRoleById(
-  executor: Executor,
-  roleId: string,
-): Promise<RoleRow | undefined> {
-  const [row] = await executor
-    .select()
-    .from(identityRoles)
-    .where(eq(identityRoles.id, roleId));
-  return row;
-}
-
 export async function insertRole(
   executor: Executor,
   name: string,

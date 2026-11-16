@@ -3,6 +3,7 @@ export {
   createSecretMasker,
   isSecretFieldName,
   withoutQueryParams,
+  withoutQueryParamsText,
   type LogFields,
   type LogLevel,
   type LogRecord,

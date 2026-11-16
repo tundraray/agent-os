@@ -1,15 +1,10 @@
-import {
-  BadRequestException,
-  ConflictException,
-  HttpException,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
+import { HttpException, InternalServerErrorException } from '@nestjs/common';
 import { AgentsError } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import type { ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
 import { WorkflowsError } from '@agent-os/workflows';
+import { apiError } from '../common/api-error.js';
 
 /**
  * The not-found codes a route answers with; a runtime `TASK_NOT_FOUND` and an agents `AGENT_NOT_FOUND`
@@ -17,49 +12,43 @@ import { WorkflowsError } from '@agent-os/workflows';
  */
 export type NotFoundCode = Extract<
   ThreadsErrorCode,
-  'THREAD_NOT_FOUND' | 'AGENT_NOT_FOUND' | 'RUN_NOT_FOUND' | 'DECISION_NOT_FOUND'
+  | 'THREAD_NOT_FOUND'
+  | 'AGENT_NOT_FOUND'
+  | 'RUN_NOT_FOUND'
+  | 'DECISION_NOT_FOUND'
 >;
 
 /**
  * One constant message per code: a missing and another owner's object answer with the same body
  * (NFR-06, plan rule 11), and no text of the original error reaches the client.
  */
-const MESSAGES: Record<ThreadsErrorCode, string> = {
-  THREAD_NOT_FOUND: 'Thread not found',
-  AGENT_NOT_FOUND: 'Agent not found',
-  RUN_NOT_FOUND: 'Run not found',
-  DECISION_NOT_FOUND: 'Decision not found',
-  VALIDATION_FAILED: 'Validation failed',
-  INVALID_CURSOR: 'Invalid cursor',
-  INVALID_ARGUMENTS: 'Invalid arguments',
-  NOT_FINISHED: 'Agent is not finished',
-  PARENT_FINISHED: 'Parent agent is finished',
+const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
+  THREAD_NOT_FOUND: { status: 404, message: 'Thread not found' },
+  AGENT_NOT_FOUND: { status: 404, message: 'Agent not found' },
+  RUN_NOT_FOUND: { status: 404, message: 'Run not found' },
+  DECISION_NOT_FOUND: { status: 404, message: 'Decision not found' },
+  VALIDATION_FAILED: { status: 400, message: 'Validation failed' },
+  INVALID_CURSOR: { status: 400, message: 'Invalid cursor' },
+  INVALID_ARGUMENTS: { status: 400, message: 'Invalid arguments' },
+  NOT_FINISHED: { status: 409, message: 'Agent is not finished' },
+  PARENT_FINISHED: { status: 409, message: 'Parent agent is finished' },
 };
 
-/** The HTTP answer of one API error code: body `{ statusCode, message, error, errorCode }` (`ApiErrorSchema`). */
+/** The HTTP answer of one API error code, body `ApiErrorSchema`. */
 export function httpError(code: ThreadsErrorCode): HttpException {
-  const message = MESSAGES[code];
-  switch (code) {
-    case 'THREAD_NOT_FOUND':
-    case 'AGENT_NOT_FOUND':
-    case 'RUN_NOT_FOUND':
-    case 'DECISION_NOT_FOUND':
-      return new NotFoundException(message, { errorCode: code });
-    case 'VALIDATION_FAILED':
-    case 'INVALID_CURSOR':
-    case 'INVALID_ARGUMENTS':
-      return new BadRequestException(message, { errorCode: code });
-    case 'NOT_FINISHED':
-    case 'PARENT_FINISHED':
-      return new ConflictException(message, { errorCode: code });
-  }
+  const { status, message } = ANSWERS[code];
+  return apiError(status, code, message);
 }
 
 /** 404 THREAD_NOT_FOUND: missing, foreign and deleted threads stay indistinguishable to the client. */
-export const threadNotFound = (): HttpException => httpError('THREAD_NOT_FOUND');
+export const threadNotFound = (): HttpException =>
+  httpError('THREAD_NOT_FOUND');
 
 /** The code of an expected refusal of a package, or `undefined` for anything else. */
-function codeOf(error: unknown, notFound: NotFoundCode): ThreadsErrorCode | undefined {
+function codeOf(
+  error: unknown,
+  notFound: NotFoundCode,
+): ThreadsErrorCode | undefined {
   if (error instanceof AgentsError) {
     switch (error.code) {
       // A tree deleted mid-read of a conversation is the conversation missing (Flow 6).
@@ -158,7 +147,9 @@ export async function runCommand<T>(
         outcome: 'refused',
         status,
         errorCode:
-          typeof body === 'object' && 'errorCode' in body ? body.errorCode : undefined,
+          typeof body === 'object' && 'errorCode' in body
+            ? body.errorCode
+            : undefined,
         durationMs: Date.now() - startedAt,
       });
     }

@@ -20,9 +20,9 @@ FROM node:26-bookworm-slim
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends tini \
   && rm -rf /var/lib/apt/lists/*
-# Sign-in does not read NODE_ENV. The value only keeps the test hooks RUNTIME_CRASH_AT
-# (packages/runtime) and FIXTURE_FAULTS (packages/mcp-fixture) readable; `production` turns them off.
-ENV NODE_ENV=development
+# The API reads NODE_ENV in two places only, and `production` turns both test hooks off:
+# RUNTIME_CRASH_AT (packages/runtime) and FIXTURE_FAULTS (packages/mcp-fixture). Sign-in does not read it.
+ENV NODE_ENV=production
 COPY --from=build /app /app
 WORKDIR /app/apps/api
 USER node

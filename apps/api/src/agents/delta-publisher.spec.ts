@@ -48,7 +48,13 @@ function setup(notify?: (payload: string) => Promise<void>) {
 }
 
 function part(offset: number, text: string) {
-  return { ownerId: OWNER_ID, rootId: ROOT_ID, agentId: AGENT_ID, offset, text };
+  return {
+    ownerId: OWNER_ID,
+    rootId: ROOT_ID,
+    agentId: AGENT_ID,
+    offset,
+    text,
+  };
 }
 
 const LONE_SURROGATE =
@@ -97,9 +103,11 @@ describe('DeltaPublisher', () => {
             offset += text.length;
             if (index === 0) {
               await vi.advanceTimersByTimeAsync(0);
-              expect(published().map((piece) => piece.text).join('')).toBe(
-                text,
-              );
+              expect(
+                published()
+                  .map((piece) => piece.text)
+                  .join(''),
+              ).toBe(text);
             }
           }
           await vi.advanceTimersByTimeAsync(1000);
@@ -162,7 +170,7 @@ describe('DeltaPublisher', () => {
 
     expect(warn).toHaveBeenCalledWith('text delta notify failed', {
       agentId: AGENT_ID,
-      error: 'connection lost',
+      error: new Error('connection lost'),
     });
     expect(sent.map((payload) => JSON.parse(payload) as Published)).toEqual([
       part(4, ' kept'),

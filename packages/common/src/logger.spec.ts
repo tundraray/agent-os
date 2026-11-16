@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createLogger, sentrySink, type LogLevel, type Logger, type SentrySdk } from './index.js';
+import {
+  createLogger,
+  sentrySink,
+  withoutQueryParamsText,
+  type LogLevel,
+  type Logger,
+  type SentrySdk,
+} from './index.js';
 import { memorySink, type MemorySink } from './testing.js';
 
 // DC-11 / UC-9: the logger redacts, expands and truncates before both sinks.
@@ -137,9 +144,9 @@ params: ${params.join(',')}`,
     const param = 'client-secret-value-42';
     const query = 'update "identity_providers" set "options" = $1';
 
-    logger.error('provider update failed', {
-      error: new QueryError(query, [param, 7], new Error('deadlock detected')),
-    });
+    const failure = new QueryError(query, [param, 7], new Error('deadlock detected'));
+
+    logger.error('provider update failed', { error: failure });
 
     const { fields } = only(memory);
     expect(JSON.stringify(fields)).not.toContain(param);
@@ -151,6 +158,8 @@ params: ${params.join(',')}`,
     expect((fields.error as { stack: string }).stack).toContain('logger.spec.ts');
     const [captured] = sentry.captureException.mock.calls[0]!;
     expect(String((captured as Error).stack)).not.toContain(param);
+    // The message as text: what Sentry's `beforeSend` cuts for an error the SDK captured by itself.
+    expect(withoutQueryParamsText(failure.message)).toBe(`Failed query: ${query}`);
   });
 
   it('expands a non-Error thrown value into a message', () => {

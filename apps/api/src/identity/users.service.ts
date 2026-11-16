@@ -36,6 +36,11 @@ import {
   type UserRow,
 } from './users.repository.js';
 
+/** The `{ id, name }` of each role, as the admin views and the audit carry it. */
+export function roleRefs(roles: MemberRole[]): { id: string; name: string }[] {
+  return roles.map(({ id, name }) => ({ id, name }));
+}
+
 /** The admin view of an employee; roles are passed by the caller. */
 function toAdminUserSummary(
   user: UserRow,
@@ -48,13 +53,8 @@ function toAdminUserSummary(
     login: user.login,
     status: UserStatusSchema.parse(user.status),
     lastSignInAt: user.lastSignInAt?.toISOString() ?? null,
-    roles: roles.map(({ id, name }) => ({ id, name })),
+    roles: roleRefs(roles),
   };
-}
-
-/** An employee id from a route that is not a UUID answers 404 USER_NOT_FOUND like a missing one. */
-export function checkUserId(userId: string): void {
-  if (!isUuid(userId)) throw identityError('USER_NOT_FOUND');
 }
 
 /** Opaque list cursor: base64url of `{ n: name, i: id }` of the last employee of the page. */
@@ -130,9 +130,7 @@ export class UsersService {
       ...toAdminUserSummary(user, roles),
       adminRight: {
         personal: user.isAdmin,
-        roles: roles
-          .filter((role) => role.isAdmin)
-          .map(({ id, name }) => ({ id, name })),
+        roles: roleRefs(roles.filter((role) => role.isAdmin)),
       },
     };
   }
@@ -359,9 +357,11 @@ export class UsersService {
     return validationFailed(reason);
   }
 
-  private async findOr404(userId: string): Promise<UserRow> {
-    checkUserId(userId);
-    const user = await findUserById(this.db, userId);
+  /** The employee, or 404 USER_NOT_FOUND: for a missing one and for an id that is not a UUID alike. */
+  async findOr404(userId: string): Promise<UserRow> {
+    const user = isUuid(userId)
+      ? await findUserById(this.db, userId)
+      : undefined;
     if (user === undefined) throw identityError('USER_NOT_FOUND');
     return user;
   }

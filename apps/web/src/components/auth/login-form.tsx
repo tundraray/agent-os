@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CircleX, Eye, EyeOff, Info, LoaderCircle } from "lucide-react";
+import { CircleX, Info, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 import { IdentityErrorCode, nextPath, type ProviderButtonList } from "@agent-os/contracts";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { PasswordField } from "@/components/password-field";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { authApi } from "@/lib/auth/auth-api";
 import {
@@ -36,7 +37,6 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
   const [providers, setProviders] = useState<ProviderButtonList | null>(null);
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
-  const [passwordShown, setPasswordShown] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formReason, setFormReason] = useState<LoginReasonView | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -124,40 +124,19 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
             />
             <FieldError id="login-error">{fieldErrors.login}</FieldError>
           </Field>
-          <Field data-invalid={fieldErrors.password !== undefined}>
-            <FieldLabel htmlFor="password">Пароль</FieldLabel>
-            <div className="relative">
-              <Input
-                ref={passwordRef}
-                id="password"
-                name="password"
-                type={passwordShown ? "text" : "password"}
-                autoComplete="current-password"
-                className="h-9 pr-10"
-                value={password}
-                disabled={busy}
-                aria-invalid={fieldErrors.password !== undefined}
-                aria-describedby={fieldErrors.password !== undefined ? "password-error" : undefined}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  setFieldErrors((current) => ({ ...current, password: undefined }));
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="absolute top-1/2 right-1 -translate-y-1/2"
-                aria-label={passwordShown ? "Скрыть пароль" : "Показать пароль"}
-                aria-pressed={passwordShown}
-                disabled={busy}
-                onClick={() => setPasswordShown((shown) => !shown)}
-              >
-                {passwordShown ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
-              </Button>
-            </div>
-            <FieldError id="password-error">{fieldErrors.password}</FieldError>
-          </Field>
+          <PasswordField
+            id="password"
+            label="Пароль"
+            autoComplete="current-password"
+            inputRef={passwordRef}
+            value={password}
+            error={fieldErrors.password}
+            disabled={busy}
+            onChange={(value) => {
+              setPassword(value);
+              setFieldErrors((current) => ({ ...current, password: undefined }));
+            }}
+          />
           <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {submitting && <LoaderCircle className="animate-spin" aria-hidden />}
             {submitting ? "Входим…" : "Войти"}
