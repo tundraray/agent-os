@@ -77,8 +77,10 @@ export interface ToolRegistry {
    */
   sessionTools(input: SessionToolsInput): Promise<SessionTool[]>;
   /**
-   * The set a call is checked against: `sessionTools` without the account filter, so a call the model asked
-   * for before the account went away gets `auth_required`, not `tool_not_in_definition` (C3).
+   * The set a call is checked against: `sessionTools` without the owner's access filter and without the
+   * account filter. A call to a server the owner may not use is then refused `no_access` by the call check,
+   * and a call the model asked for before the account went away gets `auth_required`, not
+   * `tool_not_in_definition` (C3; design-mcp-connect.md DC-2).
    */
   checkTools(input: SessionToolsInput): Promise<SessionTool[]>;
   /**
@@ -211,7 +213,7 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
       return [...agentTools(input), ...mcpToolsOf(rows)];
     },
     async checkTools(input) {
-      return [...agentTools(input), ...mcpToolsOf(await allowedServers(input))];
+      return [...agentTools(input), ...mcpToolsOf(await definitionServers(input.definition))];
     },
     definitionMcpTools: async (definition) => mcpToolsOf(await definitionServers(definition)),
   };

@@ -26,6 +26,7 @@ import {
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
 } from '../runtime/runtime.tokens.js';
+import { AdminMcpServersController } from './admin-mcp-servers.controller.js';
 import { readAgentsSettings } from './agents-settings.js';
 import {
   AGENT_TURN_CLIENT,
@@ -34,6 +35,7 @@ import {
   DELTA_PUBLISHER,
 } from './agents.tokens.js';
 import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
+import { McpConnectionsController } from './mcp-connections.controller.js';
 
 /**
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
@@ -46,9 +48,12 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
  * Phases: `onModuleInit` — `start()` (catalog check, MCP servers), before `RuntimeModule` starts the
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
+ *
+ * Its controllers are the HTTP layer of `Agents.mcp`: an employee's MCP accounts and the admin's registry.
  */
 @Module({
   imports: [RuntimeModule, IdentityModule],
+  controllers: [McpConnectionsController, AdminMcpServersController],
   providers: [
     {
       provide: AGENTS_SETTINGS,

@@ -1436,22 +1436,22 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       ]);
 
       // Then: U2's model was offered no server tool (only `run_code`, which every session has); its forced
-      // call was refused, is in its history, and nothing of it reached a server (the name is not in its
-      // session: `tool_not_in_definition`)
+      // call was refused `no_access` (the server is in the definition, the owner may not use it), is in its
+      // history, and nothing of it reached a server
       expect(denied.calls[0]?.toolNames).toEqual(['run_code']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
-        `mcp__${LOGS_SERVER}__get_trace done refused tool_not_in_definition timed`,
+        `mcp__${LOGS_SERVER}__get_trace done refused no_access timed`,
       ]);
       expect((await toolCallRowsOf(harness.db, deniedId)).map((call) => call.args)).toEqual([TRACE_B]);
       expect(historyLines(await historyOf(harness, deniedId, deniedOwner))).toEqual([
         'task: Read as an owner without servers',
         `model_answer:  [mcp__${LOGS_SERVER}__get_trace]`,
-        `tool_result: mcp__${LOGS_SERVER}__get_trace refused tool_not_in_definition`,
+        `tool_result: mcp__${LOGS_SERVER}__get_trace refused no_access`,
         'model_answer: report of the owner without servers []',
       ]);
       expect(toolOutputOf(denied.calls[1]?.messages ?? [], denied.calls[0]?.toolCallIds[0])).toContain(
-        '[refused: tool_not_in_definition]',
+        '[refused: no_access]',
       );
     } finally {
       await harness.close();
