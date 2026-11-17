@@ -26,3 +26,4 @@
 
 - [design-access.md](../../features/enterprise-access/design-access.md) — `AccessModule` и `AccessAdminModule`
 - [design-library.md](../../features/custom-agents/design-library.md) — `LibraryModule` и `LibraryApiModule` (KD-6)
+- [design-runtime.md](../../features/custom-agents/design-runtime.md) — порт `RecordLibrary`, который реализует `LibraryService`

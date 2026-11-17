@@ -745,11 +745,11 @@ sequenceDiagram
 
 - **`resolve(viewerId, recordId)`** — запись для старта. Returns `ResolvedRecord` или `null`.
 - **`resolveBuiltin(viewerId, builtinKey)`** — то же по ключу встроенной записи. Returns `ResolvedRecord` или `null`.
-- **`listVisible(viewerId)`** — все видимые записи для списка главного чата. Returns список заголовков: `id`, `kind`, `name`, `description`, `version`, `builtinKey`, `author` (`{ id, name, disabled }` или `null`), `mine`, `offerInChat`. Содержимого нет: полное определение берёт `resolve` при старте.
+- **`listVisible(viewerId)`** — все видимые записи для списка главного чата. Returns список заголовков: `id`, `kind`, `name`, `description`, `version`, `builtinKey`, `author` (`{ id, name, disabled }` или `null`), `mine`, `shared`, `offerInChat`. Содержимого нет: полное определение берёт `resolve` при старте. `shared` — `true`, если у записи есть хоть один адресат (роль, сотрудник или «все»), и `false`, если запись видит только владелец; по нему инструмент создания в чате отказывает в правке общей записи до того, как что-то составит (AC-18.5), а не узнаёт об этом только из отказа `saveOwn`. Защитой остаётся отказ `saveOwn` с причиной `shared`.
 - **`seedBuiltin(input)`** — создаёт системную запись с заданными номером, ключом, видом, именем, описанием, содержимым и `everyone`, если записи с этим ключом нет. Существующую не трогает, поэтому правки администратора переживают рестарт. Номер задаёт вызывающий, чтобы встроенные записи могли ссылаться друг на друга и на себя. Пишет `library_create` от имени `system`. Безопасна при двух экземплярах сервера: второй найдёт запись первого.
 - **`saveOwn(ownerId, input, usableServers)`** — создаёт или правит личную запись вызывающего для инструмента создания (`runtime` FR-18). Вход — номер и версия правимой записи или ничего для новой, вид, имя, описание, содержимое; `usableServers` — доступные вызывающему серверы из реестра пакета. Правила, ответы и аудит — как у `POST` и `PUT /api/library`. Returns `{ outcome: 'saved', record }` или `{ outcome: 'refused', reason }`; `reason` — `not_found`, `read_only` (системная или чужая видимая), `shared` (у записи есть адресаты, AC-18.5), `version_conflict`, `name_taken`, `system_name`, `invalid` или причина `RECORD_REJECTED`.
 
-**`ResolvedRecord`** — заголовок из `listVisible` и `content`. Номер записи и `version` запуск сохраняет вместе с копией содержимого.
+**`ResolvedRecord`** — заголовок из `listVisible`, вместе с `shared`, и `content`. Номер записи и `version` запуск сохраняет вместе с копией содержимого.
 
 **Error handling**
 
@@ -946,3 +946,4 @@ stateDiagram-v2
 | 1.0 | 2026-11-17 | Первая версия |
 | 1.1 | 2026-11-17 | Утверждён владельцем |
 | 1.2 | 2026-11-17 | KD-1 ссылается на принятый ADR-0016 |
+| 1.3 | 2026-11-17 | Contract Definitions, «Для части `runtime`»: заголовок `listVisible` и `ResolvedRecord` получают поле `shared` по запросу дизайна `runtime` (AC-18.5) |

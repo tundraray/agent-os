@@ -14,7 +14,7 @@
 
 - `packages/agents/src/tools/tool-gate.ts`
 
-Тот же приём уже есть в `packages/agents/src/model/model-choice.ts`, `packages/agents/src/step/turn-rules.ts`, `packages/agents/src/agent-view.ts` и `apps/api/src/chat/chat-status.ts`.
+Тот же приём уже есть в `packages/agents/src/step/turn-rules.ts`, `packages/agents/src/agent-view.ts` и `apps/api/src/chat/chat-status.ts`.
 
 ## Not For
 
@@ -28,3 +28,4 @@
 
 - [design-access.md](../../features/enterprise-access/design-access.md) — `effectiveAccess`: права, запреты и квоты сотрудника (KD-2)
 - [design-library.md](../../features/custom-agents/design-library.md) — правила сохранения, аудитории и замены в копии
+- [design-runtime.md](../../features/custom-agents/design-runtime.md) — `gateStart` с пределом исполнителя и список чата `chatListing`
