@@ -1,6 +1,6 @@
 # Свои агенты и workflow — Design Document — web
 
-**Status:** Draft · **Date:** 2026-11-17 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-library.md](./design-library.md#contract-definitions), [design-runtime.md](./design-runtime.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-17 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-library.md](./design-library.md#contract-definitions), [design-runtime.md](./design-runtime.md#contract-definitions)
 
 ## Snapshot
 
@@ -8,7 +8,7 @@
 
 - **Не меняется**: беседа, лента, поток событий и очередь; ядро клиента API и его обработчики 401 и 403; форма и таблица панели, которыми пользуются пять существующих разделов.
 - **Главный риск**: защита несохранённых изменений от кнопки «Назад» — у App Router нет для этого API, и решение держится на своём обработчике `popstate` (KD-4); проверяет его спайк в браузере до работы над редактором.
-- **Открытые вопросы**: один, к `library` — [Open Questions](#open-questions).
+- **Открытые вопросы**: нет.
 
 ### Key Decisions
 
@@ -53,6 +53,12 @@
 Команда, не вызванные исполнители и отказы по пределу есть только в `WorkflowRunView` ([design-runtime.md](./design-runtime.md#contract-definitions)), который отдаёт вид запуска `runs.get` по существующему `GET /api/agents/:agentId/run`. Карточка читает его при появлении и снова, когда меняется статус координатора или число его детей; шаги приходят живыми из ленты, как сегодня. Так строки шагов не ждут запроса, а «не вызывался» и «предел вызовов исчерпан» появляются с задержкой одного чтения.
 
 Не взяты: команда в каждом `AgentNode` — контракт `runtime` утверждён без неё; опрос по таймеру — лишние запросы у завершённых запусков.
+
+#### KD-8: Систему веб показывает по имени из реестра MCP, без описания
+
+`GET /api/library/choices` отдаёт в `servers` только имена ([design-library.md](./design-library.md#contract-definitions)), а у реестра MCP нет ни отображаемого имени, ни описания сервера. Поэтому флажок в поле «Системы» редактора и строка системы в просмотре подписаны именем сервера из реестра, а пояснения под ними нет. Это отход от UXRD: [record-editor.md](../../design-system/components/record-editor.md), часть 7, [definition-view.md](../../design-system/components/definition-view.md), часть 4, и MC-7 просят «отображаемое имя и описание». Строка системы получит пояснение, когда реестр начнёт хранить эти поля.
+
+Не взяты: отображаемое имя и описание в реестре и в `choices.servers` — это изменение реестра MCP и его раздела панели, оно вне этой фичи.
 
 ## Terms
 
@@ -754,7 +760,7 @@ stateDiagram-v2
 
 ## Open Questions
 
-- [design-library.md](./design-library.md#contract-definitions): `GET /api/library/choices` отдаёт в `servers` только имена, и у реестра MCP нет отображаемого имени и описания сервера, а UXRD их требует: [record-editor.md](../../design-system/components/record-editor.md), часть 7, и [definition-view.md](../../design-system/components/definition-view.md), часть 4 («отображаемое имя UI и описание Caption», MC-7). Не хватает поля отображаемого имени и описания у каждого сервера в `choices.servers` (и источника в реестре). Блокирует только описание под флажком; до решения веб показывает имя сервера реестра без описания. Решает `library` с владельцем реестра.
+Нет.
 
 ## Appendix: Fact Disposition
 
@@ -777,10 +783,11 @@ stateDiagram-v2
 | Нет состояния «Сведения» у метки (`apps/web/src/components/state-badge.tsx:StateBadge`) | transform | «Дерево компонентов» |
 | Оболочка, MSW и фикстуры по схемам (`apps/web/src/test:harness`) | transform | Test Strategy: новые фикстуры по `library.ts` |
 
-Отчёт о соответствии: расхождение с `read-on-open.md` (постоянная метка лога в `useResource`) решает «Логирование»; список «нужно от `runtime`» сверен с [design-runtime.md](./design-runtime.md#contract-definitions) и закрыт им, кроме отображаемых имён систем из Open Questions.
+Отчёт о соответствии: расхождение с `read-on-open.md` (постоянная метка лога в `useResource`) решает «Логирование»; список «нужно от `runtime`» сверен с [design-runtime.md](./design-runtime.md#contract-definitions) и закрыт им; отображаемых имён систем в нём нет, их решает KD-8.
 
 ## Update History
 
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-17 | Initial version |
+| 1.1 | 2026-11-17 | Решён вопрос к `design-library.md`: система показывается по имени из реестра MCP без описания, `choices` и реестр не меняются (KD-8, отход от UXRD MC-7); утверждён владельцем |
