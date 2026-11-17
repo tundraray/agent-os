@@ -724,12 +724,12 @@ sequenceDiagram
 - `model` — номер модели вида `anthropic/<id>`; обязателен.
 - `maxTurns` — от 1 до 200.
 - `agents` — номера записей-агентов, которых агент может запускать; без повторов.
-- `tools` — встроенные инструменты платформы из закрытого набора `RecordToolSchema`: `start_agent`, `message_agent`, `list_agents`, `stop_agent`, `run_code`, `start_workflow`. Редактор их не показывает и сохраняет как есть; новая запись начинает с пустого списка. Набор меняет `runtime`, когда меняет инструменты; инструмента создания в нём нет.
+- `tools` — встроенные инструменты платформы из закрытого набора `RecordToolSchema`: `start_agent`, `message_agent`, `list_agents`, `stop_agent`. `run_code` код даёт каждой сессии, а `start_workflow` — только корню беседы, поэтому в записи их нет. Редактор поле `tools` не показывает и сохраняет как есть; новая запись начинает с пустого списка. Набор меняет `runtime`, когда меняет инструменты ([design-runtime.md](design-runtime.md), KD-6); инструмента создания в нём нет.
 
 **`WorkflowContent`**
 
 - `coordinator` — `rules` (правила словами, до 4 000 знаков, может быть пустым), `model`, `maxTurns`.
-- `executors` — от 1 до 10 исполнителей. У каждого: `name` (от 1 до 80 знаков, уникально в команде без учёта регистра), `role` — строка «за что отвечает и когда звать» (от 1 до 300 знаков), `prompt`, `servers`, `model`, `maxTurns`, `maxRuns` (от 1 до 20), `tools` (без `start_workflow`) и `source` — `{ recordId, version }` агента-источника или `null`.
+- `executors` — от 1 до 10 исполнителей. У каждого: `name` (от 1 до 80 знаков, уникально в команде без учёта регистра), `role` — строка «за что отвечает и когда звать» (от 1 до 300 знаков), `prompt`, `servers`, `model`, `maxTurns`, `maxRuns` (от 1 до 20), `tools` и `source` — `{ recordId, version }` агента-источника или `null`.
 - `finalExecutor` — имя исполнителя, чей отчёт становится ответом, или `null`: ответ пишет координатор.
 
 **`CopyResult`**
@@ -947,3 +947,4 @@ stateDiagram-v2
 | 1.1 | 2026-11-17 | Утверждён владельцем |
 | 1.2 | 2026-11-17 | KD-1 ссылается на принятый ADR-0016 |
 | 1.3 | 2026-11-17 | Contract Definitions, «Для части `runtime`»: заголовок `listVisible` и `ResolvedRecord` получают поле `shared` по запросу дизайна `runtime` (AC-18.5) |
+| 1.4 | 2026-11-17 | Contract Definitions: `RecordToolSchema` — четыре значения (`start_agent`, `message_agent`, `list_agents`, `stop_agent`); `run_code` и `start_workflow` выдаёт код, не запись ([design-runtime.md](design-runtime.md), KD-6) |
