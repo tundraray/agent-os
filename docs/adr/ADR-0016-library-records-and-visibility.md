@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-17). Дополняет [ADR-0009](ADR-0009-agent-definitions-as-process-data.md) и [ADR-0015](ADR-0015-access-gate-and-model-catalogue.md), не заменяя их.
+Accepted (2026-11-17). Дополняет [ADR-0009](ADR-0009-agent-definitions-as-process-data.md) и [ADR-0015](ADR-0015-access-gate-and-model-catalogue.md), не заменяя их.
 
 ## Decision
 
