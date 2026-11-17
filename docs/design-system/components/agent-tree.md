@@ -30,6 +30,7 @@
 5. **Модель** — Data, `--muted-foreground`.
 6. **Запущен** — Data, табличные цифры, `--muted-foreground`.
 7. **Беседа** — ссылка на беседу, Data; только у корневых строк, у дочерних пусто.
+8. **Запись** — [подпись записи](./record-label.md), вариант «Под названием», агента или workflow, по которому идёт строка (custom-agents UXRD, RN-02). В широкой области — колонка «Запись» между «Агент» и «Статус»; в узкой — начало строки мета. У строки без записи пусто.
 
 Компактная плотность ([foundations → Spacing & Density](../foundations.md#spacing--density)): строка 32 px, в узкой области две строки по 20 px; при грубом указателе строка не ниже 44 px. Отступ уровня — 16 px, после четвёртого уровня отступ не растёт. Строки делит `--border`; ширина — вся область до 1200 px.
 
@@ -76,3 +77,4 @@
 ## Used In
 
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — экран «Агенты».
+- [docs/features/custom-agents/uxrd.md](../../features/custom-agents/uxrd.md) — колонка «Запись» (RN-02).
