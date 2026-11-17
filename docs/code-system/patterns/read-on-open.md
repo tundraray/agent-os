@@ -28,3 +28,4 @@
 ## Used In
 
 - [design-admin.md](../../features/enterprise-access/design-admin.md) — KD-4: таблицы и страницы записей панели
+- [design-web.md](../../features/custom-agents/design-web.md) — страницы библиотеки и раздел панели «Агенты и workflow»

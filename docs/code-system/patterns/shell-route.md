@@ -29,3 +29,4 @@
 ## Used In
 
 - [design-admin.md](../../features/enterprise-access/design-admin.md) — KD-1, KD-2: вид `admin` и `AdminGate`
+- [design-web.md](../../features/custom-agents/design-web.md) — KD-1: вид `library` и раздел панели `library`
