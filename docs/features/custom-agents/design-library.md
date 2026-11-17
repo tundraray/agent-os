@@ -1,6 +1,6 @@
 # Свои агенты и workflow — Design Document — library
 
-**Status:** На утверждении · **Date:** 2026-11-17 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** ничего — первая часть
+**Status:** Approved · **Date:** 2026-11-17 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** ничего — первая часть
 
 ## Snapshot
 
@@ -944,3 +944,4 @@ stateDiagram-v2
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-17 | Первая версия |
+| 1.1 | 2026-11-17 | Утверждён владельцем |
