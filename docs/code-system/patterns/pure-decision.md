@@ -27,3 +27,4 @@
 ## Used In
 
 - [design-access.md](../../features/enterprise-access/design-access.md) — `effectiveAccess`: права, запреты и квоты сотрудника (KD-2)
+- [design-library.md](../../features/custom-agents/design-library.md) — правила сохранения, аудитории и замены в копии

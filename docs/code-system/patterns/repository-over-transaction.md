@@ -29,3 +29,4 @@
 - [design-chat.md](../../features/agent-platform/design-chat.md) — таблица `chat_conversations` в `apps/api`
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — таблицы `identity_*` и `audit_events` в `apps/api`
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — таблицы `agent_mcp_*`; внешний вызов вне транзакции (KD-1)
+- [design-library.md](../../features/custom-agents/design-library.md) — таблицы `library_*` и событие аудита в транзакции изменения
