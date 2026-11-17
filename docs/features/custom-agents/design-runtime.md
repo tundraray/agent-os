@@ -68,7 +68,7 @@
 
 ## Terms
 
-- **Снимок** — копия запуска (PRD, Terms): содержимое записи на момент старта, имя запуска и происхождение; у координатора в нём вся команда.
+- **Снимок** — копия запуска (PRD, Terms): содержимое записи на момент старта, имя запуска и происхождение; у координатора в нём вся команда. У агента снимок несёт ещё заголовки записей из его `agents` — номер, имя и описание тех, что видны запускающему на старте: по ним строится описание его `start_agent`.
 - **Происхождение** — номер, вид, версия, имя и автор записи, с которой стартовал запуск, ключ встроенной записи и у исполнителя — его имя в команде.
 - **Корень беседы** — сессия главного чата, которую создаёт первое сообщение беседы.
 - **Набор запуска** — кого сессия может запустить: у корня — записи, которые чат может предложить, у агента — номера из его `agents`, у координатора — команда.
@@ -601,9 +601,10 @@ sequenceDiagram
 
 **Маршруты** (под `SessionGuard`, сотрудник из `req.user.id`; остальные — как в [design-chat.md](../agent-platform/design-chat.md#contract-definitions))
 
-- **`POST /api/threads/:threadId/messages`** — тело `text` и необязательный `recordId` чипа; запись, которую чат сотрудника запустить не может, — 404 `RECORD_NOT_FOUND`.
+- **`POST /api/threads/:threadId/messages`** — тело `text` и необязательный `recordId` чипа; запись, которую чат сотрудника запустить не может, — 404 `RECORD_NOT_FOUND`. Если первое сообщение не может стартовать корень беседы (модель записи `chat` сотруднику не разрешена или не подключена), ответ — 409 `START_REFUSED` с `reason` и `model`, как у перезапуска.
 - **`POST /api/threads/:threadId/drafts/:draftId`** — `action`: `save` с необязательным `name`, `reject`, или `saved_in_editor` с `recordId` своей записи. Returns `DraftView`; отказ `saveOwn` приходит в его `refusal` с ответом 200. 404 `DRAFT_NOT_FOUND`, 409 `DRAFT_RESOLVED`.
 - **`POST /api/agents/:agentId/restart`** — добавляется 409 `START_REFUSED` с `reason` и `model`.
+- **`GET /api/agents/:agentId/run`** — отдаёт `WorkflowRunView` вместо одного брифа; `WorkflowRunBriefSchema` удаляется.
 - **`POST /api/decisions/:decisionId`** — у брифа веб передаёт `workflow` без изменений вместо `template`.
 
 **Данные для `web`** (`packages/contracts`)
@@ -611,10 +612,10 @@ sequenceDiagram
 **`RunOrigin`** — с какой записи стартовал запуск: `recordId`, `kind`, `version` и `name` на старте, `author` (`{ id, name }` или `null` у системной), `builtinKey` или `null`, `executor` — имя исполнителя или `null`. Живые данные записи — последнюю видимую версию, аудиторию, доступность — веб берёт из `GET /api/library` по `recordId`; записи там нет — она смотрящему недоступна.
 
 - **`AgentView`** (и `AgentNode`): `definition` становится `name` — имя запуска из снимка; `template` уходит; добавляются `origin` (`null` у корня беседы) и `firstRun` — у владельца не было более ранней сессии с этой записью.
-- **`WorkflowRunView`**: `origin`, `brief`, `coordinator`; `team` — исполнители снимка с `name`, `role`, `maxRuns`, `final`; `steps` — дети координатора с `origin.executor`, а не вызванные — исполнители `team` вне `steps`; `limitRefusals` — `{ executor, at }` каждого отказа `run_limit`.
-- **`Confirmation`**: добавляется `origin` агента, который просит (`null` у корня); `templateTitle` уходит; содержимое брифа — `workflow` и три поля.
+- **`WorkflowRunView`** переезжает сюда из `packages/workflows`: `origin`, `brief`, `coordinator`; `team` — исполнители снимка с `name`, `role`, `maxRuns`, `final`; `steps` — дети координатора с `origin.executor`, а не вызванные — исполнители `team` вне `steps`; `limitRefusals` — `{ executor, at }` каждого отказа `run_limit`.
+- **`Confirmation`**: добавляется `origin` агента, который просит (`null` у корня); содержимое брифа (`content`) — `workflow` и три поля, заголовок шаблона `title` из него уходит.
 - **`DraftView`** (`ConversationView.drafts`, все черновики беседы): `draftId`; `callId` вызова `draft_record`, у которого стоит карточка; `kind`, `name`, `description`, `content`; `recordId` и `baseVersion` правимой записи или `null`; `state` — `pending`, `saved`, `saved_in_editor`, `rejected`, `superseded`; `refusal` — причина последнего отказа `saveOwn` или `null`; `savedRecordId`; `createdAt`, `resolvedAt`.
-- **`HistoryEntry`**: у `user_message` — `record` чипа (`{ id, kind, name }`), у отказа `tool_result` — `refusalDetail`, номер модели при отказе по модели.
+- **`HistoryEntry`**: у `user_message` и `task` — `record` чипа (`{ id, kind, name }` или `null`); у `task` он бывает только у корня беседы, потому что её первое сообщение становится заданием корня. У `tool_result` — `refusalDetail` (`{ model }` или `null`): номер модели при отказе по модели.
 
 **Error handling**
 
@@ -631,6 +632,7 @@ sequenceDiagram
 
 - **`runtime_tasks.input`** хранит снимок, поручение, описание и у ответвления — ссылку на историю родителя. Модель сессии — модель снимка.
 - **`agent_sessions`**: вместо `definition` — `name`; добавлены происхождение и метка первого запуска; `limits` удалён. Пара «владелец — номер записи» проиндексирована для счёта в списке чата.
+- **`agent_tool_calls`**: добавлен `refusal_detail` — номер модели отказа по модели или пусто; из него история берёт `refusalDetail`.
 - **`chat_drafts`** — новая таблица: беседа (каскад), владелец, вызов в истории корня, вид, правимая запись и версия, имя, описание, содержимое, состояние, сохранённая запись, последний отказ, даты.
 - **Миграция** сначала удаляет все строки `chat_conversations` и `runtime_tasks`, затем меняет схему и CHECK причин отказа; `runtime_model_calls` и таблицы без связи с деревом остаются (AC-19.1).
 
@@ -665,7 +667,7 @@ stateDiagram-v2
 
 **Invariants**
 
-1. После старта определение запуска берётся только из снимка. Единственное чтение библиотеки после старта — список чата корня на каждом шаге модели (KD-4), и снимок оно не меняет.
+1. После старта определение запуска берётся только из снимка, включая описание `start_agent` агента: его строят заголовки записей из `agents`, сохранённые в снимке на старте. Единственное чтение библиотеки после старта — список чата корня на каждом шаге модели (KD-4), и снимок оно не меняет.
 2. Каждый старт записи — корень, ребёнок, workflow, перезапуск — проходит `resolveStart` от имени запускающего; исполнитель и ответвление берут снимок из снимка.
 3. У задач одного дерева один владелец, и права проверяются для него, кто бы ни написал запись.
 4. `draft_record` и `start_workflow` есть только у сессии без родителя.
@@ -816,3 +818,4 @@ AC-16.5 держит форма `WorkflowContentSchema` части `library`; е
 | 1.0 | 2026-11-17 | Initial version |
 | 1.1 | 2026-11-17 | Решён вопрос к `design-library.md`: `draft_record` по признаку `shared` заголовка отказывает до черновика (AC-18.5), просьбу поделиться чат направляет к «Поделиться» текстом (AC-18.3); утверждён владельцем |
 | 1.2 | 2026-11-17 | KD-1 ссылается на принятый ADR-0017 |
+| 1.3 | 2026-11-17 | По Notes 9 и 10 плана части: `record` чипа и у `task` корня, столбец `agent_tool_calls.refusal_detail`, заголовки записей из `agents` в снимке агента (Terms, инвариант 1), 409 `START_REFUSED` на первом сообщении; `WorkflowRunView` переезжает в `packages/contracts` и отдаётся `GET /api/agents/:agentId/run` вместо `WorkflowRunBriefSchema`; у `Confirmation` поля `templateTitle` нет — из содержимого брифа уходит `title` |
