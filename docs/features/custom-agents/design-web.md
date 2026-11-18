@@ -50,7 +50,7 @@
 
 #### KD-7: Карточка хода workflow читает `WorkflowRunView` через существующий `getRun`; шаги — дети координатора из ленты, подписанные `origin.executor`
 
-Команда, не вызванные исполнители и отказы по пределу есть только в `WorkflowRunView` ([design-runtime.md](./design-runtime.md#contract-definitions)), который отдаёт вид запуска `runs.get` по существующему `GET /api/agents/:agentId/run`. Карточка читает его при появлении и снова, когда меняется статус координатора или число его детей; шаги приходят живыми из ленты, как сегодня. Так строки шагов не ждут запроса, а «не вызывался» и «предел вызовов исчерпан» появляются с задержкой одного чтения.
+Команда, не вызванные исполнители и отказы по пределу есть только в `WorkflowRunView` ([design-runtime.md](./design-runtime.md#contract-definitions)). Существующий `GET /api/agents/:agentId/run` отдаёт его целиком: `origin`, `brief`, `coordinator`, `team` (у исполнителя `name`, `role`, `maxRuns`, `final`), `steps` и `limitRefusals` (`executor` и `at` каждого отказа). Схемы одного брифа `WorkflowRunBriefSchema` больше нет, и `getRun` уже разбирает `WorkflowRunViewSchema`. Не вызванные — исполнители `team`, которых нет среди `steps`. Карточка читает вид при появлении и снова, когда меняется статус координатора или число его детей; шаги приходят живыми из ленты, как сегодня. Так строки шагов не ждут запроса, а «не вызывался» и «предел вызовов исчерпан» появляются с задержкой одного чтения.
 
 Не взяты: команда в каждом `AgentNode` — контракт `runtime` утверждён без неё; опрос по таймеру — лишние запросы у завершённых запусков.
 
@@ -84,7 +84,7 @@
 
 **Constraints**
 
-- PoC без совместимости: код, который читал `template` и `definition` у запусков, переписывается на `origin` и `name` в той же работе, слово «Бриф» в интерфейсе заменяется (MC-21).
+- PoC без совместимости: код, который читал `template` и `definition` у запусков, часть `runtime` уже перевела на `origin` и `name`; слово «Бриф» в интерфейсе заменяет эта часть (MC-21).
 - `apps/web` зависит только от `contracts` и `common`; к API ходит только через `apiRequest` ([web-api-client.md](../../code-system/patterns/web-api-client.md)).
 - Лог — через `src/lib/logger.ts` ([Логирование](#логирование)); тестов мало ([Test Strategy](#test-strategy)).
 - WCAG 2.1 AA и работа от 360 px (NFR-05) — как задают UXRD «Accessibility», «Responsive Behavior» и спецификации компонентов; проверяют L1-сценарии.
@@ -97,12 +97,12 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 |---|---|---|---|
 | `parseShellRoute`, `MainView`, `AppSidebar`, `ChatHeader`, `DocumentTitle` | [shell-route.md](../../code-system/patterns/shell-route.md) | extended | вид `library`, раздел панели `library` (KD-1) |
 | `libraryApi` в `lib/library`, `adminApi.library`, `describeLibraryError` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | new | по образцу `adminApi` и `describeAdminError` |
-| `threadsApiClient`, `useFeedRuntime` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | extended | `recordId` у сообщения, `draftAction` |
+| `threadsApiClient`, `useFeedRuntime` | [web-api-client.md](../../code-system/patterns/web-api-client.md) | extended | `recordId` у сообщения, `draftAction`; `getRun` уже разбирает `WorkflowRunViewSchema` |
 | `useResource` | [read-on-open.md](../../code-system/patterns/read-on-open.md) | extended | метка лога вместо постоянной `admin: read failed` |
 | `libraryIndex`, `composerSeed`, `draftHandoff`, `leaveGuard` | [shell-store.md](../../code-system/patterns/shell-store.md) | new | новый паттерн по образцу `agentList` и `currentUser` (KD-2, KD-4–KD-6) |
 | `RecordEditor`, `useRecordForm` | — | new | KD-3; части формы панели — reused |
 | `RecordLabel`, `LibraryRow`, `DefinitionView`, `ExecutorItem`, `ShareDialog`, `DraftCard` | спецификации дизайн-системы | new | по [Component tree](#дерево-компонентов) |
-| `DecisionCard`, `RunCard`, `AgentTree`, `AgentMeta`, `AgentHeader`, `StateBadge`, `ThreadNotice`, `Composer`, `tool-fallback.aui.tsx` | спецификации дизайн-системы | extended | подписи, строки шагов, состояние «Сведения», RV-02, чип, отказы |
+| `DecisionCard`, `RunCard`, `AgentTree`, `AgentMeta`, `AgentHeader`, `StateBadge`, `ThreadNotice`, `Composer`, `tool-fallback.aui.tsx` | спецификации дизайн-системы | extended | подписи, строки шагов, состояние «Сведения», RV-02, чип, отказы. Уже сделано частью `runtime`: `AgentMeta`, `AgentTree`, `RunCard` и экран агента узнают координатора общей проверкой `isWorkflowCoordinator` из `to-feed.ts`; `DecisionCard` разбирает бриф `{ workflow, question, boundaries, result }` и пока озаглавлен «Бриф»; `tool-fallback.aui.tsx` пока показывает новые причины общей строкой отказа и берёт модель из `args.model` |
 | `AdminPageHeader` → `PageHeader` | — | extended | шапка через портал и для страниц библиотеки; родитель — ссылка, а не раздел панели |
 | `AgentsNavItem` → `SectionNavItem` | — | extended | второй пункт сайдбара «Библиотека» |
 | `DataTable`, `ConfirmDialog`, `FormError`, `ConversationView`-лента, announcer, `pluralRu`, `formatModel` | — | reused | — |
@@ -338,7 +338,7 @@ flowchart TB
     class e5 w5
 ```
 
-`toFeed` ставит часть `draft` по времени создания черновика и прячет успешный вызов `draft_record`, как сегодня прячет успешный `start_agent`. Карточка хода выбирает вариант по `origin.kind`, а не по `template`; задание связывается с запуском по номеру записи workflow, а не по имени. `RunCard` workflow дочитывает `WorkflowRunView` (KD-7).
+`toFeed` ставит часть `draft` по времени создания черновика и прячет успешный вызов `draft_record`, как сегодня прячет успешный `start_agent`. Карточка хода выбирает вариант общей проверкой `isWorkflowCoordinator` (`origin.kind` — `workflow`, `origin.executor` — `null`), а задание связывается с запуском по номеру записи workflow; это уже сделала часть `runtime`. `RunCard` workflow дочитывает `WorkflowRunView` (KD-7). Чип отправленного сообщения лента берёт из поля `record` записи истории: у `user_message` — у любого сообщения, у `task` — только у корня беседы, чьё задание — первое сообщение. Модель отказа блок вызова читает из `refusalDetail` результата `tool_result`, а не из аргументов вызова.
 
 #### Дерево компонентов
 
@@ -353,7 +353,7 @@ flowchart TB
 | `ExecutorItem`, `ExecutorPanel` | [executor-item.md](../../design-system/components/executor-item.md) | команда WF-01, панель WF-03 на `Drawer` | new |
 | `ShareDialog` | [share-dialog.md](../../design-system/components/share-dialog.md) | SH-01, сотрудник и администратор | new |
 | `DraftCard` | [decision-card.md](../../design-system/components/decision-card.md), «Черновик записи» | часть ленты `draft` (DC-01) | new |
-| `DecisionCard` | то же, «Действие» и «Бриф» | подпись записи (RN-04), «Задание · {имя}» (RN-05) | extended |
+| `DecisionCard` | то же, «Действие» и «Бриф» | подпись записи (RN-04), «Задание · {имя}» (RN-05) с именем по правилу [«Имя в заголовке задания»](#правила-веба) | extended |
 | `RunCard` | [agent-run-card.md](../../design-system/components/agent-run-card.md) | RN-01 | extended |
 | `AgentTree` | [agent-tree.md](../../design-system/components/agent-tree.md) | колонка «Из библиотеки» (RN-02) | extended |
 | `AgentMeta`, `AgentHeader` | agent-platform UXRD, AV-01, AV-02 | вторая строка мета и подсказка перезапуска (RN-03) | extended |
@@ -482,6 +482,7 @@ sequenceDiagram
 - `DraftView` с `refusal` → строка MC-8 на карточке; при `name_taken` — «Сохранить как «{свободное имя}»», и то же действие уходит с этим именем.
 - 409 `DRAFT_RESOLVED` → лента перечитывает беседу, карточка показывает итог из другой вкладки без строки ошибки (DC-9).
 - 404 `RECORD_NOT_FOUND` на сообщение → чип уходит, текст возвращается в поле, под полем MC-16 «{Вид} недоступен…» (DC-10).
+- 409 `START_REFUSED` на первое сообщение новой беседы (модель записи `chat` сотруднику не разрешена или не подключена) → поле ведёт себя как при любой неудачной отправке (KD-5): текст и чип возвращаются, беседа в списке не появляется. Под полем — уведомление, которое называет модель из поля `model` тела ошибки. Своего текста для первого сообщения в UXRD нет, поэтому берётся текст отказа запуска из MC-16, тот же, что у перезапуска: «Модель {модель} вам недоступна — {вид} не запустился», где на месте вида — «чат». Продолжение «Откройте его и выберите другую модель» и «Открыть» не показываются: запись `chat` сотрудник не правит. Тело без `model` → строка неудачной отправки chat-shell MC-27.
 - Сеть или 5xx на сообщение → текст и чип возвращаются, строка неудачной отправки chat-shell MC-27.
 
 #### Flow 3: Изменён после запуска и «Запустить заново»
@@ -547,14 +548,14 @@ sequenceDiagram
 - **`libraryApi`** (`lib/library`) — по функции на маршрут сотрудника из [design-library.md](./design-library.md#contract-definitions): `list`, `get`, `create`, `save` (с `version`), `saveAudience`, `copy`, `remove`, `choices`, `myRoles`. Ответы разбирают схемы `packages/contracts/src/library.ts`.
 - **`adminApi.library`** — по функции на маршрут панели: `system`, `shared`, `bans`, `get`, `create`, `save`, `saveAudience`, `remove`, `close`, `liftBan`.
 - **`describeLibraryError(error, context)`** — переводит `ApiRequestError` в место и текст: поле формы по имени или форма; правила — [Ошибки и их место](#ошибки-и-их-место). Неизвестный код — «Не удалось сохранить: {причина}» с сообщением сервера.
-- Пределы полей для счётчиков и проверки до отправки — константы `packages/contracts/src/library.ts`, по которым построены схемы содержимого; веб своих чисел не держит.
+- Пределы полей для счётчиков и проверки до отправки — константы `packages/contracts/src/library.ts`, по которым построены схемы содержимого; веб своих чисел не держит. Оттуда же правило для имени записи и имени исполнителя — без управляющих символов и переводов строки: проверка в редакторе берёт его из схемы контракта, а не из своего выражения.
 
 #### Сторы оболочки
 
 - **`libraryIndex`** — `status`, записи по номеру и `refresh()`. Отдаёт `summaryOf(recordId)`: `RecordSummary` или «нет», когда список прочитан, а записи в нём нет. Ошибка чтения не стирает прежний список.
 - **`composerSeed`** — `put(target, { record?, text? })`, где `target` — номер беседы или `new`; поле этой беседы забирает текст один раз при появлении и держит чип до принятой отправки, «✕» или нового чипа. Один чип на беседу.
-- **`draftHandoff`** — один перенос: номер беседы и `DraftView`. Редактор забирает его при открытии своей страницы; перенос другой страницы или перезагрузка его стирают. После успешного создания или сохранения редактор шлёт этому черновику `saved_in_editor` с номером записи; ответ 409 `DRAFT_RESOLVED` или 404 `DRAFT_NOT_FOUND` только пишется в лог — запись уже сохранена.
-- **`threadsApiClient.draftAction(threadId, draftId, action)`** — `POST /api/threads/:threadId/drafts/:draftId` с `save` (и необязательным именем), `reject` или `saved_in_editor`; ответ — `DraftView`. Его зовут `DraftCard` и редактор.
+- **`draftHandoff`** — один перенос: номер беседы и `DraftView`. Редактор забирает его при открытии своей страницы; перенос другой страницы или перезагрузка его стирают. После успешного создания или сохранения редактор шлёт этому черновику `saved_in_editor` с номером записи; ответы 409 `DRAFT_RESOLVED`, 404 `DRAFT_NOT_FOUND` и 404 `RECORD_NOT_FOUND` только пишутся в лог — запись уже сохранена, а при `RECORD_NOT_FOUND` черновик остаётся ждущим в карточке.
+- **`threadsApiClient.draftAction(threadId, draftId, action)`** — `POST /api/threads/:threadId/drafts/:draftId` с действием `save` (необязательное `name`), `reject` или `saved_in_editor` (`recordId` своей записи); ответ — `DraftView`. Отказ `saveOwn` приходит ответом 200: черновик остаётся `pending`, причина — в его `refusal`. Ошибки: 404 `DRAFT_NOT_FOUND`, 409 `DRAFT_RESOLVED`, а у `saved_in_editor` с записью, которая сотруднику не своя, — 404 `RECORD_NOT_FOUND`, и черновик продолжает ждать. Его зовут `DraftCard` и редактор.
 - **`leaveGuard`** — `hold(name)` и `release()` у экрана с несохранённым; `confirmLeave()` спрашивает MC-11 и отвечает, уходить ли. Пока ничего не удержано, переходы идут без вопроса.
 
 #### Компоненты
@@ -573,6 +574,7 @@ sequenceDiagram
 - **Изменён после запуска**, если в `libraryIndex` есть запись `origin.recordId` с версией больше `origin.version`.
 - **Пояснение получателю** (AC-29.1) показывают страница записи коллеги и карточка хода, у которой `firstRun`, автор — не смотрящий и запись есть в живых данных; роли — те, где `member`.
 - **Черновик устарел** (DC-01), если у ждущего черновика правки версия записи в живых данных больше `baseVersion` или последний отказ — `version_conflict`.
+- **Имя в заголовке задания** (MC-21) — из `libraryIndex` по номеру `workflow` из содержимого брифа. Содержимое — только `workflow`, `question`, `boundaries` и `result`, без заголовка шаблона, а запуска с `origin` до подтверждения ещё нет, поэтому происхождение запуска источником не служит. Пока список не прочитан или записи в нём нет, заголовок — «Задание» без имени.
 - **Свободное имя** — «{имя} 2», «{имя} 3» и дальше, первое, которого нет среди своих записей в живых данных.
 - **Изменённые поля** конфликта и черновика считает одна функция сравнения двух определений; поля называются подписями формы (MC-7, MC-15).
 
@@ -589,11 +591,13 @@ sequenceDiagram
 | 422 `role_not_member`, `sharing_banned` | ошибка формы окна «Поделиться» | MC-14 |
 | 422 `audience_fixed`, `builtin`, `holder_not_found` | ошибка формы панели | MC-8 «Не удалось сохранить: {причина}» |
 | 403 `RECORD_READ_ONLY` | ошибка формы; введённое остаётся | MC-8 |
-| 409 `START_REFUSED` | уведомление у «Запустить с нуля», нового агента нет | MC-16 |
-| отказ инструмента `record_unavailable`, `model_not_allowed`, `shared`, `read_only`, `run_limit` | блок вызова в ленте; у модели — «Открыть», у `shared` — «Открыть в редакторе» | MC-16, MC-17 |
+| 409 `START_REFUSED` на «Запустить с нуля» | уведомление у «Запустить с нуля», нового агента нет | MC-16 |
+| 409 `START_REFUSED` на первое сообщение новой беседы | уведомление под полем; текст и чип возвращаются, беседы в списке нет (Flow 2) | MC-16, текст отказа запуска у перезапуска с «чат» на месте вида |
+| отказ инструмента `record_unavailable`, `model_not_allowed`, `shared`, `read_only`, `run_limit` | блок вызова в ленте; у модели — «Открыть» и модель из `refusalDetail.model`, у `shared` — «Открыть в редакторе» | MC-16, MC-17 |
+| отказ `invalid_arguments` у `draft_record` | блок вызова в ленте, карточки черновика нет | общий текст отказа платформы |
 | сеть | ошибка формы или уведомления | MC-8 «нет связи с сервером» |
 
-Отказ `read_only` на записи коллеги текста в UXRD не имеет и показывает общий текст отказа платформы, как сегодня у неизвестной причины.
+Отказ `read_only` на записи коллеги текста в UXRD не имеет и показывает общий текст отказа платформы, как сегодня у неизвестной причины. Просьбу поделиться чат не передаёт инструменту: он отвечает обычным текстом MC-16 (UXRD v1.4, DC-02), поэтому блока вызова с отказом и кнопки у неё нет, и веб ничего своего для неё не рисует.
 
 ### State Transitions and Invariants
 
@@ -749,7 +753,7 @@ stateDiagram-v2
 ## Security Considerations
 
 - **Authentication & Authorization**: права решает сервер; веб показывает действия по флагам `canEdit`, `canShare`, `canDelete` и праву администратора из `CurrentUser`, а раздел панели монтируется только через `AdminGate`. Невидимая запись для веба — 404, и экран RV-02 одинаков для всех причин, поэтому существование чужой записи не видно.
-- **Input Validation**: веб проверяет поля до отправки по тем же пределам контракта, но решает сервер; ответы разбирают схемы `contracts`, ответ не по схеме — ошибка `invalid_response`. Имена и тексты авторов выводятся как текст, без разметки.
+- **Input Validation**: веб проверяет поля до отправки по тем же пределам контракта, но решает сервер; ответы разбирают схемы `contracts`, ответ не по схеме — ошибка `invalid_response`. Имена, описания, инструкции, имена и роли исполнителей и имена авторов — свободный текст, который пишут другие сотрудники (ревью безопасности части `runtime`). Веб выводит их только как текст: без `dangerouslySetInnerHTML` и без перевода markdown в HTML без очистки.
 - **Sensitive Data Handling**: секретов в записях нет; промпт и содержимое не идут в лог, адрес и хранилища браузера. Сторы оболочки живут только в памяти вкладки.
 
 ## Risks and Mitigation
@@ -773,15 +777,17 @@ stateDiagram-v2
 | Форма панели без версии, конфликта и защиты (`apps/web/src/components/admin/admin-form.tsx:AdminForm`) | out-of-scope | KD-3: не меняется, редактор свой |
 | Нет защиты ухода, переходы — `next/link` и `router.push` (`apps/web/src/components/shell/shell-actions.tsx:newChat`) | transform | KD-4 |
 | Поле сообщения шлёт только текст (`apps/web/src/components/assistant-ui/elements/thread.aui.tsx:Composer`) | transform | KD-5, Flow 2 |
-| Неизвестный вид решения — «Подтвердить / Отклонить», слово «Бриф» (`apps/web/src/components/agents/decision-card.tsx:briefOf`) | transform | KD-6, RN-05, MC-21 |
-| Задание связано с запуском по имени шаблона (`apps/web/src/lib/feed/to-feed.ts:briefQuestionOf`) | transform | C3 · беседа и запуски: по номеру записи |
-| Шаги подписаны поручением, вариант — по `template` (`apps/web/src/components/agents/run-card.tsx:RunCard`) | transform | KD-7, UC-9 |
+| Бриф разбирается как `{ workflow, question, boundaries, result }` под заголовком «Бриф»; неизвестный вид решения — «Подтвердить / Отклонить» (`apps/web/src/components/agents/decision-card.tsx:briefOf`) | transform | KD-6, RN-05, MC-21, правило «Имя в заголовке задания» |
+| Шаги подписаны поручением; вариант уже выбирает `isWorkflowCoordinator` (`apps/web/src/components/agents/run-card.tsx:RunCard`) | transform | KD-7, UC-9 |
+| Новые причины отказа — общей строкой, модель отказа — из `args.model` (`apps/web/src/components/assistant-ui/elements/tool-fallback.aui.tsx:refusalOf`) | transform | «Ошибки и их место»: тексты MC-16, MC-17, модель из `refusalDetail` |
 | Шесть колонок дерева без «Из библиотеки» (`apps/web/src/components/agents/agent-tree.tsx:ROW_GRID`) | transform | RN-02, «Дерево компонентов» |
 | Одна строка мета и перезапуск без подсказки (`apps/web/src/components/agents/agent-header.tsx:RESTART`) | transform | DC-11, UC-10 |
 | «Запись не найдена» привязана к разделу панели (`apps/web/src/components/shell/thread-notice.tsx:record-not-found`) | transform | новый вариант RV-02, DC-1; панель — прежний вариант с разделом `library` |
 | Нет `tabs`, `sheet`, `command`, `collapsible` в `ui` (`apps/web/src/components/ui:missing-primitives`) | transform | Building-block Inventory: `tabs`, `Drawer`, `Combobox`, `CollapsibleRoot` |
 | Нет состояния «Сведения» у метки (`apps/web/src/components/state-badge.tsx:StateBadge`) | transform | «Дерево компонентов» |
 | Оболочка, MSW и фикстуры по схемам (`apps/web/src/test:harness`) | transform | Test Strategy: новые фикстуры по `library.ts` |
+
+Дизайн сохраняет то, что задача «web compile» части `runtime` уже сделала в `apps/web`: задание связано с запуском по номеру записи workflow, а координатора узнаёт `isWorkflowCoordinator` (`apps/web/src/lib/feed/to-feed.ts:briefQuestionOf`); фикстуры видов беседы и запуска уже в новых формах (`apps/web/src/test/fixtures.ts`).
 
 Отчёт о соответствии: расхождение с `read-on-open.md` (постоянная метка лога в `useResource`) решает «Логирование»; список «нужно от `runtime`» сверен с [design-runtime.md](./design-runtime.md#contract-definitions) и закрыт им; отображаемых имён систем в нём нет, их решает KD-8.
 
@@ -791,3 +797,4 @@ stateDiagram-v2
 |---------|------|--------|
 | 1.0 | 2026-11-17 | Initial version |
 | 1.1 | 2026-11-17 | Решён вопрос к `design-library.md`: система показывается по имени из реестра MCP без описания, `choices` и реестр не меняются (KD-8, отход от UXRD MC-7); утверждён владельцем |
+| 1.2 | 2026-11-18 | Сверено с `design-runtime.md` v1.3 и построенной частью `runtime`: 409 `START_REFUSED` на первое сообщение (Flow 2, текст перезапуска MC-16); `record` у `task` и `user_message`, `refusalDetail` у `tool_result`; полный `WorkflowRunView` (KD-7); имя в заголовке задания из `libraryIndex`; новые причины отказа и ответ текстом на просьбу поделиться; правило имён без управляющих символов; ответы маршрута черновиков; инвентарь после задачи «web compile»; вывод чужого текста только как текст |
