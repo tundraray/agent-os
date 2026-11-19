@@ -110,3 +110,4 @@
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — лента беседы и страница агента.
 - [docs/features/code-execution/uxrd.md](../../features/code-execution/uxrd.md) — запуск кода в истории (CE-03).
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — отказы по правам и модели, исход «нужен вход в аккаунт».
+- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — шаги в работе над ответом; изменения в повторе — исход «Отказано».

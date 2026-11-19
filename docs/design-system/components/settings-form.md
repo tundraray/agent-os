@@ -72,3 +72,4 @@ https://agent-os.corp/auth/oidc/7/callback  [⧉]  5 значение для к�
 ## Used In
 
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — форма входа, смена пароля, формы и диалоги панели администратора.
+- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — настройки библиотеки: срок хранения, проверка, улучшение (FB-05).

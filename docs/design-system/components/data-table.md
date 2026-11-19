@@ -69,3 +69,4 @@ anya@corp.example
 ## Used In
 
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — разделы панели администратора, «Мой доступ».
+- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — оценки по версиям и случаи, версии, случаи проверки, «Что нашёл анализ».
