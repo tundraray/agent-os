@@ -58,4 +58,3 @@ general-purpose  от компании                       у агента к�
 ## Used In
 
 - [docs/features/custom-agents/uxrd.md](../../features/custom-agents/uxrd.md) — библиотека, редакторы, чип в поле сообщения, карточки в беседе, дерево и страница агента, панель администратора.
-- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — участники работы над ответом, «Где ошибка» в итоге анализа.

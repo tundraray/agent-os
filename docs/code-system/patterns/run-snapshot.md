@@ -28,4 +28,3 @@
 ## Used In
 
 - [design-runtime.md](../../features/custom-agents/design-runtime.md) — старт записи, исполнителя, ответвления и перезапуск (KD-1, KD-2)
-- [design-eval.md](../../features/self-correction/design-eval.md) — источник `supplied`: версия, которую вызывающий прочёл уровнем панели, и префикс истории во входе задачи (KD-3)

@@ -63,4 +63,3 @@
 
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — список агентов, страница агента, лента беседы.
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — «Остановлен» с причиной «квота исчерпана» (QS-01).
-- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — итог каждого участника в работе над ответом.

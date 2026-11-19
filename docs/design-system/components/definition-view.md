@@ -94,4 +94,3 @@ Workflow получает только задание, которое вы по�
 ## Used In
 
 - [docs/features/custom-agents/uxrd.md](../../features/custom-agents/uxrd.md) — карточка черновика, страница записи коллеги или компании, запись в панели администратора.
-- [docs/features/self-correction/uxrd.md](../../features/self-correction/uxrd.md) — «Показать версию целиком» на странице версии (EV-03).
