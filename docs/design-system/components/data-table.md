@@ -69,3 +69,4 @@ anya@corp.example
 ## Used In
 
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — разделы панели администратора, «Мой доступ».
+- [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — список записей на экране «Что узнал workflow» (KN-01).
