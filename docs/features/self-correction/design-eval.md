@@ -8,7 +8,7 @@
 
 - **Не меняется**: «Сохранить» сразу делает версию рабочей; запуски в беседах берут содержимое записи, как сейчас; беседы сотрудников.
 - **Главный риск**: прогон главного чата повторяет прежние ходы беседы по копии случая, и агентов прежних ходов в нём нет ([Risks and Mitigation](#risks-and-mitigation)).
-- **Открытые вопросы**: один — к дизайну `feedback` ([Open Questions](#open-questions)).
+- **Открытые вопросы**: нет.
 
 ### Key Decisions
 
@@ -697,7 +697,7 @@ stateDiagram-v2
 
 ## Open Questions
 
-- Дизайн `feedback` называет `CaseRef` результатом `casesOf`, но не перечисляет его полей. Части `eval` нужны `caseId`, `rating`, `ratedAt`, версия этой записи в случае и `holdout`. Это блокирует `EvalService.startCheck`; поля добавляет владелец [design-feedback.md](./design-feedback.md#contract-definitions).
+Нет. Поля `CaseRef` определены в [design-feedback.md](./design-feedback.md#contract-definitions).
 
 ## Appendix: Fact Disposition
 
