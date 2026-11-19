@@ -1,6 +1,6 @@
 # Улучшение записей по оценкам сотрудников — Design Document — loop
 
-**Status:** На утверждении · **Date:** 2026-11-19 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-eval.md](./design-eval.md#contract-definitions), [design-feedback.md](./design-feedback.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-19 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-eval.md](./design-eval.md#contract-definitions), [design-feedback.md](./design-feedback.md#contract-definitions)
 
 ## Snapshot
 
@@ -478,6 +478,8 @@ stateDiagram-v2
 
 Без этих правок часть не строится; дизайн `loop` написан так, как будто они сделаны.
 
+Все четыре правки внесены в [design-eval.md](./design-eval.md#contract-definitions) (версия 1.1, 2026-11-19).
+
 1. **`design-eval.md` — задача ведущего в транзакции вызывающего.** В «Что эта часть добавляет к `feedback` и пакетам» добавить `runtime.tasks.create(request, tx?)`: с транзакцией строка задачи и её событие `task.created` пишутся в ней, повторы — забота вызывающего. `EvalService.startCheck` без `parent` создаёт задачу ведущего этой операцией. Сегодня `TaskControl.create` открывает свою транзакцию, и обещание «одной транзакцией» в C3 · Components: api не выполняется. Паттерн [driver-task.md](../../code-system/patterns/driver-task.md) уже описывает старт так.
 2. **`design-eval.md`, «Для части `loop`» — `LibraryService.saveCandidate`** принимает транзакцию вызывающего и администратора, от имени которого сохраняет. Для `savedBy` = `analysis` это владелец цикла: права и выбор системы считаются для него, как у маршрута, а аудит `library_candidate` называет его и `analysis`.
 3. **`design-eval.md`, «Для части `loop`» — `LibraryService.systemVersions()`**: системные записи панели — `recordId`, `kind`, `name`, `builtinKey`, рабочая версия и признак «есть кандидат». По ней цикл находит запись и её рабочую версию, а `analyzer` — по ключу, как ведущий проверки находит `judge`; метка «ждёт решения» узнаёт кандидатов.
@@ -508,3 +510,4 @@ stateDiagram-v2
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-19 | Первая версия |
+| 1.1 | 2026-11-19 | Правки upstream в `design-eval.md` внесены. Утверждён: владелец работает автономно на рекомендуемых вариантах |

@@ -1,6 +1,6 @@
 # Улучшение записей по оценкам сотрудников — Design Document — eval
 
-**Status:** На утверждении · **Date:** 2026-11-19 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-feedback.md](./design-feedback.md#contract-definitions)
+**Status:** Approved · **Date:** 2026-11-19 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** [design-feedback.md](./design-feedback.md#contract-definitions)
 
 ## Snapshot
 
@@ -107,7 +107,7 @@ Follows the [code system](../../code-system/README.md).
 | `EvalCheckHandler` | [driver-task.md](../../code-system/patterns/driver-task.md) | new | Единственный тип задачи сейчас — `agent` (KD-2) |
 | `readVerdict`, `caseOutcome`, `checkSummary`, `judgeTask` | [pure-decision.md](../../code-system/patterns/pure-decision.md) | new | По образцу `endOfTurn` |
 | `LibraryService`, сидер, правило «изменено» в API и вебе, `FeedbackService.rate` | [settings-row.md](../../code-system/patterns/settings-row.md) | extended | История, кандидат, судья, настройки, правило «изменено», метка `holdout` |
-| `resolveStart`, `agents.sessions`, шаги агента, `runtime.ledger`, `runtime.tasks` | [run-snapshot.md](../../code-system/patterns/run-snapshot.md) | extended | `supplied`, `prepareRun`, `check`, `spendOfRoot`, удаление поддерева |
+| `resolveStart`, `agents.sessions`, шаги агента, `runtime.ledger`, `runtime.tasks` | [run-snapshot.md](../../code-system/patterns/run-snapshot.md) | extended | `supplied`, `prepareRun`, `check`, `spendOfRoot`, удаление поддерева, создание задачи в транзакции вызывающего |
 | Вкладка «Версии», страницы версии и повтора | [shell-route.md](../../code-system/patterns/shell-route.md), [read-on-open.md](../../code-system/patterns/read-on-open.md) | new | Перечитывание раз в 5 с, пока проверка идёт |
 | `VersionDiff`, `CheckSummary`, `AnswerWork` «Повтор», `StateBadge` | — | new, extended | Спецификации [version-diff.md](../../design-system/components/version-diff.md), [check-summary.md](../../design-system/components/check-summary.md), [answer-work.md](../../design-system/components/answer-work.md), [state-badge.md](../../design-system/components/state-badge.md) |
 | Редактор записи, страница случая, вкладка «Оценки», форма настроек | [web-api-client.md](../../code-system/patterns/web-api-client.md) | extended | «Сохранить кандидатом», «Повторить на версии…», колонка «Случай», группа EV-08 |
@@ -294,7 +294,7 @@ flowchart TB
     class e7 w7
 ```
 
-- `EvalService` проверяет, что версия есть в истории и у записи нет идущей проверки, берёт случаи из `FeedbackService.casesOf` и одной транзакцией пишет проверку с пределом и числом повторов из настроек, строки случаев и задачу ведущего с номером проверки.
+- `EvalService` проверяет, что версия есть в истории и у записи нет идущей проверки, берёт случаи из `FeedbackService.casesOf` и одной транзакцией пишет проверку с пределом и числом повторов из настроек, строки случаев и задачу ведущего с номером проверки. Задачу ведущего в этой транзакции создаёт `runtime.tasks.create` с транзакцией вызывающего: сегодня `TaskControl.create` открывает свою, и без этой правки runtime старт одной транзакцией невозможен.
 - `EvalCheckHandler` — порт `TaskHandler` типа `eval_check`: версию и судью он берёт из `LibraryService`, копию случая — из `FeedbackService.caseDetail`, вход ребёнка — из `agents.sessions.prepareRun`.
 - Версии, кандидат и включение — операции `LibraryService` на маршрутах `admin-library.controller.ts` (Flow 1).
 
@@ -544,16 +544,18 @@ sequenceDiagram
 
 **Для части `loop`** (операции внутри `apps/api`)
 
-- **`LibraryService.saveCandidate(recordId, body, savedBy)`** — кандидат по правилам маршрута; `savedBy` — администратор или `analysis`. Возвращает `VersionSummary`.
+- **`LibraryService.saveCandidate(recordId, body, savedBy)`** — кандидат по правилам маршрута; `savedBy` — администратор или `analysis`. Операция принимает транзакцию вызывающего и администратора, от имени которого сохраняет. Для `savedBy` = `analysis` это владелец цикла: права и выбор системы считаются для него, как у маршрута, а аудит `library_candidate` называет его и `analysis`. Возвращает `VersionSummary`.
+- **`LibraryService.systemVersions()`** — системные записи панели: `recordId`, `kind`, `name`, `builtinKey`, рабочая версия и признак «есть кандидат».
 - **`LibraryService.version(recordId, version)`** — содержимое версии как `ResolvedRecord` уровнем панели или `null`.
 - **`LibraryService.enableVersion(recordId, version, by)`** и **`rejectVersion(recordId, version, by)`** — правила и аудит маршрутов.
 - **`EvalService.startCheck(request, parent?)`** — `request` — поля `StartCheckBody` и администратор. Без `parent` ведущий — корень своего дерева. С `parent` — транзакцией и `effects` шага задачи `loop` — ведущий становится её ребёнком: конец проверки приходит ей `child_finished`, а предел действует на всё её дерево. Возвращает номер проверки; отказы — как у маршрута.
+- **`EvalService.runningCheck(recordId)`** — номер идущей проверки записи без случая (не повтора одного случая) или `null`.
 - **`EvalService.check(checkId)`** — `CheckView` или `null`. Итог каждого случая несёт `holdout`, и итоги контрольных `loop` анализатору не передаёт.
 
 **Что эта часть добавляет к `feedback` и пакетам**
 
 - **`FeedbackService.rate`** ставит `holdout` (KD-6); `CaseRef`, `CaseSummary` и `CaseDetail` получают поле `holdout`.
-- **`StartSource` `supplied`** — запись, которую вызывающий уже прочёл (`ResolvedRecord`): `resolveStart` проверяет её модель и строит снимок с её происхождением и версией, не спрашивая библиотеку.
+- **`StartSource` `supplied`** — запись, которую вызывающий уже прочёл (`ResolvedRecord`): `resolveStart` проверяет её модель и строит снимок с её происхождением и версией, не спрашивая библиотеку. Передавать `supplied` может только код, который сам прочёл эту версию записи с условием панели от имени администратора: ведущий проверки и ведущий цикла `loop` для анализатора.
 - **`agents.sessions.prepareRun(request)`** — вход: владелец, запись `supplied`, задание, описание, метка записи, необязательный префикс и `check` с `asRoot` и `capUsd`. Возвращает тип `agent` и вход для `effects.spawn` или отказ `resolveStart`.
 - **`judgeTask(case, attempt)`** — задание судьи: вид оценки и комментарий, вопрос и ответ хода из случая, прежний отчёт этой записи из копии (у `chat` — ответ хода), новый ответ попытки и исходы, допустимые для вида оценки. Судья стартует через `prepareRun` с тем же `check` (`capUsd` проверки, `asRoot` = `false`), поэтому предел и отказы действуют и на него.
 - **`agents.sessions.droppedTools(agentId)`** — серверы и инструменты снимка агента, которые `sessionTools` не отдаёт его владельцу: сервер выключен, нет права или нет аккаунта OAuth.
@@ -561,6 +563,7 @@ sequenceDiagram
 - **`ToolRefusalReasonSchema`** получает `check_run`, **`AgentFailureReasonSchema`** — `spend_cap`; проверки базы на `agent_tool_calls` и `agent_code_calls` расширяет миграция.
 - **`runtime.ledger.spendOfRoot(rootId)`** — сумма стоимости вызовов моделей всех задач дерева.
 - **`runtime.tasks.deleteTree(taskId, ownerId)`** принимает и законченную задачу не в корне и удаляет её с потомками; корень удаляется как сейчас, поэтому удаление беседы не меняется.
+- **`runtime.tasks.create(request, tx?)`** принимает необязательную транзакцию вызывающего: с ней строка задачи и её событие `task.created` пишутся в этой транзакции, а повторы при конфликте — забота вызывающего. Без `tx` операция, как сейчас, открывает свою транзакцию с повторами, поэтому прежние вызовы не меняются. `EvalService.startCheck` без `parent` создаёт задачу ведущего этой операцией.
 
 **`VersionSummary`**
 
@@ -731,3 +734,4 @@ stateDiagram-v2
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-19 | Первая версия |
+| 1.1 | 2026-11-19 | Правки для части `loop`: `runtime.tasks.create` с транзакцией вызывающего, `saveCandidate` в транзакции и от имени администратора, `systemVersions`, `runningCheck`, кто передаёт `supplied`. Утверждён: владелец работает автономно на рекомендуемых вариантах |
