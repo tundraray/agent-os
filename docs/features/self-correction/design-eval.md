@@ -79,7 +79,7 @@
 - **Part**: `eval`
 - **Covers**: FR-07–FR-13, FR-20, FR-21; NFR-01 (маршруты этой части), NFR-03, NFR-04 (вход прогонов и судьи), NFR-05, NFR-07 (разделы панели этой части)
 - **Depends on**: [design-feedback.md](./design-feedback.md#contract-definitions), «Для частей `eval` и `loop`»
-- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0012](../../adr/ADR-0012-closed-api-and-server-issued-employee-id.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md), [ADR-0016](../../adr/ADR-0016-library-records-and-visibility.md), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md); тест трёх условий для нового ADR проходят KD-1 и прогоны вне беседы (KD-2, KD-3)
+- **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md), [ADR-0012](../../adr/ADR-0012-closed-api-and-server-issued-employee-id.md), [ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md), [ADR-0016](../../adr/ADR-0016-library-records-and-visibility.md), [ADR-0017](../../adr/ADR-0017-run-snapshots-from-library.md); тест трёх условий для нового ADR проходят KD-1 ([ADR-0018](../../adr/ADR-0018-library-record-version-history.md)) и прогоны вне беседы (KD-2, KD-3 вместе с пределом KD-4 — [ADR-0019](../../adr/ADR-0019-check-runs-outside-conversation.md))
 - **Sibling parts**: `feedback` — его операции эта часть потребляет; `loop` (FR-14–FR-18) потребляет [Contract Definitions](#contract-definitions), «Для части `loop`»
 
 **Out of scope**
