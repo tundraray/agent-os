@@ -30,3 +30,4 @@
 
 - [design-library.md](../../features/custom-agents/design-library.md) — KD-9: `defaultMaxTurns`
 - [design-feedback.md](../../features/self-correction/design-feedback.md) — KD-6: `caseRetentionDays`
+- [design-eval.md](../../features/self-correction/design-eval.md) — `holdoutPercent`, `spendCapUsd`, `checkRepeats`

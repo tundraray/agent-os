@@ -30,3 +30,4 @@
 - [design-runtime.md](../../features/agent-platform/design-runtime.md) — порт `TaskHandler`, Flow 1–4
 - [design-agents.md](../../features/agent-platform/design-agents.md) — `AgentStepHandler`: шаг модели и шаг инструментов, намерение перед изменяющим вызовом
 - [design-access.md](../../features/enterprise-access/design-access.md) — отказ модели и исчерпанная квота завершают агента итогом «упасть» с причиной (KD-5)
+- [design-eval.md](../../features/self-correction/design-eval.md) — второй тип задачи `eval_check` в `apps/api` ([driver-task.md](./driver-task.md)); отказ `check_run` и падение `spend_cap` в шагах агента (KD-3, KD-4)
