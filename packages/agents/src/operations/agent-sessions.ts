@@ -239,11 +239,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     fields: Record<string, unknown>,
     work: () => Promise<T>,
     outcomeOf: (result: T) => Record<string, unknown> = () => ({}),
+    /** The level of the success record: `debug` for an operation called on every runtime event. */
+    level: 'info' | 'debug' = 'info',
   ): Promise<T> {
     const startedAt = Date.now();
     try {
       const result = await work();
-      logger.info(`agents.${operation} answered`, {
+      logger[level](`agents.${operation} answered`, {
         ...fields,
         outcome: 'ok',
         ...outcomeOf(result),
@@ -670,6 +672,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { rootId },
         () => sessions.rootOwner(database, rootId),
         (ownerId) => ({ ownerId: ownerId ?? null }),
+        // The live hub asks on every runtime event of every running agent.
+        'debug',
       );
     },
 

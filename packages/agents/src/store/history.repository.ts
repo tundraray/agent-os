@@ -2,11 +2,27 @@ import {
   CALL_RECORD_KINDS,
   type HistoryEntryKind,
   HistoryEntryKindSchema,
+  type ToolOutcome,
   ToolOutcomeSchema,
 } from '@agent-os/contracts';
-import { agentMessages } from '@agent-os/db';
+import { type agentCodeCalls, agentMessages } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, asc, count, desc, eq, gt, gte, inArray, lte, max, notInArray, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  lte,
+  max,
+  notInArray,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 
 import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history.js';
 import { START_AGENT_TOOL } from '../tools/builtin/start-agent.js';
@@ -66,6 +82,38 @@ function promoted(entry: NewHistoryEntry) {
 }
 
 const isResult = eq(agentMessages.kind, 'tool_result');
+
+/** Calls that finished in (`after`, `through`]; `after` null — no lower bound. */
+export interface FinishedWindow {
+  readonly after: Date | null;
+  readonly through: Date;
+}
+
+/** `finished_at` within the window, for either table of calls. */
+export function finishedIn(
+  finishedAt: typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
+  window: FinishedWindow,
+): SQL | undefined {
+  return and(
+    isNotNull(finishedAt),
+    lte(finishedAt, window.through),
+    window.after === null ? undefined : gt(finishedAt, window.after),
+  );
+}
+
+/** A finished MCP call of some tasks: what both tables of calls give a reader of many sessions. */
+export interface FinishedMcpCall<O extends ToolOutcome> {
+  readonly server: string;
+  readonly tool: string;
+  readonly outcome: O;
+  readonly args: unknown;
+  readonly finishedAt: Date;
+}
+
+/** A text field of a `tool_result`'s content. */
+function resultField(name: string): SQL<string | null> {
+  return sql<string | null>`${agentMessages.content} ->> ${name}`;
+}
 
 /**
  * `agent_messages` inside the caller's transaction (repository over a transaction): an append-only
@@ -220,6 +268,51 @@ export const history = {
         ),
       );
     return row?.started ?? 0;
+  },
+
+  /**
+   * The direct MCP calls of the tasks with one of the outcomes, finished in the window: their
+   * `tool_result` entries, read through the promoted `finished_at` (`agent_messages_result_idx`), by end
+   * time. Results of one task that ended at the same moment keep the order they were written in, which
+   * is the order of their calls.
+   */
+  async mcpResults<O extends ToolOutcome>(
+    reader: StoreReader,
+    taskIds: readonly string[],
+    outcomes: readonly O[],
+    window: FinishedWindow,
+  ): Promise<(FinishedMcpCall<O> & { readonly text: string })[]> {
+    const server = resultField('server');
+    const outcome = resultField('outcome');
+    const rows = await reader
+      .select({
+        server,
+        tool: resultField('tool'),
+        outcome,
+        args: sql<unknown>`${agentMessages.content} -> 'args'`,
+        text: resultField('text'),
+        finishedAt: agentMessages.finishedAt,
+      })
+      .from(agentMessages)
+      .where(
+        and(
+          inArray(agentMessages.taskId, [...taskIds]),
+          isResult,
+          isNotNull(server),
+          inArray(outcome, [...outcomes]),
+          finishedIn(agentMessages.finishedAt, window),
+        ),
+      )
+      .orderBy(asc(agentMessages.finishedAt), asc(agentMessages.taskId), asc(agentMessages.seq));
+    // The query keeps only rows with a server, one of the outcomes and an end time.
+    return rows.map((row) => ({
+      server: row.server as string,
+      tool: row.tool as string,
+      outcome: row.outcome as O,
+      args: row.args,
+      text: row.text ?? '',
+      finishedAt: row.finishedAt as Date,
+    }));
   },
 
   /** How many tool calls the agent's answers requested: the count of a child's report. */
