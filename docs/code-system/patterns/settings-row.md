@@ -29,3 +29,4 @@
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — `identity_settings`: срок сеанса и публичный адрес
 - [design-library.md](../../features/custom-agents/design-library.md) — `library_settings`: лимит ходов новой записи
 - [design-core.md](../../features/self-learning/design-core.md) — `agent_knowledge_settings` в пакете `agents`: предел знаний и выключатель уроков (KD-7)
+- [design-core.md](../../features/model-providers/design-core.md) — `access_model_defaults` в модуле `access`: модели чата и эмбеддингов по умолчанию (KD-5)
