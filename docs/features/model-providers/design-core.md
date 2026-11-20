@@ -1,6 +1,6 @@
 # Провайдеры моделей — Design Document — core
 
-**Status:** На утверждении · **Date:** 2026-11-20 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** ничего — первая часть
+**Status:** Approved · **Date:** 2026-11-20 · **PRD:** [prd.md](./prd.md) · **UXRD:** [uxrd.md](./uxrd.md) · **Depends on:** ничего — первая часть
 
 ## Snapshot
 
@@ -14,7 +14,7 @@
 
 #### KD-1: Реестр провайдеров — таблица `agent_model_providers` пакета `agents`; каталог ссылается на провайдера первой частью id модели, текстом без внешнего ключа; адрес и ключ читаются из базы на каждом вызове, без кэша
 
-Модель вызывает пакет `agents`, поэтому ключ хранится там, где его отправляют, и не пересекает границу пакета. Так же устроен реестр MCP-серверов ([ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md)). Каталог моделей остаётся в модуле `access` ([ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md)), и связь «модель → провайдер» — текст, как у права на MCP-сервер. Факт другой стороны границы — вид провайдера при добавлении модели, число моделей провайдера при его удалении — контроллер читает сам и передаёт входом операции ([port-module-split.md](../../code-system/patterns/port-module-split.md)). Чтение строки по первичному ключу стоит доли миллисекунды против секунд вызова модели и укладывается в бюджет NFR-02, а смена ключа видна со следующего вызова на любом экземпляре API. Переменные `ANTHROPIC_API_KEY`, `AGENTS_ANTHROPIC_BASE_URL`, `AGENT_DEFAULT_MODEL`, поля `AgentsConfig` и `createResolveModel` удаляются без замены (FR-02).
+Решение записано в [ADR-0019](../../adr/ADR-0019-model-provider-registry-in-agents.md). Модель вызывает пакет `agents`, поэтому ключ хранится там, где его отправляют, и не пересекает границу пакета. Так же устроен реестр MCP-серверов ([ADR-0014](../../adr/ADR-0014-mcp-registry-owned-by-agents.md)). Каталог моделей остаётся в модуле `access` ([ADR-0015](../../adr/ADR-0015-access-gate-and-model-catalogue.md)), и связь «модель → провайдер» — текст, как у права на MCP-сервер. Факт другой стороны границы — вид провайдера при добавлении модели, число моделей провайдера при его удалении — контроллер читает сам и передаёт входом операции ([port-module-split.md](../../code-system/patterns/port-module-split.md)). Чтение строки по первичному ключу стоит доли миллисекунды против секунд вызова модели и укладывается в бюджет NFR-02, а смена ключа видна со следующего вызова на любом экземпляре API. Переменные `ANTHROPIC_API_KEY`, `AGENTS_ANTHROPIC_BASE_URL`, `AGENT_DEFAULT_MODEL`, поля `AgentsConfig` и `createResolveModel` удаляются без замены (FR-02).
 
 Не взяты: провайдеры в `access` с ключом в ответе `AccessGate` — ключ ходил бы через порт на каждый вызов, а состояние провайдера смешалось бы с правами. Новый пакет — у реестра нет второго потребителя. Кэш клиентов со сбросом при записи — не видит ключ, сменённый на другом экземпляре; ADR-0015 отверг такой кэш для прав по той же причине.
 
@@ -32,7 +32,7 @@ AI SDK уже приводит три вида к одной форме: пот�
 
 #### KD-4: id модели — `<провайдер>/<имя у провайдера>`, разрез по первой косой черте; у модели каталога появляются назначение и размерность; провайдер — первая часть id, отдельного столбца нет
 
-Форму задаёт PRD, а id `anthropic/…` в правах, квотах, записях и журнале ей уже соответствуют, поэтому данные не мигрируют (AC-05.4). Имя у провайдера может содержать косую черту, как `Qwen/Qwen3-32B` у vLLM. Провайдера из id достаёт одна функция `modelProvider` в `contracts`, а все проверки `anthropic/` удаляются. Назначение модели — `chat` или `embedding`; модель эмбеддингов хранит цену ввода, нули в остальных ставках и неизменную размерность.
+Форму задаёт PRD, решение записано в [ADR-0018](../../adr/ADR-0018-model-id-provider-prefix.md), а id `anthropic/…` в правах, квотах, записях и журнале ей уже соответствуют, поэтому данные не мигрируют (AC-05.4). Имя у провайдера может содержать косую черту, как `Qwen/Qwen3-32B` у vLLM. Провайдера из id достаёт одна функция `modelProvider` в `contracts`, а все проверки `anthropic/` удаляются. Назначение модели — `chat` или `embedding`; модель эмбеддингов хранит цену ввода, нули в остальных ставках и неизменную размерность.
 
 Не взяты: столбец провайдера — второе место для того же значения. Отдельная таблица моделей эмбеддингов — права, удаление и список каталога пришлось бы удвоить.
 
@@ -79,6 +79,7 @@ AI SDK уже приводит три вида к одной форме: пот�
 - Особые настройки вызова одного вида: рассуждения, фильтры безопасности, свой предел вывода или окна контекста у модели. Все виды берут общий `AGENT_MAX_OUTPUT_TOKENS` и общий порог сжатия `AGENT_COMPACT_AT_TOKENS`.
 - Встроенные записи, уже посеянные на существующей базе разработчика, сохраняют свою модель `anthropic/…` и не следуют модели по умолчанию, пока базу не создали заново: записи не мигрируют.
 - Подпись рассуждений Gemini в истории вызовов инструментов не хранится (Risks).
+- `RecordSummary` не получает модель записи и её готовность: пометка «модель не работает» есть на странице записи и в редакторе, но не в строке списка библиотеки.
 
 **Constraints**
 
@@ -531,25 +532,28 @@ sequenceDiagram
 
 #### Для части `web`
 
-Все маршруты ниже — под `@AdminOnly()`: не администратор получает 403 `ADMIN_REQUIRED`. Тело проверяет схема из `contracts`; нарушение — 400 `VALIDATION_FAILED`. Ни один ответ не содержит значения ключа.
+Все маршруты ниже — под `@AdminOnly()`: не администратор получает 403 `ADMIN_REQUIRED`. Тело проверяет схема из `contracts`; нарушение — 400 `VALIDATION_FAILED`. Ни один ответ не содержит значения ключа. Формы провайдеров моделей названы с префиксом `ModelProvider`: имена `ProviderView`, `CreateProviderBody` и `UpdateProviderBody` в `identity.ts` и маршрут `/api/admin/providers` принадлежат провайдерам входа. Где каждая форма лежит в `contracts`, показывает таблица в конце раздела.
 
-- **`GET /api/admin/model-providers`** — провайдеры по имени. Returns список `ProviderView`.
-- **`POST /api/admin/model-providers`** — заводит провайдера из `name`, `kind`, необязательных `baseUrl` и `apiKey`; провайдер включён. Returns 201 `ProviderView`. Имя занято — 409 `MODEL_PROVIDER_NAME_TAKEN`.
-- **`GET /api/admin/model-providers/:name`** — один провайдер. Returns `ProviderView`; нет такого — 404 `MODEL_PROVIDER_NOT_FOUND`.
-- **`PATCH /api/admin/model-providers/:name`** — меняет любое из `baseUrl` (`null` — адрес вида по умолчанию), `apiKey` (`null` — убрать ключ) и `enabled`; имя и вид не меняются. Returns `ProviderView`; 404 как выше.
+- **`GET /api/admin/model-providers`** — провайдеры по имени. Returns список `ModelProviderView`.
+- **`POST /api/admin/model-providers`** — тело `CreateModelProviderBody`: `name`, `kind`, необязательные `baseUrl` и `apiKey`; провайдер включён. Returns 201 `ModelProviderView`. Имя занято — 409 `MODEL_PROVIDER_NAME_TAKEN`.
+- **`GET /api/admin/model-providers/:name`** — один провайдер. Returns `ModelProviderView`; нет такого — 404 `MODEL_PROVIDER_NOT_FOUND`.
+- **`PATCH /api/admin/model-providers/:name`** — тело `UpdateModelProviderBody`: любое из `baseUrl` (`null` — адрес вида по умолчанию), `apiKey` (`null` — убрать ключ) и `enabled`; имя и вид не меняются. Returns `ModelProviderView`; 404 как выше.
 - **`DELETE /api/admin/model-providers/:name`** — удаляет провайдера без моделей в каталоге. Returns 204. У провайдера есть модели — 409 `MODEL_PROVIDER_HAS_MODELS` с числом моделей в `count` (AC-01.3); 404 как выше.
-- **`POST /api/admin/model-providers/:name/check`** — один запрос к провайдеру с сохранёнными адресом и ключом, без вызова модели (FR-15). Returns `ProviderCheck`; 404 как выше.
-- **`GET /api/admin/models`**, **`POST`**, **`PATCH /:id`**, **`DELETE /:id`** — каталог, как сегодня, в новой форме `CatalogModel`. Добавление модели к несуществующему провайдеру — 422 `MODEL_PROVIDER_INVALID` с причиной `provider_unknown` (AC-05.3); модель эмбеддингов к провайдеру вида Anthropic — та же ошибка с причиной `embeddings_not_supported` (AC-05.2). Удаление модели по умолчанию снимает выбор (DC-6).
+- **`POST /api/admin/model-providers/:name/check`** — один запрос к провайдеру с сохранёнными адресом и ключом, без вызова модели (FR-15). Returns `ModelProviderCheck`; 404 как выше.
+- **`GET /api/admin/models`** — каталог по имени. Returns список `CatalogModel`.
+- **`POST /api/admin/models`** — тело `CreateCatalogModelBody`, объединение по `purpose`: у обоих `id` целиком (`<провайдер>/<имя у провайдера>`) и `name`; у `chat` — `prices` и `longContext`, как сегодня; у `embedding` — `inputUsdPerMTok` и `dimensions`. Returns `CatalogModel`.
+- **`PATCH /api/admin/models/:id`** — тело `UpdateCatalogModelBody`: один строгий объект, хотя бы одно из `name`, `prices`, `longContext` и `inputUsdPerMTok`. Модель чата меняет первые три, модель эмбеддингов — `name` и `inputUsdPerMTok`; на поле другого назначения `AccessService`, прочитав назначение строки, отвечает 400 `VALIDATION_FAILED`. **`DELETE /api/admin/models/:id`** — как сегодня.
+- Правила каталога: добавление модели к несуществующему провайдеру — 422 `MODEL_PROVIDER_INVALID` с причиной `provider_unknown` (AC-05.3); модель эмбеддингов к провайдеру вида Anthropic — та же ошибка с причиной `embeddings_not_supported` (AC-05.2). Удаление модели по умолчанию снимает выбор (DC-6).
 - **`GET /api/admin/model-defaults`** — модели по умолчанию. Returns `ModelDefaults`.
-- **`PUT /api/admin/model-defaults`** — задаёт `chatModel` и `embeddingModel`, каждое — id модели каталога или `null`. Returns `ModelDefaults`. Модели нет в каталоге или она не своего назначения — 422 `MODEL_DEFAULT_INVALID` с причиной `model_unknown`, `not_chat` или `not_embedding` (AC-06.2).
+- **`PUT /api/admin/model-defaults`** — тело `UpdateModelDefaultsBody`: `chatModel` и `embeddingModel`, каждое — id модели каталога или `null`. Returns `ModelDefaults`. Модели нет в каталоге или она не своего назначения — 422 `MODEL_DEFAULT_INVALID` с причиной `model_unknown`, `not_chat` или `not_embedding` и отклонённым id в `model` (AC-06.2).
 - **`POST /api/admin/grants`** — как сегодня; право на модель эмбеддингов — 422 `GRANT_INVALID` с причиной `embedding_model` (DC-5).
 - **`GET /api/access/models`** («Мой доступ») — только модели чата; каждая получает `unavailableReason`: `null`, если провайдер готов, иначе `provider_missing`, `provider_disabled` или `provider_key_missing`. По этому полю веб прячет модель из выбора и помечает запись, которая на ней не запустится (`uxrd.md` MP-08). Контроллер переезжает в `AccessAdminModule`, потому что читает готовность провайдеров у `Agents` ([port-module-split.md](../../code-system/patterns/port-module-split.md)).
 - **`GET /api/library/choices`** — `defaultModel` становится `null`, пока модель чата по умолчанию не выбрана.
 - **`POST /api/library/...`, содержимое записи** — модель записи может быть `null`: запись работает на модели чата по умолчанию. Посев ставит `null` во встроенные записи, кроме координатора `deep-research` (KD-5).
-- **Отказ старта** — 409 `START_REFUSED` получает причины `model_not_configured`, `provider_missing`, `provider_disabled`, `provider_key_missing` с полем `model` (AC-02.1, AC-09.1). Те же четыре причины получает исход `refused` вызова `start_agent` и `start_workflow` (`ToolRefusalReasonSchema`), с моделью в `refusalDetail`: так отказ видит блок вызова в беседе (AC-09.1, `uxrd.md` MP-09).
+- **Отказ старта** — 409 `START_REFUSED` получает причины `model_not_configured`, `provider_missing`, `provider_disabled`, `provider_key_missing` с полем `model`; у `model_not_configured` оно `null` (AC-02.1, AC-09.1). Те же четыре причины получает исход `refused` вызова `start_agent` и `start_workflow` (`ToolRefusalReasonSchema`), с моделью в `refusalDetail`: так отказ видит блок вызова в беседе (AC-09.1, `uxrd.md` MP-09).
 - **Сбой агента** — `failureReason` получает `provider_missing`, `provider_disabled`, `provider_key_missing`, `provider_key_rejected`, `provider_unavailable`, `provider_tools_rejected`; `model_error` остаётся для прочих ошибок провайдера.
 
-**`ProviderView`**
+**`ModelProviderView`**
 
 - `name` — имя провайдера и первая часть id его моделей.
 - `kind` — `anthropic`, `gemini` или `openai_compatible`.
@@ -559,17 +563,32 @@ sequenceDiagram
 - `state` — `ready`, `disabled` или `key_missing`.
 - `catalogModels` — число моделей провайдера в каталоге; контроллер берёт его у `AccessService`.
 
-**`ProviderCheck`**
+**`ModelProviderCheck`**
 
 - `result` — `works`, `key_rejected` или `unreachable`.
 - `message` — статус и текст ответа провайдера до 500 символов, через маску секретов; `null` при `works`.
 
-**`CatalogModel`** — объединение по `purpose`, у обоих `id`, `name` и `provider` (первая часть id):
+**`CatalogModel`** — строка ответа со своей схемой; сегодня она псевдоним тела добавления, и веб разбирает список этой схемой. Объединение по `purpose`, у обоих `id`, `name` и `provider` (первая часть id):
 
 - `purpose: 'chat'` — `prices` и `longContext`, как сегодня.
-- `purpose: 'embedding'` — `inputUsdPerMTok` и `dimensions` (целое от 1 до 4096). Изменение меняет только `name` и `inputUsdPerMTok`.
+- `purpose: 'embedding'` — `inputUsdPerMTok` и `dimensions` (целое от 1 до 4096).
 
 **`ModelDefaults`** — `chatModel` и `embeddingModel`, каждое id или `null`; `updatedAt` и `updatedBy` — `null`, пока значения ни разу не задавали.
+
+**Где изменения ложатся в `packages/contracts/src`**
+
+| Модуль | Имя | Изменение |
+|---|---|---|
+| `model-providers.ts`, новый, по образцу `mcp.ts` | `ModelProviderNameSchema`, `MODEL_PROVIDER_NAME_MAX_LENGTH`, `MODEL_PROVIDER_API_KEY_MIN_LENGTH`, `MODEL_PROVIDER_API_KEY_MAX_LENGTH` | имя провайдера и границы ключа 32, 8 и 512 (FR-01) |
+| `model-providers.ts` | `ModelProviderKindSchema`, `ModelProviderViewSchema`, `ModelProviderCheckSchema`, `CreateModelProviderBodySchema`, `UpdateModelProviderBodySchema`, `ModelProviderErrorCode` | формы выше; коды `MODEL_PROVIDER_NOT_FOUND`, `MODEL_PROVIDER_NAME_TAKEN`, `MODEL_PROVIDER_HAS_MODELS` |
+| `access.ts` | `ModelIdSchema`, `modelProvider` | первая часть id — по `ModelProviderNameSchema`, после первой косой черты — непустое имя без пробелов, косая черта в нём допустима (KD-4) |
+| `access.ts` | `CatalogModelSchema`, `CreateCatalogModelBodySchema`, `UpdateCatalogModelBodySchema`, `ModelDefaultsSchema`, `UpdateModelDefaultsBodySchema` | формы и тела выше; назначение при изменении проверяет сервис, не схема |
+| `access.ts` | `AccessErrorCode`, `ModelProviderInvalidReasonSchema`, `ModelDefaultInvalidReasonSchema`, `ModelDefaultInvalidErrorSchema` | коды `MODEL_PROVIDER_INVALID` и `MODEL_DEFAULT_INVALID` с их причинами; ошибка моделей по умолчанию несёт `model` |
+| `access.ts` | `GrantInvalidReasonSchema` | причина `embedding_model` |
+| `access.ts` | `MyModelSchema`, `ModelUnavailableReasonSchema` | `unavailableReason`: `null`, `provider_missing`, `provider_disabled` или `provider_key_missing` |
+| `agents.ts`, `threads.ts` | `ToolRefusalReasonSchema`, `StartRefusedErrorSchema` | четыре причины отказа старта; `model` у `model_not_configured` — `null` |
+| `agents.ts` | `AgentFailureReasonSchema` | шесть причин `provider_*` из «Сбой агента» |
+| `library.ts` | `LibraryChoicesSchema`, `AgentContentSchema`, `WorkflowContentSchema` | `defaultModel` и модель агента, координатора и исполнителя могут быть `null` |
 
 #### Внутри платформы
 
@@ -597,7 +616,7 @@ sequenceDiagram
 - `MODEL_PROVIDER_NAME_TAKEN` — 409 при добавлении.
 - `MODEL_PROVIDER_HAS_MODELS` — 409 при удалении, с `count`.
 - `MODEL_PROVIDER_INVALID` — 422 при добавлении модели, с `reason`.
-- `MODEL_DEFAULT_INVALID` — 422 при выборе модели по умолчанию, с `reason`.
+- `MODEL_DEFAULT_INVALID` — 422 при выборе модели по умолчанию, с `reason` и `model`.
 
 ### Data Model
 
@@ -733,3 +752,4 @@ sequenceDiagram
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-20 | Initial version |
+| 1.1 | 2026-11-20 | Approved; формы провайдеров моделей названы `ModelProvider…`, тела каталога и модуль `contracts` для каждого изменения названы, `MODEL_DEFAULT_INVALID` несёт `model`, ссылки на ADR-0018 и ADR-0019 |
