@@ -20,7 +20,6 @@ import type { SendMessageResponse } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
-  conversationView,
   conversationWithTurns,
   threadList,
   threadSummary,
@@ -169,14 +168,10 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
         return HttpResponse.json(body, { status: 202 });
       }),
       http.get(`${API}/api/threads/t-1/history`, () =>
-        HttpResponse.json(
-          accepted
-            ? conversationWithTurns(threadT1, ['Составь план', 'Готово.'])
-            : conversationView({
-                thread: threadT1,
-                chat: { status: 'new', failureReason: null, rootAgentId: null, model: null },
-              }),
-        ),
+        // Before its first message the conversation does not exist: a read is 404, as on the server.
+        accepted
+          ? HttpResponse.json(conversationWithTurns(threadT1, ['Составь план', 'Готово.']))
+          : HttpResponse.json({ statusCode: 404, message: 'Thread not found', errorCode: 'THREAD_NOT_FOUND' }, { status: 404 }),
       ),
       http.get(`${API}/api/threads/t-1`, () => HttpResponse.json(threadSummary({ id: 't-1', title: null }))),
     );
@@ -253,14 +248,6 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
       }),
       http.get(`${API}/api/threads/:id`, ({ params }) =>
         HttpResponse.json(threadSummary({ id: String(params.id), title: null })),
-      ),
-      http.get(`${API}/api/threads/:id/history`, ({ params }) =>
-        HttpResponse.json(
-          conversationView({
-            thread: threadSummary({ id: String(params.id), title: null }),
-            chat: { status: 'new', failureReason: null, rootAgentId: null, model: null },
-          }),
-        ),
       ),
       http.post(`${API}/api/threads/:id/messages`, () =>
         HttpResponse.json(

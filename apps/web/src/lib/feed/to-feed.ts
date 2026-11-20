@@ -160,11 +160,11 @@ export type ReportPartData = Extract<HistoryEntry, { kind: "child_report" }>["co
 export type EventPartData = Extract<HistoryEntry, { kind: "event" }>["content"] & {
   createdAt: string;
   /** The model of the agent whose feed this is (the conversation's root or the page's agent); QS-01 names it. */
-  model: string | null;
+  model: string;
 };
 
 /** `error` of the reply error block TH-08: the root's failure reason and model (MC-11). */
-export type ReplyErrorData = { reason: ChatFailureReason; model: string | null };
+export type ReplyErrorData = { reason: ChatFailureReason; model: string };
 
 /** `artifact` of a `tool-call` part: what tool-call.md shows besides arguments and result. */
 export type ToolCallArtifact = {

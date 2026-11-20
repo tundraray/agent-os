@@ -110,7 +110,7 @@ function QuotaFailureLine({ data }: { data: EventPartData }) {
     accessApi.modelsForFeed().then(
       (models) => {
         if (!current) return;
-        const row = model === null ? null : quotaRowOf(models, model, createdAt);
+        const row = quotaRowOf(models, model, createdAt);
         if (row === null) logger.warn("feed: quota failure without the model's spent row", { model, at: createdAt });
         setRead({ status: "ready", row, month: models.month });
       },
@@ -147,12 +147,9 @@ type NamesRead = { status: "loading" } | { status: "ready"; names: ModelNames | 
  */
 function ProviderFailureLine({ data, reason }: { data: EventPartData; reason: ProviderFailureReason }) {
   const { createdAt, model } = data;
-  const [read, setRead] = useState<NamesRead>(
-    model === null ? { status: "ready", names: undefined } : { status: "loading" },
-  );
+  const [read, setRead] = useState<NamesRead>({ status: "loading" });
 
   useEffect(() => {
-    if (model === null) return;
     let current = true;
     accessApi.modelsForFeed().then(
       (models) => {
@@ -169,7 +166,7 @@ function ProviderFailureLine({ data, reason }: { data: EventPartData; reason: Pr
     };
   }, [model, reason]);
 
-  const label = model === null ? undefined : formatModel(model, read.status === "ready" ? read.names : undefined);
+  const label = formatModel(model, read.status === "ready" ? read.names : undefined);
   const text = providerReasonText(reason, label);
   return (
     <div data-slot="provider-failure" className="flex min-w-0 flex-col">
