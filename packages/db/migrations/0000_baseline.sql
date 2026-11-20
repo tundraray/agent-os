@@ -244,15 +244,19 @@ CREATE TABLE "app"."agent_model_providers" (
 --> statement-breakpoint
 CREATE TABLE "app"."agent_sessions" (
 	"task_id" uuid PRIMARY KEY NOT NULL,
+	"parent_id" uuid,
+	"root_id" uuid NOT NULL,
 	"owner_id" text NOT NULL,
+	"title" text,
+	"updated_at" timestamp with time zone,
 	"name" text NOT NULL,
 	"description" text NOT NULL,
 	"model" text NOT NULL,
 	"prompt" text NOT NULL,
-	"record_id" uuid,
-	"record_kind" text,
-	"record_version" integer,
-	"record_name" text,
+	"record_id" uuid NOT NULL,
+	"record_kind" text NOT NULL,
+	"record_version" integer NOT NULL,
+	"record_name" text NOT NULL,
 	"author_id" uuid,
 	"author_name" text,
 	"builtin_key" text,
@@ -311,15 +315,6 @@ CREATE TABLE "app"."audit_events" (
 	"outcome" text NOT NULL,
 	"reason" text,
 	"at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "app"."chat_conversations" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"owner_id" text NOT NULL,
-	"title" text DEFAULT '' NOT NULL,
-	"root_id" uuid,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "app"."chat_drafts" (
@@ -567,7 +562,7 @@ ALTER TABLE "app"."agent_messages" ADD CONSTRAINT "agent_messages_task_id_agent_
 ALTER TABLE "app"."agent_sessions" ADD CONSTRAINT "agent_sessions_task_id_runtime_tasks_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."runtime_tasks"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_tool_calls" ADD CONSTRAINT "agent_tool_calls_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_tool_results" ADD CONSTRAINT "agent_tool_results_call_fk" FOREIGN KEY ("task_id","call_id") REFERENCES "app"."agent_tool_calls"("task_id","call_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "app"."chat_drafts" ADD CONSTRAINT "chat_drafts_conversation_id_chat_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."chat_conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."chat_drafts" ADD CONSTRAINT "chat_drafts_conversation_id_agent_sessions_task_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."identity_login_requests" ADD CONSTRAINT "identity_login_requests_provider_id_identity_providers_id_fk" FOREIGN KEY ("provider_id") REFERENCES "app"."identity_providers"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."identity_role_members" ADD CONSTRAINT "identity_role_members_role_id_identity_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "app"."identity_roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."identity_role_members" ADD CONSTRAINT "identity_role_members_user_id_identity_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "app"."identity_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -592,8 +587,8 @@ CREATE INDEX "agent_knowledge_runs_record_idx" ON "app"."agent_knowledge_runs" U
 CREATE INDEX "agent_knowledge_runs_extract_task_idx" ON "app"."agent_knowledge_runs" USING btree ("extract_task_id") WHERE "app"."agent_knowledge_runs"."extract_task_id" is not null;--> statement-breakpoint
 CREATE INDEX "agent_knowledge_runs_last_extract_task_idx" ON "app"."agent_knowledge_runs" USING btree ("last_extract_task_id") WHERE "app"."agent_knowledge_runs"."last_extract_task_id" is not null;--> statement-breakpoint
 CREATE INDEX "agent_sessions_owner_record_idx" ON "app"."agent_sessions" USING btree ("owner_id","record_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "chat_conversations_root_idx" ON "app"."chat_conversations" USING btree ("root_id");--> statement-breakpoint
-CREATE INDEX "chat_conversations_owner_page_idx" ON "app"."chat_conversations" USING btree ("owner_id","updated_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "agent_sessions_root_idx" ON "app"."agent_sessions" USING btree ("root_id");--> statement-breakpoint
+CREATE INDEX "agent_sessions_owner_page_idx" ON "app"."agent_sessions" USING btree ("owner_id","updated_at" DESC NULLS LAST,"task_id" DESC NULLS LAST) WHERE "app"."agent_sessions"."updated_at" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "chat_drafts_conversation_idx" ON "app"."chat_drafts" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "identity_role_members_user_idx" ON "app"."identity_role_members" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_roles_name_idx" ON "app"."identity_roles" USING btree (lower("name"));--> statement-breakpoint

@@ -7,7 +7,7 @@ import {
   type RecordBody,
   type SaveOwnRefusal,
 } from '@agent-os/contracts';
-import { chatConversations, chatDrafts } from '@agent-os/db';
+import { chatDrafts } from '@agent-os/db';
 import { and, asc, eq } from 'drizzle-orm';
 import type { Executor } from '../common/executor.js';
 
@@ -30,9 +30,9 @@ export interface Draft {
   readonly resolvedAt: Date | null;
 }
 
-/** What `draft_record` writes: the root's owner, its call and the proposed record. */
+/** What `draft_record` writes: the conversation — the id of its root session — its owner, the call and the proposed record. */
 export interface NewDraft {
-  readonly rootId: string;
+  readonly conversationId: string;
   readonly ownerId: string;
   readonly callId: string;
   readonly target: { readonly id: string; readonly version: number } | null;
@@ -82,24 +82,19 @@ const PENDING = DraftStateSchema.enum.pending;
 // transaction — the root step's commit for `draft_record`, the action's own for `DraftsService`.
 
 /**
- * Writes a draft into the conversation of the root `rootId` and its owner, turning the conversation's
- * waiting draft into `superseded` first (KD-6, DC-8): a conversation has at most one waiting draft.
- * `undefined` when no conversation of that owner has this root.
+ * Writes a draft into the conversation, turning the conversation's waiting draft into `superseded`
+ * first (KD-6, DC-8): a conversation has at most one waiting draft. The caller is the conversation's
+ * root, in its own step; the foreign key refuses an id that is no session.
  */
-export async function insertDraft(executor: Executor, draft: NewDraft): Promise<Draft | undefined> {
-  const [conversation] = await executor
-    .select({ id: chatConversations.id })
-    .from(chatConversations)
-    .where(and(eq(chatConversations.rootId, draft.rootId), eq(chatConversations.ownerId, draft.ownerId)));
-  if (conversation === undefined) return undefined;
+export async function insertDraft(executor: Executor, draft: NewDraft): Promise<Draft> {
   await executor
     .update(chatDrafts)
     .set({ state: DraftStateSchema.enum.superseded, resolvedAt: new Date() })
-    .where(and(eq(chatDrafts.conversationId, conversation.id), eq(chatDrafts.state, PENDING)));
+    .where(and(eq(chatDrafts.conversationId, draft.conversationId), eq(chatDrafts.state, PENDING)));
   const [row] = await executor
     .insert(chatDrafts)
     .values({
-      conversationId: conversation.id,
+      conversationId: draft.conversationId,
       ownerId: draft.ownerId,
       callId: draft.callId,
       kind: draft.body.kind,

@@ -40,7 +40,10 @@ export interface AgentView {
   readonly depth: number;
   /** The run's name from its snapshot. */
   readonly name: string;
-  /** The record the run started from; `null` for a conversation's root. */
+  /**
+   * The record the run started from; `null` for a root, which the employee sees as the conversation
+   * itself and not as a run of a record (its session row does carry the builtin record `chat`).
+   */
   readonly origin: RunOrigin | null;
   /** The owner had no earlier session with this record. */
   readonly firstRun: boolean;
@@ -69,7 +72,7 @@ export function toAgentView(task: Task, session: Session, pendingInterrupt: bool
     rootId: task.rootId,
     depth: task.depth,
     name: session.name,
-    origin: session.origin,
+    origin: task.parentId === null ? null : session.origin,
     firstRun: session.firstRun,
     description: session.description,
     model: session.model,

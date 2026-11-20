@@ -7,7 +7,7 @@
 // Started as `it.todo` skeletons; the Given/When/Then comments are the rows' specification. Tests are written with their tasks and run once, at the end of the part (project rule "Tests only at the end").
 // The existing `chat-threads`, `app` and `threads` specs and the Mastra-based `test/support` (seed, countMessages, rawMessageContents, createTestMastra, mockModels) are deleted or rewritten by the implementation tasks (Design Doc, "Сборка и что уходит"); this file does not touch them.
 //
-// Light test process (CLAUDE.md "Tests"): skeletons exist only where a defect is invisible below this level - the HTTP edge, the SSE stream and the NOTIFY hub over a real database, the first-send row lock, the new `chat_conversations` table, and the owner check of every route. Already proven by the lower parts and NOT repeated here:
+// Light test process (CLAUDE.md "Tests"): skeletons exist only where a defect is invisible below this level - the HTTP edge, the SSE stream and the NOTIFY hub over a real database, the first send that creates the root session a conversation is, and the owner check of every route. Already proven by the lower parts and NOT repeated here:
 // step recovery and the process-kill matrix, inbox order and single delivery, the fence, the closure of a stopped tree (runtime INT-1..INT-3, E2E-1); the owner check of the `runtime_*` operations and the ledger/month window/cost rule (runtime INT-4, INT-5); the history loop, interrupt/stop internals, report routing between agents, turn limit, the tool gate and the confirmation lifecycle
 // (agents INT-1..INT-4); the brief decision mechanics, the coordinator and the run view's content (workflows part). Here a lower-part behaviour appears only as the wiring that reaches the employee: the HTTP answer, the SSE note, the row the web re-reads.
 //
@@ -20,7 +20,7 @@
 // - Support to write alongside (test/support): createTestApp.ts (rewritten: `AppModule` with the scripted `ModelClient` and the fixture config), scriptedModel.ts (scenarios, latches, recorded inputs, title scenarios), sseClient.ts (parse, wait, record), fixtureLog.ts (read and filter the call log), api.ts (typed helpers over supertest validating bodies with the `packages/contracts` schemas: ConversationView, AgentPageView, AgentListPage, ApiErrorSchema).
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
-//   INT-4 unique defect: one route or the stream of the part that reads a conversation, an agent, a run, a decision or the spend by id without the owner check, or answers a foreign id differently from a missing one (a leak in itself), or hands another employee's `tree` note or text part to a stream. No lower test can see it: the runtime INT-4 and agents INT-4 cover only the `runtime_*` and `agent_*` operations, not `chat_conversations`, the controllers, the SSE hub or `GET /spend`;
+//   INT-4 unique defect: one route or the stream of the part that reads a conversation, an agent, a run, a decision or the spend by id without the owner check, or answers a foreign id differently from a missing one (a leak in itself), or hands another employee's `tree` note or text part to a stream. No lower test can see it: the runtime INT-4 and agents INT-4 cover only the `runtime_*` and `agent_*` operations, not the conversation routes over the root sessions, the controllers, the SSE hub or `GET /spend`;
 //   NFR-06 asks one two-user test per access point and CLAUDE.md lists isolation first.
 //
 // E2E: 0 of 1-2 - the file `agent-platform-chat.e2e-spec.ts` is deliberately not generated. The user journey that crosses the browser (the composer, the stream drawn in the feed, the agent tray) belongs to the `web` part's E2E; the API half of the same journey is INT-1 over real HTTP and a real SSE stream. A child-process row here would only repeat the kill matrix of runtime E2E-1; the one restart-specific fact of this part (`ready` after the stream reconnects, state re-read gives the same rows) is INT-1 row E without killing the process.
@@ -413,7 +413,10 @@ const AGENT_ROUTES: readonly RouteCall[] = [
   { method: 'post', path: (id) => `/agents/${id}/restart` },
 ];
 
-/** The conversation routes that take an id (Contract «Беседы»); a foreign or missing id answers `THREAD_NOT_FOUND`. */
+/**
+ * The conversation routes that take an id (Contract «Беседы»), all but the send; a foreign or missing id
+ * answers `THREAD_NOT_FOUND`.
+ */
 const THREAD_ROUTES: readonly RouteCall[] = [
   { method: 'get', path: (id) => `/threads/${id}` },
   {
@@ -424,17 +427,20 @@ const THREAD_ROUTES: readonly RouteCall[] = [
   { method: 'delete', path: (id) => `/threads/${id}` },
   { method: 'get', path: (id) => `/threads/${id}/history` },
   { method: 'get', path: (id) => `/threads/${id}/agents` },
-  {
-    method: 'post',
-    path: (id) => `/threads/${id}/messages`,
-    body: { text: "INT-4: a message into someone else's conversation" },
-  },
   { method: 'post', path: (id) => `/threads/${id}/interrupt` },
 ];
 
+/** The body of every 404 `THREAD_NOT_FOUND`. */
+const THREAD_NOT_FOUND_BODY = {
+  statusCode: 404,
+  message: 'Thread not found',
+  error: 'Not Found',
+  errorCode: 'THREAD_NOT_FOUND',
+};
+
 /**
- * INT-4: the rows of the owner's tree that a foreign call could change — the conversation row (with its
- * row version), the tasks, their queues, histories and decisions. Read through the harness pool: the
+ * INT-4: the rows of the owner's tree that a foreign call could change — the conversation, which is its
+ * root session row (with its row version), the tasks, their queues, histories and decisions. Read through the harness pool: the
  * rows the plan's test names.
  */
 async function treeSnapshot(
@@ -446,7 +452,7 @@ async function treeSnapshot(
     (await harness.pool.query(sql, params)).rows;
   return {
     conversation: await read(
-      'SELECT id, owner_id, title, root_id, updated_at, xmin::text AS version FROM app.chat_conversations WHERE id = $1',
+      'SELECT task_id, parent_id, root_id, owner_id, title, updated_at, xmin::text AS version FROM app.agent_sessions WHERE task_id = $1',
       [threadId],
     ),
     tasks: await read(
@@ -492,26 +498,11 @@ async function ledgerCalls(
 }
 
 /**
- * Root sessions of the owner: sessions without a parent task. Every one is a conversation's chat (a run of the `chat`
- * record); its row keeps no origin (`builtin_key` is null at a root), so it is told by the missing parent.
+ * Root sessions of the owner: sessions without a parent, each its own root and a run of the `chat` record. Every
+ * one is a conversation.
  */
-const OWNER_ROOT_SESSIONS = `FROM app.agent_sessions s JOIN app.runtime_tasks t ON t.task_id = s.task_id
-       WHERE s.owner_id = $1 AND t.parent_id IS NULL`;
-
-/** INT-3 C: chat sessions of the owner that no conversation names as its root (an orphan root). */
-async function orphanChatRoots(
-  harness: TestApp,
-  ownerId: string,
-): Promise<number> {
-  const { rows } = await harness.pool.query<{ count: number }>(
-    `SELECT count(*)::int AS count ${OWNER_ROOT_SESSIONS}
-         AND NOT EXISTS (SELECT 1 FROM app.chat_conversations c WHERE c.root_id = s.task_id)`,
-    [ownerId],
-  );
-  const [row] = rows;
-  if (row === undefined) throw new Error('the orphan count returned no row');
-  return row.count;
-}
+const OWNER_ROOT_SESSIONS = `FROM app.agent_sessions s
+       WHERE s.owner_id = $1 AND s.parent_id IS NULL AND s.root_id = s.task_id AND s.builtin_key = 'chat'`;
 
 describe('agent-platform / chat - integration (real AppModule + real Postgres + real MCP fixture, scripted model)', () => {
   // One boot of `AppModule` per file (plan Notes 4): two apps with workers over one database would step
@@ -623,35 +614,34 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // DC-5: "После каждого подключения поток первым отправляет `ready`; после восстановления `LISTEN` — тоже."
   // Use cases: UC-1, UC-2, UC-5, UC-7, UC-E2, UC-E3. EARS: When / While. Design flows: Flow 1 (a message and the answer in parts), Flow 2 (a message while the chat works, interrupt), Flow 3 (a background report), Flow 5 (reconnect), KD-1, KD-2, KD-3.
   //
-  // Catches: (A) the answer that arrives only whole (the `onTextDelta` hook not wired through `DeltaPublisher` and `LiveHub` to the stream), a first part that waits for the 100 ms merge, `offset` not starting at 0, a delta that is persisted (a draft stored as a second answer in the history), a first message that does not become the task of the root or whose conversation row never gets the root id, a `tree` note without the row it announces;
+  // Catches: (A) the answer that arrives only whole (the `onTextDelta` hook not wired through `DeltaPublisher` and `LiveHub` to the stream), a first part that waits for the 100 ms merge, `offset` not starting at 0, a delta that is persisted (a draft stored as a second answer in the history), a first message that does not become the task of the root or whose root does not get the conversation's id, a `tree` note without the row it announces;
   //   (B) a report from a background agent that reaches the history but never wakes the stream (no `tree` note on a child's event: the hub resolves the conversation only by the root's own events), a decision of a depth-2 agent missing from the conversation view or showing `open` after the decision, a reload that differs from what the live notes produced (an entry duplicated or lost across the `afterSeq` boundary);
-  //   (C) a message to a busy chat that is lost, delivered before the result of the running call, or not visible in `pending` while it waits; (D) an interrupt that still calls the model or leaves `working`, an interrupt on a free chat or on a conversation with no root that errors instead of `not_active`;
-  //   (E) a stream that does not send `ready` first, a `LISTEN` connection lost and never reopened (silent stream forever), a re-read after reconnect that repeats or skips entries; (F) two first messages sent together that create two roots or lose one message (the row lock of KD-1).
+  //   (C) a message to a busy chat that is lost, delivered before the result of the running call, or not visible in `pending` while it waits; (D) an interrupt that still calls the model or leaves `working`, an interrupt on a free chat that errors instead of `not_active`, an interrupt on an id that has no first message yet that answers anything but 404;
+  //   (E) a stream that does not send `ready` first, a `LISTEN` connection lost and never reopened (silent stream forever), a re-read after reconnect that repeats or skips entries; (F) two first messages sent together that create two roots, lose one message or answer 500 (the second start finds the id taken and sends to the root).
   // Not re-checked here: the order, single delivery and wake-up of the inbox, the cut-off step and the closure of open calls (runtime INT-2, INT-3; agents INT-2), the tool gate and the decision's one execution (agents INT-3), the history loop and routing of reports between agents (agents INT-1), the chat-status derivation, the coalescing arithmetic and the hub's filter (unit), the foreign owner's stream (INT-4).
   // Behavior: HTTP command (202) -> worker step with scripted model -> text parts as `delta` events and the finished step as history rows + `tree` note -> the view re-read from the last number equals the live picture -> pending, interrupt, report and reconnect leave one consistent history
   // @category: core-functionality
-  // @dependency: AppModule (ConversationsService, ConversationsRepository, ThreadsController, EventsController, LiveHub, DeltaPublisher), createRuntime, createAgents (onTextDelta), createWorkflows, scripted model double, MCP fixture (`logs` delayed read, `backoffice` mutating), Postgres
+  // @dependency: AppModule (ConversationsService, ThreadsController, EventsController, LiveHub, DeltaPublisher), createRuntime, createAgents (onTextDelta), createWorkflows, scripted model double, MCP fixture (`logs` delayed read, `backoffice` mutating), Postgres
   // @complexity: high
   //
   // Verification items (table-driven by scenario; ids, texts and counts are hardcoded literals):
-  // - Row A "first message, answer in parts, then the same after a reload" (UC-1, AC-14.1, DC-1): a new conversation (`POST /threads`, empty title, no root, `GET .../history` shows chat status `new` and no entries); the SSE stream is open with `watch=thread:<id>` and its first event is `ready`; the scenario answers the first message with three text parts. `POST .../messages` answers 202 with an empty `messageId`.
-  //   Then: the stream carries `delta` events whose `offset` starts at 0 and whose texts concatenate to the final answer, then a `tree` note with the thread id; `GET .../history?afterSeq=0` shows the task entry with the message text and exactly ONE `model_answer` with the joined text, the conversation row now has the root id (`rootAgentId` in the view), status `idle`; no entry holds a part of the answer; the second message returns a non-empty `messageId`, lands in the SAME root's history (same `rootAgentId`) and produces one more answer.
+  // - Row A "first message, answer in parts, then the same after a reload" (UC-1, AC-14.1, DC-1): a new conversation (`POST /threads` hands out its id with an empty title and writes nothing: `GET .../history` is 404 `THREAD_NOT_FOUND` until the first message); the SSE stream is open with `watch=thread:<id>` and its first event is `ready`; the scenario answers the first message with three text parts. `POST .../messages` answers 202 with an empty `messageId`.
+  //   Then: the stream carries `delta` events whose `offset` starts at 0 and whose texts concatenate to the final answer, then a `tree` note with the thread id; `GET .../history?afterSeq=0` shows the task entry with the message text and exactly ONE `model_answer` with the joined text, the root has the conversation's id (`rootAgentId` in the view), status `idle`; no entry holds a part of the answer; the second message returns a non-empty `messageId`, lands in the SAME root's history (same `rootAgentId`) and produces one more answer.
   // - Row B "a background agent reports into the open conversation; the reload equals the live picture" (UC-2, UC-7, AC-14.2, AC-17.1..AC-17.3, AC-06.1, NFR-02): the stream is open on the thread; the chat's script calls the read `logs` tool, then `start_agent` (the built-in general agent record), then answers text; the child asks the mutating `create_incident_note` (held for confirmation, depth 2), then after the decision reports. The test reads `GET .../history` after each `tree` note, with the last `nextAfterSeq`.
   //   Then: a `tree` note arrives when the child starts, one when its request opens (the view lists the request under `decisions` with status `open`, the agent description and the arguments, and the chat status is still `idle`/`working` without a new employee message), one after `POST /decisions/:id` (200 `resolved`; the request now reads `resolved` with the decision and the final arguments), one when the child reports; the report is a `child_report` entry in the root history, followed by a chat `model_answer` that the test never asked for; the `tree` note for the report arrives after the report row exists (the row is read in the handler of the note) and within the test's own 2 s wait (NFR-02 shape);
   //   the fixture journal has exactly one `create_incident_note`. A fresh read of the view with `afterSeq=0` returns the same entries, the same call outcomes, the same `resolved` request and the same `agents` tree as the sum of the incremental reads (equal after sorting by seq, no duplicate seq, no gap).
   // - Row C "a message to a busy chat waits in pending and lands after the result" (UC-5, AC-16.1): the chat's step holds a delayed `logs` read call; `POST .../messages` twice. Then: both return 202 with distinct `messageId`s; `GET .../history` lists them in `pending` in order with `source` `user` while the call is held and the chat status is `working`; after the release the history reads `tool_result`, message 1, message 2, `model_answer`, `pending` is empty, and the model's next input saw both after the result.
-  // - Row D "interrupt" (UC-5, AC-16.2; the held case + the not-active case): (1) a held call, `POST .../interrupt` -> 200 `interrupted`, status `interrupted`, the open call has outcome `interrupted`, the model double's call counter unchanged until the next message, which clears the mark. (2) A free chat (status `idle`) and a conversation with no root: `interrupt` -> 200 `not_active`, nothing is created.
+  // - Row D "interrupt" (UC-5, AC-16.2; the held case + the not-active case): (1) a held call, `POST .../interrupt` -> 200 `interrupted`, status `interrupted`, the open call has outcome `interrupted`, the model double's call counter unchanged until the next message, which clears the mark. (2) A free chat (status `idle`): `interrupt` -> 200 `not_active`; an id without a first message: `interrupt` -> 404 `THREAD_NOT_FOUND`; nothing is created.
   // - Row E "reconnect" (UC-E2, DC-5): a second stream to the same thread after the first was dropped by the client: its first event is `ready` and no earlier note is replayed; the view re-read from the last known number returns only entries after it (none duplicated). Then the hub's `LISTEN` backend is terminated in the database (`pg_terminate_backend` on the session whose `application_name`/query is the `LISTEN`, found through `pg_stat_activity`); the open stream receives a new `ready`, and an entry written after that produces a `tree` note again.
-  // - Row F "two first messages at once" (UC-E3, DC-1, Invariant 1): a conversation with no root; two `POST .../messages` are started in the same tick. Then: both return 202; exactly one has an empty `messageId` (the task) and the other a non-empty one (the queue); the history holds ONE task entry and ONE delivered/pending message; `GET /threads/:id/agents` and the root id are single (no second root created: the owner has one root session).
+  // - Row F "two first messages at once" (UC-E3, DC-1, Invariant 1): an id without a first message; two `POST .../messages` are started in the same tick. Then: both return 202; exactly one has an empty `messageId` (the task) and the other a non-empty one (the queue); the history holds ONE task entry and ONE delivered/pending message; `GET /threads/:id/agents` and the root id are single (no second root created: the owner has one root session).
   it(
     'INT-1 A: the first message creates the root with its text as the task, the answer arrives as delta events from offset 0 followed by a tree note, the history holds one answer and no draft, and the next message goes to the same root',
     async () => {
-      // Given: a new conversation (no root, status `new`) and a stream watching it
+      // Given: the id of a new conversation (nothing is written before its first message) and a stream watching it
       const api = chatApi(harness.app, INT1.a);
       const firstMessage = 'INT-1 A: what does the trace show?';
       const secondMessage = 'INT-1 A: and what caused them?';
-      // The answer is held until the 202 is back, so the conversation row already names the root when
-      // the parts are published (a part of a root no conversation names yet is not routed to a thread).
+      // The answer is held until the 202 is back, so the parts are published after the first send returned.
       const answerHeld = createLatch();
       const chat = harness.model.script({ task: firstMessage }, [
         { text: ['The trace ', 'shows two ', 'errors.'], latch: answerHeld },
@@ -659,13 +649,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       ]);
       const thread = await api.createThread();
       expect(thread.title).toBeNull();
-      const empty = await api.history(thread.id);
-      expect([
-        empty.chat.status,
-        empty.chat.rootAgentId,
-        empty.chat.model,
-        empty.entries,
-      ]).toEqual(['new', null, null, []]);
+      expect(
+        await expectError(api.raw('get', `/threads/${thread.id}/history`), 404),
+      ).toEqual(THREAD_NOT_FOUND_BODY);
+      expect((await api.listThreads()).threads).toEqual([]);
       const stream = await openStream(
         harness.app,
         INT1.a,
@@ -1012,7 +999,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   );
 
   it(
-    'INT-1 D: an interrupt leaves the chat interrupted and silent until the next message, and on a free chat or a conversation with no root returns not_active',
+    'INT-1 D: an interrupt leaves the chat interrupted and silent until the next message, on a free chat returns not_active, and on an id without a first message answers 404',
     async () => {
       const api = chatApi(harness.app, INT1.d);
       const held = harness.fixtureLog.latch(FIXTURE_LATCHES.d2);
@@ -1061,14 +1048,16 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'model_answer: Carrying on with the message. []',
         ]);
 
-        // Case 2 - Given: a conversation with no root and the free chat of case 1
+        // Case 2 - Given: an id without a first message and the free chat of case 1
         const noRoot = await api.createThread();
 
-        // Then: an interrupt is `not_active` on both, and nothing is created
-        expect(await api.interrupt(noRoot.id)).toEqual({
-          outcome: 'not_active',
-        });
-        expect((await api.history(noRoot.id)).chat.status).toBe('new');
+        // Then: an interrupt finds no conversation by the id and is `not_active` on the free chat; nothing is created
+        expect(
+          await expectError(
+            api.raw('post', `/threads/${noRoot.id}/interrupt`),
+            404,
+          ),
+        ).toEqual(THREAD_NOT_FOUND_BODY);
         expect(await api.interrupt(second.id)).toEqual({
           outcome: 'not_active',
         });
@@ -1211,7 +1200,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   it(
     'INT-1 F: two first messages sent together create one root, one is the task and the other sits in its queue',
     async () => {
-      // Given: a conversation with no root; either message may become the task
+      // Given: the id of a new conversation; either message may become the task
       const api = chatApi(harness.app, INT1.f);
       const one = 'INT-1 F: first of two at once';
       const two = 'INT-1 F: second of two at once';
@@ -1296,7 +1285,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // @complexity: high
   //
   // Verification items (table-driven by route family; every row validates the body with the contract schema and asserts literal ids and counts):
-  // - Row A "the tree and the list" (AC-21.1, AC-24.1, KD-7): owner U has three conversations; two hold agents (one with a parent-child pair), one has no root; the test starts five top agents in total and the app's `AGENT_PAGE_SIZE` is set to 2 for this test (if the constant is not overridable, the test starts 21 agents) so the cursor walk is visible. Then: `GET /agents` lists the top agents (children of roots), newest first, with subtrees, `threadId` and `threadTitle`; walking `nextCursor` returns each top agent exactly once and no root; `GET /threads/:id/agents` returns that conversation's tree without the root; `GET /agents/awaiting` equals the number of open requests across all conversations, counts an open request of a grandchild and drops it after the decision; the status of an agent seen in the list changes after `stop` (AC-21.1 "смена статуса").
+  // - Row A "the tree and the list" (AC-21.1, AC-24.1, KD-7): owner U has two conversations that hold agents (one with a parent-child pair) and an id without a first message; the test starts five top agents in total and the app's `AGENT_PAGE_SIZE` is set to 2 for this test (if the constant is not overridable, the test starts 21 agents) so the cursor walk is visible. Then: `GET /agents` lists the top agents (children of roots), newest first, with subtrees, `threadId` and `threadTitle`; walking `nextCursor` returns each top agent exactly once and no root; `GET /threads/:id/agents` returns that conversation's tree without the root; `GET /agents/awaiting` equals the number of open requests across all conversations, counts an open request of a grandchild and drops it after the decision; the status of an agent seen in the list changes after `stop` (AC-21.1 "смена статуса").
   // - Row B "one agent's page and the fork's inherited history" (AC-22.1): an agent that made a read call, got a pending message while a call was held, received a child's report. Then: `GET /agents/:id/history?afterSeq=0` returns `agent` (with `threadId`, `threadTitle`, model), `entries` in order (task, `model_answer`, call with arguments and outcome, `child_report`), `pending` with the waiting message, `decisions` of this agent only, `children`; a fork's `inherited` returns the parent's entries up to `throughSeq` and nothing after it, and for a non-fork returns an empty page; `GET /agents/:id/run` for the coordinator of a workflow run returns the run's brief, for a plain agent returns 404 `RUN_NOT_FOUND`.
   // - Row C "the controls, and the chat's own tools" (AC-23.1, AC-23.2, AC-15.2, AC-15.3): an agent working on a held call. `POST /agents/:id/messages` -> 202 with a `messageId`, shown in its `pending`; `POST .../interrupt` -> 200 `interrupted`; `POST .../stop` -> 200 with the stopped ids (the agent and its child); `POST .../restart` on the finished agent -> 201 with a NEW `agentId` (task text and parent as before), on a working agent -> 409 `NOT_FINISHED`, on an agent whose parent has finished -> 409 `PARENT_FINISHED`; `interrupt` on a finished agent -> 200 `not_active`.
   //   Then, with the chat itself: three employee messages drive the scripted chat through `list_agents` (the tool result lists the agent with its status, literally), `message_agent` (the message stands in that agent's history) and `stop_agent` (the agent reads `stopped`); none of them touches an agent of another conversation of the same owner.
@@ -1306,8 +1295,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     "INT-2 A: the owner's agent list pages each top agent once with its thread, a conversation lists its agents without the root, and the awaiting count includes deep requests and drops resolved ones",
     async () => {
       // Given: three conversations of one owner — the first with a parent-child pair (the grandchild asks
-      // for a confirmation) and a second agent, the second with three agents (one held working), the
-      // third without a root; five top agents in all, the page size is 2 (beforeAll)
+      // for a confirmation) and a second agent, the second with three agents (one held working), and
+      // the id of a third without a first message; five top agents in all, the page size is 2 (beforeAll)
       const api = chatApi(harness.app, INT2.a);
       const firstTask = 'INT-2 A: first conversation';
       const secondTask = 'INT-2 A: second conversation';
@@ -1367,8 +1356,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       ]);
       try {
         const first = await api.createThread();
-        await api.renameThread(first.id, 'INT-2 A: first');
         await api.send(first.id, firstTask);
+        await api.renameThread(first.id, 'INT-2 A: first');
         const firstView = await waitFor(
           () => api.history(first.id),
           (view) =>
@@ -1378,8 +1367,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           "the first conversation's agents and the grandchild's open request",
         );
         const second = await api.createThread();
-        await api.renameThread(second.id, 'INT-2 A: second');
         await api.send(second.id, secondTask);
+        await api.renameThread(second.id, 'INT-2 A: second');
         await threeHeld.reached();
         const secondView = await waitFor(
           () => api.history(second.id),
@@ -1443,7 +1432,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           agents.map(() => GENERAL_PURPOSE.id),
         );
 
-        // Then: a conversation lists its own agents without the root; the conversation without a root lists none
+        // Then: a conversation lists its own agents without the root; an id without a first message is no conversation
         expect((await api.threadAgents(first.id)).map(nodeLine)).toEqual([
           'A1 parent [A1 grandchild []]',
           'A1 second []',
@@ -1451,7 +1440,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(
           (await api.threadAgents(second.id)).map(nodeLine).sort(),
         ).toEqual(['A2 one []', 'A2 three []', 'A2 two []']);
-        expect(await api.threadAgents(third.id)).toEqual([]);
+        expect(
+          await expectError(api.raw('get', `/threads/${third.id}/agents`), 404),
+        ).toEqual(THREAD_NOT_FOUND_BODY);
 
         // Then: the awaiting count holds the grandchild's request and drops it once it is decided
         expect(await api.awaiting()).toEqual({ count: 1 });
@@ -1548,8 +1539,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       });
       try {
         const thread = await api.createThread();
-        await api.renameThread(thread.id, 'INT-2 B: thread');
         await api.send(thread.id, task);
+        await api.renameThread(thread.id, 'INT-2 B: thread');
         await untilFixtureCall(TRACE_INT2_B, harness.fixtureLog.callLog);
         const started = await waitFor(
           () => api.history(thread.id),
@@ -2256,41 +2247,55 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Flow 6: "беседы, её агентов, очередей, запросов и событий нет; строки журнала токенов остались, расход месяца не уменьшился. Строка беседы заблокирована на время удаления, поэтому первая отправка в ту же беседу ждёт и затем получает 404."
   // Use cases: UC-3, UC-4. EARS: When / If-then. Design flows: Flow 1 (title in the background), Flow 6 (delete), KD-1, KD-6.
   //
-  // Catches: (A) a list that duplicates or skips a conversation across pages once the page moves to SQL over `chat_conversations`, ignores `updatedAt` growth on send or rename (a conversation does not move to the top), returns another state for rename of a blank title (must be 400), reads a deleted conversation (404 on read, send, history); the old mapping of a missing id to 404 changed by the new table;
+  // Catches: (A) a list that duplicates or skips a conversation across pages over the owner's root sessions, ignores `updatedAt` growth on send or rename (a conversation does not move to the top), returns another state for rename of a blank title (must be 400), reads a deleted conversation (404 on read, send, history); the old mapping of a missing id to 404 changed;
   //   (B) the automatic title that overwrites a title the employee set meanwhile (the conditional write "only into empty"), a generation failure that leaves a half-written or default title, one that is not retried by the next send, a title call that leaves no ledger row (Invariant 4) or is not a row without a task id, a title that blocks the first message's 202;
-  //   (C) a delete that leaves the working agent running (it still calls its tool and the model after the 204), leaves rows of the tree readable by id (the agent still answers 200), or removes the ledger rows so that the month's spend falls (AC-14.4 plus "журнал токенов цел"); a delete racing a first send that creates a root nobody can see or an orphan conversation row.
+  //   (C) a delete that leaves the working agent running (it still calls its tool and the model after the 204), leaves rows of the tree readable by id (the agent still answers 200), or removes the ledger rows so that the month's spend falls (AC-14.4 plus "журнал токенов цел"); a delete racing a first send that answers 500 or leaves the list and the delete's answer in disagreement.
   // Not re-checked here: the stop of the tree's tasks and the rows `deleteTree` removes (runtime INT-3), the ledger surviving `deleteTree` as a runtime rule (runtime INT-5; here only through the HTTP spend), the cursor encoding, the title rules and the schemas (unit), the foreign owner (INT-4), the stream (INT-1).
-  // Behavior: HTTP list/rename/delete/send -> `chat_conversations` and the agents tree -> the next list, read, send and spend show the new state; the title is written in the background under the conditional update
+  // Behavior: HTTP list/rename/delete/send -> the root sessions and the agents tree -> the next list, read, send and spend show the new state; the title is written in the background under the conditional update
   // @category: core-functionality
-  // @dependency: AppModule (ConversationsService, ConversationsRepository, TitleService, ThreadsController), agents.completeText, createRuntime (tasks.deleteTree, ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
+  // @dependency: AppModule (ConversationsService, TitleService, ThreadsController), agents.completeText, createRuntime (tasks.deleteTree, ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by scenario):
-  // - Row A "list, rename, delete" (UC-3, AC-14.3): owner U has 25 conversations with distinct `updatedAt`. Then: page 1 has 20 items and a `nextCursor`, page 2 has 5 and none; the union is the 25 ids, no duplicates, in `updatedAt` descending order; a send into the oldest conversation moves it to the top of page 1; rename with `"  "` answers 400 `VALIDATION_FAILED` and with `" Отчёт "` answers 200 with the trimmed title; a bad cursor answers 400 `INVALID_CURSOR`; delete answers 204, then `GET`, `PATCH`, `GET .../history`, `POST .../messages` and a second `DELETE` all answer 404 `THREAD_NOT_FOUND` with the same body as for a random id; the list no longer contains it.
+  // - Row A "list, rename, delete" (UC-3, AC-14.3): owner U has 25 conversations with distinct `updatedAt`. Then: page 1 has 20 items and a `nextCursor`, page 2 has 5 and none; the union is the 25 ids, no duplicates, in `updatedAt` descending order; a send into the oldest conversation moves it to the top of page 1; rename with `"  "` answers 400 `VALIDATION_FAILED` and with `" Отчёт "` answers 200 with the trimmed title; a bad cursor answers 400 `INVALID_CURSOR`; delete answers 204, then `GET`, `PATCH`, `GET .../history`, `POST .../interrupt` and a second `DELETE` all answer 404 `THREAD_NOT_FOUND` with the same body as for a random id (a send to a deleted id is a first message: it starts a conversation with that id); the list no longer contains it.
   // - Row B "the automatic title" (UC-3, DC-2, Invariant 2, Invariant 4; four cases): (1) the first message with a scripted title: the 202 is returned before the title is written (the title call is held on a latch), then after the release the thread's title is the scripted text (trimmed per the unit rules) and the ledger holds one extra row without a task id; (2) the employee renames the conversation while the generation is held: after the release the manual title is intact; (3) a generation that fails: the title stays empty, a warning is logged without the message text, the message itself was accepted and answered; (4) the next send retries the generation and the title is then written.
-  // - Row C "delete with a working agent, and the money" (UC-4, AC-14.4, Flow 6): a conversation whose child agent waits on a held read call, with ledger rows written by the chat and the child (literal costs). Record `GET /spend` and the fixture journal length. Delete the conversation -> 204. Then: `GET /agents/:childId/history` and `.../run` answer 404 `AGENT_NOT_FOUND`; `GET /agents` lists nothing of it; after the held call is released and workers run, the fixture journal gains no entry and the scripted model's call counter for the tree is unchanged; `GET /spend` returns the same sum as before; sending to the deleted conversation answers 404. Second case: a delete and a first send started together on a conversation without a root: the outcome is either (send 202, then the delete removes the new root, the list loses the conversation) or (delete 204, the send 404), never an orphan root readable by id.
+  // - Row C "delete with a working agent, and the money" (UC-4, AC-14.4, Flow 6): a conversation whose child agent waits on a held read call, with ledger rows written by the chat and the child (literal costs). Record `GET /spend` and the fixture journal length. Delete the conversation -> 204. Then: `GET /agents/:childId/history` and `.../run` answer 404 `AGENT_NOT_FOUND`; `GET /agents` lists nothing of it; after the held call is released and workers run, the fixture journal gains no entry and the scripted model's call counter for the tree is unchanged; `GET /spend` returns the same sum as before. Second case: a delete and a first send started together on an id without a first message: the send is 202 either way; the delete is 204 when it ran after the root was created (the list loses the conversation) or 404 when it found nothing (the conversation is listed).
   // Plan Notes 5(б): the pages of 25 conversations, the renames and the bad cursor of row A are rows of
   // the rewritten `threads.e2e-spec.ts` (T6.4); here row A asserts only the move to the top on a send and
   // the 404 of the conversation's new routes after a delete.
   it(
-    'INT-3 A: the conversation list pages 25 conversations without duplicates, a send moves one to the top, a blank rename is 400 and a deleted conversation answers 404 on every route like a random id',
+    'INT-3 A: the conversation list pages 25 conversations without duplicates, a send moves one to the top, a blank rename is 400 and a deleted conversation answers 404 on its read and interrupt routes like a random id',
     async () => {
-      // Given: three conversations of one owner, listed last changed first
+      // Given: three conversations of one owner, each started by its first message, listed last changed first
       const api = chatApi(harness.app, INT3.a);
-      const task = 'INT-3 A: summarise the bottom conversation';
-      harness.model.script({ task }, [
-        { text: 'The bottom conversation, summarised.' },
-      ]);
-      for (let created = 0; created < 3; created += 1) await api.createThread();
+      const firsts = [1, 2, 3].map(
+        (number) => `INT-3 A: first message of conversation ${number}`,
+      );
+      for (const first of firsts) {
+        harness.model.script({ task: first }, [], {
+          thereafter: { text: 'Answered.' },
+        });
+        const { id } = await api.createThread();
+        expect(await api.send(id, first)).toEqual({ messageId: null });
+      }
       const before = (await api.listThreads()).threads.map(
         (summary) => summary.id,
       );
       expect(before).toHaveLength(3);
       const bottom = before[2];
       if (bottom === undefined) throw new Error('no bottom conversation');
+      await untilIdle(
+        api,
+        bottom,
+        (view) => view.entries.length === 2,
+        'the first answer in the bottom conversation',
+      );
 
       // When: a message goes into the conversation at the bottom
-      expect(await api.send(bottom, task)).toEqual({ messageId: null });
+      expect(
+        (await api.send(bottom, 'INT-3 A: summarise the bottom conversation'))
+          .messageId,
+      ).toEqual(expect.any(String));
 
       // Then: it moves to the top; the others keep their order
       expect(
@@ -2299,19 +2304,18 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       await untilIdle(
         api,
         bottom,
-        (view) => view.entries.length === 2,
+        (view) => view.entries.length === 4,
         'the answer in the bottom conversation',
       );
 
       // When: the conversation is deleted
       await api.deleteThread(bottom);
 
-      // Then: its history, a send and an interrupt answer 404 `THREAD_NOT_FOUND`
-      // with the same body as a random id
+      // Then: its history and an interrupt answer 404 `THREAD_NOT_FOUND` with the same body as a random id
       const afterDelete = THREAD_ROUTES.filter((route) =>
-        /\/(history|messages|interrupt)$/.test(route.path(':id')),
+        /\/(history|interrupt)$/.test(route.path(':id')),
       );
-      expect(afterDelete).toHaveLength(3);
+      expect(afterDelete).toHaveLength(2);
       for (const route of afterDelete)
         await expectSameAsMissing(api, route, bottom, 'THREAD_NOT_FOUND');
     },
@@ -2559,31 +2563,30 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         ).toEqual([]);
         expect([chat.calls.length, reader.calls.length]).toEqual([2, 1]);
 
-        // Case 2 - Given: a conversation without a root; When: its first message and its delete start together
+        // Case 2 - Given: an id without a first message; When: its first message and its delete start together
         const racing = await api.createThread();
         const [sent, deleted] = await Promise.all([
           api.raw('post', `/threads/${racing.id}/messages`, { text: raceTask }),
           api.raw('delete', `/threads/${racing.id}`),
         ]);
 
-        // Then: the row lock orders them: the send went first (202, the delete removed the new root) or
-        // found nothing (404); the delete succeeds either way
-        expect(deleted.status).toBe(204);
-        expect({ status: sent.status, body: sent.body as unknown }).toEqual(
-          sent.status === 202
-            ? { status: 202, body: { messageId: null } }
-            : {
-                status: 404,
-                body: expect.objectContaining({
-                  errorCode: 'THREAD_NOT_FOUND',
-                }),
-              },
+        // Then: the first message is accepted either way; the delete ran after the root was created (204,
+        // the conversation is gone) or found nothing to delete (404, the conversation is listed) — the
+        // delete's answer and the list never disagree
+        expect({ status: sent.status, body: sent.body as unknown }).toEqual({
+          status: 202,
+          body: { messageId: null },
+        });
+        expect({
+          status: deleted.status,
+          listed: (await api.listThreads()).threads.map(
+            (summary) => summary.id,
+          ),
+        }).toEqual(
+          deleted.status === 204
+            ? { status: 204, listed: [control.id] }
+            : { status: 404, listed: [racing.id, control.id] },
         );
-        // Then: the list lost the conversation and no chat root outlived its conversation
-        expect(
-          (await api.listThreads()).threads.map((summary) => summary.id),
-        ).toEqual([control.id]);
-        expect(await orphanChatRoots(harness, INT3.c.id)).toBe(0);
       } finally {
         held.release();
       }
@@ -2613,10 +2616,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   //
   // Verification items (table-driven by route; A has a conversation with a root, a child agent, a coordinator of a workflow run, one open request, a held read call and ledger rows; B has own conversation and agent):
   // - Rows: `GET /threads/:id`, `PATCH /threads/:id`, `DELETE /threads/:id`, `GET /threads/:id/history`, `GET /threads/:id/agents`, `POST /threads/:id/messages`, `POST /threads/:id/interrupt`; `GET /agents/:id/history`, `.../inherited`, `.../run`, `POST /agents/:id/messages`, `.../interrupt`, `.../stop`, `.../restart` (with A's child id AND with A's ROOT id); `POST /decisions/:id` (approve and reject); `GET /events?watch=thread:<A's id>` and `watch=agent:<A's child id>` as B.
-  // - For each row the same request is made with a well-formed id that exists for nobody (the "missing" reference). Then: status code, `errorCode` (`THREAD_NOT_FOUND`, `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND`) and the whole body are equal, with nothing of A's data (title, task text, argument, count) in the answer; for the ROOT id the agent routes answer `AGENT_NOT_FOUND`, the same as for a missing agent.
+  // - For each row but the send the same request is made with a well-formed id that exists for nobody (the "missing" reference); a send to an id that exists for nobody is a first message, so `POST /threads/:id/messages` with A's id is asserted to be the constant 404 `THREAD_NOT_FOUND` body. Then: status code, `errorCode` (`THREAD_NOT_FOUND`, `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND`) and the whole body are equal, with nothing of A's data (title, task text, argument, count) in the answer; for the ROOT id the agent routes answer `AGENT_NOT_FOUND`, the same as for a missing agent.
   // - The stream: B's stream (open on A's thread and on A's child agent, plus B's own thread) receives `ready` and only B's own notes while A's agent writes history and three text parts and its request is resolved by A; after the run B's received list contains no `tree` with A's thread id and no `delta` of A's agent; A's own stream (a control) did receive them.
   // - B's lists: `GET /threads`, `GET /agents` (all pages), `GET /agents/awaiting` and `GET /spend` contain none of A's conversations or agents, count none of A's open request and sum none of A's ledger rows.
-  // - After all rows: a row-version snapshot of A's `chat_conversations` row, the agents tree and its inbox equals the snapshot before; A's request is still open and A can approve it (the fixture journal then holds one call); A's conversation and agent read in full for A.
+  // - After all rows: a row-version snapshot of A's root session row (the conversation), the agents tree and its inbox equals the snapshot before; A's request is still open and A can approve it (the fixture journal then holds one call); A's conversation and agent read in full for A.
   it(
     "INT-4: every route and the stream called as another employee answer exactly as for a missing id, including the root id on agent routes, leak nothing of the owner's data, deliver none of the owner's notes or text parts, and change none of the owner's rows",
     async () => {
@@ -2687,8 +2690,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       const streams: SseStream[] = [];
       try {
         const aThread = await a.createThread();
-        await a.renameThread(aThread.id, aTitle);
         await a.send(aThread.id, aTask);
+        await a.renameThread(aThread.id, aTitle);
         const briefOpen = await waitFor(
           () => a.history(aThread.id),
           (view) =>
@@ -2792,6 +2795,15 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         // When / Then: B calls every route with A's ids — each answer equals the answer for a missing id
         for (const route of THREAD_ROUTES)
           await expectSameAsMissing(b, route, aThread.id, 'THREAD_NOT_FOUND');
+        // A send to an id that exists for nobody is a first message; A's id is taken, and not by B's conversation
+        expect(
+          await expectError(
+            b.raw('post', `/threads/${aThread.id}/messages`, {
+              text: "INT-4: a message into someone else's conversation",
+            }),
+            404,
+          ),
+        ).toEqual(THREAD_NOT_FOUND_BODY);
         for (const agentId of [readerId, aRoot]) {
           for (const route of AGENT_ROUTES)
             await expectSameAsMissing(b, route, agentId, 'AGENT_NOT_FOUND');

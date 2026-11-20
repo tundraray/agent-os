@@ -117,7 +117,9 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
           store.dispose();
         },
       });
-      void store.load();
+      // A conversation created in this tab (`initialize()` marked it ready) exists on the server only from its
+      // first message: a read before that would be 404. The accepted send reads the feed.
+      if (status.getState().history[remoteId] !== 'ready') void store.load();
       return store;
     },
     forget: (remoteId) => {

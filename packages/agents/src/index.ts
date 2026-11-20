@@ -49,6 +49,7 @@ export {
 } from './model/mastra-turn.js';
 export type { TextDelta } from './model/model-client.js';
 export type { AgentConfirmation, AgentHistoryEntry, AgentSessions } from './operations/agent-sessions.js';
+export type { RootSession } from './store/sessions.repository.js';
 export type { EmbeddingInputType } from './providers/adapters.js';
 export { ModelProviderError } from './providers/model-provider-errors.js';
 export { PROVIDER_KINDS } from './providers/provider-kinds.js';

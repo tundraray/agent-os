@@ -70,6 +70,8 @@ export interface CreateTask {
   input: unknown;
   /** Creates a child of this task, outside a step; the parent must be the owner's and not finished. */
   parentId?: string;
+  /** The id of the new task, a UUID; generated when absent. A taken id is `TASK_EXISTS`. */
+  taskId?: string;
 }
 
 export interface TaskControlDeps {
@@ -127,7 +129,8 @@ export class TaskControl {
 
   /**
    * Creates a root task (its own root, depth 0) or, with `parentId`, a child of the owner's task
-   * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`.
+   * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`. The id
+   * is `taskId` when given — `TASK_EXISTS` if a task of any owner has it — or a new one.
    * The parent is locked FOR UPDATE and must not be finished: a stop of the parent and this
    * creation are ordered by that lock (plan Notes 4, Invariant 6). Returns the `taskId`.
    *
@@ -317,7 +320,7 @@ export class TaskControl {
   /** The creation's writes in `tx`: the parent locked, the task row and `task.created`. */
   private async createIn(tx: RuntimeTx, request: CreateTask, input: unknown): Promise<TaskRow> {
     const { tasks, events } = this.deps;
-    const taskId: string = randomUUID();
+    const taskId: string = request.taskId ?? randomUUID();
     let lineage: { parentId: string | null; rootId: string; depth: number } = {
       parentId: null,
       rootId: taskId,

@@ -336,10 +336,6 @@ export async function removeRunRows(
 ): Promise<void> {
   const users = rows.users ?? [];
   await pool.query(
-    'DELETE FROM app.chat_conversations WHERE owner_id = ANY($1::text[])',
-    [users],
-  );
-  await pool.query(
     'DELETE FROM app.runtime_tasks WHERE owner_id = ANY($1::text[])',
     [users],
   );

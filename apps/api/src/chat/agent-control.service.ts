@@ -3,6 +3,7 @@ import {
   AgentsError,
   type Agents,
   type AgentView as AgentsAgentView,
+  type RootSession,
 } from '@agent-os/agents';
 import {
   HISTORY_PAGE_SIZE,
@@ -37,10 +38,6 @@ import {
   toPending,
   toWorkflowRunView,
 } from './conversation-view.js';
-import {
-  type Conversation,
-  ConversationsRepository,
-} from './conversations.repository.js';
 import { decodeRowCursor, toThreadSummary } from './conversations.service.js';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor.js';
 
@@ -57,13 +54,12 @@ type ListedAgent = {
  * The agent routes, decisions and spend (design-chat.md, Contract «Агенты», «Решения и расход», KD-7,
  * DC-3). Every agent operation starts with `agents.sessions.get` (the owner check of the package) and
  * refuses a conversation's root: for the web the root is not an agent. A malformed, missing or foreign
- * id answers as a missing one. Agents are reached only through `agents`, `workflows` and `runtime`;
- * the only table read is `chat_conversations`.
+ * id answers as a missing one. Agents and the conversations — their root sessions — are reached only
+ * through `agents`, `workflows` and `runtime`.
  */
 @Injectable()
 export class AgentControlService {
   constructor(
-    private readonly conversations: ConversationsRepository,
     @Inject(AGENTS) private readonly agents: Agents,
     @Inject(RUNTIME) private readonly runtime: Runtime,
     @Inject(WORKFLOWS) private readonly workflows: Workflows,
@@ -76,9 +72,9 @@ export class AgentControlService {
    */
   async page(ownerId: string, cursor?: string): Promise<AgentListPage> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
-    const rows = await this.conversations.listWithRoot(ownerId);
+    const roots = await this.agents.sessions.roots({ ownerId });
     const perConversation = await Promise.all(
-      rows.map(async (row) => this.topAgentsOf(row, ownerId)),
+      roots.map(async (root) => this.topAgentsOf(root, ownerId)),
     );
     const page = selectThreadPage({
       sorted: sortThreadsForList(perConversation.flat()),
@@ -93,10 +89,9 @@ export class AgentControlService {
 
   /** NV-01: open decision requests across all the owner's conversations. */
   async awaiting(ownerId: string): Promise<AwaitingCount> {
-    const rows = await this.conversations.listWithRoot(ownerId);
+    const roots = await this.agents.sessions.roots({ ownerId });
     const counts = await Promise.all(
-      rows.map(async ({ rootId }) => {
-        if (rootId === null) return 0;
+      roots.map(async ({ rootId }) => {
         const confirmations = await unlessDeleted(
           this.agents.sessions.confirmations(rootId, ownerId),
         );
@@ -115,9 +110,8 @@ export class AgentControlService {
     afterSeq: number,
   ): Promise<AgentPageView> {
     const view = await this.agent(agentId, ownerId);
-    const conversation = await this.conversations.findByRoot(view.rootId);
-    if (conversation === undefined || conversation.ownerId !== ownerId)
-      throw agentNotFound();
+    const conversation = await this.agents.sessions.root(view.rootId, ownerId);
+    if (conversation === undefined) throw agentNotFound();
     const [views, entries, messages, confirmations] = await Promise.all([
       this.agents.sessions.list(view.rootId, ownerId),
       this.agents.sessions.history({
@@ -140,7 +134,7 @@ export class AgentControlService {
     return {
       agent: {
         ...toAgentView(view),
-        threadId: conversation.id,
+        threadId: conversation.rootId,
         threadTitle: toThreadSummary(conversation).title,
         ...(parentDescription === undefined ? {} : { parentDescription }),
       },
@@ -255,18 +249,17 @@ export class AgentControlService {
 
   /** The top agents of one conversation with their subtrees; none when its tree was deleted meanwhile. */
   private async topAgentsOf(
-    row: Conversation,
+    root: RootSession,
     ownerId: string,
   ): Promise<ListedAgent[]> {
-    if (row.rootId === null) return [];
     const views = await unlessDeleted(
-      this.agents.sessions.list(row.rootId, ownerId),
+      this.agents.sessions.list(root.rootId, ownerId),
     );
-    const threadTitle = toThreadSummary(row).title;
-    return toAgentTree(views, row.rootId).map((node) => ({
+    const threadTitle = toThreadSummary(root).title;
+    return toAgentTree(views, root.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),
       id: node.agentId,
-      node: { ...node, threadId: row.id, threadTitle },
+      node: { ...node, threadId: root.rootId, threadTitle },
     }));
   }
 }

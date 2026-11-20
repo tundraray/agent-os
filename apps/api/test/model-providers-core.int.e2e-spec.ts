@@ -843,18 +843,20 @@ describe('model-providers / core - API integration (real AppModule + real Postgr
       const notConfigured = await refusedFirstMessage(
         'INT-4 row 1: the first message with no default chat model',
       );
-      // Then: refused `model_not_configured` with no model; the conversation got no root and no title
+      // Then: refused `model_not_configured` with no model; no conversation appeared
       expect(notConfigured.refusal).toEqual([
         'START_REFUSED',
         'model_not_configured',
         null,
       ]);
-      const unstarted = await anyaApi.history(notConfigured.thread);
-      expect([
-        unstarted.thread.title,
-        unstarted.chat.status,
-        unstarted.chat.rootAgentId,
-      ]).toEqual([null, 'new', null]);
+      expect(
+        (
+          await expectError(
+            anyaApi.raw('get', `/threads/${notConfigured.thread}/history`),
+            404,
+          )
+        ).errorCode,
+      ).toBe('THREAD_NOT_FOUND');
 
       // Row 2 - Given: the case's model is the default chat model
       await putDefaults({ chatModel: REFUSE_MODEL });

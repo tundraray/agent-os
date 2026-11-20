@@ -81,6 +81,7 @@ const INPUT: SessionInput = { snapshot: SNAPSHOT, prompt: 'Look it up', descript
 
 const SESSION: Session = {
   taskId: AGENT,
+  parentId: null,
   ownerId: OWNER,
   name: SNAPSHOT.name,
   origin: SNAPSHOT.origin,

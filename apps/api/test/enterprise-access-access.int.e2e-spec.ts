@@ -1303,11 +1303,15 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         'model_not_allowed',
         MODEL_A,
       ]);
-      const notStarted = await borisApi.history(borisThread);
-      expect([notStarted.chat.status, notStarted.chat.rootAgentId]).toEqual([
-        'new',
-        null,
-      ]);
+      // No conversation appeared: it exists only from an accepted first message
+      expect(
+        (
+          await expectError(
+            borisApi.raw('get', `/threads/${borisThread}/history`),
+            404,
+          )
+        ).errorCode,
+      ).toBe('THREAD_NOT_FOUND');
       expect([harness.model.calls.length, titles.calls.length]).toEqual([
         callsBefore,
         titlesBefore,

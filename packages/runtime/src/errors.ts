@@ -2,6 +2,8 @@
 export const RUNTIME_ERROR_CODES = [
   /** The task does not exist or belongs to another owner. */
   'TASK_NOT_FOUND',
+  /** A task is created with an id that is taken, by any owner. */
+  'TASK_EXISTS',
   /** No handler is registered for the task type. */
   'UNKNOWN_TASK_TYPE',
   /** A child is created under a finished parent; the parent is first revived by a message. */

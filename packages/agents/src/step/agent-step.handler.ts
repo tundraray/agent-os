@@ -173,7 +173,7 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
     if (existing !== undefined) return existing;
     const input = sessionInputOf(ctx.input);
     const made = await ctx.guard((tx: RuntimeTx) =>
-      sessions.ensureSession(tx, ctx.taskId, input, ctx.ownerId),
+      sessions.ensureSession(tx, ctx, input),
     );
     if (made.outcome === 'fenced') return undefined;
     const session = await sessions.get(database, ctx.taskId);

@@ -1,12 +1,7 @@
-import {
-  CHAT_BUILTIN_KEY,
-  ChipRecordSchema,
-  RecordKindSchema,
-  type RunOrigin,
-} from '@agent-os/contracts';
+import { ChipRecordSchema, RecordKindSchema, type RunOrigin } from '@agent-os/contracts';
 import { agentMessages, agentSessions, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, count, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository.js';
@@ -41,15 +36,17 @@ export function sessionInputOf(input: unknown): SessionInput {
   return AgentTaskInputSchema.parse(input);
 }
 
-/** An `agent_sessions` row: the run's name, origin and first-run mark; the snapshot stays in the task input. */
+/** An `agent_sessions` row: the run's name, parent, origin and first-run mark; the snapshot stays in the task input. */
 export interface Session {
   readonly taskId: string;
+  /** `null` for a root session. */
+  readonly parentId: string | null;
   readonly ownerId: string;
   /** The run's name from its snapshot. */
   readonly name: string;
-  /** The record the run started from; `null` for a conversation's root. */
-  readonly origin: RunOrigin | null;
-  /** The owner had no earlier session with this record. */
+  /** The record the run started from; a root session carries the builtin record `chat`. */
+  readonly origin: RunOrigin;
+  /** The owner had no earlier session with this record; never set on a root session. */
   readonly firstRun: boolean;
   readonly description: string;
   readonly model: string;
@@ -61,6 +58,33 @@ export interface Session {
   readonly closed: boolean;
   readonly lastInputTokens: number | null;
   readonly createdAt: Date;
+}
+
+/** The task a session is written for: its place in the tree is copied into the row. */
+export interface SessionTask {
+  readonly taskId: string;
+  readonly ownerId: string;
+  /** `null` for a root. */
+  readonly parentId: string | null;
+  /** The task's own id for a root. */
+  readonly rootId: string;
+}
+
+/** A root session as its owner lists it: the conversation it is to the employee. */
+export interface RootSession {
+  readonly rootId: string;
+  readonly ownerId: string;
+  /** Empty until a title is written. */
+  readonly title: string;
+  readonly createdAt: Date;
+  /** The last change, in milliseconds: the key of the owner's list. */
+  readonly updatedAt: Date;
+}
+
+/** The position of a root session in the owner's list: the cursor of the next page. */
+export interface RootPosition {
+  readonly updatedAt: Date;
+  readonly rootId: string;
 }
 
 /** The fields of a session a step changes: the turn counter, the marks and the compaction driver. */
@@ -76,13 +100,12 @@ const TASK_ENTRY_SEQ = 1;
 
 type SessionRow = typeof agentSessions.$inferSelect;
 
-function originOf(row: SessionRow): RunOrigin | null {
-  if (row.recordId === null) return null;
+function originOf(row: SessionRow): RunOrigin {
   return {
     recordId: row.recordId,
     kind: RecordKindSchema.parse(row.recordKind),
-    version: z.number().int().parse(row.recordVersion),
-    name: z.string().parse(row.recordName),
+    version: row.recordVersion,
+    name: row.recordName,
     author:
       row.authorId === null ? null : { id: row.authorId, name: z.string().parse(row.authorName) },
     builtinKey: row.builtinKey,
@@ -93,6 +116,7 @@ function originOf(row: SessionRow): RunOrigin | null {
 function toSession(row: SessionRow): Session {
   return {
     taskId: row.taskId,
+    parentId: row.parentId,
     ownerId: row.ownerId,
     name: row.name,
     origin: originOf(row),
@@ -111,12 +135,36 @@ function toSession(row: SessionRow): Session {
 }
 
 /**
- * The origin the session row keeps (KD-3): the snapshot's, except at a conversation's root — a run of the
- * `chat` record — whose row has none.
+ * The list time is written truncated to milliseconds: the list cursor keeps it in ms, so the order of
+ * the rows and the cursor's comparison read the same value.
  */
-function storedOrigin(input: SessionInput): RunOrigin | null {
-  const { origin } = input.snapshot;
-  return origin.builtinKey === CHAT_BUILTIN_KEY ? null : origin;
+const NOW_MS = sql<Date>`date_trunc('milliseconds', now())`;
+
+/** A root session's row: `title` and `updated_at` are set on every root and only there. */
+const isRoot = isNotNull(agentSessions.updatedAt);
+
+const ownedRoot = (rootId: string, ownerId: string) =>
+  and(eq(agentSessions.taskId, rootId), eq(agentSessions.ownerId, ownerId), isRoot);
+
+const ROOT_COLUMNS = {
+  rootId: agentSessions.taskId,
+  ownerId: agentSessions.ownerId,
+  title: agentSessions.title,
+  createdAt: agentSessions.createdAt,
+  updatedAt: agentSessions.updatedAt,
+};
+
+function toRootSession(row: {
+  rootId: string;
+  ownerId: string;
+  title: string | null;
+  createdAt: Date;
+  updatedAt: Date | null;
+}): RootSession {
+  if (row.title === null || row.updatedAt === null) {
+    throw new Error(`Session ${row.rootId} is not a root session`);
+  }
+  return { ...row, title: row.title, updatedAt: row.updatedAt };
 }
 
 /** Whether the owner has a session of this record other than `taskId`. */
@@ -142,35 +190,36 @@ export const sessions = {
   /**
    * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11):
    * both the starter and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps their race
-   * safe. The name, the model and the origin come from the snapshot; `first_run` is set when the owner
-   * had no earlier session with the record. The session that creates the row of the coordinator of a
-   * self-learning workflow also creates its run row (`agent_knowledge_runs`), once per run.
+   * safe. The name, the model and the origin come from the snapshot, the parent and the root from the
+   * task; `first_run` is set when the owner had no earlier session with the record. A root session
+   * starts with an empty title and its list time. The session that creates the row of the coordinator
+   * of a self-learning workflow also creates its run row (`agent_knowledge_runs`), once per run.
    */
-  async ensureSession(
-    tx: RuntimeTx,
-    taskId: string,
-    input: SessionInput,
-    ownerId: string,
-  ): Promise<void> {
-    const origin = storedOrigin(input);
-    const firstRun = origin === null ? false : !(await ranBefore(tx, ownerId, origin.recordId, taskId));
+  async ensureSession(tx: RuntimeTx, task: SessionTask, input: SessionInput): Promise<void> {
+    const { taskId, ownerId } = task;
+    const root = task.parentId === null;
+    const { origin } = input.snapshot;
+    const firstRun = root ? false : !(await ranBefore(tx, ownerId, origin.recordId, taskId));
     const created = await tx
       .insert(agentSessions)
       .values({
         taskId,
+        parentId: task.parentId,
+        rootId: task.rootId,
         ownerId,
+        ...(root ? { title: '', updatedAt: NOW_MS } : {}),
         name: input.snapshot.name,
         description: input.description,
         model: snapshotDefinition(input.snapshot).model,
         prompt: input.prompt,
-        recordId: origin?.recordId ?? null,
-        recordKind: origin?.kind ?? null,
-        recordVersion: origin?.version ?? null,
-        recordName: origin?.name ?? null,
-        authorId: origin?.author?.id ?? null,
-        authorName: origin?.author?.name ?? null,
-        builtinKey: origin?.builtinKey ?? null,
-        executor: origin?.executor ?? null,
+        recordId: origin.recordId,
+        recordKind: origin.kind,
+        recordVersion: origin.version,
+        recordName: origin.name,
+        authorId: origin.author?.id ?? null,
+        authorName: origin.author?.name ?? null,
+        builtinKey: origin.builtinKey,
+        executor: origin.executor,
         firstRun,
         forkedFromTaskId: input.forkedFrom?.agentId ?? null,
         forkedThroughSeq: input.forkedFrom?.throughSeq ?? null,
@@ -215,7 +264,7 @@ export const sessions = {
   /**
    * How many runs of each record the owner started, for the order of the chat listing (KD-4): only
    * sessions of the record itself — an executor carries its workflow's record id and a fork its
-   * source's, so neither counts.
+   * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
   async recordCounts(reader: StoreReader, ownerId: string): Promise<Map<string, number>> {
     const rows = await reader
@@ -224,20 +273,90 @@ export const sessions = {
       .where(
         and(
           eq(agentSessions.ownerId, ownerId),
-          isNotNull(agentSessions.recordId),
+          isNotNull(agentSessions.parentId),
           isNull(agentSessions.executor),
           isNull(agentSessions.forkedFromTaskId),
         ),
       )
       .groupBy(agentSessions.recordId);
-    return new Map(
-      rows.flatMap((row) => (row.recordId === null ? [] : [[row.recordId, row.sessions] as const])),
-    );
+    return new Map(rows.map((row) => [row.recordId, row.sessions] as const));
   },
 
   /** Writes the given fields of the session; an empty patch writes nothing. */
   async update(tx: RuntimeTx, taskId: string, patch: SessionPatch): Promise<void> {
     if (Object.values(patch).every((value) => value === undefined)) return;
     await tx.update(agentSessions).set(patch).where(eq(agentSessions.taskId, taskId));
+  },
+
+  /** The owner's root session; another owner's and a session that is not a root are as absent as a missing one. */
+  async root(reader: StoreReader, rootId: string, ownerId: string): Promise<RootSession | undefined> {
+    const [row] = await reader.select(ROOT_COLUMNS).from(agentSessions).where(ownedRoot(rootId, ownerId));
+    return row === undefined ? undefined : toRootSession(row);
+  },
+
+  /** The owner of a root session, whoever it is; `undefined` when `rootId` names no root session. */
+  async rootOwner(reader: StoreReader, rootId: string): Promise<string | undefined> {
+    const [row] = await reader
+      .select({ ownerId: agentSessions.ownerId })
+      .from(agentSessions)
+      .where(and(eq(agentSessions.taskId, rootId), isRoot));
+    return row?.ownerId;
+  },
+
+  /**
+   * The owner's root sessions, last changed first (`updated_at DESC, task_id DESC`, the order of
+   * `agent_sessions_owner_page_idx`): strictly after `after`, at most `limit`; all of them without either.
+   */
+  async roots(
+    reader: StoreReader,
+    ownerId: string,
+    page: { readonly after?: RootPosition; readonly limit?: number } = {},
+  ): Promise<RootSession[]> {
+    const owned = and(eq(agentSessions.ownerId, ownerId), isRoot);
+    const { after } = page;
+    const query = reader
+      .select(ROOT_COLUMNS)
+      .from(agentSessions)
+      .where(
+        after === undefined
+          ? owned
+          : and(
+              owned,
+              sql`(${agentSessions.updatedAt}, ${agentSessions.taskId}) < (${after.updatedAt.toISOString()}::timestamptz, ${after.rootId}::uuid)`,
+            ),
+      )
+      .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.taskId));
+    const rows = await (page.limit === undefined ? query : query.limit(page.limit));
+    return rows.map(toRootSession);
+  },
+
+  /** `updated_at = now()`: the owner's root session moves to the top of the list. */
+  async touchRoot(reader: StoreReader, rootId: string, ownerId: string): Promise<void> {
+    await reader.update(agentSessions).set({ updatedAt: NOW_MS }).where(ownedRoot(rootId, ownerId));
+  },
+
+  /** Sets the owner's title and moves the root session up; `undefined` for a missing or another owner's one. */
+  async renameRoot(
+    reader: StoreReader,
+    rootId: string,
+    ownerId: string,
+    title: string,
+  ): Promise<RootSession | undefined> {
+    const [row] = await reader
+      .update(agentSessions)
+      .set({ title, updatedAt: NOW_MS })
+      .where(ownedRoot(rootId, ownerId))
+      .returning(ROOT_COLUMNS);
+    return row === undefined ? undefined : toRootSession(row);
+  },
+
+  /** Writes a generated title only into an empty one; `true` when it was written. */
+  async titleRootIfEmpty(reader: StoreReader, rootId: string, ownerId: string, title: string): Promise<boolean> {
+    const rows = await reader
+      .update(agentSessions)
+      .set({ title })
+      .where(and(ownedRoot(rootId, ownerId), eq(agentSessions.title, '')))
+      .returning({ taskId: agentSessions.taskId });
+    return rows.length > 0;
   },
 };

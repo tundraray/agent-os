@@ -1,14 +1,16 @@
-// agent-platform / chat - the former conversation routes over `chat_conversations`
+// agent-platform / chat - the former conversation routes over the root sessions
 // Design Doc: docs/features/agent-platform/design-chat.md (v1.2), Contract «Беседы» (the former list, create,
 // rename and delete keep their routes and shapes) and «Не меняется»; AC-14.3 (list, rename, delete).
 // Rewritten from the Mastra-based `threads.e2e-spec.ts` (work plan T6.4): the data is created through the API
-// (`POST /threads`, `PATCH /threads/:id`) one request after another, so the rows get their own `updatedAt`.
+// (`POST /threads` and the first message, which creates the conversation; `PATCH /threads/:id`) one request after
+// another, so the rows get their own `updatedAt`.
 // Removed from the former file: the `/messages` history cases (the route is gone) and «Ownership isolation»
 // (proved by INT-4 of `agent-platform-chat.int.e2e-spec.ts`). INT-3 A of that file asserts the move to the top
 // on a send and the 404 of the conversation's new routes after a delete; this file keeps the pages, renames,
 // cursors and the former routes' 404s.
 //
-// Harness: one `createTestApp()` per file (no runtime workers: no case here sends a message), real Postgres
+// Harness: one `createTestApp()` per file (no runtime workers: a first message only creates the root, nothing
+// answers it), the run's default chat model and role of `conversationsSetup`, real Postgres
 // (`pnpm db:up`), real session check; every case uses its own employee (`createEmployee` of support/session.ts), so rows of one case never meet
 // another's. Response bodies are parsed with the `@agent-os/contracts` schemas.
 
@@ -19,19 +21,15 @@ import {
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  type ChatApi,
-  chatApi,
-  expectBody,
-  expectError,
-} from './support/api.js';
+import { type ChatApi, expectBody, expectError } from './support/api.js';
 import { removeRunRows } from './support/access.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
-  createEmployee,
-  seedSuperAdmin,
-  type Session,
-} from './support/session.js';
+  type ConversationsSetup,
+  conversationsSetup,
+  startConversation,
+} from './support/library.js';
+import { seedSuperAdmin, type Session } from './support/session.js';
 
 /** Creating 120 conversations one by one plus a page walk exceeds the default 5 s. */
 const BULK_TEST_TIMEOUT_MS = 60_000;
@@ -48,39 +46,49 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 let harness: TestApp;
 /** The file's administrator: creates the employees. */
 let admin: Session;
+/** What the employees need to start a conversation. */
+let setup: ConversationsSetup | undefined;
 
 beforeAll(async () => {
   harness = await createTestApp();
+  // Every first message starts a title in the background; it answers, so no title call fails.
+  harness.model.completeText({ text: 'Заголовок' });
   admin = await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`);
-});
+  setup = await conversationsSetup(harness.app, admin);
+}, BULK_TEST_TIMEOUT_MS);
 
 afterAll(async () => {
   if (harness === undefined) return;
   try {
-    if (admin !== undefined)
-      await removeRunRows(harness.pool, {
-        models: [],
-        roles: [],
-        users: [admin.id],
-      });
+    try {
+      await setup?.restore();
+    } finally {
+      if (admin !== undefined)
+        await removeRunRows(harness.pool, {
+          models: setup === undefined ? [] : [setup.model],
+          roles: setup === undefined ? [] : [setup.roleId],
+          users: [admin.id],
+        });
+    }
   } finally {
     await harness.close();
   }
-});
+}, BULK_TEST_TIMEOUT_MS);
 
-/** The API as a fresh employee. */
+/** The API as a fresh employee who may start a conversation. */
 async function asNewUser(): Promise<ChatApi> {
-  return chatApi(harness.app, await createEmployee(harness.app, admin));
+  if (setup === undefined) throw new Error('the suite has no setup');
+  return setup.newEmployee();
 }
 
-/** Creates `count` conversations one request after another. */
+/** Creates `count` conversations, each by its first message, one after another. */
 async function createConversations(
   api: ChatApi,
   count: number,
 ): Promise<ThreadSummary[]> {
   const created: ThreadSummary[] = [];
   for (let index = 0; index < count; index += 1)
-    created.push(await api.createThread());
+    created.push(await startConversation(api));
   return created;
 }
 
@@ -126,7 +134,7 @@ async function walkFrom(
   return pages;
 }
 
-describe('agent-platform / chat - the former conversation routes over chat_conversations (real AppModule + real Postgres)', () => {
+describe('agent-platform / chat - the former conversation routes over the root sessions (real AppModule + real Postgres)', () => {
   // ---------------------------------------------------------------------------------------------------------------
   // GET /threads - pages, cursor, owner header
   // ---------------------------------------------------------------------------------------------------------------
@@ -234,11 +242,13 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
   // ---------------------------------------------------------------------------------------------------------------
   // POST /threads
   // ---------------------------------------------------------------------------------------------------------------
-  // Contract «Беседы»: "POST /threads -> 201, title: null, id формата UUID, появляется в списке первой."
-  // Catches: a client-provided id honoured, a default title instead of null, the new conversation not first in the list.
-  it('creates a conversation with a server UUID and title null that is listed first', async () => {
+  // Contract «Беседы»: POST /threads -> 201, title: null, a server UUID; nothing is written — the conversation
+  // appears, first in the list, with its first message.
+  // Catches: a client-provided id honoured, a default title instead of null, an empty conversation that is listed or
+  //   readable before its first message, the conversation not first in the list after it.
+  it('hands out a server UUID with title null, lists and reads nothing until the first message, then lists the conversation first', async () => {
     const api = await asNewUser();
-    const older = await api.createThread();
+    const older = await startConversation(api);
 
     const body = await expectBody(
       api.raw('post', '/threads', { id: 'client-id' }),
@@ -252,6 +262,15 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
     expect(body.createdAt).toBe(body.updatedAt);
     expect(
       (await api.listThreads()).threads.map((thread) => thread.id),
+    ).toEqual([older.id]);
+    expect(
+      await expectError(api.raw('get', `/threads/${body.id}`), 404),
+    ).toEqual(NOT_FOUND_BODY);
+
+    await api.send(body.id, 'Первое сообщение');
+
+    expect(
+      (await api.listThreads()).threads.map((thread) => thread.id),
     ).toEqual([body.id, older.id]);
   });
 
@@ -263,7 +282,7 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
     // Catches: an untrimmed title persisted, a response that differs from the list, the 200-character boundary refused.
     it('saves the trimmed title, returns it in the response and the list, and accepts 200 characters', async () => {
       const api = await asNewUser();
-      const { id } = await api.createThread();
+      const { id } = await startConversation(api);
 
       const renamed = await api.renameThread(id, '  Отчёт Q3  ');
 
@@ -281,7 +300,7 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
     // Catches: a whitespace-only or 201-character title accepted, or the conversation changed despite the 400.
     it('rejects missing, empty, whitespace-only and 201-character titles with 400 VALIDATION_FAILED and leaves the title unchanged', async () => {
       const api = await asNewUser();
-      const { id } = await api.createThread();
+      const { id } = await startConversation(api);
       await api.renameThread(id, 'Исходный');
 
       for (const invalid of [
@@ -310,8 +329,8 @@ describe('agent-platform / chat - the former conversation routes over chat_conve
   // Catches: a delete that leaves the row listed or readable, a rename that resurrects it, a second DELETE that answers 500.
   it('removes the conversation from the list, answers 404 on GET and PATCH, and a second DELETE is 404', async () => {
     const api = await asNewUser();
-    const kept = await api.createThread();
-    const { id } = await api.createThread();
+    const kept = await startConversation(api);
+    const { id } = await startConversation(api);
 
     const deleted = await api.raw('delete', `/threads/${id}`);
 

@@ -1,5 +1,5 @@
 {
-  "id": "00495c74-362e-492c-a34f-a05f7252e70f",
+  "id": "f68c509f-326d-4aec-b4b2-b160aff1ec7d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1605,11 +1605,35 @@
           "primaryKey": true,
           "notNull": true
         },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "root_id": {
+          "name": "root_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "owner_id": {
           "name": "owner_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "name": {
           "name": "name",
@@ -1639,25 +1663,25 @@
           "name": "record_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "record_kind": {
           "name": "record_kind",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "record_version": {
           "name": "record_version",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "record_name": {
           "name": "record_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "author_id": {
           "name": "author_id",
@@ -1755,6 +1779,49 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_sessions_root_idx": {
+          "name": "agent_sessions_root_idx",
+          "columns": [
+            {
+              "expression": "root_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_sessions_owner_page_idx": {
+          "name": "agent_sessions_owner_page_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"agent_sessions\".\"updated_at\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2077,102 +2144,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.chat_conversations": {
-      "name": "chat_conversations",
-      "schema": "app",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "root_id": {
-          "name": "root_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "chat_conversations_root_idx": {
-          "name": "chat_conversations_root_idx",
-          "columns": [
-            {
-              "expression": "root_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_conversations_owner_page_idx": {
-          "name": "chat_conversations_owner_page_idx",
-          "columns": [
-            {
-              "expression": "owner_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "app.chat_drafts": {
       "name": "chat_drafts",
       "schema": "app",
@@ -2289,16 +2260,16 @@
         }
       },
       "foreignKeys": {
-        "chat_drafts_conversation_id_chat_conversations_id_fk": {
-          "name": "chat_drafts_conversation_id_chat_conversations_id_fk",
+        "chat_drafts_conversation_id_agent_sessions_task_id_fk": {
+          "name": "chat_drafts_conversation_id_agent_sessions_task_id_fk",
           "tableFrom": "chat_drafts",
-          "tableTo": "chat_conversations",
+          "tableTo": "agent_sessions",
           "schemaTo": "app",
           "columnsFrom": [
             "conversation_id"
           ],
           "columnsTo": [
-            "id"
+            "task_id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"

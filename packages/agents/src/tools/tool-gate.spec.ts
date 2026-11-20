@@ -421,6 +421,7 @@ const OPEN_PURGE: ToolCallRow = {
 
 const SESSION: Session = {
   taskId: CALLER.agentId,
+  parentId: CALLER.parentId,
   ownerId: OWNER,
   name: HELPER.name,
   origin: HELPER.origin,

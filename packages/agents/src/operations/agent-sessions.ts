@@ -37,6 +37,8 @@ import {
 } from '../start/resolve-start.js';
 import type { RunSnapshot } from '../start/snapshot.js';
 import {
+  type RootPosition,
+  type RootSession,
   type Session,
   type SessionInput,
   sessionInputOf,
@@ -52,6 +54,8 @@ const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
 
 /** The root of a conversation (design-runtime.md, «Операции `agents`»): it runs the `chat` record. */
 export interface StartRequest {
+  /** The id of the new root, a UUID; a new one when absent. A taken id is the runtime's `TASK_EXISTS`. */
+  readonly agentId?: string;
   readonly ownerId: string;
   readonly prompt: string;
   readonly description: string;
@@ -68,6 +72,13 @@ export interface SendRequest extends AgentRef {
   readonly text: string;
   /** The message's chip (KD-4): the model and the history get it with the text. */
   readonly record?: ChipRecord;
+}
+
+/** A page of the owner's root sessions: strictly after `after`, at most `limit`; all without either. */
+export interface RootsRequest {
+  readonly ownerId: string;
+  readonly after?: RootPosition;
+  readonly limit?: number;
 }
 
 export interface HistoryRequest extends AgentRef {
@@ -144,6 +155,21 @@ export interface AgentSessions {
   history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
   confirmations(rootId: string, ownerId: string): Promise<AgentConfirmation[]>;
   resolveConfirmation(request: ResolveConfirmationRequest): Promise<ResolveOutcome>;
+  /**
+   * The owner's root session — the conversation the employee sees; `undefined` for a missing one,
+   * another owner's and a session that is not a root.
+   */
+  root(rootId: string, ownerId: string): Promise<RootSession | undefined>;
+  /** The owner of a root session, whoever it is: for a signal of a tree that carries no owner. */
+  rootOwner(rootId: string): Promise<string | undefined>;
+  /** The owner's root sessions, last changed first (`updatedAt` DESC, then `rootId` DESC). */
+  roots(request: RootsRequest): Promise<RootSession[]>;
+  /** Moves the owner's root session to the top of the list. */
+  touchRoot(rootId: string, ownerId: string): Promise<void>;
+  /** Sets the title and moves the root session up; `undefined` as in `root`. */
+  renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined>;
+  /** Writes a generated title only into an empty one; `true` when it was written. */
+  titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean>;
 }
 
 export interface AgentSessionsDeps {
@@ -277,22 +303,36 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return { kind: 'record', recordId: snapshot.origin.recordId, expected: snapshot.origin.kind };
   }
 
-  /** Creates the agent task, then its session in its own transaction (plan Notes 11). */
-  async function createAgent(
+  /**
+   * Creates a root: its task and its session commit together, so whoever sees the task sees the
+   * session, and of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`.
+   */
+  async function createRoot(
     ownerId: string,
-    parentId: string | null,
+    input: SessionInput,
+    agentId?: string,
+  ): Promise<{ agentId: string }> {
+    return database.transaction(async (tx) => {
+      const taskId = await runtime.tasks.create(
+        { type: AGENT_TASK_TYPE, ownerId, input, ...(agentId === undefined ? {} : { taskId: agentId }) },
+        tx,
+      );
+      await sessions.ensureSession(tx, { taskId, ownerId, parentId: null, rootId: taskId }, input);
+      return { agentId: taskId };
+    });
+  }
+
+  /** Creates the agent task under its parent, then its session in its own transaction (plan Notes 11). */
+  async function createChild(
+    parent: { readonly ownerId: string; readonly parentId: string; readonly rootId: string },
     input: SessionInput,
   ): Promise<{ agentId: string }> {
-    const agentId = await asAgent(
-      runtime.tasks.create({
-        type: AGENT_TASK_TYPE,
-        ownerId,
-        input,
-        ...(parentId === null ? {} : { parentId }),
-      }),
-    );
+    const { ownerId, parentId, rootId } = parent;
+    const agentId = await asAgent(runtime.tasks.create({ type: AGENT_TASK_TYPE, ownerId, input, parentId }));
     // A worker may take the first step before this: it makes the same session (ON CONFLICT DO NOTHING).
-    await database.transaction((tx) => sessions.ensureSession(tx, agentId, input, ownerId));
+    await database.transaction((tx) =>
+      sessions.ensureSession(tx, { taskId: agentId, ownerId, parentId, rootId }, input),
+    );
     return { agentId };
   }
 
@@ -356,18 +396,22 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   return {
-    start({ ownerId, prompt, description, record }) {
+    start({ agentId, ownerId, prompt, description, record }) {
       return logged(
         'start',
-        { ownerId, recordId: record?.id ?? null },
+        { agentId: agentId ?? null, ownerId, recordId: record?.id ?? null },
         async () => {
           const started = await startSnapshot(ownerId, { kind: 'builtin', builtinKey: CHAT_BUILTIN_KEY }, null);
-          const created = await createAgent(ownerId, null, {
-            snapshot: started.snapshot,
-            prompt,
-            description,
-            ...(record === undefined ? {} : { record }),
-          });
+          const created = await createRoot(
+            ownerId,
+            {
+              snapshot: started.snapshot,
+              prompt,
+              description,
+              ...(record === undefined ? {} : { record }),
+            },
+            agentId,
+          );
           started.done(created.agentId, created.agentId);
           return created;
         },
@@ -453,11 +497,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           // AC-09.2: the same assignment and parent on the snapshot of KD-2; the history starts anew,
           // and a restarted fork does not inherit its parent's.
           const started = await startSnapshot(ownerId, restartSource(snapshot, session), task.parentId);
-          const created = await createAgent(ownerId, task.parentId, {
+          const input = {
             snapshot: started.snapshot,
             description: session.description,
             prompt: session.prompt,
-          });
+          };
+          const created =
+            task.parentId === null
+              ? await createRoot(ownerId, input)
+              : await createChild({ ownerId, parentId: task.parentId, rootId: task.rootId }, input);
           started.done(created.agentId, task.rootId);
           return created;
         },
@@ -483,7 +531,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { agentId, ownerId },
         async () => {
           const task = await agentTask(agentId, ownerId);
-          // An agent whose session is not written yet (between `tasks.create` and `ensureSession`) is not shown.
+          // A child whose session is not written yet (between `tasks.create` and `ensureSession`) is not shown.
           const session = await sessions.get(database, agentId);
           if (session === undefined) throw agentNotFound(agentId);
           return view(task, session);
@@ -594,6 +642,59 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           return runtime.decisions.resolve(decisionId, ownerId, { approve, ...edited });
         },
         (outcome) => ({ outcome }),
+      );
+    },
+
+    root(rootId, ownerId) {
+      return logged(
+        'root',
+        { rootId, ownerId },
+        () => sessions.root(database, rootId, ownerId),
+        (found) => ({ found: found !== undefined }),
+      );
+    },
+
+    rootOwner(rootId) {
+      return logged(
+        'rootOwner',
+        { rootId },
+        () => sessions.rootOwner(database, rootId),
+        (ownerId) => ({ ownerId: ownerId ?? null }),
+      );
+    },
+
+    roots({ ownerId, after, limit }) {
+      return logged(
+        'roots',
+        { ownerId, afterRootId: after?.rootId ?? null, limit: limit ?? null },
+        () =>
+          sessions.roots(database, ownerId, {
+            ...(after === undefined ? {} : { after }),
+            ...(limit === undefined ? {} : { limit }),
+          }),
+        (found) => ({ roots: found.length }),
+      );
+    },
+
+    touchRoot(rootId, ownerId) {
+      return logged('touchRoot', { rootId, ownerId }, () => sessions.touchRoot(database, rootId, ownerId));
+    },
+
+    renameRoot(rootId, ownerId, title) {
+      return logged(
+        'renameRoot',
+        { rootId, ownerId },
+        () => sessions.renameRoot(database, rootId, ownerId, title),
+        (renamed) => ({ found: renamed !== undefined }),
+      );
+    },
+
+    titleRootIfEmpty(rootId, ownerId, title) {
+      return logged(
+        'titleRootIfEmpty',
+        { rootId, ownerId },
+        () => sessions.titleRootIfEmpty(database, rootId, ownerId, title),
+        (written) => ({ written }),
       );
     },
   };

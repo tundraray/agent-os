@@ -13,7 +13,6 @@ import { WORKFLOWS } from '../workflows/workflows.tokens.js';
 import { AgentControlService } from './agent-control.service.js';
 import { AgentsController } from './agents.controller.js';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens.js';
-import { ConversationsRepository } from './conversations.repository.js';
 import { ConversationsService } from './conversations.service.js';
 import { DecisionsController } from './decisions.controller.js';
 import { createDraftRecordTool, DRAFT_RECORD_REGISTRATION } from './draft-record.tool.js';
@@ -53,7 +52,6 @@ import { TitleService } from './title.service.js';
       },
       inject: [AGENTS, LibraryService, APP_LOGGER, WORKFLOWS],
     },
-    ConversationsRepository,
     DraftsService,
     TitleService,
     ConversationsService,
@@ -61,6 +59,6 @@ import { TitleService } from './title.service.js';
     AgentControlService,
     LiveHub,
   ],
-  exports: [ConversationsRepository, ConversationsService, LiveHub],
+  exports: [ConversationsService, LiveHub],
 })
 export class ChatModule {}

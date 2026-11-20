@@ -9,12 +9,6 @@ export interface LiveStream {
   readonly watch: Watch | null;
 }
 
-/** The conversation a root agent belongs to (a row of `chat_conversations`). */
-export interface RootConversation {
-  readonly threadId: string;
-  readonly ownerId: string;
-}
-
 /** The addressing part of a text part: its owner, its tree and the agent that wrote it. */
 export interface DeltaAddress {
   readonly ownerId: string;
@@ -39,31 +33,19 @@ export function parseWatch(value: string | undefined): Watch | null {
 }
 
 /** A `tree` note of a conversation goes to every stream of the conversation's owner (DC-4). */
-export function noteTargets<S extends LiveStream>(
-  conversation: RootConversation,
-  streams: Iterable<S>,
-): S[] {
-  return [...streams].filter((stream) => stream.ownerId === conversation.ownerId);
+export function noteTargets<S extends LiveStream>(ownerId: string, streams: Iterable<S>): S[] {
+  return [...streams].filter((stream) => stream.ownerId === ownerId);
 }
 
 /**
  * A text part goes only to streams of its owner (Invariant 3) that watch the agent that wrote it, or
- * — for a part of the root — that watch the root's conversation. The conversation is looked up per
- * signal, so a `thread:` stream opened before the conversation got its root receives the root's parts
- * once the conversation is found; `null` (not found yet) reaches only the `agent:` streams.
+ * — for a part of the root — that watch the root's conversation, whose id is the root's. So a
+ * `thread:` stream opened before the first message receives the root's parts as soon as there are any.
  */
-export function deltaTargets<S extends LiveStream>(
-  delta: DeltaAddress,
-  conversationOfRoot: RootConversation | null,
-  streams: Iterable<S>,
-): S[] {
-  const rootThreadId =
-    delta.agentId === delta.rootId && conversationOfRoot?.ownerId === delta.ownerId
-      ? conversationOfRoot.threadId
-      : null;
+export function deltaTargets<S extends LiveStream>(delta: DeltaAddress, streams: Iterable<S>): S[] {
   return [...streams].filter((stream) => {
     if (stream.ownerId !== delta.ownerId || stream.watch === null) return false;
     if (stream.watch.kind === 'agent') return stream.watch.agentId === delta.agentId;
-    return stream.watch.threadId === rootThreadId;
+    return delta.agentId === delta.rootId && stream.watch.threadId === delta.rootId;
   });
 }

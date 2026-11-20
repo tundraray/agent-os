@@ -74,6 +74,7 @@ import {
 } from '../src/identity/session-cookie.js';
 import {
   allowRole,
+  grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
@@ -1589,7 +1590,22 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
             name: 'Аня',
             email: anyaEmail,
           });
+          // A conversation exists from its first message, which needs a right on the chat's model: a personal one
+          await grantTo(
+            app,
+            admin,
+            { userId: anyaLocal.id },
+            {
+              effect: 'allow',
+              target: { kind: 'model', model: DEFAULT_MODEL },
+            },
+          );
+          const anyaFirst = 'INT-3 row 4: the first message of Аня';
+          harness.model.script({ task: anyaFirst }, [], {
+            thereafter: { text: 'INT-3 row 4: an answer' },
+          });
           const anyaThread = await chatApi(app, anyaLocal).createThread();
+          await chatApi(app, anyaLocal).send(anyaThread.id, anyaFirst);
           const role = await expectBody(
             apiRequest(app, admin, 'post', '/admin/roles', {
               name: `e2e-analysts-${randomUUID()}`,

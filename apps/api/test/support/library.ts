@@ -8,6 +8,7 @@ import {
   type CreateRecordBody,
   type RecordDetail,
   type RecordSummary,
+  type ThreadSummary,
   type UpdateRecordBody,
   type WorkflowContent,
 } from '@agent-os/contracts';
@@ -15,9 +16,20 @@ import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
 import { builtinRecords } from '../../src/library/builtin-records.js';
-import { catalogueModelIds } from './access.js';
-import { expectBody } from './api.js';
-import { apiRequest, type Method, type Session } from './session.js';
+import {
+  allowRole,
+  catalogueModelIds,
+  HAIKU_TEST_PRICES,
+  runModel,
+  useRunModels,
+} from './access.js';
+import { type ChatApi, chatApi, expectBody } from './api.js';
+import {
+  apiRequest,
+  createEmployee,
+  type Method,
+  type Session,
+} from './session.js';
 
 /**
  * The library of the tests (custom-agents/design-library.md, Contract Definitions): record bodies, the
@@ -328,6 +340,61 @@ export async function pointBuiltinsAt(
       );
     }
   };
+}
+
+/** What a suite that only needs conversations to exist gets from {@link conversationsSetup}. */
+export interface ConversationsSetup {
+  /** The run's default chat model: pass it to `removeRunRows`. */
+  readonly model: string;
+  /** The run's role, allowed the model: pass it to `removeRunRows`. */
+  readonly roleId: string;
+  /** The API as a new employee who may start a conversation. */
+  newEmployee(): Promise<ChatApi>;
+  /** Gives the platform back its default models and the built-in records theirs; run before `removeRunRows`. */
+  restore(): Promise<void>;
+}
+
+/**
+ * The least a first message needs to start its root (a conversation exists only from its first message): the
+ * run's default chat model, the built-in records on it and a role allowed the model.
+ */
+export async function conversationsSetup(
+  app: TestApp,
+  admin: Session,
+): Promise<ConversationsSetup> {
+  const model = runModel('claude-haiku-5-5');
+  const restoreModels = await useRunModels(app, admin, {
+    chat: { id: model, ...HAIKU_TEST_PRICES },
+  });
+  const restoreBuiltins = await pointBuiltinsAt(app, admin, model);
+  const role = await allowRole(app, admin, {
+    name: 'conversations',
+    models: [model],
+    servers: [],
+  });
+  return {
+    model,
+    roleId: role.id,
+    newEmployee: async () => {
+      const session = await createEmployee(app, admin);
+      await role.add(session);
+      return chatApi(app, session);
+    },
+    restore: async () => {
+      await restoreBuiltins();
+      await restoreModels();
+    },
+  };
+}
+
+/**
+ * A conversation of the employee: the id `POST /threads` hands out and its first message, which creates it.
+ * Returns it as `GET /threads/:id` reads it.
+ */
+export async function startConversation(api: ChatApi): Promise<ThreadSummary> {
+  const { id } = await api.createThread();
+  await api.send(id, 'Первое сообщение беседы');
+  return api.getThread(id);
 }
 
 /** One route with a record number: its method, its path under `/api` and a body that passes its schema. */

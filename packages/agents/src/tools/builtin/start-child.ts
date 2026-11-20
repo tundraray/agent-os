@@ -35,7 +35,11 @@ export function createStartChild(deps: StartChildDeps): (scope: StartChildScope)
         ...(forkedFrom === undefined ? {} : { forkedFrom }),
       };
       const agentId = await effects.spawn({ type: AGENT_TASK_TYPE, input });
-      await sessions.ensureSession(tx, agentId, input, caller.ownerId);
+      await sessions.ensureSession(
+        tx,
+        { taskId: agentId, ownerId: caller.ownerId, parentId: caller.agentId, rootId: caller.rootId },
+        input,
+      );
       return { agentId };
     };
 }

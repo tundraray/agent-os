@@ -168,7 +168,7 @@ export function createDraftRecordTool(
         return { kind: 'refused', reason: prepared.reason };
       }
       const draft = await insertDraft(tx, {
-        rootId: caller.rootId,
+        conversationId: caller.rootId,
         ownerId: caller.ownerId,
         callId,
         target: prepared.target,
@@ -176,11 +176,6 @@ export function createDraftRecordTool(
         description: prepared.description,
         body: prepared.body,
       });
-      if (draft === undefined) {
-        throw new Error(
-          `Root ${caller.rootId} of draft_record has no conversation of its owner`,
-        );
-      }
       logger.info('record draft written', {
         ...fields,
         threadId: draft.conversationId,

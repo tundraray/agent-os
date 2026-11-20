@@ -74,7 +74,6 @@ const APP_TABLES = [
   'agent_tool_calls',
   'agent_tool_results',
   'audit_events',
-  'chat_conversations',
   'chat_drafts',
   'identity_login_requests',
   'identity_providers',

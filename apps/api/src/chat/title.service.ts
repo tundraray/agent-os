@@ -8,7 +8,6 @@ import {
 import type { Logger } from '@agent-os/common';
 import { AGENTS } from '../agents/agents.tokens.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
-import { ConversationsRepository } from './conversations.repository.js';
 import {
   buildTitlePrompt,
   normalizeGeneratedTitle,
@@ -21,9 +20,9 @@ const TITLE_MAX_OUTPUT_TOKENS = 64;
 const TITLE_TIMEOUT_MS = 8_000;
 
 export type EnsureTitleRequest = {
+  /** The conversation: the id of its root session. */
   readonly threadId: string;
   readonly ownerId: string;
-  readonly rootId: string;
   /** The text of the first message when this send created the root; otherwise the root's task is read. */
   readonly firstText?: string;
 };
@@ -51,7 +50,6 @@ export class TitleService {
 
   constructor(
     @Inject(AGENTS) private readonly agents: Agents,
-    private readonly conversations: ConversationsRepository,
     @Inject(APP_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.title' });
@@ -64,10 +62,10 @@ export class TitleService {
     void this.generate(request).finally(() => this.generating.delete(request.threadId));
   }
 
-  private async generate({ threadId, ownerId, rootId, firstText }: EnsureTitleRequest): Promise<void> {
+  private async generate({ threadId, ownerId, firstText }: EnsureTitleRequest): Promise<void> {
     const startedAt = Date.now();
     try {
-      const source = firstText ?? (await this.firstTask(rootId, ownerId));
+      const source = firstText ?? (await this.firstTask(threadId, ownerId));
       if (source === undefined) {
         this.logger.warn('thread title not generated', {
           threadId,
@@ -91,7 +89,7 @@ export class TitleService {
         });
         return;
       }
-      const written = await this.conversations.setTitleIfEmpty(threadId, title);
+      const written = await this.agents.sessions.titleRootIfEmpty(threadId, ownerId, title);
       this.logger.info('thread title generated', {
         threadId,
         ownerId,

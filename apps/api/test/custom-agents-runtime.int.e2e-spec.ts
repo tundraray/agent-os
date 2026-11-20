@@ -649,19 +649,20 @@ async function threadRows(
 }
 
 /**
- * Root sessions of the owner: sessions without a parent task (a conversation's chat). A root keeps no origin,
- * so `withOrigin` counts the roots that wrongly name a record.
+ * Root sessions of the owner: sessions without a parent (a conversation's chat). A root is a run of the built-in
+ * record `chat`, so `ofChat` counts the roots whose row names that record.
  */
 async function rootSessions(
   ownerId: string,
-): Promise<{ total: number; withOrigin: number }> {
+): Promise<{ total: number; ofChat: number }> {
   const { rows } = await harness.pool.query<{
     total: number;
-    withOrigin: number;
+    ofChat: number;
   }>(
-    `SELECT count(*)::int AS total, count(s.record_id)::int AS "withOrigin"
-       FROM app.agent_sessions s JOIN app.runtime_tasks t ON t.task_id = s.task_id
-      WHERE s.owner_id = $1 AND t.parent_id IS NULL`,
+    `SELECT count(*)::int AS total, count(r.id)::int AS "ofChat"
+       FROM app.agent_sessions s
+       LEFT JOIN app.library_records r ON r.id = s.record_id AND r.builtin_key = 'chat' AND s.builtin_key = 'chat'
+      WHERE s.owner_id = $1 AND s.parent_id IS NULL`,
     [ownerId],
   );
   const [counts] = rows;
@@ -1265,8 +1266,8 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         `${lastResultOf(removedView, START_AGENT).outcome} ${lastResultOf(removedView, START_AGENT).refusalReason}`,
       ).toBe('refused record_unavailable');
       expect(treeOf(removedView.agents)).toHaveLength(agentsBefore);
-      // A conversation's root keeps no origin
-      expect(await rootSessions(boris.id)).toEqual({ total: 1, withOrigin: 0 });
+      // A conversation's root keeps its link to the record it runs: the built-in `chat`
+      expect(await rootSessions(boris.id)).toEqual({ total: 1, ofChat: 1 });
 
       // An employee with no right on the chat's model: the first message is refused with the model, and no root exists
       const dima = await newEmployee('Дима', []);
@@ -1282,7 +1283,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         'model_not_allowed',
         DEFAULT_MODEL,
       ]);
-      expect(await rootSessions(dima.id)).toEqual({ total: 0, withOrigin: 0 });
+      expect(await rootSessions(dima.id)).toEqual({ total: 0, ofChat: 0 });
 
       // The administrator denies Аня R's model: her chat's start of R is refused with the model, and so is the
       // restart of her finished run of R; her agent list does not change

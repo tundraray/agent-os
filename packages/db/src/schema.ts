@@ -322,8 +322,21 @@ export const agentSessions = app.table(
     taskId: uuid('task_id')
       .primaryKey()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-    /** Owner of the task; read only by the `task.failed` consumer. */
+    /**
+     * The task's parent and root, copied from `runtime_tasks` when the row is written (a root names
+     * itself as its root), so the chain reads from this table. No FK: the row is deleted by the cascade
+     * of `task_id` alone.
+     */
+    parentId: uuid('parent_id'),
+    rootId: uuid('root_id').notNull(),
+    /** Owner of the task. */
     ownerId: text('owner_id').notNull(),
+    /**
+     * Set only on a root session, which the owner sees as a conversation: its title (empty until one
+     * is written) and its last change, the key of the owner's list. Null on every other session.
+     */
+    title: text('title'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
     /** Name of the run from its snapshot (custom-agents/design-runtime.md, KD-3). */
     name: text('name').notNull(),
     description: text('description').notNull(),
@@ -332,14 +345,14 @@ export const agentSessions = app.table(
     /** Task text; `restart` starts a new agent with it. */
     prompt: text('prompt').notNull(),
     /**
-     * Origin of the run: the library record it started from, as it was at the start. All null for a
-     * conversation's root. No FK: the record may be deleted. The snapshot itself lives only in the
-     * task input (ADR-0017).
+     * Origin of the run: the library record it started from, as it was at the start; a root session
+     * carries the builtin record `chat`. No FK: the record may be deleted. The snapshot itself lives
+     * only in the task input (ADR-0017).
      */
-    recordId: uuid('record_id'),
-    recordKind: text('record_kind'),
-    recordVersion: integer('record_version'),
-    recordName: text('record_name'),
+    recordId: uuid('record_id').notNull(),
+    recordKind: text('record_kind').notNull(),
+    recordVersion: integer('record_version').notNull(),
+    recordName: text('record_name').notNull(),
     authorId: uuid('author_id'),
     authorName: text('author_name'),
     builtinKey: text('builtin_key'),
@@ -361,6 +374,11 @@ export const agentSessions = app.table(
   (t) => [
     /** Counts the owner's runs of a record for the chat listing. */
     index('agent_sessions_owner_record_idx').on(t.ownerId, t.recordId),
+    index('agent_sessions_root_idx').on(t.rootId),
+    /** The owner's list of root sessions: last changed first. */
+    index('agent_sessions_owner_page_idx')
+      .on(t.ownerId, t.updatedAt.desc(), t.taskId.desc())
+      .where(sql`${t.updatedAt} IS NOT NULL`),
   ],
 );
 
@@ -587,39 +605,10 @@ export const agentModelProviders = app.table(
   ],
 );
 
-// ---------------------------------------------------------------------------------------------
-// Chat conversations (agent-platform/design-chat.md, Data Model, KD-1). No FK to the root task:
-// the row is locked during the tree's deletion and removed after the tree.
-// ---------------------------------------------------------------------------------------------
-
-export const chatConversations = app.table(
-  'chat_conversations',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: text('owner_id').notNull(),
-    /** Empty string until the title is written; the API returns `null` for it. */
-    title: text('title').notNull().default(''),
-    /** The root session of agent `chat`; null until the first message. One root, one conversation. */
-    rootId: uuid('root_id'),
-    createdAt: createdAt(),
-    updatedAt: timestamp('updated_at', { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => [
-    uniqueIndex('chat_conversations_root_idx').on(t.rootId),
-    index('chat_conversations_owner_page_idx').on(
-      t.ownerId,
-      t.updatedAt.desc(),
-      t.id.desc(),
-    ),
-  ],
-);
-
 /**
  * A record draft of a conversation (custom-agents/design-runtime.md, KD-6): written by `draft_record`
- * of the root, resolved by the conversation's route. `record_id` and `saved_record_id` have no FK:
- * the record may be deleted.
+ * of the root, resolved by the conversation's route. The conversation is its root session, and the
+ * drafts go with it. `record_id` and `saved_record_id` have no FK: the record may be deleted.
  */
 export const chatDrafts = app.table(
   'chat_drafts',
@@ -627,7 +616,7 @@ export const chatDrafts = app.table(
     id: uuid('id').primaryKey().defaultRandom(),
     conversationId: uuid('conversation_id')
       .notNull()
-      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
     ownerId: text('owner_id').notNull(),
     /** The `draft_record` call in the root's history the card stands at. */
     callId: text('call_id').notNull(),

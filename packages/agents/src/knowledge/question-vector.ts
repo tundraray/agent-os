@@ -83,8 +83,8 @@ export async function embedQuestion(
   ctx: StepContext,
   session: Session,
 ): Promise<boolean> {
-  // A conversation's root has no record: it never learns, and its input is not even parsed.
-  if (session.origin === null) return true;
+  // A root session never learns, and its input is not even parsed.
+  if (session.parentId === null) return true;
   const snapshot = sessionInputOf(ctx.input).snapshot;
   const learning = sessionLearningOf(snapshot);
   if (learning === null) return true;
