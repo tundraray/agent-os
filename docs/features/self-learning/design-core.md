@@ -22,7 +22,7 @@
 
 #### KD-2: Флажок — поле `selfLearning` в `WorkflowContent` со значением по умолчанию `false`; снимок исполнителя получает поле `learning`; запуск, который учится, получает строку в `agent_knowledge_runs` при создании сессии координатора
 
-Поле с умолчанием читается из всех старых записей и старых снимков без миграции данных, а правит его тот, кто правит workflow, через существующие маршруты библиотеки. Координатор видит флажок в своём снимке — там весь `WorkflowContent`. Исполнитель получает только своего исполнителя, поэтому `executorSnapshot` кладёт в его снимок поле `learning`: `null`, когда workflow не учится, иначе — список серверов всей команды; по нему шаг исполнителя решает, какой урок устарел (KD-5). Поле стоит рядом с `origin`, а не в `RunOrigin`: `RunOrigin` хранится столбцами `agent_sessions` и входит в контракт веба. Строку запуска пишет `sessions.ensureSession` — единственное место, где создаётся сессия, — в той же транзакции, когда снимок координатора несёт включённый флажок. Так запуск берёт флажок при старте и держит его до конца (AC-01.2). Копия workflow копирует и флажок, но граф привязан к номеру записи, поэтому у копии он пуст (AC-02.3).
+Поле с умолчанием читается из всех старых записей и старых снимков без миграции данных, а правит его тот, кто правит workflow, через существующие маршруты библиотеки; черновик из чата его не меняет (Invariant 9). Координатор видит флажок в своём снимке — там весь `WorkflowContent`. Исполнитель получает только своего исполнителя, поэтому `executorSnapshot` кладёт в его снимок поле `learning`: `null`, когда workflow не учится, иначе — список серверов всей команды; по нему шаг исполнителя решает, какой урок устарел (KD-5). Поле стоит рядом с `origin`, а не в `RunOrigin`: `RunOrigin` хранится столбцами `agent_sessions` и входит в контракт веба. Строку запуска пишет `sessions.ensureSession` — единственное место, где создаётся сессия, — в той же транзакции, когда снимок координатора несёт включённый флажок. Так запуск берёт флажок при старте и держит его до конца (AC-01.2). Копия workflow копирует и флажок, но граф привязан к номеру записи, поэтому у копии он пуст (AC-02.3).
 
 Не взяты: поле в `RunOrigin` — правка контракта веба ради внутреннего признака; столбец в `agent_sessions` — признак всё равно нужен в снимке исполнителя для перезапуска, а строка запуска нужна для отметки «извлечено до» (KD-3).
 
@@ -114,6 +114,7 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 | `selectKnowledge`, `checkOperations` | [pure-decision.md](../../code-system/patterns/pure-decision.md) | new | отбор (KD-6) и проверка операций (KD-4) |
 | `modelStep`, `compactionStep` | [run-snapshot.md](../../code-system/patterns/run-snapshot.md) | extended | блок знаний — живые данные рядом со снимком (KD-6) |
 | `WorkflowContentSchema`, `executorSnapshot`, `sessions.ensureSession` | [run-snapshot.md](../../code-system/patterns/run-snapshot.md) | extended | флажок, `learning`, строка запуска (KD-2) |
+| `createDraftRecordTool` (`draft_record`) | — | extended | флажок черновика не задаёт модель (Invariant 9) |
 | `ModelClient.call`, `AccessGate`, журнал токенов, `envelope` | — | reused | без изменений (KD-4, KD-6) |
 | `Agents.knowledge`, опция `secrets` у `createAgents` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | операции графа и настроек; список секретов от `apps/api` |
 | `createSecretMasker` | [logging.md](../../code-system/patterns/logging.md) | reused | чистка текста операций (FR-05) |
@@ -637,6 +638,7 @@ sequenceDiagram
 
 #### Для части `web`
 
+- **Схемы** — формы ниже лежат zod-схемами в новом модуле `knowledge.ts` пакета `packages/contracts`: `KnowledgeViewSchema` (ответ `GET` графа), `KnowledgeSettingsSchema` (ответ маршрутов настроек) и `UpdateKnowledgeSettingsBodySchema` (тело `PUT`). Там же константы предела `KNOWLEDGE_LIMIT_TOKENS_MIN` = 1 000, `KNOWLEDGE_LIMIT_TOKENS_MAX` = 32 000 и `KNOWLEDGE_LIMIT_TOKENS_DEFAULT` = 8 000; умолчание столбца `limit_tokens` берётся из `KNOWLEDGE_LIMIT_TOKENS_DEFAULT`, как `RECORD_MAX_TURNS_DEFAULT` у `library_settings`.
 - **`GET /api/library/:id/knowledge`** — граф workflow для экрана знаний. Возвращает `KnowledgeView`. 404 `RECORD_NOT_FOUND`, когда записи нет, она не видна сотруднику ни в библиотеке, ни в панели, или это агент; 403 `KNOWLEDGE_FORBIDDEN`, когда workflow виден, но сотрудник не автор и не администратор при workflow в панели.
 - **`DELETE /api/library/:id/knowledge/entities/:entityId`** — удаляет сущность и все связи-факты с ней. 204, в том числе когда сущности уже нет. Те же 404 и 403. Аудит `knowledge_delete` — только когда что-то удалено.
 - **`DELETE /api/library/:id/knowledge/relations/:relationId`** — удаляет связь, урок или «искал — не нашёл». Ответы и аудит — как у сущности.
@@ -660,7 +662,7 @@ sequenceDiagram
 - Связь-факт: `from` и `to` — `id` и `name` сущностей, `label` — что их связывает.
 - Урок: `server`, `tool`, `question` (вид вопроса), `hint`, `outcome`.
 - «Искал — не нашёл»: `server`, `tool`, `question`.
-- `confirmations` — целое от 1; `date` — день последнего подтверждения или добавления, ISO.
+- `confirmations` — целое от 1; `date` — время коммита раунда, который добавил запись или последним её подтвердил: полная отметка времени ISO 8601, как `createdAt` в остальных контрактах; день из неё веб берёт сам.
 - `status` — `in_prompt`, `left_out` (не поместилась в предел), `outdated` (помечена моделью или её инструмента больше нет у workflow) или `lessons_off` (урок при выключенных уроках). Запуск и сотрудник, от которых пришла запись, не отдаются (AC-11.4).
 
 **`LastExtraction`**
@@ -668,22 +670,22 @@ sequenceDiagram
 - `at` — когда раунд закончился, ISO; `model` — модель извлечения.
 - `status` — `done`, `skipped` или `failed`.
 - `added`, `confirmed`, `outdated` — числа операций при `done`; все нули — нового не нашлось.
-- `reason` — при `skipped`: `stopped`, `owner_disabled`, `quota_exhausted`, `model_not_connected`, `model_not_allowed`, `no_models_allowed`; при `failed`: `model_error`, `invalid_answer`, `interrupted`; при `done` — `null`. Для `no_models_allowed`, `invalid_answer` и `interrupted` в UXRD (MC-3) пока нет текста.
+- `reason` — при `skipped`: `stopped`, `owner_disabled`, `quota_exhausted`, `model_not_connected`, `model_not_allowed`, `no_models_allowed`; при `failed`: `model_error`, `invalid_answer`, `interrupted`; при `done` — `null`.
 
 **`KnowledgeSettings`**
 
-- `limitTokens` — целое от 1 000 до 32 000, по умолчанию 8 000.
+- `limitTokens` — целое от `KNOWLEDGE_LIMIT_TOKENS_MIN` до `KNOWLEDGE_LIMIT_TOKENS_MAX`, по умолчанию `KNOWLEDGE_LIMIT_TOKENS_DEFAULT`.
 - `lessonsEnabled` — по умолчанию `true`.
 - `updatedAt` — ISO или `null`, пока стоят умолчания.
 
 **Error handling**
 
 - `RECORD_NOT_FOUND` — 404, как во всей библиотеке.
-- `KNOWLEDGE_FORBIDDEN` — 403, новый код в наборе кодов библиотеки в `contracts`. Веб показывает на него тот же экран «Не найдено» (UXRD KN-03).
+- `KNOWLEDGE_FORBIDDEN` — 403, новый член `LibraryErrorCode` в `packages/contracts/src/library.ts`. Веб показывает на него тот же экран «Не найдено» (UXRD KN-03).
 
 #### Внутри платформы
 
-- **`WorkflowContent.selfLearning`** — логическое поле, по умолчанию `false` (KD-2).
+- **`WorkflowContent.selfLearning`** — логическое поле, по умолчанию `false` (KD-2). Модель его не задаёт: `prepare` инструмента `draft_record` (`createDraftRecordTool`) после разбора содержимого ставит в черновик правки значение правимой версии записи из `LibraryService.resolve`, а в черновик новой записи — `false`, что бы ни прислала модель. Черновик правки привязан к этой версии, поэтому флажок, изменённый после черновика, не затирается: такое сохранение получает `version_conflict`.
 - **Снимок исполнителя, поле `learning`** — `null` или `servers`: серверы всех исполнителей команды из снимка координатора, по умолчанию `null`. Перезапуск исполнителя берёт его из своего снимка.
 - **`runtime.tasks.create(request, tx?)`** — с транзакцией пишет задачу и `task.created` в ней и не повторяет транзакцию сам; без неё работает как сегодня.
 - **Задача `knowledge.extract`** — корневая, владелец — запускающий; вход: `runId` (номер задачи координатора) и `rootId` (корень беседы). Шаг всегда завершает задачу сам и пишет итог в строку запуска; `fail` он не возвращает.
@@ -708,7 +710,7 @@ sequenceDiagram
 
 **Runtime settings**
 
-- `agent_knowledge_settings.limit_tokens` — по умолчанию 8 000, границы 1 000 – 32 000; предел блока знаний в шаге и в извлечении.
+- `agent_knowledge_settings.limit_tokens` — умолчание и границы — константы `KNOWLEDGE_LIMIT_TOKENS_*` выше; предел блока знаний в шаге и в извлечении.
 - `agent_knowledge_settings.lessons_enabled` — по умолчанию `true`; при `false` уроки не идут ни в шаг, ни в извлечение и не входят в предел.
 
 ### Data Model
@@ -789,6 +791,7 @@ stateDiagram-v2
 6. Связь-факт соединяет сущности того же workflow и не живёт без них.
 7. Граф существует, пока существует запись workflow; выключенный флажок его не трогает.
 8. Строка настроек одна, её значения в границах.
+9. Черновик из чата не меняет флажок: черновик правки несёт `selfLearning` правимой версии, черновик новой записи — `false`.
 
 ### Логирование
 
@@ -810,10 +813,10 @@ stateDiagram-v2
   - When: исполнитель вызывает `logs.search` (успех по `billing-api`, пусто по `payment-gateway`), запуск завершается (строкой таблицы — и падает), модель извлечения отвечает уроком, фактом и «искал — не нашёл».
   - Then: задача извлечения создана после события конца; вызов модели шёл на A; строка журнала токенов несёт владельца-запускающего, и месячный расход его вырос; в графе урок с `logs.search` и «искал — не нашёл» с `logs.search`; следующий запуск получает их внутри конверта данных у координатора и у исполнителя.
 
-- **UC-2: Флажок выключен посреди запуска** — covers AC-01.2, AC-02.2, DC-1
+- **UC-2: Флажок выключен посреди запуска** — covers AC-01.2, AC-02.2, DC-1, Invariant 9
   - Given: workflow, сохранённый до появления флажка, читается с `selfLearning = false`; автор включает флажок, запуск начат, в графе есть записи.
-  - When: автор выключает флажок, запуск заканчивается, затем стартует новый запуск, затем автор включает флажок снова.
-  - Then: первый запуск пополнил граф; новый запуск не получил блок знаний и строки запуска не получил; после включения граф тот же.
+  - When: автор выключает флажок, запуск заканчивается, затем стартует новый запуск, затем автор включает флажок снова; строкой таблицы — автор сохраняет черновик правки из чата, в содержимом которого нет `selfLearning`.
+  - Then: первый запуск пополнил граф; новый запуск не получил блок знаний и строки запуска не получил; после включения граф тот же; после сохранения черновика флажок по-прежнему включён.
 
 - **UC-3: Граф и жизнь записи workflow** — covers AC-02.1, AC-02.3
   - Given: у workflow есть граф.
@@ -924,3 +927,4 @@ AC-07.2 (ответ не называет граф источником) — п�
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-19 | Initial version |
+| 1.1 | 2026-11-20 | Схемы и константы предела в `packages/contracts`, формат `KnowledgeItem.date`, черновик из чата не меняет флажок (Invariant 9) |
