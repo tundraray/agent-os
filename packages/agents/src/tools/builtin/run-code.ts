@@ -34,26 +34,26 @@ export interface RunTexts {
 }
 
 /** The text of a `write` run whose decided request has no readable list (DC-16). */
-const NO_CONFIRMED_LIST = 'в запросе нет списка «Может вызвать»';
+const NO_CONFIRMED_LIST = 'the decided request has no list of tools the script may call';
 
 export function runTexts(settings: RunTextSettings): RunTexts {
   return {
     failures: {
-      syntax: 'синтаксическая ошибка',
-      exception: 'исключение',
-      timeout: `превышено время (${settings.timeoutMs / 1000} с)`,
-      memory: `превышена память (${settings.memoryMb} МБ)`,
-      result_too_large: `итог больше предела (${settings.resultMaxBytes} байт)`,
-      result_not_json: 'итог не переводится в JSON',
-      call_limit: `превышено число вызовов (${settings.maxToolCalls})`,
-      protocol: 'нарушен протокол исполнителя',
-      crashed: 'процесс исполнителя упал',
-      handler_failed: 'сбой платформы при обработке вызова из скрипта',
-      busy: 'исполнитель кода занят',
-      aborted: 'запуск прерван',
+      syntax: 'syntax error',
+      exception: 'exception',
+      timeout: `time limit exceeded (${settings.timeoutMs / 1000} s)`,
+      memory: `memory limit exceeded (${settings.memoryMb} MB)`,
+      result_too_large: `the result is larger than the limit (${settings.resultMaxBytes} bytes)`,
+      result_not_json: 'the result cannot be converted to JSON',
+      call_limit: `tool call limit exceeded (${settings.maxToolCalls})`,
+      protocol: 'the executor broke the protocol',
+      crashed: 'the executor process crashed',
+      handler_failed: 'platform failure while handling a call from the script',
+      busy: 'the code executor is busy',
+      aborted: 'the run was interrupted',
     },
-    perUserLimit: `превышено число одновременных запусков (${settings.maxConcurrentPerUser})`,
-    twiceInterrupted: 'запуск дважды прерван рестартом',
+    perUserLimit: `concurrent run limit exceeded (${settings.maxConcurrentPerUser})`,
+    twiceInterrupted: 'the run was interrupted by a restart twice',
     resultNotFound: RESULT_NOT_FOUND,
   };
 }
@@ -70,7 +70,7 @@ const DETAILED_REASONS: ReadonlySet<FailReason> = new Set(['syntax', 'exception'
 function failureText(outcome: Extract<RunOutcome, { status: 'failed' }>, texts: RunTexts): string {
   const message = DETAILED_REASONS.has(outcome.reason) ? outcome.text : null;
   const detail = message === null || message === '' ? '' : `: ${message}`;
-  const line = outcome.line === null ? '' : `; строка ${outcome.line}`;
+  const line = outcome.line === null ? '' : `; line ${outcome.line}`;
   return `${texts.failures[outcome.reason]}${detail}${line}`;
 }
 
@@ -92,7 +92,7 @@ function isEmptyContainer(value: unknown): boolean {
 /**
  * The run's end as the model gets it (DC-2): a string as it is; `undefined`, `null` or an empty
  * string — `empty` with no text; an empty array or object — `empty` with `[]` or `{}`; any other value
- * — `success` with its JSON. A failed run is `tool_error` «причина; строка N» (DC-13, «Error
+ * — `success` with its JSON. A failed run is `tool_error` `reason; line N` (DC-13, «Error
  * handling»); only a successful run keeps its output (DC-14).
  */
 export function outcomeOfRun(outcome: RunOutcome, texts: RunTexts): DoneResult {

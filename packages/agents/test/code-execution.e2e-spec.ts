@@ -197,9 +197,9 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
   // User Journey: the employee's agent is running a script that calls tools; the server dies mid-run and is started again
   // AC-10.6: "Given идёт запуск `read`, when сервер останавливают и запускают снова, then платформа исполняет этот запуск заново ровно один раз: в логе запуска видно одно повторное исполнение, а агент получает его итог или ошибку, как от обычного запуска."
   // AC-10.2: "Given идёт запуск `write`, when сервер останавливают и запускают снова, then запуск сам не повторяется, а агент получает результат «исход неизвестен: запуск прерван рестартом»."
-  // Design DC-15: "Читающий запуск, потерянный рестартом второй раз, третий раз не исполняется: вызов закрыт ошибкой «запуск дважды прерван рестартом»."
+  // Design DC-15: "Читающий запуск, потерянный рестартом второй раз, третий раз не исполняется: вызов закрыт ошибкой «the run was interrupted by a restart twice»."
   // Verification: rows - A a read run killed during a from-code call; B the same run killed a second time; C a confirmed write run killed after its first from-code call
-  // Behavior: process killed at the point -> a second instance continues -> A: the read script runs once more, exactly once, the log has one "повторное исполнение" record and the agent gets the result; B: the error "запуск дважды прерван рестартом" and no third execution;
+  // Behavior: process killed at the point -> a second instance continues -> A: the read script runs once more, exactly once, the log has one "повторное исполнение" record and the agent gets the result; B: the error "the run was interrupted by a restart twice" and no third execution;
   //   C: the result "исход неизвестен", and the fixture journal holds no more calls than before the restart (the script is not run again)
   // Catches: a restart that repeats a mutating script (a note created twice), or one that loses a read run for good, or a read run that a crash loop re-executes forever
   // @category: e2e
@@ -248,7 +248,7 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
   );
 
   it(
-    'E2E-1 row B: DC-15 a read run killed twice ends with "запуск дважды прерван рестартом" and is not executed a third time',
+    'E2E-1 row B: DC-15 a read run killed twice ends with "the run was interrupted by a restart twice" and is not executed a third time',
     async () => {
       // Given: the fixture holds the first two get_trace calls; the first API process runs the read run
       const scene = await openScene((latch) => [holdCall('get_trace', TRACE, latch, [1, 2])]);
@@ -275,7 +275,7 @@ describe('E2E-1: a server restart in the middle of a run (killed process, second
           `1/1 ${LOGS_SERVER}/get_trace interrupted`,
           `2/1 ${LOGS_SERVER}/get_trace interrupted`,
         ]);
-        expect(await runLine(scene, agentId)).toBe('run_code tool_error attempts 2 запуск дважды прерван рестартом');
+        expect(await runLine(scene, agentId)).toBe('run_code tool_error attempts 2 the run was interrupted by a restart twice');
         expect(historyLines(await historyOf(scene.control, agentId, scene.ownerId))).toEqual(
           historyOfRun(READ_RUN, 'tool_result: run_code tool_error'),
         );

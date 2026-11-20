@@ -57,9 +57,9 @@ function coordinatorPrompt(content: WorkflowSnapshot['content']): string {
   return parts.join('\n\n');
 }
 
-/** A line of the team in the coordinator's `start_agent` (KD-5): «имя (до N вызовов): роль». */
+/** A line of the team in the coordinator's `start_agent` (KD-5): `name (up to N calls): role`. */
 function teamLine(executor: WorkflowSnapshot['content']['executors'][number]): string {
-  return descriptionLine(`${executor.name} (до ${executor.maxRuns} вызовов): ${executor.role}`);
+  return descriptionLine(`${executor.name} (up to ${executor.maxRuns} calls): ${executor.role}`);
 }
 
 /** A line of an agent's `start_agent`: the record id it is started by, its name and description. */

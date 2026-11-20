@@ -48,7 +48,7 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       // design-mcp-connect.md KD-5: no usable account is its own outcome, with the page to fix it on
       'no usable account of the owner is auth_required naming the server',
       { kind: 'auth_required' } satisfies McpCallResponse,
-      { outcome: 'auth_required', text: 'Нужно подключить аккаунт backoffice на странице «Мой доступ»' },
+      { outcome: 'auth_required', text: 'An account of backoffice must be connected on the page «Мой доступ»' },
     ],
   ] as const)('%s', (_case, response, expected) => {
     expect(toOutcome(response, SERVER)).toEqual(expected);

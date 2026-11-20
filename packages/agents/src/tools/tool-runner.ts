@@ -311,14 +311,14 @@ function codeRefusalText(
   reason: ToolRefusalReason,
   runClass: RunCodeArgs['class'],
 ): string {
-  const run = `запуск ${runClass}`;
+  const run = `${runClass} run`;
   switch (reason) {
     case 'not_in_confirmed_script':
-      return `${tool}: инструмента нет в подтверждённом коде (${reason}, ${run})`;
+      return `${tool}: the tool is not in the confirmed code (${reason}, ${run})`;
     case 'changing_in_read_run':
-      return `${tool}: инструмент не помечен читающим, а ${run} только читает (${reason})`;
+      return `${tool}: the tool is not marked read-only, and a ${run} only reads (${reason})`;
     default:
-      return `${tool}: отказ ${reason} (${run})`;
+      return `${tool}: refused, ${reason} (${run})`;
   }
 }
 

@@ -1092,8 +1092,8 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const borisThread = await firstMessage(boris, listed);
       await untilAnswered(boris, borisThread, 'INT-3 B: ответ Борису');
       expect(namesakes(firstCallFor(listed))).toEqual([
-        `${borisOwn.id}: ${name} (ваша)`,
-        `${r.id}: ${name} (автор Аня)`,
+        `${borisOwn.id}: ${name} (yours)`,
+        `${r.id}: ${name} (by Аня)`,
       ]);
 
       // Аня turns the switch off; Борис writes again: R is gone from his list and his start of R is refused
@@ -1114,7 +1114,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         'INT-3 B: R не запущен',
       );
       expect(namesakes(firstCallFor(switchedOff))).toEqual([
-        `${borisOwn.id}: ${name} (ваша)`,
+        `${borisOwn.id}: ${name} (yours)`,
       ]);
       expect(outcomesOf(refusedOff, START_AGENT)).toEqual([
         'refused not_allowed',
@@ -1461,7 +1461,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         await api(anya).send(thread, next);
         await untilAnswered(anya, thread, 'INT-4 A: список прочитан');
         expect(listingHeads(firstCallFor(next), START_AGENT)).toContain(
-          `${record.id}: ${second} (ваша)`,
+          `${record.id}: ${second} (yours)`,
         );
 
         // A second save of the same draft: 409, and still one record and one event

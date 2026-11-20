@@ -30,7 +30,7 @@ function isEmpty(result: CallToolResult): boolean {
 
 /** What the model reads when the owner has no usable account on the server (KD-5). */
 function authRequiredText(server: string): string {
-  return `Нужно подключить аккаунт ${server} на странице «Мой доступ»`;
+  return `An account of ${server} must be connected on the page «Мой доступ»`;
 }
 
 /**

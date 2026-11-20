@@ -339,11 +339,11 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       }
 
       // Then: each run ended with its error text, which the model got on its next turn instead of a result (AC-07.4, AC-10.4, DC-11, DC-12)
-      const callLimit = seenRunResult('[tool_error]\nпревышено число вызовов (50)');
+      const callLimit = seenRunResult('[tool_error]\ntool call limit exceeded (50)');
       expect(toolOutputOf(script.calls[2]?.messages ?? [], refusedRunId)).toBe(callLimit);
       expect(toolOutputOf(script.calls[3]?.messages ?? [], burstRunId)).toBe(callLimit);
       expect(toolOutputOf(script.calls[4]?.messages ?? [], memoryRunId)).toBe(
-        seenRunResult('[tool_error]\nпревышена память (512 МБ)'),
+        seenRunResult('[tool_error]\nmemory limit exceeded (512 MB)'),
       );
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
         `task: ${prompt}`,
@@ -411,7 +411,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
 
       // Then: the model got the reason with the line, and the corrected run executed as an ordinary call and succeeded
       expect(toolOutputOf(script.calls[1]?.messages ?? [], brokenRunId)).toBe(
-        seenRunResult('[tool_error]\nсинтаксическая ошибка: SyntaxError: variable name expected; строка 3'),
+        seenRunResult('[tool_error]\nsyntax error: SyntaxError: variable name expected; line 3'),
       );
       expect(toolOutputOf(script.calls[2]?.messages ?? [], fixedRunId)).toBe(seenRunResult('6'));
       expect((await toolCallRowsOf(harness.db, agentId)).map((row) => `${row.tool} ${row.outcome} attempts ${row.attempts}`)).toEqual([
@@ -835,7 +835,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
       expect(returnedBy(await historyOf(harness, agentId, ownerId), runCallId)).toEqual({
         noteIds: NOTE_IDS,
         refusal:
-          `refused not_in_confirmed_script mcp__${LOGS_SERVER}__search_logs: инструмента нет в подтверждённом коде (not_in_confirmed_script, запуск write)`,
+          `refused not_in_confirmed_script mcp__${LOGS_SERVER}__search_logs: the tool is not in the confirmed code (not_in_confirmed_script, write run)`,
       });
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs' })).toEqual([]);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(3);
@@ -934,14 +934,14 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       // Then: each request got its refusal, whose text names the tool, the reason and the run class (AC-03.4, AC-03.6,
       // AC-03.1, AC-05.5, DC-5, DC-6)
       expect(returnedBy(await historyOf(harness, agentA, employeeA), runA)).toEqual([
-        'refused not_callable_from_code start_agent: отказ not_callable_from_code (запуск read)',
-        'refused not_callable_from_code run_code: отказ not_callable_from_code (запуск read)',
-        `refused tool_not_in_definition mcp__${LOGS_SERVER}__no_such_tool: отказ tool_not_in_definition (запуск read)`,
-        `refused tool_not_in_definition mcp__${TRACKER_SERVER}__search_tickets: отказ tool_not_in_definition (запуск read)`,
-        `refused no_access mcp__${BACKOFFICE_SERVER}__search_orders: отказ no_access (запуск read)`,
+        'refused not_callable_from_code start_agent: refused, not_callable_from_code (read run)',
+        'refused not_callable_from_code run_code: refused, not_callable_from_code (read run)',
+        `refused tool_not_in_definition mcp__${LOGS_SERVER}__no_such_tool: refused, tool_not_in_definition (read run)`,
+        `refused tool_not_in_definition mcp__${TRACKER_SERVER}__search_tickets: refused, tool_not_in_definition (read run)`,
+        `refused no_access mcp__${BACKOFFICE_SERVER}__search_orders: refused, no_access (read run)`,
       ]);
       expect(resultEntryOf(await historyOf(harness, agentW, employeeW), runW).text).toBe(
-        `refused changing_in_read_run mcp__${BACKOFFICE_SERVER}__create_incident_note: инструмент не помечен читающим, а запуск read только читает (changing_in_read_run)`,
+        `refused changing_in_read_run mcp__${BACKOFFICE_SERVER}__create_incident_note: the tool is not marked read-only, and a read run only reads (changing_in_read_run)`,
       );
 
       // Then: every refusal has its audit row "отказ" with the reason
@@ -1018,12 +1018,12 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
 
   // AC-04.3: "Given результат получен в сессии другого агента или другого сотрудника, when скрипт просит его по идентификатору, then скрипт получает такой же ответ, как для несуществующего идентификатора."
   // AC-06.2: "Given два запуска идут одновременно, when скрипт второго пытается прочитать что-либо, оставленное первым, then он получает такой же ответ, как для несуществующих данных."
-  // Behavior: `readResult` with a `callId` of B's session, of another agent of A, an invented id, the `callId` of a call that ended in an error, and a `callId` left by a concurrent run -> every answer is the same "результат не найден"
+  // Behavior: `readResult` with a `callId` of B's session, of another agent of A, an invented id, the `callId` of a call that ended in an error, and a `callId` left by a concurrent run -> every answer is the same "result not found"
   // Catches: another employee's full result (or one from another session) readable by guessing a `callId`; an answer that differs between "foreign" and "missing" and so confirms the id exists
   // @category: core-functionality
   // @dependency: readResult, agent_tool_results, session and owner lookup, CodeRunner (real process)
   // @complexity: medium
-  it('INT-3 row C: AC-04.3 readResult answers one "результат не найден" for a foreign session, another agent, an invented id, a failed call and a concurrent run', async () => {
+  it('INT-3 row C: AC-04.3 readResult answers one "result not found" for a foreign session, another agent, an invented id, a failed call and a concurrent run', async () => {
     // Given: employees A and B may read `logs`. B's agent reads one record directly (its full result is stored). A's first
     // agent reads one record directly, then runs a script that leaves a global and calls `search_logs` with a page the
     // fixture holds, so that run is still going. A's second agent reads one record directly, makes a direct call that
@@ -1112,7 +1112,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       expect(codeCallLines(await codeCallRowsOf(harness.db, firstId, firstRunId))).toEqual([`1 ${LOGS_SERVER}/search_logs null null`]);
 
       // Then: the failed direct call kept no full result (DC-8), and every id that is not the run's own successful
-      // result answered the same "результат не найден"; the run read its own result and saw no global of the first run
+      // result answered the same "result not found"; the run read its own result and saw no global of the first run
       const secondHistory = await historyOf(harness, secondId, employeeA);
       expect(historyLines(secondHistory)).toEqual([
         `task: ${promptSecond}`,
@@ -1123,7 +1123,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
         'tool_result: run_code success',
         'model_answer: Чужого не прочитано []',
       ]);
-      const notFound = 'not_found null результат не найден';
+      const notFound = 'not_found null result not found';
       expect(returnedBy(secondHistory, secondRunId)).toEqual({
         answers: {
           foreignSession: notFound,
@@ -1367,7 +1367,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
 
   // AC-07.6: "Given у сотрудника А исполняются два запуска кода, а других запусков на сервере нет, when агент сотрудника А начинает третий, then третий скрипт не выполняется, вызывающий получает ошибку «превышено число одновременных запусков», а запуск, который в это время начинает сотрудник Б, исполняется ..."
   // Design KD-11, DC-18: "отказ по пределу сотрудника попытку читающего запуска не тратит"; the place is freed on any end of the run.
-  // Behavior: substituted CodeRunner holds each run; `CODE_RUN_MAX_CONCURRENT_PER_USER` 2, `CODE_RUN_MAX_CONCURRENT` 4. Row 1: A has two running, A starts a third, B starts one -> A's third is `tool_error` "превышено число одновременных запусков (2)", the CodeRunner never got its script, `attempts` did not grow, B's run executes.
+  // Behavior: substituted CodeRunner holds each run; `CODE_RUN_MAX_CONCURRENT_PER_USER` 2, `CODE_RUN_MAX_CONCURRENT` 4. Row 1: A has two running, A starts a third, B starts one -> A's third is `tool_error` "concurrent run limit exceeded (2)", the CodeRunner never got its script, `attempts` did not grow, B's run executes.
   //   Row 2: A has two running, one ends in an error, A starts another -> it executes (the slot was freed by the failure)
   // Catches: one employee filling the server's executor slots (and starving everyone else), a refused run spending a read run's attempt, a slot leaked by an error end so the employee is locked out of code
   // @category: edge-case
@@ -1420,7 +1420,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
 
       // Then: the third run is refused with the limit's text, the runner never got its script, and its attempt was not spent (AC-07.6, DC-18)
       expect(toolOutputOf(thirdA.replies.calls[1]?.messages ?? [], toolCallIdOf(thirdA.replies, 0))).toBe(
-        seenRunResult('[tool_error]\nпревышено число одновременных запусков (2)'),
+        seenRunResult('[tool_error]\nconcurrent run limit exceeded (2)'),
       );
       expect(held.runs.map((run) => run.script)).toEqual([firstA.script, secondA.script]);
       expect(await runRows(thirdId)).toEqual(['run_code done tool_error attempts 0']);

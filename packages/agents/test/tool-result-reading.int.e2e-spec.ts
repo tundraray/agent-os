@@ -24,6 +24,7 @@ import { createFixtureFiles, FIXTURE_SHARED_TOKEN, startFixtureProcess } from '@
 import { eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { McpClient } from '../src/mcp/mcp-client.js';
+import { RESULT_NOT_FOUND } from '../src/tools/large-result.js';
 import {
   type AgentsHarness,
   createAgentsHarness,
@@ -49,7 +50,7 @@ const LINE_CHARS = 2_000;
 const REDACTED = '[redacted]';
 
 /** The answer of a reading tool to a callId that is missing or not the caller's. */
-const NOT_FOUND = 'результат не найден';
+const NOT_FOUND = RESULT_NOT_FOUND;
 
 /** The search of INT-1, in a case the fixture's data does not use: the search ignores case. */
 const PATTERN = 'Payment-API';

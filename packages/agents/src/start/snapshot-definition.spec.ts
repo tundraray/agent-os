@@ -103,9 +103,9 @@ function workflow(rules: string, finalExecutor: string | null): WorkflowSnapshot
 }
 
 const TEAM_LINES = [
-  'plan (до 1 вызовов): Делит вопрос на направления',
-  'gather (до 5 вызовов): Собирает данные по направлению',
-  'answer (до 2 вызовов): Пишет ответ',
+  'plan (up to 1 calls): Делит вопрос на направления',
+  'gather (up to 5 calls): Собирает данные по направлению',
+  'answer (up to 2 calls): Пишет ответ',
 ];
 
 describe('snapshotDefinition', () => {
