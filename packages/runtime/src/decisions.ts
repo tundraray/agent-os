@@ -119,7 +119,7 @@ export class Decisions {
    * Writes the resolution once and queues the waiting task, with `decision.resolved` and
    * `task.queued`. A request that is `resolved` or `cancelled` (a stop closed it) gives
    * `already_resolved` and changes nothing. Throws `DECISION_NOT_FOUND` for a missing or another
-   * owner's request.
+   * owner's request, or one of a deleted tree.
    */
   async resolve(
     decisionId: string,
@@ -207,7 +207,9 @@ export class Decisions {
       .from(runtimeDecisions)
       .where(eq(runtimeDecisions.decisionId, decisionId))
       .for('update');
-    if (!task || !request) {
+    // A request of a deleted tree answers as a missing one: the stop cancelled it, and
+    // `already_resolved` would tell the deleted tree apart.
+    if (!task || task.deletedAt !== null || !request) {
       throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
     }
     if (request.status !== open) {

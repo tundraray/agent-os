@@ -7,6 +7,7 @@ import {
   type RuntimeTx,
 } from '@agent-os/runtime';
 
+import { sessions } from '../store/sessions.repository.js';
 import {
   advanceExtractedUpTo,
   ensureEmbeddingRow,
@@ -119,8 +120,8 @@ export function triggerDecision<R extends TriggerRun, E extends TriggerEmbedding
 // ---------- The consumer ----------
 
 export interface KnowledgeTriggerDeps {
-  /** `create` only with the delivery `tx`; `get` reads the conversation root of a run. */
-  readonly tasks: Pick<Runtime['tasks'], 'create' | 'get'>;
+  /** `create` only with the delivery `tx`. */
+  readonly tasks: Pick<Runtime['tasks'], 'create'>;
   readonly logger: Logger;
 }
 
@@ -167,8 +168,10 @@ export function createKnowledgeTrigger(deps: KnowledgeTriggerDeps): EventConsume
           await updateKnowledgeRun(tx, run.runId, { extractTaskId: null });
           return undefined;
         }
-        // The failed task's event is rooted at itself; the next round needs the conversation root.
-        const { rootId } = await deps.tasks.get(run.runId, run.ownerId);
+        // The failed task's event is rooted at itself; the next round needs the conversation root. It is
+        // read from the run's own session: the runtime answers a deleted conversation's tree as missing.
+        const rootId = await sessions.rootIdOf(tx, run.runId);
+        if (rootId === undefined) throw new Error(`Learning run ${run.runId} has no session`);
         const taskId = await createExtract(tx, run, rootId);
         await updateKnowledgeRun(tx, run.runId, { extractTaskId: taskId, needsRound: false });
         return taskId;

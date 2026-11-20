@@ -492,6 +492,22 @@ async function ledgerCalls(
 }
 
 /**
+ * INT-3 A: the rows of a deleted conversation that a later request could change — the tree (as
+ * `treeSnapshot` reads it) and the ledger rows of its tasks. Read through the harness pool.
+ */
+async function deletedTreeState(
+  harness: TestApp,
+  rootId: string,
+): Promise<Record<string, unknown[]>> {
+  const ledger = await harness.pool.query(
+    `SELECT c.call_id, c.cost_usd FROM app.runtime_model_calls c
+       JOIN app.runtime_tasks t ON t.task_id = c.task_id WHERE t.root_id = $1 ORDER BY c.call_id`,
+    [rootId],
+  );
+  return { ...(await treeSnapshot(harness, rootId, rootId)), ledger: ledger.rows };
+}
+
+/**
  * Root sessions of the owner: sessions without a parent, each its own root and a run of the `chat` record. Every
  * one is a conversation.
  */
@@ -2244,21 +2260,21 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Catches: (A) a list that duplicates or skips a conversation across pages over the owner's root sessions, ignores `updatedAt` growth on send or rename (a conversation does not move to the top), returns another state for rename of a blank title (must be 400), reads a deleted conversation (404 on read, send, history); the old mapping of a missing id to 404 changed;
   //   (B) the automatic title that overwrites a title the employee set meanwhile (the conditional write "only into empty"), a generation failure that leaves a half-written or default title, one that is not retried by the next send, a title call that leaves no ledger row (Invariant 4) or is not a row without a task id, a title that blocks the first message's 202;
   //   (C) a delete that leaves the working agent running (it still calls its tool and the model after the 204), leaves rows of the tree readable by id (the agent still answers 200), or removes the ledger rows so that the month's spend falls (AC-14.4 plus "журнал токенов цел"); a delete racing a first send that answers 500 or leaves the list and the delete's answer in disagreement.
-  // Not re-checked here: the stop of the tree's tasks and the rows `deleteTree` removes (runtime INT-3), the ledger surviving `deleteTree` as a runtime rule (runtime INT-5; here only through the HTTP spend), the cursor encoding, the title rules and the schemas (unit), the foreign owner (INT-4), the stream (INT-1).
+  // Not re-checked here: the stop of the tree's tasks and the rows `deleteTree` marks (runtime INT-5 D), the ledger surviving `deleteTree` as a runtime rule (runtime INT-5; here only through the HTTP spend), the cursor encoding, the title rules and the schemas (unit), the foreign owner (INT-4), the stream (INT-1).
   // Behavior: HTTP list/rename/delete/send -> the root sessions and the agents tree -> the next list, read, send and spend show the new state; the title is written in the background under the conditional update
   // @category: core-functionality
-  // @dependency: AppModule (ConversationsService, TitleService, ThreadsController), agents.completeText, createRuntime (tasks.deleteTree, ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
+  // @dependency: AppModule (ConversationsService, TitleService, ThreadsController), agents.completeText, agents.sessions.deleteRoot, createRuntime (ledger), scripted model double (answer, fail, gated title scenarios), MCP fixture (delayed read), Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by scenario):
-  // - Row A "list, rename, delete" (UC-3, AC-14.3): owner U has 25 conversations with distinct `updatedAt`. Then: page 1 has 20 items and a `nextCursor`, page 2 has 5 and none; the union is the 25 ids, no duplicates, in `updatedAt` descending order; a send into the oldest conversation moves it to the top of page 1; rename with `"  "` answers 400 `VALIDATION_FAILED` and with `" Отчёт "` answers 200 with the trimmed title; a bad cursor answers 400 `INVALID_CURSOR`; delete answers 204, then `GET`, `PATCH`, `GET .../history`, `POST .../interrupt` and a second `DELETE` all answer 404 `THREAD_NOT_FOUND` with the same body as for a random id (a send to a deleted id is a first message: it starts a conversation with that id); the list no longer contains it.
+  // - Row A "list, rename, delete" (UC-3, AC-14.3): owner U has 25 conversations with distinct `updatedAt`. Then: page 1 has 20 items and a `nextCursor`, page 2 has 5 and none; the union is the 25 ids, no duplicates, in `updatedAt` descending order; a send into the oldest conversation moves it to the top of page 1; rename with `"  "` answers 400 `VALIDATION_FAILED` and with `" Отчёт "` answers 200 with the trimmed title; a bad cursor answers 400 `INVALID_CURSOR`; delete answers 204, then `GET`, `PATCH`, `GET .../history`, `POST .../interrupt` and a second `DELETE` all answer 404 `THREAD_NOT_FOUND` with the same body as for a random id, and so does `GET .../agents`; a send to the deleted id is 404 with the constant body and creates nothing; the root's task row is `stopped` and marked deleted, its session row is marked deleted and its history entries stay; between right after the delete and after those requests the tree's rows (tasks, queues, history, decisions, session) and its ledger rows do not change; the list no longer contains it.
   // - Row B "the automatic title" (UC-3, DC-2, Invariant 2, Invariant 4; four cases): (1) the first message with a scripted title: the 202 is returned before the title is written (the title call is held on a latch), then after the release the thread's title is the scripted text (trimmed per the unit rules) and the ledger holds one extra row without a task id; (2) the employee renames the conversation while the generation is held: after the release the manual title is intact; (3) a generation that fails: the title stays empty, a warning is logged without the message text, the message itself was accepted and answered; (4) the next send retries the generation and the title is then written.
   // - Row C "delete with a working agent, and the money" (UC-4, AC-14.4, Flow 6): a conversation whose child agent waits on a held read call, with ledger rows written by the chat and the child (literal costs). Record `GET /spend` and the fixture journal length. Delete the conversation -> 204. Then: `GET /agents/:childId/history` and `.../run` answer 404 `AGENT_NOT_FOUND`; `GET /agents` lists nothing of it; after the held call is released and workers run, the fixture journal gains no entry and the scripted model's call counter for the tree is unchanged; `GET /spend` returns the same sum as before. Second case: a delete and a first send started together on an id without a first message: the send is 202 either way; the delete is 204 when it ran after the root was created (the list loses the conversation) or 404 when it found nothing (the conversation is listed).
   // Plan Notes 5(б): the pages of 25 conversations, the renames and the bad cursor of row A are rows of
   // the rewritten `threads.e2e-spec.ts` (T6.4); here row A asserts only the move to the top on a send and
-  // the 404 of the conversation's new routes after a delete.
+  // the deleted conversation: 404 on every route and the send, its rows kept and nothing woken.
   it(
-    'INT-3 A: the conversation list pages 25 conversations without duplicates, a send moves one to the top, a blank rename is 400 and a deleted conversation answers 404 on its read and interrupt routes like a random id',
+    'INT-3 A: a send moves a conversation to the top, and a deleted conversation keeps its rows and answers 404 on every route, the send included',
     async () => {
       // Given: three conversations of one owner, each started by its first message, listed last changed first
       const api = chatApi(harness.app, INT3.a);
@@ -2304,14 +2320,37 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
 
       // When: the conversation is deleted
       await api.deleteThread(bottom);
+      const rightAfterDelete = await deletedTreeState(harness, bottom);
 
-      // Then: its history and an interrupt answer 404 `THREAD_NOT_FOUND` with the same body as a random id
-      const afterDelete = THREAD_ROUTES.filter((route) =>
-        /\/(history|interrupt)$/.test(route.path(':id')),
-      );
-      expect(afterDelete).toHaveLength(2);
-      for (const route of afterDelete)
+      // Then: every conversation route answers 404 `THREAD_NOT_FOUND` with the same body as a random id
+      expect(THREAD_ROUTES).toHaveLength(6);
+      for (const route of THREAD_ROUTES)
         await expectSameAsMissing(api, route, bottom, 'THREAD_NOT_FOUND');
+      // And: a send to the deleted id is 404 with the constant body — a random id would be a first message
+      const sentToDeleted = await api.raw('post', `/threads/${bottom}/messages`, {
+        text: 'INT-3 A: a message to the deleted conversation',
+      });
+      expect({ status: sentToDeleted.status, body: sentToDeleted.body as unknown }).toEqual({
+        status: 404,
+        body: THREAD_NOT_FOUND_BODY,
+      });
+
+      // And: the rows stay, marked deleted; the root is stopped and its history kept
+      const read = async (sql: string): Promise<unknown[]> =>
+        (await harness.pool.query(sql, [bottom])).rows;
+      expect(
+        await read('SELECT status, deleted_at IS NOT NULL AS deleted FROM app.runtime_tasks WHERE task_id = $1'),
+      ).toEqual([{ status: 'stopped', deleted: true }]);
+      expect(
+        await read('SELECT deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1'),
+      ).toEqual([{ deleted: true }]);
+      // Four entries were shown before the delete: two messages and their two answers.
+      const [history] = await read(
+        'SELECT count(*)::int AS entries FROM app.agent_messages WHERE task_id = $1',
+      );
+      expect((history as { entries: number }).entries).toBeGreaterThanOrEqual(4);
+      // And: nothing woke after those requests — no new queue message, no status change, no model call
+      expect(await deletedTreeState(harness, bottom)).toEqual(rightAfterDelete);
     },
     TEST_TIMEOUT_MS,
   );
@@ -2613,7 +2652,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // - For each row but the send the same request is made with a well-formed id that exists for nobody (the "missing" reference); a send to an id that exists for nobody is a first message, so `POST /threads/:id/messages` with A's id is asserted to be the constant 404 `THREAD_NOT_FOUND` body. Then: status code, `errorCode` (`THREAD_NOT_FOUND`, `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND`) and the whole body are equal, with nothing of A's data (title, task text, argument, count) in the answer; for the ROOT id the agent routes answer `AGENT_NOT_FOUND`, the same as for a missing agent.
   // - The stream: B's stream (open on A's thread and on A's child agent, plus B's own thread) receives `ready` and only B's own notes while A's agent writes history and three text parts and its request is resolved by A; after the run B's received list contains no `tree` with A's thread id and no `delta` of A's agent; A's own stream (a control) did receive them.
   // - B's lists: `GET /threads`, `GET /agents` (all pages), `GET /agents/awaiting` and `GET /spend` contain none of A's conversations or agents, count none of A's open request and sum none of A's ledger rows.
-  // - A retaken id: A deletes the conversation and B sends a first message with its id (a new conversation of B's) -> B's stream gets the `tree` notes of that id, a stream of A's opened after the delete gets none (the hub reads the owner of a root for every note and remembers none).
+  // - A deleted id is not retaken: A deletes the conversation and B sends a first message with its id -> 404 with the constant `THREAD_NOT_FOUND` body; the id still has one session row, A's, marked deleted; a stream of A's opened after the delete gets no note of that id (a deleted root has no owner for the hub).
   // - After all rows: a row-version snapshot of A's root session row (the conversation), the agents tree and its inbox equals the snapshot before; A's request is still open and A can approve it (the fixture journal then holds one call); A's conversation and agent read in full for A.
   it(
     "INT-4: every route and the stream called as another employee answer exactly as for a missing id, including the root id on agent routes, leak nothing of the owner's data, deliver none of the owner's notes or text parts, and change none of the owner's rows",
@@ -2682,10 +2721,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script({ task: bOwnTask }, [
         { text: 'B own done.', latch: bOwnHeld },
       ]);
-      const bRetakenTask = "INT-4 B: a first message with A's deleted id";
       const aNextTask = 'INT-4 A: the next thread';
-      for (const task of [bRetakenTask, aNextTask])
-        harness.model.script({ task }, [], { thereafter: { text: 'Noted.' } });
+      harness.model.script({ task: aNextTask }, [], { thereafter: { text: 'Noted.' } });
       const streams: SseStream[] = [];
       try {
         const aThread = await a.createThread();
@@ -2925,27 +2962,30 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           linesOf(readerPage.entries)[0],
         ]).toEqual([aThread.id, aTitle, `task: ${readerTask}`]);
 
-        // When: A deletes the conversation and B's first message takes its id — a new conversation of B's
+        // When: A deletes the conversation and B sends a first message with its id
         await a.deleteThread(aThread.id);
         const aAfterDelete = await openStream(harness.app, INT4.a);
         streams.push(aAfterDelete);
         await aAfterDelete.next('ready');
-        await b.send(aThread.id, bRetakenTask);
+        const bToDeleted = await b.raw('post', `/threads/${aThread.id}/messages`, {
+          text: "INT-4 B: a first message with A's deleted id",
+        });
 
-        // Then: the notes of the retaken id go to B's stream, which got none of them while it was A's
-        await bOnAThread.until(
-          (events) => events.some((event) => isTreeOf(event, aThread.id)),
-          "a note of the retaken id on B's stream",
-        );
-        const retaken = await untilIdle(
-          b,
-          aThread.id,
-          (view) => view.entries.at(-1)?.kind === 'model_answer',
-          "B's retaken conversation",
-        );
-        expect(linesOf(retaken.entries)[0]).toBe(`task: ${bRetakenTask}`);
+        // Then: B gets the constant 404 and the id stays A's deleted conversation: no row of B's was created
+        expect({ status: bToDeleted.status, body: bToDeleted.body as unknown }).toEqual({
+          status: 404,
+          body: THREAD_NOT_FOUND_BODY,
+        });
+        expect(
+          (
+            await harness.pool.query(
+              'SELECT owner_id, deleted_at IS NOT NULL AS deleted FROM app.agent_sessions WHERE task_id = $1',
+              [aThread.id],
+            )
+          ).rows,
+        ).toEqual([{ owner_id: INT4.a.id, deleted: true }]);
 
-        // Then: A's stream gets none of them (A's own later note comes after them: the hub handles signals in order)
+        // Then: A's stream gets no note of the deleted id (A's own later note comes after any: the hub handles signals in order)
         const aNext = await a.createThread();
         await a.send(aNext.id, aNextTask);
         await aAfterDelete.until(

@@ -13,6 +13,7 @@ import {
 import type { Database } from '@agent-os/db';
 import {
   isFinished,
+  retryingTransaction,
   type Runtime,
   RuntimeError,
   type ResolveOutcome,
@@ -182,6 +183,12 @@ export interface AgentSessions {
   renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined>;
   /** Writes a generated title only into an empty one; `true` when it was written. */
   titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean>;
+  /**
+   * Stops the conversation's tree and marks it and its root session deleted, in one transaction: from
+   * then on the conversation answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
+   * a missing, another owner's or an already deleted root.
+   */
+  deleteRoot(rootId: string, ownerId: string): Promise<void>;
 }
 
 export interface AgentSessionsDeps {
@@ -709,6 +716,19 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { rootId, ownerId },
         () => sessions.titleRootIfEmpty(database, rootId, ownerId, title),
         (written) => ({ written }),
+      );
+    },
+
+    deleteRoot(rootId, ownerId) {
+      return logged('deleteRoot', { rootId, ownerId }, () =>
+        asAgent(
+          // Retried as a whole on a deadlock: `deleteTree` does not retry in the caller's transaction.
+          // The task rows are locked first (inside `deleteTree`), the session row after, as a step's commit does.
+          retryingTransaction(database, logger, 'sessions.deleteRoot', async (tx) => {
+            await runtime.tasks.deleteTree(rootId, ownerId, tx);
+            await sessions.markDeleted(tx, rootId);
+          }),
+        ),
       );
     },
   };

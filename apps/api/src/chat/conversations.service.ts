@@ -54,10 +54,11 @@ export function toThreadSummary(root: RootSession): ThreadSummary {
 /**
  * Conversations over agents (design-chat.md, Flows 1, 2, 6): a conversation is the root session of the
  * library record `chat` (design-runtime.md, KD-7), and its id is the root's. It appears with its first
- * message — `create` only hands out an id — and is deleted with its tree. Agents are reached only
- * through `agents.sessions` and `runtime.tasks.deleteTree`; a message's record chip is checked in the
- * library. An id without a root session of the employee — never used, deleted, or another employee's —
- * is `THREAD_NOT_FOUND` on every route but the first send.
+ * message — `create` only hands out an id. Agents are reached only through `agents.sessions`; a
+ * message's record chip is checked in the library. An id without a live root session of the employee
+ * — never used, deleted, or another employee's — is `THREAD_NOT_FOUND` on every route; only a never
+ * used id starts a conversation with the first send. A deleted conversation answers as a missing one
+ * everywhere, the send included: its rows stay and keep its id taken.
  */
 @Injectable()
 export class ConversationsService {
@@ -113,8 +114,10 @@ export class ConversationsService {
    * (`messageId` null); any later one goes into the root's queue and moves the conversation up. The
    * title starts in the background while it is empty (DC-2). A record chip is checked first (KD-4,
    * DC-6), so a refused chip leaves the queue untouched. A root the start procedure refuses is
-   * `START_REFUSED` from `agents`, and no conversation appears. A send to a conversation deleted
-   * meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete and the send take turns on the root task's lock.
+   * `START_REFUSED` from `agents`, and no conversation appears. The id of a deleted conversation is
+   * taken by its rows: `start` gets `TASK_EXISTS` and `owned()` answers 404, for its owner and anyone
+   * else alike. A send to a conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`: the delete
+   * and the send take turns on the root task's lock.
    */
   async send(
     threadId: string,
@@ -148,12 +151,12 @@ export class ConversationsService {
   }
 
   /**
-   * Flow 6: the root's tree is stopped and deleted, and the conversation — its root session — and its
-   * drafts go with it by the cascade. A tree deleted meanwhile is `TASK_NOT_FOUND` of the runtime.
+   * Flow 6: the root's tree is stopped and marked deleted together with the root session, in one
+   * transaction; the rows stay. A conversation deleted meanwhile is `AGENT_NOT_FOUND` of `agents`.
    */
   async delete(threadId: string, ownerId: string): Promise<void> {
     await this.owned(threadId, ownerId);
-    await this.runtime.tasks.deleteTree(threadId, ownerId);
+    await this.agents.sessions.deleteRoot(threadId, ownerId);
   }
 
   /**

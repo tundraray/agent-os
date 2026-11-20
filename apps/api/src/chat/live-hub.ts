@@ -61,10 +61,10 @@ const PING = messageEvent({ type: 'ping', data: {} });
  *
  * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
  * by the tree's root id, and its owner is read for every note — one row of `agent_sessions` by its
- * primary key. The owner is never remembered: a deleted conversation's id can be taken by another
- * employee's first message, on this or another API instance, and a remembered owner would then get
- * the new conversation's notes. A root that is no conversation (a tree of another task type) has no
- * owner, and a signal nobody can receive is dropped. A lost connection is reopened every second, and
+ * primary key, and never remembered. A deleted conversation's root is marked and so has no owner
+ * (`rootOwner` answers `undefined`): the notes of its tree go to nobody, on this or another API
+ * instance, from the moment the deletion commits. A root that is no conversation (a tree of another
+ * task type) has no owner either, and a signal nobody can receive is dropped. A lost connection is reopened every second, and
  * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
  */
 @Injectable()

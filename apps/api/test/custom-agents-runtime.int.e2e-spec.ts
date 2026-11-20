@@ -1637,7 +1637,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
     );
 
     it(
-      "INT-4 D: another employee's draft and a draft of another conversation answer one 404, and the draft stays as it was",
+      "INT-4 D: another employee's draft and a draft of another conversation answer one 404, and the draft stays as it was, and a draft of a deleted conversation",
       async () => {
         // Given: Аня's waiting draft D1 and Борис's waiting draft D2 in his own conversation
         const anya = await newEmployee('Аня', [drafts]);
@@ -1719,6 +1719,19 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         ).toEqual([[borisDraft.draftId, 'pending']]);
         expect(await ownNames(anya)).not.toContain(anyaName);
         expect(await ownNames(boris)).not.toContain(anyaName);
+        expect(await ownNames(boris)).not.toContain(borisName);
+
+        // When: Борис deletes his conversation while D2 still waits, then saves D2 through it
+        await api(boris).deleteThread(borisThread);
+        const ofDeleted = refused(
+          await draftAction(boris, borisThread, borisDraft.draftId, {
+            action: 'save',
+          }),
+          404,
+          'DRAFT_NOT_FOUND',
+        );
+        // Then: the same 404 as another employee's draft, and D2 did not become a record
+        expect(ofDeleted).toEqual(answers[0]);
         expect(await ownNames(boris)).not.toContain(borisName);
       },
       TEST_TIMEOUT_MS,

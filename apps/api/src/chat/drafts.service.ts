@@ -45,7 +45,8 @@ export class DraftsService {
   /**
    * One action on the draft `draftId` of the owner's conversation `threadId`. A missing draft, another
    * employee's, one of another conversation and an id that is not a UUID answer the same 404
-   * DRAFT_NOT_FOUND; a draft that no longer waits — 409 DRAFT_RESOLVED.
+   * DRAFT_NOT_FOUND; a draft of a deleted conversation answers as another employee's (its rows stay,
+   * its root session does not). A draft that no longer waits — 409 DRAFT_RESOLVED.
    */
   async act(
     threadId: string,
@@ -54,6 +55,8 @@ export class DraftsService {
     action: DraftActionRequest,
   ): Promise<DraftView> {
     if (!isUuid(threadId) || !isUuid(draftId))
+      throw httpError('DRAFT_NOT_FOUND');
+    if ((await this.agents.sessions.root(threadId, ownerId)) === undefined)
       throw httpError('DRAFT_NOT_FOUND');
     const usableServers =
       action.action === 'save' ? await this.agents.mcp.usable(ownerId) : [];

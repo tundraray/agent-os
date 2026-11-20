@@ -25,7 +25,7 @@ export type { NewMessage } from './inbox.js';
 export type { CallUsage, ModelPrice } from './model-cost.js';
 export { monthOf } from './month.js';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
-export type { RuntimeTx } from './runtime-tx.js';
+export { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
 export type { InterruptMessage, InterruptOutcome, Task } from './task-control.js';
 export {
   type ModelCallRecord,

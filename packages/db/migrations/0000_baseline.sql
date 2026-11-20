@@ -272,7 +272,8 @@ CREATE TABLE "app"."agent_sessions" (
 	"interrupted" boolean DEFAULT false NOT NULL,
 	"closed" boolean DEFAULT false NOT NULL,
 	"last_input_tokens" integer,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"deleted_at" timestamp with time zone
 );
 --> statement-breakpoint
 CREATE TABLE "app"."agent_tool_result_settings" (
@@ -530,6 +531,7 @@ CREATE TABLE "app"."runtime_tasks" (
 	"created_seq" bigint GENERATED ALWAYS AS IDENTITY (sequence name "app"."runtime_tasks_created_seq_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp with time zone,
+	"deleted_at" timestamp with time zone,
 	CONSTRAINT "runtime_tasks_status_check" CHECK ("app"."runtime_tasks"."status" in ('queued', 'running', 'waiting', 'completed', 'failed', 'stopped')),
 	CONSTRAINT "runtime_tasks_wait_reason_check" CHECK ("app"."runtime_tasks"."wait_reason" in ('messages', 'decision', 'interrupted')),
 	CONSTRAINT "runtime_tasks_waiting_check" CHECK (("app"."runtime_tasks"."status" = 'waiting') = ("app"."runtime_tasks"."wait_reason" is not null))
@@ -582,7 +584,7 @@ CREATE UNIQUE INDEX "agent_messages_call_once_idx" ON "app"."agent_messages" USI
 CREATE INDEX "agent_messages_result_idx" ON "app"."agent_messages" USING btree ("task_id","finished_at") WHERE "app"."agent_messages"."kind" = 'tool_result';--> statement-breakpoint
 CREATE INDEX "agent_sessions_owner_record_idx" ON "app"."agent_sessions" USING btree ("owner_id","record_id");--> statement-breakpoint
 CREATE INDEX "agent_sessions_root_idx" ON "app"."agent_sessions" USING btree ("root_id");--> statement-breakpoint
-CREATE INDEX "agent_sessions_owner_page_idx" ON "app"."agent_sessions" USING btree ("owner_id","updated_at" DESC NULLS LAST,"task_id" DESC NULLS LAST) WHERE "app"."agent_sessions"."updated_at" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX "agent_sessions_owner_page_idx" ON "app"."agent_sessions" USING btree ("owner_id","updated_at" DESC NULLS LAST,"task_id" DESC NULLS LAST) WHERE "app"."agent_sessions"."updated_at" IS NOT NULL AND "app"."agent_sessions"."deleted_at" IS NULL;--> statement-breakpoint
 CREATE INDEX "chat_drafts_conversation_idx" ON "app"."chat_drafts" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "identity_role_members_user_idx" ON "app"."identity_role_members" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "identity_roles_name_idx" ON "app"."identity_roles" USING btree (lower("name"));--> statement-breakpoint
