@@ -16,9 +16,11 @@ import {
   PROVIDER_NAME_MAX_LENGTH,
   RECORD_MAX_TURNS_MAX,
   RECORD_MAX_TURNS_MIN,
+  UpdateToolResultSettingsBodySchema,
   type McpServerMode,
   type ModelPurpose,
   type PriceRates,
+  type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import { ADMIN_TEXT } from './admin-texts';
 
@@ -185,6 +187,46 @@ export function knowledgeSettingsRules({ limitTokens }: { limitTokens: string })
     tokens >= KNOWLEDGE_LIMIT_TOKENS_MIN &&
     tokens <= KNOWLEDGE_LIMIT_TOKENS_MAX;
   return valid ? {} : { limitTokens: ADMIN_TEXT.knowledgeLimitTokens };
+}
+
+// ---------- Large tool results (tool-result-reading R-5) ----------
+
+export type ToolResultSettingsValues = { storeFromChars: string; previewChars: string; readMaxTokens: string };
+
+const TOOL_RESULT_RANGE_TEXT: Readonly<Record<keyof ToolResultSettingsValues, string>> = {
+  storeFromChars: ADMIN_TEXT.toolResultStoreFromChars,
+  previewChars: ADMIN_TEXT.toolResultPreviewChars,
+  readMaxTokens: ADMIN_TEXT.toolResultReadMaxTokens,
+};
+
+const isToolResultField = (key: PropertyKey | undefined): key is keyof ToolResultSettingsValues =>
+  typeof key === 'string' && key in TOOL_RESULT_RANGE_TEXT;
+
+/** The typed texts as the request body; a text that is not a number becomes `NaN`, which the schema refuses. */
+export function toolResultSettingsBodyOf(values: ToolResultSettingsValues): UpdateToolResultSettingsBody {
+  const numberOf = (text: string): number => parseDecimal(text) ?? Number.NaN;
+  return {
+    storeFromChars: numberOf(values.storeFromChars),
+    previewChars: numberOf(values.previewChars),
+    readMaxTokens: numberOf(values.readMaxTokens),
+  };
+}
+
+/**
+ * The contract's body schema decides, as the server's 400 does: whole numbers within its bounds, and the
+ * preview shorter than the threshold (its only custom rule).
+ */
+export function toolResultSettingsRules(values: ToolResultSettingsValues): FieldErrors<keyof ToolResultSettingsValues> {
+  const parsed = UpdateToolResultSettingsBodySchema.safeParse(toolResultSettingsBodyOf(values));
+  const errors: FieldErrors<keyof ToolResultSettingsValues> = {};
+  if (parsed.success) return errors;
+  for (const issue of parsed.error.issues) {
+    const field = issue.path[0];
+    if (!isToolResultField(field) || errors[field] !== undefined) continue;
+    errors[field] =
+      issue.code === 'custom' ? ADMIN_TEXT.toolResultPreviewBelowThreshold : TOOL_RESULT_RANGE_TEXT[field];
+  }
+  return errors;
 }
 
 // ---------- Grants (GR-01, MC-25, DC-14) ----------

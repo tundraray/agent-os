@@ -35,6 +35,15 @@ import {
   SaveOwnRefusalSchema,
   SINGLE_CALL_RECORD_KINDS,
   TaskStatusSchema,
+  TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+  TOOL_RESULT_PREVIEW_CHARS_MAX,
+  TOOL_RESULT_PREVIEW_CHARS_MIN,
+  TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
+  TOOL_RESULT_READ_MAX_TOKENS_MAX,
+  TOOL_RESULT_READ_MAX_TOKENS_MIN,
+  TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+  TOOL_RESULT_STORE_FROM_CHARS_MAX,
+  TOOL_RESULT_STORE_FROM_CHARS_MIN,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -434,8 +443,9 @@ export const agentMessages = app.table(
 );
 
 /**
- * Full result of a successful direct MCP call, as a value for scripts (code-execution KD-5): the one
- * place of the full value, keyed by the call of its session's history.
+ * Full result of a successful or empty direct MCP call (code-execution KD-5; tool-result-reading R-1, R-4):
+ * the one place of the full result, keyed by the call of its session's history, with the known secrets
+ * masked.
  */
 export const agentToolResults = app.table(
   'agent_tool_results',
@@ -444,10 +454,44 @@ export const agentToolResults = app.table(
       .notNull()
       .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
     callId: text('call_id').notNull(),
+    /** The value a script reads with `readResult`. */
     value: jsonb('value').notNull(),
+    /** The full text the reading tools page through and search. */
+    text: text('text').notNull(),
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.taskId, t.callId] })],
+);
+
+/** The single row of the large tool result settings (tool-result-reading R-5); the migration creates it. */
+export const agentToolResultSettings = app.table(
+  'agent_tool_result_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    storeFromChars: integer('store_from_chars')
+      .notNull()
+      .default(TOOL_RESULT_STORE_FROM_CHARS_DEFAULT),
+    previewChars: integer('preview_chars').notNull().default(TOOL_RESULT_PREVIEW_CHARS_DEFAULT),
+    readMaxTokens: integer('read_max_tokens').notNull().default(TOOL_RESULT_READ_MAX_TOKENS_DEFAULT),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('agent_tool_result_settings_single_row_check', sql`${t.id}`),
+    check(
+      'agent_tool_result_settings_store_from_chars_check',
+      isWithin(t.storeFromChars, TOOL_RESULT_STORE_FROM_CHARS_MIN, TOOL_RESULT_STORE_FROM_CHARS_MAX),
+    ),
+    check(
+      'agent_tool_result_settings_preview_chars_check',
+      isWithin(t.previewChars, TOOL_RESULT_PREVIEW_CHARS_MIN, TOOL_RESULT_PREVIEW_CHARS_MAX),
+    ),
+    check(
+      'agent_tool_result_settings_read_max_tokens_check',
+      isWithin(t.readMaxTokens, TOOL_RESULT_READ_MAX_TOKENS_MIN, TOOL_RESULT_READ_MAX_TOKENS_MAX),
+    ),
+  ],
 );
 
 /** Audit of the tool calls a `run_code` script made; the result is seen only by the script (code-execution KD-6). */

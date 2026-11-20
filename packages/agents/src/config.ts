@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+/** The limit of a `run_code` result, bytes (AC-07.3): the executor's protocol, not a setting. */
+const CODE_RUN_RESULT_MAX_BYTES = 16_384;
+
 /** An empty variable (`NAME=` in `.env`) means "not set": the default applies. */
 const unsetWhenEmpty = (value: unknown) => (value === '' ? undefined : value);
 
@@ -13,7 +16,6 @@ const positiveInteger = (fallback: number) =>
 const AgentsEnvSchema = z.object({
   AGENT_MAX_OUTPUT_TOKENS: positiveInteger(16_000),
   AGENT_MAX_DEPTH: positiveInteger(3),
-  AGENT_TOOL_RESULT_MAX_BYTES: positiveInteger(16_384),
   AGENT_COMPACT_AT_TOKENS: positiveInteger(200_000),
   MCP_CALL_TIMEOUT_MS: positiveInteger(60_000),
   // design-code-execution.md, Runtime settings.
@@ -30,15 +32,13 @@ export interface AgentsConfig {
   readonly maxOutputTokens: number;
   /** `AGENT_MAX_DEPTH`: the largest depth of an agent; a conversation is at depth 0. */
   readonly maxDepth: number;
-  /** `AGENT_TOOL_RESULT_MAX_BYTES`: a longer result is cut. */
-  readonly toolResultMaxBytes: number;
   /** `AGENT_COMPACT_AT_TOKENS`: input tokens of the previous call that start compaction. */
   readonly compactAtTokens: number;
   /** `MCP_CALL_TIMEOUT_MS`: limit of one MCP call. */
   readonly mcpCallTimeoutMs: number;
   /** `NODE_ENV` is not `production`: `http` server and authorization addresses pass the address rule. */
   readonly allowHttpUrls: boolean;
-  /** `CODE_RUN_*`; a run's result limit is `toolResultMaxBytes`. */
+  /** `CODE_RUN_*` and the run's result limit. */
   readonly codeRun: CodeRunConfig;
 }
 
@@ -54,6 +54,8 @@ export interface CodeRunConfig {
   readonly maxConcurrent: number;
   /** `CODE_RUN_MAX_CONCURRENT_PER_USER`: runs of one employee at once in one API process (KD-11). */
   readonly maxConcurrentPerUser: number;
+  /** The limit of a run's result, bytes: the executor's protocol, not a setting (AC-07.3). */
+  readonly resultMaxBytes: number;
 }
 
 /**
@@ -67,7 +69,6 @@ export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>):
   return {
     maxOutputTokens: env.AGENT_MAX_OUTPUT_TOKENS,
     maxDepth: env.AGENT_MAX_DEPTH,
-    toolResultMaxBytes: env.AGENT_TOOL_RESULT_MAX_BYTES,
     compactAtTokens: env.AGENT_COMPACT_AT_TOKENS,
     mcpCallTimeoutMs: env.MCP_CALL_TIMEOUT_MS,
     allowHttpUrls: env.NODE_ENV !== 'production',
@@ -77,6 +78,7 @@ export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>):
       maxToolCalls: env.CODE_RUN_MAX_TOOL_CALLS,
       maxConcurrent: env.CODE_RUN_MAX_CONCURRENT,
       maxConcurrentPerUser: env.CODE_RUN_MAX_CONCURRENT_PER_USER,
+      resultMaxBytes: CODE_RUN_RESULT_MAX_BYTES,
     },
   };
 }

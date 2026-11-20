@@ -9,7 +9,7 @@ import type {
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { apiBaseUrl } from '@/lib/config';
-import { currentUser, knowledgeSettings, modelDefaults, modelProviderView } from './fixtures';
+import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolResultSettings } from './fixtures';
 
 /**
  * Reads the shell makes on every mount whatever the test is about: the signed-in employee (UM-01, also
@@ -20,7 +20,8 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView } from
  * agent page and the agent list (custom-agents design-web.md, KD-2). The model providers and the model
  * defaults are read by the grant dialog, the company record editor and the «Модели» section; a ready
  * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
- * «Системные» tab of «Агенты и workflow» (self-learning AS-01). A test that cares overrides them with
+ * «Системные» tab of «Агенты и workflow» (self-learning AS-01); the settings of large tool results by the
+ * «MCP-серверы» list (tool-result-reading R-5). A test that cares overrides them with
  * `server.use(...)`.
  */
 const shellDefaults = [
@@ -38,6 +39,7 @@ const shellDefaults = [
   http.get(`${apiBaseUrl}/api/admin/model-providers`, () => HttpResponse.json([modelProviderView()])),
   http.get(`${apiBaseUrl}/api/admin/model-defaults`, () => HttpResponse.json(modelDefaults())),
   http.get(`${apiBaseUrl}/api/admin/knowledge/settings`, () => HttpResponse.json(knowledgeSettings())),
+  http.get(`${apiBaseUrl}/api/admin/tool-results/settings`, () => HttpResponse.json(toolResultSettings())),
 ];
 
 /**

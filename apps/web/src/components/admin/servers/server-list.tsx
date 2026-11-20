@@ -14,6 +14,7 @@ import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import { ToolResultSettingsForm } from './tool-result-settings-form';
 
 /** UXRD MC-29. */
 const TEXT = {
@@ -75,7 +76,10 @@ const toRow = (server: McpServerSummary): DataTableRow => ({
   ],
 });
 
-/** UXRD AD-08: the registered servers as link rows in the server's order (by name). */
+/**
+ * UXRD AD-08: the registered servers as link rows in the server's order (by name); under them the settings of
+ * large tool results (tool-result-reading R-5).
+ */
 export function ServerList() {
   const servers = useResource(adminApi.servers.list, 'servers');
 
@@ -91,8 +95,9 @@ export function ServerList() {
           {TEXT.register}
         </Link>
       </PageHeader>
-      <div className="max-w-240">
+      <div className="flex max-w-240 flex-col gap-8">
         <DataTable caption={adminSectionTitle('servers')} columns={COLUMNS} state={state} />
+        <ToolResultSettingsForm />
       </div>
     </>
   );

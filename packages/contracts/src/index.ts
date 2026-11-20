@@ -9,3 +9,4 @@ export * from './next-path.js';
 export * from './access.js';
 export * from './library.js';
 export * from './knowledge.js';
+export * from './tool-results.js';

@@ -80,3 +80,8 @@ export { START_AGENT_TOOL, StartAgentArgsSchema, WAITING_RULE } from './tools/bu
 export { logStart } from './tools/builtin/start-child.js';
 export { START_WORKFLOW_TOOL } from './tools/tool-registry.js';
 export type { InCommitAgentTool, InCommitToolInput, StartChildRequest } from './tools/tool.js';
+export type {
+  AgentsToolResults,
+  ToolResultSettingsChange,
+  ToolResultSettingsUpdate,
+} from './tools/tool-result-settings.js';

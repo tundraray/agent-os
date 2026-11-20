@@ -22,6 +22,7 @@ import {
   RoleListSchema,
   RoleSummarySchema,
   SignInSettingsSchema,
+  ToolResultSettingsSchema,
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
@@ -53,6 +54,7 @@ import {
   type RoleSummary,
   type SignInSettings,
   type SystemRecordAudienceBody,
+  type ToolResultSettings,
   type UpdateCatalogModelBody,
   type UpdateKnowledgeSettingsBody,
   type UpdateLibrarySettingsBody,
@@ -63,6 +65,7 @@ import {
   type UpdateRecordBody,
   type UpdateRoleBody,
   type UpdateSignInSettingsBody,
+  type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
 import { apiBaseUrl } from '@/lib/config';
@@ -226,6 +229,14 @@ const knowledge = {
     apiRequest({ path: apiPath('knowledge', 'settings'), method: 'PUT', body, schema: KnowledgeSettingsSchema }),
 };
 
+/** «Большие результаты инструментов» under «MCP-серверы» (tool-result-reading R-5). */
+const toolResults = {
+  settings: (): Promise<ToolResultSettings> =>
+    apiRequest({ path: apiPath('tool-results', 'settings'), schema: ToolResultSettingsSchema }),
+  saveSettings: (body: UpdateToolResultSettingsBody): Promise<ToolResultSettings> =>
+    apiRequest({ path: apiPath('tool-results', 'settings'), method: 'PUT', body, schema: ToolResultSettingsSchema }),
+};
+
 export const adminApi = {
   users,
   roles,
@@ -238,4 +249,5 @@ export const adminApi = {
   modelDefaults,
   library,
   knowledge,
+  toolResults,
 };

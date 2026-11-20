@@ -275,10 +275,23 @@ CREATE TABLE "app"."agent_sessions" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "app"."agent_tool_result_settings" (
+	"id" boolean PRIMARY KEY DEFAULT true NOT NULL,
+	"store_from_chars" integer DEFAULT 50000 NOT NULL,
+	"preview_chars" integer DEFAULT 2000 NOT NULL,
+	"read_max_tokens" integer DEFAULT 25000 NOT NULL,
+	"updated_at" timestamp with time zone,
+	CONSTRAINT "agent_tool_result_settings_single_row_check" CHECK ("app"."agent_tool_result_settings"."id"),
+	CONSTRAINT "agent_tool_result_settings_store_from_chars_check" CHECK ("app"."agent_tool_result_settings"."store_from_chars" between 1000 and 1000000),
+	CONSTRAINT "agent_tool_result_settings_preview_chars_check" CHECK ("app"."agent_tool_result_settings"."preview_chars" between 200 and 20000),
+	CONSTRAINT "agent_tool_result_settings_read_max_tokens_check" CHECK ("app"."agent_tool_result_settings"."read_max_tokens" between 2000 and 100000)
+);
+--> statement-breakpoint
 CREATE TABLE "app"."agent_tool_results" (
 	"task_id" uuid NOT NULL,
 	"call_id" text NOT NULL,
 	"value" jsonb NOT NULL,
+	"text" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "agent_tool_results_task_id_call_id_pk" PRIMARY KEY("task_id","call_id")
 );
@@ -596,4 +609,5 @@ INSERT INTO "app"."identity_roles" ("name", "is_admin", "builtin") VALUES ('Су
 INSERT INTO "app"."identity_settings" ("id", "idle_minutes", "absolute_minutes") VALUES (true, 480, 1440);--> statement-breakpoint
 INSERT INTO "app"."library_settings" ("id", "default_max_turns") VALUES (true, 40);--> statement-breakpoint
 INSERT INTO "app"."access_model_defaults" ("id") VALUES (true);--> statement-breakpoint
-INSERT INTO "app"."agent_knowledge_settings" ("id") VALUES (true);
+INSERT INTO "app"."agent_knowledge_settings" ("id") VALUES (true);--> statement-breakpoint
+INSERT INTO "app"."agent_tool_result_settings" ("id") VALUES (true);

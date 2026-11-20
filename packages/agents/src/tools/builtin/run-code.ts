@@ -16,15 +16,14 @@ import type { CodeRunConfig } from '../../config.js';
 import { callRecords } from '../../store/call-records.repository.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
 import { toolResults } from '../../store/tool-results.repository.js';
+import { RESULT_NOT_FOUND } from '../large-result.js';
 import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool.js';
 import { callTargetOf, type ToolRegistry } from '../tool-registry.js';
 import type { CodeCallScope, ToolRunner } from '../tool-runner.js';
 import { canCallOf } from './can-call.js';
 
-/** What the texts of a run name: the settings and the result limit (`AGENT_TOOL_RESULT_MAX_BYTES`). */
-interface RunTextSettings extends Omit<CodeRunConfig, 'maxConcurrent'> {
-  readonly resultMaxBytes: number;
-}
+/** What the texts of a run name: the run settings with its result limit. */
+type RunTextSettings = Omit<CodeRunConfig, 'maxConcurrent'>;
 
 /** Every text a run gives the model (design-code-execution.md, «Error handling»): one table. */
 export interface RunTexts {
@@ -55,7 +54,7 @@ export function runTexts(settings: RunTextSettings): RunTexts {
     },
     perUserLimit: `превышено число одновременных запусков (${settings.maxConcurrentPerUser})`,
     twiceInterrupted: 'запуск дважды прерван рестартом',
-    resultNotFound: 'результат не найден',
+    resultNotFound: RESULT_NOT_FOUND,
   };
 }
 
@@ -134,8 +133,6 @@ export interface RunCodeDeps {
   readonly registry: () => ToolRegistry;
   readonly runner: ToolRunner;
   readonly codeRun: CodeRunConfig;
-  /** `AGENT_TOOL_RESULT_MAX_BYTES`: the limit of a run's result (AC-07.3). */
-  readonly toolResultMaxBytes: number;
   /**
    * The logger's redaction by value over the settings' secrets (FR-11): applied to a run's output and
    * result text before they are stored or given to the model; never to what the script itself gets.
@@ -151,8 +148,8 @@ const DESCRIPTION = [
   '- `callTool(name, args)` calls an MCP tool under the same name and with the same arguments as in your tool',
   '  list (`mcp__<server>__<tool>`) and resolves with its full answer; a refusal or a tool error rejects with',
   "  an error that has `outcome`, `reason` and `text`; the text of a tool error is empty, not the server's.",
-  '- `readResult(callId)` resolves with the full result of an earlier direct tool call of yours whose answer',
-  '  you saw cut, by the `callId` named in the cut mark.',
+  '- `readResult(callId)` resolves with the full result of an earlier direct tool call of yours that came to you',
+  '  as a stored result, by the `callId` the stored result names.',
   '- `console.log`, `console.info`, `console.warn`, `console.error` write to the script output, which the',
   '  employee sees and you do not.',
   'Class `read` runs at once and may call only tools marked read-only; class `write` waits for one decision',
@@ -210,7 +207,7 @@ interface RunScope {
  * script gets its audit row through the step's `guard` before it reaches its server.
  */
 export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
-  const texts = runTexts({ ...deps.codeRun, resultMaxBytes: deps.toolResultMaxBytes });
+  const texts = runTexts(deps.codeRun);
   const seats = createSeats(deps.codeRun.maxConcurrentPerUser);
 
   /** What a run stores and gives the model, with the settings' secrets masked (FR-11, AC-11.1). */
@@ -293,15 +290,15 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     run: RunScope,
     request: Extract<BridgeRequest, { op: 'read' }>,
   ): Promise<RequestAnswer> {
-    const value = await toolResults.findForRun(deps.database, {
+    const found = await toolResults.findForRun(deps.database, {
       callId: request.resultId,
       taskId: run.caller.agentId,
       ownerId: run.caller.ownerId,
     });
-    run.logger.debug('code run read a full result', { resultId: request.resultId, found: value !== undefined });
-    return value === undefined
+    run.logger.debug('code run read a full result', { resultId: request.resultId, found: found !== undefined });
+    return found === undefined
       ? { kind: 'error', error: { outcome: 'not_found', reason: null, text: texts.resultNotFound } }
-      : { kind: 'value', value };
+      : { kind: 'value', value: found.value };
   }
 
   /** Starts the run and turns its end into the tool's result. */
@@ -321,7 +318,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
       limits: {
         timeoutMs: deps.codeRun.timeoutMs,
         memoryMb: deps.codeRun.memoryMb,
-        resultMaxBytes: deps.toolResultMaxBytes,
+        resultMaxBytes: deps.codeRun.resultMaxBytes,
       },
       onRequest: async (request, runSignal) => {
         if (request.op === 'read') return answerRead(run, request);

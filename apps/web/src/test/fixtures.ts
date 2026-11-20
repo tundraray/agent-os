@@ -35,6 +35,10 @@ import {
   SignInSettingsSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
+  TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+  TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
+  TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+  ToolResultSettingsSchema,
   WorkflowContentSchema,
   WorkflowRunViewSchema,
   modelProvider,
@@ -76,6 +80,7 @@ import {
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
+  type ToolResultSettings,
   type WorkflowContent,
   type WorkflowRunView,
 } from '@agent-os/contracts';
@@ -483,6 +488,17 @@ export function knowledgeSettings(overrides: Partial<KnowledgeSettings> = {}): K
   return KnowledgeSettingsSchema.parse({
     limitTokens: KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
     lessonsEnabled: true,
+    updatedAt: null,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/tool-results/settings: the defaults, never set. */
+export function toolResultSettings(overrides: Partial<ToolResultSettings> = {}): ToolResultSettings {
+  return ToolResultSettingsSchema.parse({
+    storeFromChars: TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+    previewChars: TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+    readMaxTokens: TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
     updatedAt: null,
     ...overrides,
   });

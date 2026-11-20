@@ -80,6 +80,8 @@ const TEST_TIMEOUT_MS = 180_000;
 /** A server name the records name and the registry never holds (DC-11). */
 const GHOST_SERVER = runName('ghost');
 
+/** The tools every session offers its model, before any server's tools. */
+const SESSION_TOOLS = ['read_tool_result', 'search_tool_result', 'run_code'];
 /** The run's tools as the model names them; the registry keeps a server's tools sorted by name. */
 const LOGS_TOOLS = [
   `mcp__${LOGS_SERVER}__aggregate_logs`,
@@ -308,7 +310,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const { control } = harness.fixtureProcess;
     try {
       // 1. DC-11: the start passed with `ghost` in a definition; with no server of the run registered, both
-      //    agents are offered only `run_code`, and `ghost` gives no tool
+      //    agents are offered only the tools every session has, and `ghost` gives no tool
       const anyaAgent = await startEmployee(harness, model, {
         ownerId: anya,
         root: everyServer,
@@ -332,8 +334,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
           [AFTER_DISCONNECT]: TURN_DONE,
         },
       });
-      expect(anyaAgent.script.calls[0]?.toolNames).toEqual(['run_code']);
-      expect(borisAgent.script.calls[0]?.toolNames).toEqual(['run_code']);
+      expect(anyaAgent.script.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
+      expect(borisAgent.script.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
 
       // 2. AC-12.5 / AC-13.1: the admin registers `logs` with the shared token; at the next model call both sets
       //    hold its tools (no restart); both calls reach the server with the shared identity, and each audit row
@@ -344,8 +346,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         mode: 'shared',
         sharedToken: FIXTURE_SHARED_TOKEN,
       });
-      expect((await turn(harness, anyaAgent, READ_LOGS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
-      expect((await turn(harness, borisAgent, READ_LOGS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, READ_LOGS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
+      expect((await turn(harness, borisAgent, READ_LOGS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect(journalLines(fixture.callLog)).toEqual(['logs shared get_trace', 'logs shared get_trace']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_ANYA })).toHaveLength(1);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_BORIS })).toHaveLength(1);
@@ -366,7 +368,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         'admin',
       ]);
       expect(adminConnected.change?.added).toEqual(['create_incident_note', 'get_order', 'search_orders']);
-      expect((await turn(harness, anyaAgent, LOOK_AT_BACKOFFICE)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, LOOK_AT_BACKOFFICE)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect((await harness.sessions.get(anyaAgent.agentId, anya)).status).not.toBe('failed');
       expect((await harness.agents.mcp.connections(anya)).map((c) => `${c.server} ${c.status}`)).toEqual([
         `${BACKOFFICE_SERVER} needs_auth`,
@@ -392,7 +394,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         "Аня's back-office call to reach the fixture",
       );
       expect((await turn(harness, borisAgent, READ_BACKOFFICE)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         ...BACKOFFICE_TOOLS,
         ...LOGS_TOOLS,
       ]);
@@ -400,7 +402,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       anyaHeld.release();
       await turnEnded(harness, anyaAgent, anyaCallsBefore + 2);
       fixture.setFaults([]);
-      expect(anyaAgent.script.calls[anyaCallsBefore]?.toolNames).toEqual(['run_code', ...BACKOFFICE_TOOLS, ...LOGS_TOOLS]);
+      expect(anyaAgent.script.calls[anyaCallsBefore]?.toolNames).toEqual([...SESSION_TOOLS, ...BACKOFFICE_TOOLS, ...LOGS_TOOLS]);
       const anyaOrders = fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_ANYA });
       const borisOrders = fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_BORIS });
       expect(anyaOrders.map((entry) => `${entry.source} ${entry.account} ${entry.mode}`)).toEqual([
@@ -426,7 +428,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       // 5. AC-14.4: Аня disconnects -> her next set has no `backoffice` tool and her status is `needs_auth`;
       //    Борис's set and status are unchanged
       await harness.agents.mcp.disconnect(anya, BACKOFFICE_SERVER);
-      expect((await turn(harness, anyaAgent, AFTER_DISCONNECT)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, AFTER_DISCONNECT)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect((await harness.agents.mcp.connections(anya)).map((c) => `${c.server} ${c.status}`)).toEqual([
         `${BACKOFFICE_SERVER} needs_auth`,
       ]);
@@ -434,7 +436,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         `${BACKOFFICE_SERVER} connected`,
       ]);
       expect((await turn(harness, borisAgent, AFTER_DISCONNECT)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         ...BACKOFFICE_TOOLS,
         ...LOGS_TOOLS,
       ]);
@@ -466,7 +468,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       });
       await glebScript.called(2);
       await waitForTaskStatus(harness, glebAgentId, gleb, 'waiting');
-      expect(glebScript.calls[0]?.toolNames).toEqual(['run_code']);
+      expect(glebScript.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
       const glebRunId = glebScript.calls[0]?.toolCallIds[2] ?? '';
       expect(await auditOf(harness, glebAgentId)).toEqual([
         `${gleb} ${GET_TRACE} refused no_access`,
@@ -498,7 +500,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       const refreshed = await harness.agents.mcp.refreshTools(LOGS_SERVER, admin);
       expect([refreshed.added, refreshed.removed]).toEqual([[ADDED_TOOL], []]);
       expect((await turn(harness, anyaAgent, AFTER_REFRESH)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         `mcp__${LOGS_SERVER}__aggregate_logs`,
         ADDED_TOOL_NAME,
         `mcp__${LOGS_SERVER}__get_trace`,
@@ -507,7 +509,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       await harness.agents.mcp.update(LOGS_SERVER, { enabled: false });
       expect(await harness.agents.mcp.usable(anya)).toEqual([BACKOFFICE_SERVER]);
       const journalBeforeDisabled = readFixtureLog(fixture.callLog).length;
-      expect((await turn(harness, anyaAgent, AFTER_DISABLE)).toolNames).toEqual(['run_code']);
+      expect((await turn(harness, anyaAgent, AFTER_DISABLE)).toolNames).toEqual(SESSION_TOOLS);
       expect((await auditOf(harness, anyaAgent.agentId)).at(-1)).toBe(`${anya} ${GET_TRACE} refused tool_not_in_definition`);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_AFTER_DISABLE })).toEqual([]);
       expect(readFixtureLog(fixture.callLog)).toHaveLength(journalBeforeDisabled);
@@ -696,7 +698,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_REFRESH_REVOKED })).toEqual([]);
       expect(await accountRowOf(harness, anya)).toBeUndefined();
       expect(await connectionLines(harness, anya)).toEqual([`${BACKOFFICE_SERVER} needs_auth`]);
-      expect((await turn(harness, anyaFirst, AFTER_LOSS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS, ...TRACKER_TOOLS]);
+      expect((await turn(harness, anyaFirst, AFTER_LOSS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS, ...TRACKER_TOOLS]);
       expect(await connectionLines(harness, boris)).toEqual([`${BACKOFFICE_SERVER} connected`]);
       expect((await control.stats('boris')).refreshes).toBe(1);
 

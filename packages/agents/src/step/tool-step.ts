@@ -196,9 +196,10 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     const close = (call: CallState, ending: CallEnding): Closing =>
       (tx) => callRecords.close(tx, ctx.taskId, call, ending);
     /**
-     * Closes a call the runner ran and, for a direct MCP call with a value, stores its full result in the
-     * same transaction (code-execution KD-5). A refusal, an error, a transport failure and a built-in tool
-     * carry no `fullResult` and get no row (DC-8).
+     * Closes a call the runner ran and stores its full result in the same transaction: every successful and
+     * empty direct MCP result, as before (code-execution KD-5); only a long one reached the model as the
+     * wrapper (tool-result-reading R-1, R-4). A refusal, an error, a transport failure and a built-in tool
+     * carry no `stored` and get no row (DC-8).
      */
     const closeExecuted = async (
       tx: RuntimeTx,
@@ -217,12 +218,8 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
           ? undefined
           : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
       );
-      if (closed !== undefined && execution.kind === 'done' && execution.fullResult !== undefined) {
-        await toolResults.insert(tx, {
-          taskId: ctx.taskId,
-          callId: call.callId,
-          value: execution.fullResult.value,
-        });
+      if (closed !== undefined && execution.kind === 'done' && execution.stored !== undefined) {
+        await toolResults.insert(tx, { taskId: ctx.taskId, callId: call.callId, ...execution.stored });
       }
       return closed;
     };

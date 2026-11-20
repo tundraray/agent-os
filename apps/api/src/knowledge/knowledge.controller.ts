@@ -33,7 +33,7 @@ function itemIdOf(raw: string): number | null {
 }
 
 /**
- * Runs one knowledge route and logs it once (design-core.md, Logging «Маршруты»): the route, the
+ * Runs one route and logs it once (design-core.md, Logging «Маршруты»): the route, the
  * caller's fields, the outcome (`ok`, or the status and `errorCode` of a refusal), `durationMs`. The
  * fields carry ids and counts only, never the text of a graph entry.
  */
@@ -47,7 +47,7 @@ export async function loggedRoute<T>(
   const startedAt = Date.now();
   try {
     const result = await work();
-    logger.info('knowledge route answered', {
+    logger.info('route answered', {
       route,
       ...fields,
       outcome: 'ok',
@@ -58,7 +58,7 @@ export async function loggedRoute<T>(
   } catch (error) {
     if (error instanceof HttpException && error.getStatus() < 500) {
       const body = error.getResponse();
-      logger.info('knowledge route refused', {
+      logger.info('route refused', {
         route,
         ...fields,
         outcome: 'refused',
@@ -70,7 +70,7 @@ export async function loggedRoute<T>(
         durationMs: Date.now() - startedAt,
       });
     } else {
-      logger.error('knowledge route failed', {
+      logger.error('route failed', {
         route,
         ...fields,
         outcome: 'error',

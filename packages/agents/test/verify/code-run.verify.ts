@@ -149,7 +149,7 @@ describe('UC-N2: the empty script returns within 2 s (p95)', () => {
       const limits = {
         timeoutMs: defaults.codeRun.timeoutMs,
         memoryMb: defaults.codeRun.memoryMb,
-        resultMaxBytes: defaults.toolResultMaxBytes,
+        resultMaxBytes: defaults.codeRun.resultMaxBytes,
       };
 
       // When: 50 empty scripts run one after another

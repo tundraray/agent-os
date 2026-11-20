@@ -1,5 +1,5 @@
 {
-  "id": "441483da-17e7-4a34-b787-91a89f2199ca",
+  "id": "c275ed6d-c29a-4f0b-96ea-e5319d395746",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1939,6 +1939,70 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "app.agent_tool_result_settings": {
+      "name": "agent_tool_result_settings",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "store_from_chars": {
+          "name": "store_from_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 50000
+        },
+        "preview_chars": {
+          "name": "preview_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 2000
+        },
+        "read_max_tokens": {
+          "name": "read_max_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 25000
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_tool_result_settings_single_row_check": {
+          "name": "agent_tool_result_settings_single_row_check",
+          "value": "\"app\".\"agent_tool_result_settings\".\"id\""
+        },
+        "agent_tool_result_settings_store_from_chars_check": {
+          "name": "agent_tool_result_settings_store_from_chars_check",
+          "value": "\"app\".\"agent_tool_result_settings\".\"store_from_chars\" between 1000 and 1000000"
+        },
+        "agent_tool_result_settings_preview_chars_check": {
+          "name": "agent_tool_result_settings_preview_chars_check",
+          "value": "\"app\".\"agent_tool_result_settings\".\"preview_chars\" between 200 and 20000"
+        },
+        "agent_tool_result_settings_read_max_tokens_check": {
+          "name": "agent_tool_result_settings_read_max_tokens_check",
+          "value": "\"app\".\"agent_tool_result_settings\".\"read_max_tokens\" between 2000 and 100000"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "app.agent_tool_results": {
       "name": "agent_tool_results",
       "schema": "app",
@@ -1958,6 +2022,12 @@
         "value": {
           "name": "value",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },

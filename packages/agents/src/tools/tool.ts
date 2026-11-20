@@ -117,6 +117,11 @@ interface AgentToolBase<Args> {
   /** Only a session without a parent gets the tool (KD-6, Invariant 4). */
   readonly rootOnly?: boolean;
   /**
+   * Every session gets the tool, without a grant, and no definition names it (tool-result-reading R-2):
+   * it reaches only what the session itself owns.
+   */
+  readonly everySession?: boolean;
+  /**
    * What of the call's arguments may go to the log, which reaches Sentry: a tool whose arguments carry
    * a prompt, a record's content or a brief names only the fields that identify the call
    * (design-runtime.md, «Логирование»). Without it the arguments are logged whole. It may get the

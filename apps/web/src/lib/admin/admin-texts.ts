@@ -6,6 +6,12 @@ import {
   MODEL_PROVIDER_NAME_MAX_LENGTH,
   RECORD_MAX_TURNS_MAX,
   RECORD_MAX_TURNS_MIN,
+  TOOL_RESULT_PREVIEW_CHARS_MAX,
+  TOOL_RESULT_PREVIEW_CHARS_MIN,
+  TOOL_RESULT_READ_MAX_TOKENS_MAX,
+  TOOL_RESULT_READ_MAX_TOKENS_MIN,
+  TOOL_RESULT_STORE_FROM_CHARS_MAX,
+  TOOL_RESULT_STORE_FROM_CHARS_MIN,
   type GrantEffect,
   type McpCheckFailureReason,
   type ProviderCheckFailure,
@@ -65,6 +71,11 @@ export const ADMIN_TEXT = {
   defaultMaxTurns: `Введите целое число от ${RECORD_MAX_TURNS_MIN} до ${RECORD_MAX_TURNS_MAX}`,
   // self-learning MC-8: «Место для знаний в запуске, токенов».
   knowledgeLimitTokens: `Нужно целое число от ${KNOWLEDGE_LIMIT_TOKENS_MIN} до ${KNOWLEDGE_LIMIT_TOKENS_MAX}`,
+  // tool-result-reading R-5: «Большие результаты инструментов» under «MCP-серверы».
+  toolResultStoreFromChars: `Нужно целое число от ${TOOL_RESULT_STORE_FROM_CHARS_MIN} до ${TOOL_RESULT_STORE_FROM_CHARS_MAX}`,
+  toolResultPreviewChars: `Нужно целое число от ${TOOL_RESULT_PREVIEW_CHARS_MIN} до ${TOOL_RESULT_PREVIEW_CHARS_MAX}`,
+  toolResultReadMaxTokens: `Нужно целое число от ${TOOL_RESULT_READ_MAX_TOKENS_MIN} до ${TOOL_RESULT_READ_MAX_TOKENS_MAX}`,
+  toolResultPreviewBelowThreshold: 'Начало должно быть меньше длины, с которой ответ заменяется ссылкой',
   // MC-27
   publicUrlRequired: 'Сначала сохраните публичный адрес Agent OS в настройках входа.',
   // MC-20

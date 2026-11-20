@@ -109,8 +109,8 @@ export interface ToolRegistry {
   /**
    * The tools the model is offered (design-agents.md, «Инструменты»; design-mcp-connect.md DC-1;
    * design-runtime.md KD-4, KD-6): the built-in ones the snapshot's definition names, the root's tools
-   * (`start_workflow`, `draft_record`) in a session without a parent only, `run_code` in every session
-   * (code-execution KD-3), then the MCP tools of the snapshot's servers (`*` — all) that are enabled in the
+   * (`start_workflow`, `draft_record`) in a session without a parent only, the `everySession` tools
+   * (`read_tool_result`, `search_tool_result`) and `run_code` in every session (code-execution KD-3), then the MCP tools of the snapshot's servers (`*` — all) that are enabled in the
    * registry, whose server–tool pair the gate allows the owner (one `AccessGate.tools` per set; a disabled
    * owner gets no MCP tool, and his model call fails the step) and, for an `oauth` server, that the owner
    * has an account on. At the root the descriptions of `start_agent` and `start_workflow` list the chat
@@ -209,12 +209,17 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
     return tool.description;
   }
 
-  /** The built-in tools the snapshot names, the root's tools at the root only, then `run_code` (KD-6). */
+  /**
+   * The built-in tools the snapshot names, the root's tools at the root only, the tools of every session
+   * (`everySession`), then `run_code` (KD-6).
+   */
   function agentTools(input: SessionToolsInput, listing: ChatListing | null): SessionTool[] {
     const named = snapshotDefinition(input.snapshot).tools.map((name) => registered(name, input));
     const rootTools = input.root ? [...tools.values()].filter((tool) => tool.rootOnly === true) : [];
+    const everySession = [...tools.values()].filter((tool) => tool.everySession === true);
     return [
       ...[...named, ...rootTools].map((tool) => sessionToolOf(tool, descriptionOf(tool, input, listing))),
+      ...everySession.map((tool) => sessionToolOf(tool)),
       sessionToolOf(runCode),
     ];
   }

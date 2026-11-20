@@ -181,7 +181,13 @@ function refusedAgent(refusal: Refusal) {
     access,
     audit,
     callTimeoutMs: 1000,
-    toolResultMaxBytes: 1024,
+    resultSettings: async () => ({
+      storeFromChars: 50_000,
+      previewChars: 2_000,
+      readMaxTokens: 25_000,
+      updatedAt: null,
+    }),
+    maskSecrets: (text) => text,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
   });
   const modelClient = createModelClient({

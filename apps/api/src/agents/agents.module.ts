@@ -33,6 +33,7 @@ import {
 } from '../runtime/runtime.tokens.js';
 import { AdminMcpServersController } from './admin-mcp-servers.controller.js';
 import { AdminModelProvidersController } from './admin-model-providers.controller.js';
+import { AdminToolResultsController } from './admin-tool-results.controller.js';
 import { readAgentsSettings } from './agents-settings.js';
 import {
   AGENT_TURN_CLIENT,
@@ -77,14 +78,16 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
  *
- * Its controllers are the HTTP layer of `Agents.mcp` (an employee's MCP accounts and the admin's registry)
- * and of `Agents.providers` (the admin's model provider registry).
+ * Its controllers are the HTTP layer of `Agents.mcp` (an employee's MCP accounts and the admin's registry),
+ * of `Agents.providers` (the admin's model provider registry) and of `Agents.toolResults` (the admin's
+ * settings of large tool results).
  */
 @Module({
   imports: [RuntimeModule, IdentityModule, AccessModule, LibraryModule],
   controllers: [
     McpConnectionsController,
     AdminMcpServersController,
+    AdminToolResultsController,
     AdminModelProvidersController,
   ],
   providers: [

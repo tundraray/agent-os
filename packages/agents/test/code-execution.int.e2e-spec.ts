@@ -57,7 +57,6 @@ import {
   inputLines,
   type Script,
   type ScriptedModel,
-  type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import type { CodeRunner, RunOutcome } from '@agent-os/code-runner';
 import {
@@ -83,6 +82,7 @@ import {
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
+import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader.js';
 import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers.js';
 import { newUser } from './support/new-user.js';
 
@@ -92,21 +92,10 @@ const TEST_TIMEOUT_MS = 120_000;
 // A read-class script of INT-1 A reads the full result of a direct `mcp__${LOGS_SERVER}__search_logs` (500 records, more than the slice) by `callId`.
 // The fixture's `totalMatched` is the literal the script's count is compared with.
 
-/** `search_logs` as the model and a script name it. */
-const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
-/** A quarter of an hour of the fixture's week: 629 records, so the first page (500, the default `pageSize`) is not all of them. */
-const WINDOW = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:00.000Z' } as const;
 /** The fixture's `totalMatched` for {@link WINDOW}: 500 on the first page and 129 on the second. */
 const TOTAL_MATCHED = 629;
-/** The direct answer for {@link WINDOW} is 120 598 bytes of JSON; the model's slice keeps 16 384 (`AGENT_TOOL_RESULT_MAX_BYTES`). */
-const CUT_BYTES = 104_214;
-/** One record of {@link WINDOW}: a cheap read call for the rows that count calls. */
-const ONE_RECORD = { ...WINDOW, pageSize: 1 } as const;
-
-/** A `run_code` call of a scripted answer; class `read` unless named. */
-function runCode(description: string, script: string, runClass: 'read' | 'write' = 'read'): ScriptedToolCall {
-  return { tool: 'run_code', args: { description, class: runClass, script } };
-}
+// The direct answer for WINDOW is 120 598 bytes of JSON, longer than the default `storeFromChars` (50 000): the model
+// gets the wrapper with a preview of its start, and the whole answer is stored under the call's callId.
 
 /**
  * The `callId` the cut mark of a direct result names, as the model reads it (inside the data envelope the
@@ -225,12 +214,16 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       const [searchCallId, runCallId] = answerCallIds(script);
       if (searchCallId === undefined || runCallId === undefined) throw new Error('the model made no two tool calls');
 
-      // Then: the model saw the slice ending with the cut mark that names the direct call's callId (AC-04.1, DC-7)
-      const seenSlice = toolOutputOf(script.calls[1]?.messages ?? [], searchCallId);
-      expect(seenSlice.startsWith(`<data source="tool search_logs" author="${LOGS_SERVER}">\n`)).toBe(true);
-      expect(seenSlice.endsWith(
-        `\nрезультат обрезан на ${CUT_BYTES} байт; полный — \`readResult(&quot;${searchCallId}&quot;)\` в \`run_code\`\n</data>`,
+      // Then: the model saw the wrapper, not the answer: its size and the direct call's callId with readResult (AC-04.1;
+      // tool-result-reading R-1), and nothing of the answer past the preview - `totalMatched`, the last key of the
+      // canonical JSON, is not there
+      const seenWrapper = toolOutputOf(script.calls[1]?.messages ?? [], searchCallId);
+      expect(seenWrapper.startsWith(
+        `<data source="tool search_logs" author="${LOGS_SERVER}">\n[stored result] Output too large: `,
       )).toBe(true);
+      expect(seenWrapper).toContain(` characters. The full output is stored under callId &quot;${searchCallId}&quot;.\n`);
+      expect(seenWrapper).toContain(`readResult(&quot;${searchCallId}&quot;)`);
+      expect(seenWrapper).not.toContain('totalMatched');
 
       // Then: the read run started without asking the employee (AC-05.1)
       expect(await harness.sessions.confirmations(agentId, ownerId)).toEqual([]);
@@ -496,13 +489,6 @@ function codeCallLines(rows: Awaited<ReturnType<typeof codeCallRowsOf>>): string
     const target = row.server === null ? row.tool : `${row.server}/${row.tool}`;
     return `${row.seq} ${target} ${row.outcome} ${row.refusalReason}`;
   });
-}
-
-/** The id the model's double gave to call `position` of the script's answer `answer`. */
-function toolCallIdOf(script: Script, answer: number, position = 0): string {
-  const id = script.calls[answer]?.toolCallIds[position];
-  if (id === undefined) throw new Error(`Answer ${answer} of the script has no tool call ${position}`);
-  return id;
 }
 
 /** The ids of the tool calls in the model's own earlier answers, as its input carries them. */

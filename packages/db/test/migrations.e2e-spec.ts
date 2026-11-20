@@ -71,6 +71,8 @@ const APP_TABLES = [
   'agent_messages',
   'agent_model_providers',
   'agent_sessions',
+  // `name` sorts bytewise: '_' (0x5f) before 's' (0x73).
+  'agent_tool_result_settings',
   'agent_tool_results',
   'audit_events',
   'chat_drafts',

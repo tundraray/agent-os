@@ -35,10 +35,12 @@ import { createAgentStepHandler } from './step/agent-step.handler.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
+import { toolResults } from './store/tool-results.repository.js';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index.js';
 import { createRunCodeTool } from './tools/builtin/run-code.js';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry.js';
 import { rootMayStartRecord } from './tools/tool-gate.js';
+import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings.js';
 import { createToolRunner } from './tools/tool-runner.js';
 
 export interface AgentsOptions {
@@ -121,6 +123,11 @@ export interface Agents {
    */
   readonly knowledge: AgentsKnowledge;
   /**
+   * The settings of large tool results (tool-result-reading R-5): the only entry point of `apps/api` to
+   * `agent_tool_result_settings`. Admin-only is the route's rule.
+   */
+  readonly toolResults: AgentsToolResults;
+  /**
    * One call of the default chat model outside any task, without tools (the conversation title): the
    * retries and cancel of an agent's call, a token ledger row without `taskId`, no text parts to the
    * hook. No default chat model rejects with `ModelNotConfiguredError`; a provider that is not ready or
@@ -169,13 +176,16 @@ export function createAgents(options: AgentsOptions): Agents {
     logger: logger.child({ service: 'agents.providers' }),
   });
   const startDeps = { library, access, providers, audit };
+  // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
+  const maskSecrets = createSecretMasker([]);
   const runner = createToolRunner({
     client: mcpClient,
     accounts,
     access,
     audit,
     callTimeoutMs: config.mcpCallTimeoutMs,
-    toolResultMaxBytes: config.toolResultMaxBytes,
+    resultSettings: () => toolResults.readSettings(database),
+    maskSecrets,
     startChildFor: createStartChild({ maxDepth: config.maxDepth }),
   });
   const codeRunner =
@@ -191,9 +201,7 @@ export function createAgents(options: AgentsOptions): Agents {
     registry: () => registry,
     runner,
     codeRun: config.codeRun,
-    toolResultMaxBytes: config.toolResultMaxBytes,
-    // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
-    maskSecrets: createSecretMasker([]),
+    maskSecrets,
   });
   const registry: ToolRegistry = createToolRegistry({
     builtins: createBuiltinTools({
@@ -280,6 +288,7 @@ export function createAgents(options: AgentsOptions): Agents {
       store: vectorStore,
       logger,
     }),
+    toolResults: createAgentsToolResults({ database, logger }),
     completeText: (request) => modelClient.completeText(request),
     async start() {
       const startedAt = Date.now();

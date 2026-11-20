@@ -53,7 +53,7 @@
 //     * `parseAgentsConfig` and the catalog check in `start()` - duplicate definition name, unknown tool or agent reference: one table, each row a startup error naming the variable or the name; whether a model may be called (catalogue, grants, quota) is the access gate's verdict at the call (`model-client.spec.ts`, `tool-gate.spec.ts`)
 // - runtime INT-1..INT-5 and E2E-1 (list above): everything about steps, inbox, fence, stop closure, owner check of `runtime_*`, ledger and restarts.
 // - not automated: AgentView does not carry tokens or cost (AC-13.2: a type shape; the chosen model in the view is a unit row of the status/view mapping and the ledger row is INT-1 row A); the zod validation of `start_agent` arguments (library; the gate row
-//   `invalid_arguments` is in the unit table); `AGENT_TOOL_RESULT_MAX_BYTES` truncation (one unit row if the plan wants it, no AC); the Haiku quality risk (a manual run after the `chat` part, per the Design Doc risk list).
+//   `invalid_arguments` is in the unit table); large tool results (the tool-result-reading part: `large-result.spec.ts`, `tool-result-reading.int`); the Haiku quality risk (a manual run after the `chat` part, per the Design Doc risk list).
 //
 // AC -> proving test:
 // - AC-01.2 (agent share): INT-3 row E
@@ -1382,6 +1382,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: U1's model was offered the `logs` tools (the registry keeps a server's list by tool name) and its
       // read reached the server once
       expect(allowed.calls[0]?.toolNames).toEqual([
+        'read_tool_result',
+        'search_tool_result',
         'run_code',
         `mcp__${LOGS_SERVER}__aggregate_logs`,
         `mcp__${LOGS_SERVER}__get_trace`,
@@ -1400,10 +1402,10 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'model_answer: report of the allowed owner []',
       ]);
 
-      // Then: U2's model was offered no server tool (only `run_code`, which every session has); its forced
+      // Then: U2's model was offered no server tool (only the tools every session has); its forced
       // call was refused `no_access` (the server is in the definition, the owner may not use it), is in its
       // history, and nothing of it reached a server
-      expect(denied.calls[0]?.toolNames).toEqual(['run_code']);
+      expect(denied.calls[0]?.toolNames).toEqual(['read_tool_result', 'search_tool_result', 'run_code']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B })).toEqual([]);
       expect(await auditLinesOf(harness, deniedId)).toEqual([
         `mcp__${LOGS_SERVER}__get_trace done refused no_access timed`,

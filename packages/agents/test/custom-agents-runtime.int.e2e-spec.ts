@@ -270,9 +270,9 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       // Then: every call of the first child, on A before the takeover and on B after it, ran on version 1 -
       // its prompt, its (empty) tool set, its model - and the call of the tool only version 2 has was refused
       expect(digest.calls.map(lineOf)).toEqual([
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | run_code`,
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | run_code`,
-        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | run_code`,
+        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
+        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
+        `Digest prompt, version 1. | ${TEST_MODEL_DEFAULT} | read_tool_result, search_tool_result, run_code`,
       ]);
       expect(historyLines(await historyOf(restarted, firstChildId, boris))).toEqual([
         'task: Digest task',
@@ -293,7 +293,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
 
       // Then: the second child runs on version 2; the run origins say 1 and 2
       expect(secondDigest.calls.map(lineOf)).toEqual([
-        `Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, run_code`,
+        `Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`,
       ]);
       const firstView = await restarted.sessions.get(firstChildId, boris);
       const secondView = await restarted.sessions.get(secondChildId, boris);
@@ -311,7 +311,7 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       await waitForTaskStatus(restarted, restartId, boris, 'completed');
 
       // Then: a new agent under the same root on version 2, asked of the library for Борис
-      expect(lineOf(digest.calls[3])).toBe(`Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, run_code`);
+      expect(lineOf(digest.calls[3])).toBe(`Digest prompt, version 2. | ${TEST_MODEL_CHOSEN} | list_agents, read_tool_result, search_tool_result, run_code`);
       expect(inputLines(digest.calls[3]?.messages ?? [])).toEqual(['user: Digest task']);
       const restartView = await restarted.sessions.get(restartId, boris);
       expect([restartView.parentId, restartView.origin?.version]).toEqual([rootId, 2]);
@@ -449,8 +449,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       expect(library.resolveCalls).toHaveLength(resolvedBefore);
       // Then: the executor restarted on its own snapshot although its source and its workflow are gone
       expect(planner.calls.map(lineOf)).toEqual([
-        `Planner prompt. | ${TEST_MODEL_CHOSEN} | run_code`,
-        `Planner prompt. | ${TEST_MODEL_CHOSEN} | run_code`,
+        `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
+        `Planner prompt. | ${TEST_MODEL_CHOSEN} | read_tool_result, search_tool_result, run_code`,
       ]);
       const plannerRestart = await harness.sessions.get(plannerRestartId, boris);
       expect([
@@ -461,8 +461,8 @@ describe('custom-agents / runtime - agents package (real runtime + Postgres, scr
       ]).toEqual([coordinatorId, workflowId, 1, 'planner']);
       // Then: the fork restarted on the forker's snapshot of version 1, without the forker's history
       expect(fork.calls.map(lineOf)).toEqual([
-        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, run_code`,
-        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, run_code`,
+        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
+        `Forker prompt, version 1. | ${TEST_MODEL_DEFAULT} | start_agent, read_tool_result, search_tool_result, run_code`,
       ]);
       expect(inputLines(fork.calls[1]?.messages ?? [])).toEqual(['user: Fork task']);
       const forkRestart = await harness.sessions.get(forkRestartId, boris);

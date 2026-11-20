@@ -12,6 +12,7 @@ import {
   roleNameRules,
   serverRules,
   signInSettingsRules,
+  toolResultSettingsRules,
   type ModelValues,
 } from './form-rules';
 
@@ -49,6 +50,10 @@ const PROVIDER_NAME = 'Имя — до 32 знаков: строчные лат�
 const API_KEY = 'Ключ — от 8 до 512 символов';
 const DIMENSIONS = 'Размерность — целое число больше нуля';
 const KNOWLEDGE_LIMIT = 'Нужно целое число от 1000 до 32000';
+const tools = { storeFromChars: '50000', previewChars: '2000', readMaxTokens: '25000' };
+const STORE_FROM = 'Нужно целое число от 1000 до 1000000';
+const PREVIEW = 'Нужно целое число от 200 до 20000';
+const PREVIEW_BELOW = 'Начало должно быть меньше длины, с которой ответ заменяется ссылкой';
 
 describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16)', () => {
   it.each<[string, () => unknown, unknown]>([
@@ -140,6 +145,15 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['an empty knowledge place', () => knowledgeSettingsRules({ limitTokens: '' }), { limitTokens: KNOWLEDGE_LIMIT }],
     ['knowledge place «1000»', () => knowledgeSettingsRules({ limitTokens: '1000' }), {}],
     ['knowledge place «32000»', () => knowledgeSettingsRules({ limitTokens: '32000' }), {}],
+    // tool-result-reading R-5
+    ['tool result threshold «999»', () => toolResultSettingsRules({ ...tools, storeFromChars: '999', previewChars: '200' }), { storeFromChars: STORE_FROM }],
+    ['tool result threshold «1000001»', () => toolResultSettingsRules({ ...tools, storeFromChars: '1000001' }), { storeFromChars: STORE_FROM }],
+    ['tool result threshold «50000,5»', () => toolResultSettingsRules({ ...tools, storeFromChars: '50000,5' }), { storeFromChars: STORE_FROM }],
+    ['tool result preview «2000» equal to the threshold «2000»', () => toolResultSettingsRules({ ...tools, storeFromChars: '2000' }), { previewChars: PREVIEW_BELOW }],
+    ['tool result preview «3000» above the threshold «2000»', () => toolResultSettingsRules({ ...tools, storeFromChars: '2000', previewChars: '3000' }), { previewChars: PREVIEW_BELOW }],
+    ['tool result preview «20001»', () => toolResultSettingsRules({ ...tools, previewChars: '20001' }), { previewChars: PREVIEW }],
+    ['tool result bounds «1000» / «200» / «2000»', () => toolResultSettingsRules({ storeFromChars: '1000', previewChars: '200', readMaxTokens: '2000' }), {}],
+    ['tool result bounds «1000000» / «20000» / «100000»', () => toolResultSettingsRules({ storeFromChars: '1000000', previewChars: '20000', readMaxTokens: '100000' }), {}],
     // MC-26, MC-27
     ['an empty role name', () => roleNameRules({ name: '  ' }), { name: 'Введите название' }],
     ['a provider name of 61 characters', () => providerRules({ name: 'G'.repeat(61) }), {

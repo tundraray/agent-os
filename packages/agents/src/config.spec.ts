@@ -18,7 +18,6 @@ describe('agents configuration refuses to start naming the variable', () => {
     const expected: AgentsConfig = {
       maxOutputTokens: 16_000,
       maxDepth: 3,
-      toolResultMaxBytes: 16_384,
       compactAtTokens: 200_000,
       mcpCallTimeoutMs: 60_000,
       allowHttpUrls: true,
@@ -28,6 +27,7 @@ describe('agents configuration refuses to start naming the variable', () => {
         maxToolCalls: 50,
         maxConcurrent: 4,
         maxConcurrentPerUser: 2,
+        resultMaxBytes: 16_384,
       },
     };
 
