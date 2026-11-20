@@ -24,15 +24,14 @@ export async function readLibrarySettings(
   return row;
 }
 
-/** Writes the administrator's change with who and when; returns the row after it. */
+/** Writes the administrator's change with its time; returns the row after it. */
 export async function writeLibrarySettings(
   executor: Executor,
   defaultMaxTurns: number,
-  actorId: string,
 ): Promise<LibrarySettingsRow> {
   const [row] = await executor
     .update(librarySettings)
-    .set({ defaultMaxTurns, updatedAt: new Date(), updatedBy: actorId })
+    .set({ defaultMaxTurns, updatedAt: new Date() })
     .returning(settingsColumns);
   if (row === undefined) throw new Error('library_settings row is missing');
   return row;

@@ -22,7 +22,6 @@ export interface NewCodeCall {
   /** MCP server id; null for built-in and registered tools. */
   readonly server: string | null;
   readonly args: unknown;
-  readonly startedAt: Date;
 }
 
 /** One call from code: the key of its row. */

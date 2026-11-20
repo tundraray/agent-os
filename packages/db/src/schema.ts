@@ -5,6 +5,7 @@ import {
   DecisionStatusSchema,
   DeliveryStatusSchema,
   DraftStateSchema,
+  EmbeddingFailureReasonSchema,
   EMBEDDING_DIMENSIONS_MAX,
   EMBEDDING_DIMENSIONS_MIN,
   EVENT_PAYLOAD_MAX_BYTES,
@@ -148,12 +149,16 @@ export const runtimeTasks = app.table(
       'runtime_tasks_waiting_check',
       sql`(${t.status} = ${literal(TaskStatusSchema.enum.waiting)}) = (${t.waitReason} is not null)`,
     ),
+    /** The claim: the oldest `queued` task of the registered types, in this order. */
     index('runtime_tasks_ready_idx')
-      .on(t.status, t.type, t.createdAt)
+      .on(t.createdAt, t.taskId)
       .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.queued)}`),
+    /** The recovery sweeper: `running` tasks whose lease has expired, oldest first. */
+    index('runtime_tasks_lease_idx')
+      .on(t.leaseExpiresAt)
+      .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.running)}`),
     index('runtime_tasks_root_idx').on(t.rootId),
     index('runtime_tasks_parent_idx').on(t.parentId),
-    index('runtime_tasks_owner_idx').on(t.ownerId),
   ],
 );
 
@@ -177,7 +182,6 @@ export const runtimeInbox = app.table(
     /** Step that received the message; null while pending. */
     deliveredStep: integer('delivered_step'),
     createdAt: createdAt(),
-    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
   },
   (t) => [
     unique('runtime_inbox_recipient_seq_key').on(t.recipientId, t.seq),
@@ -218,6 +222,8 @@ export const runtimeDecisions = app.table(
     uniqueIndex('runtime_decisions_open_task_idx')
       .on(t.taskId)
       .where(sql`${t.status} = ${literal(DecisionStatusSchema.enum.open)}`),
+    /** Serves the cascade from the task; the partial index above covers only open requests. */
+    index('runtime_decisions_task_idx').on(t.taskId),
     index('runtime_decisions_root_idx').on(t.rootId),
   ],
 );
@@ -237,9 +243,10 @@ export const runtimeEvents = app.table(
       .notNull()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
     taskId: uuid('task_id'),
+    /** Kept for incident analysis; no code reads it. */
     causationId: uuid('causation_id'),
+    /** Kept for incident analysis; no code reads it. */
     stateRevision: integer('state_revision').notNull(),
-    payloadRef: text('payload_ref'),
     payload: jsonb('payload').notNull(),
     createdAt: createdAt(),
   },
@@ -249,8 +256,6 @@ export const runtimeEvents = app.table(
       sql`octet_length(${t.payload}::text) <= ${sql.raw(String(EVENT_PAYLOAD_MAX_BYTES))}`,
     ),
     index('runtime_events_root_seq_idx').on(t.rootId, t.seq),
-    index('runtime_events_causation_idx').on(t.causationId),
-    index('runtime_events_task_seq_idx').on(t.taskId, t.seq),
   ],
 );
 
@@ -369,7 +374,10 @@ export const agentMessages = app.table(
     seq: integer('seq').notNull(),
     kind: text('kind').notNull(),
     content: jsonb('content').notNull(),
-    /** Token ledger row of a `model_answer`; no FK, the ledger outlives the tree. */
+    /**
+     * Token ledger row of a `model_answer`; no FK, the ledger outlives the tree. Kept for incident
+     * analysis; no code reads it.
+     */
     modelCallId: uuid('model_call_id'),
     createdAt: createdAt(),
   },
@@ -408,7 +416,7 @@ export const agentToolCalls = app.table(
     /** `{ model }` of a refusal by model (`model_not_connected`, `model_not_allowed`); null otherwise. */
     refusalDetail: jsonb('refusal_detail'),
     resultText: text('result_text'),
-    /** Agent started by `start_agent`. */
+    /** Agent started by `start_agent`. Kept for incident analysis; no code reads it. */
     childTaskId: uuid('child_task_id'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -435,11 +443,6 @@ export const agentToolCalls = app.table(
       'agent_tool_calls_done_check',
       sql`(${t.state} = ${literal(ToolCallStateSchema.enum.done)}) = (${t.outcome} is not null)`,
     ),
-    index('agent_tool_calls_awaiting_idx')
-      .on(t.state)
-      .where(
-        sql`${t.state} = ${literal(ToolCallStateSchema.enum.awaiting_confirmation)}`,
-      ),
   ],
 );
 
@@ -478,7 +481,6 @@ export const agentCodeCalls = app.table(
     args: jsonb('args').notNull(),
     outcome: text('outcome'),
     refusalReason: text('refusal_reason'),
-    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (t) => [
@@ -550,20 +552,11 @@ export const agentMcpAccounts = app.table(
     server: text('server')
       .notNull()
       .references(() => agentMcpServers.name, { onDelete: 'cascade' }),
-    /** How the token was obtained; `oauth` is the only type so far. */
-    tokenType: text('token_type').notNull(),
     accessToken: text('access_token').notNull(),
     refreshToken: text('refresh_token'),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
-    connectedAt: timestamp('connected_at', { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    refreshedAt: timestamp('refreshed_at', { withTimezone: true }),
   },
-  (t) => [
-    primaryKey({ columns: [t.ownerId, t.server] }),
-    check('agent_mcp_accounts_token_type_check', isOneOf(t.tokenType, ['oauth'])),
-  ],
+  (t) => [primaryKey({ columns: [t.ownerId, t.server] })],
 );
 
 // ---------------------------------------------------------------------------------------------
@@ -787,8 +780,6 @@ export const identitySettings = app.table(
     absoluteMinutes: integer('absolute_minutes').notNull().default(ABSOLUTE_MINUTES_DEFAULT),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
-    /** Employee id or `system`; null while the defaults stand. */
-    updatedBy: text('updated_by'),
   },
   (t) => [
     check('identity_settings_single_row_check', sql`${t.id}`),
@@ -921,7 +912,7 @@ export const accessGrants = app.table(
     unique('access_grants_holder_target_key')
       .on(t.roleId, t.userId, t.effect, t.targetKind, t.server, t.tool, t.model)
       .nullsNotDistinct(),
-    index('access_grants_role_idx').on(t.roleId),
+    /** The cascade from a role is served by the unique key above: `role_id` is its first column. */
     index('access_grants_user_idx').on(t.userId),
     check('access_grants_effect_check', isOneOf(t.effect, GrantEffectSchema.options)),
     check('access_grants_target_kind_check', isOneOf(t.targetKind, GrantTargetKindSchema.options)),
@@ -1035,8 +1026,6 @@ export const librarySettings = app.table(
     defaultMaxTurns: integer('default_max_turns').notNull().default(RECORD_MAX_TURNS_DEFAULT),
     /** Null while the default stands. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
-    /** Employee id; null while the default stands. */
-    updatedBy: text('updated_by'),
   },
   (t) => [
     check('library_settings_single_row_check', sql`${t.id}`),
@@ -1069,7 +1058,7 @@ const knowledgeItemFields = () => ({
   confirmations: integer('confirmations').notNull().default(1),
   createdAt: createdAt(),
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull().defaultNow(),
-  /** Coordinator task of the run that added the record. */
+  /** Coordinator task of the run that added the record. Kept for incident analysis; no code reads it. */
   sourceRunId: uuid('source_run_id').notNull(),
   /** Coordinator task of the run that confirmed it last. */
   confirmedByRunId: uuid('confirmed_by_run_id').notNull(),
@@ -1113,6 +1102,9 @@ export const agentKnowledgeRelations = app.table(
   },
   (t) => [
     index('agent_knowledge_relations_record_idx').on(t.recordId),
+    /** Serve the cascade from an entity. */
+    index('agent_knowledge_relations_from_entity_idx').on(t.fromEntityId),
+    index('agent_knowledge_relations_to_entity_idx').on(t.toEntityId),
     /** Named: the generated names pass the 63-character limit of Postgres. */
     foreignKey({
       name: 'agent_knowledge_relations_from_entity_fk',
@@ -1176,6 +1168,13 @@ export const agentKnowledgeRuns = app.table(
   },
   (t) => [
     index('agent_knowledge_runs_record_idx').on(t.recordId),
+    /** The trigger finds the run by the task of an event. */
+    index('agent_knowledge_runs_extract_task_idx')
+      .on(t.extractTaskId)
+      .where(sql`${t.extractTaskId} is not null`),
+    index('agent_knowledge_runs_last_extract_task_idx')
+      .on(t.lastExtractTaskId)
+      .where(sql`${t.lastExtractTaskId} is not null`),
     check(
       'agent_knowledge_runs_last_status_check',
       isOneOf(t.lastStatus, LastExtractionStatusSchema.options),
@@ -1203,20 +1202,33 @@ export const agentKnowledgeQuestions = app.table('agent_knowledge_questions', {
 });
 
 /** The vector row of a workflow (KD-8): its pass in progress and the last embeddings outcome. */
-export const agentKnowledgeEmbedding = app.table('agent_knowledge_embedding', {
-  recordId: uuid('record_id')
-    .primaryKey()
-    .references(() => libraryRecords.id, { onDelete: 'cascade' }),
-  /** Pass task in progress (Invariant 13). */
-  passTaskId: uuid('pass_task_id'),
-  needsPass: boolean('needs_pass').notNull().default(false),
-  /** Employee charged for records without a vector; null — the platform. */
-  payerId: text('payer_id'),
-  /** Reason of the last failed attempt; null — it succeeded. */
-  lastReason: text('last_reason'),
-  lastModel: text('last_model'),
-  lastAt: timestamp('last_at', { withTimezone: true }),
-});
+export const agentKnowledgeEmbedding = app.table(
+  'agent_knowledge_embedding',
+  {
+    recordId: uuid('record_id')
+      .primaryKey()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    /** Pass task in progress (Invariant 13). */
+    passTaskId: uuid('pass_task_id'),
+    needsPass: boolean('needs_pass').notNull().default(false),
+    /** Employee charged for records without a vector; null — the platform. */
+    payerId: text('payer_id'),
+    /** Reason of the last failed attempt; null — it succeeded. */
+    lastReason: text('last_reason'),
+    lastModel: text('last_model'),
+    lastAt: timestamp('last_at', { withTimezone: true }),
+  },
+  (t) => [
+    /** The trigger finds the row by the task of an event. */
+    index('agent_knowledge_embedding_pass_task_idx')
+      .on(t.passTaskId)
+      .where(sql`${t.passTaskId} is not null`),
+    check(
+      'agent_knowledge_embedding_last_reason_check',
+      isOneOf(t.lastReason, EmbeddingFailureReasonSchema.options),
+    ),
+  ],
+);
 
 /**
  * The pgvector store of `KnowledgeVectorStore` (KD-8): the collection is the workflow, one vector
@@ -1253,8 +1265,6 @@ export const agentKnowledgeSettings = app.table(
     lessonsEnabled: boolean('lessons_enabled').notNull().default(true),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
-    /** Employee id; null while the defaults stand. */
-    updatedBy: text('updated_by'),
   },
   (t) => [
     check('agent_knowledge_settings_single_row_check', sql`${t.id}`),

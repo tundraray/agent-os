@@ -1,5 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import {
+  EmbeddingFailureReasonSchema,
   type KnowledgeSettings,
   type KnowledgeView,
   type LastExtraction,
@@ -9,7 +10,7 @@ import {
 import type { Database } from '@agent-os/db';
 import type { Runtime, RuntimeTx } from '@agent-os/runtime';
 
-import type { AgentsEmbeddings, EmbeddingFailureReason } from '../embeddings/embeddings.js';
+import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
 import { sessions } from '../store/sessions.repository.js';
 import { graphItemsOf, registryToolAlive } from './knowledge-block.js';
 import {
@@ -64,7 +65,7 @@ export interface KnowledgeRelationDeletion {
 }
 
 export interface KnowledgeSettingsUpdate {
-  /** The administrator, written as `updated_by`. */
+  /** The administrator, named in the log. */
   readonly actorId: string;
   /** Checked by `UpdateKnowledgeSettingsBodySchema` before the call; the CHECK is the last line. */
   readonly limitTokens: number;
@@ -210,7 +211,7 @@ export function createAgentsKnowledge(deps: AgentsKnowledgeDeps): AgentsKnowledg
     async updateSettings({ actorId, limitTokens, lessonsEnabled }) {
       const startedAt = Date.now();
       const change = await database.transaction((tx) =>
-        writeKnowledgeSettings(tx, { actorId, limitTokens, lessonsEnabled }),
+        writeKnowledgeSettings(tx, { limitTokens, lessonsEnabled }),
       );
       const before = settingsView(change.before);
       const after = settingsView(change.after);
@@ -253,32 +254,10 @@ async function embeddingState(
   };
 }
 
-/** Every reason `embed` can give; the record makes the compiler keep the list complete. */
-const EMBEDDING_FAILURE_REASONS: Record<EmbeddingFailureReason, true> = {
-  model_not_configured: true,
-  owner_disabled: true,
-  provider_missing: true,
-  provider_disabled: true,
-  provider_key_missing: true,
-  provider_key_rejected: true,
-  provider_unavailable: true,
-  provider_error: true,
-  dimension_mismatch: true,
-};
-
-function isEmbeddingFailureReason(reason: string): reason is EmbeddingFailureReason {
-  return Object.hasOwn(EMBEDDING_FAILURE_REASONS, reason);
-}
-
 /** The workflow's last embedding attempt when it failed with a model; a success or no attempt — `null`. */
 function lastFailureOf(row: KnowledgeEmbeddingRow | undefined): EmbeddingState['lastFailure'] {
   if (row?.lastReason == null || row.lastModel === null) return null;
-  if (!isEmbeddingFailureReason(row.lastReason)) {
-    throw new Error(
-      `knowledge embedding row of ${row.recordId} has an unknown reason ${row.lastReason}`,
-    );
-  }
-  return { reason: row.lastReason, model: row.lastModel };
+  return { reason: EmbeddingFailureReasonSchema.parse(row.lastReason), model: row.lastModel };
 }
 
 /**

@@ -166,3 +166,15 @@ export async function deleteGrant(
 ): Promise<void> {
   await executor.delete(accessGrants).where(eq(accessGrants.id, id));
 }
+
+/** Deletes every grant on the server and its tools; returns how many there were. */
+export async function deleteServerGrants(
+  executor: Executor,
+  server: string,
+): Promise<number> {
+  const rows = await executor
+    .delete(accessGrants)
+    .where(eq(accessGrants.server, server))
+    .returning({ id: accessGrants.id });
+  return rows.length;
+}

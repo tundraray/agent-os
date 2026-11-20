@@ -47,6 +47,20 @@ export const LastExtractionReasonSchema = z.enum([
 ]);
 export type LastExtractionReason = z.infer<typeof LastExtractionReasonSchema>;
 
+/** Why an embeddings call gave no vectors (self-learning/design-core.md, Contract `Agents.embeddings.embed`). */
+export const EmbeddingFailureReasonSchema = z.enum([
+  'model_not_configured',
+  'owner_disabled',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_error',
+  'dimension_mismatch',
+]);
+export type EmbeddingFailureReason = z.infer<typeof EmbeddingFailureReasonSchema>;
+
 /** State of selection by meaning: the first state that applies, top to bottom. */
 export const KnowledgeSelectionSchema = z.discriminatedUnion('state', [
   z.discriminatedUnion('reason', [

@@ -1,5 +1,5 @@
 import type { Logger } from '@agent-os/common';
-import { modelProvider } from '@agent-os/contracts';
+import { type EmbeddingFailureReason, modelProvider } from '@agent-os/contracts';
 import {
   type CallUsage,
   type Clock,
@@ -25,18 +25,6 @@ import { type EmbeddingBatch, type EmbeddingClient, EmbeddingTimeoutError } from
 
 /** At most this many texts go in one provider request; a longer list goes in batches, one after another (DC-9). */
 export const EMBEDDING_BATCH_SIZE = 100;
-
-/** Why `embed` gave no vectors (design-core.md, Contract `Agents.embeddings.embed`). */
-export type EmbeddingFailureReason =
-  | 'model_not_configured'
-  | 'owner_disabled'
-  | 'provider_missing'
-  | 'provider_disabled'
-  | 'provider_key_missing'
-  | 'provider_key_rejected'
-  | 'provider_unavailable'
-  | 'provider_error'
-  | 'dimension_mismatch';
 
 export interface EmbedRequest {
   /** Their order is the order of the vectors; an empty list is answered without a provider request. */

@@ -119,10 +119,10 @@ export async function withKnowledgeLimit<T>(
   try {
     return await body();
   } finally {
-    const { limitTokens: limit, lessonsEnabled, updatedAt, updatedBy } = before;
+    const { limitTokens: limit, lessonsEnabled, updatedAt } = before;
     await db
       .update(agentKnowledgeSettings)
-      .set({ limitTokens: limit, lessonsEnabled, updatedAt, updatedBy });
+      .set({ limitTokens: limit, lessonsEnabled, updatedAt });
   }
 }
 

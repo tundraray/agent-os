@@ -42,7 +42,6 @@ export interface StoredEvent {
   causationId: string | null;
   /** `step_no` of the task when the event was written. */
   stateRevision: number;
-  payloadRef: string | null;
   payload: unknown;
   createdAt: Date;
 }
@@ -179,7 +178,6 @@ export class EventLog {
         taskId,
         causationId,
         stateRevision: stepNo,
-        payloadRef: null,
         payload: event.payload,
       })
       .returning({ seq: runtimeEvents.seq, createdAt: runtimeEvents.createdAt });
@@ -202,7 +200,6 @@ export class EventLog {
       taskId,
       causationId,
       stateRevision: stepNo,
-      payloadRef: null,
       payload: event.payload,
       createdAt: row.createdAt,
     };

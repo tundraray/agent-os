@@ -17,7 +17,6 @@ export { type Agents, createAgents, type RootStartQuery } from './create-agents.
 export { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client.js';
 export type {
   AgentsEmbeddings,
-  EmbeddingFailureReason,
   EmbeddingModelChoice,
   EmbedRequest,
   EmbedResult,

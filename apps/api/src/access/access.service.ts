@@ -59,6 +59,7 @@ import {
 import { grantRules, type GrantRuleInput } from './grant-rules.js';
 import {
   deleteGrant,
+  deleteServerGrants,
   findGrant,
   grantsOf,
   insertGrant,
@@ -571,6 +572,16 @@ export class AccessService implements AccessGate {
       await this.audit(tx, actorId, 'grant', id, before, null);
     });
     this.logChange(actorId, 'grant', id, 'delete');
+  }
+
+  /**
+   * Deletes the grants on an MCP server that is being removed from the registry: a grant names its
+   * server as text without FK, so a grant left behind would attach to a new server of the same name.
+   * The removal of the server is the audited change; the grants go with it, as a cascade does.
+   */
+  async removeServerGrants(actorId: string, server: string): Promise<void> {
+    const grants = await deleteServerGrants(this.db, server);
+    this.logger.info('grants of a removed mcp server deleted', { actorId, server, grants });
   }
 
   /**

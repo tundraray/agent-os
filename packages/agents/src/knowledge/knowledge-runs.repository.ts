@@ -1,4 +1,8 @@
-import type { LastExtractionReason, LastExtractionStatus } from '@agent-os/contracts';
+import type {
+  EmbeddingFailureReason,
+  LastExtractionReason,
+  LastExtractionStatus,
+} from '@agent-os/contracts';
 import {
   agentKnowledgeEmbedding,
   agentKnowledgeQuestions,
@@ -197,7 +201,7 @@ export type KnowledgeEmbeddingPatch = Partial<
 
 /** An embeddings attempt of the workflow: the failure reason or `null`, and the model. */
 export interface EmbeddingOutcome {
-  readonly reason: string | null;
+  readonly reason: EmbeddingFailureReason | null;
   readonly model: string | null;
 }
 

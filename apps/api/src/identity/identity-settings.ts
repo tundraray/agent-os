@@ -105,7 +105,7 @@ export class IdentitySettings {
     const startedAt = Date.now();
     const { before, after } = await this.db.transaction(async (tx) => {
       const previous = await readSettings(tx);
-      const updated = await writeSettings(tx, auditState(body), actorId);
+      const updated = await writeSettings(tx, auditState(body));
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

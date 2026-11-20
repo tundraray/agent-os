@@ -55,7 +55,7 @@ export class LibrarySettingsService {
     const startedAt = Date.now();
     const { before, after } = await this.db.transaction(async (tx) => {
       const previous = await readLibrarySettings(tx);
-      const updated = await writeLibrarySettings(tx, defaultMaxTurns, actorId);
+      const updated = await writeLibrarySettings(tx, defaultMaxTurns);
       await this.auditLog.record(tx, {
         kind: 'admin_change',
         actor: actorId,

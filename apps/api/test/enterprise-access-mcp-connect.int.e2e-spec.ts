@@ -1008,8 +1008,12 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         (await call(admin, 'delete', `/admin/mcp-servers/${BACKOFFICE_SERVER}`))
           .status,
       ).toBe(204);
-      // Then: no account names it; the history of its calls stays with the name as text
+      // Then: no account and no grant names it; the history of its calls stays with the name as text
       expect(await ownersOn(BACKOFFICE_SERVER)).toEqual([]);
+      expect(
+        (await pool.query('SELECT id FROM app.access_grants WHERE server = $1', [BACKOFFICE_SERVER]))
+          .rows,
+      ).toEqual([]);
       const history = await pool.query<{
         server: string | null;
         tool: string;

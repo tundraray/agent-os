@@ -203,10 +203,10 @@ export async function readKnowledgeSettings(reader: StoreReader): Promise<Knowle
   return row;
 }
 
-/** Locks the row and writes the administrator's change with who and when (KD-7). */
+/** Locks the row and writes the administrator's change with its time (KD-7). */
 export async function writeKnowledgeSettings(
   tx: RuntimeTx,
-  change: { readonly limitTokens: number; readonly lessonsEnabled: boolean; readonly actorId: string },
+  change: { readonly limitTokens: number; readonly lessonsEnabled: boolean },
 ): Promise<KnowledgeSettingsChange> {
   const [before] = await tx.select(settingsColumns).from(agentKnowledgeSettings).for('update');
   if (before === undefined) throw new Error('agent_knowledge_settings row is missing');
@@ -216,7 +216,6 @@ export async function writeKnowledgeSettings(
       limitTokens: change.limitTokens,
       lessonsEnabled: change.lessonsEnabled,
       updatedAt: new Date(),
-      updatedBy: change.actorId,
     })
     .returning(settingsColumns);
   if (after === undefined) throw new Error('agent_knowledge_settings row is missing');

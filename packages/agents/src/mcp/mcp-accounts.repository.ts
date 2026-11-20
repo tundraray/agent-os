@@ -13,7 +13,7 @@ export interface McpTokens {
   readonly expiresAt: Date | null;
 }
 
-/** An account a connection writes: `oauth` is the only token type so far. */
+/** An account a connection writes. */
 export interface NewMcpAccount extends McpTokens {
   readonly ownerId: string;
   readonly server: string;
@@ -45,15 +45,12 @@ export function accountsOf(reader: StoreReader, ownerId: string): Promise<McpAcc
     .orderBy(asc(agentMcpAccounts.server));
 }
 
-/** Saves a fresh connection; a reconnection replaces the tokens and the connection time. */
+/** Saves a fresh connection; a reconnection replaces the tokens. */
 export async function upsertAccount(reader: StoreReader, account: NewMcpAccount): Promise<void> {
   const connected = {
-    tokenType: 'oauth',
     accessToken: account.accessToken,
     refreshToken: account.refreshToken,
     expiresAt: account.expiresAt,
-    connectedAt: new Date(),
-    refreshedAt: null,
   };
   await reader
     .insert(agentMcpAccounts)
@@ -73,7 +70,7 @@ export async function updateTokens(
 ): Promise<boolean> {
   const rows = await reader
     .update(agentMcpAccounts)
-    .set({ ...tokens, refreshedAt: new Date() })
+    .set(tokens)
     .where(accountKey(server, ownerId))
     .returning({ server: agentMcpAccounts.server });
   return rows.length > 0;

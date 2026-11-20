@@ -234,9 +234,8 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     }
     const target = callTargetOf(run.codeScope.snapshot, request.name);
     const key = { taskId: run.caller.agentId, runCallId: run.callId, attempt: run.attempt, seq };
-    const startedAt = new Date();
     const opened = await run.guard((tx) =>
-      codeCalls.open(tx, { ...key, ...target, args: request.args, startedAt }),
+      codeCalls.open(tx, { ...key, ...target, args: request.args }),
     );
     if (opened.outcome === 'fenced') {
       run.logger.warn('code call not sent: its audit row was fenced', { seq, ...target });
