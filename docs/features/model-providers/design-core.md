@@ -58,7 +58,7 @@ AI SDK уже приводит три вида к одной форме: пот�
 
 - **Провайдер, вид провайдера, ключ, каталог, модель чата, модель эмбеддингов, размерность** — как в [PRD, Terms](./prd.md#terms).
 - **Подключение провайдера** — то, что нужно для одного запроса: вид, адрес, ключ и имя модели у провайдера. Реестр собирает его из строки провайдера на каждом вызове.
-- **Готовность провайдера** — `ready`, `missing` (не заведён), `disabled` (выключен) или `key_missing` (вид требует ключ, а его нет).
+- **Готовность провайдера** — `ready`, `missing` (не заведён), `disabled` (выключен) или `key_missing` (вид требует ключ, а его нет). `providerReadiness` проверяет условия в этом порядке и отдаёт первое сработавшее, поэтому выключенный провайдер без ключа — `disabled`.
 - **Адаптер вида** — объект пакета `agents`, который знает всё, чем вид отличается от других; остальной код видит только его методы.
 - **Шов** — интерфейс, который тесты подменяют двойником, а всё над ним работает по-настоящему: `AgentTurnModelClient` для чата и `EmbeddingClient` для эмбеддингов.
 - **Метка кеша** — указание провайдеру «запомни запрос до этого места»; меняет только стоимость.
@@ -560,7 +560,8 @@ sequenceDiagram
 - `baseUrl` — заданный адрес или `null`; `effectiveBaseUrl` — адрес, на который уходят запросы: заданный или адрес вида по умолчанию (`https://api.anthropic.com/v1`, `https://generativelanguage.googleapis.com/v1beta`, `https://api.openai.com/v1`).
 - `enabled` — включён ли.
 - `apiKeySet` — задан ли ключ; `apiKeyLast4` — последние четыре символа ключа или `null`.
-- `state` — `ready`, `disabled` или `key_missing`.
+- `keyRequired` — нужен ли виду ключ: `true` у `anthropic` и `gemini`, `false` у `openai_compatible`. Веб решает, показать ли «Нужен ключ», по `keyRequired` и `apiKeySet` и своей копии правила не держит.
+- `state` — `ready`, `disabled` или `key_missing` по `providerReadiness`; выключенный провайдер без ключа получает `disabled`, поэтому отсутствие ключа у него видно только по `keyRequired` и `apiKeySet`.
 - `catalogModels` — число моделей провайдера в каталоге; контроллер берёт его у `AccessService`.
 
 **`ModelProviderCheck`**
@@ -580,7 +581,7 @@ sequenceDiagram
 | Модуль | Имя | Изменение |
 |---|---|---|
 | `model-providers.ts`, новый, по образцу `mcp.ts` | `ModelProviderNameSchema`, `MODEL_PROVIDER_NAME_MAX_LENGTH`, `MODEL_PROVIDER_API_KEY_MIN_LENGTH`, `MODEL_PROVIDER_API_KEY_MAX_LENGTH` | имя провайдера и границы ключа 32, 8 и 512 (FR-01) |
-| `model-providers.ts` | `ModelProviderKindSchema`, `ModelProviderViewSchema`, `ModelProviderCheckSchema`, `CreateModelProviderBodySchema`, `UpdateModelProviderBodySchema`, `ModelProviderErrorCode` | формы выше; коды `MODEL_PROVIDER_NOT_FOUND`, `MODEL_PROVIDER_NAME_TAKEN`, `MODEL_PROVIDER_HAS_MODELS` |
+| `model-providers.ts` | `ModelProviderKindSchema`, `ModelProviderViewSchema`, `ModelProviderCheckSchema`, `CreateModelProviderBodySchema`, `UpdateModelProviderBodySchema`, `ModelProviderErrorCode` | формы выше, у `ModelProviderViewSchema` поле `keyRequired`; коды `MODEL_PROVIDER_NOT_FOUND`, `MODEL_PROVIDER_NAME_TAKEN`, `MODEL_PROVIDER_HAS_MODELS` |
 | `access.ts` | `ModelIdSchema`, `modelProvider` | первая часть id — по `ModelProviderNameSchema`, после первой косой черты — непустое имя без пробелов, косая черта в нём допустима (KD-4) |
 | `access.ts` | `CatalogModelSchema`, `CreateCatalogModelBodySchema`, `UpdateCatalogModelBodySchema`, `ModelDefaultsSchema`, `UpdateModelDefaultsBodySchema` | формы и тела выше; назначение при изменении проверяет сервис, не схема |
 | `access.ts` | `AccessErrorCode`, `ModelProviderInvalidReasonSchema`, `ModelDefaultInvalidReasonSchema`, `ModelDefaultInvalidErrorSchema` | коды `MODEL_PROVIDER_INVALID` и `MODEL_DEFAULT_INVALID` с их причинами; ошибка моделей по умолчанию несёт `model` |
@@ -608,7 +609,8 @@ sequenceDiagram
 - **`AccessGate.embedding`** — по `ownerId` или `null` отвечает `allowed` с `model`, ценой ввода и `dimensions` либо `refused` с `owner_disabled` или `model_not_configured`. Права и квоты не читает. **`AccessGate.model`** на модель эмбеддингов отвечает `model_not_connected`.
 - **`Agents.providers`** — операции реестра для контроллеров `apps/api`: список, чтение, добавление, изменение, удаление со входом `catalogModels` (число моделей в каталоге), проверка подключения, вид провайдера по имени и готовность провайдеров по именам. Пишущая операция возвращает `view`, `before` и `after` без значения ключа, а при смене ключа поле `apiKey` в `before` и `after` равно `changed` ([write-only-secret.md](../../code-system/patterns/write-only-secret.md)).
 - **`rememberSecret`** в `@agent-os/common` — добавляет значение в память секретов процесса; каждая маска `createSecretMasker` скрывает его с этого момента.
-- **`PLATFORM_OWNER_ID`** в `@agent-os/runtime` — владелец `platform` строк журнала без сотрудника.
+- **`createAgents`** опции `secrets` не имеет и не получает; `secretValuesOf` удаляется вместе с ключом в `AgentsConfig`, а маска `run_code` и логгер `AgentsModule` берут ключи только из памяти секретов (KD-7).
+- **`PLATFORM_OWNER_ID`** в `@agent-os/runtime` — владелец `platform` строк журнала без сотрудника. Им можно назвать и владельца фоновой задачи `runtime`: `TaskControl` принимает любой текст владельца и сверяет его только на равенство. Такую задачу не видит и не останавливает ни один сотрудник. Вызов модели или инструмента от её имени `AccessGate` отклоняет с `owner_disabled`, поэтому шаг такой задачи не передаёт её владельца в вызов: `ownerId` вызова `Agents.embeddings.embed` он задаёт сам — сотрудник, на которого пишется расход, или `null`.
 
 **Error handling**
 
@@ -753,3 +755,4 @@ sequenceDiagram
 |---------|------|--------|
 | 1.0 | 2026-11-20 | Initial version |
 | 1.1 | 2026-11-20 | Approved; формы провайдеров моделей названы `ModelProvider…`, тела каталога и модуль `contracts` для каждого изменения названы, `MODEL_DEFAULT_INVALID` несёт `model`, ссылки на ADR-0018 и ADR-0019 |
+| 1.2 | 2026-11-20 | `ModelProviderView` несёт `keyRequired`, порядок `providerReadiness` назван; судьба опции `secrets` и `secretValuesOf`; `PLATFORM_OWNER_ID` может владеть фоновой задачей |
