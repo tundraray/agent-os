@@ -15,16 +15,19 @@
 
 #### KD-1: Беседа — корневая сессия агента `chat`; её id — id беседы, и появляется она с первым сообщением
 
-Сессии агента нужно задание, а у новой беседы его нет. Поэтому `POST /api/threads` ничего не пишет и только выдаёт новый UUID. Первое сообщение вызывает `agents.sessions.start` без родителя с этим id и текстом сообщения как заданием: задача runtime и сессия создаются в одной транзакции. Каждое следующее сообщение — `send` в очередь корня. До первого сообщения беседы нет: её нет в списке, и все маршруты беседы, кроме отправки, отвечают 404 `THREAD_NOT_FOUND`. `apps/api` доходит до бесед только через операции корня в `agents.sessions` (`root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`).
+Сессии агента нужно задание, а у новой беседы его нет. Поэтому `POST /api/threads` ничего не пишет и только выдаёт новый UUID. Первое сообщение вызывает `agents.sessions.start` без родителя с этим id и текстом сообщения как заданием: задача runtime и сессия создаются в одной транзакции. Каждое следующее сообщение — `send` в очередь корня. До первого сообщения беседы нет: её нет в списке, и все маршруты беседы, кроме отправки, отвечают 404 `THREAD_NOT_FOUND`. `apps/api` доходит до бесед только через операции корня в `agents.sessions` (`root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`, `deleteRoot`).
 
 Гонки решает runtime. Из двух одновременных первых отправок вторая ждёт транзакцию первой и получает `TASK_EXISTS` на первичном ключе, а её сообщение уходит в очередь уже созданного корня. Отправка и удаление по очереди берут замок задачи корня. Заголовок пишется условием «только в пустой». Этим заменяются Mastra Memory, замок `ThreadWriteLock`, реестр `ThreadRunRegistry` и таблица `chat_thread_runs`.
 
 Решение пересмотрено 2026-11-20 по решению владельца. Сначала беседа была строкой своей таблицы `chat_conversations` со ссылкой на корень, а вариант «id беседы равен id корня» был отвергнут: корень пришлось бы создавать без задания. Владелец решил, что пустой новой беседе не нужно существовать, и тогда беседа и корень — одна запись: таблица, её блокировка и поиск беседы по корню в `LiveHub` ушли.
 
-Последствия, принятые вместе с решением:
+Удаление помечает беседу, а не стирает её. Операция `agents.sessions.deleteRoot` одной транзакцией останавливает дерево и ставит отметку `deleted_at` каждой задаче дерева и корневой сессии; с этого момента все чтения и команды видят беседу и её агентов как несуществующие. Записи вызовов инструментов в журнале агентов — аудит и должны пережить удаление, а id удалённой беседы не должен снова стать беседой. Не взято: стирание дерева каскадом вместе с сессиями, журналом и черновиками — оно уничтожает аудит и освобождает id.
 
-- сервер не отличает удалённый id от никогда не использованного: отправка на такой id начинает новую беседу с этим id;
-- на маршруте отправки чужой id отвечает 404, а несуществующий принимается, поэтому только здесь чужой id отвечает не так, как несуществующий;
+Последствия, принятые вместе с решениями:
+
+- строки удалённой беседы держат её id занятым, поэтому отправка на этот id отвечает 404 `THREAD_NOT_FOUND` и ничего не создаёт — и владельцу, и любому другому; новую беседу начинает только никогда не использованный id;
+- на маршруте отправки чужой и удалённый id отвечают 404, а никогда не использованный принимается, поэтому только здесь чужой id отвечает не так, как несуществующий;
+- строки удалённых бесед копятся: очистки по сроку хранения нет, внешние ключи с каскадом остаются в схеме для неё;
 - переименование до первого сообщения — 404;
 - `touchRoot` поднимает беседу в списке после постановки сообщения в очередь, а не в одной транзакции с ней.
 
@@ -51,7 +54,7 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 - в `packages/agents` — хук `createAgents({ onTextDelta })`, ради которого `ModelClient` переходит с `generate` на `Agent.stream` с `maxSteps: 1` (KD-3);
 - в `packages/agents` — `agents.completeText` для заголовка: разовый вызов модели без задачи, который пишет строку журнала токенов без `taskId` (так журнал уже допускает), поэтому Mastra не остаётся в `apps/api`;
 - в `packages/runtime` — `decisions.listTree` вместо `decisions.listOpen`, а в `packages/agents` на нём — `agents.sessions.confirmations(rootId, ownerId)` вместо `pendingConfirmations`: запросы дерева со статусом `open`, `resolved` или `cancelled` и решением. Без этого беседа после перезагрузки теряла бы решённые копии запросов фоновых агентов (AC-14.2);
-- в `packages/agents` — `start` с id, который задаёт вызывающий, и операции корневой сессии `root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`: беседа — корневая сессия (KD-1), и `apps/api` не читает таблицы `agents` сам.
+- в `packages/agents` — `start` с id, который задаёт вызывающий, и операции корневой сессии `root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`, `deleteRoot`: беседа — корневая сессия (KD-1), и `apps/api` не читает таблицы `agents` сам.
 
 Прежние `listOpen`, `pendingConfirmations` и вызов `generate` удаляются, а не живут рядом с новыми (CLAUDE.md). Их вызовы, в том числе в пакете `workflows` и тестах всех трёх пакетов, переходят на новые операции в той же работе. Не взято: обходы в `apps/api` (свой вызов Mastra, чтение таблиц `agents` и `runtime`) — они нарушают правила пакетов [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md).
 
@@ -71,7 +74,7 @@ AC-14.1 и UXRD («ответ стримится») требуют показы�
 
 - **Part**: `chat` — четвёртая часть Delivery Parts в PRD.
 - **Covers**: FR-14, FR-15, FR-16, FR-17; API для FR-21–FR-24 и FR-29; NFR-06 на каждой точке доступа этого API; NFR-02 и NFR-03 в доле беседы.
-- **Depends on**: [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `createAgents`, `definitions.register`, операции агентов `start`, `send`, `interrupt`, `stop`, `restart`, `get`, `list`, `history`, `resolveConfirmation` и операции корня из KD-6, `AgentView`, `HistoryEntry`, событие `agents.history_appended`. Операции агентов — сервис `agents.sessions` (`agents.sessions.start` и так далее); `start()` и `stop()` жизненного цикла — на `Agents`; [design-workflows.md, Contract Definitions](./design-workflows.md#contract-definitions) — `createWorkflows`, `templates.list`, `runs.get`, `WorkflowRunView`, `start_workflow`; [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `tasks.get`, `tasks.deleteTree`, `inbox.listPending`, канал `runtime_events`, `ledger.monthSpend`, логгер `common`.
+- **Depends on**: [design-agents.md, Contract Definitions](./design-agents.md#contract-definitions) — `createAgents`, `definitions.register`, операции агентов `start`, `send`, `interrupt`, `stop`, `restart`, `get`, `list`, `history`, `resolveConfirmation` и операции корня из KD-6, `AgentView`, `HistoryEntry`, событие `agents.history_appended`. Операции агентов — сервис `agents.sessions` (`agents.sessions.start` и так далее); `start()` и `stop()` жизненного цикла — на `Agents`; [design-workflows.md, Contract Definitions](./design-workflows.md#contract-definitions) — `createWorkflows`, `templates.list`, `runs.get`, `WorkflowRunView`, `start_workflow`; [design-runtime.md, Contract Definitions](./design-runtime.md#contract-definitions) — `tasks.get`, `inbox.listPending`, канал `runtime_events`, `ledger.monthSpend`, логгер `common`.
 - **Prerequisite ADRs**: [ADR-0001](../../adr/ADR-0001-durable-runtime-owner.md) (состояние только в Postgres), [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) (Drizzle, миграции вперёд), [ADR-0004](../../adr/ADR-0004-agent-framework-packages.md) (правила пакетов).
 - **Sibling parts**: `runtime`, `agents`, `workflows` — контракты выше; `web` — экраны поверх этого API.
 - **Правки в пакетах нижних частей**: эта часть сама меняет `packages/runtime`, `packages/agents` и `packages/workflows` по KD-6, и план работ ставит эти правки первыми; дизайны и планы нижних частей не меняются.
@@ -99,7 +102,7 @@ Follows the [code system](../../code-system/README.md).
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
 | `ChatModule` в `apps/api/src/chat/` | обычный провайдер Nest ([composition-root.md](../../code-system/patterns/composition-root.md), Not For) | extended | вместо прежних `ChatModule` и `ThreadsModule`; регистрирует определение `chat` в фабрике провайдера, до `agents.start()` |
-| Операции корня в `agents.sessions` (`root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`) | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | extended — KD-1 | над `agent_sessions`; вместо вызовов Memory в `ThreadsService` и отдельной таблицы бесед |
+| Операции корня в `agents.sessions` (`root`, `rootOwner`, `roots`, `touchRoot`, `renameRoot`, `titleRootIfEmpty`, `deleteRoot`) | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | extended — KD-1 | над `agent_sessions`; вместо вызовов Memory в `ThreadsService` и отдельной таблицы бесед |
 | `ConversationsService`, `ThreadsController` | — | extended | маршруты и формы бесед прежние; добавлены история, отправка, прерывание |
 | `AgentControlService`, `AgentsController`, `DecisionsController`, `SpendController` | — | new | тонкие обёртки над операциями `agents`, `workflows`, `runtime` с проверкой владельца |
 | `LiveHub`, `EventsController` | — | new — KD-2 | искали: SSE, WebSocket и `EventSource` в коде нет; NOTIFY слушает только runtime для своих воркеров |
@@ -131,7 +134,8 @@ Follows the [code system](../../code-system/README.md).
 
 ### API для веба (FR-21–FR-24, FR-29) и NFR-06
 
-- Каждая точка API отвечает на чужой id так же, как на несуществующий, тем же телом; маршруты агентов так же отвечают на id корня беседы. Исключение — отправка в беседу: несуществующий id начинает новую беседу, а чужой отвечает 404 `THREAD_NOT_FOUND` и ничего не создаёт (DC-3, KD-1).
+- Каждая точка API отвечает на чужой id так же, как на несуществующий, тем же телом; маршруты агентов так же отвечают на id корня беседы. Исключение — отправка в беседу: никогда не использованный id начинает новую беседу, а чужой отвечает 404 `THREAD_NOT_FOUND` и ничего не создаёт (DC-3, KD-1).
+- Удалённая беседа и её агенты отвечают своему владельцу на каждом маршруте так же, как несуществующий id, тем же телом; отправка на id удалённой беседы — 404 `THREAD_NOT_FOUND`, и ничего не создаётся (KD-1).
 - Поток SSE отдаёт сотруднику заметки только о его беседах и части текста только его агентов (DC-4).
 - После каждого подключения поток первым отправляет `ready` (DC-5).
 
@@ -220,7 +224,7 @@ flowchart TB
     subgraph api["api"]
         ctl["1 · ThreadsController<br/>схема входа"]
         svc["2 · ConversationsService<br/>владелец и корень"]
-        pk["3 · agents · runtime<br/>root, start, send, deleteTree"]
+        pk["3 · agents · runtime<br/>root, start, send, deleteRoot"]
         title["TitleService<br/>заголовок в фоне"]
     end
     db[("Postgres")]
@@ -246,7 +250,7 @@ flowchart TB
     class e4 w4
 ```
 
-- `ConversationsService` находит корневую сессию владельца через `agents.sessions.root` (иначе `THREAD_NOT_FOUND`). Если корня ещё нет, отправка создаёт его через `agents.sessions.start` с id беседы, а иначе кладёт сообщение в очередь через `send` и поднимает беседу в списке через `touchRoot`. Удаление — проверка владельца и `tasks.deleteTree` корня; сессия корня и черновики беседы уходят с деревом каскадом.
+- `ConversationsService` находит корневую сессию владельца через `agents.sessions.root` (иначе `THREAD_NOT_FOUND`). Если корня ещё нет, отправка создаёт его через `agents.sessions.start` с id беседы, а иначе кладёт сообщение в очередь через `send` и поднимает беседу в списке через `touchRoot`. Удаление — проверка владельца и `agents.sessions.deleteRoot`: дерево остановлено и помечено удалённым вместе с корневой сессией, а строки, черновики беседы в том числе, остаются (Flow 6).
 - `AgentControlService` (не нарисован, тот же путь) делает то же для маршрутов агентов и решений: владелец проверяется операцией `agents` или `workflows`, а корень беседы отвергается как несуществующий агент.
 - `TitleService` пишет заголовок через `titleRootIfEmpty` — условием «только в пустой».
 
@@ -307,7 +311,7 @@ flowchart TB
     class e6 r3
 ```
 
-- `LiveHub` держит одно отдельное соединение с `LISTEN runtime_events` и `LISTEN agent_text_delta` на процесс и раздаёт сигналы потокам своих вкладок. `rootId` из `runtime_events` и есть id беседы, поэтому искать беседу не нужно: хаб берёт только владельца корня у `agents.sessions.rootOwner` (кэш в памяти, промах не кэшируется) и шлёт заметку `tree` только потокам этого владельца. Часть текста несёт владельца и агента, и хаб отдаёт её только потоку того же владельца, который наблюдает этого агента.
+- `LiveHub` держит одно отдельное соединение с `LISTEN runtime_events` и `LISTEN agent_text_delta` на процесс и раздаёт сигналы потокам своих вкладок. `rootId` из `runtime_events` и есть id беседы, поэтому искать беседу не нужно: хаб берёт только владельца корня у `agents.sessions.rootOwner` на каждую заметку, ничего не запоминая, и шлёт заметку `tree` только потокам этого владельца. У помеченного удалённым корня владельца нет, поэтому заметки его дерева не уходят никому. Часть текста несёт владельца и агента, и хаб отдаёт её только потоку того же владельца, который наблюдает этого агента.
 - Потерянное соединение `LISTEN` хаб открывает заново и шлёт всем своим потокам `ready`, потому что сигналы за время обрыва потеряны.
 - `EventsController` — точка `@Sse()` NestJS: поток событий `MessageEvent` с полями `type` и `data` и подсказкой переподключения ([NestJS, Server-Sent Events](https://docs.nestjs.com/techniques/server-sent-events)). Каждые 20 с он шлёт `ping`, чтобы прокси не закрыл простаивающий поток.
 
@@ -389,7 +393,8 @@ sequenceDiagram
 **Failure handling:**
 
 - Id занят чужой задачей, например беседой другого сотрудника → 404 `THREAD_NOT_FOUND`, в очередь ничего не легло.
-- Беседа удалена или id никогда не использовался → отправка начинает новую беседу с этим id: сервер их не различает (KD-1).
+- Беседа удалена → её строки держат id: `start` получает `TASK_EXISTS`, ответ — 404 `THREAD_NOT_FOUND`, как на чужой id, и ничего не создано (KD-1). Отказ процедуры старта проверяется раньше и даёт 409 `START_REFUSED` одинаково для удалённого, чужого и нового id.
+- Id никогда не использовался → отправка начинает новую беседу с этим id.
 - Две первые отправки одновременно → `start` второй ждёт транзакцию первой и получает `TASK_EXISTS`, а её сообщение ложится в очередь созданного корня.
 - Сбой `touchRoot` после `send` → сообщение уже в очереди, а ответ 500 и беседа не поднялась в списке: `touchRoot` идёт не в одной транзакции с постановкой в очередь.
 - Повтор вызова модели внутри `ModelClient` или повтор потерянного шага начинает части заново с `offset` 0 → веб сбрасывает черновик.
@@ -652,12 +657,14 @@ sequenceDiagram
 title: "Удаление беседы с деревом агентов"
 config:
   themeCSS: |
-    @keyframes lit_s6{0%,22.5%{stroke:#991b1b;stroke-width:6px}25%,100%{stroke:#37474f;stroke-width:2px}}
-    @keyframes litr_s6{0%,22.5%{stroke:#1d4ed8;stroke-width:6px}25%,100%{stroke:#37474f;stroke-width:2px}}
-    .messageLine0[data-id='i1'],.messageLine1[data-id='i1']{animation:lit_s6 4.8s linear 0s infinite}
-    .messageLine0[data-id='i2'],.messageLine1[data-id='i2']{animation:lit_s6 4.8s linear 1.2s infinite}
-    .messageLine0[data-id='i4'],.messageLine1[data-id='i4']{animation:litr_s6 4.8s linear 2.4s infinite}
-    .messageLine0[data-id='i5'],.messageLine1[data-id='i5']{animation:litr_s6 4.8s linear 3.6s infinite}
+    @keyframes lit_s6{0%,15%{stroke:#991b1b;stroke-width:6px}16.67%,100%{stroke:#37474f;stroke-width:2px}}
+    @keyframes litr_s6{0%,15%{stroke:#1d4ed8;stroke-width:6px}16.67%,100%{stroke:#37474f;stroke-width:2px}}
+    .messageLine0[data-id='i1'],.messageLine1[data-id='i1']{animation:lit_s6 7.2s linear 0s infinite}
+    .messageLine0[data-id='i2'],.messageLine1[data-id='i2']{animation:lit_s6 7.2s linear 1.2s infinite}
+    .messageLine0[data-id='i3'],.messageLine1[data-id='i3']{animation:lit_s6 7.2s linear 2.4s infinite}
+    .messageLine0[data-id='i5'],.messageLine1[data-id='i5']{animation:litr_s6 7.2s linear 3.6s infinite}
+    .messageLine0[data-id='i7'],.messageLine1[data-id='i7']{animation:litr_s6 7.2s linear 4.8s infinite}
+    .messageLine0[data-id='i8'],.messageLine1[data-id='i8']{animation:litr_s6 7.2s linear 6s infinite}
   theme: base
   look: classic
   themeVariables:
@@ -676,18 +683,24 @@ sequenceDiagram
     end
     participant DB@{ "type": "database" } as Postgres
     W->>C: DELETE беседы
-    C->>R: deleteTree корня
-    Note over R,DB: дерево с корнем-беседой и черновиками удалено, журнал токенов цел
-    R-->>C: deleted
+    C->>A: deleteRoot корня
+    A->>R: deleteTree в транзакции agents
+    Note over R,DB: дерево остановлено, у каждой задачи deleted_at
+    R-->>A: deleted
+    Note over A,DB: deleted_at у корневой сессии, одна транзакция зафиксирована
+    A-->>C: готово
     C-->>W: 204
 ```
 
-**Outcome:** беседы, её агентов, очередей, запросов, событий и черновиков нет: беседа — сессия корня, и `deleteTree` удаляет её с деревом, а черновики уходят каскадом. Строки журнала токенов остались, расход месяца не уменьшился. Отправка и удаление по очереди берут замок задачи корня. Отправка, которая нашла беседу до конца удаления, отвечает 404 `THREAD_NOT_FOUND`. Отправка после удаления начинает новую беседу с тем же id (KD-1).
+**Outcome:** беседа и её агенты для всех маршрутов не существуют, но ничего не стёрто: задачи, очереди, запросы, события и их доставки, сессии, журнал агентов с записями вызовов, сохранённые результаты, вызовы кода, проходы знаний и черновики остаются в базе (KD-1). Строки журнала токенов не тронуты, расход месяца не уменьшился. Отправка и удаление по очереди берут замок задачи корня, а отметку отправка читает из этой же заблокированной строки. Поэтому отправка, которая ждала удаления, видит беседу несуществующей, отвечает 404 `THREAD_NOT_FOUND` и не оживляет корень; отправка после удаления отвечает так же (KD-1).
+
+Ожидающий черновик записи удалённой беседы отвечает `DRAFT_NOT_FOUND` на сохранение, выдачу и отклонение. Остальные части видят удалённое дерево по своим правилам: извлечение знаний — [self-learning/design-core.md](../self-learning/design-core.md), счёт `firstRun` — [design-agents.md, Data Model](./design-agents.md#data-model).
 
 **Failure handling:**
 
-- Беседа чужая или уже удалена → 404 `THREAD_NOT_FOUND`, ничего не удалено.
-- Дерево удалено другим запросом между проверкой владельца и `deleteTree` → `TASK_NOT_FOUND` runtime, ответ тот же 404.
+- Беседа чужая или уже удалена → 404 `THREAD_NOT_FOUND`, ничего не изменилось.
+- Беседа удалена другим запросом между проверкой владельца и `deleteRoot` → `AGENT_NOT_FOUND` агентов, ответ тот же 404.
+- Deadlock или сбой сериализации → транзакция повторяется целиком.
 - Шаг агента дерева ещё идёт → runtime отсекает его попытку, итог не записывается ([design-runtime.md](./design-runtime.md#contract-definitions), `stop`).
 
 ### Contract Definitions
@@ -696,10 +709,10 @@ sequenceDiagram
 
 **Беседы** (`ThreadsController`)
 
-- **`GET /threads?cursor`**, **`POST /threads`**, **`GET /threads/:threadId`**, **`PATCH /threads/:threadId`**, **`DELETE /threads/:threadId`** — прежние формы: страница `THREAD_PAGE_SIZE` по `updatedAt` по убыванию с `nextCursor`, создание (201 `ThreadSummary`), чтение, переименование (`title` после обрезки пробелов от 1 до `THREAD_TITLE_MAX_LENGTH`), удаление (204). `POST /threads` ничего не пишет: он выдаёт новый UUID с пустым заголовком, а беседа появляется с первым сообщением. До него беседы нет в списке, а чтение, переименование и удаление отвечают 404 `THREAD_NOT_FOUND`. Удаление останавливает и удаляет дерево беседы (Flow 6). `updatedAt` растёт при отправке сообщения и переименовании.
+- **`GET /threads?cursor`**, **`POST /threads`**, **`GET /threads/:threadId`**, **`PATCH /threads/:threadId`**, **`DELETE /threads/:threadId`** — прежние формы: страница `THREAD_PAGE_SIZE` по `updatedAt` по убыванию с `nextCursor`, создание (201 `ThreadSummary`), чтение, переименование (`title` после обрезки пробелов от 1 до `THREAD_TITLE_MAX_LENGTH`), удаление (204). `POST /threads` ничего не пишет: он выдаёт новый UUID с пустым заголовком, а беседа появляется с первым сообщением. До него беседы нет в списке, а чтение, переименование и удаление отвечают 404 `THREAD_NOT_FOUND`. Удаление останавливает дерево беседы и помечает его удалённым, строки остаются; после него беседа на каждом маршруте — несуществующая (Flow 6). `updatedAt` растёт при отправке сообщения и переименовании.
 - **`GET /threads/:threadId/history?afterSeq`** — `ConversationView`; `afterSeq` по умолчанию 0.
 - **`GET /threads/:threadId/agents`** — дерево агентов беседы без корня, массив `AgentNode`; для абзаца MC-26 и живого обновления списка агентов.
-- **`POST /threads/:threadId/messages`** с `text` — первое сообщение создаёт корень с id `threadId`, остальные идут в очередь (DC-1). Ответ 202 с `messageId`, у первого сообщения он пуст: оно становится заданием. Текст после обрезки — от 1 до `CHAT_MESSAGE_MAX_LENGTH` символов. Id без корня — новый, удалённый или никогда не использованный — начинает беседу с этим id; id, занятый чужой задачей, — 404 `THREAD_NOT_FOUND`.
+- **`POST /threads/:threadId/messages`** с `text` — первое сообщение создаёт корень с id `threadId`, остальные идут в очередь (DC-1). Ответ 202 с `messageId`, у первого сообщения он пуст: оно становится заданием. Текст после обрезки — от 1 до `CHAT_MESSAGE_MAX_LENGTH` символов. Никогда не использованный id начинает беседу с этим id; id удалённой беседы и id, занятый чужой задачей, — 404 `THREAD_NOT_FOUND`, а при отказе процедуры старта — 409 `START_REFUSED`; ничего не создаётся (KD-1).
 - **`POST /threads/:threadId/interrupt`** без тела — 200 с `outcome`: `interrupted` или `not_active`; до первого сообщения — 404 `THREAD_NOT_FOUND`. Новое сообщение, пока чат работает, идёт через `POST /threads/:threadId/messages` (FR-16).
 
 **Агенты** (`AgentsController`). Корень беседы для этих маршрутов не существует: `AGENT_NOT_FOUND`.
@@ -749,17 +762,19 @@ sequenceDiagram
 - **`agents.completeText({ ownerId, system, prompt, maxOutputTokens, signal })`** — один вызов модели `AGENT_DEFAULT_MODEL` вне задачи; пишет строку журнала без `taskId`; возвращает текст.
 - **`agents.sessions.confirmations(rootId, ownerId)`** заменяет `pendingConfirmations` и отдаёт `Confirmation` всех статусов; строится на `decisions.listTree(rootId, ownerId)` runtime, который заменяет `listOpen` и возвращает запросы дерева со статусом, решением и временем.
 - **`agents.sessions.start({ agentId?, ownerId, prompt, description, record? })`** — создаёт задачу и корневую сессию в одной транзакции; без `agentId` id новый, а занятый id — `TASK_EXISTS` runtime.
-- **Операции корневой сессии** (KD-1). Чужой корень, сессия не-корень и отсутствующий id для них одинаково отсутствуют.
+- **Операции корневой сессии** (KD-1). Чужой корень, удалённый корень, сессия не-корень и отсутствующий id для них одинаково отсутствуют.
   - `root(rootId, ownerId)` — корневая сессия владельца: id, заголовок (пустой, пока не записан), время создания и изменения; иначе ничего.
   - `rootOwner(rootId)` — владелец корневой сессии, кто бы он ни был; иначе ничего. Нужна `LiveHub`, потому что сигнал `runtime_events` не несёт владельца.
   - `roots({ ownerId, limit?, after? })` — корни владельца по времени изменения, затем по id, по убыванию, строго после `after`.
   - `touchRoot(rootId, ownerId)` поднимает корень в списке; `renameRoot(rootId, ownerId, title)` пишет заголовок, поднимает корень и возвращает его или ничего.
   - `titleRootIfEmpty(rootId, ownerId, title)` пишет заголовок только в пустой и отвечает, записан ли он.
+  - `deleteRoot(rootId, ownerId)` одной транзакцией останавливает дерево беседы и помечает удалёнными каждую его задачу и корневую сессию; строки остаются. При deadlock или сбое сериализации транзакция повторяется целиком. Отсутствующий, чужой и уже удалённый корень — `AGENT_NOT_FOUND`.
 
 **Error handling**
 
-- `THREAD_NOT_FOUND` — 404, беседы нет или она чужая.
-- `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND` — 404, нет, чужой или корень беседы.
+- `THREAD_NOT_FOUND` — 404, беседы нет, она чужая или удалена.
+- `START_REFUSED` — 409, процедура старта отказала первому сообщению или перезапуску; причина и модель — [custom-agents/design-runtime.md](../custom-agents/design-runtime.md#contract-definitions).
+- `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND` — 404, нет, чужой, из удалённой беседы или корень беседы.
 - `VALIDATION_FAILED` — 400, вход не прошёл схему; `INVALID_CURSOR` — 400; `INVALID_ARGUMENTS` — 400, правка аргументов решения.
 - `NOT_FINISHED`, `PARENT_FINISHED` — 409.
 - Сбой сервера — 500 без текста ошибки и стека.
@@ -775,7 +790,7 @@ sequenceDiagram
 
 ### Data Model
 
-Своей таблицы бесед у части нет. Беседа — строка `agent_sessions` её корня ([design-agents.md, Data Model](./design-agents.md#data-model)), а id беседы — `task_id` корня. Только у корня заполнены `title` (пустая строка, пока заголовка нет) и `updated_at` — ключ списка бесед владельца; у остальных сессий оба поля пусты, а `parent_id` и `root_id` есть у каждой сессии. Корень хранит ссылку на встроенную запись «Главный чат» (`record_*`, `builtin_key = 'chat'`), но вид API для корня по-прежнему отдаёт `origin: null`. Черновики записей беседы (`chat_drafts.conversation_id`) ссылаются на `agent_sessions.task_id` с каскадом и удаляются вместе с деревом. История, очередь, запросы, статусы и токены живут в таблицах `runtime_*` и `agent_*`. Таблицы `chat_conversations` и `chat_thread_runs` удалены миграциями вперёд.
+Своей таблицы бесед у части нет. Беседа — строка `agent_sessions` её корня ([design-agents.md, Data Model](./design-agents.md#data-model)), а id беседы — `task_id` корня. Только у корня заполнены `title` (пустая строка, пока заголовка нет) и `updated_at` — ключ списка бесед владельца; у остальных сессий оба поля пусты, а `parent_id` и `root_id` есть у каждой сессии. Корень хранит ссылку на встроенную запись «Главный чат» (`record_*`, `builtin_key = 'chat'`), но вид API для корня по-прежнему отдаёт `origin: null`. Удалённая беседа — та же строка с отметкой `deleted_at`: список бесед и операции корня её не видят (KD-1). Черновики записей беседы (`chat_drafts.conversation_id`) ссылаются на `agent_sessions.task_id` с каскадом; приложение строк не стирает, и каскад остаётся для будущей очистки по сроку хранения. История, очередь, запросы, статусы и токены живут в таблицах `runtime_*` и `agent_*`. Таблицы `chat_conversations` и `chat_thread_runs` удалены миграциями вперёд.
 
 ### State Transitions and Invariants
 
@@ -819,6 +834,7 @@ stateDiagram-v2
 2. Автоматический заголовок не перезаписывает непустой заголовок.
 3. Заметка `tree` и часть текста уходят только потокам владельца дерева.
 4. Каждый вызов модели части, в том числе заголовка, — строка журнала токенов.
+5. Удалённая беседа не возвращается: её строки не стираются, но ни один маршрут её не видит, ни одна команда не меняет её дерево, а её id не начинает новую беседу.
 
 ## Test Strategy
 
@@ -837,11 +853,11 @@ stateDiagram-v2
 - **UC-3: Список, переименование, удаление, заголовок** — covers AC-14.3, DC-2
   - Given: у сотрудника 25 бесед; сценарий модели заголовка отвечает, падает или ждёт.
   - When: он листает список, переименовывает, удаляет и отправляет первое сообщение.
-  - Then: страницы по 20 без дублей, id из `POST /threads` не виден в списке до первого сообщения, пустой заголовок — 400, удалённая беседа — 404 на чтение, переименование и удаление, а отправка на её id начинает новую беседу; заголовок появляется не дольше бюджета `chat-shell` AC-17.1, ручной заголовок не перезаписан, сбой оставляет заголовок пустым и пишет предупреждение, следующая отправка повторяет генерацию.
+  - Then: страницы по 20 без дублей, id из `POST /threads` не виден в списке до первого сообщения, пустой заголовок — 400, удалённая беседа — 404 на чтение, переименование, удаление и отправку, а отправка на её id беседы не создаёт; заголовок появляется не дольше бюджета `chat-shell` AC-17.1, ручной заголовок не перезаписан, сбой оставляет заголовок пустым и пишет предупреждение, следующая отправка повторяет генерацию.
 - **UC-4: Удаление беседы с работающим агентом** — covers AC-14.4
   - Given: в беседе агент ждёт долгого инструмента; в журнале есть его вызовы модели.
   - When: беседу удаляют.
-  - Then: агент недоступен (404), его инструмент не получил новых вызовов, `GET /spend` показывает ту же сумму.
+  - Then: агент недоступен (404), его инструмент не получил новых вызовов, `GET /spend` показывает ту же сумму; задача и сессия корня остались в базе с отметкой удаления, а журнал агентов цел.
 - **UC-5: Сообщение занятому чату и прерывание** — covers AC-16.1, AC-16.2
   - Given: чат в шаге с долгим читающим инструментом.
   - When: сотрудник отправляет сообщение, затем прерывает.
@@ -877,7 +893,7 @@ stateDiagram-v2
 
 ## Security Considerations
 
-- **Authentication & Authorization**: каждый контроллер, включая поток SSE, — под `SessionGuard`; в production до настоящей аутентификации все маршруты отвечают 401, как сейчас. `EventSource` не умеет свои заголовки, поэтому поток получает того же пользователя, что и остальные запросы вкладки без `x-user-id`; настоящая аутентификация позже придёт cookie. Владельца проверяет каждая операция `agents`, `workflows`, `runtime`, а бесед — `ConversationsService`; одна проверка на точку, одинаковый 404 для чужого и несуществующего (DC-3). Исключение — отправка в беседу: чужой id отвечает 404, а несуществующий начинает беседу, поэтому по ответу отправки видно, занят ли id. Это принято вместе с KD-1: id — случайный UUID, и данных чужой беседы ответ не раскрывает.
+- **Authentication & Authorization**: каждый контроллер, включая поток SSE, — под `SessionGuard`; в production до настоящей аутентификации все маршруты отвечают 401, как сейчас. `EventSource` не умеет свои заголовки, поэтому поток получает того же пользователя, что и остальные запросы вкладки без `x-user-id`; настоящая аутентификация позже придёт cookie. Владельца проверяет каждая операция `agents`, `workflows`, `runtime`, а бесед — `ConversationsService`; одна проверка на точку, одинаковый 404 для чужого и несуществующего (DC-3). Исключение — отправка в беседу: чужой и удалённый id отвечают 404, а никогда не использованный начинает беседу, поэтому по ответу отправки видно, занят ли id. Это принято вместе с KD-1: id — случайный UUID, и данных чужой беседы ответ не раскрывает.
 - **Input Validation**: тела, параметры и курсоры проверяют схемы `packages/contracts` через `ZodValidationPipe`; правку аргументов решения проверяет схема инструмента в `agents`. Текст сообщения ограничен `CHAT_MESSAGE_MAX_LENGTH`, а `INBOX_PAYLOAD_MAX_BYTES` runtime больше этого предела.
 - **Sensitive Data Handling**: логи не содержат текстов сообщений, заголовков и частей ответа — только id, исходы и длительности. Поток отдаёт данные только владельцу (DC-4). Ответы об ошибках не несут текстов исключений и стеков.
 
@@ -888,7 +904,7 @@ stateDiagram-v2
 - **Части текста фоновых агентов создают лишний поток NOTIFY** — низкое влияние, средняя вероятность. Склейка за 100 мс; хаб отбрасывает части агентов, за которыми никто не следит, до разбора в потоки.
 - **`GET /agents` и счётчик NV-01 делают по запросу на беседу** — низкое влияние, средняя вероятность при сотнях бесед. Счётчик веб перечитывает не чаще раза в секунду; операция «все агенты владельца» в `agents` уберёт перебор, когда понадобится.
 - **Haiku выбирает не ту ветку правила FR-15** — высокое влияние, средняя вероятность. Правило словами в промпте, каталог в описаниях инструментов, ручной прогон после части (PRD, Assumptions); модель чата меняется полем определения (KD-5).
-- **Удаление беседы не шлёт заметку `tree`, и другие вкладки владельца видят беседу до следующего чтения** — низкое влияние, высокая вероятность при нескольких вкладках. Хаб находит владельца по корневой сессии, а Flow 6 удаляет её вместе с деревом; вкладка узнаёт об удалении по 404 при следующем чтении или после `ready`. Одной строкой заметку не добавить: экземпляров `api` может быть несколько, и сигнал об удалении должен дойти до хаба каждого — для этого нужен свой канал NOTIFY с владельцем и беседой и третий `LISTEN` хаба. Своя вкладка перечитывает дерево и экран сама ([design-web.md](./design-web.md#risks-and-mitigation)).
+- **Удаление беседы не шлёт заметку `tree`, и другие вкладки владельца видят беседу до следующего чтения** — низкое влияние, высокая вероятность при нескольких вкладках. Хаб находит владельца по корневой сессии, а у помеченного удалённым корня владельца нет, поэтому заметка об остановке дерева тоже не уходит; вкладка узнаёт об удалении по 404 при следующем чтении или после `ready`. Одной строкой заметку не добавить: экземпляров `api` может быть несколько, и сигнал об удалении должен дойти до хаба каждого — для этого нужен свой канал NOTIFY с владельцем и беседой и третий `LISTEN` хаба. Своя вкладка перечитывает дерево и экран сама ([design-web.md](./design-web.md#risks-and-mitigation)).
 
 ## Appendix: Fact Disposition
 
@@ -900,7 +916,7 @@ stateDiagram-v2
 | CRUD бесед и проверка владельца поверх Memory (`threads.service.ts`, ThreadsService) | transform | KD-1; Contract Definitions, «Беседы» |
 | Замок `ThreadWriteLock` и его пул (`thread-write-lock.ts`) | remove | KD-1: `TASK_EXISTS` первой отправки, замок задачи корня и условная запись заголовка |
 | Реестр ответов и `chat_thread_runs` (`thread-run-registry.ts`; `schema.ts`, chatThreadRuns) | remove | KD-1; Data Model |
-| Хуки удаления беседы (`thread-deletion-hooks.ts`) | remove | Flow 6: `tasks.deleteTree` |
+| Хуки удаления беседы (`thread-deletion-hooks.ts`) | remove | Flow 6: `agents.sessions.deleteRoot` |
 | Автозаголовок на агенте Mastra `thread-title` (`thread-title.service.ts`) | transform | KD-6, DC-2 |
 | Агент `assistant` на Opus с инструментами расследования (`assistant.agent.ts`) | transform | KD-5 |
 | Связки с `ResearchLaunchService` в контроллере чата (`research-launch.service.ts`) | remove | уходят с контроллером; сам контур удаляет `runtime` (KD-7 там) |
@@ -919,3 +935,4 @@ stateDiagram-v2
 | 1.1 | 2026-11-14 | Утверждён оркестратором по поручению владельца. Правки контрактов `runtime` и `agents` (`decisions.listTree`, `confirmations`, `onTextDelta` с `Agent.stream`, `completeText`) эта часть делает сама первой работой, удаляя прежние операции и переводя их вызовы в `packages/workflows` и тестах; дизайны и планы нижних частей не меняются (KD-6, Part). В Risks — базовая линия NFR-03. |
 | 1.2 | 2026-11-14 | По допущениям A-1 и A-2 части `web`: у `AgentNode` и `AgentPageView.agent` координатора workflow — `template` с `name` и `title` из `templates.list` (те же поля, что `WorkflowRunView.template`); у `AgentPageView.agent` — `parentDescription`, если родитель не корень беседы. Заметка `tree` при удалении беседы не добавлена: ей нужен свой канал NOTIFY между экземплярами `api`; записано в Risks. |
 | 1.3 | 2026-11-21 | По коду после решения владельца 2026-11-20 (коммит 345e1ff): таблицы `chat_conversations` нет, беседа — корневая сессия `agent_sessions`, её id — id корня, и появляется она с первым сообщением; `POST /threads` только выдаёт id. KD-1 пересмотрен с датой и причиной: одна запись вместо двух, пустой новой беседе не нужно существовать; записаны последствия (удалённый id не отличим от нового, исключение DC-3 на отправке, `touchRoot` вне транзакции). В KD-6 и Contract Definitions добавлены `start` с id и операции корневой сессии `agents.sessions`. Исправлены Overview, Terms, Building-block Inventory, AC FR-14 и DC-3, C2, обе схемы C3, Flow 1, 2, 6, Contract Definitions, Data Model, State Transitions, UC-3, UC-E1, UC-E3, Security, Risks, Fact Disposition. |
+| 1.4 | 2026-11-21 | По коду после решения владельца 2026-11-21 (коммит 7d1fe8d): удаление беседы — пометка `deleted_at` дерева и корневой сессии одной транзакцией `agents.sessions.deleteRoot`, строки остаются; удалённая беседа на каждом маршруте — несуществующая, отправка на её id — 404 без новой беседы (отменено последствие KD-1 «удалённый id начинает новую беседу»); `LiveHub` читает владельца на каждую заметку без кэша. Исправлены KD-1, Building-block Inventory, AC API, C3, Flow 1, Flow 6 с новой схемой, Contract Definitions, Data Model, Invariants, UC-3, UC-4, Security, Risks, Fact Disposition. |
