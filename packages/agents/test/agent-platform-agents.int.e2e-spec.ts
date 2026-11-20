@@ -30,7 +30,7 @@
 // - Support to write alongside (test/support): agentsHarness.ts (database + runtime + agents, scripted double, fixture config, second instance, `expireLease`), scriptedModel.ts (scenarios, latches, recorded inputs), fixtureLog.ts (read and filter the call log).
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
-//   INT-4 unique defect: an `agents` operation that reads `agent_sessions`, `agent_messages` or `agent_tool_calls` by id (history, list, restart, confirmations) before, or without, the runtime owner check - the runtime's own INT-4 covers only the `runtime_*`
+//   INT-4 unique defect: an `agents` operation that reads `agent_sessions`, `agent_messages` or tool calls in `agent_messages` by id (history, list, restart, confirmations) before, or without, the runtime owner check - the runtime's own INT-4 covers only the `runtime_*`
 //   tables and cannot see these three. CLAUDE.md lists isolation first and NFR-06 asks one two-user test per access point.
 //
 // E2E: 0 of 1-2 - the file `agent-platform-agents.e2e-spec.ts` is deliberately not generated. The one thing only a dead process proves - the step commit boundary - is runtime E2E-1, which already kills the runtime at every commit point with a generic handler.
@@ -1028,7 +1028,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Verification items (table-driven by command):
   // - Row A "interrupt" (UC-E1; two cases): Case 1, the agent waits for a slow read call held on the fixture: `agents.get` read right after the command (call still held) shows `interrupted`; once the step runs, the open call has outcome
   //   `interrupted`, the history ends with the `interrupted` event, the model double gets NO further call (counter unchanged) until `agents.send`; the message then clears the mark, the agent continues, and its status is `working`; the slow server's late answer
-  //   (released afterwards) writes no result and no second row (one `agent_tool_calls` row for the call). Case 2, the call is a confirmed mutating one already in `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
+  //   (released afterwards) writes no result and no second row (one tool calls in `agent_messages` for the call). Case 2, the call is a confirmed mutating one already in `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
   // - Row B "stop of a subtree" (UC-E2): agent R (with a parent P) has child C (waiting on a held read call, with an open confirmation request from a second call) and grandchild G; the row stops R. Then: R, C and G read
   //   `stopped` right after the command; C's open call has outcome `interrupted` and its confirmation is no longer in `confirmations`; `agents.history` of R ends with `stopped`, of C and G with `stopped_with_parent`; the model double's call counter is
   //   unchanged after the command even when the held calls are released and workers run again; R's parent holds exactly one notification with status `stopped`; `agents.stop` on R again returns an empty list.
@@ -1328,7 +1328,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @dependency: createRuntime x1-2, createAgents (tool gate, McpClients, ToolAccess, guard intent, confirmations, resolveConfirmation), scripted model double, MCP fixture processes with `FIXTURE_CALL_LOG` and fault schedule, Postgres
   // @complexity: high
   //
-  // Verification items (table-driven by row; every row reads the fixture journal and the `agent_tool_calls` rows of its agent):
+  // Verification items (table-driven by row; every row reads the fixture journal and the tool calls in `agent_messages` of its agent):
   // - Row A "refusals reach nothing" (UC-E4 boundary, UC-E5, AC-11.1/11.3): the access gate double gives owner U1 `logs` and owner U2 nothing; both run an agent whose definition has `mcpServers` `*`. The script of each asks for `mcp__${LOGS_SERVER}__<read tool>`. Then: U1's model input lists the
   //   `logs` tools and the call succeeds (outcome `success`, one journal entry); U2's model input does not list them, and the scripted forced call is refused: outcome `refused`, reason `no_access`, ZERO journal entries for U2, the refusal in U2's history. A second case in
   //   U1's run: a tool name not in the definition's `tools` gets `tool_not_in_definition` and no journal entry.
@@ -1773,7 +1773,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Contract Definitions: "Все операции принимают владельца (`ownerId`). Агент чужого владельца отвечает так же, как несуществующий: `AGENT_NOT_FOUND`. Владельца проверяет runtime в каждой операции, которую `agents` вызывает первой."
   // Use case: UC-E7. EARS: If-then. Design flow: Contract Definitions ("Операции агентов"), Security Considerations.
   //
-  // Catches: one operation of the part that reads `agent_sessions`, `agent_messages` or `agent_tool_calls` by id before - or without - the runtime owner check: another employee reads an agent's history or its tool arguments, lists a foreign tree, learns of its pending
+  // Catches: one operation of the part that reads `agent_sessions`, `agent_messages` or tool calls in `agent_messages` by id before - or without - the runtime owner check: another employee reads an agent's history or its tool arguments, lists a foreign tree, learns of its pending
   //   confirmations, restarts it (copying its definition and task into a new agent) or resolves its confirmation; or answers that differ between "foreign" and "missing" (a leak in itself). (`start` takes no parent: a child starts only from its parent's own step.)
   // Not re-checked here: the owner check of the `runtime_*` operations (runtime INT-4), authentication and the HTTP edge (the `chat` part's API), the MCP access table (INT-3 row A).
   // Behavior: owner B calls each operation on owner A's agent, tree and confirmation -> the answer equals the answer for an id that exists for nobody -> nothing of A's changed
@@ -1785,7 +1785,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `resolveConfirmation` (approve and reject).
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`AGENT_NOT_FOUND`, and `DECISION_NOT_FOUND` for the confirmation), with nothing of A's data
   //   (no definition, task text, argument or count) in the answer or the error message.
-  // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, `agent_tool_calls` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
+  // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, tool calls in `agent_messages` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
   it('INT-4: every agents operation called as another owner answers exactly as for a missing agent or decision, leaks nothing of the owner\'s data and changes none of the owner\'s rows', async () => {
     // Given: owner A has a root awaiting confirmation of create_incident_note (history with a tool call)
     // and a completed child the root started first; owner B is another employee

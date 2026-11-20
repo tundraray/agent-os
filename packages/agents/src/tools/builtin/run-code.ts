@@ -13,8 +13,8 @@ import type { Database } from '@agent-os/db';
 
 import { OwnerDisabledError } from '../../access-gate.js';
 import type { CodeRunConfig } from '../../config.js';
+import { callRecords } from '../../store/call-records.repository.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
-import { toolCalls } from '../../store/tool-calls.repository.js';
 import { toolResults } from '../../store/tool-results.repository.js';
 import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool.js';
 import { callTargetOf, type ToolRegistry } from '../tool-registry.js';
@@ -348,11 +348,11 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     return result;
   }
 
-  /** The attempt of a run: 1 for `write` (its `attempts` stays 0); for `read`, counted through `guard` (KD-7). */
+  /** The attempt of a run: 1 for `write` (it has no `run_attempt` record); for `read`, recorded through `guard` (KD-7). */
   async function attemptOf(input: OutsideToolInput<RunCodeArgs>, logger: Logger): Promise<number | DoneResult> {
     if (input.args.class === 'write') return 1;
     const bumped = await input.guard((tx) =>
-      toolCalls.bumpAttempts(tx, { taskId: input.caller.agentId, callId: input.callId }),
+      callRecords.startAttempt(tx, { taskId: input.caller.agentId, callId: input.callId }, input.args),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');

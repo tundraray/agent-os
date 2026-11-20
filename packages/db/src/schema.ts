@@ -2,6 +2,7 @@ import {
   ABSOLUTE_MINUTES_DEFAULT,
   ABSOLUTE_MINUTES_MAX,
   ABSOLUTE_MINUTES_MIN,
+  CALL_RECORD_KINDS,
   DecisionStatusSchema,
   DeliveryStatusSchema,
   DraftStateSchema,
@@ -32,8 +33,8 @@ import {
   RECORD_MAX_TURNS_MIN,
   RecordKindSchema,
   SaveOwnRefusalSchema,
+  SINGLE_CALL_RECORD_KINDS,
   TaskStatusSchema,
-  ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -382,7 +383,10 @@ export const agentSessions = app.table(
   ],
 );
 
-/** History of an agent: append-only, `seq` grows within the session. */
+/**
+ * History of an agent: append-only, `seq` grows within the session. A tool call is an item of its
+ * `model_answer`; what happened to it are later rows keyed by `call_id` — nothing is updated in place.
+ */
 export const agentMessages = app.table(
   'agent_messages',
   {
@@ -397,98 +401,63 @@ export const agentMessages = app.table(
      * analysis; no code reads it.
      */
     modelCallId: uuid('model_call_id'),
+    /** The call a call record is about (`CALL_RECORD_KINDS`); null for every other kind. */
+    callId: text('call_id'),
+    /** When the call of a `tool_result` ended: the window and the order of the extraction input. */
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.seq] }),
+    index('agent_messages_call_idx').on(t.taskId, t.callId),
+    /** A call has at most one result, one confirmation request, one decision and one intent. */
+    uniqueIndex('agent_messages_call_once_idx')
+      .on(t.taskId, t.callId, t.kind)
+      .where(isOneOf(t.kind, SINGLE_CALL_RECORD_KINDS)),
+    /** The results of a task by end time: the extraction window and the count of started runs. */
+    index('agent_messages_result_idx')
+      .on(t.taskId, t.finishedAt)
+      .where(sql`${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)}`),
     check(
       'agent_messages_kind_check',
       isOneOf(t.kind, HistoryEntryKindSchema.options),
     ),
+    check(
+      'agent_messages_call_id_check',
+      sql`(${t.callId} is not null) = (${isOneOf(t.kind, CALL_RECORD_KINDS)})`,
+    ),
+    check(
+      'agent_messages_finished_at_check',
+      sql`(${t.finishedAt} is not null) = (${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)})`,
+    ),
   ],
 );
 
-/** One row per tool call of a model answer: the audit record of the call. */
-export const agentToolCalls = app.table(
-  'agent_tool_calls',
+/**
+ * Full result of a successful direct MCP call, as a value for scripts (code-execution KD-5): the one
+ * place of the full value, keyed by the call of its session's history.
+ */
+export const agentToolResults = app.table(
+  'agent_tool_results',
   {
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
-    /** Call id given by the provider. */
-    callId: text('call_id').notNull(),
-    /** `seq` of the `model_answer` that requested the call. */
-    answerSeq: integer('answer_seq').notNull(),
-    /** Position of the call within its answer. */
-    position: integer('position').notNull(),
-    tool: text('tool').notNull(),
-    /** MCP server id; null for built-in and registered tools. */
-    server: text('server'),
-    args: jsonb('args').notNull(),
-    state: text('state')
-      .notNull()
-      .default(ToolCallStateSchema.enum.requested),
-    /** Set exactly while the state is `done`. */
-    outcome: text('outcome'),
-    refusalReason: text('refusal_reason'),
-    /** `{ model }` of a refusal by model (`model_not_connected`, `model_not_allowed`); null otherwise. */
-    refusalDetail: jsonb('refusal_detail'),
-    resultText: text('result_text'),
-    /** Agent started by `start_agent`. Kept for incident analysis; no code reads it. */
-    childTaskId: uuid('child_task_id'),
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    finishedAt: timestamp('finished_at', { withTimezone: true }),
-    /** How many times a `run_code` read run has started (code-execution KD-7). */
-    attempts: integer('attempts').notNull().default(0),
-    /** Script output of a successful `run_code` run. */
-    output: text('output'),
-  },
-  (t) => [
-    primaryKey({ columns: [t.taskId, t.callId] }),
-    check(
-      'agent_tool_calls_state_check',
-      isOneOf(t.state, ToolCallStateSchema.options),
-    ),
-    check(
-      'agent_tool_calls_outcome_check',
-      isOneOf(t.outcome, ToolOutcomeSchema.options),
-    ),
-    check(
-      'agent_tool_calls_refusal_reason_check',
-      isOneOf(t.refusalReason, ToolRefusalReasonSchema.options),
-    ),
-    check(
-      'agent_tool_calls_done_check',
-      sql`(${t.state} = ${literal(ToolCallStateSchema.enum.done)}) = (${t.outcome} is not null)`,
-    ),
-  ],
-);
-
-/** Full result of a successful direct MCP call, as a value for scripts (code-execution KD-5). */
-export const agentToolResults = app.table(
-  'agent_tool_results',
-  {
-    taskId: uuid('task_id').notNull(),
     callId: text('call_id').notNull(),
     value: jsonb('value').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [
-    primaryKey({ columns: [t.taskId, t.callId] }),
-    foreignKey({
-      name: 'agent_tool_results_call_fk',
-      columns: [t.taskId, t.callId],
-      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
-    }).onDelete('cascade'),
-  ],
+  (t) => [primaryKey({ columns: [t.taskId, t.callId] })],
 );
 
 /** Audit of the tool calls a `run_code` script made; the result is seen only by the script (code-execution KD-6). */
 export const agentCodeCalls = app.table(
   'agent_code_calls',
   {
-    taskId: uuid('task_id').notNull(),
-    /** `callId` of the `run_code` row. */
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    /** `callId` of the `run_code` call in the session's history. */
     runCallId: text('run_call_id').notNull(),
     attempt: integer('attempt').notNull(),
     /** Number of the call within its attempt. */
@@ -503,11 +472,6 @@ export const agentCodeCalls = app.table(
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.runCallId, t.attempt, t.seq] }),
-    foreignKey({
-      name: 'agent_code_calls_run_call_fk',
-      columns: [t.taskId, t.runCallId],
-      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
-    }).onDelete('cascade'),
     check(
       'agent_code_calls_outcome_check',
       isOneOf(t.outcome, ToolOutcomeSchema.options),

@@ -1,23 +1,9 @@
-import {
-  AgentMessageKindSchema,
-  CHILD_FINISHED_KIND,
-  ChipRecordSchema,
-  type ToolOutcome,
-  ToolOutcomeSchema,
-  ToolRefusalReasonSchema,
-  ToolCallStateSchema,
-} from '@agent-os/contracts';
-import type { RuntimeTx, StepMessage } from '@agent-os/runtime';
+import { AgentMessageKindSchema, CHILD_FINISHED_KIND, ChipRecordSchema } from '@agent-os/contracts';
+import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { NewHistoryEntry } from '../store/history.repository.js';
+import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import { sessions, type StoreReader } from '../store/sessions.repository.js';
-import {
-  isRunCodeCall,
-  refusalDetailOf,
-  type ToolCallRow,
-  toolCalls,
-} from '../store/tool-calls.repository.js';
 
 /**
  * Marks a message to an agent that the runtime stopped (plan Notes 5): the first step that delivers
@@ -79,7 +65,7 @@ async function childReport(
       status: notice.status,
       reason: notice.failure?.reason ?? null,
       text: notice.result?.report ?? null,
-      toolCalls: await toolCalls.countFor(reader, notice.taskId),
+      toolCalls: await history.toolCallCount(reader, notice.taskId),
       durationMs: notice.durationMs,
     },
   };
@@ -141,66 +127,4 @@ export function rootTurnReset(input: {
 }): number {
   const employeeMessage = input.messages.some((message) => message.kind === userMessage);
   return employeeMessage && input.isRoot ? 0 : input.turns;
-}
-
-/**
- * Closing on an interrupt or a stop (KD-3, Flow 7): «interrupted», but a call in `sending` may have
- * reached its server — «unknown».
- */
-function interruptedOutcome(call: ToolCallRow): ToolOutcome {
-  return call.state === ToolCallStateSchema.enum.sending
-    ? ToolOutcomeSchema.enum.unknown
-    : ToolOutcomeSchema.enum.interrupted;
-}
-
-/** An open call as an interrupt or a stop closes it at `finishedAt`, before the write or without one. */
-export function closedView(call: ToolCallRow, finishedAt: Date): ToolCallRow {
-  return {
-    ...call,
-    state: ToolCallStateSchema.enum.done,
-    outcome: interruptedOutcome(call),
-    finishedAt,
-  };
-}
-
-/**
- * The `tool_result` entry of a closed call row; a `run_code` row also carries its script output (DC-14),
- * other tools have no `output` field.
- */
-export function toolResultEntry(call: ToolCallRow): Extract<NewHistoryEntry, { kind: 'tool_result' }> {
-  return {
-    kind: 'tool_result',
-    content: {
-      callId: call.callId,
-      tool: call.tool,
-      server: call.server,
-      args: call.args,
-      outcome: ToolOutcomeSchema.parse(call.outcome),
-      refusalReason: ToolRefusalReasonSchema.nullable().parse(call.refusalReason),
-      refusalDetail: refusalDetailOf(call),
-      text: call.resultText,
-      ...(isRunCodeCall(call) ? { output: call.output } : {}),
-      startedAt: call.startedAt?.toISOString() ?? null,
-      finishedAt: call.finishedAt?.toISOString() ?? null,
-    },
-  };
-}
-
-/**
- * Closes the agent's open calls in answer and position order as an interrupt or a stop does and
- * returns the closed rows. The only closing of open calls (overview, Common Processing Points); a
- * call already closed by a racing write is skipped. `toolCalls.close` also closes the open calls from
- * code of a closed `run_code` row (code-execution Invariant 4).
- */
-export async function closeOpen(tx: RuntimeTx, taskId: string): Promise<ToolCallRow[]> {
-  const closed: ToolCallRow[] = [];
-  for (const call of await toolCalls.open(tx, taskId)) {
-    const row = await toolCalls.close(
-      tx,
-      { taskId, callId: call.callId },
-      { outcome: interruptedOutcome(call) },
-    );
-    if (row !== undefined) closed.push(row);
-  }
-  return closed;
 }

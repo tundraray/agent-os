@@ -342,7 +342,7 @@ describe('custom-agents / runtime - workflows package (real runtime + Postgres, 
   //      carries the version-2 prompt and executor `a` runs the updated copy (AC-16.2).
   //   B. Limit and unknown name are different reasons (AC-16.6, UC-E4). Given the same team where `b` may run twice; When the coordinator
   //      calls `b` a third time and then calls a name that is not in the team; Then the third call is closed with `run_limit`, the other
-  //      with `not_allowed` (two different tool-result reasons in the coordinator's history); the `agent_tool_calls` row of the first holds
+  //      with `not_allowed` (two different tool-result reasons in the coordinator's history); the tool calls in `agent_messages` of the first holds
   //      `run_limit` (the CHECK of the migration accepts it); no third child of `b` exists; `runs.get` of the coordinator returns `team` with
   //      the three names, roles and `maxRuns`, `steps` with the children and their `origin.executor`, and `limitRefusals` with exactly one
   //      `{ executor: 'b', at }`.
@@ -509,7 +509,7 @@ describe('custom-agents / runtime - workflows package (real runtime + Postgres, 
         });
         await waitForStatus(harness, run.coordinatorId, boris, 'completed');
 
-        // Then: two different reasons in the coordinator's history, and in its rows of `agent_tool_calls`
+        // Then: two different reasons in the coordinator's history, and in its rows of tool calls in `agent_messages`
         const history = await historyOf(harness, run.coordinatorId, boris);
         expect(startAgentResults(history)).toEqual([
           ['b', 'success', null],

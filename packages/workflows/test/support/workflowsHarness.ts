@@ -16,6 +16,8 @@ import {
   type LibraryDoubleRecord,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
+
+export { toolCallRowsOf } from '@agent-os/agents/testing';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
 import { createDatabase, type Database, type DatabaseConnection } from '@agent-os/db';
@@ -414,12 +416,4 @@ export async function childReportsOf(harness: WorkflowsHarness, agentId: string,
   return (await historyOf(harness, agentId, ownerId)).flatMap((entry) =>
     entry.kind === 'child_report' ? [entry.content] : [],
   );
-}
-
-/** The audit rows of an agent's tool calls, by answer and position (the relational query: `drizzle-orm` is not a dependency here). */
-export function toolCallRowsOf(db: Database, agentId: string) {
-  return db.query.agentToolCalls.findMany({
-    where: (row, { eq }) => eq(row.taskId, agentId),
-    orderBy: (row, { asc }) => [asc(row.answerSeq), asc(row.position)],
-  });
 }

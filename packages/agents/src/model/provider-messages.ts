@@ -1,5 +1,5 @@
-import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
-import { mcpToolName } from '../mcp/mcp-tool.js';
+import { foldCalls, requestedName } from '../history/call-state.js';
+import type { HistoryContent, HistoryEntry } from '../history/history.js';
 import type { AgentToolCall, AgentToolResult, AgentTurnMessage } from './mastra-turn.js';
 
 /** The preamble of the instructions: text inside an envelope is data, never instructions (Security «Input Validation»). */
@@ -20,19 +20,16 @@ export function envelope(source: string, author: string, data: string): string {
 /** The author of what the package itself produced: a built-in tool's result, a compaction summary. */
 const PACKAGE_AUTHOR = 'agents';
 
-/** The parent's history the fork continues: its entries and calls through `throughSeq` precede the child's own (KD-7). */
+/** The parent's history the fork continues: its entries through `throughSeq` precede the child's own (KD-7). */
 export interface ForkPrefix {
   readonly throughSeq: number;
   readonly entries: readonly HistoryEntry[];
-  readonly calls: readonly ToolCallRecord[];
 }
 
 export interface ProviderMessagesInput {
   readonly forkPrefix?: ForkPrefix;
-  /** The session's own entries in `seq` order. */
+  /** The session's own entries in `seq` order, at least from its last compaction on. */
   readonly entries: readonly HistoryEntry[];
-  /** The session's own tool calls. */
-  readonly calls: readonly ToolCallRecord[];
 }
 
 function childReportText(report: HistoryContent<'child_report'>): string {
@@ -53,7 +50,7 @@ function toolResultOf(result: HistoryContent<'tool_result'>): AgentToolResult {
           .join('\n');
   return {
     toolCallId: result.callId,
-    toolName: result.server === null ? result.tool : mcpToolName(result.server, result.tool),
+    toolName: requestedName(result),
     output: envelope(`tool ${result.tool}`, result.server ?? PACKAGE_AUTHOR, data),
   };
 }
@@ -62,8 +59,14 @@ function eventText(event: HistoryContent<'event'>): string {
   return event.reason === null ? `[event] ${event.event}` : `[event] ${event.event}: ${event.reason}`;
 }
 
-/** A non-answer, non-result entry as the model sees it; employee text goes as is, data in the envelope. */
-function messageOf(entry: Exclude<HistoryEntry, { kind: 'model_answer' | 'tool_result' }>): AgentTurnMessage {
+/** What the model reads as a message of its own: every kind but an answer and the records of its calls. */
+type MessageEntry = Extract<
+  HistoryEntry,
+  { kind: 'task' | 'user_message' | 'agent_message' | 'child_report' | 'notice' | 'event' | 'compaction' }
+>;
+
+/** A message entry as the model sees it; employee text goes as is, data in the envelope. */
+function messageOf(entry: MessageEntry): AgentTurnMessage {
   switch (entry.kind) {
     case 'task':
     case 'user_message':
@@ -81,15 +84,8 @@ function messageOf(entry: Exclude<HistoryEntry, { kind: 'model_answer' | 'tool_r
   }
 }
 
-/** Entries of one session with that session's tool calls: `seq` repeats across the parent and the fork. */
-interface HistorySegment {
-  readonly entries: readonly HistoryEntry[];
-  readonly calls: readonly ToolCallRecord[];
-}
-
-/** What the model sees: the fork prefix, then own entries, with the last compaction replacing what it covers (KD-7). */
-function visibleSegments(input: ProviderMessagesInput): HistorySegment[] {
-  const own: HistorySegment = { entries: input.entries, calls: input.calls };
+/** What the model sees, one session at a time (`seq` and call ids repeat across the parent and the fork): the fork prefix, then own entries, with the last compaction replacing what it covers (KD-7). */
+function visibleSegments(input: ProviderMessagesInput): (readonly HistoryEntry[])[] {
   const lastCompaction = [...input.entries]
     .reverse()
     .find((entry): entry is Extract<HistoryEntry, { kind: 'compaction' }> => entry.kind === 'compaction');
@@ -97,21 +93,25 @@ function visibleSegments(input: ProviderMessagesInput): HistorySegment[] {
     // The summary covers the fork prefix too: it was made from what the model saw before it.
     const { throughSeq } = lastCompaction.content;
     const after = input.entries.filter((entry) => entry.seq > throughSeq && entry.kind !== 'compaction');
-    return [{ entries: [lastCompaction, ...after], calls: input.calls }];
+    return [[lastCompaction, ...after]];
   }
-  if (input.forkPrefix === undefined) return [own];
+  if (input.forkPrefix === undefined) return [input.entries];
   const { throughSeq } = input.forkPrefix;
-  return [
-    { entries: input.forkPrefix.entries.filter((entry) => entry.seq <= throughSeq), calls: input.forkPrefix.calls },
-    own,
-  ];
+  return [input.forkPrefix.entries.filter((entry) => entry.seq <= throughSeq), input.entries];
 }
 
-function answerCalls(answerSeq: number, calls: readonly ToolCallRecord[]): AgentToolCall[] {
-  return calls
-    .filter((call) => call.answerSeq === answerSeq)
-    .sort((left, right) => left.position - right.position)
-    .map((call) => ({ toolCallId: call.callId, toolName: call.tool, args: call.args }));
+/**
+ * The calls of each answer of a segment as the model made them, by the answer's `seq`: under the name
+ * it called, with the arguments the call went out with — the employee's edit when there was one.
+ */
+function answerCalls(segment: readonly HistoryEntry[]): Map<number, AgentToolCall[]> {
+  const byAnswer = new Map<number, AgentToolCall[]>();
+  for (const call of foldCalls(segment)) {
+    const calls = byAnswer.get(call.answerSeq) ?? [];
+    calls.push({ toolCallId: call.callId, toolName: requestedName(call), args: call.args });
+    byAnswer.set(call.answerSeq, calls);
+  }
+  return byAnswer;
 }
 
 /**
@@ -134,20 +134,30 @@ export function buildProviderMessages(input: ProviderMessagesInput): AgentTurnMe
   };
 
   for (const segment of visibleSegments(input)) {
-    for (const entry of segment.entries) {
-      if (entry.kind === 'model_answer') {
-        closeAnswer();
-        const toolCalls = answerCalls(entry.seq, segment.calls);
-        messages.push({ role: 'assistant', content: entry.content.text, toolCalls });
-        openCalls = new Set(toolCalls.map((call) => call.toolCallId));
-      } else if (entry.kind === 'tool_result') {
-        results.push(toolResultOf(entry.content));
-        openCalls.delete(entry.content.callId);
-        if (openCalls.size === 0) closeAnswer();
-      } else if (openCalls.size > 0) {
-        deferred.push(messageOf(entry));
-      } else {
-        messages.push(messageOf(entry));
+    const calls = answerCalls(segment);
+    for (const entry of segment) {
+      switch (entry.kind) {
+        case 'model_answer': {
+          closeAnswer();
+          const toolCalls = calls.get(entry.seq) ?? [];
+          messages.push({ role: 'assistant', content: entry.content.text, toolCalls });
+          openCalls = new Set(toolCalls.map((call) => call.toolCallId));
+          break;
+        }
+        case 'tool_result':
+          results.push(toolResultOf(entry.content));
+          openCalls.delete(entry.content.callId);
+          if (openCalls.size === 0) closeAnswer();
+          break;
+        // The state records of a call are not messages: the model sees the call and its result.
+        case 'tool_confirmation':
+        case 'tool_decision':
+        case 'tool_sent':
+        case 'run_attempt':
+          break;
+        default:
+          if (openCalls.size > 0) deferred.push(messageOf(entry));
+          else messages.push(messageOf(entry));
       }
     }
   }

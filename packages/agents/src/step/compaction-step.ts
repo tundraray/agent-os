@@ -7,6 +7,7 @@ import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
 import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
 import { type ModelClient, modelErrorMessage } from '../model/model-client.js';
 import { snapshotDefinition } from '../start/snapshot-definition.js';
+import type { HistoryEntry } from '../history/history.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
   type Session,
@@ -61,6 +62,8 @@ export interface CompactionStepDeps {
 export type CompactionStep = (
   ctx: StepContext,
   session: Session,
+  /** The session's entries from its last compaction on, as the handler read them. */
+  own: readonly HistoryEntry[],
   prelude?: StepPrelude,
 ) => Promise<StepResult>;
 
@@ -74,12 +77,12 @@ export type CompactionStep = (
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
   const { database, registry, modelClient, audit, vectorStore } = deps;
 
-  return async function compactionStep(ctx, session, prelude) {
+  return async function compactionStep(ctx, session, own, prelude) {
     const startedAt = Date.now();
     const { snapshot } = sessionInputOf(ctx.input);
     const definition = snapshotDefinition(snapshot);
     const delivered = await entriesOf(database, ctx.messages);
-    const view = await readSessionHistory(database, session);
+    const view = await readSessionHistory(database, session, own);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
     // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache.
@@ -173,11 +176,10 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     return {
       outcome: 'continue',
       commit: async (tx, effects) => {
-        const preludeEntries = await writePrelude(tx);
-        // The prelude goes first in its own append, so the summary knows the last `seq` it covers.
-        // `agents.history_appended` goes once, with the last `seq`, from the second append.
-        const before = await history.append(tx, ctx.taskId, preludeEntries);
-        const throughSeq = before.at(-1)?.seq ?? view.lastSeq;
+        // The prelude goes first in its own appends, so the summary knows the last `seq` it covers.
+        // `agents.history_appended` goes once, with the last `seq`, from the last append.
+        await history.append(tx, ctx.taskId, await writePrelude(tx));
+        const throughSeq = await history.lastSeq(tx, ctx.taskId);
         await appendWithEvent(tx, effects, ctx.taskId, [
           { kind: 'compaction', content: { summary, throughSeq } },
           { kind: 'event', content: { event: HistoryEventSchema.enum.compacted, reason: null } },

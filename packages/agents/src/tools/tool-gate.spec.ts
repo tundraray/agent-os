@@ -5,10 +5,10 @@ import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate.js';
 import type { AgentSnapshot } from '../start/snapshot.js';
+import type { CallState } from '../history/call-state.js';
 import { createToolStep } from '../step/tool-step.js';
 import type { Session, SessionInput } from '../store/sessions.repository.js';
 import { createLibraryDouble } from '../testing.js';
-import type { ToolCallRow } from '../store/tool-calls.repository.js';
 import type { AgentTool, ToolCaller } from './tool.js';
 import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate.js';
 import { createToolRegistry, type SessionTool } from './tool-registry.js';
@@ -399,8 +399,7 @@ const HELPER: AgentSnapshot = {
 const HELPER_INPUT: SessionInput = { snapshot: HELPER, prompt: 'Clean up the logs', description: 'Clean up' };
 
 /** The denied tool was not offered, so the model step stored the name as asked, without a server. */
-const OPEN_PURGE: ToolCallRow = {
-  taskId: CALLER.agentId,
+const OPEN_PURGE: CallState = {
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
@@ -408,15 +407,9 @@ const OPEN_PURGE: ToolCallRow = {
   server: null,
   args: {},
   state: 'requested',
-  outcome: null,
-  refusalReason: null,
-  refusalDetail: null,
-  resultText: null,
-  childTaskId: null,
-  startedAt: null,
-  finishedAt: null,
+  sentAt: null,
   attempts: 0,
-  output: null,
+  result: null,
 };
 
 const SESSION: Session = {

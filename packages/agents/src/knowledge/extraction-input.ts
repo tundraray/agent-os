@@ -1,4 +1,4 @@
-import { agentCodeCalls, agentToolCalls } from '@agent-os/db';
+import { agentCodeCalls, agentMessages } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 import { and, asc, eq, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
 
@@ -16,7 +16,7 @@ import type { KnowledgeRun } from './knowledge-runs.repository.js';
  * and it logs nothing — the caller logs the counts, never the text.
  */
 
-/** A call's `result_text` in the input is cut to this many UTF-8 bytes. */
+/** A call's result text in the input is cut to this many UTF-8 bytes. */
 const EXTRACTION_RESULT_BYTES = 2_000;
 /** A call's arguments (as JSON) in the input are cut to this many UTF-8 bytes. */
 const EXTRACTION_ARGS_BYTES = 500;
@@ -63,7 +63,7 @@ export interface ExtractionInput {
   readonly counts: ExtractionInputCounts;
 }
 
-/** One call read from either table, before it is numbered and written as text. */
+/** One call read from either source, before it is numbered and written as text. */
 interface InputCall {
   readonly server: string;
   readonly tool: string;
@@ -105,7 +105,7 @@ async function subtreeTaskIds(deps: ExtractionInputDeps, run: ExtractionRun): Pr
 
 /** `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round. */
 function inWindow(
-  finishedAt: typeof agentToolCalls.finishedAt | typeof agentCodeCalls.finishedAt,
+  finishedAt: typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
   run: ExtractionRun,
   readAt: Date,
 ): SQL | undefined {
@@ -116,39 +116,47 @@ function inWindow(
   );
 }
 
+/** A text field of a `tool_result`'s content. */
+function resultField(name: string): SQL<string | null> {
+  return sql<string | null>`${agentMessages.content} ->> ${name}`;
+}
+
+/**
+ * The direct MCP calls: their `tool_result` entries, read through the promoted `finished_at`
+ * (`agent_messages_result_idx`). Results of one task that ended at the same moment keep the order
+ * they were written in, which is the order of their calls.
+ */
 async function readDirectCalls(
   reader: StoreReader,
   taskIds: readonly string[],
   run: ExtractionRun,
   readAt: Date,
 ): Promise<InputCall[]> {
+  const server = resultField('server');
+  const outcome = resultField('outcome');
   const rows = await reader
     .select({
-      server: agentToolCalls.server,
-      tool: agentToolCalls.tool,
-      outcome: agentToolCalls.outcome,
-      args: agentToolCalls.args,
-      resultText: agentToolCalls.resultText,
-      finishedAt: agentToolCalls.finishedAt,
+      server,
+      tool: resultField('tool'),
+      outcome,
+      args: sql<unknown>`${agentMessages.content} -> 'args'`,
+      resultText: resultField('text'),
+      finishedAt: agentMessages.finishedAt,
     })
-    .from(agentToolCalls)
+    .from(agentMessages)
     .where(
       and(
-        inArray(agentToolCalls.taskId, [...taskIds]),
-        isNotNull(agentToolCalls.server),
-        inArray(agentToolCalls.outcome, [...ROUND_OUTCOMES]),
-        inWindow(agentToolCalls.finishedAt, run, readAt),
+        inArray(agentMessages.taskId, [...taskIds]),
+        eq(agentMessages.kind, 'tool_result'),
+        isNotNull(server),
+        inArray(outcome, [...ROUND_OUTCOMES]),
+        inWindow(agentMessages.finishedAt, run, readAt),
       ),
     )
-    .orderBy(
-      asc(agentToolCalls.finishedAt),
-      asc(agentToolCalls.taskId),
-      asc(agentToolCalls.answerSeq),
-      asc(agentToolCalls.position),
-    );
+    .orderBy(asc(agentMessages.finishedAt), asc(agentMessages.taskId), asc(agentMessages.seq));
   return rows.map((row) => ({
     server: row.server as string,
-    tool: row.tool,
+    tool: row.tool as string,
     outcome: row.outcome as RoundCallOutcome,
     args: row.args,
     resultText: row.resultText ?? '',
@@ -159,8 +167,8 @@ async function readDirectCalls(
 
 /**
  * Calls a `run_code` script made, of its latest attempt only: a re-run script repeats its calls, and
- * an earlier attempt would give the same call twice (Invariant 3). The latest attempt is the one the
- * `run_code` row counts (`attempts`; a `write` run keeps 0 and runs once, as attempt 1).
+ * an earlier attempt would give the same call twice (Invariant 3). The latest attempt is the number of
+ * the run's `run_attempt` records (a `write` run has none and runs once, as attempt 1).
  */
 async function readCodeCalls(
   reader: StoreReader,
@@ -168,6 +176,11 @@ async function readCodeCalls(
   run: ExtractionRun,
   readAt: Date,
 ): Promise<InputCall[]> {
+  const attempts = sql`(
+    select count(*) from ${agentMessages}
+     where ${agentMessages.taskId} = ${agentCodeCalls.taskId}
+       and ${agentMessages.callId} = ${agentCodeCalls.runCallId}
+       and ${agentMessages.kind} = 'run_attempt')`;
   const rows = await reader
     .select({
       server: agentCodeCalls.server,
@@ -177,17 +190,10 @@ async function readCodeCalls(
       finishedAt: agentCodeCalls.finishedAt,
     })
     .from(agentCodeCalls)
-    .innerJoin(
-      agentToolCalls,
-      and(
-        eq(agentToolCalls.taskId, agentCodeCalls.taskId),
-        eq(agentToolCalls.callId, agentCodeCalls.runCallId),
-      ),
-    )
     .where(
       and(
         inArray(agentCodeCalls.taskId, [...taskIds]),
-        eq(agentCodeCalls.attempt, sql`greatest(${agentToolCalls.attempts}, 1)`),
+        eq(agentCodeCalls.attempt, sql`greatest(${attempts}, 1)`),
         isNotNull(agentCodeCalls.server),
         inArray(agentCodeCalls.outcome, [...ROUND_OUTCOMES]),
         inWindow(agentCodeCalls.finishedAt, run, readAt),

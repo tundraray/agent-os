@@ -8,6 +8,7 @@ import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AccessDeniedEntry, ModelVerdict } from './access-gate.js';
+import type { CallState } from './history/call-state.js';
 import type { KnowledgeVectorStore } from './knowledge/vector-store.js';
 import { createModelClient } from './model/model-client.js';
 import type { AgentSnapshot } from './start/snapshot.js';
@@ -15,7 +16,6 @@ import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
 import type { Session, SessionInput } from './store/sessions.repository.js';
-import type { ToolCallRow } from './store/tool-calls.repository.js';
 import {
   createAccessGateDouble,
   createLibraryDouble,
@@ -98,8 +98,7 @@ const SESSION: Session = {
   createdAt: new Date(0),
 };
 
-const OPEN_CALL: ToolCallRow = {
-  taskId: AGENT,
+const OPEN_CALL: CallState = {
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
@@ -107,15 +106,9 @@ const OPEN_CALL: ToolCallRow = {
   server: null,
   args: {},
   state: 'requested',
-  outcome: null,
-  refusalReason: null,
-  refusalDetail: null,
-  resultText: null,
-  childTaskId: null,
-  startedAt: null,
-  finishedAt: null,
+  sentAt: null,
   attempts: 0,
-  output: null,
+  result: null,
 };
 
 function stepContext(logger: Logger): StepContext {
@@ -237,7 +230,7 @@ function deniedModel(reason: string): AccessDeniedEntry {
   return { kind: 'access_denied', actor: OWNER, objectType: 'model', objectId: MODEL, outcome: 'rejected', reason };
 }
 
-const modelStep = (agent: RefusedAgent) => agent.modelStep(agent.ctx, SESSION);
+const modelStep = (agent: RefusedAgent) => agent.modelStep(agent.ctx, SESSION, []);
 
 describe("an agent whose model or tool call is refused by the gate ends `failed` with the verdict's reason; the audit hook runs once, never for `owner_disabled`", () => {
   it.each<[string, Refusal, (agent: RefusedAgent) => Promise<StepResult>, readonly AccessDeniedEntry[]]>([
@@ -246,7 +239,7 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the compaction step on a spent quota',
       QUOTA,
-      (agent) => agent.compactionStep(agent.ctx, SESSION),
+      (agent) => agent.compactionStep(agent.ctx, SESSION, []),
       [deniedModel('quota_exhausted')],
     ],
     [

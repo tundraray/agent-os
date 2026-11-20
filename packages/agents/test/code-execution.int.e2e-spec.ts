@@ -205,7 +205,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   count and returns errors per service -> the model gets only the returned value, the history carries the value and the `output`, the audit has one run row and one from-code row linked to it, the log has start, call with outcome and duration, output and end under one `runId`
   // Catches: a run whose pieces work alone but not chained - `readResult` returning the 16 KiB slice instead of the full result (the count is not `totalMatched`), the script output reaching the model, a from-code call row not linked to its run row, or a run missing from the log
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, agent_tool_results, agent_tool_calls, MCP fixture (logs), logger, ScriptedModel, Postgres
+  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, agent_tool_results, tool calls in `agent_messages`, MCP fixture (logs), logger, ScriptedModel, Postgres
   // @complexity: high
   it('INT-1 row A: AC-01.1 a read run counts the full result by callId, reaches the second page, and the model gets only the returned value', async () => {
     // Given: the agent reads a quarter of an hour of logs directly (500 records, more than the slice), then runs a read script
@@ -304,7 +304,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   the next model call carries the error text, not a truncated result; the API process still answers
   // Catches: refused calls not counted (a script loops on refusals forever), a burst of parallel calls getting past the limit of 50, data handed to the script past 64 MiB, and the model getting a cut-off result in place of the error
   // @category: edge-case
-  // @dependency: run_code tool, CodeRunner (real process), tool call counter, agent_tool_calls, MCP fixture, ScriptedModel
+  // @dependency: run_code tool, CodeRunner (real process), tool call counter, tool calls in `agent_messages`, MCP fixture, ScriptedModel
   // @complexity: medium
   it('INT-1 row B: AC-07.4 the call and memory limits end the run with the error text the model sees on its next turn (rows: 51 calls, Promise.all of 100, readResult past 64 MiB)', async () => {
     // Given: the agent reads a large page directly, then runs three scripts at the production limits (50 calls, 64 MiB):
@@ -578,7 +578,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a `write` run whose script calls `mcp__${BACKOFFICE_SERVER}__create_incident_note` three times -> before the decision the fixture journal is empty and the request carries the agent, the description, the class, the full script and the one-item "Может вызвать" list ("меняет") -> approve -> three calls, no new request, the result
   // Catches: a mutating call reaching the server before the employee decided, a request that does not carry the list or the full script the employee will confirm, a confirmed script that asks again for each call
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), agent_tool_calls
+  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), tool calls in `agent_messages`
   // @complexity: high
   it('INT-2 row A: AC-05.3 the request waits with the journal empty and carries script and "Может вызвать"; approve runs the three calls once, with no new request', async () => {
     // Given: a write run of three notes; the fixture holds the first note until the test releases it
@@ -817,7 +817,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a confirmed script makes three note calls, then calls `mcp__${LOGS_SERVER}__search_logs` by a name built from two parts -> refusal `not_in_confirmed_script` naming the tool, audit row "отказ", the journal has three calls and no `search_logs`, the log's run start carries "подтверждён" and the code hash
   // Catches: a confirmed script reaching a tool the employee never saw in the "Может вызвать" list (the confirmation covers more than what was shown)
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", agent_tool_calls, MCP fixture, logger
+  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", tool calls in `agent_messages`, MCP fixture, logger
   // @complexity: high
   it('INT-2 row E: AC-03.7 a confirmed script calling a tool absent from the confirmed list is refused not_in_confirmed_script and the server never sees it', async () => {
     // Given: a write script that creates the three notes, then calls `search_logs` by a name built from two parts at run time
@@ -883,7 +883,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   //   `create_incident_note` in a `read` run -> `changing_in_read_run` with tool name and class -> every row has an audit row "отказ" and the fixture journal is empty
   // Catches: a script reaching a server its employee may not use, a built-in tool through the code door (it would start agents or nest runs past the gate), a change slipping into a read run
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, agent_tool_calls, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, tool calls in `agent_messages`, MCP fixture
   // @complexity: high
   it('INT-3 row A: AC-03.1 each refused call from code (built-in, invented, outside the definition, not permitted, changing in read) gets its reason and an audit row, and the server journal stays empty', async () => {
     // Given: the definition names `logs` and `backoffice`; employee A may use `logs` only, employee W both. A's read script
@@ -985,7 +985,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   // Behavior: the script passes `ownerId` of employee B in the arguments of an allowed read tool -> the call is recorded for A and reaches the server as the direct call with the same arguments does, ending in the same outcome class
   // Catches: an owner taken from the script's arguments instead of from the step (Invariant 1) - one employee acting as another
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, agent_tool_calls, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, tool calls in `agent_messages`, MCP fixture
   // @complexity: medium
   it('INT-3 row B: AC-03.3 an ownerId of another employee in the arguments changes nothing: recorded for the owner, same outcome as the direct call', async () => {
     // Given: employee A may use `logs`, employee B no server at all; A's agent calls `search_logs` directly with B's id
@@ -1239,7 +1239,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   `sending` and closes "исход неизвестен" after the agent continues, without running the script again.
   // Catches: a run that keeps calling tools after the employee said stop (side effects already refused), or an executor process left behind
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, agent_tool_calls, MCP fixture (held call)
+  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, tool calls in `agent_messages`, MCP fixture (held call)
   // @complexity: high
   it('INT-4 row A: AC-10.1 interrupting the agent mid-run: no further call reaches the server, no executor process remains, the run and its audit row end "прервано"', async () => {
     // Given: a read script that calls `search_logs` ten times in a row; the fixture holds the third call
@@ -1385,7 +1385,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   Row 2: A has two running, one ends in an error, A starts another -> it executes (the slot was freed by the failure)
   // Catches: one employee filling the server's executor slots (and starving everyone else), a refused run spending a read run's attempt, a slot leaked by an error end so the employee is locked out of code
   // @category: edge-case
-  // @dependency: run_code tool, admission counters, CodeRunner (substituted), agent_tool_calls attempts
+  // @dependency: run_code tool, admission counters, CodeRunner (substituted), tool calls in `agent_messages` attempts
   // @complexity: medium
   it('INT-4 row C: AC-07.6 the third concurrent run of an employee is refused without spending an attempt, another employee is served, and any end of a run frees the slot', async () => {
     // Given: employees A and B may read `logs`; the substituted runner holds every run; at most 2 runs of one employee, 4 in all

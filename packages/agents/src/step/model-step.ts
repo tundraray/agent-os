@@ -5,7 +5,7 @@ import {
   type ChipRecord,
   HistoryEventSchema,
 } from '@agent-os/contracts';
-import { agentToolCalls, type Database } from '@agent-os/db';
+import type { Database } from '@agent-os/db';
 import {
   isFinished,
   type Runtime,
@@ -14,15 +14,12 @@ import {
   type StepEffects,
   type StepResult,
 } from '@agent-os/runtime';
-import { eq } from 'drizzle-orm';
 
 import type { AccessAudit } from '../access-gate.js';
-import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
+import type { HistoryEntry } from '../history/history.js';
 import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
 import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
-import { mcpToolName } from '../mcp/mcp-tool.js';
 import {
-  type ModelAnswer,
   type ModelClient,
   modelDeniedEntry,
   modelErrorMessage,
@@ -41,16 +38,12 @@ import {
   sessions,
   type StoreReader,
 } from '../store/sessions.repository.js';
-import { type NewToolCall, toolCalls } from '../store/tool-calls.repository.js';
-import { callTargetOf, type SessionTool, type ToolRegistry } from '../tools/tool-registry.js';
+import { callTargetOf, type ToolRegistry } from '../tools/tool-registry.js';
 import { entriesOf, rootTurnReset } from './deliver.js';
 import { endOfTurn, type FinalExecutorReport } from './turn-rules.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
-
-/** The largest `seq` a history can have: `agent_messages.seq` is a Postgres `integer`. */
-const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
 const FAILURE_REASONS = AgentFailureReasonSchema.enum;
@@ -68,62 +61,35 @@ export interface StepPrelude {
   readonly patch: SessionPatch;
 }
 
-/** The history the model sees, read outside the commit: the fork prefix, the own entries and calls. */
+/** The history the model sees, read outside the commit: the fork prefix and the own entries. */
 export interface SessionHistory {
   readonly forkPrefix?: ForkPrefix;
-  /** Every own entry in `seq` order. */
+  /** The own entries from the last compaction on, in `seq` order (`history.visible`). */
   readonly entries: readonly HistoryEntry[];
-  readonly calls: readonly ToolCallRecord[];
   /** `seq` of the last own entry; 0 for an empty history. */
   readonly lastSeq: number;
 }
 
-/** The name the model called: `agent_tool_calls` keeps an MCP tool as its server and raw name. */
-export function requestedName(call: { readonly tool: string; readonly server: string | null }): string {
-  return call.server === null ? call.tool : mcpToolName(call.server, call.tool);
-}
-
-/** The calls of an agent as the provider messages need them, under the names the model called. */
-async function callRecords(reader: StoreReader, taskId: string): Promise<ToolCallRecord[]> {
-  // Read here, not in the repository: only the history view needs every call of a session.
-  const rows = await reader
-    .select({
-      callId: agentToolCalls.callId,
-      answerSeq: agentToolCalls.answerSeq,
-      position: agentToolCalls.position,
-      tool: agentToolCalls.tool,
-      server: agentToolCalls.server,
-      args: agentToolCalls.args,
-    })
-    .from(agentToolCalls)
-    .where(eq(agentToolCalls.taskId, taskId));
-  return rows.map((row) => ({
-    callId: row.callId,
-    answerSeq: row.answerSeq,
-    position: row.position,
-    tool: requestedName(row),
-    args: row.args,
-  }));
-}
-
-/** Reads the session's history with the parent's part of a fork (KD-7). */
+/**
+ * The session's history as the model sees it: `own` — its entries from the last compaction on — and,
+ * for a fork that has not compacted yet, the parent's part (KD-7); a summary covers that part too.
+ */
 export async function readSessionHistory(
   reader: StoreReader,
   session: Session,
+  own: readonly HistoryEntry[],
 ): Promise<SessionHistory> {
-  const entries = await history.listThrough(reader, session.taskId, MAX_SEQ);
-  const calls = await callRecords(reader, session.taskId);
-  const lastSeq = entries.at(-1)?.seq ?? 0;
-  if (session.forkedFromTaskId === null || session.forkedThroughSeq === null) {
-    return { entries, calls, lastSeq };
+  const lastSeq = own.at(-1)?.seq ?? 0;
+  const compacted = own.some((entry) => entry.kind === 'compaction');
+  if (compacted || session.forkedFromTaskId === null || session.forkedThroughSeq === null) {
+    return { entries: own, lastSeq };
   }
   const throughSeq = session.forkedThroughSeq;
   const forkPrefix: ForkPrefix = {
     throughSeq,
-    entries: await history.listThrough(reader, session.forkedFromTaskId, throughSeq),
-    calls: await callRecords(reader, session.forkedFromTaskId),
+    entries: await history.through(reader, session.forkedFromTaskId, throughSeq),
   };
-  return { forkPrefix, entries, calls, lastSeq };
+  return { forkPrefix, entries: own, lastSeq };
 }
 
 /**
@@ -173,19 +139,23 @@ export function providerMessagesOf(
       ? {}
       : { forkPrefix: { ...forkPrefix, entries: withChipLines(forkPrefix.entries) } }),
     entries: withChipLines([...view.entries, ...shown]),
-    calls: view.calls,
   });
 }
 
-/** Appends the entries and writes `agents.history_appended` with the last `seq` (§ «Сообщения и события»). */
+/**
+ * Appends the entries and writes `agents.history_appended` with the last `seq` (§ «Сообщения и события»).
+ * `before` — entries the same transaction appended already, such as the results of closed calls: the
+ * event names the last of them when nothing follows.
+ */
 export async function appendWithEvent(
   tx: RuntimeTx,
   effects: StepEffects,
   taskId: string,
   entries: readonly NewHistoryEntry[],
+  before: readonly HistoryEntry[] = [],
 ): Promise<HistoryEntry[]> {
   const appended = await history.append(tx, taskId, entries);
-  const last = appended.at(-1);
+  const last = appended.at(-1) ?? before.at(-1);
   if (last !== undefined) {
     await effects.emit(AGENTS_HISTORY_APPENDED, { agentId: taskId, seq: last.seq });
   }
@@ -317,30 +287,10 @@ export interface ModelStepDeps {
 export type ModelStep = (
   ctx: StepContext,
   session: Session,
+  /** The session's entries from its last compaction on, as the handler read them. */
+  own: readonly HistoryEntry[],
   prelude?: StepPrelude,
 ) => Promise<StepResult>;
-
-/** The tool calls of an answer as `agent_tool_calls` rows: a name the session does not offer stays as written. */
-function newToolCalls(
-  ctx: StepContext,
-  answer: ModelAnswer,
-  answerSeq: number,
-  sessionTools: readonly SessionTool[],
-): NewToolCall[] {
-  return answer.toolCalls.map((call, position) => {
-    // An unknown name is refused by the tool step (`tool_not_in_definition`); it stays as the model wrote it.
-    const target = callTargetOf(sessionTools, call.toolName);
-    return {
-      taskId: ctx.taskId,
-      callId: call.toolCallId,
-      answerSeq,
-      position,
-      tool: target.tool,
-      server: target.server,
-      args: call.args,
-    };
-  });
-}
 
 /**
  * Builds the model step (design-agents.md: KD-1, KD-2, KD-6, «Как шаг выбирает работу» d3–d4,
@@ -351,8 +301,8 @@ function newToolCalls(
  *   (Invariant 6) gets the history and the session's tools. A provider that keeps failing → `fail`
  *   `model_error`; a call `AccessGate` refused → `fail` with the verdict's reason, the model not called.
  *   Each failure closes the session and resets the turn counter (DC-1).
- * - An answer with calls is written with its open calls (`requested`): `continue`, the tool step runs
- *   them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
+ * - An answer with calls is written with them: they are open (`requested`) until their results;
+ *   `continue`, the tool step runs them. An answer without calls ends the turn (`endOfTurn`): `wait`, a notice and `continue`, or
  *   `complete` with `{ report }`, the session closed and its counter reset.
  * - Every commit writes the turn counter, `last_input_tokens` of the call (KD-7) and
  *   `agents.history_appended`.
@@ -365,12 +315,13 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
    * included (DC-4; design-runtime.md KD-5): a child is that executor by the `executor` of its origin.
    */
   async function finalExecutorReport(
+    taskId: string,
     finalExecutor: string,
-    ownEntries: readonly HistoryEntry[],
     delivered: readonly NewHistoryEntry[],
   ): Promise<FinalExecutorReport | null> {
-    const reports: HistoryContent<'child_report'>[] = [];
-    for (const entry of [...ownEntries, ...delivered]) {
+    // Read by kind, not from the step's entries: a report may stand before the last compaction.
+    const reports = await history.childReports(database, taskId);
+    for (const entry of delivered) {
       if (entry.kind === 'child_report') reports.push(entry.content);
     }
     if (reports.length === 0) return null;
@@ -398,7 +349,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     return { unfinished, pending };
   }
 
-  return async function modelStep(ctx, session, prelude) {
+  return async function modelStep(ctx, session, own, prelude) {
     const startedAt = Date.now();
     // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
     const { snapshot } = sessionInputOf(ctx.input);
@@ -428,7 +379,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       });
     }
 
-    const view = await readSessionHistory(database, session);
+    const view = await readSessionHistory(database, session, own);
     const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
     // The graph is live data read beside the snapshot on every step (KD-6); a failed read fails the step.
     const knowledge = await knowledgeBlock(
@@ -488,7 +439,15 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     const counted = turns + 1;
     const answerEntry: NewHistoryEntry = {
       kind: 'model_answer',
-      content: { text: result.text },
+      content: {
+        text: result.text,
+        toolCalls: result.toolCalls.map((call) => ({
+          callId: call.toolCallId,
+          // A name the session does not offer stays as the model wrote it: the tool step refuses it.
+          ...callTargetOf(sessionTools, call.toolName),
+          args: call.args,
+        })),
+      },
       modelCallId: result.modelCallId,
     };
     const callPatch: SessionPatch = {
@@ -502,16 +461,11 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       after: readonly NewHistoryEntry[],
       patch: SessionPatch,
     ): Promise<void> => {
-      const appended = await appendWithEvent(tx, effects, ctx.taskId, [
+      await appendWithEvent(tx, effects, ctx.taskId, [
         ...(await writeStepEntries(tx)),
         answerEntry,
         ...after,
       ]);
-      if (result.toolCalls.length > 0) {
-        const answer = appended.find((entry) => entry.kind === 'model_answer');
-        if (answer === undefined) throw new Error(`The answer of agent ${ctx.taskId} was not appended`);
-        await toolCalls.insertRequested(tx, newToolCalls(ctx, result, answer.seq, sessionTools));
-      }
       await sessions.update(tx, ctx.taskId, patch);
     };
 
@@ -533,7 +487,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       finalExecutorReport:
         isRoot || finalExecutor === null
           ? null
-          : await finalExecutorReport(finalExecutor, view.entries, delivered),
+          : await finalExecutorReport(ctx.taskId, finalExecutor, delivered),
       text: result.text,
     });
 

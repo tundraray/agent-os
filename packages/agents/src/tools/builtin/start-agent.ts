@@ -14,7 +14,7 @@ import {
   type StartSource,
 } from '../../start/resolve-start.js';
 import type { RunSnapshot } from '../../start/snapshot.js';
-import { toolCalls } from '../../store/tool-calls.repository.js';
+import { history } from '../../store/history.repository.js';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool.js';
 import { gateStart, type LaunchSet, type StartGate, type StartTarget } from '../tool-gate.js';
 import { logStart } from './start-child.js';
@@ -210,7 +210,7 @@ export function createStartAgentTool(
         prepared.target.kind === 'executor'
           ? {
               ...prepared.target,
-              startedCount: await toolCalls.startedCount(tx, caller.agentId, prepared.target.name),
+              startedCount: await history.startedCount(tx, caller.agentId, prepared.target.name),
             }
           : prepared.target;
       const gate = gateStart({
@@ -256,14 +256,11 @@ export function createStartAgentTool(
   };
 }
 
-/**
- * The fork's link (KD-7): the last entry of the caller before the `model_answer` that requested this
- * call — the call is still open while it runs, so its row holds the answer's `seq`.
- */
+/** The fork's link (KD-7): the last entry of the caller before the `model_answer` that requested this call. */
 async function seqBeforeAnswer(tx: RuntimeTx, caller: ToolCaller, callId: string): Promise<number> {
-  const call = (await toolCalls.open(tx, caller.agentId)).find((row) => row.callId === callId);
-  if (call === undefined) {
-    throw new Error(`Call ${callId} of agent ${caller.agentId} is not open while it runs`);
+  const answerSeq = await history.answerSeqOf(tx, caller.agentId, callId);
+  if (answerSeq === undefined) {
+    throw new Error(`No answer of agent ${caller.agentId} requested call ${callId}`);
   }
-  return call.answerSeq - 1;
+  return answerSeq - 1;
 }

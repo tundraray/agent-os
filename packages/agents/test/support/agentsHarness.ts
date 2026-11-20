@@ -21,7 +21,6 @@ import { type AgentContent, CHAT_BUILTIN_KEY } from '@agent-os/contracts';
 import {
   agentCodeCalls,
   agentModelProviders,
-  agentToolCalls,
   createDatabase,
   type Database,
   runtimeEvents,
@@ -45,6 +44,8 @@ import {
   type ScriptedEmbeddings,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
+
+export { toolCallRowsOf } from '@agent-os/agents/testing';
 import {
   createRuntime,
   type ModelPrice,
@@ -626,15 +627,6 @@ export function ledgerRowsOf(db: Database, ownerId: string, taskId?: string) {
     .orderBy(asc(runtimeModelCalls.calledAt));
 }
 
-/** The audit rows of an agent's tool calls, by answer and position. */
-export function toolCallRowsOf(db: Database, agentId: string) {
-  return db
-    .select()
-    .from(agentToolCalls)
-    .where(eq(agentToolCalls.taskId, agentId))
-    .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
-}
-
 /** The audit rows of the tool calls one `run_code` run's script made, by attempt and number. */
 export function codeCallRowsOf(db: Database, agentId: string, runCallId: string) {
   return db
@@ -663,8 +655,9 @@ export function toolOutputOf(messages: readonly AgentTurnMessage[], toolCallId: 
 
 /**
  * Row versions (`xmin`) of everything the agents and the runtime keep about the given agents: their
- * `agent_sessions`, `agent_messages`, `agent_tool_calls` and `runtime_tasks` rows, one sorted line each
- * (`<table> <task id> [<key>] <version>`). Equal snapshots mean no row was written, added or removed.
+ * `agent_sessions`, `agent_messages` and `runtime_tasks` rows, one sorted line each
+ * (`<table> <task id> [<key>] <version>`). Equal snapshots mean no row was written, added or removed —
+ * tool calls included: a call and every change of it are `agent_messages` rows.
  */
 export async function treeRowVersionsOf(db: Database, taskIds: readonly string[]): Promise<string[]> {
   const ids = sql.join(
@@ -675,8 +668,6 @@ export async function treeRowVersionsOf(db: Database, taskIds: readonly string[]
     SELECT concat_ws(' ', 'session', task_id, xmin) AS line FROM app.agent_sessions WHERE task_id IN (${ids})
     UNION ALL
     SELECT concat_ws(' ', 'message', task_id, seq, xmin) FROM app.agent_messages WHERE task_id IN (${ids})
-    UNION ALL
-    SELECT concat_ws(' ', 'call', task_id, call_id, xmin) FROM app.agent_tool_calls WHERE task_id IN (${ids})
     UNION ALL
     SELECT concat_ws(' ', 'task', task_id, xmin) FROM app.runtime_tasks WHERE task_id IN (${ids})
     ORDER BY 1`);

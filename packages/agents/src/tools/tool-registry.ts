@@ -48,7 +48,7 @@ export type SessionTool =
       readonly mcp: McpTool;
     };
 
-/** The tool and the server of a call as `agent_tool_calls` and the confirmation request hold them. */
+/** The tool and the server of a call as the history and the confirmation request hold them. */
 export interface ToolTarget {
   readonly tool: string;
   readonly server: string | null;

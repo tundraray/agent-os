@@ -4,7 +4,10 @@ import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/
 
 import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
 import { embedQuestion } from '../knowledge/question-vector.js';
-import type { NewHistoryEntry } from '../store/history.repository.js';
+import { type CallState, openCalls } from '../history/call-state.js';
+import type { HistoryEntry } from '../history/history.js';
+import { callRecords, interruptedResults } from '../store/call-records.repository.js';
+import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
   AgentTaskInputSchema,
   type Session,
@@ -12,10 +15,8 @@ import {
   sessionInputOf,
   sessions,
 } from '../store/sessions.repository.js';
-import { type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { compactionDue, type CompactionStep } from './compaction-step.js';
-import { type Continuation, continuationOf, stopRecords } from './continuation.js';
-import { closedView, closeOpen, toolResultEntry } from './deliver.js';
+import { type Continuation, continuationOf, stopEvent } from './continuation.js';
 import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step.js';
 import type { ToolStep } from './tool-step.js';
 
@@ -35,7 +36,7 @@ const INTERRUPTED_EVENT: NewHistoryEntry = {
 };
 
 export interface AgentStepHandlerDeps {
-  /** Reads the session and its open calls outside the commit: only steps of this agent write them. */
+  /** Reads the session and its history outside the commit: only steps of this agent write them. */
   readonly database: Database;
   readonly toolStep: ToolStep;
   readonly modelStep: ModelStep;
@@ -54,7 +55,7 @@ interface StepPlan {
   /** A message of another kind than `interrupt` is delivered: the `interrupted` mark goes (KD-3). */
   readonly otherMessages: boolean;
   /** Open calls of the agent before the step. */
-  readonly open: readonly ToolCallRow[];
+  readonly open: readonly CallState[];
 }
 
 /** A stop or an interrupt closes the open calls in the prelude: they are never run. */
@@ -63,19 +64,16 @@ function closesOpen(plan: StepPlan): boolean {
 }
 
 /**
- * The entries of the prelude over the calls it closes (Flow 6, Flow 7, KD-3): for a stopped agent its
- * stop records — the ones `history` showed derived until now — then `continued`; on an `interrupt`
- * the closed calls, unless the stop records hold them, and the `interrupted` event.
+ * The events of the prelude, which follow the results of the calls it closes (Flow 6, Flow 7, KD-3):
+ * for a stopped agent its stop event — the one `history` showed derived until now — then `continued`;
+ * on an `interrupt` the `interrupted` event.
  */
-function preludeEntries(plan: StepPlan, closed: readonly ToolCallRow[]): NewHistoryEntry[] {
+function preludeEvents(plan: StepPlan): NewHistoryEntry[] {
   const stop = plan.continuation?.stop ?? null;
   const entries: NewHistoryEntry[] = [];
-  if (stop !== null) entries.push(...stopRecords(closed, stop.withParent));
+  if (stop !== null) entries.push(stopEvent(stop.withParent));
   if (plan.continuation !== undefined) entries.push(CONTINUED_EVENT);
-  if (plan.interrupted) {
-    if (stop === null) entries.push(...closed.map(toolResultEntry));
-    entries.push(INTERRUPTED_EVENT);
-  }
+  if (plan.interrupted) entries.push(INTERRUPTED_EVENT);
   return entries;
 }
 
@@ -87,8 +85,8 @@ function preludeEntries(plan: StepPlan, closed: readonly ToolCallRow[]): NewHist
  */
 function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrelude | undefined {
   const closes = closesOpen(plan);
-  const now = new Date();
-  const entries = preludeEntries(plan, closes ? plan.open.map((call) => closedView(call, now)) : []);
+  const events = preludeEvents(plan);
+  const entries = [...(closes ? interruptedResults(plan.open, new Date()) : []), ...events];
 
   const clearsMark = session.interrupted && plan.otherMessages;
   const patch: SessionPatch = {
@@ -100,7 +98,11 @@ function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrel
   return {
     entries,
     patch,
-    write: async (tx) => preludeEntries(plan, closes ? await closeOpen(tx, ctx.taskId) : []),
+    write: async (tx) => {
+      // The results are appended here, ahead of the events the caller appends.
+      if (closes) await callRecords.closeOpen(tx, ctx.taskId);
+      return events;
+    },
   };
 }
 
@@ -189,11 +191,14 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
       return abandoned(ctx, 'question write fenced or cancelled');
     }
 
+    // One read of the history for the whole step: from the last compaction on, where every open call
+    // and everything the model sees is. Nothing is cached between steps — any worker runs the next one.
+    const own: HistoryEntry[] = await history.visible(database, ctx.taskId);
     const plan: StepPlan = {
       continuation: continuationOf({ session, messages: ctx.messages }),
       interrupted: ctx.messages.some((message) => message.kind === interrupt),
       otherMessages: ctx.messages.some((message) => message.kind !== interrupt),
-      open: await toolCalls.open(database, ctx.taskId),
+      open: openCalls(own),
     };
     const prelude = preludeOf(ctx, session, plan);
 
@@ -202,14 +207,15 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
       return interruptWait(ctx, prelude, startedAt);
     }
 
-    const openCalls = closesOpen(plan) ? [] : plan.open;
-    if (openCalls.length > 0) {
-      return withPrelude(ctx, await deps.toolStep(ctx, session, openCalls), prelude);
+    const toRun = closesOpen(plan) ? [] : plan.open;
+    if (toRun.length > 0) {
+      return withPrelude(ctx, await deps.toolStep(ctx, session, toRun), prelude);
     }
+    // A compaction is written only here, with no call left open: `history.visible` relies on it.
     if (compactionDue(session, deps.compactAtTokens)) {
-      return deps.compactionStep(ctx, session, prelude);
+      return deps.compactionStep(ctx, session, own, prelude);
     }
-    return deps.modelStep(ctx, session, prelude);
+    return deps.modelStep(ctx, session, own, prelude);
   }
 
   return { type: AGENT_TASK_TYPE, inputSchema: AgentTaskInputSchema, step };

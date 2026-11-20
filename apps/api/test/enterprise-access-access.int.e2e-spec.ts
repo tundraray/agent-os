@@ -565,7 +565,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   инструменты и те же отказы, что главный чат". Design: DC-1, DC-2, DC-4 (the tool half); UC-1, and the target-existence and duplicate rows of UC-7.
   // Behavior: the administrator makes rights through the admin operations -> the employees' agents run (workers on, scripted model) -> the set offered
   //   to the model, the check at the call (direct, after confirmation, from `run_code`, from a workflow agent) and the changes made while agents run all
-  //   answer from the rights of that moment -> the fixture journal, `agent_tool_calls` / `agent_code_calls` rows and the audit.
+  //   answer from the rights of that moment -> the fixture journal, tool calls in `agent_messages` / `agent_code_calls` rows and the audit.
   // Steps (one story, literal expectations; the registry holds `backoffice` with the mutating tool `create_incident_note` and the read tools
   //   `get_order`, `search_orders`, `logs` with `aggregate_logs`, `get_trace`, `search_logs`, and `tracker` with `search_tickets`; shared-token servers,
   //   so no account of an employee is involved):
@@ -633,9 +633,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           target: string;
           reason: string;
         }>(
-          `SELECT s.owner_id AS owner, 'call' AS door, coalesce(c.server || '/' || c.tool, c.tool) AS target, c.refusal_reason AS reason
-             FROM app.agent_tool_calls c JOIN app.agent_sessions s USING (task_id)
-            WHERE s.owner_id = ANY($1::text[]) AND c.outcome = 'refused'
+          `SELECT s.owner_id AS owner, 'call' AS door,
+                  coalesce(c.content ->> 'server' || '/' || (c.content ->> 'tool'), c.content ->> 'tool') AS target,
+                  c.content ->> 'refusalReason' AS reason
+             FROM app.agent_messages c JOIN app.agent_sessions s USING (task_id)
+            WHERE s.owner_id = ANY($1::text[]) AND c.kind = 'tool_result' AND c.content ->> 'outcome' = 'refused'
            UNION ALL
            SELECT s.owner_id, 'code', k.server || '/' || k.tool, k.refusal_reason
              FROM app.agent_code_calls k JOIN app.agent_sessions s USING (task_id)

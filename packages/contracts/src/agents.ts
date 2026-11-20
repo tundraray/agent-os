@@ -21,6 +21,10 @@ export const HistoryEntryKindSchema = z.enum([
   'agent_message',
   'child_report',
   'model_answer',
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'run_attempt',
   'tool_result',
   'notice',
   'event',
@@ -39,7 +43,27 @@ export const HistoryEventSchema = z.enum([
 ]);
 export type HistoryEvent = z.infer<typeof HistoryEventSchema>;
 
-/** State of a tool call; the outcome is set exactly when the state is `done`. */
+/**
+ * Kinds that record the state of one tool call and are keyed by its `callId`. A call is the item of a
+ * `model_answer`; its state is which of these records exist (`foldCalls` of the agents package).
+ */
+export const CALL_RECORD_KINDS = [
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'run_attempt',
+  'tool_result',
+] as const satisfies readonly HistoryEntryKind[];
+
+/** Call records a call has at most one of; a `run_code` read run may have two `run_attempt` records. */
+export const SINGLE_CALL_RECORD_KINDS = [
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'tool_result',
+] as const satisfies readonly HistoryEntryKind[];
+
+/** State of a tool call, derived from its records; `done` is a call with a `tool_result`. */
 export const ToolCallStateSchema = z.enum([
   'requested',
   'awaiting_confirmation',

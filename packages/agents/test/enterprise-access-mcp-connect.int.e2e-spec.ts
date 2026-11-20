@@ -46,9 +46,9 @@ import {
   type ScriptedAnswer,
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
-import { agentMcpAccounts, agentSessions, agentToolCalls } from '@agent-os/db';
+import { agentMcpAccounts, agentSessions } from '@agent-os/db';
 import { FIXTURE_SHARED_TOKEN, createFixtureFiles, fixtureCallsOf, holdCall, readFixtureLog } from '@agent-os/mcp-fixture';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
@@ -59,6 +59,7 @@ import {
   type TestRecord,
   testRecord,
   toolOutputOf,
+  toolCallRowsOf,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
@@ -202,21 +203,15 @@ async function turn(harness: AgentsHarness, employee: Employee, text: string): P
 
 /** An agent's audit rows with the owner of their session: `<owner> <server>/<tool> <outcome>[ <reason>]`. */
 async function auditOf(harness: AgentsHarness, agentId: string): Promise<string[]> {
-  const rows = await harness.db
-    .select({
-      ownerId: agentSessions.ownerId,
-      tool: agentToolCalls.tool,
-      server: agentToolCalls.server,
-      outcome: agentToolCalls.outcome,
-      refusalReason: agentToolCalls.refusalReason,
-    })
-    .from(agentToolCalls)
-    .innerJoin(agentSessions, eq(agentSessions.taskId, agentToolCalls.taskId))
-    .where(eq(agentToolCalls.taskId, agentId))
-    .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
+  // The calls are folded from the agent's history; their owner is the owner of its session row.
+  const [session] = await harness.db
+    .select({ ownerId: agentSessions.ownerId })
+    .from(agentSessions)
+    .where(eq(agentSessions.taskId, agentId));
+  const rows = await toolCallRowsOf(harness.db, agentId);
   return rows.map((row) =>
     [
-      row.ownerId,
+      session?.ownerId,
       row.server === null ? row.tool : `${row.server}/${row.tool}`,
       row.outcome ?? '-',
       ...(row.refusalReason === null ? [] : [row.refusalReason]),
@@ -263,13 +258,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   пропадают у него со следующего вызова модели, а статус - «нужна аутентификация»". Design: DC-1, DC-2, DC-11; UC-1, UC-2 (calls), UC-4, UC-E4.
   // Behavior: an admin or employee operation on `Agents.mcp` -> the next model call of a running agent builds its set from the database ->
   //   the scripted model asks for tools -> `ToolRunner` asks the one access function, then opens ONE connection with the owner's token ->
-  //   fixture journal and `agent_tool_calls` rows.
+  //   fixture journal and tool calls in `agent_messages`.
   // Steps (one story, literal expectations; the registry is empty at the start; Аня and Борис are permitted `logs` and `backoffice` and Глеб
   //   nothing, server rights of the access gate double keyed by their ids; the definitions name `*` and also `ghost`, which is never registered; an agent of Аня is running):
   //   1. DC-11: startup passed with `ghost` in the definitions; `ghost` yields no tool in any set.
   //   2. AC-12.5 / AC-13.1: the admin registers `logs` (shared token); at Аня's next model call her set holds the `logs` tools, no restart.
   //      Аня's and Борис's agents each call one `logs` tool -> the journal holds two calls with the shared identity, and each
-  //      `agent_tool_calls` row belongs to its own agent and `ownerId`.
+  //      tool calls in `agent_messages` belongs to its own agent and `ownerId`.
   //   3. AC-14.2 / AC-14.3: `backoffice` (personal OAuth) is registered and the admin account is connected. Аня has no account: the set of her
   //      next model call has no `backoffice` tool and her agent keeps working (the scripted model finishes the turn). Аня and Борис connect;
   //      at their next model calls the sets hold the `backoffice` tools.

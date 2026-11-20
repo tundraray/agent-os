@@ -226,9 +226,13 @@ CREATE TABLE "app"."agent_messages" (
 	"kind" text NOT NULL,
 	"content" jsonb NOT NULL,
 	"model_call_id" uuid,
+	"call_id" text,
+	"finished_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "agent_messages_task_id_seq_pk" PRIMARY KEY("task_id","seq"),
-	CONSTRAINT "agent_messages_kind_check" CHECK ("app"."agent_messages"."kind" in ('task', 'user_message', 'agent_message', 'child_report', 'model_answer', 'tool_result', 'notice', 'event', 'compaction'))
+	CONSTRAINT "agent_messages_kind_check" CHECK ("app"."agent_messages"."kind" in ('task', 'user_message', 'agent_message', 'child_report', 'model_answer', 'tool_confirmation', 'tool_decision', 'tool_sent', 'run_attempt', 'tool_result', 'notice', 'event', 'compaction')),
+	CONSTRAINT "agent_messages_call_id_check" CHECK (("app"."agent_messages"."call_id" is not null) = ("app"."agent_messages"."kind" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'run_attempt', 'tool_result'))),
+	CONSTRAINT "agent_messages_finished_at_check" CHECK (("app"."agent_messages"."finished_at" is not null) = ("app"."agent_messages"."kind" = 'tool_result'))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."agent_model_providers" (
@@ -269,31 +273,6 @@ CREATE TABLE "app"."agent_sessions" (
 	"closed" boolean DEFAULT false NOT NULL,
 	"last_input_tokens" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "app"."agent_tool_calls" (
-	"task_id" uuid NOT NULL,
-	"call_id" text NOT NULL,
-	"answer_seq" integer NOT NULL,
-	"position" integer NOT NULL,
-	"tool" text NOT NULL,
-	"server" text,
-	"args" jsonb NOT NULL,
-	"state" text DEFAULT 'requested' NOT NULL,
-	"outcome" text,
-	"refusal_reason" text,
-	"refusal_detail" jsonb,
-	"result_text" text,
-	"child_task_id" uuid,
-	"started_at" timestamp with time zone,
-	"finished_at" timestamp with time zone,
-	"attempts" integer DEFAULT 0 NOT NULL,
-	"output" text,
-	CONSTRAINT "agent_tool_calls_task_id_call_id_pk" PRIMARY KEY("task_id","call_id"),
-	CONSTRAINT "agent_tool_calls_state_check" CHECK ("app"."agent_tool_calls"."state" in ('requested', 'awaiting_confirmation', 'sending', 'done')),
-	CONSTRAINT "agent_tool_calls_outcome_check" CHECK ("app"."agent_tool_calls"."outcome" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required')),
-	CONSTRAINT "agent_tool_calls_refusal_reason_check" CHECK ("app"."agent_tool_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared')),
-	CONSTRAINT "agent_tool_calls_done_check" CHECK (("app"."agent_tool_calls"."state" = 'done') = ("app"."agent_tool_calls"."outcome" is not null))
 );
 --> statement-breakpoint
 CREATE TABLE "app"."agent_tool_results" (
@@ -548,7 +527,7 @@ ALTER TABLE "app"."access_grants" ADD CONSTRAINT "access_grants_user_id_identity
 ALTER TABLE "app"."access_grants" ADD CONSTRAINT "access_grants_model_access_models_id_fk" FOREIGN KEY ("model") REFERENCES "app"."access_models"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."access_model_defaults" ADD CONSTRAINT "access_model_defaults_chat_model_access_models_id_fk" FOREIGN KEY ("chat_model") REFERENCES "app"."access_models"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."access_model_defaults" ADD CONSTRAINT "access_model_defaults_embedding_model_access_models_id_fk" FOREIGN KEY ("embedding_model") REFERENCES "app"."access_models"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "app"."agent_code_calls" ADD CONSTRAINT "agent_code_calls_run_call_fk" FOREIGN KEY ("task_id","run_call_id") REFERENCES "app"."agent_tool_calls"("task_id","call_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."agent_code_calls" ADD CONSTRAINT "agent_code_calls_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_knowledge_embedding" ADD CONSTRAINT "agent_knowledge_embedding_record_id_library_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "app"."library_records"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_knowledge_entities" ADD CONSTRAINT "agent_knowledge_entities_record_id_library_records_id_fk" FOREIGN KEY ("record_id") REFERENCES "app"."library_records"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_knowledge_questions" ADD CONSTRAINT "agent_knowledge_questions_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -560,8 +539,7 @@ ALTER TABLE "app"."agent_knowledge_vectors" ADD CONSTRAINT "agent_knowledge_vect
 ALTER TABLE "app"."agent_mcp_accounts" ADD CONSTRAINT "agent_mcp_accounts_server_agent_mcp_servers_name_fk" FOREIGN KEY ("server") REFERENCES "app"."agent_mcp_servers"("name") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_messages" ADD CONSTRAINT "agent_messages_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."agent_sessions" ADD CONSTRAINT "agent_sessions_task_id_runtime_tasks_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."runtime_tasks"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "app"."agent_tool_calls" ADD CONSTRAINT "agent_tool_calls_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "app"."agent_tool_results" ADD CONSTRAINT "agent_tool_results_call_fk" FOREIGN KEY ("task_id","call_id") REFERENCES "app"."agent_tool_calls"("task_id","call_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "app"."agent_tool_results" ADD CONSTRAINT "agent_tool_results_task_id_agent_sessions_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."chat_drafts" ADD CONSTRAINT "chat_drafts_conversation_id_agent_sessions_task_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "app"."agent_sessions"("task_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."identity_login_requests" ADD CONSTRAINT "identity_login_requests_provider_id_identity_providers_id_fk" FOREIGN KEY ("provider_id") REFERENCES "app"."identity_providers"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."identity_role_members" ADD CONSTRAINT "identity_role_members_role_id_identity_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "app"."identity_roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -586,6 +564,9 @@ CREATE INDEX "agent_knowledge_relations_to_entity_idx" ON "app"."agent_knowledge
 CREATE INDEX "agent_knowledge_runs_record_idx" ON "app"."agent_knowledge_runs" USING btree ("record_id");--> statement-breakpoint
 CREATE INDEX "agent_knowledge_runs_extract_task_idx" ON "app"."agent_knowledge_runs" USING btree ("extract_task_id") WHERE "app"."agent_knowledge_runs"."extract_task_id" is not null;--> statement-breakpoint
 CREATE INDEX "agent_knowledge_runs_last_extract_task_idx" ON "app"."agent_knowledge_runs" USING btree ("last_extract_task_id") WHERE "app"."agent_knowledge_runs"."last_extract_task_id" is not null;--> statement-breakpoint
+CREATE INDEX "agent_messages_call_idx" ON "app"."agent_messages" USING btree ("task_id","call_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "agent_messages_call_once_idx" ON "app"."agent_messages" USING btree ("task_id","call_id","kind") WHERE "app"."agent_messages"."kind" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'tool_result');--> statement-breakpoint
+CREATE INDEX "agent_messages_result_idx" ON "app"."agent_messages" USING btree ("task_id","finished_at") WHERE "app"."agent_messages"."kind" = 'tool_result';--> statement-breakpoint
 CREATE INDEX "agent_sessions_owner_record_idx" ON "app"."agent_sessions" USING btree ("owner_id","record_id");--> statement-breakpoint
 CREATE INDEX "agent_sessions_root_idx" ON "app"."agent_sessions" USING btree ("root_id");--> statement-breakpoint
 CREATE INDEX "agent_sessions_owner_page_idx" ON "app"."agent_sessions" USING btree ("owner_id","updated_at" DESC NULLS LAST,"task_id" DESC NULLS LAST) WHERE "app"."agent_sessions"."updated_at" IS NOT NULL;--> statement-breakpoint

@@ -21,7 +21,7 @@ import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
 import { type Session, sessionInputOf } from '../store/sessions.repository.js';
-import { toolCalls } from '../store/tool-calls.repository.js';
+import { callRecords } from '../store/call-records.repository.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
 import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry.js';
 
@@ -262,7 +262,7 @@ export interface ToolRunner {
    */
   planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
   /**
-   * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
+   * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
    * an `outside` tool in its input (code-execution KD-10).
@@ -660,19 +660,18 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
           kind: 'in_commit',
           commit: async (tx, effects) => {
             const startedAt = Date.now();
-            const intent = await toolCalls.markSending(tx, key);
-            const execution: ToolExecution | NotSent =
-              intent === undefined
-                ? { kind: 'not_sent', reason: 'not_awaiting' }
-                : await runInCommit(inCommit, prepared, tx, effects);
+            const execution: ToolExecution | NotSent = (await callRecords.markSent(tx, key))
+              ? await runInCommit(inCommit, prepared, tx, effects)
+              : { kind: 'not_sent', reason: 'not_awaiting' };
             logCall(ctx.logger, loggedCall(sent), execution, startedAt);
             return execution;
           },
         };
       }
       const startedAt = Date.now();
-      const intent = await ctx.guard((tx) => toolCalls.markSending(tx, key));
-      if (intent.outcome === 'fenced' || intent.value === undefined) {
+      // Committed before the request leaves: a step lost from here on finds the intent and never resends.
+      const intent = await ctx.guard((tx) => callRecords.markSent(tx, key));
+      if (intent.outcome === 'fenced' || !intent.value) {
         const notSent: NotSent = {
           kind: 'not_sent',
           reason: intent.outcome === 'fenced' ? 'fenced' : 'not_awaiting',

@@ -19,6 +19,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  CALL_RECORD_KINDS,
   DecisionStatusSchema,
   DeliveryStatusSchema,
   DraftStateSchema,
@@ -38,7 +39,6 @@ import {
   RecordKindSchema,
   SaveOwnRefusalSchema,
   TaskStatusSchema,
-  ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -71,7 +71,6 @@ const APP_TABLES = [
   'agent_messages',
   'agent_model_providers',
   'agent_sessions',
-  'agent_tool_calls',
   'agent_tool_results',
   'audit_events',
   'chat_drafts',
@@ -251,11 +250,7 @@ describe('E2E-2: migrating an empty database twice creates the app schema once w
           DeliveryStatusSchema.options,
         ),
         agent_messages_kind_check: sorted(HistoryEntryKindSchema.options),
-        agent_tool_calls_state_check: sorted(ToolCallStateSchema.options),
-        agent_tool_calls_outcome_check: sorted(ToolOutcomeSchema.options),
-        agent_tool_calls_refusal_reason_check: sorted(
-          ToolRefusalReasonSchema.options,
-        ),
+        agent_messages_call_id_check: sorted(CALL_RECORD_KINDS),
         agent_code_calls_outcome_check: sorted(ToolOutcomeSchema.options),
         agent_code_calls_refusal_reason_check: sorted(
           ToolRefusalReasonSchema.options,

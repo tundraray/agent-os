@@ -98,14 +98,14 @@ import {
 import { type LogFields, rememberSecret } from '@agent-os/common';
 import { KNOWLEDGE_LIMIT_TOKENS_MIN, type KnowledgeView, type WorkflowContent } from '@agent-os/contracts';
 import {
-  agentToolCalls,
+  agentMessages,
   createDatabase,
   type Database,
   type DatabaseConnection,
   libraryRecords,
 } from '@agent-os/db';
 import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
-import { eq } from 'drizzle-orm';
+import { eq, max } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { KnowledgeGraph } from '../src/knowledge/knowledge.repository.js';
@@ -301,7 +301,7 @@ function coordinatorReplies(turns: readonly CoordinatorTurn[]): ReplyFromInput {
   };
 }
 
-/** The first child an agent started (`agent_tool_calls.child_task_id`), once it exists. */
+/** The first child an agent started (`childTaskId` of a `start_agent` result), once it exists. */
 async function startedChild(harness: AgentsHarness, agentId: string): Promise<string> {
   const rows = await waitFor(
     () => toolCallRowsOf(harness.db, agentId),
@@ -376,25 +376,36 @@ function learningContent(recordId: string): WorkflowContent {
 }
 
 /**
- * Writes a done `search_logs` call with the outcome `empty` into the audit of a finished session, as the tool
- * step leaves one: the fixture answers every call with a structured result, so no real call is `empty`, and a
- * «searched — found nothing» record needs one (DC-11). The session must be finished: no step reads it again.
+ * Writes the `tool_result` of a `search_logs` call with the outcome `empty` into the history of a finished
+ * session, as the tool step leaves one: the fixture answers every call with a structured result, so no real
+ * call is `empty`, and a «searched — found nothing» record needs one (DC-11). The session must be finished:
+ * no step reads it again.
  */
 async function writeEmptyCall(db: Database, taskId: string, service: string): Promise<void> {
   const at = new Date();
-  await db.insert(agentToolCalls).values({
+  const callId = `empty-${randomUUID()}`;
+  const [last] = await db
+    .select({ seq: max(agentMessages.seq) })
+    .from(agentMessages)
+    .where(eq(agentMessages.taskId, taskId));
+  await db.insert(agentMessages).values({
     taskId,
-    callId: `empty-${randomUUID()}`,
-    answerSeq: 0,
-    position: 0,
-    tool: 'search_logs',
-    server: LOGS_SERVER,
-    args: { ...LOG_QUERY, service },
-    state: 'done',
-    outcome: 'empty',
-    resultText: '',
-    startedAt: at,
+    seq: (last?.seq ?? 0) + 1,
+    kind: 'tool_result',
+    callId,
     finishedAt: at,
+    content: {
+      callId,
+      tool: 'search_logs',
+      server: LOGS_SERVER,
+      args: { ...LOG_QUERY, service },
+      outcome: 'empty',
+      refusalReason: null,
+      refusalDetail: null,
+      text: '',
+      startedAt: at.toISOString(),
+      finishedAt: at.toISOString(),
+    },
   });
 }
 

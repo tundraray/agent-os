@@ -10,7 +10,7 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { agentToolCalls, type Database } from '@agent-os/db';
+import type { Database } from '@agent-os/db';
 import {
   isFinished,
   type Runtime,
@@ -18,16 +18,15 @@ import {
   type ResolveOutcome,
   type Task,
 } from '@agent-os/runtime';
-import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { AccessAudit, AccessGate } from '../access-gate.js';
 import { type AgentView, toAgentView } from '../agent-view.js';
 import { AgentsError } from '../errors.js';
-import type { HistoryEntry } from '../history/history.js';
+import { foldCalls } from '../history/call-state.js';
 import { messagePayload } from '../step/continuation.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
-import { history } from '../store/history.repository.js';
+import { history, type PageEntry } from '../store/history.repository.js';
 import type { RecordLibrary } from '../start/record-library.js';
 import {
   auditStartRefusal,
@@ -106,12 +105,25 @@ export interface AnswerToolCall extends ToolDisplay {
   readonly state: ToolCallState;
 }
 
+type StoredResult = Extract<PageEntry, { kind: 'tool_result' }>;
+
+/** A `tool_result` as `history` shows it: without the started child's id, kept for incident analysis only. */
+type ShownResult = Omit<StoredResult, 'content'> & {
+  readonly content: Omit<StoredResult['content'], 'childTaskId'>;
+};
+
+function shownResult(entry: StoredResult): ShownResult {
+  const { childTaskId: _childTaskId, ...content } = entry.content;
+  return { ...entry, content };
+}
+
 /**
- * An entry of `history` (design-agents.md, HistoryEntry): as stored, except that a `model_answer`
- * carries its tool calls, which the store keeps in `agent_tool_calls`.
+ * An entry of `history` (design-agents.md, HistoryEntry): as stored, except that each tool call of a
+ * `model_answer` carries its state, folded from the call's records, which are not entries of their own.
  */
 export type AgentHistoryEntry =
-  | Exclude<HistoryEntry, { kind: 'model_answer' }>
+  | Exclude<PageEntry, { kind: 'model_answer' | 'tool_result' }>
+  | ShownResult
   | {
       readonly seq: number;
       readonly kind: 'model_answer';
@@ -347,34 +359,29 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return toAgentView(task, session, await pendingInterrupt(task));
   }
 
-  /** The tool calls of the given answers, by answer and position. */
+  /** The tool calls of the given answers with their state, by answer and position. */
   async function callsOf(
     agentId: string,
-    answerSeqs: readonly number[],
+    answers: readonly Extract<PageEntry, { kind: 'model_answer' }>[],
     shownClosed: boolean,
   ): Promise<Map<number, AnswerToolCall[]>> {
     const byAnswer = new Map<number, AnswerToolCall[]>();
-    if (answerSeqs.length === 0) return byAnswer;
-    const rows = await database
-      .select()
-      .from(agentToolCalls)
-      .where(
-        and(eq(agentToolCalls.taskId, agentId), inArray(agentToolCalls.answerSeq, [...answerSeqs])),
-      )
-      .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
-    const displays = await registry.displays(rows);
-    for (const [index, row] of rows.entries()) {
-      const calls = byAnswer.get(row.answerSeq) ?? [];
-      calls.push({
-        callId: row.callId,
-        tool: row.tool,
-        server: row.server,
-        args: row.args,
+    const callIds = answers.flatMap((answer) => answer.content.toolCalls.map((call) => call.callId));
+    // Only the records of the page's calls are read, by `(task_id, call_id)`; the answers go first.
+    const calls = foldCalls([...answers, ...(await history.callRecords(database, agentId, callIds))]);
+    const displays = await registry.displays(calls);
+    for (const [index, call] of calls.entries()) {
+      const ofAnswer = byAnswer.get(call.answerSeq) ?? [];
+      ofAnswer.push({
+        callId: call.callId,
+        tool: call.tool,
+        server: call.server,
+        args: call.args,
         // A stopped agent's open calls are shown closed (Flow 7): the stop records follow them.
-        state: shownClosed ? ToolCallStateSchema.enum.done : ToolCallStateSchema.parse(row.state),
+        state: shownClosed ? ToolCallStateSchema.enum.done : call.state,
         ...displays[index],
       });
-      byAnswer.set(row.answerSeq, calls);
+      byAnswer.set(call.answerSeq, ofAnswer);
     }
     return byAnswer;
   }
@@ -571,14 +578,17 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           const derived = isStopped
             ? await stopEntries(database, { task, parent: await parentOf(task, ownerId) })
             : [];
-          const stored = await history.list(database, agentId, afterSeq, limit);
-          const answers = stored.filter((entry) => entry.kind === 'model_answer').map((entry) => entry.seq);
+          // The page is cut by the query after the call records are left out, so a page shorter than
+          // `limit` is the end of the history.
+          const stored = await history.page(database, agentId, afterSeq, limit);
+          const answers = stored.filter((entry) => entry.kind === 'model_answer');
           const calls = await callsOf(agentId, answers, isStopped);
-          const page: AgentHistoryEntry[] = stored.map((entry) =>
-            entry.kind === 'model_answer'
+          const page: AgentHistoryEntry[] = stored.map((entry) => {
+            if (entry.kind === 'tool_result') return shownResult(entry);
+            return entry.kind === 'model_answer'
               ? { ...entry, content: { text: entry.content.text, toolCalls: calls.get(entry.seq) ?? [] } }
-              : entry,
-          );
+              : entry;
+          });
           page.push(...derived.filter((entry) => entry.seq > afterSeq));
           return page.slice(0, limit);
         },

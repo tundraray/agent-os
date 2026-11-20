@@ -3,9 +3,10 @@ import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/
 import { z } from 'zod';
 
 import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate.js';
-import type { NewHistoryEntry } from '../store/history.repository.js';
+import { type CallState, requestedName } from '../history/call-state.js';
+import type { HistoryEntry } from '../history/history.js';
+import { type CallEnding, callRecords } from '../store/call-records.repository.js';
 import type { Session } from '../store/sessions.repository.js';
-import { type ToolCallEnding, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { toolResults } from '../store/tool-results.repository.js';
 import { callTargetOf, loggedArgsOf, type ToolRegistry } from '../tools/tool-registry.js';
 import {
@@ -15,8 +16,8 @@ import {
   type ToolRunner,
   toolDeniedEntry,
 } from '../tools/tool-runner.js';
-import { entriesOf, toolResultEntry } from './deliver.js';
-import { appendWithEvent, logStep, refusedResult, requestedName } from './model-step.js';
+import { entriesOf } from './deliver.js';
+import { appendWithEvent, logStep, refusedResult } from './model-step.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';
@@ -43,11 +44,12 @@ interface CallDecision {
 }
 
 /**
- * Closes one call inside the commit transaction and returns its closed row; `undefined` when the call
- * was closed already or was not sent. Closings run one after another, in call order, so an in-commit
- * call sees the calls before it closed (two `start_agent` calls of one answer count each other).
+ * Closes one call inside the commit transaction and returns its appended `tool_result`; `undefined`
+ * when the call was closed already or was not sent. Closings run one after another, in call order, so
+ * an in-commit call sees the results of the calls before it (two `start_agent` calls of one answer
+ * count each other).
  */
-type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<ToolCallRow | undefined>;
+type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<HistoryEntry | undefined>;
 
 export interface ToolStepDeps {
   readonly registry: Pick<ToolRegistry, 'checkTools'>;
@@ -60,12 +62,13 @@ export interface ToolStepDeps {
 
 /**
  * The tool step (KD-1): runs the open calls of the model's last answer, in answer order.
- * `openCalls` are `toolCalls.open` of the agent; a step that took an `interrupt` never comes here (T4.4).
+ * `openCalls` are the agent's calls without a result (`openCalls` of its history); a step that took an
+ * `interrupt` never comes here (T4.4).
  */
 export type ToolStep = (
   ctx: StepContext,
   session: Session,
-  openCalls: readonly ToolCallRow[],
+  openCalls: readonly CallState[],
 ) => Promise<StepResult>;
 
 function decisionOf(ctx: StepContext): CallDecision | undefined {
@@ -80,12 +83,8 @@ function decisionOf(ctx: StepContext): CallDecision | undefined {
   };
 }
 
-function close(call: ToolCallRow, ending: ToolCallEnding): Closing {
-  return (tx) => toolCalls.close(tx, { taskId: call.taskId, callId: call.callId }, ending);
-}
-
-/** How a call the runner ran ends in its row. */
-function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): ToolCallEnding {
+/** How a call the runner ran ends in its `tool_result`. */
+function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): CallEnding {
   if (execution.kind === 'refused') {
     return {
       outcome: refused,
@@ -105,79 +104,60 @@ function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): 
   };
 }
 
-/**
- * Closes a call the runner ran and, for a direct MCP call with a value, stores its full result in the
- * same transaction (code-execution KD-5). A refusal, an error, a transport failure and a built-in tool
- * carry no `fullResult` and get no row (DC-8).
- */
-async function closeExecuted(
-  tx: RuntimeTx,
-  call: ToolCallRow,
-  run: { readonly execution: ToolExecution; readonly startedAt: Date; readonly finishedAt: Date },
-): Promise<ToolCallRow | undefined> {
-  const { execution, startedAt, finishedAt } = run;
-  const closed = await toolCalls.close(
-    tx,
-    { taskId: call.taskId, callId: call.callId },
-    endingOf(execution, startedAt, finishedAt),
-  );
-  if (closed !== undefined && execution.kind === 'done' && execution.fullResult !== undefined) {
-    await toolResults.insert(tx, {
-      taskId: call.taskId,
-      callId: call.callId,
-      value: execution.fullResult.value,
-    });
-  }
-  return closed;
-}
-
-/** Runs the closings in call order and returns their `tool_result` entries. */
+/** Runs the closings in call order, each appending its `tool_result`, and returns the appended entries. */
 async function closeAll(
   closings: readonly Closing[],
   tx: RuntimeTx,
   effects: StepEffects,
-): Promise<NewHistoryEntry[]> {
-  const results: NewHistoryEntry[] = [];
+): Promise<HistoryEntry[]> {
+  const results: HistoryEntry[] = [];
   for (const closing of closings) {
     const closed = await closing(tx, effects);
-    if (closed !== undefined) results.push(toolResultEntry(closed));
+    if (closed !== undefined) results.push(closed);
   }
   return results;
 }
 
 /**
- * The commit of the step: the closings in call order, their `tool_result` entries, then the entries of
- * the messages the step delivers (KD-1: a message stands after the results of its answer), and
- * `agents.history_appended` with the last `seq`. `afterClosings` (`markAwaiting` of `await_decision`)
- * runs between the closings and the entries.
+ * The commit of the step: the closings in call order, each with its `tool_result`, then the
+ * `tool_confirmation` of the call an `await_decision` waits on (`awaited`), then the entries of the
+ * messages the step delivers (KD-1: a message stands after the results of its answer), and
+ * `agents.history_appended` with the last `seq`.
  */
 function commitOf(
   ctx: StepContext,
   closings: readonly Closing[],
-  afterClosings?: (tx: RuntimeTx) => Promise<void>,
+  awaited?: CallState,
 ): NonNullable<StepResult['commit']> {
   return async (tx, effects) => {
     const results = await closeAll(closings, tx, effects);
-    if (afterClosings !== undefined) await afterClosings(tx);
-    await appendWithEvent(tx, effects, ctx.taskId, [
-      ...results,
-      ...(await entriesOf(tx, ctx.messages)),
-    ]);
+    await appendWithEvent(
+      tx,
+      effects,
+      ctx.taskId,
+      [
+        ...(awaited === undefined
+          ? []
+          : [{ kind: 'tool_confirmation' as const, content: { callId: awaited.callId } }]),
+        ...(await entriesOf(tx, ctx.messages)),
+      ],
+      results,
+    );
   };
 }
 
 /**
  * Builds the tool step (design-agents.md: KD-1, KD-4, Flow 1, Flow 5, DC-5, DC-6, Invariants 1–3).
  *
- * - A call in `sending` has no result and is never sent again: `unknown` (DC-5, AC-01.2), also when the
- *   owner is disabled. It is `sending` only when a step was lost after the intent; an interrupt or a stop
- *   closes it elsewhere.
+ * - A call in `sending` — its `tool_sent` intent is written and it has no result — is never sent again:
+ *   `unknown` (DC-5, AC-01.2), also when the owner is disabled. A step finds it so only when a step was
+ *   lost after the intent; an interrupt or a stop closes it elsewhere.
  * - The gate is asked once before the calls: a disabled owner fails the agent with `owner_disabled` and no
  *   call starts; a pair it does not allow is `no_access` before any confirmation, with one audit record.
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
  *   a call needing confirmation without a decision ends the step with `await_decision`, the ready
- *   results committed and the call marked awaiting, the rest waiting; a rejected one is `rejected`; a
- *   confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
+ *   results committed and the call's `tool_confirmation` written, the rest waiting; a rejected one is
+ *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
  *   after it so its result is committed before anything else runs; an `outside` call runs under the
  *   step's signal; an `in_commit` call runs in the commit.
  * - The signal aborted around a call, or the intent fenced: `continue` without writes — the runtime
@@ -213,6 +193,39 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     });
     const decision = decisionOf(ctx);
     const closings: Closing[] = [];
+    const close = (call: CallState, ending: CallEnding): Closing =>
+      (tx) => callRecords.close(tx, ctx.taskId, call, ending);
+    /**
+     * Closes a call the runner ran and, for a direct MCP call with a value, stores its full result in the
+     * same transaction (code-execution KD-5). A refusal, an error, a transport failure and a built-in tool
+     * carry no `fullResult` and get no row (DC-8).
+     */
+    const closeExecuted = async (
+      tx: RuntimeTx,
+      call: CallState,
+      run: { readonly execution: ToolExecution; readonly startedAt: Date; readonly finishedAt: Date },
+      // The employee's decision on a confirmed call, written with the result unless the intent wrote it.
+      decided?: CallDecision,
+    ): Promise<HistoryEntry | undefined> => {
+      const { execution } = run;
+      const closed = await callRecords.close(
+        tx,
+        ctx.taskId,
+        call,
+        endingOf(execution, run.startedAt, run.finishedAt),
+        decided === undefined
+          ? undefined
+          : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
+      );
+      if (closed !== undefined && execution.kind === 'done' && execution.fullResult !== undefined) {
+        await toolResults.insert(tx, {
+          taskId: ctx.taskId,
+          callId: call.callId,
+          value: execution.fullResult.value,
+        });
+      }
+      return closed;
+    };
     const done = (): StepResult => {
       logStep(ctx, STEP_KIND, stepStartedAt, 'continue', { calls: closings.length });
       return { outcome: 'continue', commit: commitOf(ctx, closings) };
@@ -226,10 +239,10 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         model: session.model,
         refusal: { kind: 'refused', reason: 'owner_disabled' },
         audit,
-        writeEntries: async (tx, effects) => [
-          ...(await closeAll(closings, tx, effects)),
-          ...(await entriesOf(tx, ctx.messages)),
-        ],
+        writeEntries: async (tx, effects) => {
+          await closeAll(closings, tx, effects);
+          return entriesOf(tx, ctx.messages);
+        },
         patch: {},
       });
 
@@ -313,15 +326,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               outcome: 'await_decision',
               kind: request.kind,
               payload: request.payload,
-              commit: commitOf(ctx, closings, async (tx) => {
-                const moved = await toolCalls.markAwaiting(tx, {
-                  taskId: ctx.taskId,
-                  callId: call.callId,
-                });
-                if (moved === undefined) {
-                  throw new Error(`Call ${call.callId} of agent ${ctx.taskId} was no longer requested`);
-                }
-              }),
+              commit: commitOf(ctx, closings, call),
             };
           }
 
@@ -335,7 +340,9 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               reason: 'rejected',
               durationMs: 0,
             });
-            closings.push(close(call, { outcome: rejected }));
+            closings.push((tx) =>
+              callRecords.close(tx, ctx.taskId, call, { outcome: rejected }, { approved: false }),
+            );
             continue;
           }
 
@@ -357,18 +364,21 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               const callStartedAt = new Date();
               const execution = await commit(tx, effects);
               if (execution.kind === 'not_sent') return undefined;
-              return closeExecuted(tx, call, {
-                execution,
-                startedAt: callStartedAt,
-                finishedAt: new Date(),
-              });
+              return closeExecuted(
+                tx,
+                call,
+                { execution, startedAt: callStartedAt, finishedAt: new Date() },
+                callDecision,
+              );
             });
             return done();
           }
           const { execution } = send;
           if (execution.kind === 'aborted') return abandon('signal aborted during the confirmed call');
           const finishedAt = new Date();
-          closings.push((tx) => closeExecuted(tx, call, { execution, startedAt, finishedAt }));
+          closings.push((tx) =>
+            closeExecuted(tx, call, { execution, startedAt, finishedAt }, callDecision),
+          );
           // The confirmed result is committed before anything else of the answer runs (KD-1).
           return done();
         }

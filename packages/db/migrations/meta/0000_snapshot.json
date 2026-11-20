@@ -1,5 +1,5 @@
 {
-  "id": "f68c509f-326d-4aec-b4b2-b160aff1ec7d",
+  "id": "441483da-17e7-4a34-b787-91a89f2199ca",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -449,18 +449,16 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "agent_code_calls_run_call_fk": {
-          "name": "agent_code_calls_run_call_fk",
+        "agent_code_calls_task_id_agent_sessions_task_id_fk": {
+          "name": "agent_code_calls_task_id_agent_sessions_task_id_fk",
           "tableFrom": "agent_code_calls",
-          "tableTo": "agent_tool_calls",
+          "tableTo": "agent_sessions",
           "schemaTo": "app",
           "columnsFrom": [
-            "task_id",
-            "run_call_id"
+            "task_id"
           ],
           "columnsTo": [
-            "task_id",
-            "call_id"
+            "task_id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
@@ -1488,6 +1486,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "call_id": {
+          "name": "call_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1496,7 +1506,79 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "agent_messages_call_idx": {
+          "name": "agent_messages_call_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "call_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_messages_call_once_idx": {
+          "name": "agent_messages_call_once_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "call_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"app\".\"agent_messages\".\"kind\" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'tool_result')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_messages_result_idx": {
+          "name": "agent_messages_result_idx",
+          "columns": [
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "finished_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"app\".\"agent_messages\".\"kind\" = 'tool_result'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "agent_messages_task_id_agent_sessions_task_id_fk": {
           "name": "agent_messages_task_id_agent_sessions_task_id_fk",
@@ -1527,7 +1609,15 @@
       "checkConstraints": {
         "agent_messages_kind_check": {
           "name": "agent_messages_kind_check",
-          "value": "\"app\".\"agent_messages\".\"kind\" in ('task', 'user_message', 'agent_message', 'child_report', 'model_answer', 'tool_result', 'notice', 'event', 'compaction')"
+          "value": "\"app\".\"agent_messages\".\"kind\" in ('task', 'user_message', 'agent_message', 'child_report', 'model_answer', 'tool_confirmation', 'tool_decision', 'tool_sent', 'run_attempt', 'tool_result', 'notice', 'event', 'compaction')"
+        },
+        "agent_messages_call_id_check": {
+          "name": "agent_messages_call_id_check",
+          "value": "(\"app\".\"agent_messages\".\"call_id\" is not null) = (\"app\".\"agent_messages\".\"kind\" in ('tool_confirmation', 'tool_decision', 'tool_sent', 'run_attempt', 'tool_result'))"
+        },
+        "agent_messages_finished_at_check": {
+          "name": "agent_messages_finished_at_check",
+          "value": "(\"app\".\"agent_messages\".\"finished_at\" is not null) = (\"app\".\"agent_messages\".\"kind\" = 'tool_result')"
         }
       },
       "isRLSEnabled": false
@@ -1849,163 +1939,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "app.agent_tool_calls": {
-      "name": "agent_tool_calls",
-      "schema": "app",
-      "columns": {
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "call_id": {
-          "name": "call_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "answer_seq": {
-          "name": "answer_seq",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tool": {
-          "name": "tool",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "server": {
-          "name": "server",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "args": {
-          "name": "args",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'requested'"
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refusal_reason": {
-          "name": "refusal_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refusal_detail": {
-          "name": "refusal_detail",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "result_text": {
-          "name": "result_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "child_task_id": {
-          "name": "child_task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "output": {
-          "name": "output",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "agent_tool_calls_task_id_agent_sessions_task_id_fk": {
-          "name": "agent_tool_calls_task_id_agent_sessions_task_id_fk",
-          "tableFrom": "agent_tool_calls",
-          "tableTo": "agent_sessions",
-          "schemaTo": "app",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "task_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "agent_tool_calls_task_id_call_id_pk": {
-          "name": "agent_tool_calls_task_id_call_id_pk",
-          "columns": [
-            "task_id",
-            "call_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "agent_tool_calls_state_check": {
-          "name": "agent_tool_calls_state_check",
-          "value": "\"app\".\"agent_tool_calls\".\"state\" in ('requested', 'awaiting_confirmation', 'sending', 'done')"
-        },
-        "agent_tool_calls_outcome_check": {
-          "name": "agent_tool_calls_outcome_check",
-          "value": "\"app\".\"agent_tool_calls\".\"outcome\" in ('success', 'empty', 'tool_error', 'transport_failure', 'refused', 'rejected', 'interrupted', 'unknown', 'auth_required')"
-        },
-        "agent_tool_calls_refusal_reason_check": {
-          "name": "agent_tool_calls_refusal_reason_check",
-          "value": "\"app\".\"agent_tool_calls\".\"refusal_reason\" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'model_not_configured', 'provider_missing', 'provider_disabled', 'provider_key_missing', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared')"
-        },
-        "agent_tool_calls_done_check": {
-          "name": "agent_tool_calls_done_check",
-          "value": "(\"app\".\"agent_tool_calls\".\"state\" = 'done') = (\"app\".\"agent_tool_calls\".\"outcome\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "app.agent_tool_results": {
       "name": "agent_tool_results",
       "schema": "app",
@@ -2038,18 +1971,16 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "agent_tool_results_call_fk": {
-          "name": "agent_tool_results_call_fk",
+        "agent_tool_results_task_id_agent_sessions_task_id_fk": {
+          "name": "agent_tool_results_task_id_agent_sessions_task_id_fk",
           "tableFrom": "agent_tool_results",
-          "tableTo": "agent_tool_calls",
+          "tableTo": "agent_sessions",
           "schemaTo": "app",
           "columnsFrom": [
-            "task_id",
-            "call_id"
+            "task_id"
           ],
           "columnsTo": [
-            "task_id",
-            "call_id"
+            "task_id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"

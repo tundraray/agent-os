@@ -6,11 +6,17 @@ import {
   type RecordBody,
   type RecordHeader,
   type ResolvedRecord,
+  type ToolCallState,
+  type ToolOutcome,
+  type ToolRefusalReason,
 } from '@agent-os/contracts';
+import type { Database } from '@agent-os/db';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate.js';
 import type { EmbeddingClient } from './embeddings/embedding-client.js';
+import { foldCalls } from './history/call-state.js';
+import { history } from './store/history.repository.js';
 import type { EmbeddingInputType } from './providers/adapters.js';
 import type { ProviderReadiness } from './providers/provider-readiness.js';
 import type { AgentsProviders } from './providers/provider-registry.js';
@@ -35,6 +41,9 @@ import type {
  * reply may be computed from the call's input; a reply may be a provider error. A call of
  * `agents.completeText` (`purpose: 'complete_text'`) is answered by the separate text script.
  */
+
+/** The largest `seq` a history can have: `agent_messages.seq` is a Postgres `integer`. */
+const MAX_SEQ = 2_147_483_647;
 
 /** Usage of an answer that names none: below any compaction threshold of the tests. */
 export const DEFAULT_USAGE: CallUsage = {
@@ -713,4 +722,49 @@ export function createLibraryDouble(): LibraryDouble {
         .map((record) => headerOf(record, viewerId));
     },
   };
+}
+
+/** A tool call of an agent as the integration tests assert it: the call of its answer with what its records say. */
+export interface ToolCallRow {
+  readonly taskId: string;
+  readonly callId: string;
+  readonly answerSeq: number;
+  readonly position: number;
+  readonly tool: string;
+  readonly server: string | null;
+  readonly args: unknown;
+  readonly state: ToolCallState;
+  readonly outcome: ToolOutcome | null;
+  readonly refusalReason: ToolRefusalReason | null;
+  readonly refusalDetail: { readonly model: string } | null;
+  readonly resultText: string | null;
+  readonly childTaskId: string | null;
+  readonly startedAt: Date | null;
+  readonly finishedAt: Date | null;
+  /** How many attempts of a `run_code` read run started. */
+  readonly attempts: number;
+  readonly output: string | null;
+}
+
+/**
+ * The tool calls of an agent, by answer and position, folded from its whole history in `agent_messages`
+ * by the package's own `foldCalls` — one row per call, whatever was compacted since.
+ */
+export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
+  const entries = await history.through(db, agentId, MAX_SEQ);
+  return foldCalls(entries).map(({ sentAt, result, ...call }) => {
+    const startedAt = sentAt ?? result?.startedAt ?? null;
+    return {
+      taskId: agentId,
+      ...call,
+      outcome: result?.outcome ?? null,
+      refusalReason: result?.refusalReason ?? null,
+      refusalDetail: result?.refusalDetail ?? null,
+      resultText: result?.text ?? null,
+      childTaskId: result?.childTaskId ?? null,
+      startedAt: startedAt === null ? null : new Date(startedAt),
+      finishedAt: result?.finishedAt == null ? null : new Date(result.finishedAt),
+      output: result?.output ?? null,
+    };
+  });
 }

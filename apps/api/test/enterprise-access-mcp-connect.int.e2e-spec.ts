@@ -351,7 +351,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //       tokens; one scripted run of her chat calls `logs` (success) and `backoffice` (the account is lost on the call: `auth_required`).
   //   deletion
   //   10. AC-13.6: Аня, Борис and the administrator have accounts on `backoffice`; `DELETE /api/admin/mcp-servers/backoffice` -> 204; no row of
-  //       `agent_mcp_accounts` names `backoffice` any more; `agent_tool_calls` history rows of the server stay with the name as text.
+  //       `agent_mcp_accounts` names `backoffice` any more; tool calls in `agent_messages` history rows of the server stay with the name as text.
   //   secrets
   //   11. NFR-02 (UC-E3): the known values (the shared token before and after the administrator replaced it, the wrong token, every access
   //       and refresh token stored, the OAuth client secret if the fixture issued one, every `state` and authorization `code`, the session
@@ -1019,9 +1019,10 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         tool: string;
         outcome: string | null;
       }>(
-        `SELECT c.server, c.tool, c.outcome FROM app.agent_tool_calls c
+        `SELECT c.content ->> 'server' AS server, c.content ->> 'tool' AS tool, c.content ->> 'outcome' AS outcome
+           FROM app.agent_messages c
            JOIN app.agent_sessions s ON s.task_id = c.task_id
-          WHERE s.owner_id = $1 ORDER BY c.position`,
+          WHERE s.owner_id = $1 AND c.kind = 'tool_result' ORDER BY c.created_at, c.seq`,
         [anya.id],
       );
       expect(history.rows).toEqual([
@@ -1041,10 +1042,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       expect(tokenLabels.length).toBe(5);
       const agentRows = await pool.query<{ content: unknown }>(
         `SELECT to_jsonb(m) AS content FROM app.agent_messages m
-           JOIN app.agent_sessions s ON s.task_id = m.task_id WHERE s.owner_id = $1
-         UNION ALL
-         SELECT to_jsonb(c) FROM app.agent_tool_calls c
-           JOIN app.agent_sessions s ON s.task_id = c.task_id WHERE s.owner_id = $1`,
+           JOIN app.agent_sessions s ON s.task_id = m.task_id WHERE s.owner_id = $1`,
         [anya.id],
       );
       const audit = await pool.query<{ row: unknown }>(
