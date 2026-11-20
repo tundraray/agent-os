@@ -33,15 +33,16 @@ import {
   createAgentsHarness,
   historyLines,
   historyOf,
+  testRecord,
   toolCallRowsOf,
   waitFor,
 } from './support/agentsHarness.js';
 import {
   type ChildScenario,
   childScenario,
-  codeRunDefinition,
   type CodeRunChild,
   CodeRunChildren,
+  codeRunRecord,
   FIRST_NOTE,
   readRun,
   type ScenarioRun,
@@ -53,7 +54,7 @@ import { newUser } from './support/new-user.js';
 
 /** The run's servers of the scenario; the test's harness registers them at its fixture process. */
 const SERVERS = { logs: LOGS_SERVER, backoffice: BACKOFFICE_SERVER };
-const CODE_RUN_DEFINITION = codeRunDefinition(SERVERS);
+const CODE_RUN = codeRunRecord(SERVERS);
 const READ_RUN = readRun(SERVERS);
 const WRITE_RUN = writeRun(SERVERS);
 
@@ -86,7 +87,7 @@ async function openScene(holds: (latch: FileLatch) => FixtureFaultRule[]): Promi
     model: createScriptedModel(),
     fixture,
     access,
-    definitions: [CODE_RUN_DEFINITION],
+    root: testRecord(CODE_RUN.name, { servers: CODE_RUN.servers }),
     runtimeConfig: { workers: false },
   });
   return { ownerId, fixture, scenario: childScenario(access, SERVERS), children, control };
@@ -104,7 +105,6 @@ async function closeScene(scene: Scene): Promise<void> {
 async function startAgent(scene: Scene, run: ScenarioRun): Promise<string> {
   const { agentId } = await scene.control.sessions.start({
     ownerId: scene.ownerId,
-    definition: CODE_RUN_DEFINITION.name,
     prompt: run.task,
     description: run.description,
   });

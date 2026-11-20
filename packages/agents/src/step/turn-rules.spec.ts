@@ -1,13 +1,13 @@
 import { type EndOfTurn, type EndOfTurnInput, endOfTurn } from './turn-rules.js';
 
-// KD-2, «Конец хода», DC-3, DC-4 (final agent), Invariant 4, Notes 6: an answer without tool calls
-// waits, is refused with a notice, or completes with a report.
+// KD-2, «Конец хода», DC-3, DC-4 (final executor, design-runtime.md KD-5), Invariant 4, Notes 6: an
+// answer without tool calls waits, is refused with a notice, or completes with a report.
 const CHILD: EndOfTurnInput = {
   isRoot: false,
   unfinishedChildren: 0,
   pendingChildNotices: 0,
-  finalAgent: null,
-  finalAgentReport: null,
+  finalExecutor: null,
+  finalExecutorReport: null,
   text: 'my own answer',
 };
 
@@ -16,22 +16,22 @@ describe('the end of a turn waits, refuses or completes', () => {
     ['the root session waits', { ...CHILD, isRoot: true }, 'wait', null],
     ['a child with an unfinished child waits', { ...CHILD, unfinishedChildren: 1 }, 'wait', null],
     ['a child with an undelivered child notice waits', { ...CHILD, pendingChildNotices: 1 }, 'wait', null],
-    ['the final agent has no report yet: notice', { ...CHILD, finalAgent: 'answer' }, 'notice', null],
+    ['the final executor has no report yet: notice', { ...CHILD, finalExecutor: 'answer' }, 'notice', null],
     [
-      "the final agent's completed report becomes the session's report",
-      { ...CHILD, finalAgent: 'answer', finalAgentReport: { status: 'completed', text: 'final report' } },
+      "the final executor's completed report becomes the session's report",
+      { ...CHILD, finalExecutor: 'answer', finalExecutorReport: { status: 'completed', text: 'final report' } },
       'complete',
       'final report',
     ],
     [
-      "the final agent's failed report does not end the session",
-      { ...CHILD, finalAgent: 'answer', finalAgentReport: { status: 'failed', text: null } },
+      "the final executor's failed report does not end the session",
+      { ...CHILD, finalExecutor: 'answer', finalExecutorReport: { status: 'failed', text: null } },
       'notice',
       null,
     ],
     [
-      "the final agent's stopped report does not end the session",
-      { ...CHILD, finalAgent: 'answer', finalAgentReport: { status: 'stopped', text: null } },
+      "the final executor's stopped report does not end the session",
+      { ...CHILD, finalExecutor: 'answer', finalExecutorReport: { status: 'stopped', text: null } },
       'notice',
       null,
     ],

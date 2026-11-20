@@ -57,6 +57,7 @@ import {
 } from './support/access.js';
 import { chatApi, expectBody, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { pointBuiltinsAt } from './support/library.js';
 import {
   authorize,
   beginConnect,
@@ -83,7 +84,7 @@ import { databaseUrl } from './support/migrate.global-setup.js';
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 const PASSWORD = 'e2e-password-12';
-/** The app's default model: a model of the run, allowed to Аня (row 11a runs her chat). */
+/** The model of the built-in records (`pointBuiltinsAt`): a model of the run, allowed to Аня (row 11a runs her chat). */
 const DEFAULT_MODEL = runModel('mcp-connect-haiku');
 /** Row 8: a second `oauth` server at the same fixture path, waiting for its administrator's account. */
 const SECOND_OAUTH_SERVER = runName('backoffice-second');
@@ -153,6 +154,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   let adminRoleId: string | undefined;
   /** The sign-in settings as found, kept only when they had no public address and the test saved one. */
   let settingsWithoutPublicUrl: SignInSettings | undefined;
+  /** Gives the built-in records back their models; run in `afterAll` while the app is up. */
+  let restoreBuiltins: (() => Promise<void>) | undefined;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -196,6 +199,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     userIds.push(admin2.id);
     // Аня's chat (row 11a) runs on the run's model; Глеб never gets a right: no MCP server is his.
     await addModel(app, admin, { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES });
+    restoreBuiltins = await pointBuiltinsAt(app, admin, DEFAULT_MODEL);
     await grantTo(
       app,
       admin,
@@ -251,18 +255,22 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
 
   afterAll(async () => {
     try {
-      if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
-        await expectBody(
-          apiRequest(
-            harness.app,
-            admin,
-            'put',
-            '/admin/settings/sign-in',
-            settingsWithoutPublicUrl,
-          ),
-          200,
-          SignInSettingsSchema,
-        );
+      try {
+        await restoreBuiltins?.();
+      } finally {
+        if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
+          await expectBody(
+            apiRequest(
+              harness.app,
+              admin,
+              'put',
+              '/admin/settings/sign-in',
+              settingsWithoutPublicUrl,
+            ),
+            200,
+            SignInSettingsSchema,
+          );
+        }
       }
     } finally {
       await harness?.close();

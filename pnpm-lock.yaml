@@ -481,6 +481,9 @@ importers:
       '@agent-os/common':
         specifier: workspace:*
         version: link:../common
+      '@agent-os/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       zod:
         specifier: ^4.6.7
         version: 4.6.7

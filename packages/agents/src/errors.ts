@@ -1,15 +1,23 @@
-/** Error codes of agents operations (design-agents.md, Error handling). */
+import type { StartRefusedError } from '@agent-os/contracts';
+
+/** Error codes of agents operations (design-agents.md, Error handling; design-runtime.md, Error handling). */
 export type AgentsErrorCode =
   /** The agent does not exist or belongs to another owner. */
   | 'AGENT_NOT_FOUND'
-  /** No definition with this name is in the catalog. */
-  | 'UNKNOWN_DEFINITION'
   /** The new agent would be deeper than `AGENT_MAX_DEPTH`. */
   | 'DEPTH_LIMIT'
   /** A restart from scratch of an agent that is still working. */
   | 'NOT_FINISHED'
   /** Edited arguments of a confirmation the tool does not allow, or that fail its schema. */
-  | 'INVALID_ARGUMENTS';
+  | 'INVALID_ARGUMENTS'
+  /** The start procedure refused the record: `refusal` names the reason and the model. */
+  | 'START_REFUSED';
+
+/** Why a start was refused (409 `START_REFUSED`): `model` is the refused model on a model refusal, otherwise `null`. */
+export interface StartRefusalDetail {
+  readonly reason: StartRefusedError['reason'];
+  readonly model: string | null;
+}
 
 /**
  * An expected refusal of an agents operation; the caller maps `code` to its own answer. Codes of
@@ -17,12 +25,15 @@ export type AgentsErrorCode =
  */
 export class AgentsError extends Error {
   override readonly name = 'AgentsError';
+  /** Set for `START_REFUSED` only. */
+  readonly refusal: StartRefusalDetail | null;
 
   constructor(
     readonly code: AgentsErrorCode,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly refusal?: StartRefusalDetail },
   ) {
     super(message, options);
+    this.refusal = options?.refusal ?? null;
   }
 }

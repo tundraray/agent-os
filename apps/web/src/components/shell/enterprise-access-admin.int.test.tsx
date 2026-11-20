@@ -524,7 +524,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      no «Панель администратора» in the user menu; ZERO requests to `/api/admin/*` for the whole test ([support] request counter on
   //      `server.events` `request:start`, because the screen could swallow the unhandled-request error); «В чат» leaves without a chat restart
   //   2. an administrator (`isAdmin: true`) opens the user menu and chooses «Панель администратора»: «Сотрудники» is open, the sidebar shows «К чату»
-  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели» (no «Журнал», no pauses), the focus is on the `h1`
+  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели», «Агенты и workflow» (no «Журнал», no pauses), the focus is on the `h1`
   //      «Сотрудники», `document.title` is «Сотрудники — Панель — Agent OS»; the first request after `GET /api/auth/me` is `GET /api/admin/users`
   //   3. the administrator on `/admin/roles` presses «Создать роль» and creates one: `POST /api/admin/roles` answers `403 ADMIN_REQUIRED` - the SAME
   //      address now shows «Нет доступа», the ordinary sidebar, the menu without the panel item, no role row left on screen, and no further
@@ -535,7 +535,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: parseShellRoute, AdminGate, CurrentUser store, AppSidebar, UserMenu, MainView, ThreadNotice, apiRequest 403 handler, adminApi, MSW, next/navigation mock
   // @complexity: medium
-  it('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its five sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place', async () => {
+  it('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its six sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place', async () => {
     // Arrange: the conversation list both employees have, the panel's reads and the refused «Создать роль»
     let threadReads = 0;
     server.use(
@@ -574,10 +574,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     const employee = trackRequests(server);
     const employeeView = renderWithRuntime({ pathname: '/admin/roles' });
 
-    // Assert (row 1, «Право ещё не известно»): the table's Loading named «Роли», five skeleton rows in place of the sections
+    // Assert (row 1, «Право ещё не известно»): the table's Loading named «Роли», six skeleton rows in place of the sections
     expect(await screen.findByRole('status', { name: 'Роли' })).toBeInTheDocument();
     const unknownNav = screen.getByRole('navigation', { name: 'Панель' });
-    expect(unknownNav.querySelectorAll('[data-slot="sidebar-menu-skeleton"]')).toHaveLength(5);
+    expect(unknownNav.querySelectorAll('[data-slot="sidebar-menu-skeleton"]')).toHaveLength(6);
     expect(within(unknownNav).getAllByRole('link').map((link) => link.textContent)).toEqual(['К чату']);
     await waitFor(() => expect(employee.requests.map((request) => request.path)).toContain('/api/auth/me'));
     expect(employee.adminCount()).toBe(0);
@@ -628,7 +628,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(await screen.findByRole('button', { name: 'Меню пользователя Игорь Петров' }));
     await followLink(user, await screen.findByRole('menuitem', { name: 'Панель администратора' }), adminView.setPathname);
 
-    // Assert (row 2): «Сотрудники» with its h1 focused and its tab title; «К чату», «Панель» and exactly the five sections
+    // Assert (row 2): «Сотрудники» with its h1 focused and its tab title; «К чату», «Панель» and exactly the six sections
     const usersTitle = await screen.findByRole('heading', { level: 1, name: 'Сотрудники' });
     await waitFor(() => expect(usersTitle).toHaveFocus());
     await waitFor(() => expect(document.title).toBe('Сотрудники — Панель — Agent OS'));
@@ -641,6 +641,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       'Авторизация',
       'MCP-серверы',
       'Модели',
+      'Агенты и workflow',
     ]);
     expect(within(panelNav).getByRole('link', { name: 'Сотрудники' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('navigation', { name: 'История бесед' })).toBeNull();

@@ -22,8 +22,6 @@ import type { Executor } from '../common/executor.js';
 import { isUuid } from '../common/is-uuid.js';
 import { IdentityDirectory } from '../identity/identity-directory.js';
 import { identityError } from '../identity/identity.errors.js';
-import { roleSummaries } from '../identity/roles.repository.js';
-import { findUserById } from '../identity/users.repository.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import {
   RUNTIME,
@@ -32,6 +30,7 @@ import {
 } from '../runtime/runtime.tokens.js';
 import { accessError } from './access.errors.js';
 import {
+  allowedCatalogue,
   effectiveAccess,
   type EffectiveAccess,
   type GrantRow,
@@ -179,11 +178,7 @@ export class AccessService implements AccessGate {
   async myModels(ownerId: string): Promise<MyModels> {
     const startedAt = Date.now();
     const month = monthOf(this.clock.now());
-    const access = await this.accessOf(ownerId);
-    const allowed = new Set(access.allowedModels());
-    const catalogue = (await listModels(this.db)).filter((model) =>
-      allowed.has(model.id),
-    );
+    const { access, catalogue } = await this.allowedOf(ownerId);
     const spend =
       catalogue.length === 0
         ? new Map<string, number>()
@@ -209,6 +204,17 @@ export class AccessService implements AccessGate {
       durationMs: Date.now() - startedAt,
     });
     return { month, models };
+  }
+
+  /**
+   * The models allowed to the employee and in the catalogue, by name then id, quota aside (KD-4): the
+   * list of "My access", whose top model is "the first allowed" of the model choice.
+   */
+  async allowedModels(
+    ownerId: string,
+  ): Promise<{ id: string; name: string }[]> {
+    const { catalogue } = await this.allowedOf(ownerId);
+    return catalogue.map(({ id, name }) => ({ id, name }));
   }
 
   // ---------- Admin: catalogue ----------
@@ -372,6 +378,17 @@ export class AccessService implements AccessGate {
     return effectiveAccess(await this.grantRowsOf(ownerId));
   }
 
+  /** The employee's rights and the catalogue models they allow, in catalogue order. */
+  private async allowedOf(
+    ownerId: string,
+  ): Promise<{ access: EffectiveAccess; catalogue: CatalogModel[] }> {
+    const [access, models] = await Promise.all([
+      this.accessOf(ownerId),
+      listModels(this.db),
+    ]);
+    return { access, catalogue: allowedCatalogue(access, models) };
+  }
+
   /** The grants of the employee's roles and his own. */
   private async grantRowsOf(ownerId: string): Promise<GrantRow[]> {
     if (!isUuid(ownerId)) return [];
@@ -391,15 +408,17 @@ export class AccessService implements AccessGate {
 
   private async holderOr404(holder: GrantHolderQuery): Promise<void> {
     if ('roleId' in holder) {
-      const [role] = isUuid(holder.roleId)
-        ? await roleSummaries(this.db, holder.roleId)
-        : [];
-      if (role === undefined) throw identityError('ROLE_NOT_FOUND');
+      const { roleIds } = await this.identity.existing({
+        roleIds: [holder.roleId],
+        userIds: [],
+      });
+      if (roleIds.length === 0) throw identityError('ROLE_NOT_FOUND');
       return;
     }
-    const user = isUuid(holder.userId)
-      ? await findUserById(this.db, holder.userId)
-      : undefined;
-    if (user === undefined) throw identityError('USER_NOT_FOUND');
+    const { userIds } = await this.identity.existing({
+      roleIds: [],
+      userIds: [holder.userId],
+    });
+    if (userIds.length === 0) throw identityError('USER_NOT_FOUND');
   }
 }

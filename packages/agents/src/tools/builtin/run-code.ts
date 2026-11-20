@@ -13,9 +13,7 @@ import type { Database } from '@agent-os/db';
 
 import { OwnerDisabledError } from '../../access-gate.js';
 import type { CodeRunConfig } from '../../config.js';
-import { type DefinitionCatalog, definitionOf } from '../../definitions/catalog.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
-import { sessions } from '../../store/sessions.repository.js';
 import { toolCalls } from '../../store/tool-calls.repository.js';
 import { toolResults } from '../../store/tool-results.repository.js';
 import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool.js';
@@ -129,7 +127,6 @@ export function confirmedNamesOf(confirmed: unknown): ConfirmedNames {
 export interface RunCodeDeps {
   readonly codeRunner: CodeRunner;
   readonly database: Database;
-  readonly catalog: DefinitionCatalog;
   /**
    * Read at execution, not at build: the registry is built with `run_code` in it, so the tool takes
    * it lazily and the build has no cycle.
@@ -222,12 +219,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     return typeof result.output === 'string'
       ? { ...result, text, output: deps.maskSecrets(result.output) }
       : { ...result, text };
-  }
-
-  async function definitionOfCaller(caller: ToolCaller) {
-    const session = await sessions.get(deps.database, caller.agentId);
-    if (session === undefined) throw new Error(`Agent ${caller.agentId} has no session`);
-    return definitionOf(deps.catalog, session);
   }
 
   /** A script's tool call: counted, written open through `guard`, run by `callFromCode`, closed. */
@@ -404,7 +395,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         confirmedNames = confirmed.names;
       }
 
-      const definition = await definitionOfCaller(caller);
       const release = seats.take(caller.ownerId);
       if (release === undefined) {
         logger.warn('code run refused: the employee has no free run place', {
@@ -416,7 +406,8 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         const attempt = await attemptOf(input, logger);
         if (typeof attempt !== 'number') return attempt;
         const registry = deps.registry();
-        const snapshot = await registry.definitionMcpTools(definition);
+        // The servers of the caller's snapshot, not the library's record now (ADR-0011, ADR-0017).
+        const snapshot = await registry.definitionMcpTools(caller.snapshot);
         return await runScript(
           {
             caller,

@@ -41,9 +41,9 @@ function useLatest<V>(value: V) {
 /**
  * Runs reads so that only the newest one reaches the screen, and only while it is mounted. `apiRequest`
  * takes no signal, so a superseded request still completes; its answer is dropped here. Every failed
- * read is logged once, here.
+ * read is logged once, here, as `{label}: read failed`.
  */
-function useLatestRead() {
+function useLatestRead(label = 'admin') {
   const generation = useRef(0);
   useEffect(
     () => () => {
@@ -59,19 +59,22 @@ function useLatestRead() {
         if (mine === generation.current) apply({ ok: true, value });
       },
       (error: unknown) => {
-        logger.error('admin: read failed', describeApiError(error));
+        logger.error(`${label}: read failed`, describeApiError(error));
         if (mine === generation.current) apply({ ok: false, error });
       },
     );
-  }, []);
+  }, [label]);
 }
 
 type Snapshot<S> = S & { key: string; status: ResourceStatus; error: unknown };
 
-/** design-admin.md, KD-4: a screen's data read on open and on `key` change, read again after a change. */
-export function useResource<T>(load: () => Promise<T>, key: string): Resource<T> {
+/**
+ * design-admin.md, KD-4: a screen's data read on open and on `key` change, read again after a change.
+ * `label` names the screen's area in the log of a failed read (`library` for the library screens).
+ */
+export function useResource<T>(load: () => Promise<T>, key: string, label = 'admin'): Resource<T> {
   const loadRef = useLatest(load);
-  const run = useLatestRead();
+  const run = useLatestRead(label);
   const [snapshot, setSnapshot] = useState<Snapshot<{ data: T | undefined }>>({
     key,
     status: 'loading',

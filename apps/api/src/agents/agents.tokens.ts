@@ -1,8 +1,8 @@
 /** Providers of `AgentsModule`, the composition root of the agents package in `apps/api` (design-agents.md, C2 `api`). */
 
 /**
- * The assembled agents package (`Agents` of `@agent-os/agents`). Upper modules register their definitions
- * and tools on it in their providers' factories, before `AgentsModule.onModuleInit` calls `start()`.
+ * The assembled agents package (`Agents` of `@agent-os/agents`). Upper modules register their tools on
+ * it in their providers' factories, before `AgentsModule.onModuleInit` calls `start()`.
  */
 export const AGENTS = Symbol('AGENTS');
 

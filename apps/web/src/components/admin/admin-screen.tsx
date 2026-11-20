@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { focusShellTarget } from '@/lib/focus';
 import type { AdminPage, AdminSection } from '@/lib/shell-route';
+import { LibrarySection } from './library/library-section';
 import { CatalogSection } from './models/catalog-section';
 import { RolesSection } from './roles/roles-section';
 import { ServersSection } from './servers/servers-section';
@@ -33,5 +34,7 @@ export function AdminScreen({ section, page }: AdminScreenProps) {
       return <SignInSection page={page} />;
     case 'servers':
       return <ServersSection page={page} />;
+    case 'library':
+      return <LibrarySection page={page} />;
   }
 }

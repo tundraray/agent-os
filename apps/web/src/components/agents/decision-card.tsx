@@ -10,18 +10,22 @@ import {
 } from "@agent-os/contracts";
 import { CircleCheckIcon, CircleMinusIcon, CircleStopIcon, CircleXIcon, LoaderCircleIcon, type LucideIcon } from "lucide-react";
 import { z } from "zod";
+import { useStore } from "zustand";
 import { AgentStatus, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
 import { ValueRows } from "@/components/agents/value-rows";
+import { RecordLabel } from "@/components/library/record-label";
+import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { BRIEF_PARTS, formatTime } from "@/lib/agents/format";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
+import { taskTitleName } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
-import { agentPath } from "@/lib/shell-route";
+import { agentPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
-/** UXRD MC-19 (action) and MC-20 (brief), verbatim. */
+/** agent-platform UXRD MC-19 (action) and MC-20 (brief); the brief's title and outcomes — custom-agents MC-21. */
 const TEXT = {
   byChat: "Чат хочет выполнить:",
   args: "Аргументы",
@@ -31,14 +35,14 @@ const TEXT = {
   rejected: "Отклонено",
   cancelled: "Не понадобилось: агент остановлен",
   sendFailed: "Не удалось отправить решение. Попробуйте ещё раз.",
-  briefTitle: "Бриф",
+  briefTitle: "Задание",
   launch: "Запустить",
   edit: "Исправить",
   launchEdited: "Запустить с правками",
   cancelEdit: "Отмена",
   emptyQuestion: "Вопрос не может быть пустым",
-  briefApproved: "Бриф подтверждён",
-  briefRejected: "Бриф отклонён",
+  briefApproved: "Задание подтверждено",
+  briefRejected: "Задание отклонено",
 } as const;
 
 /** code-execution UXRD, MC-6–MC-9, verbatim. */
@@ -103,24 +107,18 @@ type BriefField = (typeof BRIEF_PARTS)[number]["key"];
 type BriefText = Record<BriefField, string>;
 
 /**
- * `start_workflow` arguments as the confirmation carries them: the template name travels inside `args`
- * and goes back unchanged with the three fields (design-web.md, Flow 2).
+ * `start_workflow` arguments as the confirmation carries them, and the brief card content of the same
+ * shape: the workflow record id travels inside `args` and goes back unchanged with the three fields
+ * (design-runtime.md, § Маршруты).
  */
-const BriefArgsSchema = z.object({
-  template: z.string().min(1),
-  question: z.string(),
-  boundaries: z.string(),
-  result: z.string(),
-});
-/** The brief card content (`title` and the three fields). */
-const BriefContentSchema = z.object({
-  title: z.string(),
+const BriefSchema = z.object({
+  workflow: z.string().min(1),
   question: z.string(),
   boundaries: z.string(),
   result: z.string(),
 });
 
-type Brief = { template: string; title: string; text: BriefText };
+type Brief = { workflow: string; text: BriefText };
 
 const pickText = (value: BriefText): BriefText => ({
   question: value.question,
@@ -134,8 +132,8 @@ const pickText = (value: BriefText): BriefText => ({
  */
 function briefOf(confirmation: Confirmation): Brief | null {
   if (confirmation.kind !== WORKFLOWS_BRIEF_CONFIRMATION) return null;
-  const args = BriefArgsSchema.safeParse(confirmation.args);
-  const content = BriefContentSchema.safeParse(confirmation.content);
+  const args = BriefSchema.safeParse(confirmation.args);
+  const content = BriefSchema.safeParse(confirmation.content);
   if (!args.success || !content.success) {
     logger.warn("[web-feed] brief confirmation outside the contract", {
       decisionId: confirmation.decisionId,
@@ -146,10 +144,9 @@ function briefOf(confirmation: Confirmation): Brief | null {
   }
   // A confirmed brief shows the text it ran with, edits included (decision-card.md, States).
   const ran =
-    confirmation.resolution?.approve === true ? BriefArgsSchema.safeParse(confirmation.resolution.args) : null;
+    confirmation.resolution?.approve === true ? BriefSchema.safeParse(confirmation.resolution.args) : null;
   return {
-    template: args.data.template,
-    title: content.data.title,
+    workflow: args.data.workflow,
     text: pickText(ran?.success === true ? ran.data : content.data),
   };
 }
@@ -203,12 +200,16 @@ function useBriefEdit() {
 
 type Pressed = "approve" | "reject" | "launch" | "launchEdited";
 
-/** A row button: in «Отправка» the pressed one shows the spinner in place of its label, at the same width. */
-function DecisionButton({
+/**
+ * A row button: in «Отправка» the pressed one shows the spinner in place of its label, at the same width.
+ * `unavailable` — the action is not allowed in this state (a stale draft's «Сохранить»).
+ */
+export function DecisionButton({
   label,
   variant,
   pressed,
   busy,
+  unavailable = false,
   onClick,
   buttonRef,
 }: {
@@ -216,6 +217,7 @@ function DecisionButton({
   variant: "default" | "outline" | "ghost";
   pressed: boolean;
   busy: boolean;
+  unavailable?: boolean;
   onClick: () => void;
   buttonRef?: (element: HTMLButtonElement | null) => void;
 }) {
@@ -225,7 +227,7 @@ function DecisionButton({
       type="button"
       size="sm"
       variant={variant}
-      disabled={busy}
+      disabled={busy || unavailable}
       aria-busy={pressed || undefined}
       onClick={onClick}
       className="relative pointer-coarse:h-11"
@@ -240,6 +242,24 @@ function DecisionButton({
   );
 }
 
+/**
+ * RN-05, MC-21: «Задание · {имя}» by the workflow of the brief's content (design-web.md, «Имя в заголовке
+ * задания»), «Задание» while the library list is not read or has no such record; under it the workflow's
+ * record label. The run's origin does not exist before the confirmation, so the live list is the source.
+ */
+function TaskHeading({ workflowId }: { workflowId: string }) {
+  const { libraryIndex } = useShellServices();
+  // Subscribes to the list: the title follows a read that lands after the card.
+  useStore(libraryIndex, (state) => state.records);
+  const live = libraryIndex.summaryOf(workflowId);
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <h3 className="text-base leading-6 font-semibold break-words">{taskTitleName(workflowId, libraryIndex)}</h3>
+      {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
+    </div>
+  );
+}
+
 export type DecisionCardProps = {
   confirmation: Confirmation;
   /** The conversation's root asks: «Чат хочет выполнить:» (MC-19). */
@@ -249,8 +269,8 @@ export type DecisionCardProps = {
 };
 
 /**
- * The one decision window of KD-5 (decision-card.md, UXRD CV-03, MC-19, MC-20): a mutating action of an
- * agent or the chat, or a workflow brief. «Отправка» lasts until the re-read; the outcome comes from the
+ * The one decision window of KD-5 (decision-card.md, UXRD CV-03, MC-19, MC-20, MC-21): a mutating action
+ * of an agent or the chat, or a workflow task (the brief). «Отправка» lasts until the re-read; the outcome comes from the
  * `Confirmation` status, so a decision taken in another copy shows its outcome with no error line.
  * The container is focusable (`tabIndex` −1) and found by `data-decision-id` («К запросу»).
  */
@@ -304,7 +324,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   }
 
   const briefArgs = (text: BriefText): Record<string, unknown> | undefined =>
-    brief === null ? undefined : { template: brief.template, ...pickText(text) };
+    brief === null ? undefined : { workflow: brief.workflow, ...pickText(text) };
 
   const startEdit = (): void => {
     if (brief === null) return;
@@ -369,22 +389,32 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   if (brief === null) {
     body = (
       <>
-        <p className="text-foreground text-sm leading-5">
-          {byChat ? (
-            TEXT.byChat
-          ) : (
-            <>
-              {"Агент «"}
-              <Link
-                href={agentPath(confirmation.agentId)}
-                className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
-              >
-                {confirmation.description}
-              </Link>
-              {"» хочет выполнить:"}
-            </>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="text-foreground text-sm leading-5">
+            {byChat ? (
+              TEXT.byChat
+            ) : (
+              <>
+                {"Агент «"}
+                <Link
+                  href={agentPath(confirmation.agentId)}
+                  className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
+                >
+                  {confirmation.description}
+                </Link>
+                {"» хочет выполнить:"}
+              </>
+            )}
+          </p>
+          {/* RN-04: the asking agent's record; the chat's own request has none. */}
+          {!byChat && confirmation.origin !== null && (
+            <RecordLabel
+              origin={confirmation.origin}
+              variant="under"
+              href={recordPath(confirmation.origin.recordId)}
+            />
           )}
-        </p>
+        </div>
         <div className="flex min-w-0 flex-col">
           <p className="flex min-w-0 items-baseline gap-1.5">
             <span className="text-foreground min-w-0 text-sm leading-5 font-medium break-words">{toolName}</span>
@@ -433,7 +463,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
     const errorId = `${fieldId}-question-error`;
     body = (
       <>
-        <h3 className="text-base leading-6 font-semibold break-words">{`${TEXT.briefTitle} · ${brief.title}`}</h3>
+        <TaskHeading workflowId={brief.workflow} />
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
           {BRIEF_PARTS.map(({ key: field, label }) => {
             const id = `${fieldId}-${field}`;
@@ -479,7 +509,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   } else {
     body = (
       <>
-        <h3 className="text-base leading-6 font-semibold break-words">{`${TEXT.briefTitle} · ${brief.title}`}</h3>
+        <TaskHeading workflowId={brief.workflow} />
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
           {BRIEF_PARTS.map(({ key: field, label }) => (
             <div key={field} className="contents">

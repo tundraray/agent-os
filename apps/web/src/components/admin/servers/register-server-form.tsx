@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { MCP_SERVER_NAME_MAX_LENGTH, type McpServerMode, type RegisterMcpServerBody } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { adminApi } from '@/lib/admin/admin-api';
 import { registerFailed } from '@/lib/admin/admin-texts';
@@ -9,7 +10,7 @@ import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminRadioField, AdminTextField, FORM_TEXT, type AdminRadioOption } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE, sectionParent } from '../admin-header';
 import { SecretField } from '../secret-field';
 import { SERVER_MODE_LABEL, SERVER_TEXT } from './server-list';
 
@@ -72,7 +73,7 @@ export function RegisterServerForm() {
 
   return (
     <>
-      <AdminPageHeader title={TEXT.title} parent="servers" />
+      <PageHeader area={PANEL_TITLE} title={TEXT.title} parent={sectionParent('servers')} />
       <AdminForm
         variant="page"
         initialValues={INITIAL}

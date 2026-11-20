@@ -9,10 +9,10 @@ import { WORKFLOWS } from './workflows.tokens.js';
 
 /**
  * Composition root of the workflows package in `apps/api` (composition-root.md, design-workflows.md
- * «Сборка»). The registration runs in the `WORKFLOWS` factory: Nest builds every provider before any
- * `onModuleInit`, and `AgentsModule.onModuleInit` calls `agents.start()`, which seals the catalog. The
- * package has no background work, so the module has no lifecycle hooks; a bad template throws from the
- * factory and stops the start (DC-1).
+ * «Сборка», design-runtime.md KD-5). The factory registers `start_workflow`, a tool of the conversation
+ * root: Nest builds every provider before any `onModuleInit`, and `AgentsModule.onModuleInit` calls
+ * `agents.start()`, which closes the tool registration. Workflows themselves are library records read at
+ * each start; the package has no background work, so the module has no lifecycle hooks.
  */
 @Module({
   imports: [AgentsModule],

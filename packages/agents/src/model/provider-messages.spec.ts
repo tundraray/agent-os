@@ -7,12 +7,12 @@ import { buildProviderMessages, envelope, type ProviderMessagesInput } from './p
 
 const AT = new Date('2026-11-14T10:00:00.000Z');
 
-const task = (seq: number, text: string): HistoryEntry => ({ seq, kind: 'task', createdAt: AT, content: { text } });
+const task = (seq: number, text: string): HistoryEntry => ({ seq, kind: 'task', createdAt: AT, content: { text, record: null } });
 const userMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
   kind: 'user_message',
   createdAt: AT,
-  content: { text },
+  content: { text, record: null },
 });
 const agentMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
@@ -37,6 +37,7 @@ const result = (seq: number, callId: string, text: string): HistoryEntry => ({
     args: {},
     outcome: 'success',
     refusalReason: null,
+    refusalDetail: null,
     text,
     startedAt: null,
     finishedAt: null,

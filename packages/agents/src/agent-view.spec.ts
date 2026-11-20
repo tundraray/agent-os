@@ -2,8 +2,8 @@ import type { AgentStatus } from '@agent-os/contracts';
 import { type AgentStatusInput, agentStatus } from './agent-view.js';
 
 // State Transitions (MC-3 labels) and KD-3: «Прерван» is visible right after the command, from the
-// pending `interrupt` without text, and after the step took it, from the session's mark.
-const PLAIN = { pendingInterruptWithoutText: false, sessionInterrupted: false };
+// pending `interrupt`, and after the step took it, from the session's mark.
+const PLAIN = { pendingInterrupt: false, sessionInterrupted: false };
 
 describe('agent status is derived from the task status and the session mark', () => {
   it.each<[string, AgentStatusInput, AgentStatus]>([
@@ -16,13 +16,13 @@ describe('agent status is derived from the task status and the session mark', ()
       'awaiting_confirmation',
     ],
     [
-      'queued with a pending interrupt without text is interrupted',
-      { ...PLAIN, taskStatus: 'queued', waitReason: null, pendingInterruptWithoutText: true },
+      'queued with a pending interrupt is interrupted',
+      { ...PLAIN, taskStatus: 'queued', waitReason: null, pendingInterrupt: true },
       'interrupted',
     ],
     [
-      'running with a pending interrupt without text is interrupted',
-      { ...PLAIN, taskStatus: 'running', waitReason: null, pendingInterruptWithoutText: true },
+      'running with a pending interrupt is interrupted',
+      { ...PLAIN, taskStatus: 'running', waitReason: null, pendingInterrupt: true },
       'interrupted',
     ],
     [

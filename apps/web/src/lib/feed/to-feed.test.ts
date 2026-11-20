@@ -9,6 +9,8 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
+  WORKFLOW_RECORD_ID,
+  workflowOrigin,
 } from '@/test/fixtures';
 
 import {
@@ -87,7 +89,6 @@ const sentLocally: OptimisticEntry = {
   place: 'feed',
   messageId: 'm1',
   first: false,
-  interrupt: false,
   createdAt: fixtureTime(9),
 };
 
@@ -146,8 +147,8 @@ describe('toFeed', () => {
         agents: [
           agentNode({
             agentId: 'w1',
-            definition: 'research',
-            template: { name: 'research', title: 'Исследование' },
+            name: 'Исследование',
+            origin: workflowOrigin(),
             createdAt: fixtureTime(2.5),
           }),
         ],
@@ -228,10 +229,10 @@ describe('toFeed', () => {
           decisionId: 'brief',
           agentId: 'root',
           kind: 'workflows.brief',
-          args: { template: 'research', question: 'Исходный', boundaries: '', result: '' },
-          content: { title: 'Исследование', question: 'Исходный', boundaries: '', result: '' },
+          args: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
+          content: { workflow: WORKFLOW_RECORD_ID, question: 'Исходный', boundaries: '', result: '' },
           status: 'resolved',
-          resolution: { approve: true, args: { template: 'research', question: 'Исправленный', boundaries: '', result: '' } },
+          resolution: { approve: true, args: { workflow: WORKFLOW_RECORD_ID, question: 'Исправленный', boundaries: '', result: '' } },
           createdAt: fixtureTime(2.2),
           resolvedAt: fixtureTime(2.4),
         }),
@@ -239,8 +240,8 @@ describe('toFeed', () => {
       agents: [
         agentNode({
           agentId: 'w1',
-          definition: 'research',
-          template: { name: 'research', title: 'Исследование' },
+          name: 'Исследование',
+          origin: workflowOrigin(),
           createdAt: fixtureTime(2.5),
         }),
       ],

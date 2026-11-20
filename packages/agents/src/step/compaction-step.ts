@@ -3,11 +3,15 @@ import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate.js';
-import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { ModelClient } from '../model/model-client.js';
-import { buildProviderMessages } from '../model/provider-messages.js';
+import { snapshotDefinition } from '../start/snapshot-definition.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
-import { type Session, type SessionPatch, sessions } from '../store/sessions.repository.js';
+import {
+  type Session,
+  type SessionPatch,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { entriesOf, rootTurnReset } from './deliver.js';
 import {
@@ -18,6 +22,7 @@ import {
   logStep,
   modelErrorMessage,
   previewEntries,
+  providerMessagesOf,
   readSessionHistory,
   refusedResult,
   type StepPrelude,
@@ -44,7 +49,6 @@ export function compactionDue(session: Pick<Session, 'lastInputTokens'>, compact
 export interface CompactionStepDeps {
   /** Reads the history outside the commit: only steps of this agent write it, one at a time. */
   readonly database: Database;
-  readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
   /** Gets the `access_denied` record of a refused model call (KD-6). */
@@ -66,20 +70,22 @@ export type CompactionStep = (
  * the model sees the summary and what follows it, the employee reads the whole history.
  */
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
-  const { database, catalog, registry, modelClient, audit } = deps;
+  const { database, registry, modelClient, audit } = deps;
 
   return async function compactionStep(ctx, session, prelude) {
     const startedAt = Date.now();
-    const definition = definitionOf(catalog, session);
+    const { snapshot } = sessionInputOf(ctx.input);
+    const definition = snapshotDefinition(snapshot);
     const delivered = await entriesOf(database, ctx.messages);
     const view = await readSessionHistory(database, session);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
     // History holds tool calls, and the provider takes them only with the tools defined.
     const sessionTools = await registry.sessionTools({
-      definition,
-      limits: session.limits,
+      snapshot,
       ownerId: session.ownerId,
+      agentId: ctx.taskId,
+      root: ctx.parentId === null,
     });
 
     const result = await callUnlessAborted(ctx, () =>
@@ -90,14 +96,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         agentName: definition.name,
         model: session.model,
         instructions: definition.prompt,
-        messages: [
-          ...buildProviderMessages({
-            ...(view.forkPrefix === undefined ? {} : { forkPrefix: view.forkPrefix }),
-            entries: [...view.entries, ...shown],
-            calls: view.calls,
-          }),
-          { role: 'user', content: COMPACTION_REQUEST },
-        ],
+        messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
         tools: sessionTools,
         // The summary is not an answer the employee reads: its parts do not go to the hook.
         streamsText: false,

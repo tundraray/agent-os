@@ -1,5 +1,10 @@
 import { createAgents, parseAgentsConfig } from '@agent-os/agents';
-import { createAccessGateDouble, createScriptedModel, type ScriptedModel } from '@agent-os/agents/testing';
+import {
+  createAccessGateDouble,
+  createLibraryDouble,
+  createScriptedModel,
+  type ScriptedModel,
+} from '@agent-os/agents/testing';
 import { consoleSink, createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
 import { createDatabase } from '@agent-os/db';
@@ -8,7 +13,6 @@ import {
   CHILD_MODEL,
   CHILD_SCENARIO_ENV,
   type ChildScenario,
-  codeRunDefinition,
   readRun,
   type ScenarioServers,
   writeRun,
@@ -93,8 +97,9 @@ async function main(): Promise<void> {
     // Every owner of these tests is active; the audit hook is not asserted in the child.
     access: createAccessGateDouble({ servers: scenario.access, prices: CHILD_MODEL_PRICES }),
     audit: async () => {},
+    // Steps read the snapshot of their run from the task input; only the test process starts runs.
+    library: createLibraryDouble(),
   });
-  agents.definitions.register(codeRunDefinition(scenario.servers));
   await agents.start();
 
   process.on('message', (message: HarnessMessage) => {

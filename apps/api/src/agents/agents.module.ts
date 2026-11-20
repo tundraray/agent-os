@@ -22,6 +22,8 @@ import { AccessModule } from '../access/access.module.js';
 import { AccessService } from '../access/access.service.js';
 import { AuditLog } from '../audit/audit-log.js';
 import { IdentityModule } from '../identity/identity.module.js';
+import { LibraryModule } from '../library/library.module.js';
+import { LibraryService } from '../library/library.service.js';
 import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
 import { RuntimeModule } from '../runtime/runtime.module.js';
 import {
@@ -63,19 +65,20 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
  * design-chat.md «Сборка»): reads the settings and assembles the package on the
  * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` (the one token tests replace) and
- * the `DeltaPublisher` as the `onTextDelta` hook, `AccessService` as the `AccessGate` port and `AuditLog` behind
- * the `audit` hook (design-access.md KD-1, KD-6). The `agent` handler and the `task.failed` consumer are
- * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own
- * factories injecting `AGENTS`.
+ * the `DeltaPublisher` as the `onTextDelta` hook, `AccessService` as the `AccessGate` port, `AuditLog` behind
+ * the `audit` hook (design-access.md KD-1, KD-6) and `LibraryService` as the `RecordLibrary` port
+ * (design-runtime.md, port-module-split.md: `LibraryModule` does not import this module). The `agent`
+ * handler and the `task.failed` consumer are registered in the `AGENTS` factory; upper modules register
+ * their tools in their own factories injecting `AGENTS`.
  *
- * Phases: `onModuleInit` — `start()` (catalog check), before `RuntimeModule` starts the
+ * Phases: `onModuleInit` — `start()` (closes the tool registration), before `RuntimeModule` starts the
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
  *
  * Its controllers are the HTTP layer of `Agents.mcp`: an employee's MCP accounts and the admin's registry.
  */
 @Module({
-  imports: [RuntimeModule, IdentityModule, AccessModule],
+  imports: [RuntimeModule, IdentityModule, AccessModule, LibraryModule],
   controllers: [McpConnectionsController, AdminMcpServersController],
   providers: [
     {
@@ -124,6 +127,7 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
         deltaPublisher: DeltaPublisher,
         access: AccessService,
         auditLog: AuditLog,
+        library: LibraryService,
         appLogger: Logger,
       ): Agents =>
         createAgents({
@@ -139,6 +143,7 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
             auditLog,
             appLogger.child({ service: 'agents.audit' }),
           ),
+          library,
           onTextDelta: (delta) => deltaPublisher.publish(delta),
         }),
       inject: [
@@ -149,11 +154,12 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
         DELTA_PUBLISHER,
         AccessService,
         AuditLog,
+        LibraryService,
         APP_LOGGER,
       ],
     },
   ],
-  exports: [AGENTS],
+  exports: [AGENTS, AGENTS_SETTINGS],
 })
 export class AgentsModule implements OnModuleInit, OnApplicationShutdown {
   constructor(@Inject(AGENTS) private readonly agents: Agents) {}

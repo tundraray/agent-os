@@ -1,4 +1,11 @@
-import type { AgentNode, AwaitingCount, McpConnection, MyModels, SpendResponse } from '@agent-os/contracts';
+import type {
+  AgentNode,
+  AwaitingCount,
+  McpConnection,
+  MyModels,
+  RecordSummary,
+  SpendResponse,
+} from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { apiBaseUrl } from '@/lib/config';
@@ -9,7 +16,9 @@ import { currentUser } from './fixtures';
  * the probe of a closed live stream), the «Агенты» counter (NV-01), the month's spend (SP-01), the
  * employee's MCP connections behind the menu's «нужна аутентификация» dot (UM-01), the agents of a
  * thread in the delete dialog (MC-26) and the employee's models, read by «Мой доступ» (MA-02) and the
- * quota failure line (QS-01). A test that cares overrides them with `server.use(...)`.
+ * quota failure line (QS-01), and the library list behind the record labels of the conversation, the
+ * agent page and the agent list (custom-agents design-web.md, KD-2). A test that cares overrides them
+ * with `server.use(...)`.
  */
 const shellDefaults = [
   http.get(`${apiBaseUrl}/api/auth/me`, () => HttpResponse.json(currentUser())),
@@ -22,6 +31,7 @@ const shellDefaults = [
   http.get(`${apiBaseUrl}/api/access/models`, () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),
+  http.get(`${apiBaseUrl}/api/library`, () => HttpResponse.json([] satisfies RecordSummary[])),
 ];
 
 /**

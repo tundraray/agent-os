@@ -15,8 +15,8 @@ import { UNTITLED_THREAD_TITLE } from './thread-history-item';
  * TH-06 → «Беседа не найдена — Agent OS»; TH-07 → «Agent OS»; the open thread → «{Название} — Agent OS»
  * or «Новая беседа — Agent OS». `/agents` → «Агенты — Agent OS» (MC-4); an agent page → «{название} —
  * Agent OS» (MC-8), «Агент не найден — Agent OS» (MC-15), «Agent OS» on a failed read. `/account` →
- * «Мой доступ — Agent OS» (enterprise-access MC-7). A panel address is titled by its own screen
- * (`AdminPageHeader`, `AdminGate`), which knows the record's name. While the URL thread or agent is still
+ * «Мой доступ — Agent OS» (enterprise-access MC-7). A panel or library address is titled by its own screen
+ * (`PageHeader`, `AdminGate`), which knows the record's name (custom-agents MC-1, MC-7, MC-18). While the URL thread or agent is still
  * resolving the previous title stays. Renders nothing; on an agent page it reads the agent's store from
  * `AgentFeedProvider`.
  */
@@ -31,7 +31,7 @@ export function DocumentTitle() {
   const title = ((): string | undefined => {
     if (route.kind === 'agents') return pageTitle('Агенты');
     if (route.kind === 'account') return pageTitle('Мой доступ');
-    if (route.kind === 'admin') return undefined;
+    if (route.kind === 'admin' || route.kind === 'library') return undefined;
     if (route.kind === 'agent') {
       if (agentLoadError === 'not_found') return pageTitle('Агент не найден');
       if (agentLoadError !== null) return APP_NAME;

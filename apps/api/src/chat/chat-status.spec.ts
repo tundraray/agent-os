@@ -18,7 +18,7 @@ describe('chat status', () => {
       expected: { status: 'new', failureReason: null },
     },
     {
-      name: 'root interrupted without text',
+      name: 'root interrupted',
       root: { status: 'interrupted', failureReason: null },
       task: { status: 'waiting', waitReason: 'messages' },
       expected: { status: 'interrupted', failureReason: null },

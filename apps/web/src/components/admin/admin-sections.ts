@@ -1,4 +1,4 @@
-import { BoxIcon, KeyRoundIcon, ServerIcon, ShieldIcon, UsersIcon, type LucideIcon } from 'lucide-react';
+import { BoxIcon, KeyRoundIcon, LibraryBigIcon, ServerIcon, ShieldIcon, UsersIcon, type LucideIcon } from 'lucide-react';
 import { ADMIN_SECTION_IDS, adminPath, type AdminSection } from '@/lib/shell-route';
 
 export type AdminSectionEntry = {
@@ -15,9 +15,10 @@ const LOOK: Readonly<Record<AdminSection, { title: string; Icon: LucideIcon }>> 
   'sign-in': { title: 'Авторизация', Icon: KeyRoundIcon },
   servers: { title: 'MCP-серверы', Icon: ServerIcon },
   models: { title: 'Модели', Icon: BoxIcon },
+  library: { title: 'Агенты и workflow', Icon: LibraryBigIcon },
 };
 
-/** The panel's five sections in sidebar order (AD-01, MC-18). */
+/** The panel's sections in sidebar order (AD-01, MC-18; «Агенты и workflow» — AL-01). */
 export const ADMIN_SECTIONS: readonly AdminSectionEntry[] = ADMIN_SECTION_IDS.map((section) => ({
   section,
   ...LOOK[section],

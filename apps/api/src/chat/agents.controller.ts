@@ -25,14 +25,13 @@ import {
   type SendMessageRequest,
   type SendMessageResponse,
   type StopResponse,
-  type WorkflowRunBrief,
+  type WorkflowRunView,
 } from '@agent-os/contracts';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { AgentControlService } from './agent-control.service.js';
 import { type Command, runCommand } from './chat.errors.js';
-import { interruptTextOf } from './interrupt-body.js';
 
 /**
  * The agent routes (design-chat.md, Contract «Агенты»). A malformed, missing or foreign `agentId`, and
@@ -109,12 +108,17 @@ export class AgentsController {
   workflowRun(
     @Param('agentId') agentId: string,
     @Req() req: AuthedRequest,
-  ): Promise<WorkflowRunBrief> {
+  ): Promise<WorkflowRunView> {
     const ownerId = req.user.id;
     return this.run({
       route: 'GET /agents/:agentId/run',
       fields: { ownerId, agentId },
       work: () => this.control.run(agentId, ownerId),
+      outcomeOf: (run) => ({
+        recordId: run.origin.recordId,
+        steps: run.steps.length,
+        limitRefusals: run.limitRefusals.length,
+      }),
     });
   }
 
@@ -138,16 +142,14 @@ export class AgentsController {
   @HttpCode(200)
   interrupt(
     @Param('agentId') agentId: string,
-    @Body() body: unknown,
     @Req() req: AuthedRequest,
   ): Promise<InterruptResponse> {
     const ownerId = req.user.id;
-    const text = interruptTextOf(body);
     return this.run({
       route: 'POST /agents/:agentId/interrupt',
       fields: { ownerId, agentId },
-      work: () => this.control.interrupt(agentId, ownerId, text),
-      outcomeOf: (answer) => ({ interruptOutcome: answer.outcome, withText: text !== undefined }),
+      work: () => this.control.interrupt(agentId, ownerId),
+      outcomeOf: (answer) => ({ interruptOutcome: answer.outcome }),
     });
   }
 

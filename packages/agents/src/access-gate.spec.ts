@@ -8,15 +8,14 @@ import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AccessDeniedEntry, ModelVerdict } from './access-gate.js';
-import { createCatalog } from './definitions/catalog.js';
-import type { AgentDefinition } from './definitions/definition.js';
 import { createModelClient } from './model/model-client.js';
+import type { AgentSnapshot } from './start/snapshot.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
-import type { Session } from './store/sessions.repository.js';
+import type { Session, SessionInput } from './store/sessions.repository.js';
 import type { ToolCallRow } from './store/tool-calls.repository.js';
-import { createAccessGateDouble, createScriptedModel } from './testing.js';
+import { createAccessGateDouble, createLibraryDouble, createScriptedModel } from './testing.js';
 import type { AgentTool } from './tools/tool.js';
 import { createToolRegistry } from './tools/tool-registry.js';
 import { createToolRunner } from './tools/tool-runner.js';
@@ -53,24 +52,36 @@ function emptyDatabase(): Database {
   return query as Database;
 }
 
-const DEFINITION: AgentDefinition = {
+/** The built-in tool the agent's snapshot names; the test's double stands for it. */
+const LOOKUP = 'list_agents';
+
+const SNAPSHOT: AgentSnapshot = {
+  kind: 'agent',
   name: 'helper',
-  description: 'Looks things up.',
-  prompt: 'Help.',
-  tools: ['lookup'],
-  mcpServers: [],
+  origin: {
+    recordId: '00000000-0000-4000-8000-000000000001',
+    kind: 'agent',
+    version: 1,
+    name: 'helper',
+    author: { id: '00000000-0000-4000-8000-000000000002', name: 'Аня' },
+    builtinKey: null,
+    executor: null,
+  },
+  content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP] },
   agents: [],
-  maxTurns: 10,
 };
+
+const INPUT: SessionInput = { snapshot: SNAPSHOT, prompt: 'Look it up', description: 'Look up' };
 
 const SESSION: Session = {
   taskId: AGENT,
   ownerId: OWNER,
-  definition: DEFINITION.name,
+  name: SNAPSHOT.name,
+  origin: SNAPSHOT.origin,
+  firstRun: true,
   description: 'Look up',
   model: MODEL,
   prompt: 'Look it up',
-  limits: null,
   forkedFromTaskId: null,
   forkedThroughSeq: null,
   turns: 0,
@@ -85,12 +96,13 @@ const OPEN_CALL: ToolCallRow = {
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
-  tool: 'lookup',
+  tool: LOOKUP,
   server: null,
   args: {},
   state: 'requested',
   outcome: null,
   refusalReason: null,
+  refusalDetail: null,
   resultText: null,
   childTaskId: null,
   startedAt: null,
@@ -107,7 +119,7 @@ function stepContext(logger: Logger): StepContext {
     ownerId: OWNER,
     depth: 0,
     type: 'agent',
-    input: {},
+    input: INPUT,
     stepNo: 3,
     resumedAfterLoss: false,
     messages: [],
@@ -128,11 +140,11 @@ function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
   const database = emptyDatabase();
   const model = createScriptedModel();
-  model.script({ agent: DEFINITION.name }, [], { thereafter: { text: 'answer' } });
+  model.script({ agent: SNAPSHOT.name }, [], { thereafter: { text: 'answer' } });
   const audits: AccessDeniedEntry[] = [];
   let toolRuns = 0;
   const lookup: AgentTool = {
-    name: 'lookup',
+    name: LOOKUP,
     description: 'Looks a thing up',
     argsSchema: z.object({}),
     mode: 'outside',
@@ -150,14 +162,13 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AccessDeniedEntry) => {
     audits.push(entry);
   };
-  const catalog = createCatalog();
-  catalog.register(DEFINITION);
   const registry = createToolRegistry({
     builtins: [lookup],
     runCode: { ...lookup, name: 'run_code' },
-    catalog,
     database,
     access,
+    library: createLibraryDouble(),
+    logger,
   });
   const runner = createToolRunner({
     client: {
@@ -185,15 +196,14 @@ function refusedAgent(refusal: Refusal) {
     ctx: stepContext(logger),
     modelStep: createModelStep({
       database,
-      catalog,
       registry,
       modelClient,
       audit,
       tasks: { listTree: async () => [] },
       inbox: { listPending: async () => [] },
     }),
-    compactionStep: createCompactionStep({ database, catalog, registry, modelClient, audit }),
-    toolStep: createToolStep({ catalog, registry, runner, access, audit }),
+    compactionStep: createCompactionStep({ database, registry, modelClient, audit }),
+    toolStep: createToolStep({ registry, runner, access, audit }),
     audits,
     /** Model calls and tool runs that started. */
     started: () => model.calls.length + toolRuns,

@@ -16,6 +16,7 @@ import {
   PasswordChangeBodySchema,
   PasswordSignInBodySchema,
   type CurrentUser,
+  type MyRoleList,
   type PasswordChangeBody,
   type PasswordSignInBody,
   type ProviderButtonList,
@@ -143,6 +144,12 @@ export class AuthController {
   me(@Req() req: AuthedRequest): CurrentUser {
     const { id, email, name, isAdmin, hasPassword } = req.user;
     return { id, email, name, isAdmin, hasPassword };
+  }
+
+  /** The viewer's own roles by name (`MyRoleList`), only from `req.user.id` (ADR-0012). */
+  @Get('me/roles')
+  myRoles(@Req() req: AuthedRequest): Promise<MyRoleList> {
+    return this.users.ownRoles(req.user.id);
   }
 
   /** 204; the employee's other sessions stay (KD-5). 400 VALIDATION_FAILED with `reason`. */

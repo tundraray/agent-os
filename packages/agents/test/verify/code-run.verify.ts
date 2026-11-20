@@ -17,8 +17,7 @@ import {
   createAgentsHarness,
   historyOf,
   runLogsOf,
-  testDefinition,
-  uniqueName,
+  testRecord,
   waitForTaskStatus,
 } from '../support/agentsHarness.js';
 import { LOGS_SERVER } from '../support/mcp-servers.js';
@@ -87,7 +86,6 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
     async () => {
       // Given: an agent of a fresh owner who may use `logs`, whose model asks for one read run of the grouping script
       const ownerId = newUser();
-      const definition = uniqueName('n1-reader');
       const prompt = 'Group the errors of the payment logs by service';
       const model = createScriptedModel();
       const script = model.script({ task: prompt }, [
@@ -99,12 +97,12 @@ describe('UC-N1: a script over 21 000 log records (about 5 MB) ends within 30 s'
         model,
         fixture,
         access: { [ownerId]: [LOGS_SERVER] },
-        definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+        root: testRecord('n1-reader', { servers: [LOGS_SERVER] }),
       });
       try {
         // When: the agent works to the end of its turn
         const startedAt = Date.now();
-        const { agentId } = await harness.sessions.start({ ownerId, definition, prompt, description: 'n1 reader' });
+        const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'n1 reader' });
         await script.called(2);
         await waitForTaskStatus(harness, agentId, ownerId, 'waiting');
         const turnMs = Date.now() - startedAt;

@@ -24,7 +24,7 @@
 //   test/support/mcp-servers.ts); `FIXTURE_CALL_LOG` (JSONL journal shared by every fixture process of the test) is the evidence of what reached a server. Slow reads and a failing server use the fixture's fault schedule. The harness `access` option per test maps the test's owners to servers (the `AccessGate` double of `@agent-os/agents/testing`).
 // - Two instances in one process (INT-3 rows C and E; every other row runs one instance) are two `createRuntime` + `createAgents` pairs over two pools to the same database. The second instance is the "restarted server": it has its own fixture process, points the run's registry rows at it and reads everything
 //   else from the database; "lease expired" is the harness `expireLease`, a held handler of the first instance is the zombie.
-// - Isolation (project convention, no truncate): a unique owner `newUser()` per test and a unique definition name per test (definitions are registered before `start()` into the test's own catalog); each test reads only its own tree. `fileParallelism: false`.
+// - Isolation (project convention, no truncate): a unique owner `newUser()` per test and the test's own library double (`createLibraryDouble`: a root runs its `chat` record, a child the record its parent names by id); each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering and no latency assertions: tests synchronise on latches the double and the fixture wait on, and on rows. "Status within 5 s" (NFR-01) is asserted as: the status read right after the command returns, while the call is still held; the 5 s figure
 //   belongs to the runtime part's on-demand script.
 // - Support to write alongside (test/support): agentsHarness.ts (database + runtime + agents, scripted double, fixture config, second instance, `expireLease`), scriptedModel.ts (scenarios, latches, recorded inputs), fixtureLog.ts (read and filter the call log).
@@ -43,8 +43,8 @@
 //     * model resolution - launch model, then definition model, then AGENT_DEFAULT_MODEL - AC-04.1, AC-04.2, AC-04.3, DC-2, UC-E8 (the chosen model reaching the provider call is wired by INT-1 row A)
 //     * the tool-call gate rule - `tool_not_in_definition`, `no_access`, `depth_limit`, `not_allowed` (list and count), `unknown_agent`, `invalid_arguments`, and "allowed" - AC-03.1, AC-10.2, AC-10.3, DC-6, UC-E4 rule rows; the boundary half (the refused call never
 //       reaches the server, never creates a task) is INT-3 row A and INT-1 row D
-//     * the turn counter - counts model calls since the task, not the compaction call; resets when the agent finishes a turn (report, failure, stop, interrupt without text) and, for a root session, on each delivered employee message - DC-1 (the effect on a real run is INT-1 row C)
-//     * the end-of-turn decision - text without calls ends the turn; with unfinished children the child waits; with `finalAgent` set a text without that agent's report is refused - KD-2, DC-3, DC-4, Invariant 4 (the wiring is INT-1 rows A and D)
+//     * the turn counter - counts model calls since the task, not the compaction call; resets when the agent finishes a turn (report, failure, stop, interrupt) and, for a root session, on each delivered employee message - DC-1 (the effect on a real run is INT-1 row C)
+//     * the end-of-turn decision - text without calls ends the turn; with unfinished children the child waits; with the coordinator's `finalExecutor` set a text without that executor's report is refused - KD-2, DC-3, DC-4, Invariant 4 (the wiring is INT-1 rows A and D)
 //     * the agent status derivation (State Transitions table, MC-3 labels) - `working`, `awaiting_confirmation`, `interrupted`, `completed`, `failed`, `stopped`, including "interrupted from a pending `interrupt` message before the step takes it" - KD-3
 //     * history to provider messages - the single place of Invariant 3 (a delivered message after the last result of its answer and before the next answer; a call is never separated from its result), `<data>` envelope with delimiter escaping, fork reference
 //       (history up to `throughSeq` plus the task), compaction summary replaces older entries for the model while `history` still returns all; this is also the property test: FOR ALL histories with open calls and delivered messages in any interleaving, the provider
@@ -70,9 +70,16 @@
 // - AC-25.1, AC-27.1: INT-1 row E (the wiring) over the unit assembly table; NFR-04 in the agent's share: INT-1 row B (order in history) and the runtime INT-2
 
 import { randomUUID } from 'node:crypto';
-import { type AgentTurnMessage, GENERAL_PURPOSE } from '@agent-os/agents';
+import type { AgentTurnMessage } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
-import { createLatch, createScriptedModel, inputLines, type ScriptedToolCall } from '@agent-os/agents/testing';
+import type { RecordTool, WorkflowContent } from '@agent-os/contracts';
+import {
+  createLatch,
+  createLibraryDouble,
+  createScriptedModel,
+  inputLines,
+  type ScriptedToolCall,
+} from '@agent-os/agents/testing';
 import { argsHash, createFixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { describe, expect, it } from 'vitest';
 import {
@@ -87,11 +94,13 @@ import {
   historyOf,
   historyRowVersionsOf,
   ledgerRowsOf,
+  setRootRecord,
+  START_TEST_WORKFLOW,
+  TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
-  testDefinition,
+  testRecord,
   toolCallRowsOf,
   treeRowVersionsOf,
-  uniqueName,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
@@ -121,17 +130,30 @@ const COMPACTION_REQUEST =
   'their sources, the agents you started and their results, and what is left to do. ' +
   'Answer with the summary text only; do not call tools.';
 
-/** A `start_agent` call of a scripted answer. */
-function startAgent(args: { agent: string; description: string; prompt: string; model?: string }): ScriptedToolCall {
+/** A `start_agent` call of a scripted answer: `agent` is a record id, an executor's name or `fork`. */
+function startAgent(args: { agent: string; description: string; prompt: string }): ScriptedToolCall {
   return { tool: 'start_agent', args };
 }
 
-/** Agents the agent started, in the order of its `start_agent` calls. */
+/** Every built-in tool a record may hold, as the built-in `general-purpose` record has them. */
+const ALL_RECORD_TOOLS: RecordTool[] = ['start_agent', 'message_agent', 'list_agents', 'stop_agent'];
+
+/** Agents the agent started, in the order of its starting calls (`start_agent`, `start_test_workflow`). */
 async function startedChildrenOf(harness: AgentsHarness, agentId: string): Promise<(string | undefined)[]> {
   const calls = await toolCallRowsOf(harness.db, agentId);
-  return calls.flatMap((call) =>
-    call.tool === 'start_agent' && call.childTaskId !== null ? [call.childTaskId] : [],
+  return calls.flatMap((call) => (call.childTaskId !== null ? [call.childTaskId] : []));
+}
+
+/** Waits until the agent has started `count` children (1 by default) and returns the last of them. */
+async function startedChild(harness: AgentsHarness, agentId: string, count = 1): Promise<string> {
+  const children = await waitFor(
+    () => startedChildrenOf(harness, agentId),
+    (started) => started.length >= count,
+    `child ${count} of agent ${agentId}`,
   );
+  const child = children[count - 1];
+  if (child === undefined) throw new Error(`agent ${agentId} started no child ${count}`);
+  return child;
 }
 
 /** A parent's end notices as `<status>[ <reason>][ <report>]`. */
@@ -203,7 +225,7 @@ const READ_THEN_NOTE = [
  */
 async function startWriterUntilConfirmation(
   harness: AgentsHarness,
-  request: { ownerId: string; definition: string; prompt: string },
+  request: { ownerId: string; prompt: string },
 ): Promise<{ agentId: string; decisionId: string }> {
   const { agentId } = await harness.sessions.start({ ...request, description: 'writer' });
   await waitFor(
@@ -263,17 +285,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   //   grandchild, answers text while the grandchild works, and reports only after the grandchild's report. Then: the root's `start_agent` results are in ONE step and carry two distinct `agentId`s; the children's histories begin with the task text and hold no entry of the
   //   root; the children were working at the same time (a latch both wait on is released only when both are in a model call); child 2 stays `working` after its first text and completes only after the grandchild's report, which child 2 received (the root's history has no
   //   `child_report` of the grandchild); the child reports that arrived during the root's slow call are absent from that step's input, present in the root's next model input, and the free root woke by itself (no employee message sent) and its call sees both reports;
-  //   the ledger holds exactly one row per scripted model call, with the session's task id and the model the session was started with - the child started with an explicit `model` is on that model and the others on `AGENT_DEFAULT_MODEL` (literals); `agents.get`
-  //   shows the chosen model and no token or cost field.
+  //   the ledger holds exactly one row per scripted model call, with the session's task id and the model of the session's snapshot - the child started from a record whose model is `anthropic/test-chosen` is on that model and the others on the default one (literals); `agents.get`
+  //   shows that model and no token or cost field.
   // - Row B "a message to a busy agent lands after the tool result" (UC-2): the agent's read call is held on the fixture. `agents.send` twice, then a third message after the first two. Then: the history reads, in order, `tool_result`, `user_message` 1, `user_message` 2,
   //   `user_message` 3, `model_answer`; the model call after the release has all three after the result in its input, in the order sent. Second case in the same row: a root that answered text and waits; one `agents.send` wakes it (status leaves waiting with no other command)
   //   and its next model input begins the turn with that message.
   // - Row C "turn limit, then continue, then restart" (UC-E3, UC-4): a definition with `maxTurns` 2 under a parent; the script always asks for a tool. Then: exactly two model calls, the agent `failed` with `failureReason` `turn_limit`, the parent holds one notification
   //   with that reason. `agents.send` to the failed agent: it works in the SAME session (same `agentId`, history intact and the new message last), gets the full turn limit again (two more model calls), and its report is a SECOND notification to the parent. Then the
   //   finished agent `agents.restart`s: a NEW `agentId` with the same definition, task text, model, limits and parent, its history starts at the task with nothing of the old one, and the old agent is still in `agents.list`; restarting a working agent answers `NOT_FINISHED`.
-  // - Row D "caller limits and the final agent" (UC-5): a root session always waits at the end of a turn ("Конец хода"), so the session checked is a CHILD of the root, started with `sessions.start({ parentId: <root>, limits: { agents: { planner: 1, answer: 1 },
-  //   finalAgent: 'answer' } })` (plan T6.1). The script starts `planner` twice, then `gatherer` once, then answers text, then starts `answer`, then (after its report) answers text.
-  //   Then: the second `planner` and `gatherer` have outcome `refused` with reason `not_allowed` and NO task was created for either (the session's children are the first planner and `answer` only); the first text answer is met by a `notice`
+  // - Row D "caller limits and the final agent" (UC-5): a root session always waits at the end of a turn ("Конец хода"), so the session checked is a CHILD of the root: the coordinator of a workflow record whose team is `planner` and `answer`, one run
+  //   each, with final executor `answer` (custom-agents runtime: the caller limits are the workflow's team), started by the root through the harness's `start_test_workflow`. The script starts `planner` twice, then `gatherer` once, then answers text, then starts `answer`, then (after its report) answers text.
+  //   Then: the second `planner` is refused `run_limit`, `gatherer` (outside the team) `not_allowed`, and NO task was created for either (the session's children are the first planner and `answer` only); the first text answer is met by a `notice`
   //   entry and a new turn rather than ending the session; the report its parent (the root) receives is `answer`'s report, not the session's own text; the refused calls appear in the history with the reason.
   // - Row E "fork and compaction" (UC-E10, UC-E11): a root with three exchanges calls `start_agent` with `fork`. Then: the fork's first model input holds the root's three exchanges up to the entry before the answer that contains the `start_agent` call, then the task; the root's
   //   history is unchanged (row versions of its entries before and after) and the fork's own history starts at its task. Second case: a model call whose `usage` input tokens are at `AGENT_COMPACT_AT_TOKENS` (set low for the test); the next step writes a `compaction`
@@ -281,10 +303,15 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // - Row F "a message during the last step" (Flow 6 Failure handling, design-runtime v1.2 StepResult): a child holds its last model call on a latch and answers text without calls. When `agents.send` reaches it during that call and the latch opens, then: the child ends
   //   `completed` with its report, the parent holds exactly one `child_finished` of that end, the task is `queued` again with the same id (`task.queued` with cause `revive`), the next step sees the message, and the child's second report is a second notification.
   it('INT-1 A: two children start in one step and work at once, a grandchild reports to its own parent, reports reach a free parent as its next turn and a busy one on the next step, and each model call is one ledger row on the session\'s model', async () => {
-    // Given: a root that starts two general-purpose children in one answer, then holds a read call on the fixture;
-    // child one reads and reports, child two starts a grandchild and reports after it
+    // Given: a root that starts two general-purpose children in one answer (child one from a record on the chosen
+    // model), then holds a read call on the fixture; child one reads and reports, child two starts a grandchild and
+    // reports after it
     const ownerId = newUser();
-    const rootName = uniqueName('coordinator');
+    const library = createLibraryDouble();
+    const generalId = randomUUID();
+    const general = { tools: ALL_RECORD_TOOLS, servers: [LOGS_SERVER], agents: [generalId], maxTurns: 40 };
+    library.add(testRecord('general-purpose', { ...general, id: generalId }));
+    const chosenId = library.add(testRecord('general-purpose-chosen', { ...general, model: TEST_MODEL_CHOSEN }));
     const fixture = createFixtureFiles();
     const rootRead = fixture.latch('root-read');
     fixture.setFaults([holdCall('get_trace', TRACE_A, rootRead)]);
@@ -294,8 +321,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const root = model.script({ task: 'Coordinate the two children' }, [
       {
         calls: [
-          startAgent({ agent: GENERAL_PURPOSE.name, description: 'child one', prompt: 'Child one task', model: TEST_MODEL_CHOSEN }),
-          startAgent({ agent: GENERAL_PURPOSE.name, description: 'child two', prompt: 'Child two task' }),
+          startAgent({ agent: chosenId, description: 'child one', prompt: 'Child one task' }),
+          startAgent({ agent: generalId, description: 'child two', prompt: 'Child two task' }),
         ],
       },
       { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
@@ -308,7 +335,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     ]);
     const childTwo = model.script({ task: 'Child two task' }, [
       {
-        calls: [startAgent({ agent: GENERAL_PURPOSE.name, description: 'grandchild', prompt: 'Grandchild task' })],
+        calls: [startAgent({ agent: generalId, description: 'grandchild', prompt: 'Grandchild task' })],
         latch: bothChildren,
       },
       { text: 'child two waits for the grandchild' },
@@ -321,19 +348,13 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER] },
-      definitions: [
-        testDefinition(rootName, {
-          tools: ['start_agent'],
-          mcpServers: [LOGS_SERVER],
-          agents: [GENERAL_PURPOSE.name],
-        }),
-      ],
+      library,
+      root: testRecord('coordinator', { tools: ['start_agent'], servers: [LOGS_SERVER] }),
     });
     try {
       // When: the root runs; its read is held while both children reach their first model call together
       const { agentId: rootId } = await harness.sessions.start({
         ownerId,
-        definition: rootName,
         prompt: 'Coordinate the two children',
         description: 'root',
       });
@@ -453,13 +474,15 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(Object.keys(view).sort()).toEqual([
         'agentId',
         'createdAt',
-        'definition',
         'depth',
         'description',
         'failureReason',
         'finishedAt',
+        'firstRun',
         'forkedFrom',
         'model',
+        'name',
+        'origin',
         'parentId',
         'rootId',
         'status',
@@ -473,7 +496,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   it('INT-1 B: messages sent to an agent while its read call runs stand in the history after that result in the order sent, the next model call sees them, and a message to a waiting root starts its turn', async () => {
     // Given: a root whose read call is held on the fixture
     const ownerId = newUser();
-    const readerName = uniqueName('reader');
     const fixture = createFixtureFiles();
     const held = fixture.latch('read');
     fixture.setFaults([holdCall('get_trace', TRACE_A, held)]);
@@ -487,12 +509,11 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER] },
-      definitions: [testDefinition(readerName, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
     });
     try {
       const { agentId } = await harness.sessions.start({
         ownerId,
-        definition: readerName,
         prompt: 'Read the trace',
         description: 'reader',
       });
@@ -550,12 +571,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-1 C: an agent that hits its turn limit fails with turn_limit and tells its parent, is continued by a message in the same session with a full limit, and a finished agent restarts as a new one with the same definition, task, model and parent', async () => {
-    // Given: under a parent, an agent with maxTurns 2 whose script always asks for a tool
+    // Given: under a parent, an agent with maxTurns 2 whose script always asks for a tool; the parent starts it
     const ownerId = newUser();
-    const parentName = uniqueName('parent');
-    const limitedName = uniqueName('limited');
+    const library = createLibraryDouble();
+    const limitedId = library.add(testRecord('limited', { tools: ['list_agents'], maxTurns: 2 }));
     const model = createScriptedModel();
-    model.script({ task: 'Parent of the limited agent' }, [], { thereafter: { text: 'noted' } });
+    model.script(
+      { task: 'Parent of the limited agent' },
+      [{ calls: [startAgent({ agent: limitedId, description: 'limited', prompt: 'Limited task' })] }],
+      { thereafter: { text: 'noted' } },
+    );
     const limited = model.script({ task: 'Limited task' }, [
       { calls: [LIST_AGENTS] },
       { calls: [LIST_AGENTS] },
@@ -566,25 +591,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const harness = await createAgentsHarness({
       model,
       access: {},
-      definitions: [
-        testDefinition(parentName),
-        testDefinition(limitedName, { tools: ['list_agents'], maxTurns: 2 }),
-      ],
+      library,
+      root: testRecord('parent', { tools: ['start_agent'] }),
     });
     try {
       const { agentId: parentId } = await harness.sessions.start({
         ownerId,
-        definition: parentName,
         prompt: 'Parent of the limited agent',
         description: 'parent',
       });
-      const { agentId } = await harness.sessions.start({
-        ownerId,
-        parentId,
-        definition: limitedName,
-        prompt: 'Limited task',
-        description: 'limited',
-      });
+      const agentId = await startedChild(harness, parentId);
 
       // When: it runs out of turns
       await waitForTaskStatus(harness, agentId, ownerId, 'failed');
@@ -639,8 +655,8 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: a new agent with the same definition, task, model and parent; its history starts anew; the old one stays listed
       expect(restartedId).not.toBe(agentId);
       const restarted = await harness.sessions.get(restartedId, ownerId);
-      expect([restarted.definition, restarted.description, restarted.model, restarted.parentId]).toEqual([
-        limitedName,
+      expect([restarted.name, restarted.description, restarted.model, restarted.parentId]).toEqual([
+        'limited',
         'limited',
         'anthropic/test-default',
         parentId,
@@ -663,28 +679,60 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-1 D: a start outside the caller limits or over their count is refused without creating a task, a text answer without the final agent\'s report gets a notice, and the final agent\'s report becomes the session\'s report', async () => {
-    // Given: a child of the root started with limits { planner x1, answer x1 } and final agent `answer`;
-    // its definition alone would also allow `gatherer`
+    // Given: a workflow record whose team is `planner` and `answer`, one run each, with final executor `answer`;
+    // the root starts its coordinator; `gatherer` is no executor of the team
     const ownerId = newUser();
-    const rootName = uniqueName('root');
-    const coordinatorName = uniqueName('coordinator');
-    const plannerName = uniqueName('planner');
-    const gathererName = uniqueName('gatherer');
-    const answerName = uniqueName('answer');
+    const library = createLibraryDouble();
+    const executor = (name: string): WorkflowContent['executors'][number] => ({
+      name,
+      role: `The ${name} of the team`,
+      prompt: 'You are a test executor.',
+      servers: [],
+      model: 'anthropic/test-default',
+      maxTurns: 20,
+      maxRuns: 1,
+      tools: [],
+      source: null,
+    });
+    const workflowId = library.add({
+      kind: 'workflow',
+      name: 'limited workflow',
+      ownerId: TEST_AUTHOR_ID,
+      everyone: true,
+      offerInChat: true,
+      content: {
+        coordinator: { rules: '', model: 'anthropic/test-default', maxTurns: 20 },
+        executors: [executor('planner'), executor('answer')],
+        finalExecutor: 'answer',
+      },
+    });
     const atThirdCall = createLatch();
     const plannerHeld = createLatch();
     const answerHeld = createLatch();
     const model = createScriptedModel();
-    model.script({ task: 'Root of the limited session' }, [], { thereafter: { text: 'noted' } });
+    model.script(
+      { task: 'Root of the limited session' },
+      [
+        {
+          calls: [
+            {
+              tool: START_TEST_WORKFLOW,
+              args: { workflow: workflowId, prompt: 'Coordinate with limits', description: 'coordinator' },
+            },
+          ],
+        },
+      ],
+      { thereafter: { text: 'noted' } },
+    );
     const coordinator = model.script({ task: 'Coordinate with limits' }, [
-      { calls: [startAgent({ agent: plannerName, description: 'planner', prompt: 'Plan A' })] },
-      { calls: [startAgent({ agent: plannerName, description: 'second planner', prompt: 'Plan B' })] },
+      { calls: [startAgent({ agent: 'planner', description: 'planner', prompt: 'Plan A' })] },
+      { calls: [startAgent({ agent: 'planner', description: 'second planner', prompt: 'Plan B' })] },
       {
-        calls: [startAgent({ agent: gathererName, description: 'gatherer', prompt: 'Gather' })],
+        calls: [startAgent({ agent: 'gatherer', description: 'gatherer', prompt: 'Gather' })],
         latch: atThirdCall,
       },
       { text: 'my own summary' },
-      { calls: [startAgent({ agent: answerName, description: 'answer', prompt: 'Write the answer' })] },
+      { calls: [startAgent({ agent: 'answer', description: 'answer', prompt: 'Write the answer' })] },
       { text: 'waiting for the answer' },
       { text: 'session done' },
     ]);
@@ -693,32 +741,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const harness = await createAgentsHarness({
       model,
       access: {},
-      definitions: [
-        testDefinition(rootName),
-        testDefinition(coordinatorName, {
-          tools: ['start_agent'],
-          agents: [plannerName, gathererName, answerName],
-        }),
-        testDefinition(plannerName),
-        testDefinition(gathererName),
-        testDefinition(answerName),
-      ],
+      library,
+      root: testRecord('root'),
+      workflowStarter: true,
     });
     try {
       const { agentId: rootId } = await harness.sessions.start({
         ownerId,
-        definition: rootName,
         prompt: 'Root of the limited session',
         description: 'root',
       });
-      const { agentId } = await harness.sessions.start({
-        ownerId,
-        parentId: rootId,
-        definition: coordinatorName,
-        prompt: 'Coordinate with limits',
-        description: 'coordinator',
-        limits: { agents: { [plannerName]: 1, [answerName]: 1 }, finalAgent: answerName },
-      });
+      const agentId = await startedChild(harness, rootId);
 
       // When: the planner reports while the session's third call runs; then the answer agent reports
       // while the session waits for it
@@ -734,16 +767,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       answerHeld.open();
       await waitForTaskStatus(harness, agentId, ownerId, 'completed');
 
-      // Then: the second planner and the gatherer are refused with not_allowed and created no task
+      // Then: the second planner is refused run_limit, the gatherer not_allowed, and neither created a task
       const calls = await toolCallRowsOf(harness.db, agentId);
       expect(calls.map((call) => `${call.tool} ${call.outcome} ${call.refusalReason ?? '-'}`)).toEqual([
         'start_agent success -',
-        'start_agent refused not_allowed',
+        'start_agent refused run_limit',
         'start_agent refused not_allowed',
         'start_agent success -',
       ]);
       const children = (await harness.sessions.list(rootId, ownerId)).filter((view) => view.parentId === agentId);
-      expect(children.map((view) => view.definition).sort()).toEqual([answerName, plannerName].sort());
+      expect(children.map((view) => view.name).sort()).toEqual(['answer', 'planner']);
 
       // Then: the text without the final agent's report met a notice and a new turn; the refusals are in the history
       expect(historyLines(await historyOf(harness, agentId, ownerId))).toEqual([
@@ -751,12 +784,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'model_answer:  [start_agent]',
         'tool_result: start_agent success',
         'model_answer:  [start_agent]',
-        'tool_result: start_agent refused not_allowed',
+        'tool_result: start_agent refused run_limit',
         'model_answer:  [start_agent]',
         'tool_result: start_agent refused not_allowed',
         'child_report: planner completed',
         'model_answer: my own summary []',
-        `notice: You cannot finish: there is no report of agent "${answerName}" yet. The session ends only with a completed report of agent "${answerName}"; start it with start_agent.`,
+        'notice: You cannot finish: there is no report of executor "answer" yet. The workflow ends only with a completed report of executor "answer"; start it with start_agent.',
         'model_answer:  [start_agent]',
         'tool_result: start_agent success',
         'model_answer: waiting for the answer []',
@@ -777,8 +810,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     // Given: a root with three exchanges whose third answer starts a fork; a second root whose first call
     // reports input tokens at AGENT_COMPACT_AT_TOKENS
     const ownerId = newUser();
-    const forkerName = uniqueName('forker');
-    const compactorName = uniqueName('compactor');
     const forkHeld = createLatch();
     const model = createScriptedModel();
     const forker = model.script(
@@ -794,7 +825,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       { thereafter: { text: 'noted' } },
     );
     const fork = model.script({ task: 'Fork task' }, [{ text: 'report of the fork', latch: forkHeld }]);
-    const compactor = model.script({ agent: compactorName }, [
+    const compactor = model.script({ agent: 'compactor' }, [
       { text: 'first answer', usage: { inputTokens: COMPACT_AT_TOKENS } },
       { text: 'summary of the talk' },
       { text: 'answer after compaction' },
@@ -803,13 +834,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       access: {},
       variables: { AGENT_COMPACT_AT_TOKENS: String(COMPACT_AT_TOKENS) },
-      definitions: [testDefinition(forkerName, { tools: ['start_agent'] }), testDefinition(compactorName)],
+      root: testRecord('forker', { tools: ['start_agent'] }),
     });
     try {
       // When: three exchanges, the third answer starting a fork that is held in its first call
       const { agentId: rootId } = await harness.sessions.start({
         ownerId,
-        definition: forkerName,
         prompt: 'Talk, then fork',
         description: 'forker',
       });
@@ -855,9 +885,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       ]);
 
       // When: the compacting root answers at the threshold, then gets a message
+      await setRootRecord(harness.library, testRecord('compactor'));
       const { agentId: compactorId } = await harness.sessions.start({
         ownerId,
-        definition: compactorName,
         prompt: 'Compact me',
         description: 'compactor',
       });
@@ -897,13 +927,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   }, TEST_TIMEOUT_MS);
 
   it('INT-1 F: a revive message that arrives during a child\'s last step finishes the task, notifies the parent once and requeues the task with that message', async () => {
-    // Given: a child under a root holds its last model call, which answers text without calls
+    // Given: a child the root started holds its last model call, which answers text without calls
     const ownerId = newUser();
-    const rootName = uniqueName('root');
-    const childName = uniqueName('last-step');
+    const library = createLibraryDouble();
+    const childId = library.add(testRecord('last-step'));
     const lastStep = createLatch();
     const model = createScriptedModel();
-    model.script({ task: 'Root of the last step' }, [], { thereafter: { text: 'noted' } });
+    model.script(
+      { task: 'Root of the last step' },
+      [{ calls: [startAgent({ agent: childId, description: 'last step', prompt: 'Last step task' })] }],
+      { thereafter: { text: 'noted' } },
+    );
     const child = model.script({ task: 'Last step task' }, [
       { text: 'first report', latch: lastStep },
       { text: 'second report' },
@@ -911,22 +945,16 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const harness = await createAgentsHarness({
       model,
       access: {},
-      definitions: [testDefinition(rootName), testDefinition(childName)],
+      library,
+      root: testRecord('root', { tools: ['start_agent'] }),
     });
     try {
       const { agentId: rootId } = await harness.sessions.start({
         ownerId,
-        definition: rootName,
         prompt: 'Root of the last step',
         description: 'root',
       });
-      const { agentId } = await harness.sessions.start({
-        ownerId,
-        parentId: rootId,
-        definition: childName,
-        prompt: 'Last step task',
-        description: 'last step',
-      });
+      const agentId = await startedChild(harness, rootId);
 
       // When: a message reaches the child during that call, then the call answers
       await lastStep.reached();
@@ -983,48 +1011,38 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // AC-08.4: "Given у агента есть работающие потомки, when агента останавливают, then потомки тоже получают статус «остановлен»."
   // AC-06.3: "Given агент закончил со статусом «сбой» или «остановлен», when родитель получает уведомление, then в нём есть статус и причина."
   // NFR-01: "Прерывание и остановка меняют статус агента не позже чем через 5 с после команды (p95). Измеряется тестом, где агент ждёт долгого инструмента." (status inside the command here; the figure is the runtime part's script)
-  // KD-3 (the contract this row proves): "Шаг, который получил такое сообщение, закрывает все открытые вызовы с исходом «прервано» (вызов в `sending` — «исход неизвестен»), затем ставит текст в историю и вызывает модель, а без текста ставит сессии отметку «прерван» и ждёт."
+  // KD-3 (the contract this row proves): "Шаг, который получил такое сообщение, закрывает все открытые вызовы с исходом «прервано» (вызов в `sending` — «исход неизвестен»), затем ставит сессии отметку «прерван» и ждёт." (an interrupt carries no text)
   // Use cases: UC-E1, UC-E2. EARS: When. Design flows: Flow 4 (interrupt), Flow 7 (stop with descendants), KD-3.
   //
   // Catches: (1) an interrupted agent whose open call stays "requested" forever or is recorded as a success when the slow server finally answers, or whose status reads `working` until the step happens to take the message (KD-3's derived status); (2) an interrupt
-  //   with text that does not reach the next model call, or one without text that still calls the model; (3) a call in `sending` (a mutating action already on the wire) shown as "interrupted" instead of "unknown" - claiming a send that may have happened was
+  //   that still calls the model before a message comes; (3) a call in `sending` (a mutating action already on the wire) shown as "interrupted" instead of "unknown" - claiming a send that may have happened was
   //   cancelled; (4) a stop that leaves the child or grandchild calling the model, an open confirmation still shown as pending, a missing `stopped_with_parent` entry, or a parent that is told twice or not at all - the agent-level reading of the runtime's stop.
   // Not re-checked here: the fence that refuses the cut-off step's late result, the cancelled decision row and the closure of the task tree (runtime INT-3), the status table (unit), `NOT_ACTIVE` for a finished agent (a branch of the operation, trivial).
-  // Behavior: command while a call is held -> status changes before the call returns -> the open calls are closed in the history -> the agent continues with the text, waits, or (stop) never calls the model again
+  // Behavior: command while a call is held -> status changes before the call returns -> the open calls are closed in the history -> the agent waits for a message, or (stop) never calls the model again
   // @category: core-functionality
   // @dependency: createRuntime x1-2, createAgents (interrupt, stop, history, get; step that consumes the interrupt message), scripted model double with call counter, MCP fixture (delayed read, delayed mutating call), Postgres
   // @complexity: high
   //
   // Verification items (table-driven by command):
-  // - Row A "interrupt" (UC-E1; two cases): the agent waits for a slow read call held on the fixture. Case 1, `agents.interrupt` with text: `agents.get` read right after the command (call still held) shows `interrupted`; once the step runs, the open call has outcome
-  //   `interrupted`, the text stands after it, the next model input has the text, and the slow server's late answer (released afterwards) writes no result and no second row (one `agent_tool_calls` row for the call). Case 2, without text: `interrupted` at once, the history
-  //   ends with the `interrupted` event, the model double gets NO further call (counter unchanged) until `agents.send`; the message then clears the mark, the agent continues, and its status is `working`. Case 3, the call is a confirmed mutating one already in
-  //   `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
+  // - Row A "interrupt" (UC-E1; two cases): Case 1, the agent waits for a slow read call held on the fixture: `agents.get` read right after the command (call still held) shows `interrupted`; once the step runs, the open call has outcome
+  //   `interrupted`, the history ends with the `interrupted` event, the model double gets NO further call (counter unchanged) until `agents.send`; the message then clears the mark, the agent continues, and its status is `working`; the slow server's late answer
+  //   (released afterwards) writes no result and no second row (one `agent_tool_calls` row for the call). Case 2, the call is a confirmed mutating one already in `sending` (held on the fixture): after the interrupt its outcome is `unknown`, not `interrupted`.
   // - Row B "stop of a subtree" (UC-E2): agent R (with a parent P) has child C (waiting on a held read call, with an open confirmation request from a second call) and grandchild G; the row stops R. Then: R, C and G read
   //   `stopped` right after the command; C's open call has outcome `interrupted` and its confirmation is no longer in `confirmations`; `agents.history` of R ends with `stopped`, of C and G with `stopped_with_parent`; the model double's call counter is
   //   unchanged after the command even when the held calls are released and workers run again; R's parent holds exactly one notification with status `stopped`; `agents.stop` on R again returns an empty list.
-  it('INT-2 A: interrupting an agent with a call in flight shows interrupted in the command, closes the call, hands the text to the next model call or waits without one, and marks a call already sending as unknown', async () => {
-    // Given: three agents of one owner, each with a call held on the fixture: a read call (with text),
-    // a read call (without text), and a confirmed create_incident_note already sending
+  it('INT-2 A: interrupting an agent with a call in flight shows interrupted in the command, closes the call, waits without a model call until a message comes, and marks a call already sending as unknown', async () => {
+    // Given: two agents of one owner, each with a call held on the fixture: a read call and a confirmed
+    // create_incident_note already sending
     const ownerId = newUser();
-    const readerName = uniqueName('reader');
-    const writerName = uniqueName('writer');
     const fixture = createFixtureFiles();
-    const readWithText = fixture.latch('read-with-text');
-    const readWithoutText = fixture.latch('read-without-text');
+    const readHeld = fixture.latch('read-held');
     const noteSending = fixture.latch('note-sending');
     fixture.setFaults([
-      holdCall('get_trace', TRACE_A, readWithText),
-      holdCall('get_trace', TRACE_B, readWithoutText),
+      holdCall('get_trace', TRACE_B, readHeld),
       holdCall('create_incident_note', INCIDENT_NOTE, noteSending),
     ]);
     const model = createScriptedModel();
-    const withText = model.script({ task: 'Read, then be interrupted with text' }, [
-      { calls: [{ tool: GET_TRACE, args: TRACE_A }] },
-      { text: 'answer to the interrupt' },
-      { text: 'answer after the release' },
-    ]);
-    const withoutText = model.script({ task: 'Read, then be interrupted without text' }, [
+    const reader = model.script({ task: 'Read, then be interrupted' }, [
       { calls: [{ tool: GET_TRACE, args: TRACE_B }] },
       { text: 'answer after the message' },
     ]);
@@ -1035,123 +1053,72 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [
-        testDefinition(readerName, { mcpServers: [LOGS_SERVER] }),
-        testDefinition(writerName, { mcpServers: [BACKOFFICE_SERVER] }),
-      ],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
     });
     try {
-      // Case 1 - When: the agent is interrupted with text while its read call is held
-      const { agentId: firstId } = await harness.sessions.start({
+      // Case 1 - When: the agent is interrupted while its read call is held
+      const { agentId: readerId } = await harness.sessions.start({
         ownerId,
-        definition: readerName,
-        prompt: 'Read, then be interrupted with text',
-        description: 'interrupted with text',
-      });
-      await waitFor(
-        () => fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A }),
-        (calls) => calls.length === 1,
-        'the read call of case 1 on the fixture',
-      );
-      expect(await harness.sessions.interrupt({ agentId: firstId, ownerId, text: 'stop reading, answer now' })).toBe(
-        'interrupted',
-      );
-      // Then: with text the agent goes on at once (KD-3: «Прерван» only without text)
-      expect((await harness.sessions.get(firstId, ownerId)).status).toBe('working');
-      await withText.called(2);
-      await waitForTaskStatus(harness, firstId, ownerId, 'waiting');
-
-      // Then: the open call is closed as interrupted, the text stands after it, the next model call has it
-      expect(historyLines(await historyOf(harness, firstId, ownerId))).toEqual([
-        'task: Read, then be interrupted with text',
-        `model_answer:  [${LOGS_SERVER}/get_trace]`,
-        'tool_result: get_trace interrupted',
-        'event: interrupted',
-        'user_message: stop reading, answer now',
-        'model_answer: answer to the interrupt []',
-      ]);
-      expect(inputLines(withText.calls[1]?.messages ?? [])).toEqual([
-        'user: Read, then be interrupted with text',
-        `assistant:  [mcp__${LOGS_SERVER}__get_trace]`,
-        `tool: mcp__${LOGS_SERVER}__get_trace`,
-        'user: [event] interrupted',
-        'user: stop reading, answer now',
-      ]);
-
-      // When: the slow server answers late, and a message makes the agent take one more step
-      readWithText.release();
-      await harness.sessions.send({ agentId: firstId, ownerId, text: 'after the release' });
-      await withText.called(3);
-      await waitForTaskStatus(harness, firstId, ownerId, 'waiting');
-
-      // Then: the late answer wrote no result and no second row
-      const firstCalls = await toolCallRowsOf(harness.db, firstId);
-      expect(firstCalls.map((call) => `${call.tool} ${call.state} ${call.outcome}`)).toEqual([
-        'get_trace done interrupted',
-      ]);
-      expect(
-        historyLines(await historyOf(harness, firstId, ownerId)).filter((line) => line.startsWith('tool_result')),
-      ).toEqual(['tool_result: get_trace interrupted']);
-
-      // Case 2 - When: the agent is interrupted without text while its read call is held
-      const { agentId: secondId } = await harness.sessions.start({
-        ownerId,
-        definition: readerName,
-        prompt: 'Read, then be interrupted without text',
-        description: 'interrupted without text',
+        prompt: 'Read, then be interrupted',
+        description: 'interrupted reader',
       });
       await waitFor(
         () => fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_B }),
         (calls) => calls.length === 1,
-        'the read call of case 2 on the fixture',
+        'the read call of case 1 on the fixture',
       );
-      expect(await harness.sessions.interrupt({ agentId: secondId, ownerId })).toBe('interrupted');
+      expect(await harness.sessions.interrupt({ agentId: readerId, ownerId })).toBe('interrupted');
 
       // Then: `interrupted` inside the command, the call closed, the history ends with the event
-      expect((await harness.sessions.get(secondId, ownerId)).status).toBe('interrupted');
+      expect((await harness.sessions.get(readerId, ownerId)).status).toBe('interrupted');
       await waitFor(
-        () => historyOf(harness, secondId, ownerId),
+        () => historyOf(harness, readerId, ownerId),
         (entries) => historyLines(entries).at(-1) === 'event: interrupted',
-        'the interrupted event of case 2',
+        'the interrupted event of case 1',
       );
-      await waitForTaskStatus(harness, secondId, ownerId, 'waiting');
-      expect(historyLines(await historyOf(harness, secondId, ownerId))).toEqual([
-        'task: Read, then be interrupted without text',
+      await waitForTaskStatus(harness, readerId, ownerId, 'waiting');
+      expect(historyLines(await historyOf(harness, readerId, ownerId))).toEqual([
+        'task: Read, then be interrupted',
         `model_answer:  [${LOGS_SERVER}/get_trace]`,
         'tool_result: get_trace interrupted',
         'event: interrupted',
       ]);
-      expect((await harness.sessions.get(secondId, ownerId)).status).toBe('interrupted');
+      expect((await harness.sessions.get(readerId, ownerId)).status).toBe('interrupted');
 
       // Then: the step that took the interrupt called no model: one call until a message comes
-      readWithoutText.release();
-      expect(withoutText.calls).toHaveLength(1);
+      readHeld.release();
+      expect(reader.calls).toHaveLength(1);
 
       // When: a message reaches the interrupted agent
-      await harness.sessions.send({ agentId: secondId, ownerId, text: 'go on' });
-      await withoutText.called(2);
-      await waitForTaskStatus(harness, secondId, ownerId, 'waiting');
+      await harness.sessions.send({ agentId: readerId, ownerId, text: 'go on' });
+      await reader.called(2);
+      await waitForTaskStatus(harness, readerId, ownerId, 'waiting');
 
       // Then: the message cleared the mark and the agent continued with it
-      expect(withoutText.calls).toHaveLength(2);
-      expect(inputLines(withoutText.calls[1]?.messages ?? []).slice(-3)).toEqual([
+      expect(reader.calls).toHaveLength(2);
+      expect(inputLines(reader.calls[1]?.messages ?? []).slice(-3)).toEqual([
         `tool: mcp__${LOGS_SERVER}__get_trace`,
         'user: [event] interrupted',
         'user: go on',
       ]);
-      expect((await harness.sessions.get(secondId, ownerId)).status).toBe('working');
+      expect((await harness.sessions.get(readerId, ownerId)).status).toBe('working');
 
-      // Case 3 - When: a confirmed create_incident_note is on the wire (intent `sending`) and the agent is interrupted
+      // Then: the slow server's late answer wrote no result and no second row
+      expect(
+        (await toolCallRowsOf(harness.db, readerId)).map((call) => `${call.tool} ${call.state} ${call.outcome}`),
+      ).toEqual(['get_trace done interrupted']);
+
+      // Case 2 - When: a confirmed create_incident_note is on the wire (intent `sending`) and the agent is interrupted
+      await setRootRecord(harness.library, testRecord('writer', { servers: [BACKOFFICE_SERVER] }));
       const { agentId: writerId } = await harness.sessions.start({
         ownerId,
-        definition: writerName,
         prompt: 'Write the note, then be interrupted',
         description: 'writer',
       });
       await waitFor(
         () => harness.sessions.get(writerId, ownerId),
         (view) => view.status === 'awaiting_confirmation',
-        'the confirmation request of case 3',
+        'the confirmation request of case 2',
       );
       const [request] = (await harness.sessions.confirmations(writerId, ownerId)).filter((c) => c.status === 'open');
       if (request === undefined) throw new Error('the writer has no confirmation request');
@@ -1168,7 +1135,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       await waitFor(
         () => historyOf(harness, writerId, ownerId),
         (entries) => historyLines(entries).at(-1) === 'event: interrupted',
-        'the interrupted event of case 3',
+        'the interrupted event of case 2',
       );
 
       // Then: the call that may have reached the server is unknown, not interrupted, and was sent once
@@ -1184,8 +1151,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note' })).toHaveLength(1);
       expect(writer.calls).toHaveLength(1);
     } finally {
-      readWithText.release();
-      readWithoutText.release();
+      readHeld.release();
       noteSending.release();
       await harness.close();
     }
@@ -1193,20 +1159,39 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
 
   it('INT-2 B: stopping an agent stops its child and grandchild, closes their calls and confirmations, writes the stop entries, calls the model no more, and tells the parent once', async () => {
     // Given: P (a root) has child R; R holds its model call and has child C; C has a pending confirmation of
-    // create_incident_note and an open read call; C has grandchild G whose read call is held on the fixture
+    // create_incident_note and an open read call; C has grandchild G whose read call is held on the fixture.
+    // Each parent starts its child with its first answer
     const ownerId = newUser();
-    const parentName = uniqueName('parent');
-    const stoppedName = uniqueName('stopped');
-    const childName = uniqueName('child');
-    const grandchildName = uniqueName('grandchild');
+    const library = createLibraryDouble();
+    const grandchildRecord = library.add(testRecord('grandchild', { servers: [LOGS_SERVER] }));
+    const childRecord = library.add(
+      testRecord('child', {
+        tools: ['start_agent'],
+        servers: [LOGS_SERVER, BACKOFFICE_SERVER],
+        agents: [grandchildRecord],
+      }),
+    );
+    const stoppedRecord = library.add(testRecord('stopped', { tools: ['start_agent'], agents: [childRecord] }));
     const fixture = createFixtureFiles();
     const grandchildRead = fixture.latch('grandchild-read');
     fixture.setFaults([holdCall('get_trace', TRACE_A, grandchildRead)]);
     const stoppedHeld = createLatch();
     const model = createScriptedModel();
-    const parent = model.script({ task: 'Parent of the stopped agent' }, [], { thereafter: { text: 'noted' } });
-    const stoppedScript = model.script({ task: 'Agent to stop' }, [{ text: 'never reported', latch: stoppedHeld }]);
+    const parent = model.script(
+      { task: 'Parent of the stopped agent' },
+      [{ calls: [startAgent({ agent: stoppedRecord, description: 'stopped', prompt: 'Agent to stop' })] }],
+      { thereafter: { text: 'noted' } },
+    );
+    const stoppedScript = model.script({ task: 'Agent to stop' }, [
+      { calls: [startAgent({ agent: childRecord, description: 'child', prompt: 'Child of the stopped agent' })] },
+      { text: 'never reported', latch: stoppedHeld },
+    ]);
     const childScript = model.script({ task: 'Child of the stopped agent' }, [
+      {
+        calls: [
+          startAgent({ agent: grandchildRecord, description: 'grandchild', prompt: 'Grandchild of the stopped agent' }),
+        ],
+      },
       {
         calls: [
           { tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE },
@@ -1221,49 +1206,26 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [
-        testDefinition(parentName),
-        testDefinition(stoppedName),
-        testDefinition(childName, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
-        testDefinition(grandchildName, { mcpServers: [LOGS_SERVER] }),
-      ],
+      library,
+      root: testRecord('parent', { tools: ['start_agent'] }),
     });
     try {
       const { agentId: parentId } = await harness.sessions.start({
         ownerId,
-        definition: parentName,
         prompt: 'Parent of the stopped agent',
         description: 'parent',
       });
-      await parent.called(1);
+      await parent.called(2);
       await waitForTaskStatus(harness, parentId, ownerId, 'waiting');
-      const { agentId: stoppedId } = await harness.sessions.start({
-        ownerId,
-        parentId,
-        definition: stoppedName,
-        prompt: 'Agent to stop',
-        description: 'stopped',
-      });
+      const stoppedId = await startedChild(harness, parentId);
       await stoppedHeld.reached();
-      const { agentId: childId } = await harness.sessions.start({
-        ownerId,
-        parentId: stoppedId,
-        definition: childName,
-        prompt: 'Child of the stopped agent',
-        description: 'child',
-      });
+      const childId = await startedChild(harness, stoppedId);
       await waitFor(
         () => harness.sessions.get(childId, ownerId),
         (view) => view.status === 'awaiting_confirmation',
         'the confirmation request of the child',
       );
-      const { agentId: grandchildId } = await harness.sessions.start({
-        ownerId,
-        parentId: childId,
-        definition: grandchildName,
-        prompt: 'Grandchild of the stopped agent',
-        description: 'grandchild',
-      });
+      const grandchildId = await startedChild(harness, childId);
       await waitFor(
         () => fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_A }),
         (calls) => calls.length === 1,
@@ -1289,19 +1251,23 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // When: the held calls are released and the workers run again (the parent wakes on R's notice)
       stoppedHeld.open();
       grandchildRead.release();
-      await parent.called(2);
+      await parent.called(3);
       await waitForTaskStatus(harness, parentId, ownerId, 'waiting');
 
-      // Then: the stopped tree called the model no more
-      expect([stoppedScript.calls.length, childScript.calls.length, grandchildScript.calls.length]).toEqual([1, 1, 1]);
+      // Then: the stopped tree called the model no more (R and C made one call each to start their child)
+      expect([stoppedScript.calls.length, childScript.calls.length, grandchildScript.calls.length]).toEqual([2, 2, 1]);
 
       // Then: R's history ends with `stopped`; C and G show their open calls closed and `stopped_with_parent`
       expect(historyLines(await historyOf(harness, stoppedId, ownerId))).toEqual([
         'task: Agent to stop',
+        'model_answer:  [start_agent]',
+        'tool_result: start_agent success',
         'event: stopped',
       ]);
       expect(historyLines(await historyOf(harness, childId, ownerId))).toEqual([
         'task: Child of the stopped agent',
+        'model_answer:  [start_agent]',
+        'tool_result: start_agent success',
         `model_answer:  [${BACKOFFICE_SERVER}/create_incident_note, ${LOGS_SERVER}/get_trace]`,
         'tool_result: create_incident_note interrupted',
         'tool_result: get_trace interrupted',
@@ -1378,7 +1344,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     // server; U1's answer also names a tool its definition does not have
     const allowedOwner = newUser();
     const deniedOwner = newUser();
-    const readerName = uniqueName('reader-of-all-servers');
     const fixture = createFixtureFiles();
     const model = createScriptedModel();
     const allowed = model.script({ task: 'Read as an allowed owner' }, [
@@ -1393,19 +1358,17 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [allowedOwner]: [LOGS_SERVER] },
-      definitions: [testDefinition(readerName, { mcpServers: ['*'] })],
+      root: testRecord('reader', { servers: ['*'] }),
     });
     try {
       // When: both agents run their scripts
       const { agentId: allowedId } = await harness.sessions.start({
         ownerId: allowedOwner,
-        definition: readerName,
         prompt: 'Read as an allowed owner',
         description: 'allowed reader',
       });
       const { agentId: deniedId } = await harness.sessions.start({
         ownerId: deniedOwner,
-        definition: readerName,
         prompt: 'Read as an owner without servers',
         description: 'reader without servers',
       });
@@ -1461,7 +1424,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   it('INT-3 B: a read call runs without a question while a mutating call sends nothing to the server and shows the employee one request with agent, tool and arguments', async () => {
     // Given: a writer whose one answer calls the read tool, then create_incident_note
     const ownerId = newUser();
-    const writerName = uniqueName('writer');
     const fixture = createFixtureFiles();
     const model = createScriptedModel();
     model.script({ task: 'Read, then write the note' }, [{ calls: READ_THEN_NOTE }]);
@@ -1469,13 +1431,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(writerName, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     });
     try {
       // When: the agent runs up to the mutating call
       const { agentId } = await startWriterUntilConfirmation(harness, {
         ownerId,
-        definition: writerName,
         prompt: 'Read, then write the note',
       });
 
@@ -1509,7 +1470,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   it('INT-3 C: approving after the server restarted on another instance sends the mutating call exactly once and the agent continues', async () => {
     // Given: a writer awaiting confirmation of create_incident_note on the first instance
     const ownerId = newUser();
-    const writerName = uniqueName('writer');
     const fixture = createFixtureFiles();
     const model = createScriptedModel();
     const writer = model.script({ task: 'Write the note across a restart' }, [
@@ -1519,8 +1479,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const options = {
       model,
       fixture,
+      library: createLibraryDouble(),
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(writerName, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     };
     const first = await createAgentsHarness(options);
     let firstOpen = true;
@@ -1528,7 +1489,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     try {
       const { agentId, decisionId } = await startWriterUntilConfirmation(first, {
         ownerId,
-        definition: writerName,
         prompt: 'Write the note across a restart',
       });
 
@@ -1591,7 +1551,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   it('INT-3 D: rejecting sends nothing, records the rejection and the agent continues', async () => {
     // Given: a writer awaiting confirmation of create_incident_note
     const ownerId = newUser();
-    const writerName = uniqueName('writer');
     const fixture = createFixtureFiles();
     const model = createScriptedModel();
     const writer = model.script({ task: 'Write the note, then be rejected' }, [
@@ -1602,12 +1561,11 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(writerName, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     });
     try {
       const { agentId, decisionId } = await startWriterUntilConfirmation(harness, {
         ownerId,
-        definition: writerName,
         prompt: 'Write the note, then be rejected',
       });
 
@@ -1643,7 +1601,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     // Given: on instance A (one slot, a lease only the test expires, a heartbeat that never comes) a writer
     // whose one answer is create_incident_note, then a read call; the note is held on the fixture
     const ownerId = newUser();
-    const writerName = uniqueName('writer');
     const fixture = createFixtureFiles();
     const noteHeld = fixture.latch('note-held');
     fixture.setFaults([holdCall('create_incident_note', INCIDENT_NOTE, noteHeld)]);
@@ -1660,8 +1617,9 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
     const options = {
       model,
       fixture,
+      library: createLibraryDouble(),
       access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(writerName, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     };
     const harnesses: AgentsHarness[] = [];
     try {
@@ -1673,7 +1631,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       harnesses.push(zombie);
       const { agentId, decisionId } = await startWriterUntilConfirmation(zombie, {
         ownerId,
-        definition: writerName,
         prompt: 'Write the note, then lose the step',
       });
 
@@ -1750,7 +1707,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   it('INT-3 F: a failing MCP server becomes a transport_failure result in the history and the agent carries on', async () => {
     // Given: the `logs` server drops the connection on the agent's first read call; the agent reads again afterwards
     const ownerId = newUser();
-    const readerName = uniqueName('reader');
     const fixture = createFixtureFiles();
     fixture.setFaults([{ tool: 'get_trace', argsHash: argsHash(TRACE_A), occurrences: [1], mode: 'drop_connection' }]);
     const model = createScriptedModel();
@@ -1763,13 +1719,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerId]: [LOGS_SERVER] },
-      definitions: [testDefinition(readerName, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
     });
     try {
       // When: the agent's read call takes its server down
       const { agentId } = await harness.sessions.start({
         ownerId,
-        definition: readerName,
         prompt: 'Read from a failing server',
         description: 'reader',
       });
@@ -1817,7 +1772,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // Use case: UC-E7. EARS: If-then. Design flow: Contract Definitions ("Операции агентов"), Security Considerations.
   //
   // Catches: one operation of the part that reads `agent_sessions`, `agent_messages` or `agent_tool_calls` by id before - or without - the runtime owner check: another employee reads an agent's history or its tool arguments, lists a foreign tree, learns of its pending
-  //   confirmations, restarts it (copying its definition and task into a new agent) or resolves its confirmation; or answers that differ between "foreign" and "missing" (a leak in itself). `start` with another employee's agent as `parentId` is the same hole.
+  //   confirmations, restarts it (copying its definition and task into a new agent) or resolves its confirmation; or answers that differ between "foreign" and "missing" (a leak in itself). (`start` takes no parent: a child starts only from its parent's own step.)
   // Not re-checked here: the owner check of the `runtime_*` operations (runtime INT-4), authentication and the HTTP edge (the `chat` part's API), the MCP access table (INT-3 row A).
   // Behavior: owner B calls each operation on owner A's agent, tree and confirmation -> the answer equals the answer for an id that exists for nobody -> nothing of A's changed
   // @category: core-functionality
@@ -1825,22 +1780,25 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   // @complexity: medium
   //
   // Verification items (table-driven by operation; A has a root, a child, history entries with tool calls, and one open confirmation):
-  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `resolveConfirmation` (approve and reject), and `start` with A's agent as `parentId`.
+  // - Rows: `get`, `list(rootId)`, `history`, `send`, `interrupt`, `stop`, `restart`, `confirmations(rootId)`, `resolveConfirmation` (approve and reject).
   // - For each row the same call is made with a random well-formed id that exists for nobody (the "missing" reference). Then: the answers are equal in kind and shape - the same error code (`AGENT_NOT_FOUND`, and `DECISION_NOT_FOUND` for the confirmation), with nothing of A's data
   //   (no definition, task text, argument or count) in the answer or the error message.
   // - After all rows: a row-version snapshot of A's `agent_sessions`, `agent_messages`, `agent_tool_calls` and tasks equals the snapshot before; A's confirmation is still open and A can approve it (the fixture journal then has one call); A's tree reads in full for A.
   it('INT-4: every agents operation called as another owner answers exactly as for a missing agent or decision, leaks nothing of the owner\'s data and changes none of the owner\'s rows', async () => {
     // Given: owner A has a root awaiting confirmation of create_incident_note (history with a tool call)
-    // and a completed child; owner B is another employee
+    // and a completed child the root started first; owner B is another employee
     const ownerA = newUser();
     const ownerB = newUser();
-    const rootName = uniqueName('owned-root');
-    const childName = uniqueName('owned-child');
+    const library = createLibraryDouble();
+    const childRecord = library.add(testRecord('owned-child'));
     const fixture = createFixtureFiles();
     const model = createScriptedModel();
     model.script(
       { task: 'Task of owner A' },
-      [{ calls: [{ tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE }] }],
+      [
+        { calls: [startAgent({ agent: childRecord, description: 'child of A', prompt: 'Child task of owner A' })] },
+        { calls: [{ tool: CREATE_INCIDENT_NOTE, args: INCIDENT_NOTE }] },
+      ],
       { thereafter: { text: 'root of A goes on' } },
     );
     model.script({ task: 'Child task of owner A' }, [{ text: 'report of the child of A' }]);
@@ -1848,12 +1806,12 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       model,
       fixture,
       access: { [ownerA]: [BACKOFFICE_SERVER] },
-      definitions: [testDefinition(rootName, { mcpServers: [BACKOFFICE_SERVER] }), testDefinition(childName)],
+      library,
+      root: testRecord('owned-root', { tools: ['start_agent'], servers: [BACKOFFICE_SERVER] }),
     });
     try {
       const { agentId: rootId } = await harness.sessions.start({
         ownerId: ownerA,
-        definition: rootName,
         prompt: 'Task of owner A',
         description: 'root of A',
       });
@@ -1862,13 +1820,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         (view) => view.status === 'awaiting_confirmation',
         'the confirmation request of A',
       );
-      const { agentId: childId } = await harness.sessions.start({
-        ownerId: ownerA,
-        parentId: rootId,
-        definition: childName,
-        prompt: 'Child task of owner A',
-        description: 'child of A',
-      });
+      const childId = await startedChild(harness, rootId);
       await waitForTaskStatus(harness, childId, ownerA, 'completed');
       const [request] = (await harness.sessions.confirmations(rootId, ownerA)).filter((c) => c.status === 'open');
       if (request === undefined) throw new Error('A has no confirmation request');
@@ -1881,7 +1833,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         { name: 'list', foreignId: rootId, call: (id) => sessions.list(id, ownerB) },
         { name: 'history', foreignId: rootId, call: (id) => sessions.history({ agentId: id, ownerId: ownerB, limit: 500 }) },
         { name: 'send', foreignId: childId, call: (id) => sessions.send({ agentId: id, ownerId: ownerB, text: 'hello' }) },
-        { name: 'interrupt', foreignId: rootId, call: (id) => sessions.interrupt({ agentId: id, ownerId: ownerB, text: 'stop' }) },
+        { name: 'interrupt', foreignId: rootId, call: (id) => sessions.interrupt({ agentId: id, ownerId: ownerB }) },
         { name: 'stop', foreignId: rootId, call: (id) => sessions.stop({ agentId: id, ownerId: ownerB }) },
         { name: 'restart', foreignId: childId, call: (id) => sessions.restart({ agentId: id, ownerId: ownerB }) },
         { name: 'confirmations', foreignId: rootId, call: (id) => sessions.confirmations(id, ownerB) },
@@ -1900,12 +1852,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
           foreignId: request.decisionId,
           call: (id) =>
             sessions.resolveConfirmation({ decisionId: id, ownerId: ownerB, approve: true, args: INCIDENT_NOTE }),
-        },
-        {
-          name: 'start under the agent',
-          foreignId: rootId,
-          call: (id) =>
-            sessions.start({ ownerId: ownerB, parentId: id, definition: childName, prompt: 'Foreign child', description: 'foreign' }),
         },
       ];
       const foreign: string[] = [];
@@ -1930,7 +1876,6 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
         'resolveConfirmation approve: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
         'resolveConfirmation reject: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
         'resolveConfirmation with edited arguments: RuntimeError DECISION_NOT_FOUND Decision <id> not found',
-        'start under the agent: AgentsError AGENT_NOT_FOUND Task <id> not found',
       ]);
 
       // Then: none of A's rows changed, and A's confirmation is still open
@@ -1952,6 +1897,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       // Then: the action reached the server once, and A's tree reads in full for A
       expect(fixtureCallsOf(fixture.callLog, { tool: 'create_incident_note', args: INCIDENT_NOTE })).toHaveLength(1);
       expect((await toolCallRowsOf(harness.db, rootId)).map((call) => `${call.tool} ${call.outcome}`)).toEqual([
+        'start_agent success',
         'create_incident_note success',
       ]);
       expect(new Set((await harness.sessions.list(rootId, ownerA)).map((view) => view.agentId))).toEqual(

@@ -5,20 +5,39 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAui } from '@assistant-ui/react';
 import { useStore } from 'zustand';
 import { focusAfterNewChat, focusShellTarget, isFinePointer } from '@/lib/focus';
+import type { LeaveGuard } from '@/lib/leave-guard';
 import type { ShellServices } from '@/lib/threads/shell-services';
 import type { ShellStatusState, ShellStatusStore } from '@/lib/threads/shell-status-store';
 
 export type ShellActions = {
+  /** Asks MC-11 first while unsaved changes are held (KD-4); the shortcut calls it too. */
   newChat: () => void;
+  /** `router.push(href)` once MC-11 answers «leave»; at once while nothing is held. `ShellLink` leaves through it. */
+  leaveTo: (href: string) => void;
   /** «Повторить» for a failed history load of the thread body. */
   retryHistory: (remoteId: string) => void;
   /** «Повторить» for a failed switch to a thread opened by URL. */
   retrySwitch: (threadId: string) => void;
 };
 
-const ShellActionsContext = createContext<ShellActions | null>(null);
+/** Exported for `ShellLink`, which also renders outside the shell (a link without a guard there). */
+export const ShellActionsContext = createContext<ShellActions | null>(null);
 /** Exported for tests that render a bare `Thread`, which announces through the shell's announcer. */
 export const ShellServicesContext = createContext<ShellServices | null>(null);
+
+/**
+ * KD-4: with nothing held `go()` runs at once, in the same tick — callers and tests expect `router.push`
+ * synchronously; otherwise only after MC-11 answers «Уйти без сохранения».
+ */
+export function leaveThenGo(leaveGuard: LeaveGuard, go: () => void): void {
+  if (leaveGuard.getState().held === null) {
+    go();
+    return;
+  }
+  void leaveGuard.confirmLeave().then((leave) => {
+    if (leave) go();
+  });
+}
 
 type ShellActionsProviderProps = {
   services: ShellServices;
@@ -48,14 +67,16 @@ export function ShellActionsProvider({ services, children }: ShellActionsProvide
   const actions = useMemo<ShellActions>(
     () => ({
       // No network: the server thread is created by the first send (initialize), never by «Новый чат».
-      newChat: () => {
-        if (pathname === '/') {
-          focusAfterNewChat();
-          return;
-        }
-        focusOnRoot.current = true;
-        router.push('/');
-      },
+      newChat: () =>
+        leaveThenGo(services.leaveGuard, () => {
+          if (pathname === '/') {
+            focusAfterNewChat();
+            return;
+          }
+          focusOnRoot.current = true;
+          router.push('/');
+        }),
+      leaveTo: (href) => leaveThenGo(services.leaveGuard, () => router.push(href)),
       retryHistory: (remoteId) => void services.feeds.forThread(remoteId).load(),
       retrySwitch: (threadId) => aui.threads.switchToThread(threadId),
     }),

@@ -1,7 +1,7 @@
-/** The last report of the final agent the session has received. */
-export interface FinalAgentReport {
+/** The last report of the final executor the coordinator has received. */
+export interface FinalExecutorReport {
   readonly status: 'completed' | 'failed' | 'stopped';
-  /** The report text; a failed or stopped agent may have none. */
+  /** The report text; a failed or stopped executor may have none. */
   readonly text: string | null;
 }
 
@@ -11,10 +11,10 @@ export interface EndOfTurnInput {
   readonly unfinishedChildren: number;
   /** `child_finished` messages pending in the inbox and not among the messages of this step (Notes 6). */
   readonly pendingChildNotices: number;
-  /** `limits.finalAgent` of the session. */
-  readonly finalAgent: string | null;
-  /** The last report of `finalAgent`, if any. */
-  readonly finalAgentReport: FinalAgentReport | null;
+  /** `finalExecutor` of the coordinator's snapshot; `null` for every other run. */
+  readonly finalExecutor: string | null;
+  /** The last report of `finalExecutor`, if any. */
+  readonly finalExecutorReport: FinalExecutorReport | null;
   /** The text of the model's answer without tool calls. */
   readonly text: string;
 }
@@ -28,24 +28,24 @@ export type EndOfTurn =
   | { readonly kind: 'complete'; readonly report: string };
 
 /**
- * The outcome of an answer without tool calls (KD-2, «Конец хода», DC-3, DC-4, Invariant 4): a root
- * session waits; an agent with unfinished children or an undelivered child notice waits; with a final
- * agent, only that agent's `completed` report ends the session and becomes its report; otherwise the
- * answer text is the report.
+ * The outcome of an answer without tool calls (KD-2, «Конец хода», DC-3, DC-4, Invariant 4;
+ * design-runtime.md KD-5): a root session waits; an agent with unfinished children or an undelivered
+ * child notice waits; with a final executor, only its `completed` report ends the coordinator and
+ * becomes its report; otherwise the answer text is the report.
  */
 export function endOfTurn(input: EndOfTurnInput): EndOfTurn {
   if (input.isRoot) return { kind: 'wait' };
   if (input.unfinishedChildren > 0 || input.pendingChildNotices > 0) return { kind: 'wait' };
-  if (input.finalAgent === null) return { kind: 'complete', report: input.text };
-  const report = input.finalAgentReport;
+  if (input.finalExecutor === null) return { kind: 'complete', report: input.text };
+  const report = input.finalExecutorReport;
   if (report?.status === 'completed') return { kind: 'complete', report: report.text ?? '' };
-  return { kind: 'notice', text: finishRefusal(input.finalAgent, report) };
+  return { kind: 'notice', text: finishRefusal(input.finalExecutor, report) };
 }
 
-function finishRefusal(finalAgent: string, report: FinalAgentReport | null): string {
+function finishRefusal(finalExecutor: string, report: FinalExecutorReport | null): string {
   const why =
     report === null
-      ? `there is no report of agent "${finalAgent}" yet`
-      : `the last run of agent "${finalAgent}" ended as ${report.status}`;
-  return `You cannot finish: ${why}. The session ends only with a completed report of agent "${finalAgent}"; start it with start_agent.`;
+      ? `there is no report of executor "${finalExecutor}" yet`
+      : `the last run of executor "${finalExecutor}" ended as ${report.status}`;
+  return `You cannot finish: ${why}. The workflow ends only with a completed report of executor "${finalExecutor}"; start it with start_agent.`;
 }

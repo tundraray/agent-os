@@ -2,6 +2,8 @@ import type { Logger } from '@agent-os/common';
 import {
   AGENT_TASK_TYPE,
   AgentMessageKindSchema,
+  CHAT_BUILTIN_KEY,
+  type ChipRecord,
   type DecisionStatus,
   type ToolCallState,
   ToolCallStateSchema,
@@ -19,33 +21,37 @@ import {
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { AccessAudit, AccessGate } from '../access-gate.js';
 import { type AgentView, toAgentView } from '../agent-view.js';
-import type { AgentsConfig } from '../config.js';
-import type { DefinitionCatalog } from '../definitions/catalog.js';
 import { AgentsError } from '../errors.js';
 import type { HistoryEntry } from '../history/history.js';
 import { messagePayload } from '../step/continuation.js';
-import { interruptText } from '../step/deliver.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
 import { history } from '../store/history.repository.js';
-import { type Session, type SessionInput, sessions } from '../store/sessions.repository.js';
-import { type SessionInputDeps, sessionInputOf } from '../tools/builtin/start-child.js';
-import type { SessionLimits, ToolDisplay } from '../tools/tool.js';
+import type { RecordLibrary } from '../start/record-library.js';
+import { auditStartRefusal, resolveStart, type StartSource } from '../start/resolve-start.js';
+import type { RunSnapshot } from '../start/snapshot.js';
+import {
+  type Session,
+  type SessionInput,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
+import { logStart } from '../tools/builtin/start-child.js';
+import type { ToolDisplay } from '../tools/tool.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { stopEntries } from './stop-entries.js';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
 
+/** The root of a conversation (design-runtime.md, «Операции `agents`»): it runs the `chat` record. */
 export interface StartRequest {
   readonly ownerId: string;
-  /** Without it the agent is a root session, such as a conversation. */
-  readonly parentId?: string;
-  readonly definition: string;
   readonly prompt: string;
   readonly description: string;
-  readonly model?: string;
-  readonly limits?: SessionLimits;
+  /** The chip of the conversation's first message: it stays on the root's `task` entry. */
+  readonly record?: ChipRecord;
 }
 
 export interface AgentRef {
@@ -55,11 +61,8 @@ export interface AgentRef {
 
 export interface SendRequest extends AgentRef {
   readonly text: string;
-}
-
-export interface InterruptRequest extends AgentRef {
-  /** Without text the agent is marked «прерван» and waits (KD-3). */
-  readonly text?: string;
+  /** The message's chip (KD-4): the model and the history get it with the text. */
+  readonly record?: ChipRecord;
 }
 
 export interface HistoryRequest extends AgentRef {
@@ -125,9 +128,12 @@ export interface AgentConfirmation extends ToolDisplay {
 export interface AgentSessions {
   start(request: StartRequest): Promise<{ agentId: string }>;
   send(request: SendRequest): Promise<{ messageId: string }>;
-  interrupt(request: InterruptRequest): Promise<'interrupted' | 'not_active'>;
+  /** Marks the agent «прерван»: it closes its open calls and waits for a message (KD-3). */
+  interrupt(request: AgentRef): Promise<'interrupted' | 'not_active'>;
   stop(request: AgentRef): Promise<string[]>;
   restart(request: AgentRef): Promise<{ agentId: string }>;
+  /** The run's snapshot, for the view of a run; `null` when the task is not an agent. */
+  snapshot(agentId: string, ownerId: string): Promise<RunSnapshot | null>;
   get(agentId: string, ownerId: string): Promise<AgentView>;
   list(rootId: string, ownerId: string): Promise<AgentView[]>;
   history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
@@ -138,9 +144,11 @@ export interface AgentSessions {
 export interface AgentSessionsDeps {
   readonly database: Database;
   readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions'>;
-  readonly catalog: DefinitionCatalog;
   readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
-  readonly config: Pick<AgentsConfig, 'maxDepth' | 'defaultModel'>;
+  /** `resolveStart` asks it for the record of a start or a restart. */
+  readonly library: RecordLibrary;
+  readonly access: AccessGate;
+  readonly audit: AccessAudit;
   readonly logger: Logger;
 }
 
@@ -178,13 +186,8 @@ function agentNotFound(id: string): AgentsError {
  * operation is logged with its ids and outcome.
  */
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
-  const { database, runtime, catalog, registry, config } = deps;
+  const { database, runtime, registry } = deps;
   const logger = deps.logger.child({ service: 'agents.sessions' });
-  const startDeps: SessionInputDeps = {
-    catalog,
-    maxDepth: config.maxDepth,
-    defaultModel: config.defaultModel,
-  };
 
   async function logged<T>(
     operation: string,
@@ -230,6 +233,43 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return tasks;
   }
 
+  /**
+   * The snapshot of a start by `resolveStart` on behalf of the owner (KD-2), and the log of the start
+   * once its agent exists; a refusal is logged and is `START_REFUSED` with its reason and model, and no
+   * agent is made.
+   */
+  async function startSnapshot(
+    ownerId: string,
+    source: StartSource,
+    parentId: string | null,
+  ): Promise<{ snapshot: RunSnapshot; done: (agentId: string, rootId: string) => void }> {
+    const startedAt = Date.now();
+    const resolution = await resolveStart({ ownerId, source }, deps);
+    const entry = { ownerId, parentId, source: source.kind, resolution, startedAt };
+    if (resolution.kind === 'refused') {
+      await auditStartRefusal(deps.audit, resolution);
+      logStart(logger, { ...entry, rootId: null, agentId: null, refusal: resolution.reason });
+      throw new AgentsError('START_REFUSED', `A start from source ${source.kind} is refused: ${resolution.reason}`, {
+        refusal: { reason: resolution.reason, model: resolution.model },
+      });
+    }
+    return {
+      snapshot: resolution.snapshot,
+      done: (agentId, rootId) => logStart(logger, { ...entry, rootId, agentId, refusal: null }),
+    };
+  }
+
+  /**
+   * Where a restart takes its snapshot (KD-2): a record starts anew by its id, as the owner sees it now;
+   * an executor and a fork restart on their own snapshot.
+   */
+  function restartSource(snapshot: RunSnapshot, session: Session): StartSource {
+    if (snapshot.kind === 'executor' || session.forkedFromTaskId !== null) {
+      return { kind: 'restart', snapshot };
+    }
+    return { kind: 'record', recordId: snapshot.origin.recordId, expected: snapshot.origin.kind };
+  }
+
   /** Creates the agent task, then its session in its own transaction (plan Notes 11). */
   async function createAgent(
     ownerId: string,
@@ -249,17 +289,15 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return { agentId };
   }
 
-  /** Whether an `interrupt` without text waits in the agent's queue (KD-3); only a queued or running agent can have one. */
-  async function pendingInterruptWithoutText(task: Task): Promise<boolean> {
+  /** Whether an `interrupt` waits in the agent's queue (KD-3); only a queued or running agent can have one. */
+  async function pendingInterrupt(task: Task): Promise<boolean> {
     if (task.status !== queued && task.status !== running) return false;
     const pending = await runtime.inbox.listPending(task.taskId, task.ownerId);
-    return pending.some(
-      (message) => message.kind === interrupt && interruptText(message) === undefined,
-    );
+    return pending.some((message) => message.kind === interrupt);
   }
 
   async function view(task: Task, session: Session): Promise<AgentView> {
-    return toAgentView(task, session, await pendingInterruptWithoutText(task));
+    return toAgentView(task, session, await pendingInterrupt(task));
   }
 
   /** The tool calls of the given answers, by answer and position. */
@@ -311,24 +349,29 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   return {
-    start(request) {
-      const { ownerId, parentId } = request;
+    start({ ownerId, prompt, description, record }) {
       return logged(
         'start',
-        { ownerId, parentId, definition: request.definition },
+        { ownerId, recordId: record?.id ?? null },
         async () => {
-          const parent = parentId === undefined ? null : await agentTask(parentId, ownerId);
-          const input = sessionInputOf(startDeps, parent?.depth ?? null, request);
-          return createAgent(ownerId, parent?.taskId ?? null, input);
+          const started = await startSnapshot(ownerId, { kind: 'builtin', builtinKey: CHAT_BUILTIN_KEY }, null);
+          const created = await createAgent(ownerId, null, {
+            snapshot: started.snapshot,
+            prompt,
+            description,
+            ...(record === undefined ? {} : { record }),
+          });
+          started.done(created.agentId, created.agentId);
+          return created;
         },
         ({ agentId }) => ({ agentId }),
       );
     },
 
-    send({ agentId, ownerId, text }) {
+    send({ agentId, ownerId, text, record }) {
       return logged(
         'send',
-        { agentId, ownerId },
+        { agentId, ownerId, recordId: record?.id ?? null },
         async () => {
           const target = await agentTask(agentId, ownerId);
           // Notes 5: a message to a stopped agent carries the `resume` mark; the window between this
@@ -340,7 +383,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
               ownerId,
               kind: userMessage,
               sender: ownerId,
-              payload: messagePayload(text, target, parent),
+              payload: {
+                ...messagePayload(text, target, parent),
+                ...(record === undefined ? {} : { record }),
+              },
               revive: true,
             }),
           );
@@ -350,20 +396,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       );
     },
 
-    interrupt({ agentId, ownerId, text }) {
+    interrupt({ agentId, ownerId }) {
       return logged(
         'interrupt',
-        { agentId, ownerId, withText: text !== undefined },
+        { agentId, ownerId },
         async () => {
           const task = await agentTask(agentId, ownerId);
           // A free agent (waiting for messages) has no work to cut off: `not_active`, nothing changes (Flow 4).
           if (task.status === waiting && task.waitReason === WaitReasonSchema.enum.messages) return 'not_active';
-          // KD-3: always with an `interrupt` message, with the employee's text or without.
+          // KD-3: the `interrupt` message makes the agent's next step close its calls and wait.
           return asAgent(
             runtime.tasks.interrupt(agentId, ownerId, {
               kind: interrupt,
               sender: ownerId,
-              payload: text === undefined ? {} : { text },
+              payload: {},
               revive: false,
             }),
           );
@@ -396,16 +442,31 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           }
           const session = await sessions.get(database, agentId);
           if (session === undefined) throw new Error(`Finished agent ${agentId} has no session`);
-          // AC-09.2: the same definition, task, model, limits and parent; the history starts anew.
-          return createAgent(ownerId, task.parentId, {
-            definition: session.definition,
+          const { snapshot } = sessionInputOf(task.input);
+          // AC-09.2: the same assignment and parent on the snapshot of KD-2; the history starts anew,
+          // and a restarted fork does not inherit its parent's.
+          const started = await startSnapshot(ownerId, restartSource(snapshot, session), task.parentId);
+          const created = await createAgent(ownerId, task.parentId, {
+            snapshot: started.snapshot,
             description: session.description,
             prompt: session.prompt,
-            model: session.model,
-            ...(session.limits === null ? {} : { limits: session.limits }),
           });
+          started.done(created.agentId, task.rootId);
+          return created;
         },
         (restarted) => ({ restartedAs: restarted.agentId }),
+      );
+    },
+
+    snapshot(agentId, ownerId) {
+      return logged(
+        'snapshot',
+        { agentId, ownerId },
+        async () => {
+          const task = await agentTask(agentId, ownerId);
+          return task.type === AGENT_TASK_TYPE ? sessionInputOf(task.input).snapshot : null;
+        },
+        (snapshot) => ({ kind: snapshot?.kind ?? null }),
       );
     },
 

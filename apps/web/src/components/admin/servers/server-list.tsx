@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ServerIcon } from 'lucide-react';
 import type { McpServerMode, McpServerStatus, McpServerSummary } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import { buttonVariants } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
@@ -10,7 +11,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { adminNewPath, adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 
@@ -85,11 +86,11 @@ export function ServerList() {
 
   return (
     <>
-      <AdminPageHeader title={adminSectionTitle('servers')}>
+      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('servers')}>
         <Link href={adminNewPath('servers')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
           {TEXT.register}
         </Link>
-      </AdminPageHeader>
+      </PageHeader>
       <div className="max-w-240">
         <DataTable caption={adminSectionTitle('servers')} columns={COLUMNS} state={state} />
       </div>

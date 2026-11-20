@@ -7,6 +7,8 @@ import {
   McpServerNameSchema,
   ModelIdSchema,
   PROVIDER_NAME_MAX_LENGTH,
+  RECORD_MAX_TURNS_MAX,
+  RECORD_MAX_TURNS_MIN,
   type McpServerMode,
   type PriceRates,
 } from '@agent-os/contracts';
@@ -152,6 +154,16 @@ export function signInSettingsRules({
     errors.absoluteHours = ADMIN_TEXT.absoluteBelowIdle;
   }
   return errors;
+}
+
+// ---------- Library settings ----------
+
+/** «Лимит ходов для новой записи»: a whole number within the contract's bounds of a record's «Максимум шагов». */
+export function librarySettingsRules({ defaultMaxTurns }: { defaultMaxTurns: string }): FieldErrors<'defaultMaxTurns'> {
+  const turns = parseDecimal(defaultMaxTurns);
+  const valid =
+    turns !== null && Number.isInteger(turns) && turns >= RECORD_MAX_TURNS_MIN && turns <= RECORD_MAX_TURNS_MAX;
+  return valid ? {} : { defaultMaxTurns: ADMIN_TEXT.defaultMaxTurns };
 }
 
 // ---------- Grants (GR-01, MC-25, DC-14) ----------

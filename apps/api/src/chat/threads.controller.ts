@@ -13,12 +13,15 @@ import {
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
+  DraftActionRequestSchema,
   HistoryQuerySchema,
   RenameThreadRequestSchema,
   SendMessageRequestSchema,
   ThreadListQuerySchema,
   type AgentNode,
   type ConversationView,
+  type DraftActionRequest,
+  type DraftView,
   type HistoryQuery,
   type InterruptResponse,
   type RenameThreadRequest,
@@ -33,12 +36,14 @@ import type { AuthedRequest } from '../identity/auth-user.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { type Command, runCommand } from './chat.errors.js';
 import { ConversationsService } from './conversations.service.js';
-import { interruptTextOf } from './interrupt-body.js';
+import { DraftsService } from './drafts.service.js';
 
 /**
  * The conversation routes (design-chat.md, Contract «Беседы»): the former list, create, read, rename
- * and delete, plus the conversation view, its agent tree, send and interrupt. Every command is logged once with its route, ids, outcome and
- * duration; a malformed, missing or foreign `threadId` answers the same 404 `THREAD_NOT_FOUND`.
+ * and delete, plus the conversation view, its agent tree, send (with a record chip), interrupt and the
+ * employee's action on a record draft (design-runtime.md, KD-6). Every
+ * command is logged once with its route, ids, outcome and duration; a malformed, missing or foreign
+ * `threadId` answers the same 404 `THREAD_NOT_FOUND`. The employee is always the session's (ADR-0012).
  */
 @Controller('threads')
 export class ThreadsController {
@@ -46,6 +51,7 @@ export class ThreadsController {
 
   constructor(
     private readonly conversations: ConversationsService,
+    private readonly drafts: DraftsService,
     @Inject(APP_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'chat.threads' });
@@ -147,10 +153,11 @@ export class ThreadsController {
     @Req() req: AuthedRequest,
   ): Promise<SendMessageResponse> {
     const ownerId = req.user.id;
+    const { text, recordId } = body;
     return this.run({
       route: 'POST /threads/:threadId/messages',
-      fields: { ownerId, threadId },
-      work: () => this.conversations.send(threadId, ownerId, body.text),
+      fields: { ownerId, threadId, ...(recordId === undefined ? {} : { recordId }) },
+      work: () => this.conversations.send(threadId, ownerId, text, recordId),
       outcomeOf: (sent) => ({ messageId: sent.messageId }),
     });
   }
@@ -159,16 +166,42 @@ export class ThreadsController {
   @HttpCode(200)
   interrupt(
     @Param('threadId') threadId: string,
-    @Body() body: unknown,
     @Req() req: AuthedRequest,
   ): Promise<InterruptResponse> {
     const ownerId = req.user.id;
-    const text = interruptTextOf(body);
     return this.run({
       route: 'POST /threads/:threadId/interrupt',
       fields: { ownerId, threadId },
-      work: () => this.conversations.interrupt(threadId, ownerId, text),
-      outcomeOf: (answer) => ({ interruptOutcome: answer.outcome, withText: text !== undefined }),
+      work: () => this.conversations.interrupt(threadId, ownerId),
+      outcomeOf: (answer) => ({ interruptOutcome: answer.outcome }),
+    });
+  }
+
+  /**
+   * Save, reject or «saved in the editor» of a draft of the conversation (DC-8, DC-9). A refusal of
+   * `saveOwn` is 200 with the draft's `refusal`; a draft not found in the employee's conversation is
+   * 404 DRAFT_NOT_FOUND, one no longer waiting — 409 DRAFT_RESOLVED.
+   */
+  @Post(':threadId/drafts/:draftId')
+  @HttpCode(200)
+  actOnDraft(
+    @Param('threadId') threadId: string,
+    @Param('draftId') draftId: string,
+    @Body(new ZodValidationPipe(DraftActionRequestSchema)) body: DraftActionRequest,
+    @Req() req: AuthedRequest,
+  ): Promise<DraftView> {
+    const ownerId = req.user.id;
+    return this.run({
+      route: 'POST /threads/:threadId/drafts/:draftId',
+      fields: { ownerId, threadId, draftId, action: body.action },
+      work: () => this.drafts.act(threadId, draftId, ownerId, body),
+      outcomeOf: (draft) => ({
+        callId: draft.callId,
+        recordId: draft.recordId,
+        savedRecordId: draft.savedRecordId,
+        state: draft.state,
+        refusal: draft.refusal,
+      }),
     });
   }
 

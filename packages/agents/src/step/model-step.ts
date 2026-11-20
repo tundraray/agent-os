@@ -2,6 +2,7 @@ import {
   AgentFailureReasonSchema,
   AGENTS_HISTORY_APPENDED,
   CHILD_FINISHED_KIND,
+  type ChipRecord,
   HistoryEventSchema,
 } from '@agent-os/contracts';
 import { agentToolCalls, type Database } from '@agent-os/db';
@@ -16,7 +17,6 @@ import {
 import { eq } from 'drizzle-orm';
 
 import type { AccessAudit } from '../access-gate.js';
-import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
 import { mcpToolName } from '../mcp/mcp-tool.js';
 import {
@@ -28,18 +28,21 @@ import {
   modelRefusalMessage,
   refusalFields,
 } from '../model/model-client.js';
+import type { AgentTurnMessage } from '../model/mastra-turn.js';
 import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages.js';
+import { snapshotDefinition } from '../start/snapshot-definition.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
   type Session,
   type SessionPatch,
+  sessionInputOf,
   sessions,
   type StoreReader,
 } from '../store/sessions.repository.js';
 import { type NewToolCall, toolCalls } from '../store/tool-calls.repository.js';
 import { callTargetOf, type SessionTool, type ToolRegistry } from '../tools/tool-registry.js';
 import { entriesOf, rootTurnReset } from './deliver.js';
-import { endOfTurn, type FinalAgentReport } from './turn-rules.js';
+import { endOfTurn, type FinalExecutorReport } from './turn-rules.js';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';
@@ -135,6 +138,41 @@ export function previewEntries(
     (entry, index) =>
       ({ seq: lastSeq + index + 1, kind: entry.kind, createdAt, content: entry.content }) as HistoryEntry,
   );
+}
+
+/** A message's record chip as the model reads it (KD-4): the record's id, kind and name after the text. */
+function withChip(text: string, record: ChipRecord | null): string {
+  return record === null
+    ? text
+    : `${text}\n\n[The employee chose a record: ${record.kind} ${record.id} "${record.name}"]`;
+}
+
+/** The entries as the model reads them: a task or a message with a chip carries it as a line. */
+function withChipLines(entries: readonly HistoryEntry[]): HistoryEntry[] {
+  return entries.map((entry) => {
+    if (entry.kind === 'task' || entry.kind === 'user_message') {
+      const text = withChip(entry.content.text, entry.content.record);
+      return entry.kind === 'task'
+        ? { ...entry, content: { ...entry.content, text } }
+        : { ...entry, content: { ...entry.content, text } };
+    }
+    return entry;
+  });
+}
+
+/** The provider messages of a step: the history read, then the entries not written yet (`shown`). */
+export function providerMessagesOf(
+  view: SessionHistory,
+  shown: readonly HistoryEntry[],
+): AgentTurnMessage[] {
+  const { forkPrefix } = view;
+  return buildProviderMessages({
+    ...(forkPrefix === undefined
+      ? {}
+      : { forkPrefix: { ...forkPrefix, entries: withChipLines(forkPrefix.entries) } }),
+    entries: withChipLines([...view.entries, ...shown]),
+    calls: view.calls,
+  });
 }
 
 /** Appends the entries and writes `agents.history_appended` with the last `seq` (§ «Сообщения и события»). */
@@ -264,7 +302,6 @@ export async function callUnlessAborted<T>(ctx: StepContext, call: () => Promise
 export interface ModelStepDeps {
   /** Reads the history outside the commit: only steps of this agent write it, one at a time. */
   readonly database: Database;
-  readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
   /** Gets the `access_denied` record of a refused model call (KD-6). */
@@ -323,14 +360,17 @@ function newToolCalls(
  *   `agents.history_appended`.
  */
 export function createModelStep(deps: ModelStepDeps): ModelStep {
-  const { database, catalog, registry, modelClient, audit } = deps;
+  const { database, registry, modelClient, audit } = deps;
 
-  /** The last report of `finalAgent` among the session's child reports, the delivered ones included (DC-4). */
-  async function finalAgentReport(
-    finalAgent: string,
+  /**
+   * The last report of the final executor among the coordinator's child reports, the delivered ones
+   * included (DC-4; design-runtime.md KD-5): a child is that executor by the `executor` of its origin.
+   */
+  async function finalExecutorReport(
+    finalExecutor: string,
     ownEntries: readonly HistoryEntry[],
     delivered: readonly NewHistoryEntry[],
-  ): Promise<FinalAgentReport | null> {
+  ): Promise<FinalExecutorReport | null> {
     const reports: HistoryContent<'child_report'>[] = [];
     for (const entry of [...ownEntries, ...delivered]) {
       if (entry.kind === 'child_report') reports.push(entry.content);
@@ -342,7 +382,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     );
     const last = reports
       .reverse()
-      .find((report) => children.get(report.agentId)?.definition === finalAgent);
+      .find((report) => children.get(report.agentId)?.origin?.executor === finalExecutor);
     return last === undefined ? null : { status: last.status, text: last.text };
   }
 
@@ -362,7 +402,9 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
   return async function modelStep(ctx, session, prelude) {
     const startedAt = Date.now();
-    const definition = definitionOf(catalog, session);
+    // The run's definition comes from its snapshot only, never from the library now (ADR-0017).
+    const { snapshot } = sessionInputOf(ctx.input);
+    const definition = snapshotDefinition(snapshot);
     const isRoot = ctx.parentId === null;
     const turns = rootTurnReset({
       turns: prelude?.patch.turns ?? session.turns,
@@ -376,7 +418,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     ];
     const basePatch: SessionPatch = { ...prelude?.patch };
 
-    // The definition's `maxTurns` is spent: the step fails instead of calling the model.
+    // The snapshot's `maxTurns` is spent: the step fails instead of calling the model.
     if (turns >= definition.maxTurns) {
       logStep(ctx, STEP_KIND, startedAt, 'fail', { reason: FAILURE_REASONS.turn_limit, turns });
       return failResult({
@@ -391,9 +433,10 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     const view = await readSessionHistory(database, session);
     const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
     const sessionTools = await registry.sessionTools({
-      definition,
-      limits: session.limits,
+      snapshot,
       ownerId: session.ownerId,
+      agentId: ctx.taskId,
+      root: isRoot,
     });
     const result = await callUnlessAborted(ctx, () =>
       modelClient.call({
@@ -403,11 +446,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         agentName: definition.name,
         model: session.model,
         instructions: definition.prompt,
-        messages: buildProviderMessages({
-          ...(view.forkPrefix === undefined ? {} : { forkPrefix: view.forkPrefix }),
-          entries: [...view.entries, ...shown],
-          calls: view.calls,
-        }),
+        messages: providerMessagesOf(view, shown),
         tools: sessionTools,
         streamsText: true,
         signal: ctx.signal,
@@ -480,17 +519,17 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
       };
     }
 
-    const finalAgent = session.limits?.finalAgent ?? null;
+    const { finalExecutor } = definition;
     const inFlight = isRoot ? { unfinished: 0, pending: 0 } : await childrenInFlight(ctx);
     const ending = endOfTurn({
       isRoot,
       unfinishedChildren: inFlight.unfinished,
       pendingChildNotices: inFlight.pending,
-      finalAgent,
-      finalAgentReport:
-        isRoot || finalAgent === null
+      finalExecutor,
+      finalExecutorReport:
+        isRoot || finalExecutor === null
           ? null
-          : await finalAgentReport(finalAgent, view.entries, delivered),
+          : await finalExecutorReport(finalExecutor, view.entries, delivered),
       text: result.text,
     });
 

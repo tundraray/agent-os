@@ -40,7 +40,7 @@
 //
 // AC -> proving test:
 // - AC-14.1: INT-1 row A; AC-14.2: INT-1 rows B and C; AC-14.3: INT-3 rows A and B (list, rename, delete, title) + `threads.e2e-spec.ts` (list pages and cursor walk, rename, delete) + unit schemas and title rules; AC-14.4: INT-3 row C
-// - AC-15.1: not automated (model choice) - the tool path itself is agents INT-3 row A; AC-15.2, AC-15.3: INT-2 row C (the chat's own list/message/stop tools through the real definition); AC-15.4, AC-28.1..AC-28.3: INT-2 row D (the brief); AC-15.5, AC-15.6: not automated (model choice) - the start itself is INT-1 row B
+// - AC-15.1: not automated (model choice) - the tool path itself is agents INT-3 row A; AC-15.2, AC-15.3: INT-2 row C (the chat's own list/message/stop tools through the real `chat` record); AC-15.4, AC-28.1..AC-28.3: INT-2 row D (the brief); AC-15.5, AC-15.6: not automated (model choice) - the start itself is INT-1 row B
 // - AC-16.1: INT-1 row C; AC-16.2: INT-1 row D
 // - AC-17.1, AC-06.1, NFR-02: INT-1 row B; AC-17.2: INT-1 row B (reload); AC-17.3, AC-24.2: INT-1 row B (tool confirmation at depth 2) and INT-2 row D (brief)
 // - AC-21.1, AC-21.2: INT-2 row A (list) and INT-4 (foreign); AC-22.1, AC-22.2: INT-2 row B (history of an agent, `inherited`) and INT-1 row B (live notes); AC-23.1, AC-23.2: INT-2 row C (the web routes over send, interrupt, stop, restart)
@@ -48,9 +48,6 @@
 // - NFR-06 and DC-3, DC-4, AC-13.3 at the HTTP edge: INT-4; DC-5: INT-1 row E; DC-1: INT-1 rows A and F; DC-2: INT-3 row B
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 import {
   createLatch,
   inputLines,
@@ -69,7 +66,6 @@ import {
 } from '@agent-os/contracts';
 import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub.js';
 import {
   addModel,
@@ -86,6 +82,7 @@ import {
   waitFor,
 } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { BUILTIN, pointBuiltinsAt } from './support/library.js';
 import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers.js';
 import {
   createEmployee,
@@ -104,42 +101,33 @@ const TEST_TIMEOUT_MS = 120_000;
 /** The tools of the run's fixture servers (`createTestApp`) as the model names them. */
 const GET_TRACE = `mcp__${LOGS_SERVER}__get_trace`;
 const CREATE_INCIDENT_NOTE = `mcp__${BACKOFFICE_SERVER}__create_incident_note`;
-const GENERAL_PURPOSE = 'general-purpose';
+/** The built-in records the chat starts: the conversation's root, the general agent and the research workflow. */
+const CHAT = BUILTIN.chat;
+const GENERAL_PURPOSE = BUILTIN.generalPurpose;
+const DEEP_RESEARCH = BUILTIN.deepResearch;
+/** The origin of a research run's coordinator; its version is the record's at the start, left out. */
+const DEEP_RESEARCH_ORIGIN = {
+  recordId: DEEP_RESEARCH.id,
+  kind: 'workflow',
+  name: DEEP_RESEARCH.name,
+  author: null,
+  builtinKey: DEEP_RESEARCH.builtinKey,
+  executor: null,
+} as const;
+/** Executors of the built-in research workflow, which its coordinator starts by name. */
+const PLAN_STEP = 'deep-research-plan';
+const ANSWER_STEP = 'deep-research-answer';
 const START_AGENT = 'start_agent';
 const START_WORKFLOW = 'start_workflow';
 /** `start_agent`'s agent name for a copy of the caller. */
 const FORK = 'fork';
-/** The shipped workflow template (`packages/workflows`, deep-research.json): name and title. */
-const DEEP_RESEARCH = {
-  name: 'deep-research',
-  title: 'Глубокий ресерч',
-} as const;
 /**
- * `AGENT_DEFAULT_MODEL` of the file's app: every agent that names no model runs on it. A model of the run with Haiku's
- * prices, which the spend literals of INT-2 E and INT-3 B are computed on.
+ * The model of the file's built-in records (`pointBuiltinsAt`): the chat, its agents and the research team run on it.
+ * A model of the run with Haiku's prices, which the spend literals of INT-2 E and INT-3 B are computed on.
  */
 const DEFAULT_MODEL = runModel('claude-haiku-5-5');
 /** The title every first message gets (the text script of `beforeAll`). */
 const GENERATED_TITLE = 'Conversation title';
-
-/**
- * The shipped deep-research template with its coordinator on {@link DEFAULT_MODEL}: the template names a developer's
- * model, which a suite neither adds nor allows (plan rule 11); name, title and agents stay as shipped.
- */
-function deepResearchOnRunModel(): unknown {
-  const file = join(
-    dirname(createRequire(import.meta.url).resolve('@agent-os/workflows')),
-    'templates',
-    `${DEEP_RESEARCH.name}.json`,
-  );
-  const template = z
-    .looseObject({ coordinator: z.looseObject({}) })
-    .parse(JSON.parse(readFileSync(file, 'utf8')));
-  return {
-    ...template,
-    coordinator: { ...template.coordinator, model: DEFAULT_MODEL },
-  };
-}
 
 /** The `retry:` hint of the stream's first event (EventsController). */
 const STREAM_RETRY_MS = 2000;
@@ -153,7 +141,6 @@ let INT4: Record<'a' | 'b', Session>;
 /** `get_trace` arguments, one per held or plain read call of the file (the fixture counts calls per arguments). */
 const TRACE_B = { traceId: 'b1'.repeat(16) };
 const TRACE_C = { traceId: 'c1'.repeat(16) };
-const TRACE_D1 = { traceId: 'd1'.repeat(16) };
 const TRACE_D2 = { traceId: 'd2'.repeat(16) };
 const TRACE_INT2_B = { traceId: 'b2'.repeat(16) };
 const TRACE_INT2_C = { traceId: 'c2'.repeat(16) };
@@ -172,7 +159,6 @@ const NOTE_INT4 = { orderId: 'ORD-4001', text: "INT-4: the owner's note" };
 /** Names of the fixture's file latches: each holds one read call of the file until released. */
 const FIXTURE_LATCHES = {
   c: 'int1-c',
-  d1: 'int1-d1',
   d2: 'int1-d2',
   int2b: 'int2-b',
   int2c: 'int2-c',
@@ -295,23 +281,23 @@ function untilFixtureCall(
   );
 }
 
-/** A `start_agent` call of a scripted answer. */
+/** A `start_agent` call of a scripted answer: a record id, an executor's name or {@link FORK}. */
 function startAgent(
   description: string,
   prompt: string,
-  agent: string = GENERAL_PURPOSE,
+  agent: string = GENERAL_PURPOSE.id,
 ): ScriptedToolCall {
   return { tool: START_AGENT, args: { agent, description, prompt } };
 }
 
-/** `start_workflow` arguments for the deep-research template; an edited decision sends them whole. */
+/** `start_workflow` arguments for the research workflow record; an edited decision sends them whole. */
 function briefArgs(question: string): {
-  template: string;
+  workflow: string;
   question: string;
   boundaries: string;
   result: string;
 } {
-  return { template: DEEP_RESEARCH.name, question, boundaries: '', result: '' };
+  return { workflow: DEEP_RESEARCH.id, question, boundaries: '', result: '' };
 }
 
 /** The coordinator's task: the brief as `start_workflow` writes it (question, boundaries, result). */
@@ -423,11 +409,6 @@ const AGENT_ROUTES: readonly RouteCall[] = [
     body: { text: "INT-4: a message to someone else's agent" },
   },
   { method: 'post', path: (id) => `/agents/${id}/interrupt` },
-  {
-    method: 'post',
-    path: (id) => `/agents/${id}/interrupt`,
-    body: { text: "INT-4: an interrupt of someone else's agent" },
-  },
   { method: 'post', path: (id) => `/agents/${id}/stop` },
   { method: 'post', path: (id) => `/agents/${id}/restart` },
 ];
@@ -449,11 +430,6 @@ const THREAD_ROUTES: readonly RouteCall[] = [
     body: { text: "INT-4: a message into someone else's conversation" },
   },
   { method: 'post', path: (id) => `/threads/${id}/interrupt` },
-  {
-    method: 'post',
-    path: (id) => `/threads/${id}/interrupt`,
-    body: { text: "INT-4: an interrupt of someone else's conversation" },
-  },
 ];
 
 /**
@@ -515,14 +491,20 @@ async function ledgerCalls(
   return counts;
 }
 
+/**
+ * Root sessions of the owner: sessions without a parent task. Every one is a conversation's chat (a run of the `chat`
+ * record); its row keeps no origin (`builtin_key` is null at a root), so it is told by the missing parent.
+ */
+const OWNER_ROOT_SESSIONS = `FROM app.agent_sessions s JOIN app.runtime_tasks t ON t.task_id = s.task_id
+       WHERE s.owner_id = $1 AND t.parent_id IS NULL`;
+
 /** INT-3 C: chat sessions of the owner that no conversation names as its root (an orphan root). */
 async function orphanChatRoots(
   harness: TestApp,
   ownerId: string,
 ): Promise<number> {
   const { rows } = await harness.pool.query<{ count: number }>(
-    `SELECT count(*)::int AS count FROM app.agent_sessions s
-       WHERE s.owner_id = $1 AND s.definition = 'chat'
+    `SELECT count(*)::int AS count ${OWNER_ROOT_SESSIONS}
          AND NOT EXISTS (SELECT 1 FROM app.chat_conversations c WHERE c.root_id = s.task_id)`,
     [ownerId],
   );
@@ -539,6 +521,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   let roleId: string | undefined;
   /** The file's administrator; deleted in `afterAll`. */
   let adminId: string | undefined;
+  /** Gives the built-in records back their models; run in `afterAll` before the run's rows go. */
+  let restoreBuiltins: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
     harness = await createTestApp({
@@ -546,10 +530,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       agentPageSize: 2,
       mcpServers: ['logs', 'backoffice'],
       defaultModel: DEFAULT_MODEL,
-      workflowTemplates: [deepResearchOnRunModel()],
       faults: (files) => [
         holdCall('get_trace', TRACE_C, files.latch(FIXTURE_LATCHES.c)),
-        holdCall('get_trace', TRACE_D1, files.latch(FIXTURE_LATCHES.d1)),
         holdCall('get_trace', TRACE_D2, files.latch(FIXTURE_LATCHES.d2)),
         holdCall('get_trace', TRACE_INT2_B, files.latch(FIXTURE_LATCHES.int2b)),
         holdCall('get_trace', TRACE_INT2_C, files.latch(FIXTURE_LATCHES.int2c)),
@@ -570,6 +552,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       id: DEFAULT_MODEL,
       ...HAIKU_TEST_PRICES,
     });
+    restoreBuiltins = await pointBuiltinsAt(harness.app, admin, DEFAULT_MODEL);
     const role = await allowRole(harness.app, admin, {
       name: 'chat',
       models: [DEFAULT_MODEL],
@@ -608,11 +591,15 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     for (const name of Object.values(FIXTURE_LATCHES))
       harness.fixtureLog.latch(name).release();
     try {
-      await removeRunRows(harness.pool, {
-        models: [DEFAULT_MODEL],
-        roles: roleId === undefined ? [] : [roleId],
-        users: adminId === undefined ? [] : [adminId],
-      });
+      try {
+        await restoreBuiltins?.();
+      } finally {
+        await removeRunRows(harness.pool, {
+          models: [DEFAULT_MODEL],
+          roles: roleId === undefined ? [] : [roleId],
+          users: adminId === undefined ? [] : [adminId],
+        });
+      }
     } finally {
       await harness.close();
     }
@@ -637,7 +624,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   //
   // Catches: (A) the answer that arrives only whole (the `onTextDelta` hook not wired through `DeltaPublisher` and `LiveHub` to the stream), a first part that waits for the 100 ms merge, `offset` not starting at 0, a delta that is persisted (a draft stored as a second answer in the history), a first message that does not become the task of the root or whose conversation row never gets the root id, a `tree` note without the row it announces;
   //   (B) a report from a background agent that reaches the history but never wakes the stream (no `tree` note on a child's event: the hub resolves the conversation only by the root's own events), a decision of a depth-2 agent missing from the conversation view or showing `open` after the decision, a reload that differs from what the live notes produced (an entry duplicated or lost across the `afterSeq` boundary);
-  //   (C) a message to a busy chat that is lost, delivered before the result of the running call, or not visible in `pending` while it waits; (D) an interrupt without text that still calls the model or leaves `working`, one with text that does not continue, a "not_active with text" that drops the text (FR-16), an interrupt on a conversation with no root that errors instead of `not_active`;
+  //   (C) a message to a busy chat that is lost, delivered before the result of the running call, or not visible in `pending` while it waits; (D) an interrupt that still calls the model or leaves `working`, an interrupt on a free chat or on a conversation with no root that errors instead of `not_active`;
   //   (E) a stream that does not send `ready` first, a `LISTEN` connection lost and never reopened (silent stream forever), a re-read after reconnect that repeats or skips entries; (F) two first messages sent together that create two roots or lose one message (the row lock of KD-1).
   // Not re-checked here: the order, single delivery and wake-up of the inbox, the cut-off step and the closure of open calls (runtime INT-2, INT-3; agents INT-2), the tool gate and the decision's one execution (agents INT-3), the history loop and routing of reports between agents (agents INT-1), the chat-status derivation, the coalescing arithmetic and the hub's filter (unit), the foreign owner's stream (INT-4).
   // Behavior: HTTP command (202) -> worker step with scripted model -> text parts as `delta` events and the finished step as history rows + `tree` note -> the view re-read from the last number equals the live picture -> pending, interrupt, report and reconnect leave one consistent history
@@ -648,13 +635,13 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Verification items (table-driven by scenario; ids, texts and counts are hardcoded literals):
   // - Row A "first message, answer in parts, then the same after a reload" (UC-1, AC-14.1, DC-1): a new conversation (`POST /threads`, empty title, no root, `GET .../history` shows chat status `new` and no entries); the SSE stream is open with `watch=thread:<id>` and its first event is `ready`; the scenario answers the first message with three text parts. `POST .../messages` answers 202 with an empty `messageId`.
   //   Then: the stream carries `delta` events whose `offset` starts at 0 and whose texts concatenate to the final answer, then a `tree` note with the thread id; `GET .../history?afterSeq=0` shows the task entry with the message text and exactly ONE `model_answer` with the joined text, the conversation row now has the root id (`rootAgentId` in the view), status `idle`; no entry holds a part of the answer; the second message returns a non-empty `messageId`, lands in the SAME root's history (same `rootAgentId`) and produces one more answer.
-  // - Row B "a background agent reports into the open conversation; the reload equals the live picture" (UC-2, UC-7, AC-14.2, AC-17.1..AC-17.3, AC-06.1, NFR-02): the stream is open on the thread; the chat's script calls the read `logs` tool, then `start_agent` (general-purpose), then answers text; the child asks the mutating `create_incident_note` (held for confirmation, depth 2), then after the decision reports. The test reads `GET .../history` after each `tree` note, with the last `nextAfterSeq`.
+  // - Row B "a background agent reports into the open conversation; the reload equals the live picture" (UC-2, UC-7, AC-14.2, AC-17.1..AC-17.3, AC-06.1, NFR-02): the stream is open on the thread; the chat's script calls the read `logs` tool, then `start_agent` (the built-in general agent record), then answers text; the child asks the mutating `create_incident_note` (held for confirmation, depth 2), then after the decision reports. The test reads `GET .../history` after each `tree` note, with the last `nextAfterSeq`.
   //   Then: a `tree` note arrives when the child starts, one when its request opens (the view lists the request under `decisions` with status `open`, the agent description and the arguments, and the chat status is still `idle`/`working` without a new employee message), one after `POST /decisions/:id` (200 `resolved`; the request now reads `resolved` with the decision and the final arguments), one when the child reports; the report is a `child_report` entry in the root history, followed by a chat `model_answer` that the test never asked for; the `tree` note for the report arrives after the report row exists (the row is read in the handler of the note) and within the test's own 2 s wait (NFR-02 shape);
   //   the fixture journal has exactly one `create_incident_note`. A fresh read of the view with `afterSeq=0` returns the same entries, the same call outcomes, the same `resolved` request and the same `agents` tree as the sum of the incremental reads (equal after sorting by seq, no duplicate seq, no gap).
   // - Row C "a message to a busy chat waits in pending and lands after the result" (UC-5, AC-16.1): the chat's step holds a delayed `logs` read call; `POST .../messages` twice. Then: both return 202 with distinct `messageId`s; `GET .../history` lists them in `pending` in order with `source` `user` while the call is held and the chat status is `working`; after the release the history reads `tool_result`, message 1, message 2, `model_answer`, `pending` is empty, and the model's next input saw both after the result.
-  // - Row D "interrupt with and without text" (UC-5, AC-16.2; two cases + the not-active case): (1) the same held call, `POST .../interrupt` with text -> 200 `interrupted`; once the step runs the open call has outcome `interrupted`, the text stands after it and the chat continues (status `working`, then `idle`). (2) The held call again, `POST .../interrupt` without text -> 200 `interrupted`, status `interrupted`, the model double's call counter unchanged until the next message, which clears it. (3) A free chat (status `idle`) and a conversation with no root: `interrupt` without text -> 200 `not_active`; `interrupt` with text on the free chat -> 200 `not_active` WITH a `messageId`, and the text is in the history as an ordinary delivered message (not lost).
+  // - Row D "interrupt" (UC-5, AC-16.2; the held case + the not-active case): (1) a held call, `POST .../interrupt` -> 200 `interrupted`, status `interrupted`, the open call has outcome `interrupted`, the model double's call counter unchanged until the next message, which clears the mark. (2) A free chat (status `idle`) and a conversation with no root: `interrupt` -> 200 `not_active`, nothing is created.
   // - Row E "reconnect" (UC-E2, DC-5): a second stream to the same thread after the first was dropped by the client: its first event is `ready` and no earlier note is replayed; the view re-read from the last known number returns only entries after it (none duplicated). Then the hub's `LISTEN` backend is terminated in the database (`pg_terminate_backend` on the session whose `application_name`/query is the `LISTEN`, found through `pg_stat_activity`); the open stream receives a new `ready`, and an entry written after that produces a `tree` note again.
-  // - Row F "two first messages at once" (UC-E3, DC-1, Invariant 1): a conversation with no root; two `POST .../messages` are started in the same tick. Then: both return 202; exactly one has an empty `messageId` (the task) and the other a non-empty one (the queue); the history holds ONE task entry and ONE delivered/pending message; `GET /threads/:id/agents` and the root id are single (no second root created: the count of sessions of the owner with the `chat` definition is 1).
+  // - Row F "two first messages at once" (UC-E3, DC-1, Invariant 1): a conversation with no root; two `POST .../messages` are started in the same tick. Then: both return 202; exactly one has an empty `messageId` (the task) and the other a non-empty one (the queue); the history holds ONE task entry and ONE delivered/pending message; `GET /threads/:id/agents` and the root id are single (no second root created: the owner has one root session).
   it(
     'INT-1 A: the first message creates the root with its text as the task, the answer arrives as delta events from offset 0 followed by a tree note, the history holds one answer and no draft, and the next message goes to the same root',
     async () => {
@@ -770,7 +757,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   it(
     "INT-1 B: a background agent's tool confirmation and report reach the open stream as tree notes, the decision resolves, the chat answers the report by itself, and a reload returns exactly what the live reads produced",
     async () => {
-      // Given: the chat reads a trace, starts a general-purpose writer and answers; the writer asks to
+      // Given: the chat reads a trace, starts a writer from the general agent record and answers; the writer asks to
       // create an incident note (held for confirmation) and, after the decision, reports
       const api = chatApi(harness.app, INT1.b);
       const task = 'INT-1 B: check the trace and have the incident noted';
@@ -783,7 +770,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
             {
               tool: 'start_agent',
               args: {
-                agent: GENERAL_PURPOSE,
+                agent: GENERAL_PURPOSE.id,
                 description: 'incident writer',
                 prompt: writerTask,
               },
@@ -821,9 +808,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(
           started.view.agents.map(
             (agent) =>
-              `${agent.definition} ${agent.description} ${agent.children.length}`,
+              `${agent.name} ${agent.description} ${agent.children.length}`,
           ),
-        ).toEqual(['general-purpose incident writer 0']);
+        ).toEqual([`${GENERAL_PURPOSE.name} incident writer 0`]);
         const writerId = started.view.agents[0]?.agentId;
 
         // Then: a tree note shows its request open, with the agent's description and the arguments,
@@ -1024,61 +1011,19 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   );
 
   it(
-    'INT-1 D: interrupt with text continues with the text, without text leaves the chat interrupted and silent, and on a free chat returns not_active and still delivers the text',
+    'INT-1 D: an interrupt leaves the chat interrupted and silent until the next message, and on a free chat or a conversation with no root returns not_active',
     async () => {
       const api = chatApi(harness.app, INT1.d);
-      const heldWithText = harness.fixtureLog.latch(FIXTURE_LATCHES.d1);
-      const heldWithoutText = harness.fixtureLog.latch(FIXTURE_LATCHES.d2);
+      const held = harness.fixtureLog.latch(FIXTURE_LATCHES.d2);
       try {
-        // Case 1 - Given: the chat's read call is held; When: it is interrupted with text
-        const withTextTask = 'INT-1 D: read the first trace';
-        const continuationHeld = createLatch();
-        const withText = harness.model.script({ task: withTextTask }, [
-          { calls: [{ tool: GET_TRACE, args: TRACE_D1 }] },
-          { text: 'Switched to the other trace.', latch: continuationHeld },
-          { text: 'Noted the late remark.' },
-        ]);
-        const first = await api.createThread();
-        await api.send(first.id, withTextTask);
-        await untilFixtureCall(TRACE_D1, harness.fixtureLog.callLog);
-        expect(
-          await api.interrupt(
-            first.id,
-            'INT-1 D: look at the other trace instead',
-          ),
-        ).toEqual({
-          outcome: 'interrupted',
-        });
-
-        // Then: the chat goes on with the text (status `working`), then is free; the open call reads
-        // `interrupted` and the text stands after it
-        await continuationHeld.reached();
-        expect((await api.history(first.id)).chat.status).toBe('working');
-        continuationHeld.open();
-        const continued = await untilIdle(
-          api,
-          first.id,
-          (view) => view.entries.length === 6,
-          'the answer to the interrupt',
-        );
-        expect(linesOf(continued.entries)).toEqual([
-          'task: INT-1 D: read the first trace',
-          `model_answer:  [${LOGS_SERVER}/get_trace]`,
-          'tool_result: get_trace interrupted',
-          'event: interrupted',
-          'user_message: INT-1 D: look at the other trace instead',
-          'model_answer: Switched to the other trace. []',
-        ]);
-        heldWithText.release();
-
-        // Case 2 - Given: another conversation whose read call is held; When: it is interrupted without text
-        const withoutTextTask = 'INT-1 D: read the second trace';
-        const withoutText = harness.model.script({ task: withoutTextTask }, [
+        // Case 1 - Given: the chat's read call is held; When: it is interrupted
+        const task = 'INT-1 D: read the second trace';
+        const script = harness.model.script({ task }, [
           { calls: [{ tool: GET_TRACE, args: TRACE_D2 }] },
           { text: 'Carrying on with the message.' },
         ]);
         const second = await api.createThread();
-        await api.send(second.id, withoutTextTask);
+        await api.send(second.id, task);
         await untilFixtureCall(TRACE_D2, harness.fixtureLog.callLog);
         expect(await api.interrupt(second.id)).toEqual({
           outcome: 'interrupted',
@@ -1098,12 +1043,12 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'tool_result: get_trace interrupted',
           'event: interrupted',
         ]);
-        heldWithoutText.release();
-        expect(withoutText.calls).toHaveLength(1);
+        held.release();
+        expect(script.calls).toHaveLength(1);
 
         // When: the next message comes; Then: it clears the mark and the chat answers it
         await api.send(second.id, 'INT-1 D: go on');
-        await withoutText.called(2);
+        await script.called(2);
         const resumed = await untilIdle(
           api,
           second.id,
@@ -1115,40 +1060,20 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'model_answer: Carrying on with the message. []',
         ]);
 
-        // Case 3 - Given: a conversation with no root and the free chat of case 1
+        // Case 2 - Given: a conversation with no root and the free chat of case 1
         const noRoot = await api.createThread();
 
-        // Then: an interrupt without text is `not_active` on both, and nothing is created
+        // Then: an interrupt is `not_active` on both, and nothing is created
         expect(await api.interrupt(noRoot.id)).toEqual({
           outcome: 'not_active',
         });
         expect((await api.history(noRoot.id)).chat.status).toBe('new');
-        expect(await api.interrupt(first.id)).toEqual({
+        expect(await api.interrupt(second.id)).toEqual({
           outcome: 'not_active',
         });
-
-        // When: an interrupt with text reaches the free chat
-        const late = await api.interrupt(first.id, 'INT-1 D: one more remark');
-
-        // Then: `not_active` with a message id, and the text is delivered as an ordinary message
-        expect(late).toEqual({
-          outcome: 'not_active',
-          messageId: expect.any(String),
-        });
-        await withText.called(3);
-        const delivered = await untilIdle(
-          api,
-          first.id,
-          (view) => view.entries.length === 8,
-          'the answer to the late remark',
-        );
-        expect(linesOf(delivered.entries).slice(-2)).toEqual([
-          'user_message: INT-1 D: one more remark',
-          'model_answer: Noted the late remark. []',
-        ]);
+        expect((await api.history(second.id)).entries).toHaveLength(6);
       } finally {
-        heldWithText.release();
-        heldWithoutText.release();
+        held.release();
       }
     },
     TEST_TIMEOUT_MS,
@@ -1330,7 +1255,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       // Then: one root: the conversation has no other agent and the owner has one chat session
       expect(await api.threadAgents(thread.id)).toEqual([]);
       const { rows } = await harness.pool.query<{ count: number }>(
-        "SELECT count(*)::int AS count FROM app.agent_sessions WHERE owner_id = $1 AND definition = 'chat'",
+        `SELECT count(*)::int AS count ${OWNER_ROOT_SESSIONS}`,
         [INT1.f.id],
       );
       expect(rows).toEqual([{ count: 1 }]);
@@ -1361,7 +1286,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   //
   // Catches: (A) a `GET /agents` page that misses the agents of an older conversation, repeats an agent across pages, includes the chat root itself, or a count (`/agents/awaiting`) that ignores a request of a depth-2 agent or counts a resolved one (KD-7: the list is assembled from the owner's conversations, the one place a loop over `chat_conversations` can be wrong); `GET /threads/:id/agents` that lists the root or another conversation's agents;
   //   (B) an agent page that does not carry the thread id and title, an `inherited` route that returns the parent's entries beyond `throughSeq` or for an agent that is not a fork, a `GET /agents/:id/run` that answers 200 for an agent that is not a run's coordinator (`RUN_NOT_FOUND`) or does not return the brief;
-  //   (C) a control route that is not wired to its operation (message answers 202 without queuing, stop answers without listing the stopped ids, restart of a working agent not `409 NOT_FINISHED`, restart after the parent finished not `409 PARENT_FINISHED`, `interrupt` not_active with text dropping the text), and the chat's own tools (`list_agents`, `message_agent`, `stop_agent`) missing from the registered `chat` definition or wired to another conversation's agents;
+  //   (C) a control route that is not wired to its operation (message answers 202 without queuing, stop answers without listing the stopped ids, restart of a working agent not `409 NOT_FINISHED`, restart after the parent finished not `409 PARENT_FINISHED`), and the chat's own tools (`list_agents`, `message_agent`, `stop_agent`) missing from the seeded `chat` record or wired to another conversation's agents;
   //   (D) a brief that starts a run at once or twice, a corrected question that does not reach the brief, a `POST /decisions` that answers 500 or 200 for a schema-failing edit (`INVALID_ARGUMENTS` must be 400 and the request still open), a second resolve that is not `already_resolved`, a rejected brief that starts a run; (E) a `GET /spend` that is not the ledger sum of the month (UTC), that drops the rows without a `taskId` (title calls, Invariant 4), or that falls after `deleteTree`.
   // Not re-checked here: the tool-confirmation lifecycle and its one execution (agents INT-3, runtime E2E-1), the coordinator's own steps and the run view's content (workflows part), the status derivation and the `Confirmation`/`AgentNode` mapping (unit), the cost of a call and the month window (runtime INT-5), the foreign owner's answers (INT-4), the stream notes (INT-1).
   // Behavior: the web reads the owner's agents, one agent's page, a run and the month's spend -> the controls and the decision change the state through the same operations as the chat -> the next read shows the new state and the right HTTP outcome
@@ -1372,9 +1297,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // Verification items (table-driven by route family; every row validates the body with the contract schema and asserts literal ids and counts):
   // - Row A "the tree and the list" (AC-21.1, AC-24.1, KD-7): owner U has three conversations; two hold agents (one with a parent-child pair), one has no root; the test starts five top agents in total and the app's `AGENT_PAGE_SIZE` is set to 2 for this test (if the constant is not overridable, the test starts 21 agents) so the cursor walk is visible. Then: `GET /agents` lists the top agents (children of roots), newest first, with subtrees, `threadId` and `threadTitle`; walking `nextCursor` returns each top agent exactly once and no root; `GET /threads/:id/agents` returns that conversation's tree without the root; `GET /agents/awaiting` equals the number of open requests across all conversations, counts an open request of a grandchild and drops it after the decision; the status of an agent seen in the list changes after `stop` (AC-21.1 "смена статуса").
   // - Row B "one agent's page and the fork's inherited history" (AC-22.1): an agent that made a read call, got a pending message while a call was held, received a child's report. Then: `GET /agents/:id/history?afterSeq=0` returns `agent` (with `threadId`, `threadTitle`, model), `entries` in order (task, `model_answer`, call with arguments and outcome, `child_report`), `pending` with the waiting message, `decisions` of this agent only, `children`; a fork's `inherited` returns the parent's entries up to `throughSeq` and nothing after it, and for a non-fork returns an empty page; `GET /agents/:id/run` for the coordinator of a workflow run returns the run's brief, for a plain agent returns 404 `RUN_NOT_FOUND`.
-  // - Row C "the controls, and the chat's own tools" (AC-23.1, AC-23.2, AC-15.2, AC-15.3): an agent working on a held call. `POST /agents/:id/messages` -> 202 with a `messageId`, shown in its `pending`; `POST .../interrupt` with text -> 200 `interrupted`; `POST .../stop` -> 200 with the stopped ids (the agent and its child); `POST .../restart` on the finished agent -> 201 with a NEW `agentId` (task text and parent as before), on a working agent -> 409 `NOT_FINISHED`, on an agent whose parent has finished -> 409 `PARENT_FINISHED`; `interrupt` with text on a finished agent -> 200 `not_active` with a `messageId` (the text delivered as a message).
+  // - Row C "the controls, and the chat's own tools" (AC-23.1, AC-23.2, AC-15.2, AC-15.3): an agent working on a held call. `POST /agents/:id/messages` -> 202 with a `messageId`, shown in its `pending`; `POST .../interrupt` -> 200 `interrupted`; `POST .../stop` -> 200 with the stopped ids (the agent and its child); `POST .../restart` on the finished agent -> 201 with a NEW `agentId` (task text and parent as before), on a working agent -> 409 `NOT_FINISHED`, on an agent whose parent has finished -> 409 `PARENT_FINISHED`; `interrupt` on a finished agent -> 200 `not_active`.
   //   Then, with the chat itself: three employee messages drive the scripted chat through `list_agents` (the tool result lists the agent with its status, literally), `message_agent` (the message stands in that agent's history) and `stop_agent` (the agent reads `stopped`); none of them touches an agent of another conversation of the same owner.
-  // - Row D "the brief from the web" (UC-6, AC-15.4, AC-24.2, AC-28.1..AC-28.3): the chat's script calls `start_workflow` for the `deep-research` template. Then before any decision: the view has one request of kind `workflows.brief` with the template title in `content` and status `open`, and NO coordinator agent exists under the conversation (AC-28.1). `POST /decisions/:id` with `approve` true, `template` unchanged and the question edited, plus one invalid edit first (a brief field failing its schema): the invalid one answers 400 `INVALID_ARGUMENTS` and the request stays `open`; the valid one answers 200 `resolved`; the view then shows the request `resolved`, exactly ONE new coordinator in `agents` and the corrected question in its task/brief; a repeated `POST /decisions/:id` answers 200 `already_resolved` and no second run appears. A second conversation: `approve` false -> `resolved` with the rejection, no coordinator, and the chat's next input holds the result "rejected by the user" (AC-28.3). An id that exists for nobody answers 404 `DECISION_NOT_FOUND`.
+  // - Row D "the brief from the web" (UC-6, AC-15.4, AC-24.2, AC-28.1..AC-28.3): the chat's script calls `start_workflow` for the built-in research workflow record. Then before any decision: the view has one request of kind `workflows.brief` with the record id and the brief in `content` and status `open`, and NO coordinator agent exists under the conversation (AC-28.1). `POST /decisions/:id` with `approve` true, `workflow` unchanged and the question edited, plus one invalid edit first (a brief field failing its schema): the invalid one answers 400 `INVALID_ARGUMENTS` and the request stays `open`; the valid one answers 200 `resolved`; the view then shows the request `resolved`, exactly ONE new coordinator in `agents` and the corrected question in its task/brief; a repeated `POST /decisions/:id` answers 200 `already_resolved` and no second run appears. A second conversation: `approve` false -> `resolved` with the rejection, no coordinator, and the chat's next input holds the result "rejected by the user" (AC-28.3). An id that exists for nobody answers 404 `DECISION_NOT_FOUND`.
   // - Row E "month's spend" (AC-29.1, AC-29.2, Invariant 4): the owner's runs wrote model calls with scripted `usage` and literal prices (including one title call without a task); `GET /spend` returns the current UTC month `YYYY-MM` and a `costUsd` equal to the literal sum of those ledger rows (the test computes it by hand, not by the ledger query); one more scripted call and a second read include it; a call dated the previous month (written by the test directly) is not counted; another owner's calls are not counted.
   it(
     "INT-2 A: the owner's agent list pages each top agent once with its thread, a conversation lists its agents without the root, and the awaiting count includes deep requests and drops resolved ones",
@@ -1512,9 +1437,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(agentNamed(agents, 'A1 parent').children.map(nodeLine)).toEqual([
           'A1 grandchild []',
         ]);
-        // design v1.2 (A-1): no agent here is a workflow coordinator, so none carries `template`
-        for (const agent of agents)
-          expect(agent).not.toHaveProperty('template');
+        // Then: each top agent carries the record it started from (here the general agent for every one)
+        expect(agents.map((agent) => agent.origin?.recordId)).toEqual(
+          agents.map(() => GENERAL_PURPOSE.id),
+        );
 
         // Then: a conversation lists its own agents without the root; the conversation without a root lists none
         expect((await api.threadAgents(first.id)).map(nodeLine)).toEqual([
@@ -1562,7 +1488,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   it(
     "INT-2 B: an agent page returns its entries, pending, own requests and children, a fork's inherited history stops at the fork point, and a run view exists only for a coordinator",
     async () => {
-      // Given: the chat starts a reader and a fork of itself, then asks for a deep-research brief; the
+      // Given: the chat starts a reader and a fork of itself, then asks for a research brief; the
       // reader reads a trace (held), starts a helper that asks for a confirmation and reports; the
       // coordinator starts a plan and an answer step
       const api = chatApi(harness.app, INT2.b);
@@ -1608,10 +1534,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(question) },
         [
-          { calls: [startAgent('B plan', planTask, 'deep-research-plan')] },
-          {
-            calls: [startAgent('B answer', answerTask, 'deep-research-answer')],
-          },
+          { calls: [startAgent('B plan', planTask, PLAN_STEP)] },
+          { calls: [startAgent('B answer', answerTask, ANSWER_STEP)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );
@@ -1717,14 +1641,14 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           agentId: readerId,
           parentId: rootId,
           depth: 1,
-          definition: GENERAL_PURPOSE,
+          name: GENERAL_PURPOSE.name,
+          origin: { recordId: GENERAL_PURPOSE.id, executor: null },
           description: 'B reader',
           model: DEFAULT_MODEL,
           threadId: thread.id,
           threadTitle: 'INT-2 B: thread',
         });
         expect(reader.agent).not.toHaveProperty('parentDescription');
-        expect(reader.agent).not.toHaveProperty('template');
         expect(linesOf(reader.entries)).toEqual([
           'task: INT-2 B: reader assignment',
           `model_answer:  [${LOGS_SERVER}/get_trace]`,
@@ -1758,8 +1682,8 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         const fork = await api.agentPage(forkId);
         const forkedFrom = fork.agent.forkedFrom;
         if (forkedFrom === null) throw new Error('the fork has no fork point');
-        expect([fork.agent.definition, forkedFrom.agentId]).toEqual([
-          'chat',
+        expect([fork.agent.name, forkedFrom.agentId]).toEqual([
+          CHAT.name,
           rootId,
         ]);
         const inherited = await api.inherited(forkId);
@@ -1783,24 +1707,29 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           nextAfterSeq: null,
         });
 
-        // Then: the run view exists for the coordinator (with its template, A-1) and not for a plain agent
+        // Then: the run view exists for the coordinator (with the workflow record it started from) and not for a plain agent
         const ran = await waitFor(
           () => api.history(thread.id),
           (view) =>
             view.agents.some(
               (agent) =>
-                agent.definition === DEEP_RESEARCH.name &&
+                agent.origin?.recordId === DEEP_RESEARCH.id &&
                 agent.status === 'completed',
             ),
           'the workflow run to finish',
         );
         const coordinator = agentNamed(ran.agents, question);
-        expect(coordinator.template).toEqual(DEEP_RESEARCH);
-        expect(await api.run(coordinator.agentId)).toEqual({
-          brief: { question, boundaries: '', result: '' },
-        });
+        expect(coordinator.origin).toMatchObject(DEEP_RESEARCH_ORIGIN);
+        const run = await api.run(coordinator.agentId);
+        expect([run.origin.recordId, run.coordinator.agentId, run.brief]).toEqual(
+          [
+            DEEP_RESEARCH.id,
+            coordinator.agentId,
+            { question, boundaries: '', result: '' },
+          ],
+        );
         const coordinatorPage = await api.agentPage(coordinator.agentId);
-        expect(coordinatorPage.agent.template).toEqual(DEEP_RESEARCH);
+        expect(coordinatorPage.agent.origin).toMatchObject(DEEP_RESEARCH_ORIGIN);
         expect(coordinatorPage.agent).not.toHaveProperty('parentDescription');
         expect(
           (await expectError(api.raw('get', `/agents/${readerId}/run`), 404))
@@ -1905,10 +1834,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           ),
         ).toEqual([sent.messageId]);
 
-        // When: an interrupt with text; Then: `interrupted`, and the agent goes on working with the text
-        expect(
-          await api.interruptAgent(worker.agentId, 'INT-2 C: switch focus'),
-        ).toEqual({ outcome: 'interrupted' });
+        // When: an interrupt; Then: `interrupted`, and the agent goes on working with the queued note
+        expect(await api.interruptAgent(worker.agentId)).toEqual({
+          outcome: 'interrupted',
+        });
         await workerHeld.reached();
 
         // Then: a restart of the working agent is 409 NOT_FINISHED
@@ -1948,7 +1877,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         );
         expect(fresh.agent).toMatchObject({
           parentId: rootId,
-          definition: GENERAL_PURPOSE,
+          name: GENERAL_PURPOSE.name,
           description: 'C worker',
         });
         expect(linesOf(fresh.entries)).toEqual([
@@ -1956,33 +1885,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           'model_answer: Worker done. []',
         ]);
 
-        // When: an interrupt with text reaches the finished agent; Then: `not_active` and the text is delivered
-        const late = await api.interruptAgent(
-          restarted.agentId,
-          'INT-2 C: one more remark',
-        );
-        expect(late).toEqual({
+        // When: an interrupt reaches the finished agent; Then: `not_active`
+        expect(await api.interruptAgent(restarted.agentId)).toEqual({
           outcome: 'not_active',
-          messageId: expect.any(String),
         });
-        const remarked = await waitFor(
-          () => api.agentPage(restarted.agentId),
-          (page) =>
-            page.agent.status === 'completed' &&
-            linesOf(page.entries).includes(
-              'user_message: INT-2 C: one more remark',
-            ) &&
-            linesOf(page.entries).at(-1) === 'model_answer: Worker done. []',
-          "the restarted worker's answer to the remark",
-        );
-        expect(
-          linesOf(remarked.entries).filter((line) =>
-            line.startsWith('model_answer'),
-          ),
-        ).toEqual([
-          'model_answer: Worker done. []',
-          'model_answer: Worker done. []',
-        ]);
 
         // Given: a second conversation of the same owner whose chat starts a helper (held working)
         const tools = await api.createThread();
@@ -2020,7 +1926,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           {
             agentId: helperId,
             description: 'C2 helper',
-            definition: GENERAL_PURPOSE,
+            name: GENERAL_PURPOSE.name,
             model: DEFAULT_MODEL,
             status: 'working',
           },
@@ -2075,7 +1981,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   it(
     'INT-2 D: a brief waits without a run, an invalid edit leaves it open with 400, a confirmed edited brief starts exactly one run with the edited question, a repeat is already_resolved, and a rejection starts nothing',
     async () => {
-      // Given: the chat asks for a deep-research brief
+      // Given: the chat asks for a brief of the research workflow
       const api = chatApi(harness.app, INT2.d);
       const task = 'INT-2 D: research the checkout slowdown';
       const question = 'INT-2 D: why did checkout slow down?';
@@ -2093,9 +1999,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(corrected) },
         [
-          {
-            calls: [startAgent('D answer', answerTask, 'deep-research-answer')],
-          },
+          { calls: [startAgent('D answer', answerTask, ANSWER_STEP)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );
@@ -2116,7 +2020,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       const thread = await api.createThread();
       await api.send(thread.id, task);
 
-      // Then: the brief waits as a request with the template's title, and no coordinator exists (AC-28.1)
+      // Then: the brief waits as a request naming the workflow record, and no coordinator exists (AC-28.1)
       const waiting = await waitFor(
         () => api.history(thread.id),
         (view) => view.decisions.length === 1,
@@ -2129,12 +2033,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         tool: START_WORKFLOW,
         server: null,
         args: briefArgs(question),
-        content: {
-          title: DEEP_RESEARCH.title,
-          question,
-          boundaries: '',
-          result: '',
-        },
+        content: briefArgs(question),
         status: 'open',
         resolution: null,
       });
@@ -2174,22 +2073,22 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         outcome: 'already_resolved',
       });
 
-      // Then: exactly one coordinator, with the template (A-1) and the corrected question as its brief
+      // Then: exactly one coordinator, from the workflow record and with the corrected question as its brief
       const ran = await waitFor(
         () => api.history(thread.id),
         (view) =>
           view.agents.some(
             (agent) =>
-              agent.definition === DEEP_RESEARCH.name &&
+              agent.origin?.recordId === DEEP_RESEARCH.id &&
               agent.status === 'completed',
           ),
         'the workflow run to finish',
       );
       expect(
-        ran.agents.map((agent) => `${agent.definition} ${agent.description}`),
+        ran.agents.map((agent) => `${agent.name} ${agent.description}`),
       ).toEqual([`${DEEP_RESEARCH.name} ${corrected}`]);
       const coordinator = agentNamed(ran.agents, corrected);
-      expect(coordinator.template).toEqual(DEEP_RESEARCH);
+      expect(coordinator.origin).toMatchObject(DEEP_RESEARCH_ORIGIN);
       expect(
         linesOf((await api.agentPage(coordinator.agentId)).entries)[0],
       ).toBe(`task: ${briefTask(corrected)}`);
@@ -2406,12 +2305,12 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       // When: the conversation is deleted
       await api.deleteThread(bottom);
 
-      // Then: its history, a send and an interrupt (with and without text) answer 404 `THREAD_NOT_FOUND`
+      // Then: its history, a send and an interrupt answer 404 `THREAD_NOT_FOUND`
       // with the same body as a random id
       const afterDelete = THREAD_ROUTES.filter((route) =>
         /\/(history|messages|interrupt)$/.test(route.path(':id')),
       );
-      expect(afterDelete).toHaveLength(4);
+      expect(afterDelete).toHaveLength(3);
       for (const route of afterDelete)
         await expectSameAsMissing(api, route, bottom, 'THREAD_NOT_FOUND');
     },
@@ -2712,7 +2611,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // @complexity: medium
   //
   // Verification items (table-driven by route; A has a conversation with a root, a child agent, a coordinator of a workflow run, one open request, a held read call and ledger rows; B has own conversation and agent):
-  // - Rows: `GET /threads/:id`, `PATCH /threads/:id`, `DELETE /threads/:id`, `GET /threads/:id/history`, `GET /threads/:id/agents`, `POST /threads/:id/messages`, `POST /threads/:id/interrupt` (with and without text); `GET /agents/:id/history`, `.../inherited`, `.../run`, `POST /agents/:id/messages`, `.../interrupt`, `.../stop`, `.../restart` (with A's child id AND with A's ROOT id); `POST /decisions/:id` (approve and reject); `GET /events?watch=thread:<A's id>` and `watch=agent:<A's child id>` as B.
+  // - Rows: `GET /threads/:id`, `PATCH /threads/:id`, `DELETE /threads/:id`, `GET /threads/:id/history`, `GET /threads/:id/agents`, `POST /threads/:id/messages`, `POST /threads/:id/interrupt`; `GET /agents/:id/history`, `.../inherited`, `.../run`, `POST /agents/:id/messages`, `.../interrupt`, `.../stop`, `.../restart` (with A's child id AND with A's ROOT id); `POST /decisions/:id` (approve and reject); `GET /events?watch=thread:<A's id>` and `watch=agent:<A's child id>` as B.
   // - For each row the same request is made with a well-formed id that exists for nobody (the "missing" reference). Then: status code, `errorCode` (`THREAD_NOT_FOUND`, `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND`) and the whole body are equal, with nothing of A's data (title, task text, argument, count) in the answer; for the ROOT id the agent routes answer `AGENT_NOT_FOUND`, the same as for a missing agent.
   // - The stream: B's stream (open on A's thread and on A's child agent, plus B's own thread) receives `ready` and only B's own notes while A's agent writes history and three text parts and its request is resolved by A; after the run B's received list contains no `tree` with A's thread id and no `delta` of A's agent; A's own stream (a control) did receive them.
   // - B's lists: `GET /threads`, `GET /agents` (all pages), `GET /agents/awaiting` and `GET /spend` contain none of A's conversations or agents, count none of A's open request and sum none of A's ledger rows.
@@ -2766,9 +2665,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script(
         { task: briefTask(aQuestion) },
         [
-          {
-            calls: [startAgent('A answer', answerTask, 'deep-research-answer')],
-          },
+          { calls: [startAgent('A answer', answerTask, ANSWER_STEP)] },
         ],
         { thereafter: { text: 'Run done.' } },
       );

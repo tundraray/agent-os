@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { UsersIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
@@ -12,7 +13,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
+import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
@@ -82,8 +83,8 @@ export function RolePage({ id }: { id: string }) {
 
   return (
     <>
-      <AdminPageHeader
-        parent="roles"
+      <PageHeader area={PANEL_TITLE}
+        parent={sectionParent('roles')}
         title={data.name}
         badge={data.builtin ? <StateBadge variant="source">{TEXT.builtin}</StateBadge> : undefined}
       >
@@ -96,7 +97,7 @@ export function RolePage({ id }: { id: string }) {
             ]}
           />
         )}
-      </AdminPageHeader>
+      </PageHeader>
       <div className="flex max-w-3xl flex-col gap-6">
         {/* DC-5: the built-in role keeps the admin right — its switch is on and unavailable. */}
         <SavingSwitch

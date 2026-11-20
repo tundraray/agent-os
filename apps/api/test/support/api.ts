@@ -16,7 +16,7 @@ import {
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunBriefSchema,
+  WorkflowRunViewSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -33,7 +33,7 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunBrief,
+  type WorkflowRunView,
 } from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -89,16 +89,16 @@ export interface ChatApi {
   threadAgents(threadId: string): Promise<AgentNode[]>;
   /** `POST /threads/:id/messages`, 202. */
   send(threadId: string, text: string): Promise<SendMessageResponse>;
-  /** `POST /threads/:id/interrupt`, 200; without text the body is absent. */
-  interrupt(threadId: string, text?: string): Promise<InterruptResponse>;
+  /** `POST /threads/:id/interrupt`, 200; no body. */
+  interrupt(threadId: string): Promise<InterruptResponse>;
 
   agentList(cursor?: string): Promise<AgentListPage>;
   awaiting(): Promise<AwaitingCount>;
   agentPage(agentId: string, afterSeq?: number): Promise<AgentPageView>;
   inherited(agentId: string, afterSeq?: number): Promise<InheritedHistory>;
-  run(agentId: string): Promise<WorkflowRunBrief>;
+  run(agentId: string): Promise<WorkflowRunView>;
   sendToAgent(agentId: string, text: string): Promise<SendMessageResponse>;
-  interruptAgent(agentId: string, text?: string): Promise<InterruptResponse>;
+  interruptAgent(agentId: string): Promise<InterruptResponse>;
   stopAgent(agentId: string): Promise<StopResponse>;
   restartAgent(agentId: string): Promise<RestartResponse>;
 
@@ -169,14 +169,8 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         `/threads/${threadId}/messages`,
         { text },
       ),
-    interrupt: (threadId, text) =>
-      ok(
-        200,
-        InterruptResponseSchema,
-        'post',
-        `/threads/${threadId}/interrupt`,
-        text === undefined ? undefined : { text },
-      ),
+    interrupt: (threadId) =>
+      ok(200, InterruptResponseSchema, 'post', `/threads/${threadId}/interrupt`),
 
     agentList: (cursor) =>
       ok(200, AgentListPageSchema, 'get', `/agents${cursorQuery(cursor)}`),
@@ -196,7 +190,7 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         `/agents/${agentId}/inherited${afterSeqQuery(afterSeq)}`,
       ),
     run: (agentId) =>
-      ok(200, WorkflowRunBriefSchema, 'get', `/agents/${agentId}/run`),
+      ok(200, WorkflowRunViewSchema, 'get', `/agents/${agentId}/run`),
     sendToAgent: (agentId, text) =>
       ok(
         202,
@@ -205,14 +199,8 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
         `/agents/${agentId}/messages`,
         { text },
       ),
-    interruptAgent: (agentId, text) =>
-      ok(
-        200,
-        InterruptResponseSchema,
-        'post',
-        `/agents/${agentId}/interrupt`,
-        text === undefined ? undefined : { text },
-      ),
+    interruptAgent: (agentId) =>
+      ok(200, InterruptResponseSchema, 'post', `/agents/${agentId}/interrupt`),
     stopAgent: (agentId) =>
       ok(200, StopResponseSchema, 'post', `/agents/${agentId}/stop`),
     restartAgent: (agentId) =>

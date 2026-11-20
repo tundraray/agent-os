@@ -1,4 +1,10 @@
-import type { GrantEffect, McpCheckFailureReason, ProviderCheckFailure } from '@agent-os/contracts';
+import {
+  RECORD_MAX_TURNS_MAX,
+  RECORD_MAX_TURNS_MIN,
+  type GrantEffect,
+  type McpCheckFailureReason,
+  type ProviderCheckFailure,
+} from '@agent-os/contracts';
 
 /**
  * Error texts of the admin panel's fields and forms (enterprise-access UXRD, MC-20, MC-22, MC-23, MC-25,
@@ -49,6 +55,8 @@ export const ADMIN_TEXT = {
   idleHours: 'Введите от 0,25 до 24 часов с шагом 0,25',
   absoluteHours: 'Введите целое число от 1 до 720',
   absoluteBelowIdle: 'Общий срок не может быть меньше срока без активности',
+  // Not in the UXRD: the library's setting «Лимит ходов для новой записи».
+  defaultMaxTurns: `Введите целое число от ${RECORD_MAX_TURNS_MIN} до ${RECORD_MAX_TURNS_MAX}`,
   // MC-27
   publicUrlRequired: 'Сначала сохраните публичный адрес Agent OS в настройках входа.',
   // MC-20

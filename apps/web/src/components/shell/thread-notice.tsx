@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
 import { SearchXIcon, ShieldOffIcon, SquarePenIcon, type LucideIcon } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { adminPath, AGENTS_PATH, type AdminSection } from '@/lib/shell-route';
+import { pageTitle, useDocumentTitle } from '@/hooks/use-document-title';
+import { adminPath, AGENTS_PATH, libraryPath, type AdminSection } from '@/lib/shell-route';
 import { useShellActions } from './shell-actions';
 
 export type ThreadNoticeProps =
@@ -21,7 +22,14 @@ export type ThreadNoticeProps =
   /** AD-02 (MC-19): a panel address opened without the administrator right. */
   | { variant: 'no-access' }
   /** AD-15 (MC-34): a panel record that does not exist; «К списку» opens its section's list. */
-  | { variant: 'record-not-found'; section: AdminSection };
+  | { variant: 'record-not-found'; section: AdminSection }
+  /**
+   * RV-02 (MC-6): a library record page the API answered 404. One screen for a foreign personal, closed,
+   * deleted and missing record, naming nothing of the record (ADR-0016).
+   */
+  | { variant: 'library-not-found' }
+  /** RV-01 «Ошибка» (MC-6): a library record page could not be read. */
+  | { variant: 'library-load-error'; onRetry: () => void };
 
 type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
@@ -54,11 +62,20 @@ const COPY = {
     title: 'Запись не найдена',
     description: 'Возможно, её удалили, или ссылка указана неверно.',
   },
+  'library-not-found': {
+    title: 'Не найдено',
+    description: 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.',
+  },
+  'library-load-error': {
+    title: 'Не удалось загрузить',
+    description: 'Проверьте подключение и попробуйте ещё раз.',
+  },
 } as const satisfies Record<ThreadNoticeProps['variant'], { title: string; description: string }>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
- * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3), the panel with MC-19 and MC-34.
+ * The agent page shows the same screen with MC-15 and MC-16 (UXRD Screen 3), the panel with MC-19 and MC-34,
+ * a library record page with MC-6 (RV-02 and its load error).
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
 export function ThreadNotice(props: ThreadNoticeProps) {
@@ -97,6 +114,22 @@ export function ThreadNotice(props: ThreadNoticeProps) {
           </Link>
         </NoticeScreen>
       );
+    case 'library-not-found':
+      return (
+        <NoticeScreen variant={props.variant} Icon={SearchXIcon} tab={pageTitle(COPY[props.variant].title)}>
+          <Link href={libraryPath()} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
+            В библиотеку
+          </Link>
+        </NoticeScreen>
+      );
+    case 'library-load-error':
+      return (
+        <NoticeScreen variant={props.variant}>
+          <Button className="pointer-coarse:h-11" onClick={props.onRetry}>
+            Повторить
+          </Button>
+        </NoticeScreen>
+      );
     case 'not-found':
     case 'load-error': {
       const canRetry = props.variant === 'load-error' && props.onRetry !== undefined;
@@ -117,14 +150,17 @@ type NoticeScreenProps = {
   variant: ScreenVariant;
   /** 24 px above the heading (the panel's AD-02, AD-15). */
   Icon?: LucideIcon;
+  /** The tab title, where the screen owns the tab (RV-02 «Не найдено — Agent OS»); others leave it to the shell. */
+  tab?: string;
   children: ReactNode;
 };
 
 /** The full-area notice: its h1 takes focus (tabIndex −1), its actions sit under the reason. */
-function NoticeScreen({ variant, Icon, children }: NoticeScreenProps) {
+function NoticeScreen({ variant, Icon, tab, children }: NoticeScreenProps) {
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const { title, description } = COPY[variant];
+  useDocumentTitle(tab);
 
   useEffect(() => {
     headingRef.current?.focus();

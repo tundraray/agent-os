@@ -4,6 +4,7 @@ import {
   ABSOLUTE_MINUTES_MIN,
   DecisionStatusSchema,
   DeliveryStatusSchema,
+  DraftStateSchema,
   EVENT_PAYLOAD_MAX_BYTES,
   GrantEffectSchema,
   GrantTargetKindSchema,
@@ -14,6 +15,11 @@ import {
   McpServerModeSchema,
   MessageStatusSchema,
   ProviderTypeSchema,
+  RECORD_MAX_TURNS_DEFAULT,
+  RECORD_MAX_TURNS_MAX,
+  RECORD_MAX_TURNS_MIN,
+  RecordKindSchema,
+  SaveOwnRefusalSchema,
   TaskStatusSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
@@ -292,31 +298,53 @@ export const runtimeModelCalls = app.table(
 // id, so deleting a task tree deletes its sessions, histories and tool calls.
 // ---------------------------------------------------------------------------------------------
 
-export const agentSessions = app.table('agent_sessions', {
-  taskId: uuid('task_id')
-    .primaryKey()
-    .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-  /** Owner of the task; read only by the `task.failed` consumer. */
-  ownerId: text('owner_id').notNull(),
-  definition: text('definition').notNull(),
-  description: text('description').notNull(),
-  /** Model chosen at start; every call of the session uses it. */
-  model: text('model').notNull(),
-  /** Task text; `restart` starts a new agent with it. */
-  prompt: text('prompt').notNull(),
-  /** Session limits set by the caller at start. */
-  limits: jsonb('limits'),
-  /** Fork source: the parent's history up to `forked_through_seq` precedes this one. No FK. */
-  forkedFromTaskId: uuid('forked_from_task_id'),
-  forkedThroughSeq: integer('forked_through_seq'),
-  turns: integer('turns').notNull().default(0),
-  interrupted: boolean('interrupted').notNull().default(false),
-  /** Set when the agent itself finished (`complete` or `fail`). */
-  closed: boolean('closed').notNull().default(false),
-  /** Input tokens of the last model call; drives compaction. */
-  lastInputTokens: integer('last_input_tokens'),
-  createdAt: createdAt(),
-});
+export const agentSessions = app.table(
+  'agent_sessions',
+  {
+    taskId: uuid('task_id')
+      .primaryKey()
+      .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
+    /** Owner of the task; read only by the `task.failed` consumer. */
+    ownerId: text('owner_id').notNull(),
+    /** Name of the run from its snapshot (custom-agents/design-runtime.md, KD-3). */
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    /** Model of the snapshot; every call of the session uses it. */
+    model: text('model').notNull(),
+    /** Task text; `restart` starts a new agent with it. */
+    prompt: text('prompt').notNull(),
+    /**
+     * Origin of the run: the library record it started from, as it was at the start. All null for a
+     * conversation's root. No FK: the record may be deleted. The snapshot itself lives only in the
+     * task input (ADR-0017).
+     */
+    recordId: uuid('record_id'),
+    recordKind: text('record_kind'),
+    recordVersion: integer('record_version'),
+    recordName: text('record_name'),
+    authorId: uuid('author_id'),
+    authorName: text('author_name'),
+    builtinKey: text('builtin_key'),
+    /** Executor name of a workflow step; null otherwise. */
+    executor: text('executor'),
+    /** The owner had no earlier session with this record. */
+    firstRun: boolean('first_run').notNull().default(false),
+    /** Fork source: the parent's history up to `forked_through_seq` precedes this one. No FK. */
+    forkedFromTaskId: uuid('forked_from_task_id'),
+    forkedThroughSeq: integer('forked_through_seq'),
+    turns: integer('turns').notNull().default(0),
+    interrupted: boolean('interrupted').notNull().default(false),
+    /** Set when the agent itself finished (`complete` or `fail`). */
+    closed: boolean('closed').notNull().default(false),
+    /** Input tokens of the last model call; drives compaction. */
+    lastInputTokens: integer('last_input_tokens'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    /** Counts the owner's runs of a record for the chat listing. */
+    index('agent_sessions_owner_record_idx').on(t.ownerId, t.recordId),
+  ],
+);
 
 /** History of an agent: append-only, `seq` grows within the session. */
 export const agentMessages = app.table(
@@ -364,6 +392,8 @@ export const agentToolCalls = app.table(
     /** Set exactly while the state is `done`. */
     outcome: text('outcome'),
     refusalReason: text('refusal_reason'),
+    /** `{ model }` of a refusal by model (`model_not_connected`, `model_not_allowed`); null otherwise. */
+    refusalDetail: jsonb('refusal_detail'),
     resultText: text('result_text'),
     /** Agent started by `start_agent`. */
     childTaskId: uuid('child_task_id'),
@@ -549,6 +579,43 @@ export const chatConversations = app.table(
       t.updatedAt.desc(),
       t.id.desc(),
     ),
+  ],
+);
+
+/**
+ * A record draft of a conversation (custom-agents/design-runtime.md, KD-6): written by `draft_record`
+ * of the root, resolved by the conversation's route. `record_id` and `saved_record_id` have no FK:
+ * the record may be deleted.
+ */
+export const chatDrafts = app.table(
+  'chat_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull(),
+    /** The `draft_record` call in the root's history the card stands at. */
+    callId: text('call_id').notNull(),
+    kind: text('kind').notNull(),
+    /** The edited record and its version at the draft; null for a new record. */
+    recordId: uuid('record_id'),
+    baseVersion: integer('base_version'),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    content: jsonb('content').notNull(),
+    state: text('state').notNull().default(DraftStateSchema.enum.pending),
+    savedRecordId: uuid('saved_record_id'),
+    /** Reason of the last refused `saveOwn`; null when none. */
+    refusal: text('refusal'),
+    createdAt: createdAt(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('chat_drafts_conversation_idx').on(t.conversationId),
+    check('chat_drafts_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
+    check('chat_drafts_state_check', isOneOf(t.state, DraftStateSchema.options)),
+    check('chat_drafts_refusal_check', isOneOf(t.refusal, SaveOwnRefusalSchema.options)),
   ],
 );
 
@@ -799,6 +866,105 @@ export const accessGrants = app.table(
       'access_grants_quota_check',
       sql`${t.quotaUsd} is null or (${t.effect} = ${literal(GrantEffectSchema.enum.allow)}
         and ${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)})`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Library (custom-agents/design-library.md, Data Model, KD-1). Read and written only by the
+// `library` module of `apps/api` (ADR-0016). The content of a record is one jsonb in the form of its
+// kind, checked by the kind's schema in `@agent-os/contracts`. A holder is a role or an employee
+// with FK and cascade, as in `access_grants`, or "everyone".
+// ---------------------------------------------------------------------------------------------
+
+/** A record of any kind: an employee's (with an owner) or a system one (no owner). */
+export const libraryRecords = app.table(
+  'library_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: text('kind').notNull(),
+    /** Null — a system record. */
+    ownerId: uuid('owner_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    offerInChat: boolean('offer_in_chat').notNull().default(false),
+    /** Key of a built-in system record (`chat`); null for every other record. */
+    builtinKey: text('builtin_key'),
+    content: jsonb('content').notNull(),
+    /** Grows with every edit of the record. */
+    version: integer('version').notNull().default(1),
+    /** When an admin closed sharing of an employee record; null — not closed. */
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    /** A name is unique per owner regardless of case and kind; system records are one group. */
+    uniqueIndex('library_records_owner_name_idx')
+      .on(t.ownerId, sql`lower(${t.name})`)
+      .where(sql`${t.ownerId} is not null`),
+    uniqueIndex('library_records_system_name_idx')
+      .on(sql`lower(${t.name})`)
+      .where(sql`${t.ownerId} is null`),
+    uniqueIndex('library_records_builtin_key_idx').on(t.builtinKey),
+    check('library_records_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
+    check(
+      'library_records_builtin_key_check',
+      sql`${t.builtinKey} is null or ${t.ownerId} is null`,
+    ),
+    check(
+      'library_records_closed_at_check',
+      sql`${t.closedAt} is null or ${t.ownerId} is not null`,
+    ),
+  ],
+);
+
+/** A holder of a record's audience: exactly one of a role, an employee or everyone. */
+export const libraryShares = app.table(
+  'library_shares',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    everyone: boolean('everyone').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('library_shares_record_holder_key')
+      .on(t.recordId, t.roleId, t.userId, t.everyone)
+      .nullsNotDistinct(),
+    index('library_shares_role_idx').on(t.roleId),
+    index('library_shares_user_idx').on(t.userId),
+    check(
+      'library_shares_holder_check',
+      sql`num_nonnulls(${t.roleId}, ${t.userId}, nullif(${t.everyone}, false)) = 1`,
+    ),
+  ],
+);
+
+/** The single row of the library's settings (LibrarySettings); the migration creates it. */
+export const librarySettings = app.table(
+  'library_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** «Максимум шагов» a new agent or workflow starts with; each record may change its own. */
+    defaultMaxTurns: integer('default_max_turns').notNull().default(RECORD_MAX_TURNS_DEFAULT),
+    /** Null while the default stands. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id; null while the default stands. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    check('library_settings_single_row_check', sql`${t.id}`),
+    check(
+      'library_settings_default_max_turns_check',
+      isWithin(t.defaultMaxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX),
     ),
   ],
 );

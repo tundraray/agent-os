@@ -33,13 +33,13 @@ export interface ListAgentsDeps {
   readonly database: Database;
 }
 
-/** `list_agents` (design-agents.md, «Инструменты»): the caller's descendants — id, description, definition, model, status. */
+/** `list_agents` (design-agents.md, «Инструменты»): the caller's descendants — id, description, name, model, status. */
 export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<ListAgentsArgs> {
   return {
     name: 'list_agents',
     title: 'Показать агентов',
     description:
-      'A snapshot of the agents you started and the agents they started: id, description, definition, model and status. ' +
+      'A snapshot of the agents you started and the agents they started: id, description, name, model and status. ' +
       'Use it to answer a question about the agents, never to wait for them: their reports arrive on their own as messages.',
     argsSchema: ListAgentsArgsSchema,
     mode: 'outside',
@@ -57,12 +57,12 @@ export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<Lis
           {
             agentId: task.taskId,
             description: session.description,
-            definition: session.definition,
+            name: session.name,
             model: session.model,
             status: agentStatus({
               taskStatus: task.status,
               waitReason: task.waitReason,
-              pendingInterruptWithoutText: false,
+              pendingInterrupt: false,
               sessionInterrupted: session.interrupted,
             }),
           },

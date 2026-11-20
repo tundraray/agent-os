@@ -177,14 +177,9 @@ export class McpAccounts {
    * status (AC-14.1, AC-14.6); none for a disabled employee.
    */
   async connections(ownerId: string): Promise<McpConnection[]> {
-    const { database } = this.options;
-    const access = await this.options.access.tools(ownerId);
-    if (access.kind === 'owner_disabled') return [];
-    const servers = (await listServers(database)).filter(
-      (row) => isOAuthServer(row) && usableServer(row, access),
-    );
+    const servers = (await this.usableServers(ownerId)).filter(isOAuthServer);
     if (servers.length === 0) return [];
-    const connected = new Set((await accountsOf(database, ownerId)).map((account) => account.server));
+    const connected = new Set((await accountsOf(this.options.database, ownerId)).map((account) => account.server));
     return servers.map((row) => ({
       server: row.name,
       url: row.url,
@@ -328,6 +323,18 @@ export class McpAccounts {
   async disconnect(ownerId: string, server: string): Promise<void> {
     const removed = await deleteAccount(this.options.database, server, ownerId);
     this.options.logger.info('mcp account disconnected', { ownerId, server, outcome: removed ? 'removed' : 'none' });
+  }
+
+  /** Names of enabled servers of any mode with at least one tool the gate allows the employee, by name (KD-4). */
+  async usable(ownerId: string): Promise<string[]> {
+    return (await this.usableServers(ownerId)).map((row) => row.name);
+  }
+
+  /** Enabled servers of any mode the employee may use, by name; none for a disabled employee. */
+  private async usableServers(ownerId: string): Promise<McpServerRow[]> {
+    const access = await this.options.access.tools(ownerId);
+    if (access.kind === 'owner_disabled') return [];
+    return (await listServers(this.options.database)).filter((row) => usableServer(row, access));
   }
 
   /** The admin connects his `oauth` server in any status; an employee only one he may use (`connections`' rule). */

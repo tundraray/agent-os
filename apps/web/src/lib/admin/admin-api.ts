@@ -3,12 +3,16 @@ import {
   AdminUserDetailSchema,
   AdminUserPageSchema,
   AdminUserSummarySchema,
+  BannedRecordSchema,
   CreateCatalogModelBodySchema,
   GrantSchema,
+  LibrarySettingsSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
   ProviderListSchema,
   ProviderViewSchema,
+  RecordDetailSchema,
+  RecordSummarySchema,
   RefreshMcpToolsResponseSchema,
   RoleDetailSchema,
   RoleListSchema,
@@ -17,26 +21,34 @@ import {
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
+  type BannedRecord,
   type CatalogModel,
   type CreateCatalogModelBody,
+  type CreateRecordBody,
   type CreateGrantBody,
   type CreateLocalUserBody,
   type CreateProviderBody,
   type CreateRoleBody,
   type Grant,
+  type LibrarySettings,
   type McpServerSummary,
   type McpServerView,
   type ProviderList,
   type ProviderView,
+  type RecordDetail,
+  type RecordSummary,
   type RefreshMcpToolsResponse,
   type RegisterMcpServerBody,
   type RoleDetail,
   type RoleList,
   type RoleSummary,
   type SignInSettings,
+  type SystemRecordAudienceBody,
   type UpdateCatalogModelBody,
+  type UpdateLibrarySettingsBody,
   type UpdateMcpServerBody,
   type UpdateProviderBody,
+  type UpdateRecordBody,
   type UpdateRoleBody,
   type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
@@ -150,4 +162,29 @@ const models = {
   remove: (id: string): Promise<void> => apiRequest({ path: apiPath('models', id), method: 'DELETE' }),
 };
 
-export const adminApi = { users, roles, grants, providers, signInSettings, servers, models };
+const RecordSummaryListSchema = z.array(RecordSummarySchema);
+const BannedRecordListSchema = z.array(BannedRecordSchema);
+
+/** The panel's «Агенты и workflow» (design-library.md, admin routes). */
+const library = {
+  system: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'system'), schema: RecordSummaryListSchema }),
+  shared: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'shared'), schema: RecordSummaryListSchema }),
+  bans: (): Promise<BannedRecord[]> => apiRequest({ path: apiPath('library', 'bans'), schema: BannedRecordListSchema }),
+  get: (id: string): Promise<RecordDetail> => apiRequest({ path: apiPath('library', id), schema: RecordDetailSchema }),
+  create: (body: CreateRecordBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library'), method: 'POST', body, schema: RecordDetailSchema }),
+  save: (id: string, body: UpdateRecordBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library', id), method: 'PUT', body, schema: RecordDetailSchema }),
+  saveAudience: (id: string, body: SystemRecordAudienceBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library', id, 'audience'), method: 'PUT', body, schema: RecordDetailSchema }),
+  remove: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id), method: 'DELETE' }),
+  /** Removes the record's holders and bans sharing it (Flow 4). */
+  close: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id, 'close'), method: 'POST' }),
+  liftBan: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id, 'ban'), method: 'DELETE' }),
+  /** «Лимит ходов для новой записи». */
+  settings: (): Promise<LibrarySettings> => apiRequest({ path: apiPath('library', 'settings'), schema: LibrarySettingsSchema }),
+  saveSettings: (body: UpdateLibrarySettingsBody): Promise<LibrarySettings> =>
+    apiRequest({ path: apiPath('library', 'settings'), method: 'PUT', body, schema: LibrarySettingsSchema }),
+};
+
+export const adminApi = { users, roles, grants, providers, signInSettings, servers, models, library };

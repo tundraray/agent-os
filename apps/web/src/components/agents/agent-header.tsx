@@ -1,19 +1,28 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useRouter } from "next/navigation";
-import type { AgentStatus as AgentStatusValue } from "@agent-os/contracts";
+import {
+  ThreadsErrorCodeSchema,
+  type AgentStatus as AgentStatusValue,
+  type RecordSummary,
+  type RunOrigin,
+} from "@agent-os/contracts";
 import { CircleStopIcon, MoreHorizontalIcon, RotateCcwIcon, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { AgentStatus } from "@/components/agents/agent-status";
+import { runRecord, useLiveRecord } from "@/components/agents/run-card";
+import { useLeaveThenGo } from "@/components/library/use-in-chat";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isApiRequestError } from "@/lib/api/api-request";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import type { FeedStore } from "@/lib/feed/feed-store";
 import { selectAgent } from "@/lib/feed/to-feed";
 import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
-import { agentPath } from "@/lib/shell-route";
+import { describeLibraryError, kindWord } from "@/lib/library/library-errors";
+import { agentPath, recordPath } from "@/lib/shell-route";
 
 /** MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»). */
 type Control = {
@@ -54,16 +63,29 @@ let focusOnAgent: string | null = null;
 
 /**
  * Runs the header's command: success needs nothing more (the store re-reads); a failure — 409
- * `NOT_FINISHED` and `PARENT_FINISHED` included — shows the KD-6 toast and re-reads the real status.
- * The store has already logged the failure with its kind, code and `agentId`.
+ * `NOT_FINISHED`, `PARENT_FINISHED` and `START_REFUSED` included — shows its notice and re-reads the real
+ * status. The store has already logged the failure with its kind, code and `agentId`.
  */
-async function runControl(feed: FeedStore, control: Control, run: () => Promise<void>): Promise<void> {
+async function runControl(feed: FeedStore, notify: (error: unknown) => void, run: () => Promise<void>): Promise<void> {
   try {
     await run();
-  } catch {
-    toast.error(control.failure);
+  } catch (error) {
+    notify(error);
     await feed.load();
   }
+}
+
+/**
+ * RN-03, MC-17: what «Запустить с нуля» of a library run says and whether it can go. The new start takes
+ * the live version; a record gone from the read list cannot start. An unread list says nothing yet.
+ */
+function restartHint(
+  record: RunOrigin | null,
+  live: RecordSummary | null | undefined,
+): { text: string; blocked: boolean } | null {
+  if (record === null || live === undefined) return null;
+  if (live === null) return { text: `${kindWord(record.kind, true)} недоступен — запустить с нуля нельзя`, blocked: true };
+  return { text: `Пойдёт на версии ${live.version}`, blocked: false };
 }
 
 /**
@@ -96,9 +118,30 @@ export function AgentHeader() {
   }, [agentId]);
 
   const control = agent === null ? null : CONTROL_BY_STATUS[agent.status];
+  const record = agent === null ? null : runRecord(agent);
+  const live = useLiveRecord(record?.recordId ?? "");
+  const hint = control === RESTART ? restartHint(record, live) : null;
+  const hintId = useId();
+  const leaveThenGo = useLeaveThenGo();
+
+  /** KD-6 toast; a refused start (409 `START_REFUSED`) says why by MC-16 and offers the record when it is the model. */
+  const notifyFailure = (error: unknown): void => {
+    if (
+      control === RESTART &&
+      record !== null &&
+      isApiRequestError(error) &&
+      error.code === ThreadsErrorCodeSchema.enum.START_REFUSED
+    ) {
+      const refused = describeLibraryError(error, { where: "restart", kind: record.kind, own: live?.mine === true });
+      const open = () => leaveThenGo(() => router.push(recordPath(record.recordId)));
+      toast.error(refused.text, refused.open ? { action: { label: "Открыть", onClick: open } } : undefined);
+      return;
+    }
+    if (control !== null) toast.error(control.failure);
+  };
 
   const onControl = (): void => {
-    if (control === null || busy.current) return;
+    if (control === null || busy.current || hint?.blocked === true) return;
     busy.current = true;
     const run =
       control === STOP
@@ -108,7 +151,7 @@ export function AgentHeader() {
             focusOnAgent = nextAgentId;
             router.push(agentPath(nextAgentId));
           };
-    void runControl(feed, control, run).finally(() => {
+    void runControl(feed, notifyFailure, run).finally(() => {
       busy.current = false;
     });
   };
@@ -127,11 +170,19 @@ export function AgentHeader() {
       {agent !== null && <AgentStatus variant="label" status={agent.status} className="hidden md:inline-flex" />}
       {control !== null && (
         <>
+          {hint !== null && (
+            <span id={hintId} className="sr-only">
+              {hint.text}
+            </span>
+          )}
           <Button
             variant="outline"
             size="sm"
             className="ml-auto hidden md:inline-flex pointer-coarse:h-11"
             onClick={onControl}
+            disabled={hint?.blocked === true}
+            title={hint?.text}
+            aria-describedby={hint === null ? undefined : hintId}
           >
             <control.Icon aria-hidden />
             {control.label}
@@ -151,9 +202,17 @@ export function AgentHeader() {
               <MoreHorizontalIcon aria-hidden />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-45">
-              <DropdownMenuItem onClick={onControl} className="pointer-coarse:min-h-11">
+              <DropdownMenuItem
+                onClick={onControl}
+                disabled={hint?.blocked === true}
+                className="pointer-coarse:min-h-11"
+              >
                 <control.Icon aria-hidden />
-                {control.label}
+                <span className="flex min-w-0 flex-col">
+                  {control.label}
+                  {/* A touch screen has no tooltip: the menu shows the hint under the label. */}
+                  {hint !== null && <span className="text-muted-foreground text-xs leading-4">{hint.text}</span>}
+                </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

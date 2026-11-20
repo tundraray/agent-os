@@ -24,9 +24,10 @@ import {
 } from '../support/access.js';
 import { chatApi, type ChatApi, waitFor } from '../support/api.js';
 import { createTestApp } from '../support/createTestApp.js';
+import { pointBuiltinsAt } from '../support/library.js';
 import { createEmployee, seedSuperAdmin } from '../support/session.js';
 
-/** The app's default model: a model of the run, allowed to both employees through the run's role. */
+/** The model of the built-in records (`pointBuiltinsAt`): a model of the run, allowed to both employees through the run's role. */
 const DEFAULT_MODEL = runModel('code-run-load-haiku');
 /** «Performance Requirements»: the conversation list, p95. */
 const LIST_P95_BUDGET_MS = 300;
@@ -126,6 +127,7 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
       });
       let roleId: string | undefined;
       let adminId: string | undefined;
+      let restoreBuiltins: (() => Promise<void>) | undefined;
       try {
         const loopTask = 'UC-N3: run the endless loop';
         const heapTask = 'UC-N3: grow the heap';
@@ -154,6 +156,11 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
           id: DEFAULT_MODEL,
           ...HAIKU_TEST_PRICES,
         });
+        restoreBuiltins = await pointBuiltinsAt(
+          harness.app,
+          admin,
+          DEFAULT_MODEL,
+        );
         const role = await allowRole(harness.app, admin, {
           name: 'code-run-load',
           models: [DEFAULT_MODEL],
@@ -232,11 +239,15 @@ describe("UC-N3: the server answers in its budgets while another employee's runs
         );
       } finally {
         try {
-          await removeRunRows(harness.pool, {
-            models: [DEFAULT_MODEL],
-            roles: roleId === undefined ? [] : [roleId],
-            users: adminId === undefined ? [] : [adminId],
-          });
+          try {
+            await restoreBuiltins?.();
+          } finally {
+            await removeRunRows(harness.pool, {
+              models: [DEFAULT_MODEL],
+              roles: roleId === undefined ? [] : [roleId],
+              users: adminId === undefined ? [] : [adminId],
+            });
+          }
         } finally {
           await harness.close();
         }

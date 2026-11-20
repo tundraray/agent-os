@@ -12,12 +12,15 @@ import Link from "next/link";
 import type { AgentListNode, AgentNode } from "@agent-os/contracts";
 import { ChevronDownIcon, ChevronRightIcon, RotateCwIcon } from "lucide-react";
 import { AgentStatus } from "@/components/agents/agent-status";
+import { runRecord } from "@/components/agents/run-card";
+import { RecordLabel } from "@/components/library/record-label";
 import { UNTITLED_THREAD_TITLE } from "@/components/shell/thread-history-item";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatModel, formatTime } from "@/lib/agents/format";
+import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
 import { focusShellTarget } from "@/lib/focus";
-import { agentPath, threadPath } from "@/lib/shell-route";
+import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
 /** The level indent stops growing after the fourth level (agent-tree.md, Anatomy). */
@@ -28,12 +31,13 @@ const LEAVE_MS = 150;
 
 /**
  * One row grid for both layouts, switched by the container query at 720 px of the main area:
- * narrow — toggle and two 20 px lines (status icon and description; model · time · conversation);
- * wide — a 32 px row of columns MC-4. The height never depends on the status (Invariant 4).
+ * narrow — toggle and two 20 px lines (status icon and description; record · model · time · conversation);
+ * wide — a 32 px row of columns MC-4 with «Из библиотеки» after «Агент» (RN-02). The height never depends
+ * on the status (Invariant 4).
  */
 const ROW_GRID =
   "grid grid-cols-[1.5rem_minmax(0,1fr)] grid-rows-[1.25rem_1.25rem] content-center items-center gap-x-2 " +
-  "@min-[720px]:grid-cols-[1.5rem_minmax(0,1fr)_10rem_4.5rem_7.5rem_minmax(0,10rem)] @min-[720px]:grid-rows-[2rem] @min-[720px]:gap-x-3";
+  "@min-[720px]:grid-cols-[1.5rem_minmax(0,1fr)_minmax(0,12rem)_10rem_4.5rem_7.5rem_minmax(0,10rem)] @min-[720px]:grid-rows-[2rem] @min-[720px]:gap-x-3";
 const ROW_HEIGHT = "h-10 @min-[720px]:h-8 pointer-coarse:min-h-11";
 
 /** Opens a row over 150 ms when it is inserted, and collapses it while it leaves. */
@@ -44,10 +48,10 @@ const SKELETON_WIDTHS = ["62%", "48%", "71%", "55%", "40%", "66%", "52%", "45%"]
 
 type AnyAgentNode = AgentNode | AgentListNode;
 
-/** The row text: the task; for a workflow run — the template name and the coordinator's task. */
+/** The row text: the task; for a workflow run — the workflow name and the coordinator's task. */
 function rowDescription(node: AnyAgentNode): string {
-  if (node.template === undefined) return node.description;
-  return node.description === "" ? node.template.title : `${node.template.title} · ${node.description}`;
+  if (!isWorkflowCoordinator(node)) return node.description;
+  return node.description === "" ? node.name : `${node.name} · ${node.description}`;
 }
 
 function collectIds(nodes: readonly AnyAgentNode[], into: Set<string> = new Set()): Set<string> {
@@ -84,6 +88,7 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
   const open = hasChildren && expanded.has(node.agentId);
   const appeared = !initialIds.has(node.agentId);
   const conversationTitle = thread === undefined ? null : (thread.title ?? UNTITLED_THREAD_TITLE);
+  const record = runRecord(node);
 
   return (
     <li
@@ -133,17 +138,31 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
             </Link>
           </div>
 
-          <AgentStatus variant="label" status={node.status} className="hidden @min-[720px]:inline-flex" />
+          <AgentStatus variant="label" status={node.status} className="hidden @min-[720px]:order-2 @min-[720px]:inline-flex" />
 
+          {/* Wide: «Из библиотеки» (order 1) stands before the status and the meta cells (order 2); narrow: it opens the meta line. */}
           <div className="text-muted-foreground col-start-2 flex min-w-0 items-center gap-1 text-[13px] leading-[18px] @min-[720px]:contents">
-            <span className="shrink-0 truncate">
+            {record !== null ? (
+              <>
+                {/* One 20 px line: a source or badge that would wrap is clipped, the row height stays. */}
+                <span className="relative z-10 flex h-5 min-w-0 shrink items-start overflow-hidden @min-[720px]:order-1">
+                  <RecordLabel origin={record} variant="under" href={recordPath(record.recordId)} />
+                </span>
+                <span aria-hidden className="shrink-0 @min-[720px]:hidden">
+                  ·
+                </span>
+              </>
+            ) : (
+              <span aria-hidden className="hidden @min-[720px]:order-1 @min-[720px]:block" />
+            )}
+            <span className="shrink-0 truncate @min-[720px]:order-2">
               <span className="sr-only">модель </span>
               {formatModel(node.model)}
             </span>
             <span aria-hidden className="shrink-0 @min-[720px]:hidden">
               ·
             </span>
-            <span className="shrink-0 tabular-nums">
+            <span className="shrink-0 tabular-nums @min-[720px]:order-2">
               <span className="sr-only">запущен </span>
               <time dateTime={node.createdAt}>{formatTime(node.createdAt)}</time>
             </span>
@@ -155,14 +174,14 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
                 <Link
                   href={threadPath(thread.threadId)}
                   title={conversationTitle}
-                  className="hover:text-foreground focus-visible:ring-ring relative z-10 min-w-0 truncate rounded-sm outline-none hover:underline focus-visible:ring-2"
+                  className="hover:text-foreground focus-visible:ring-ring relative z-10 min-w-0 truncate rounded-sm outline-none hover:underline focus-visible:ring-2 @min-[720px]:order-2"
                 >
                   <span className="sr-only">беседа </span>
                   {conversationTitle}
                 </Link>
               </>
             ) : (
-              <span aria-hidden className="hidden @min-[720px]:block" />
+              <span aria-hidden className="hidden @min-[720px]:order-2 @min-[720px]:block" />
             )}
           </div>
         </div>
@@ -331,6 +350,7 @@ function ColumnHeader() {
       )}
     >
       <span className="col-span-2">Агент</span>
+      <span>Из библиотеки</span>
       <span>Статус</span>
       <span>Модель</span>
       <span>Запущен</span>

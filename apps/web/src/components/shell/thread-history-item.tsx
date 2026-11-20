@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
-import Link from 'next/link';
 import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
 import { ShimmerLabel } from '@/components/surfaces';
 import {
@@ -16,6 +15,7 @@ import { focusShellTarget, isFinePointer } from '@/lib/focus';
 import { threadPath } from '@/lib/shell-route';
 import type { ThreadListEntry } from '@/lib/threads/group-threads-by-date';
 import { cn } from '@/lib/utils';
+import { ShellLink } from './shell-link';
 import { ThreadTitleField } from './thread-title-field';
 
 /** Marks a thread link: ↑/↓/Home/End of the list move focus between these elements. */
@@ -96,7 +96,7 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
     entry.remoteId === undefined ? (
       <div aria-current={isActive ? 'page' : undefined} />
     ) : (
-      <Link
+      <ShellLink
         {...linkProps}
         href={threadPath(entry.remoteId)}
         aria-current={isActive ? 'page' : undefined}

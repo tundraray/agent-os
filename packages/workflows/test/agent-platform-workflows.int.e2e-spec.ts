@@ -1,15 +1,15 @@
 // agent-platform / workflows Integration Test Skeletons - Design Doc: docs/features/agent-platform/design-workflows.md (Test Strategy UC-1, UC-E1..UC-E4; Flows 1-2; Invariants 1-4; DC-1..DC-4)
 // PRD: docs/features/agent-platform/prd.md (FR-18, FR-19, FR-20, FR-26, FR-28 acceptance criteria; NFR-06 for reading a run). Upstream: docs/features/agent-platform/design-agents.md (Contract Definitions: SessionLimits, tools.register with confirmation and argument edits, the spawn helper, AgentView, HistoryEntry), design-runtime.md
 // Generated: 2026-11-14 | Part: workflows | Test type: Integration (in-process `createRuntime` + `createAgents` + `createWorkflows` over real Postgres, real MCP fixture process, scripted model), CI job `e2e-workflows`
-// Implementation timing: created alongside the slice each test names (INT-1 the brief and `start_workflow`; INT-2 the shipped `deep-research` template run to the report and `runs.get`; INT-3 the template limits as the coordinator meets them).
+// Implementation timing: created alongside the slice each test names (INT-1 the brief and `start_workflow`; INT-2 the `deep-research` workflow run to the report and `runs.get`; INT-3 the workflow's limits as the coordinator meets them). Rewritten onto workflow records of the library double by custom-agents runtime Task 6.3.
 //
 // File name follows the convention of the agents and runtime parts (`*.e2e-spec.ts` under packages/<pkg>/test, picked up by `vitest.config.e2e.ts`, run with `pnpm --filter @agent-os/workflows test:e2e`, never in the default `vitest run`).
 // The package `packages/workflows` does not exist yet: the part's first task creates it with the same `vitest.config.e2e.ts` and `test/support/migrate.global-setup.ts` shape as `packages/agents`. The `.int.` infix separates in-process tests from a child-process file
 // `agent-platform-workflows.e2e-spec.ts`; THAT FILE IS NOT GENERATED (see "E2E" below). Started as `it.todo` skeletons; the Given/When/Then comments are the rows' specification. Tests are written with their tasks and run once, at the end of the part
 // (project rule "Tests only at the end").
 //
-// Light test process (CLAUDE.md "Tests"): this part owns no tables, no loop and no limit mechanics. Its own code is: the template file and its schema, the `start_workflow` tool (arguments, brief edit, the spawn with the template's limits), and `runs.get`.
-// A skeleton exists only where a defect is invisible below this level - the brief reaching a real coordinator through the real confirmation of `agents`, the shipped template running through the real loop to a report, and the template's limits being the ones
+// Light test process (CLAUDE.md "Tests"): this part owns no tables, no loop and no limit mechanics. Its own code is: the `start_workflow` tool (arguments, brief edit, the coordinator's start on the record's snapshot), and `runs.get`.
+// A skeleton exists only where a defect is invisible below this level - the brief reaching a real coordinator through the real confirmation of `agents`, a workflow running through the real loop to a report, and the workflow's limits being the ones
 // the coordinator actually meets. Already proven by the agents and runtime parts and NOT repeated here: the limit mechanics (`not_allowed` by list and count, `fork` refusal, the notice on a text without the final agent's report, the final agent's report as the session's
 // report, `SessionLimits` rows - agents unit gate table and agents INT-1 row D), confirmations (request, approve, reject, `ALREADY_RESOLVED`, a decision surviving a restart - agents INT-3 rows B-D and runtime E2E-1), the inbox and message order (runtime INT-2, agents INT-1 row B),
 // restart and lost steps (runtime E2E-1, agents INT-3 row E), stop of a tree (agents INT-2 row B), continue and restart of a finished agent (agents INT-1 row C), the owner check of the `agents` operations (agents INT-4).
@@ -21,10 +21,11 @@
 //   (the Design Doc's UC-1 Given), because a fixed list of answers cannot tell which report has arrived; the harness gets a "reply from history" scenario kind for that.
 // - MCP is real: the `packages/mcp-fixture` HTTP process of the harness, its `logs` (read-only) registered in the registry under the run's name (`LOGS_SERVER` of test/support/workflowsHarness.ts), `FIXTURE_CALL_LOG` as the evidence of what reached a server; a read call
 //   held on a latch, the harness's `AccessGate` double (`@agent-os/agents/testing`) gives the test's owners that server.
-// - The tree root is an agent with a TEST definition that lists `start_workflow` and nothing else (the `chat` part's main chat does not exist yet; Design Doc "Test Strategy"). Its scenario calls `start_workflow`. Reusing the harness of the agents part
-//   (`agentsHarness.ts`, `scriptedModel.ts`, `fixtureLog.ts`) is the plan's task, not a copy.
-// - The templates under test: the SHIPPED `deep-research` (INT-1, INT-2 - the real file, so a template whose wiring is wrong fails here) and, in INT-3 only, a small TEST template built with the same `parseTemplate` and registered through the same `createWorkflows` path
-//   (a coordinator with `maxTurns` 4 and one executor `answer` as `finalAgent`), so the final-step requirement and the list are shown with a coordinator that is cheap to drive.
+// - The library of agents and workflows is the `createLibraryDouble` of `@agent-os/agents/testing` (custom-agents design-runtime.md, Appendix: Fact Disposition): the tree root runs the
+//   double's `chat` record, which has no tools of its own, so `start_workflow` (root-only) is all it may call. Its scenario calls `start_workflow` with the id of a workflow record.
+// - The workflows under test are records of the double: `deep-research` (INT-1, INT-2 - the team of the former shipped template: plan, gather over the run's `logs` server, answer as
+//   `finalExecutor`) and, in INT-3 only, `limits-check` (a coordinator with `maxTurns` 6 and one executor `answer` as `finalExecutor`), so the final-step requirement and the team are shown
+//   with a coordinator that is cheap to drive.
 // - Isolation (project convention, no truncate): a unique owner `newUser()` per test, a unique conversation per test, each test reads only its own tree. `fileParallelism: false`.
 // - No sleeps for ordering: tests synchronise on latches and on rows; no latency assertions.
 //
@@ -35,13 +36,10 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven):
 // - unit, packages/workflows/src, one table-driven file per rule (literal rows, no database):
-//     * `parseTemplate` and `createWorkflows` startup checks - the shipped `deep-research` parses (the row that also keeps its values: `finalAgent` is `deep-research-answer`, a `maxRuns` per executor, coordinator model); unknown field; name not in kebab-case;
-//       duplicate executor name; `finalAgent` not among the executors; `maxRuns` 0 and above 20; `maxTurns` out of bounds; an executor holding `start_workflow`; two templates with one name; each failing row names the template and the field path - DC-1, UC-E3
-//       (one row in this file is NOT needed: a bad template throws from `createWorkflows` before `start()`, and that wiring is one call over a fake `agents` in the same unit file)
-//     * `start_workflow` argument schema and edit schema - `template` unknown name, `question` empty or over 4000, `boundaries` and `result` over 4000; the edit schema accepts changes to `question`, `boundaries`, `result` only and returns `template` as it was - DC-4 (the rule),
-//       FR-28 (rule half); the wiring of an edit through the real confirmation is INT-1 row B
-//     * the brief to task mapping - the coordinator's task is JSON with the three fields and the description is the question; the `WorkflowRunView` mapping from `AgentView`s and the first history entry (`brief`, `template`, `steps` in creation order, `RUN_NOT_FOUND`
-//       for an agent whose definition is not a template coordinator) - the view mapping and the definition check, over fakes of the `agents` operations
+//     * `start-workflow.spec.ts` - the argument schema (`workflow` not an id, `question` empty or over 4000, `boundaries` and `result` over 4000) and the refusal order of `prepare`/`execute` - DC-4 (the rule), FR-28 (rule half);
+//       the wiring of an edit through the real confirmation is INT-1 row B
+//     * `runs.spec.ts` - the `WorkflowRun` mapping from `AgentView`s, the snapshot and the history (`origin`, `brief`, `team`, `steps` in creation order, `limitRefusals`, `RUN_NOT_FOUND` for an agent without a workflow snapshot), over fakes of the `agents` operations
+//     * the workflow content and its schema (DC-1, UC-E3) are the library's (`packages/contracts`, `apps/api/src/library`); the team rule of `start_agent` is the agents unit gate table
 // - agents (AC-18.3 stop reaches all the run's agents, AC-18.4 continue in the same session, AC-26.1 a message lands at the nearest tool-result boundary of the coordinator): agents INT-2 row B, INT-1 row C, INT-1 row B - the operations are called on the coordinator
 //   and need no code of this part (Design Doc Test Strategy: "своих тестов на них нет").
 // - not automated: that the answer names the direction without data and that the coordinator follows its prompt rules (AC-19.3, the content half: the Design Doc assigns it to the manual run, business constraint 6); the 500-word cap of a gather report (prompt text);
@@ -49,17 +47,17 @@
 //
 // AC -> proving test:
 // - AC-18.1: INT-2 row A (one coordinator, every agent of the run its child, `runs.get` shows one run with its steps)
-// - AC-18.2: INT-2 row A (second plan refused, the shipped limits reach the coordinator) and INT-3 row A (an executor outside the list and `fork` refused) over the agents unit gate table
+// - AC-18.2: INT-2 row A (second plan refused by `run_limit`, the workflow's counts reach the coordinator) and INT-3 row A (a start outside the team and `fork` refused) over the agents unit gate table
 // - AC-18.3, AC-18.4, AC-26.1: agents INT-2 row B, INT-1 row C, INT-1 row B (see above)
 // - AC-18.5, DC-2: INT-3 row B (a text without the final agent's report is refused, the run fails by `turn_limit`, the root is told); the positive half (the final agent's report is the run's report) is INT-2 row A
-// - AC-19.1: INT-2 row A; AC-19.2: INT-2 row A (gather agents work at once; the count is the template's `maxRuns`, a value kept by the unit `deep-research` row); AC-19.3 (platform share): INT-2 row A
+// - AC-19.1: INT-2 row A; AC-19.2: INT-2 row A (gather agents work at once; the count is the workflow's `maxRuns`); AC-19.3 (platform share): INT-2 row A
 // - AC-20.1: INT-1 row A (the workflow starts from a confirmed brief; the "no other way" half is the absence of any other starter, a `chat` part definition rule); AC-20.2: INT-2 row A (the report text is the answer agent's text)
 // - AC-28.1, AC-28.2: INT-1 row A; AC-28.3: INT-1 row C; DC-4: INT-1 row B (wiring) over the unit edit schema
-// - DC-1, UC-E3: unit parse table; DC-3: INT-2 row A
+// - DC-1, UC-E3: the library's content schema; DC-3: INT-2 row A
 // - NFR-06 (reading a run): INT-2 row B
 
 import { randomUUID } from 'node:crypto';
-import { type AgentHistoryEntry, type AgentTurnMessage, type AgentView, GENERAL_PURPOSE, WAITING_RULE } from '@agent-os/agents';
+import { type AgentHistoryEntry, type AgentTurnMessage, type AgentView, WAITING_RULE } from '@agent-os/agents';
 import {
   createLatch,
   createScriptedModel,
@@ -76,24 +74,65 @@ import { describe, expect, it } from 'vitest';
 import { newUser } from './support/new-user.js';
 import {
   childReportsOf,
+  coordinatorsUnder,
   createWorkflowsHarness,
+  HAIKU_MODEL,
   historyOf,
-  LIMITS_ANSWER_AGENT,
-  LIMITS_TEMPLATE,
-  LIMITS_TEMPLATE_NAME,
   LOGS_SERVER,
+  ROOT_NAME,
   SONNET_MODEL,
-  shippedTemplatesWith,
+  TEST_AUTHOR_ID,
+  type TestWorkflowRecord,
+  testExecutor,
+  testWorkflow,
   waitFor,
+  waitForStatus,
   type WorkflowsHarness,
 } from './support/workflowsHarness.js';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
 
-/** The shipped template the root starts, its title and its coordinator's definition. */
+/** The workflow record the root starts: its name is the coordinator's name. */
 const DEEP_RESEARCH = 'deep-research';
-const DEEP_RESEARCH_TITLE = 'Глубокий ресерч';
+
+const PLAN_AGENT = 'deep-research-plan';
+const GATHER_AGENT = 'deep-research-gather';
+const ANSWER_AGENT = 'deep-research-answer';
+
+/**
+ * The `deep-research` workflow record (the team of the former shipped template): a Sonnet coordinator, one
+ * plan, up to five gather runs over the run's `logs` server, and the answer as `finalExecutor`.
+ */
+function deepResearchWorkflow(): TestWorkflowRecord {
+  return testWorkflow(DEEP_RESEARCH, {
+    coordinator: { rules: 'Plan first, then gather every direction, then write the answer.', model: SONNET_MODEL, maxTurns: 20 },
+    executors: [
+      testExecutor(PLAN_AGENT, { role: 'Splits the brief into directions to gather data on.', maxTurns: 6, maxRuns: 1 }),
+      testExecutor(GATHER_AGENT, {
+        role: 'Gathers data on one direction and reports what it found.',
+        servers: [LOGS_SERVER],
+        maxTurns: 16,
+        maxRuns: 5,
+      }),
+      testExecutor(ANSWER_AGENT, { role: 'Writes the answer from the reports of the directions.', maxTurns: 2, maxRuns: 2 }),
+    ],
+    finalExecutor: ANSWER_AGENT,
+  });
+}
+
+/** The INT-3 workflow record and its only executor, the final one. */
+const LIMITS_WORKFLOW = 'limits-check';
+const LIMITS_ANSWER_AGENT = 'answer';
+
+/** `limits-check`: a cheap coordinator with `maxTurns` 6 and one executor `answer`, started at most twice, as `finalExecutor`. */
+function limitsWorkflow(): TestWorkflowRecord {
+  return testWorkflow(LIMITS_WORKFLOW, {
+    coordinator: { rules: 'Start the executor answer with start_agent and wait for its report.', model: HAIKU_MODEL, maxTurns: 6 },
+    executors: [testExecutor(LIMITS_ANSWER_AGENT, { role: 'Writes the answer of the limits check.', maxTurns: 2, maxRuns: 2 })],
+    finalExecutor: LIMITS_ANSWER_AGENT,
+  });
+}
 
 /** One INT-1 conversation: the root's task, its two replies around the employee's follow-up, and the brief it proposes. */
 interface BriefConversation {
@@ -102,8 +141,8 @@ interface BriefConversation {
   readonly followUp: string;
   readonly secondReply: string;
   readonly brief: { readonly question: string; readonly boundaries: string; readonly result: string };
-  /** The template the root asks for; `deep-research` when omitted. */
-  readonly template?: string;
+  /** Id of the workflow record the root asks for. */
+  readonly workflow: string;
 }
 
 /** A root whose `start_workflow` call waits for the employee's decision. */
@@ -131,7 +170,7 @@ async function rootWithWaitingBrief(
       {
         text: conversation.secondReply,
         calls: [
-          { tool: 'start_workflow', args: { template: conversation.template ?? DEEP_RESEARCH, ...conversation.brief } },
+          { tool: 'start_workflow', args: { workflow: conversation.workflow, ...conversation.brief } },
         ],
       },
     ],
@@ -139,7 +178,6 @@ async function rootWithWaitingBrief(
   );
   const { agentId: rootId } = await harness.sessions.start({
     ownerId,
-    definition: harness.rootDefinition,
     prompt: conversation.task,
     description: 'Conversation',
   });
@@ -157,14 +195,9 @@ async function rootWithWaitingBrief(
   return { rootId, rootScript, decisionId: request.decisionId };
 }
 
-/** Definitions of the root's tree, in creation order. */
-async function definitionsUnder(harness: WorkflowsHarness, rootId: string, ownerId: string): Promise<string[]> {
-  return (await harness.sessions.list(rootId, ownerId)).map((view) => view.definition);
-}
-
-/** The coordinators (`deep-research` agents) of the root's tree. */
-async function coordinatorsUnder(harness: WorkflowsHarness, rootId: string, ownerId: string) {
-  return (await harness.sessions.list(rootId, ownerId)).filter((view) => view.definition === DEEP_RESEARCH);
+/** Names of the root's tree, in creation order. */
+async function namesUnder(harness: WorkflowsHarness, rootId: string, ownerId: string): Promise<string[]> {
+  return (await harness.sessions.list(rootId, ownerId)).map((view) => view.name);
 }
 
 /** The root's `start_workflow` result entries, as `history` stores them. */
@@ -229,7 +262,7 @@ function endsWithOwnResults(messages: readonly AgentTurnMessage[]): boolean {
   return messages[messages.length - 1]?.role === 'tool';
 }
 
-// ----- INT-2: the shipped deep-research run (one per test: each test has its own harness and model) -----
+// ----- INT-2: the deep-research run (one per test: each test has its own harness and model) -----
 
 /** The fixture's read tool (the run's `logs` server) the first gather agent calls, and its arguments. */
 const GET_TRACE = `mcp__${LOGS_SERVER}__get_trace`;
@@ -243,10 +276,6 @@ const RUN_BRIEF = {
 /** The coordinator's task: the confirmed brief as `start_workflow` writes it. */
 const RUN_TASK =
   '{"question":"Why did card payments fail yesterday between 10:00 and 12:00 UTC?","boundaries":"payments service and its gateway only","result":"causes with the evidence for each"}';
-
-const PLAN_AGENT = 'deep-research-plan';
-const GATHER_AGENT = 'deep-research-gather';
-const ANSWER_AGENT = 'deep-research-answer';
 
 const PLAN_DESCRIPTION = 'План ресерча';
 const GATHER_A_DESCRIPTION = 'Сбор · ошибки авторизации';
@@ -308,6 +337,7 @@ const deepResearchCoordinator: ReplyFromInput = (messages) => {
 
 /** A deep-research run started through a confirmed brief. */
 interface DeepResearchRun {
+  readonly workflowId: string;
   readonly rootId: string;
   readonly coordinatorId: string;
   readonly coordinatorScript: Script;
@@ -318,6 +348,7 @@ interface DeepResearchRun {
  * read), starts the root, confirms its brief unchanged and returns once the coordinator exists.
  */
 async function startDeepResearch(harness: WorkflowsHarness, model: ScriptedModel, ownerId: string): Promise<DeepResearchRun> {
+  const workflowId = harness.library.add(deepResearchWorkflow());
   const coordinatorScript = model.script({ task: RUN_TASK }, [], { thereafter: deepResearchCoordinator });
   model.script({ task: PLAN_TASK }, [{ text: PLAN_REPORT }]);
   model.script({ task: GATHER_A_TASK }, [{ calls: [{ tool: GET_TRACE, args: TRACE }] }, { text: GATHER_A_REPORT }]);
@@ -329,6 +360,7 @@ async function startDeepResearch(harness: WorkflowsHarness, model: ScriptedModel
     followUp: 'Yesterday 10:00-12:00 UTC',
     secondReply: 'Root reply two: here is the brief to confirm.',
     brief: RUN_BRIEF,
+    workflow: workflowId,
   });
   expect(
     await harness.sessions.resolveConfirmation({ decisionId: root.decisionId, ownerId, approve: true }),
@@ -338,20 +370,10 @@ async function startDeepResearch(harness: WorkflowsHarness, model: ScriptedModel
     (found) => found.length > 0,
     'the coordinator of the run',
   );
-  return { rootId: root.rootId, coordinatorId: coordinator.agentId, coordinatorScript };
+  return { workflowId, rootId: root.rootId, coordinatorId: coordinator.agentId, coordinatorScript };
 }
 
-/** Waits until the agent has ended with `status`. */
-function waitForStatus(harness: WorkflowsHarness, agentId: string, ownerId: string, status: string): Promise<AgentView> {
-  return waitFor(
-    () => harness.sessions.get(agentId, ownerId),
-    (view) => view.status === status,
-    `agent ${agentId} to be ${status}`,
-    60_000,
-  );
-}
-
-// ----- INT-3: the test template's coordinator -----
+// ----- INT-3: the coordinator of `limits-check` -----
 
 const ANSWER_RUN_TASK = 'Write the answer of the limits check.';
 
@@ -390,12 +412,12 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
   // Not re-checked here: the confirmation lifecycle, `ALREADY_RESOLVED` and its survival across a restart (agents INT-3, runtime E2E-1), the argument schema rows and the edit schema rules (unit), the card shown to the employee (`chat` and `web` parts), when the chat prepares a brief (FR-15, `chat` part).
   // Behavior: root model calls `start_workflow` with a brief -> the request waits and no coordinator exists -> the employee confirms (edited), or edits it empty, or declines -> exactly one coordinator whose input is the brief, a refusal with the request still open, or no coordinator and a closed call
   // @category: core-functionality
-  // @dependency: createRuntime, createAgents (tool gate, confirmation with argument edits, `resolveConfirmation`, spawn helper), createWorkflows (`start_workflow`, shipped `deep-research` template), scripted model double, Postgres
+  // @dependency: createRuntime, createAgents (tool gate, confirmation with argument edits, `resolveConfirmation`, spawn helper), createWorkflows (`start_workflow`), the `deep-research` workflow record of the library double, scripted model double, Postgres
   // @complexity: medium
   //
   // Verification items (table-driven by decision; the root has a two-message history before the call; literal question strings):
-  // - Row A "confirm with a corrected question" (UC-1 first half, AC-28.1, AC-28.2, AC-20.1, Invariants 1-2): the root's script calls `start_workflow` for `deep-research` with question Q1. Then, before the decision: `agents.confirmations(root)` holds one request of kind
-  //   `workflows.brief` carrying the template title and the three fields, and `agents.list(root)` has NO coordinator. The employee resolves with approve and the question changed to Q2. Then: exactly ONE coordinator under the root with definition `deep-research`;
+  // - Row A "confirm with a corrected question" (UC-1 first half, AC-28.1, AC-28.2, AC-20.1, Invariants 1-2): the root's script calls `start_workflow` for the `deep-research` record with question Q1. Then, before the decision: `agents.confirmations(root)` holds one request of kind
+  //   `workflows.brief` carrying the workflow record and the three fields, and `agents.list(root)` has NO coordinator. The employee resolves with approve and the question changed to Q2. Then: exactly ONE coordinator under the root, named `deep-research`, from that record;
   //   its history begins with a task entry that is JSON with `question` = Q2 (not Q1), `boundaries` and `result` as edited; no entry of the root's two replies is in its history; the call result the root's next model input holds contains the run id and the confirmed (edited) brief;
   //   resolving the same request again answers `already_resolved` and the number of coordinators stays one.
   // - Row B "correction with an empty question" (DC-4): the request waits; `resolveConfirmation` approves with `question` empty. Then: `INVALID_ARGUMENTS`; the request is still in `confirmations`; there is no coordinator; a following valid approval starts exactly one.
@@ -410,6 +432,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
       // The coordinators' first model calls are held: what the test reads is their input, not their run.
       const coordinatorHeld = createLatch();
       const harness = await createWorkflowsHarness({ model, owners: [ownerA, ownerB, ownerC] });
+      const workflowId = harness.library.add(deepResearchWorkflow());
       try {
         // Row A "confirm with a corrected question" (AC-28.1, AC-28.2, AC-20.1, Invariants 1-2).
         const coordinatorA = model.script(
@@ -429,42 +452,24 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
             boundaries: 'payments service only',
             result: 'a short list of causes',
           },
+          workflow: workflowId,
         });
 
-        // Before the decision: one open request of kind `workflows.brief` with the title and the three fields, no coordinator.
+        // Before the decision: one open request of kind `workflows.brief` with the record and the three fields, no coordinator.
+        const askedBrief = {
+          workflow: workflowId,
+          question: 'Why did payments fail yesterday (A)?',
+          boundaries: 'payments service only',
+          result: 'a short list of causes',
+        };
         expect(
-          (await harness.sessions.confirmations(a.rootId, ownerA)).filter((c) => c.status === 'open').map(({ kind, tool, server, args }) => ({
-            kind,
-            tool,
-            server,
-            args,
-          })),
+          (await harness.sessions.confirmations(a.rootId, ownerA))
+            .filter((c) => c.status === 'open')
+            .map(({ kind, tool, server, args, content }) => ({ kind, tool, server, args, content })),
         ).toEqual([
-          {
-            kind: 'workflows.brief',
-            tool: 'start_workflow',
-            server: null,
-            args: {
-              template: 'deep-research',
-              question: 'Why did payments fail yesterday (A)?',
-              boundaries: 'payments service only',
-              result: 'a short list of causes',
-            },
-          },
+          { kind: 'workflows.brief', tool: 'start_workflow', server: null, args: askedBrief, content: askedBrief },
         ]);
-        expect(
-          (await harness.runtime.decisions.listTree(a.rootId, ownerA)).filter((d) => d.status === 'open').map((decision) => decision.payload),
-        ).toMatchObject([
-          {
-            content: {
-              title: DEEP_RESEARCH_TITLE,
-              question: 'Why did payments fail yesterday (A)?',
-              boundaries: 'payments service only',
-              result: 'a short list of causes',
-            },
-          },
-        ]);
-        expect(await definitionsUnder(harness, a.rootId, ownerA)).toEqual([harness.rootDefinition]);
+        expect(await namesUnder(harness, a.rootId, ownerA)).toEqual([ROOT_NAME]);
 
         // The employee confirms with the question, boundaries and result edited.
         expect(
@@ -473,7 +478,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
             ownerId: ownerA,
             approve: true,
             args: {
-              template: 'deep-research',
+              workflow: workflowId,
               question: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
               boundaries: 'payments service only, no refunds',
               result: 'causes with the evidence for each',
@@ -487,7 +492,8 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         );
         expect(coordinator).toMatchObject({
           parentId: a.rootId,
-          definition: 'deep-research',
+          name: 'deep-research',
+          origin: { recordId: workflowId, kind: 'workflow', version: 1, executor: null },
           description: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC (A)?',
         });
 
@@ -539,19 +545,20 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           followUp: 'Last week (B)',
           secondReply: 'Root reply two (B): here is the brief to confirm.',
           brief: { question: 'Which merchants saw declined payments last week (B)?', boundaries: '', result: '' },
+          workflow: workflowId,
         });
         await expect(
           harness.sessions.resolveConfirmation({
             decisionId: b.decisionId,
             ownerId: ownerB,
             approve: true,
-            args: { template: 'deep-research', question: '', boundaries: '', result: '' },
+            args: { workflow: workflowId, question: '', boundaries: '', result: '' },
           }),
         ).rejects.toMatchObject({ code: 'INVALID_ARGUMENTS' });
         expect(
           (await harness.sessions.confirmations(b.rootId, ownerB)).filter((c) => c.status === 'open').map((open) => open.decisionId),
         ).toEqual([b.decisionId]);
-        expect(await definitionsUnder(harness, b.rootId, ownerB)).toEqual([harness.rootDefinition]);
+        expect(await namesUnder(harness, b.rootId, ownerB)).toEqual([ROOT_NAME]);
 
         expect(
           await harness.sessions.resolveConfirmation({ decisionId: b.decisionId, ownerId: ownerB, approve: true }),
@@ -577,6 +584,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           followUp: 'Yes, all of them (C)',
           secondReply: 'Root reply two (C): here is the brief to confirm.',
           brief: { question: 'How many payments timed out today (C)?', boundaries: 'today only', result: 'one number' },
+          workflow: workflowId,
         });
         expect(
           await harness.sessions.resolveConfirmation({ decisionId: c.decisionId, ownerId: ownerC, approve: false }),
@@ -592,7 +600,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           { outcome: 'rejected', refusalReason: null },
         ]);
         expect((await harness.sessions.confirmations(c.rootId, ownerC)).filter((request) => request.status === 'open')).toEqual([]);
-        expect(await definitionsUnder(harness, c.rootId, ownerC)).toEqual([harness.rootDefinition]);
+        expect(await namesUnder(harness, c.rootId, ownerC)).toEqual([ROOT_NAME]);
       } finally {
         await harness.close();
       }
@@ -605,38 +613,38 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
   // ---------------------------------------------------------------------------------------------------------------
   // Covers (original statements):
   // AC-18.1: "Given workflow запущен из беседы, when сотрудник открывает список агентов, then видит запуск как одну запись, а его агентов — под ним."
-  // AC-18.2: "Given шаблон объявляет, каких агентов и сколько раз координатор может вызвать, when координатор просит агента вне списка или сверх числа, then вызов не происходит, а координатор получает отказ с причиной." (the shipped template's list and count as the coordinator meets them)
+  // AC-18.2: "Given шаблон объявляет, каких агентов и сколько раз координатор может вызвать, when координатор просит агента вне списка или сверх числа, then вызов не происходит, а координатор получает отказ с причиной." (the workflow's team and run counts as the coordinator meets them)
   // AC-18.5: "Given шаблон объявляет обязательный последний шаг, when workflow заканчивается, then родитель получает как отчёт (FR-06) итог агента этого шага, а попытка координатора закончить без него получает отказ." (the report half)
   // AC-19.1: "Given подключён источник данных, when сотрудник подтвердил бриф глубокого ресерча, then в беседу приходит ответ агента ответа, а у запуска видны агенты плана, сбора и ответа."
   // AC-19.2: "Given координатор запустил несколько агентов сбора, when они работают, then они работают одновременно, и их не больше, чем разрешает шаблон."
   // AC-19.3 (platform share, Design Doc FR-19): "Сбой агента сбора приходит координатору отчётом со статусом «сбой» и причиной, координатор продолжает работу, и отчётом запуска становится отчёт агента ответа."
   // AC-20.2: "Given ответ глубокого ресерча, when сотрудник его читает, then в ответе нет статусов утверждений и групп уверенности." (the report in the conversation is the answer agent's text, nothing of the old contour is added)
   // NFR-06: "Изоляция данных пользователей — как в бизнес-ограничении 2 в `.claude/skills/project-context/SKILL.md`: каждая точка доступа к агентам, сессиям и workflow покрыта e2e-тестом с двумя пользователями." (`runs.get`)
-  // Invariant 4: "Отчёт законченного запуска — последний отчёт агента `finalAgent`."
+  // Invariant 4: the report of a finished run is the last report of the snapshot's `finalExecutor`.
   // Use cases: UC-1 (the run), UC-E4. EARS: When. Design flow: Flow 2, `runs.get` in Contract Definitions, KD-2, KD-4.
   //
-  // Catches: (1) a shipped template whose executors, tools or MCP wiring do not make the plan -> gather -> answer chain run at all against the real loop (a definition registered under the wrong name, `agents` not matching the executors, a model or tool reference
-  //   `start()` accepted but the run cannot use); (2) the template's limits not passed to the coordinator at spawn - a second plan agent that is allowed - which the agents unit and INT-1 D tests cannot see because they build their own limits; (3) the gather agents
+  // Catches: (1) a workflow whose executors, tools or MCP wiring do not make the plan -> gather -> answer chain run at all against the real loop (an executor started under the wrong name, a model or server of the snapshot
+  //   the run cannot use); (2) the workflow's run counts not reaching the coordinator through `start_workflow` - a second plan agent that is allowed - which the agents unit and INT-1 D tests cannot see because they start their own coordinator; (3) the gather agents
   //   running one after another, not at once (the coordinator's several `start_agent` calls in one answer handled sequentially); (4) one failed gather agent that kills the run, hides from the coordinator, or leaves the run without its answer - the failure not arriving
   //   as a report with status and reason; (5) the root getting the coordinator's own closing text, or a report enriched with anything but the answer agent's text, instead of the answer agent's report as the run's report; (6) `runs.get` that shows a different number of
   //   steps than the coordinator's children, or loses the brief, or answers for another employee's run or for an ordinary agent (leaking the existence of a run, or of any agent).
   // Not re-checked here: how the gate refuses (agents unit and INT-1 D), reports to a free or a busy parent (agents INT-1 A), the order and single delivery of the report notification (runtime INT-2), the content of the prompts, that the answer names the direction without data (manual run), restart mid-run (agents, runtime).
-  // Behavior: confirmed brief -> coordinator starts a plan, then gather agents in one answer, one of them fails, then the answer agent -> the root's conversation receives the answer agent's text as the run's report -> `runs.get` returns the brief, the template and the four steps
+  // Behavior: confirmed brief -> coordinator starts a plan, then gather agents in one answer, one of them fails, then the answer agent -> the root's conversation receives the answer agent's text as the run's report -> `runs.get` returns the origin, the brief, the team and the four steps
   // @category: core-functionality
-  // @dependency: createRuntime, createAgents (loop, SessionLimits, reports, list and history operations), createWorkflows (shipped `deep-research`, `start_workflow`, `runs.get`), scripted model double with a coordinator scenario that answers from its history, MCP fixture (`logs`, one read call held on a latch), Postgres
+  // @dependency: createRuntime, createAgents (loop, SessionLimits, reports, list and history operations), createWorkflows (`start_workflow`, `runs.get`), the `deep-research` workflow record of the library double, scripted model double with a coordinator scenario that answers from its history, MCP fixture (`logs`, one read call held on a latch), Postgres
   // @complexity: high
   //
   // Verification items (the Design Doc's UC-1 Given: the coordinator answers from the state of its own history - first turn: two `start_agent` calls for the plan agent in one answer; after the plan report: two gather agents in one answer; on the first gather report, while the second has not
   //   come, text; when both have come, the answer agent; after the answer agent's report, text. The first gather agent's read call is held on the fixture's latch until the second gather agent has ended; the second gather agent's model answers with an error):
   // - Row A "run to the report" (UC-1, AC-18.1, AC-18.2, AC-19.1..19.3, AC-20.2, Invariant 4): start through the confirmed brief of INT-1 (the shared setup, not a second check of it). Then: the second plan `start_agent` has outcome `refused` with reason `not_allowed` and no second plan agent exists
-  //   (the shipped limit of one reached the coordinator); the second gather agent ended `failed` while the first was still `working` (the gather agents ran at once); the coordinator's next input after the failure holds that agent's report with status "сбой" and its reason, and the
+  //   with `run_limit` (the workflow's count of one reached the coordinator); the second gather agent ended `failed` while the first was still `working` (the gather agents ran at once); the coordinator's next input after the failure holds that agent's report with status "сбой" and its reason, and the
   //   coordinator went on to start the answer agent after both had ended; `agents.list(root)` shows ONE top-level run - the coordinator - with plan, gather (completed), gather (failed) and answer as its children (AC-18.1); the root received ONE notification with status "завершён"
   //   whose text equals, literally, the answer agent's scripted text and carries no status-of-claim or confidence-group wording (it is not built from anything but that text); the coordinator is `completed`.
-  // - Row B "reading the run" (`runs.get`, UC-E4, NFR-06): after row A's run (a fresh run per test: a new owner, the scenario above), `runs.get(coordinatorId, owner)` returns `template` {name `deep-research`, title}, `brief` equal to the confirmed brief, `coordinator` (completed, its model),
+  // - Row B "reading the run" (`runs.get`, UC-E4, NFR-06): after row A's run (a fresh run per test: a new owner, the scenario above), `runs.get(coordinatorId, owner)` returns `origin` (the record, version 1), `brief` equal to the confirmed brief, `coordinator` (completed, its model), `team` and `limitRefusals` (the second plan),
   //   and `steps` of exactly four `AgentView`s in creation order - plan, gather "completed", gather "failed", answer - each with the description the coordinator gave; no `agents` entry for the root. Then the other table rows, all expecting `RUN_NOT_FOUND` with nothing of the run
   //   in the error: `runs.get(coordinatorId, otherOwner)`; `runs.get(ordinaryAgentId, owner)` for a `general-purpose` agent of the same owner; `runs.get(id that exists for nobody, owner)` - and the three answers are equal in code and shape.
   it(
-    "INT-2 A: the shipped deep-research template runs plan, two gather agents at once and the answer, refuses the second plan, goes on after a failed gather agent, and hands the root the answer agent's text as the run's report under one coordinator",
+    "INT-2 A: the deep-research workflow runs plan, two gather agents at once and the answer, refuses the second plan, goes on after a failed gather agent, and hands the root the answer agent's text as the run's report under one coordinator",
     async () => {
       const model = createScriptedModel();
       const ownerId = newUser();
@@ -661,7 +669,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         );
         expect(
           whileHeld
-            .filter((child) => child.definition === GATHER_AGENT)
+            .filter((child) => child.name === GATHER_AGENT)
             .map(({ description, status, failureReason }) => ({ description, status, failureReason }))
             .sort((left, right) => left.description.localeCompare(right.description)),
         ).toEqual([
@@ -671,15 +679,15 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         gatherRead.release();
 
         expect(await waitForStatus(harness, run.coordinatorId, ownerId, 'completed')).toMatchObject({
-          definition: 'deep-research',
+          name: 'deep-research',
           status: 'completed',
         });
 
-        // The shipped limit of one plan reached the coordinator: the second plan is refused, no task for it.
+        // The workflow's count of one plan reached the coordinator: the second plan is refused by the limit, no task for it.
         const coordinatorHistory = await historyOf(harness, run.coordinatorId, ownerId);
         expect(startAgentResults(coordinatorHistory)).toEqual([
           ['deep-research-plan', 'success', null],
-          ['deep-research-plan', 'refused', 'not_allowed'],
+          ['deep-research-plan', 'refused', 'run_limit'],
           ['deep-research-gather', 'success', null],
           ['deep-research-gather', 'success', null],
           ['deep-research-answer', 'success', null],
@@ -691,12 +699,12 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         ]);
         const steps = await childrenOf(harness, run.rootId, run.coordinatorId, ownerId);
         expect(steps).toHaveLength(4);
-        expect(steps.map(({ definition, description, status }) => ({ definition, description, status }))).toEqual(
+        expect(steps.map(({ name, description, status }) => ({ name, description, status }))).toEqual(
           expect.arrayContaining([
-            { definition: 'deep-research-plan', description: 'План ресерча', status: 'completed' },
-            { definition: 'deep-research-gather', description: 'Сбор · ошибки авторизации', status: 'completed' },
-            { definition: 'deep-research-gather', description: 'Сбор · таймауты шлюза', status: 'failed' },
-            { definition: 'deep-research-answer', description: 'Ответ ресерча', status: 'completed' },
+            { name: 'deep-research-plan', description: 'План ресерча', status: 'completed' },
+            { name: 'deep-research-gather', description: 'Сбор · ошибки авторизации', status: 'completed' },
+            { name: 'deep-research-gather', description: 'Сбор · таймауты шлюза', status: 'failed' },
+            { name: 'deep-research-answer', description: 'Ответ ресерча', status: 'completed' },
           ]),
         );
 
@@ -745,7 +753,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
   );
 
   it(
-    'INT-2 B: runs.get returns the brief, the template and the four steps of a run in order, and answers a foreign owner, an ordinary agent and an unknown id the same: RUN_NOT_FOUND',
+    'INT-2 B: runs.get returns the origin, the brief, the team, the four steps of a run in order and its over-limit start, and answers a foreign owner, an ordinary agent and an unknown id the same: RUN_NOT_FOUND',
     async () => {
       const model = createScriptedModel();
       const ownerId = newUser();
@@ -757,8 +765,15 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
 
         const view = await harness.workflows.runs.get(run.coordinatorId, ownerId);
         expect(view).toMatchObject({
-          agentId: run.coordinatorId,
-          template: { name: 'deep-research', title: 'Глубокий ресерч' },
+          origin: {
+            recordId: run.workflowId,
+            kind: 'workflow',
+            version: 1,
+            name: 'deep-research',
+            author: { id: TEST_AUTHOR_ID },
+            builtinKey: null,
+            executor: null,
+          },
           brief: {
             question: 'Why did card payments fail yesterday between 10:00 and 12:00 UTC?',
             boundaries: 'payments service and its gateway only',
@@ -767,39 +782,65 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           coordinator: {
             agentId: run.coordinatorId,
             parentId: run.rootId,
-            definition: 'deep-research',
+            name: 'deep-research',
             status: 'completed',
             model: SONNET_MODEL,
           },
+          team: [
+            { name: 'deep-research-plan', role: 'Splits the brief into directions to gather data on.', maxRuns: 1, final: false },
+            { name: 'deep-research-gather', role: 'Gathers data on one direction and reports what it found.', maxRuns: 5, final: false },
+            { name: 'deep-research-answer', role: 'Writes the answer from the reports of the directions.', maxRuns: 2, final: true },
+          ],
         });
-        // Exactly the coordinator's four children in creation order; nothing of the root.
+        // The run's one start over a limit: the second plan.
+        expect(view.limitRefusals).toEqual([{ executor: 'deep-research-plan', at: expect.any(Date) }]);
+        // Exactly the coordinator's four children in creation order, each named by its executor; nothing of the root.
         expect(
-          view.steps.map(({ parentId, definition, description, status }) => ({ parentId, definition, description, status })),
+          view.steps.map(({ parentId, name, origin, description, status }) => ({
+            parentId,
+            name,
+            executor: origin?.executor,
+            description,
+            status,
+          })),
         ).toEqual([
-          { parentId: run.coordinatorId, definition: 'deep-research-plan', description: 'План ресерча', status: 'completed' },
           {
             parentId: run.coordinatorId,
-            definition: 'deep-research-gather',
+            name: 'deep-research-plan',
+            executor: 'deep-research-plan',
+            description: 'План ресерча',
+            status: 'completed',
+          },
+          {
+            parentId: run.coordinatorId,
+            name: 'deep-research-gather',
+            executor: 'deep-research-gather',
             description: 'Сбор · ошибки авторизации',
             status: 'completed',
           },
-          { parentId: run.coordinatorId, definition: 'deep-research-gather', description: 'Сбор · таймауты шлюза', status: 'failed' },
-          { parentId: run.coordinatorId, definition: 'deep-research-answer', description: 'Ответ ресерча', status: 'completed' },
+          {
+            parentId: run.coordinatorId,
+            name: 'deep-research-gather',
+            executor: 'deep-research-gather',
+            description: 'Сбор · таймауты шлюза',
+            status: 'failed',
+          },
+          {
+            parentId: run.coordinatorId,
+            name: 'deep-research-answer',
+            executor: 'deep-research-answer',
+            description: 'Ответ ресерча',
+            status: 'completed',
+          },
         ]);
 
-        // A foreign owner, an ordinary agent of the same owner and an unknown id: one and the same RUN_NOT_FOUND.
-        model.script({ task: 'An ordinary task (INT-2 B)' }, [{ text: 'Ordinary answer.' }]);
-        const { agentId: ordinaryId } = await harness.sessions.start({
-          ownerId,
-          definition: GENERAL_PURPOSE.name,
-          prompt: 'An ordinary task (INT-2 B)',
-          description: 'Ordinary agent',
-        });
+        // A foreign owner, an ordinary agent of the same owner (the conversation root: it runs the `chat` record)
+        // and an unknown id: one and the same RUN_NOT_FOUND.
         const unknownId = randomUUID();
         const refusals = await Promise.all(
           [
             [run.coordinatorId, otherOwner],
-            [ordinaryId, ownerId],
+            [run.rootId, ownerId],
             [unknownId, ownerId],
           ].map(([agentId, owner]) => harness.workflows.runs.get(agentId, owner).then(() => undefined, (error: unknown) => error)),
         );
@@ -811,7 +852,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           }),
         ).toEqual([
           { name: 'WorkflowsError', code: 'RUN_NOT_FOUND', message: `Workflow run ${run.coordinatorId} is not found` },
-          { name: 'WorkflowsError', code: 'RUN_NOT_FOUND', message: `Workflow run ${ordinaryId} is not found` },
+          { name: 'WorkflowsError', code: 'RUN_NOT_FOUND', message: `Workflow run ${run.rootId} is not found` },
           { name: 'WorkflowsError', code: 'RUN_NOT_FOUND', message: `Workflow run ${unknownId} is not found` },
         ]);
       } finally {
@@ -822,7 +863,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
   );
 
   // ---------------------------------------------------------------------------------------------------------------
-  // INT-3  The template's limits as the coordinator meets them: an executor outside the list is refused, finishing without the final step is refused until the run fails
+  // INT-3  The workflow's limits as the coordinator meets them: a start outside the team is refused, finishing without the final executor's report is refused until the run fails
   // ---------------------------------------------------------------------------------------------------------------
   // Covers (original statements):
   // AC-18.2: "Given шаблон объявляет, каких агентов и сколько раз координатор может вызвать, when координатор просит агента вне списка или сверх числа, then вызов не происходит, а координатор получает отказ с причиной." (outside the list; the over-count half is INT-2 row A)
@@ -831,38 +872,44 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
   // KD-2: "Отказ при вызове вне списка или сверх числа, отказ закончить без агента последнего шага и его отчёт со статусом «завершён» как отчёт запуска — поведение `agents`; сбой или остановка агента последнего шага сессию не заканчивают."
   // Use cases: UC-E2. EARS: If-then. Design flow: Flow 2 (failure handling), KD-2.
   //
-  // Catches: (1) a template whose `finalAgent` or list is not turned into the coordinator's `SessionLimits` in the form `agents` reads (a limit field renamed or dropped between the two parts, so that the coordinator may start any agent or finish with its own text and the run
+  // Catches: (1) a workflow whose `finalExecutor` or team does not reach the coordinator's snapshot in the form `agents` reads (a field renamed or dropped between the two parts, so that the coordinator may start any agent or finish with its own text and the run
   //   "completes" with no answer); (2) an answer agent that fails twice leaving the run `completed` or hanging forever instead of `failed` with `turn_limit`, or a root that is not told, or told without the status and reason; (3) a coordinator that is allowed to start an agent
-  //   of a different template, an ordinary `general-purpose` agent or a `fork` (the escape from the list).
+  //   of a different workflow, an ordinary agent record or a `fork` (the escape from the team).
   // Not re-checked here: the gate's variants and counts (agents unit), that the final agent's report becomes the session's report (INT-2 row A), the notice wording and the turn counter (agents unit), the shipped template's values (unit `deep-research` row).
-  // Behavior: coordinator asks for something the template does not allow, or finishes with text while the final agent has no report -> a refusal or a `notice` in its history, no task created, and, after the last turn, the run fails with `turn_limit` and the root is told "сбой"
+  // Behavior: coordinator asks for something the workflow does not allow, or finishes with text while the final agent has no report -> a refusal or a `notice` in its history, no task created, and, after the last turn, the run fails with `turn_limit` and the root is told "сбой"
   // @category: core-functionality
-  // @dependency: createRuntime, createAgents (SessionLimits, loop, reports), createWorkflows (TEST template with `finalAgent` `answer`, `maxTurns` 4, built through the same `parseTemplate` and registration path), scripted model double (the answer agent's model always errors), Postgres
+  // @dependency: createRuntime, createAgents (the coordinator's snapshot, loop, reports), createWorkflows, the `limits-check` workflow record of the library double (`finalExecutor` `answer`, coordinator `maxTurns` 6), scripted model double (the answer agent's model always errors), Postgres
   // @complexity: medium
   //
-  // Verification items (table-driven by scenario; the TEST template has one executor `answer`, `maxRuns` 2; the root starts it through a confirmed brief as in INT-1):
-  // - Row A "outside the list" (AC-18.2): the coordinator's script asks, in one answer, for an ordinary `general-purpose` agent, for `answer` with `fork`, and for another template's coordinator `deep-research`. Then: each call has outcome `refused` with reason `not_allowed` in the coordinator's history; the number of
+  // Verification items (table-driven by scenario; `limits-check` has one executor `answer`, `maxRuns` 2; the root starts it through a confirmed brief as in INT-1):
+  // - Row A "outside the team" (AC-18.2): the coordinator's script asks, in one answer, for an ordinary agent record by its id, for a `fork`, and for another workflow `deep-research` by its name. Then: each call has outcome `refused` with reason `not_allowed` in the coordinator's history; the number of
   //   agents under the coordinator is unchanged (no task created); the coordinator continues (its next model call happens).
   // - Row B "no final report" (UC-E2, AC-18.5, DC-2): the coordinator's script: turn 1 starts `answer`; turn 2, after the failure of `answer`, starts it again; turns 3 and 4, after the second failure, answer text. The answer agent's model always errors. Then: both answer agents are `failed`; the coordinator's history holds
   //   a `notice` entry (a refusal to finish) after each of the text answers of turns 3 and 4; the coordinator ends `failed` with `failureReason` `turn_limit` and the model double has no fifth coordinator call; the root received ONE notification with status "сбой" and a non-empty reason.
   it(
-    "INT-3 A: a coordinator asking for an ordinary agent, a fork or another template's agent is refused with not_allowed, nothing is started, and it carries on",
+    "INT-3 A: a coordinator asking for an ordinary agent, a fork or another workflow is refused with not_allowed, nothing is started, and it carries on",
     async () => {
       const model = createScriptedModel();
       const ownerId = newUser();
-      const harness = await createWorkflowsHarness({
-        model,
-        owners: [ownerId],
-        templates: shippedTemplatesWith(LIMITS_TEMPLATE),
+      const harness = await createWorkflowsHarness({ model, owners: [ownerId] });
+      const limitsId = harness.library.add(limitsWorkflow());
+      harness.library.add(deepResearchWorkflow());
+      const ordinaryId = harness.library.add({
+        kind: 'agent',
+        name: 'ordinary agent',
+        ownerId: TEST_AUTHOR_ID,
+        everyone: true,
+        offerInChat: true,
+        content: { prompt: 'You are an ordinary agent.', servers: [], model: HAIKU_MODEL, maxTurns: 2, agents: [], tools: [] },
       });
       try {
-        // The coordinator asks, in one answer, for an ordinary agent, a fork and another template's coordinator.
+        // The coordinator asks, in one answer, for an ordinary agent record, a fork and another workflow.
         const coordinatorScript = model.script(
           { task: '{"question":"Is the limits check outside the list (INT-3 A)?","boundaries":"","result":""}' },
           [
             {
               calls: [
-                startAgent(GENERAL_PURPOSE.name, 'Ordinary agent', 'Do the research yourself (INT-3 A).'),
+                startAgent(ordinaryId, 'Ordinary agent', 'Do the research yourself (INT-3 A).'),
                 startAgent('fork', 'A copy of me', 'Continue as a copy (INT-3 A).'),
                 startAgent('deep-research', 'Another workflow', 'Run a deep research (INT-3 A).'),
               ],
@@ -871,7 +918,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           { thereafter: { text: 'Carrying on without them.' } },
         );
         const root = await rootWithWaitingBrief(harness, model, ownerId, {
-          template: LIMITS_TEMPLATE_NAME,
+          workflow: limitsId,
           task: 'Check the limits (INT-3 A)',
           firstReply: 'Root reply one (INT-3 A).',
           followUp: 'Go on (INT-3 A)',
@@ -882,9 +929,9 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           await harness.sessions.resolveConfirmation({ decisionId: root.decisionId, ownerId, approve: true }),
         ).toBe('resolved');
         const [coordinator] = await waitFor(
-          async () => (await harness.sessions.list(root.rootId, ownerId)).filter((view) => view.definition === LIMITS_TEMPLATE_NAME),
+          () => coordinatorsUnder(harness, root.rootId, ownerId),
           (found) => found.length > 0,
-          'the coordinator of the test template',
+          'the coordinator of limits-check',
         );
 
         // The coordinator carries on: its next model call sees the three refusals.
@@ -895,13 +942,13 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           { toolName: 'start_agent', output: '<data source="tool start_agent" author="agents">\n[refused: not_allowed]\n</data>' },
         ]);
         expect(startAgentResults(await historyOf(harness, coordinator.agentId, ownerId))).toEqual([
-          ['general-purpose', 'refused', 'not_allowed'],
+          [ordinaryId, 'refused', 'not_allowed'],
           ['fork', 'refused', 'not_allowed'],
           ['deep-research', 'refused', 'not_allowed'],
         ]);
         // Nothing was started: the tree is the root and the coordinator only.
         expect(await childrenOf(harness, root.rootId, coordinator.agentId, ownerId)).toEqual([]);
-        expect(await definitionsUnder(harness, root.rootId, ownerId)).toEqual([harness.rootDefinition, 'limits-check']);
+        expect(await namesUnder(harness, root.rootId, ownerId)).toEqual([ROOT_NAME, 'limits-check']);
       } finally {
         await harness.close();
       }
@@ -914,11 +961,8 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
     async () => {
       const model = createScriptedModel();
       const ownerId = newUser();
-      const harness = await createWorkflowsHarness({
-        model,
-        owners: [ownerId],
-        templates: shippedTemplatesWith(LIMITS_TEMPLATE),
-      });
+      const harness = await createWorkflowsHarness({ model, owners: [ownerId] });
+      const limitsId = harness.library.add(limitsWorkflow());
       try {
         const coordinatorScript = model.script(
           { task: '{"question":"Does the run fail without its answer (INT-3 B)?","boundaries":"","result":""}' },
@@ -928,7 +972,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         // The answer agent's model fails on every attempt.
         model.script({ agent: LIMITS_ANSWER_AGENT }, [], { thereafter: modelError() });
         const root = await rootWithWaitingBrief(harness, model, ownerId, {
-          template: LIMITS_TEMPLATE_NAME,
+          workflow: limitsId,
           task: 'Check the final step (INT-3 B)',
           firstReply: 'Root reply one (INT-3 B).',
           followUp: 'Go on (INT-3 B)',
@@ -939,9 +983,9 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           await harness.sessions.resolveConfirmation({ decisionId: root.decisionId, ownerId, approve: true }),
         ).toBe('resolved');
         const [coordinator] = await waitFor(
-          async () => (await harness.sessions.list(root.rootId, ownerId)).filter((view) => view.definition === LIMITS_TEMPLATE_NAME),
+          () => coordinatorsUnder(harness, root.rootId, ownerId),
           (found) => found.length > 0,
-          'the coordinator of the test template',
+          'the coordinator of limits-check',
         );
 
         // The run ends failed by the coordinator's turn limit after exactly six model calls.
@@ -953,14 +997,14 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
 
         // Both runs of the answer agent failed.
         expect(
-          (await childrenOf(harness, root.rootId, coordinator.agentId, ownerId)).map(({ definition, status, failureReason }) => ({
-            definition,
+          (await childrenOf(harness, root.rootId, coordinator.agentId, ownerId)).map(({ name, status, failureReason }) => ({
+            name,
             status,
             failureReason,
           })),
         ).toEqual([
-          { definition: 'answer', status: 'failed', failureReason: 'model_error' },
-          { definition: 'answer', status: 'failed', failureReason: 'model_error' },
+          { name: 'answer', status: 'failed', failureReason: 'model_error' },
+          { name: 'answer', status: 'failed', failureReason: 'model_error' },
         ]);
 
         // Every text answer after the second failure is met by a notice, not by the end of the session.
@@ -975,7 +1019,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
           expect(history[index + 1]).toMatchObject({
             kind: 'notice',
             content: {
-              text: 'You cannot finish: the last run of agent "answer" ended as failed. The session ends only with a completed report of agent "answer"; start it with start_agent.',
+              text: 'You cannot finish: the last run of executor "answer" ended as failed. The workflow ends only with a completed report of executor "answer"; start it with start_agent.',
             },
           });
         }

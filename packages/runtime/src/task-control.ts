@@ -59,6 +59,8 @@ export interface Task {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly finishedAt: Date | null;
+  /** The input the task was created with, as its handler parsed it. */
+  readonly input: unknown;
 }
 
 /** What `tasks.create` takes. */
@@ -106,6 +108,7 @@ function toTask(row: TaskRow): Task {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     finishedAt: row.finishedAt,
+    input: row.input,
   };
 }
 

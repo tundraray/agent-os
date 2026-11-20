@@ -4,9 +4,14 @@ import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-li
 import { authApi } from '@/lib/auth/auth-api';
 import { createCurrentUserStore, type CurrentUserStore } from '@/lib/auth/current-user';
 import { createFeedStore, type FeedStore } from '@/lib/feed/feed-store';
+import { createLeaveGuard, type LeaveGuard } from '@/lib/leave-guard';
+import { createDraftHandoff, type DraftHandoff } from '@/lib/library/draft-handoff';
+import { libraryApi } from '@/lib/library/library-api';
+import { createLibraryIndex, type LibraryIndex } from '@/lib/library/library-index';
 import { createAnnouncerStore, type AnnouncerStore } from '@/lib/live/announcer-store';
 import { createLiveStore, type LiveStore, type OpenEventSource } from '@/lib/live/live-store';
 import { logger } from '@/lib/logger';
+import { createComposerSeed, type ComposerSeed } from './composer-seed';
 import { createShellStatusStore, type ShellStatusStore } from './shell-status-store';
 import { createThreadListAdapter, type OperationNotifier } from './thread-list-adapter';
 import { threadsApiClient, type ThreadsApiClient } from './threads-api-client';
@@ -33,6 +38,14 @@ export type ShellServices = {
   currentUser: CurrentUserStore;
   /** The «Агенты» screen's store, one per shell; created on first read, so pages and expansion outlive a visit. */
   readonly agentList: AgentListStore;
+  /** Live data of library records (KD-2); created on first read, so a visit without records reads nothing. */
+  readonly libraryIndex: LibraryIndex;
+  /** Chip and template text carried to a conversation's composer (KD-5). */
+  composerSeed: ComposerSeed;
+  /** A record draft carried from a conversation to the editor (KD-6). */
+  draftHandoff: DraftHandoff;
+  /** Unsaved changes on screen, asked about before every navigation (KD-4). */
+  leaveGuard: LeaveGuard;
   listAdapter: ReturnType<typeof createThreadListAdapter>;
   auiConfig: AuiConfig;
   /** Loads `url` in the whole tab (a page outside the shell, an OAuth connect redirect). */
@@ -124,6 +137,7 @@ export function createShellServices({ openEventSource, location }: CreateShellSe
   const feeds = createThreadFeeds({ api: apiClient, status, live, announcer });
   const listAdapter = createThreadListAdapter({ api: apiClient, status, notify, feeds });
   let agentList: AgentListStore | undefined;
+  let libraryIndex: LibraryIndex | undefined;
 
   return {
     apiClient,
@@ -136,6 +150,13 @@ export function createShellServices({ openEventSource, location }: CreateShellSe
       agentList ??= createAgentListStore({ api: apiClient, live, logger });
       return agentList;
     },
+    get libraryIndex() {
+      libraryIndex ??= createLibraryIndex({ read: libraryApi.list, logger });
+      return libraryIndex;
+    },
+    composerSeed: createComposerSeed(),
+    draftHandoff: createDraftHandoff(),
+    leaveGuard: createLeaveGuard(),
     listAdapter,
     auiConfig: AuiConfig({}),
     // `window` is read at the call: the services are also built during server rendering.

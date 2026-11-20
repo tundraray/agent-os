@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ToolRefusalReasonSchema } from './agents.js';
+
 /** Page size of GET /api/threads (user decision 2026-10-28). */
 export const THREAD_PAGE_SIZE = 20;
 /** Max length of a manually set thread title (FR-15). */
@@ -50,6 +52,9 @@ export const ThreadsErrorCodeSchema = z.enum([
   'INVALID_ARGUMENTS',
   'NOT_FINISHED',
   'PARENT_FINISHED',
+  'START_REFUSED',
+  'DRAFT_NOT_FOUND',
+  'DRAFT_RESOLVED',
 ]);
 export type ThreadsErrorCode = z.infer<typeof ThreadsErrorCodeSchema>;
 
@@ -65,3 +70,18 @@ export const ApiErrorSchema = z.object({
   reason: z.string().optional(),
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
+
+/**
+ * 409 START_REFUSED of the first message and of a restart: the start procedure refused the record.
+ * `model` is the refused model on a model refusal, otherwise `null`.
+ */
+export const StartRefusedErrorSchema = ApiErrorSchema.extend({
+  errorCode: z.literal('START_REFUSED'),
+  reason: ToolRefusalReasonSchema.extract([
+    'record_unavailable',
+    'model_not_connected',
+    'model_not_allowed',
+  ]),
+  model: z.string().min(1).nullable(),
+});
+export type StartRefusedError = z.infer<typeof StartRefusedErrorSchema>;

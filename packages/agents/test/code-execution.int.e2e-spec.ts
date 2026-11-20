@@ -19,7 +19,7 @@
 //   evidence of what reached a server: "the server received nothing" is an empty filtered journal, never a mock's call count.
 // - The executor is the real `packages/code-runner` process with production limits shortened through the `CODE_RUN_*` settings; only INT-4 row C substitutes the `CodeRunner` (a double that holds each run until the test releases it), because that row proves the
 //   admission rule, not the engine.
-// - Isolation (project convention, no truncate): a unique owner `newUser()` per test, a unique definition name per test; each test reads only its own tree. `fileParallelism: false`. No sleeps for ordering: latches the double and the fixture wait on, and rows.
+// - Isolation (project convention, no truncate): a unique owner `newUser()` per test, the test's own library double (the root runs its `chat` record); each test reads only its own tree. `fileParallelism: false`. No sleeps for ordering: latches the double and the fixture wait on, and rows.
 // - Support (test/support): `agentsHarness.ts` takes a `CodeRunner` override and the `CODE_RUN_*` settings through `variables`, and hides the provider key in its logger as `apps/api` does; the journal is read with `fixtureCallsOf` of `@agent-os/mcp-fixture`, the model is `createScriptedModel` of `@agent-os/agents/testing`.
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
@@ -51,6 +51,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentConfirmation, AgentHistoryEntry, AgentTurnMessage } from '@agent-os/agents';
 import {
+  createLibraryDouble,
   createScriptedModel,
   inputLines,
   type Script,
@@ -75,10 +76,9 @@ import {
   historyLines,
   historyOf,
   runLogsOf,
-  testDefinition,
+  testRecord,
   toolCallRowsOf,
   toolOutputOf,
-  uniqueName,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
@@ -128,7 +128,7 @@ function seenRunResult(data: string): string {
   return `<data source="tool run_code" author="agents">\n${data}\n</data>`;
 }
 
-/** One reader of a test: an agent of a fresh owner whose definition reads the `logs` server. */
+/** One reader of a test: an agent of a fresh owner whose record reads the `logs` server. */
 interface Reader {
   readonly harness: AgentsHarness;
   readonly fixture: FixtureFiles;
@@ -146,17 +146,16 @@ async function startReader(
   options: Pick<AgentsHarnessOptions, 'variables' | 'fixture'> = {},
 ): Promise<Reader> {
   const ownerId = newUser();
-  const definition = uniqueName('reader');
   const fixture = options.fixture ?? createFixtureFiles('code-execution');
   const harness = await createAgentsHarness({
     ...options,
     model,
     fixture,
     access: { [ownerId]: [LOGS_SERVER] },
-    definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+    root: testRecord('reader', { servers: [LOGS_SERVER] }),
   });
   try {
-    const { agentId } = await harness.sessions.start({ ownerId, definition, prompt, description: 'reader' });
+    const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'reader' });
     return { harness, fixture, ownerId, agentId };
   } catch (error) {
     await harness.close();
@@ -553,16 +552,16 @@ async function startWriter(
   fixture: FixtureFiles = createFixtureFiles('code-execution'),
 ): Promise<Writer> {
   const ownerId = newUser();
-  const definition = uniqueName('writer');
   const options: AgentsHarnessOptions = {
     model,
     fixture,
     access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-    definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+    library: createLibraryDouble(),
+    root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
   };
   const harness = await createAgentsHarness(options);
   try {
-    const { agentId } = await harness.sessions.start({ ownerId, definition, prompt, description: 'writer' });
+    const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'writer' });
     const request = await untilRequest(harness, agentId, ownerId);
     return { harness, fixture, ownerId, agentId, options, request };
   } catch (error) {
@@ -891,9 +890,8 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
     // `backoffice` tool; W's read script asks for `create_incident_note` (W has the server, so the run class decides)
     const employeeA = newUser();
     const employeeW = newUser();
-    const definition = uniqueName('both-servers');
     const requests = [
-      ['start_agent', { agent: definition, description: 'вложенный агент', prompt: 'Сделай что-нибудь' }],
+      ['start_agent', { agent: 'both-servers', description: 'вложенный агент', prompt: 'Сделай что-нибудь' }],
       ['run_code', { description: 'вложенный запуск', class: 'read', script: 'return 1;' }],
       [`mcp__${LOGS_SERVER}__no_such_tool`, {}],
       [`mcp__${TRACKER_SERVER}__search_tickets`, {}],
@@ -927,19 +925,17 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       model,
       fixture,
       access: { [employeeA]: [LOGS_SERVER], [employeeW]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('both-servers', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     });
     try {
       // When: both runs go
       const { agentId: agentA } = await harness.sessions.start({
         ownerId: employeeA,
-        definition,
         prompt: promptA,
         description: 'refused',
       });
       const { agentId: agentW } = await harness.sessions.start({
         ownerId: employeeW,
-        definition,
         prompt: promptW,
         description: 'changing in read',
       });
@@ -1047,7 +1043,6 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
     // ends in an error (`from` after `to`), then runs a script that reads by each id and by its own
     const employeeA = newUser();
     const employeeB = newUser();
-    const definition = uniqueName('reader');
     const heldPageArgs = { ...WINDOW, pageSize: 2 };
     const unorderedArgs = { from: WINDOW.to, to: WINDOW.from, pageSize: 1 };
     const fixture = createFixtureFiles('code-execution');
@@ -1107,10 +1102,10 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       model,
       fixture,
       access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
     });
     const start = async (ownerId: string, prompt: string) =>
-      (await harness.sessions.start({ ownerId, definition, prompt, description: 'reader' })).agentId;
+      (await harness.sessions.start({ ownerId, prompt, description: 'reader' })).agentId;
     try {
       // When: B's agent reads; A's first run holds at the server; A's second agent runs its script meanwhile
       const agentB = await start(employeeB, promptB);
@@ -1395,7 +1390,6 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
     // Given: employees A and B may read `logs`; the substituted runner holds every run; at most 2 runs of one employee, 4 in all
     const employeeA = newUser();
     const employeeB = newUser();
-    const definition = uniqueName('reader');
     const held = createHeldRunner();
     const model = createScriptedModel();
     const runOf = (prompt: string, label: string) => {
@@ -1414,12 +1408,12 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
     const harness = await createAgentsHarness({
       model,
       access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
       variables: { CODE_RUN_MAX_CONCURRENT_PER_USER: '2', CODE_RUN_MAX_CONCURRENT: '4' },
       codeRunner: held.runner,
     });
     const start = async (ownerId: string, run: { prompt: string }) =>
-      (await harness.sessions.start({ ownerId, definition, prompt: run.prompt, description: 'reader' })).agentId;
+      (await harness.sessions.start({ ownerId, prompt: run.prompt, description: 'reader' })).agentId;
     const untilEnds = (ownerId: string, agentId: string, run: { replies: Script }) =>
       untilTurnEnds({ harness, fixture: harness.fixture, ownerId, agentId }, run.replies, 2);
     const runRows = async (agentId: string) =>

@@ -3,12 +3,11 @@ import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/
 import { z } from 'zod';
 
 import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate.js';
-import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import type { Session } from '../store/sessions.repository.js';
 import { type ToolCallEnding, type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
 import { toolResults } from '../store/tool-results.repository.js';
-import { callTargetOf, type ToolRegistry } from '../tools/tool-registry.js';
+import { callTargetOf, loggedArgsOf, type ToolRegistry } from '../tools/tool-registry.js';
 import {
   callerOf,
   isInCommit,
@@ -51,7 +50,6 @@ interface CallDecision {
 type Closing = (tx: RuntimeTx, effects: StepEffects) => Promise<ToolCallRow | undefined>;
 
 export interface ToolStepDeps {
-  readonly catalog: DefinitionCatalog;
   readonly registry: Pick<ToolRegistry, 'checkTools'>;
   readonly runner: ToolRunner;
   /** Asked once per step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
@@ -89,7 +87,13 @@ function close(call: ToolCallRow, ending: ToolCallEnding): Closing {
 /** How a call the runner ran ends in its row. */
 function endingOf(execution: ToolExecution, startedAt: Date, finishedAt: Date): ToolCallEnding {
   if (execution.kind === 'refused') {
-    return { outcome: refused, refusalReason: execution.reason, startedAt, finishedAt };
+    return {
+      outcome: refused,
+      refusalReason: execution.reason,
+      refusalDetail: execution.refusalDetail ?? null,
+      startedAt,
+      finishedAt,
+    };
   }
   return {
     outcome: execution.outcome,
@@ -182,7 +186,7 @@ function commitOf(
  *   calls that ran are closed and the agent fails with `owner_disabled`.
  */
 export function createToolStep(deps: ToolStepDeps): ToolStep {
-  const { catalog, registry, runner, access, audit } = deps;
+  const { registry, runner, access, audit } = deps;
 
   return async function toolStep(ctx, session, openCalls) {
     const stepStartedAt = Date.now();
@@ -198,15 +202,15 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
       return { outcome: 'continue' };
     };
 
-    const definition = definitionOf(catalog, session);
-    // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
-    // whose account went away gets `auth_required` (C3, DC-2).
-    const sessionTools = await registry.checkTools({
-      definition,
-      limits: session.limits,
-      ownerId: session.ownerId,
-    });
     const caller = callerOf(ctx);
+    // Without the access and account filters: a call to a server the owner may not use gets `no_access`, one
+    // whose account went away gets `auth_required` (C3, DC-2). The set comes from the snapshot (ADR-0017).
+    const sessionTools = await registry.checkTools({
+      snapshot: caller.snapshot,
+      ownerId: session.ownerId,
+      agentId: ctx.taskId,
+      root: ctx.parentId === null,
+    });
     const decision = decisionOf(ctx);
     const closings: Closing[] = [];
     const done = (): StepResult => {
@@ -238,7 +242,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         callId: call.callId,
         tool: call.tool,
         server: call.server,
-        args: call.args,
+        args: loggedArgsOf(sessionTools, requestedName(call), call.args),
         outcome: unknown,
         reason: ctx.resumedAfterLoss ? 'resumed_after_loss' : 'sending_without_loss',
       });
@@ -277,7 +281,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
             callId: call.callId,
             tool: call.tool,
             server: call.server,
-            args: call.args,
+            args: loggedArgsOf(sessionTools, requestedName(call), call.args),
             outcome: refused,
             reason: check.reason,
             durationMs: 0,
@@ -300,7 +304,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               callId: call.callId,
               tool: call.tool,
               server: call.server,
-              args: call.args,
+              args: loggedArgsOf(sessionTools, requestedName(call), call.args),
               outcome: null,
               reason: 'awaiting_confirmation',
             });
@@ -326,7 +330,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               callId: call.callId,
               tool: call.tool,
               server: call.server,
-              args: call.args,
+              args: loggedArgsOf(sessionTools, requestedName(call), call.args),
               outcome: rejected,
               reason: 'rejected',
               durationMs: 0,

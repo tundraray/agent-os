@@ -3,7 +3,7 @@ import {
   identityRoles,
   identityUsers,
 } from '@agent-os/db';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Executor } from '../common/executor.js';
 
 /**
@@ -82,6 +82,19 @@ export async function roleSummaries(
     .where(roleId === undefined ? undefined : eq(identityRoles.id, roleId))
     .groupBy(identityRoles.id)
     .orderBy(asc(identityRoles.name), asc(identityRoles.id));
+}
+
+/** Of the role ids given, those of roles that exist. */
+export async function existingRoleIds(
+  executor: Executor,
+  roleIds: string[],
+): Promise<string[]> {
+  if (roleIds.length === 0) return [];
+  const rows = await executor
+    .select({ id: identityRoles.id })
+    .from(identityRoles)
+    .where(inArray(identityRoles.id, roleIds));
+  return rows.map((row) => row.id);
 }
 
 /** The employees of the role by name, then id. */

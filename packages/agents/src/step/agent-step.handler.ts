@@ -1,29 +1,21 @@
 import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
-import { z } from 'zod';
 
 import type { NewHistoryEntry } from '../store/history.repository.js';
-import { type Session, type SessionInput, type SessionPatch, sessions } from '../store/sessions.repository.js';
+import {
+  AgentTaskInputSchema,
+  type Session,
+  type SessionPatch,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
 import { type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
-import { SessionLimitsSchema } from '../tools/tool.js';
 import { compactionDue, type CompactionStep } from './compaction-step.js';
 import { type Continuation, continuationOf, stopRecords } from './continuation.js';
-import { closedView, closeOpen, entriesOf, interruptText, toolResultEntry } from './deliver.js';
+import { closedView, closeOpen, toolResultEntry } from './deliver.js';
 import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step.js';
 import type { ToolStep } from './tool-step.js';
-
-/** The input of an `agent` task (plan Notes 3): the model is chosen already; the first step makes the session from it. */
-const AgentTaskInputSchema = z.object({
-  definition: z.string().min(1),
-  description: z.string(),
-  prompt: z.string(),
-  model: z.string().min(1),
-  limits: SessionLimitsSchema.optional(),
-  forkedFrom: z
-    .object({ agentId: z.string().min(1), throughSeq: z.number().int().nonnegative() })
-    .optional(),
-}) satisfies z.ZodType<SessionInput>;
 
 const { interrupt } = AgentMessageKindSchema.enum;
 
@@ -55,8 +47,6 @@ interface StepPlan {
   readonly continuation: Continuation | undefined;
   /** The step took an `interrupt` message (KD-3). */
   readonly interrupted: boolean;
-  /** One of the `interrupt` messages carries the employee's text. */
-  readonly interruptWithText: boolean;
   /** A message of another kind than `interrupt` is delivered: the `interrupted` mark goes (KD-3). */
   readonly otherMessages: boolean;
   /** Open calls of the agent before the step. */
@@ -96,7 +86,7 @@ function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrel
   const now = new Date();
   const entries = preludeEntries(plan, closes ? plan.open.map((call) => closedView(call, now)) : []);
 
-  const clearsMark = session.interrupted && (plan.otherMessages || plan.interruptWithText);
+  const clearsMark = session.interrupted && plan.otherMessages;
   const patch: SessionPatch = {
     ...(plan.continuation === undefined ? {} : CONTINUATION_PATCH),
     ...(clearsMark ? { interrupted: false } : {}),
@@ -128,7 +118,7 @@ function withPrelude(ctx: StepContext, result: StepResult, prelude: StepPrelude 
 }
 
 /**
- * An `interrupt` without text and no other message (KD-3): the open calls closed, the `interrupted`
+ * An `interrupt` and no other message (KD-3): the open calls closed, the `interrupted`
  * event, the session marked «прерван» with its turn counter reset; the agent waits for a message.
  */
 function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number): StepResult {
@@ -136,8 +126,8 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
   return {
     outcome: 'wait',
     commit: async (tx, effects) => {
-      const entries = [...(await prelude.write(tx)), ...(await entriesOf(tx, ctx.messages))];
-      await appendWithEvent(tx, effects, ctx.taskId, entries);
+      // The step's only messages are `interrupt`s: they add no entry of their own.
+      await appendWithEvent(tx, effects, ctx.taskId, await prelude.write(tx));
       await sessions.update(tx, ctx.taskId, {
         ...prelude.patch,
         interrupted: true,
@@ -151,21 +141,22 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
  * Builds the handler of `agent` tasks (design-agents.md: C3 `AgentStepHandler`, «Как шаг выбирает
  * работу», KD-3, Flow 6). Between steps it keeps nothing in memory: each step reads the session.
  *
- * 1. The session is made from the task input if the starter did not make it (through `guard`).
+ * 1. The session is made from the task input — the snapshot written at the start (ADR-0017) — if the
+ *    starter did not make it (through `guard`).
  * 2. A finished agent continues (`continuationOf`): its stop entries and `continued` go first.
- * 3. An `interrupt` closes the open calls and writes `interrupted`; with text the model is called at
- *    once, without text (and no other message) the agent is marked and waits.
+ * 3. An `interrupt` closes the open calls and writes `interrupted`; with no other message the agent is
+ *    marked and waits, with one the step goes on to its work.
  * 4. Otherwise: open calls → the tool step; input of the previous call at the threshold → compaction;
  *    else the model step (its turn limit check is d3).
  */
 export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler {
   const { database } = deps;
 
-  /** The session of the agent, made from the task input when missing; `undefined` when the attempt is fenced. */
+  /** The session of the agent, made from the snapshot in the task input when missing; `undefined` when the attempt is fenced. */
   async function sessionOf(ctx: StepContext): Promise<Session | undefined> {
     const existing = await sessions.get(database, ctx.taskId);
     if (existing !== undefined) return existing;
-    const input = AgentTaskInputSchema.parse(ctx.input);
+    const input = sessionInputOf(ctx.input);
     const made = await ctx.guard((tx: RuntimeTx) =>
       sessions.ensureSession(tx, ctx.taskId, input, ctx.ownerId),
     );
@@ -187,20 +178,17 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
       return { outcome: 'continue' };
     }
 
-    const interrupts = ctx.messages.filter((message) => message.kind === interrupt);
     const plan: StepPlan = {
       continuation: continuationOf({ session, messages: ctx.messages }),
-      interrupted: interrupts.length > 0,
-      interruptWithText: interrupts.some((message) => interruptText(message) !== undefined),
+      interrupted: ctx.messages.some((message) => message.kind === interrupt),
       otherMessages: ctx.messages.some((message) => message.kind !== interrupt),
       open: await toolCalls.open(database, ctx.taskId),
     };
     const prelude = preludeOf(ctx, session, plan);
 
-    if (plan.interrupted) {
-      if (plan.interruptWithText) return deps.modelStep(ctx, session, prelude);
-      // `prelude` is set: an interrupt always writes its event.
-      if (!plan.otherMessages && prelude !== undefined) return interruptWait(ctx, prelude, startedAt);
+    // `prelude` is set: an interrupt always writes its event.
+    if (plan.interrupted && !plan.otherMessages && prelude !== undefined) {
+      return interruptWait(ctx, prelude, startedAt);
     }
 
     const openCalls = closesOpen(plan) ? [] : plan.open;

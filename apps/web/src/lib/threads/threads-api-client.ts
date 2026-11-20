@@ -6,6 +6,7 @@ import {
   AwaitingCountSchema,
   ConversationViewSchema,
   DecisionResponseSchema,
+  DraftViewSchema,
   InheritedHistorySchema,
   InterruptResponseSchema,
   RestartResponseSchema,
@@ -14,7 +15,7 @@ import {
   StopResponseSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
-  WorkflowRunBriefSchema,
+  WorkflowRunViewSchema,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -22,8 +23,9 @@ import {
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
+  type DraftActionRequest,
+  type DraftView,
   type InheritedHistory,
-  type InterruptRequest,
   type InterruptResponse,
   type RenameThreadRequest,
   type RestartResponse,
@@ -33,7 +35,7 @@ import {
   type StopResponse,
   type ThreadListResponse,
   type ThreadSummary,
-  type WorkflowRunBrief,
+  type WorkflowRunView,
 } from "@agent-os/contracts";
 import { apiRequest } from "@/lib/api/api-request";
 
@@ -75,8 +77,6 @@ async function deleteThread(threadId: string): Promise<void> {
 
 const agentRoute = (agentId: string): string => `/api/agents/${encodeURIComponent(agentId)}`;
 const afterSeqQuery = (afterSeq: number): string => `?afterSeq=${afterSeq}`;
-const interruptBody = (text: string | undefined): InterruptRequest =>
-  text === undefined ? {} : { text };
 
 async function getConversation(threadId: string, afterSeq: number): Promise<ConversationView> {
   return apiRequest({
@@ -89,9 +89,16 @@ async function getThreadAgents(threadId: string): Promise<AgentNode[]> {
   return apiRequest({ path: `${threadRoute(threadId)}/agents`, schema: z.array(AgentNodeSchema) });
 }
 
-/** 202: the message is queued; `messageId` is null for the conversation's first message. */
-async function sendThreadMessage(threadId: string, text: string): Promise<SendMessageResponse> {
-  const body: SendMessageRequest = { text };
+/**
+ * 202: the message is queued; `messageId` is null for the conversation's first message. `recordId` is
+ * the chip's record (KD-5), sent only when there is one.
+ */
+async function sendThreadMessage(
+  threadId: string,
+  text: string,
+  recordId?: string,
+): Promise<SendMessageResponse> {
+  const body: SendMessageRequest = recordId === undefined ? { text } : { text, recordId };
   return apiRequest({
     path: `${threadRoute(threadId)}/messages`,
     method: "POST",
@@ -100,11 +107,27 @@ async function sendThreadMessage(threadId: string, text: string): Promise<SendMe
   });
 }
 
-async function interruptThread(threadId: string, text?: string): Promise<InterruptResponse> {
+/**
+ * Saves, rejects or marks a draft saved in the editor. A refused `save` is a 200 whose draft stays
+ * `pending` with its `refusal`; 404 `DRAFT_NOT_FOUND` / `RECORD_NOT_FOUND` and 409 `DRAFT_RESOLVED` throw.
+ */
+async function draftAction(
+  threadId: string,
+  draftId: string,
+  action: DraftActionRequest,
+): Promise<DraftView> {
+  return apiRequest({
+    path: `${threadRoute(threadId)}/drafts/${encodeURIComponent(draftId)}`,
+    method: "POST",
+    body: action,
+    schema: DraftViewSchema,
+  });
+}
+
+async function interruptThread(threadId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${threadRoute(threadId)}/interrupt`,
     method: "POST",
-    body: interruptBody(text),
     schema: InterruptResponseSchema,
   });
 }
@@ -132,8 +155,8 @@ async function getInherited(agentId: string, afterSeq: number): Promise<Inherite
   });
 }
 
-async function getRun(agentId: string): Promise<WorkflowRunBrief> {
-  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: WorkflowRunBriefSchema });
+async function getRun(agentId: string): Promise<WorkflowRunView> {
+  return apiRequest({ path: `${agentRoute(agentId)}/run`, schema: WorkflowRunViewSchema });
 }
 
 async function sendAgentMessage(agentId: string, text: string): Promise<SendMessageResponse> {
@@ -146,11 +169,10 @@ async function sendAgentMessage(agentId: string, text: string): Promise<SendMess
   });
 }
 
-async function interruptAgent(agentId: string, text?: string): Promise<InterruptResponse> {
+async function interruptAgent(agentId: string): Promise<InterruptResponse> {
   return apiRequest({
     path: `${agentRoute(agentId)}/interrupt`,
     method: "POST",
-    body: interruptBody(text),
     schema: InterruptResponseSchema,
   });
 }
@@ -195,6 +217,7 @@ export const threadsApiClient = {
   getConversation,
   getThreadAgents,
   sendThreadMessage,
+  draftAction,
   interruptThread,
   listAgents,
   getAwaitingCount,

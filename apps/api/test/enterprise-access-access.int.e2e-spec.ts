@@ -28,8 +28,10 @@
 //     administrator-route refusals of identity, so rows of tools and models are filtered by `objectType`).
 //   - `createTestApp`: the `mcpAccess` option, `MCP_ACCESS_TABLE` and the price file are deleted; a `defaultModel` option sets `AGENT_DEFAULT_MODEL`
 //     for the boot only (restored by `setEnv`, as `MCP_ACCESS_TABLE` is today), so no case writes the developer's environment or catalogue.
-//   - A test workflow template whose agent definition names the `backoffice` server and whose agent runs a model script and a `run_code` script,
-//     started by `start_workflow` of the employee's chat (INT-1 step 4); `packages/workflows` test support is the model for it.
+//   - A test workflow record of the employee whose executor names the `backoffice` server and runs a model script and a `run_code` script,
+//     started by `start_workflow` of the employee's chat (INT-1 step 4).
+//   - Agent records on a given model (system records the administrator shows to one employee), which the chat starts by id: the model of a
+//     start is the record's (INT-2, INT-3). The built-in records run on `A` (`pointBuiltinsAt`).
 //   - A latch around a scripted model call (the scripted model's `hold`/latch of the existing chat suite) so two calls stay in flight (INT-3).
 // Mock boundary: the model only. Do NOT mock the database, `AccessService`, `effectiveAccess`, `IdentityDirectory`, the fixture process, `TokenLedger`.
 //
@@ -79,9 +81,11 @@ import {
   CreateCatalogModelBodySchema,
   GrantSchema,
   MyModelsSchema,
+  StartRefusedErrorSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
   type AgentNode,
   type ConversationView,
+  type CreateRecordBody,
   type Grant,
   type GrantTargetBody,
   type HistoryEntry,
@@ -111,6 +115,15 @@ import {
 } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import {
+  agentBody,
+  BUILTIN,
+  createRecord,
+  createSystemRecord,
+  pointBuiltinsAt,
+  recordName,
+  setSystemAudience,
+} from './support/library.js';
+import {
   BACKOFFICE_SERVER,
   LOGS_SERVER,
   runName,
@@ -129,7 +142,7 @@ import {
 const TEST_TIMEOUT_MS = 180_000;
 const PASSWORD = 'e2e-password-12';
 
-/** The app's default model of the file: every chat runs on it. 1 USD input and 5 USD output per million tokens. */
+/** The model of the file's built-in records (`pointBuiltinsAt`): every chat runs on it. 1 USD input and 5 USD output per million tokens. */
 const MODEL_A = runModel('a');
 const PRICES_1_5: ModelPrices = {
   prices: {
@@ -176,36 +189,43 @@ const SEARCH_LOGS = mcpTool(LOGS_SERVER, 'search_logs');
 const SEARCH_TICKETS = mcpTool(TRACKER_SERVER, 'search_tickets');
 const RUN_CODE = 'run_code';
 
+/** The one executor of the INT-1 workflow, which its coordinator starts by name. */
+const ACCESS_EXECUTOR = 'access-executor';
+
 /**
- * The INT-1 test template (raw, parsed by `createWorkflows` as the shipped one; modelled on `LIMITS_TEMPLATE` of
- * `packages/workflows`): a coordinator without its own model (it runs on `A`) and one executor that names the
- * run's `backoffice`. Every session has `run_code` without naming it, and the catalogue refuses a definition that
- * names it, so the executor's `tools` is empty.
+ * The INT-1 workflow record: a coordinator on `A` and one executor on `A` that names the run's `backoffice`. Every
+ * session has `run_code` without naming it, and a record never holds it, so the executor's `tools` is empty.
  */
-const ACCESS_TEMPLATE = {
-  name: 'access-check',
-  title: 'Access check',
-  description:
-    'Test template of the access integration tests: one executor that writes an incident note.',
-  coordinator: {
-    prompt:
-      'You coordinate the access check: start the agent access-executor with start_agent and wait for its report.',
-    maxTurns: 6,
-  },
-  agents: [
-    {
-      name: 'access-executor',
-      description: 'Writes the incident note of the access check.',
-      prompt:
-        'You write the incident note of the access check from your assignment.',
-      tools: [],
-      mcpServers: [BACKOFFICE_SERVER],
-      maxTurns: 4,
-      maxRuns: 1,
+function accessCheckWorkflow(): Extract<CreateRecordBody, { kind: 'workflow' }> {
+  return {
+    kind: 'workflow',
+    name: recordName('access-check'),
+    description:
+      'Test workflow of the access integration tests: one executor that writes an incident note.',
+    content: {
+      coordinator: {
+        rules: `Start the executor ${ACCESS_EXECUTOR} with start_agent and wait for its report.`,
+        model: MODEL_A,
+        maxTurns: 6,
+      },
+      executors: [
+        {
+          name: ACCESS_EXECUTOR,
+          role: 'Writes the incident note of the access check.',
+          prompt:
+            'You write the incident note of the access check from your assignment.',
+          servers: [BACKOFFICE_SERVER],
+          model: MODEL_A,
+          maxTurns: 4,
+          maxRuns: 1,
+          tools: [],
+          source: null,
+        },
+      ],
+      finalExecutor: ACCESS_EXECUTOR,
     },
-  ],
-  finalAgent: 'access-executor',
-} as const;
+  };
+}
 
 /** The log record of a quota refusal (`ModelClient`: `access gate refused a model call`). */
 const QuotaRefusalRecordSchema = z.object({
@@ -219,21 +239,13 @@ const QuotaRefusalRecordSchema = z.object({
   }),
 });
 
-/** A `start_agent` call of a scripted answer; without `model` the definition's or the default model is used. */
+/** A `start_agent` call of a scripted answer: the agent record `agent` runs on its own model; by default the general agent on `A`. */
 function startAgent(
   description: string,
   prompt: string,
-  model?: string,
+  agent: string = BUILTIN.generalPurpose.id,
 ): ScriptedToolCall {
-  return {
-    tool: 'start_agent',
-    args: {
-      agent: 'general-purpose',
-      description,
-      prompt,
-      ...(model === undefined ? {} : { model }),
-    },
-  };
+  return { tool: 'start_agent', args: { agent, description, prompt } };
 }
 
 /** A read `run_code` call whose script calls `name` and returns `<outcome> <reason>` of the refusal, or `passed`. */
@@ -333,6 +345,10 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
     roles: [] as string[],
     models: [MODEL_A] as string[],
   };
+  /** The system records the file makes; removed in `afterAll` (an employee's own records go with the employee). */
+  const madeRecords: string[] = [];
+  /** Gives the built-in records back their models; run in `afterAll` before the run's rows go. */
+  let restoreBuiltins: (() => Promise<void>) | undefined;
 
   const adminRequest = (method: Method, path: string, body?: object) =>
     apiRequest(harness.app, admin, method, path, body);
@@ -394,6 +410,27 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       200,
       z.array(GrantSchema),
     );
+  }
+
+  /**
+   * A system agent record on `model` that only `viewer` sees, offered in the chat: the chat starts it by id and the
+   * start runs on the record's model. Like the general agent it stands in for, it may list its agents.
+   */
+  async function agentOn(model: string, viewer: Session): Promise<string> {
+    const { id } = await createSystemRecord(
+      harness.app,
+      admin,
+      agentBody(recordName(`agent on ${model}`), {
+        model,
+        tools: ['list_agents'],
+      }),
+    );
+    madeRecords.push(id);
+    await setSystemAudience(harness.app, admin, id, {
+      everyone: false,
+      userIds: [viewer.id],
+    });
+    return id;
   }
 
   /** `GET /api/access/models` of the employee. */
@@ -468,7 +505,6 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       captureLog: true,
       mcpServers: ['logs', 'backoffice', 'tracker'],
       defaultModel: MODEL_A,
-      workflowTemplates: [ACCESS_TEMPLATE],
     });
     titles = harness.model.completeText({ text: TITLE, usage: ZERO_TOKENS });
     admin = await seedSuperAdmin(
@@ -477,17 +513,27 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
     );
     made.users.push(admin.id);
     await addModel(harness.app, admin, { id: MODEL_A, ...PRICES_1_5 });
+    restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL_A);
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
     try {
-      await harness?.close();
+      try {
+        await restoreBuiltins?.();
+      } finally {
+        await harness?.close();
+      }
     } finally {
       // The servers take their accounts; the users their sessions, memberships, personal grants, conversations,
-      // agents, ledger rows and audit records; the roles and models their grants.
+      // agents, own records, ledger rows and audit records; the roles and models their grants; the system records
+      // their holders.
       await database.pool.query(
         'DELETE FROM app.agent_mcp_servers WHERE name = ANY($1)',
         [[LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER]],
+      );
+      await database.pool.query(
+        'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
+        [madeRecords],
       );
       await removeRunRows(database.pool, made);
       await database.close();
@@ -546,7 +592,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // @complexity: high
   // Implementation (task T3.1; where the comment above differs, the task's text and the built code decide): Аня, Борис
   //   and Глеб each get `A` through the run's role `int1-models`; Глеб's `logs` comes from the role `int1-logs`. The workflow
-  //   executor names `backoffice` and has `run_code` without naming it (the catalogue refuses a definition that names it).
+  //   is Аня's own record; its executor names `backoffice` and has `run_code` without naming it (a record never holds it).
   //   «Exactly one record per refusal»: the audit is written before the commit of the refusal (plan Notes 3), so the test
   //   waits for the refused call rows first and counts the audit after.
   it(
@@ -735,6 +781,12 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         server: BACKOFFICE_SERVER,
         tool: 'create_incident_note',
       });
+      // Аня's own workflow record: her chat may start it, and its executor names `backoffice`
+      const accessCheck = await createRecord(
+        harness.app,
+        anya,
+        accessCheckWorkflow(),
+      );
 
       const anyaTask =
         'INT-1: Аня writes the incident note and starts the access check';
@@ -759,7 +811,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
               {
                 tool: 'start_workflow',
                 args: {
-                  template: ACCESS_TEMPLATE.name,
+                  workflow: accessCheck.id,
                   question,
                   boundaries: '',
                   result: '',
@@ -779,7 +831,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
               {
                 tool: 'start_agent',
                 args: {
-                  agent: 'access-executor',
+                  agent: ACCESS_EXECUTOR,
                   description: 'executor',
                   prompt: executorTask,
                 },
@@ -1077,9 +1129,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //      (after the administrator gives her a personal deny of A while the role still allows it) on A -> three refusals as call results in the parent's
   //      history, `model_not_allowed` (B), `model_not_connected`, `model_not_allowed` (A); no child task exists; three `access_denied` rows (objectType
   //      `model`, the employee, the model, the reason), one per refusal.
-  //   3. AC-16.3 / AC-20.2, the main chat's first call (`sessions.start` checks nothing, KD-4): Борис has no role and no right and writes the first message
-  //      of a new conversation -> no model call (the counter unchanged), the root agent is `failed` with `no_models_allowed`, the conversation view carries
-  //      that reason, one `access_denied` row exists for him.
+  //   3. AC-16.3 / AC-20.2, the main chat's first message (the root's start checks the `chat` record's model, design-runtime.md Notes 9г): Борис has no
+  //      role and no right and writes the first message of a new conversation -> 409 START_REFUSED with the model, no model call (the counter
+  //      unchanged), no root, one `access_denied` row exists for him.
   //   4. AC-20.3, DC-5, a change at run time: Дима's agent on B waits for a message; the administrator deletes the role right on B; the next message makes it
   //      call B -> no call, the agent is `failed` with `model_not_allowed`, its parent gets one `child_finished` with the reason, one `access_denied`;
   //      a second agent of Димы on A (allowed): the administrator `DELETE`s A from the catalogue -> its next call fails `model_not_connected` (the rights
@@ -1094,8 +1146,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   // Implementation (task T3.2, plan Notes 5 and 7; where the comment above differs, the task's text decides): the catalogue
   //   of the case is `A` (the file's default model), `B` (3 / 15), `C` and `D` (1 / 5). Step 1 changes the price of `A` and puts
   //   1 / 5 back in its `finally`. Step 2: Аня's role allows `A` and `C`, a personal deny closes `C` (her chat runs on `A`, so the
-  //   call that starts the agents is made). Step 3: the conversation title is a model call of the employee too (DC-7), so Борис
-  //   gets TWO `access_denied`; the test waits for the title's log record. Step 4 deletes the separate model `D`, not `A`.
+  //   call that starts the agents is made); the agents are system records on `B`, `C` and a model that left the catalogue after
+  //   the record was saved. Step 3: the refused start rolls the send back, so no title starts and Борис gets ONE
+  //   `access_denied`. Step 4 deletes the separate model `D`, not `A`.
   it(
     'INT-2: every model call - chat first call, agent start, running agent - is made only on a verdict, costs what the catalogue said before that call, and a refusal is recorded once',
     async () => {
@@ -1103,7 +1156,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const modelB = await catalogueModel('b', PRICES_3_15);
       const modelC = await catalogueModel('c', PRICES_1_5);
       const modelD = await catalogueModel('d', PRICES_1_5);
-      const notInCatalogue = runModel('not-in-catalogue');
+      // A record cannot be saved on a model outside the catalogue: it is saved first, then the model leaves
+      const leftCatalogue = await catalogueModel('left-catalogue', PRICES_1_5);
       const anya = await employee('int2-anya');
       const boris = await employee('int2-boris');
       const dima = await employee('int2-dima');
@@ -1164,19 +1218,31 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       }
       await untilTitled(anyaApi, priced);
 
-      // 2. AC-20.1, AC-19.3, AC-17.3, AC-20.4: `start_agent` on `B` (not allowed to her), on a model outside the catalogue and
-      //    on `C` (the role allows it, a personal deny closes it) -> three refusals as call results, no child, three records
+      // 2. AC-20.1, AC-19.3, AC-17.3, AC-20.4: `start_agent` of agent records on `B` (not allowed to her), on a model outside
+      //    the catalogue and on `C` (the role allows it, a personal deny closes it) -> three refusals as call results, no
+      //    child, three records
+      const anyaOnB = await agentOn(modelB, anya);
+      const anyaOutside = await agentOn(leftCatalogue, anya);
+      const anyaOnC = await agentOn(modelC, anya);
+      expect(
+        (
+          await adminRequest(
+            'delete',
+            `/admin/models/${encodeURIComponent(leftCatalogue)}`,
+          )
+        ).status,
+      ).toBe(204);
       const startTask = 'INT-2 step 2: start agents on three models';
       harness.model.script({ task: startTask }, [
         {
           calls: [
-            startAgent('agent on B', 'INT-2 step 2: work on B', modelB),
+            startAgent('agent on B', 'INT-2 step 2: work on B', anyaOnB),
             startAgent(
               'agent outside the catalogue',
               'INT-2 step 2: work outside the catalogue',
-              notInCatalogue,
+              anyaOutside,
             ),
-            startAgent('agent on C', 'INT-2 step 2: work on C', modelC),
+            startAgent('agent on C', 'INT-2 step 2: work on C', anyaOnC),
           ],
         },
         { text: 'no agent started' },
@@ -1202,44 +1268,41 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(await deniedAudit('model', { anya })).toEqual([
         `anya ${modelB} rejected model_not_allowed`,
         `anya ${modelC} rejected model_not_allowed`,
-        `anya ${notInCatalogue} rejected model_not_connected`,
+        `anya ${leftCatalogue} rejected model_not_connected`,
       ]);
       await untilTitled(anyaApi, starts);
 
-      // 3. AC-16.3 / AC-20.2, the chat's first call (`sessions.start` checks nothing, KD-4): Борис has no role and no right ->
-      //    no model call, neither of the chat nor of the title; the root is `failed` with `no_models_allowed`; two records
+      // 3. AC-16.3 / AC-20.2, the chat's first message: the root starts from the `chat` record only when its model is
+      //    allowed (design-runtime.md, Notes 9г). Борис has no role and no right -> 409 START_REFUSED naming the model, no
+      //    root, no model call of the chat or of the title (the send is rolled back), one record
       const borisTask = 'INT-2 step 3: Борис writes his first message';
       harness.model.script({ task: borisTask }, [
         { text: 'a call Борис may not make' },
       ]);
       const callsBefore = harness.model.calls.length;
       const titlesBefore = titles.calls.length;
-      const borisThread = await startConversation(borisApi, borisTask);
-      const failed = await waitFor(
-        () => borisApi.history(borisThread),
-        (view) => view.chat.status === 'failed',
-        "Борис's chat to fail",
+      const { id: borisThread } = await borisApi.createThread();
+      const refusedStart = await expectBody(
+        borisApi.raw('post', `/threads/${borisThread}/messages`, {
+          text: borisTask,
+        }),
+        409,
+        StartRefusedErrorSchema,
       );
-      expect([failed.chat.status, failed.chat.failureReason]).toEqual([
-        'failed',
-        'no_models_allowed',
+      expect([refusedStart.reason, refusedStart.model]).toEqual([
+        'model_not_allowed',
+        MODEL_A,
       ]);
-      await waitFor(
-        () =>
-          harness.log.filter(
-            (line) =>
-              line.includes('thread title refused by the access gate') &&
-              line.includes(borisThread),
-          ),
-        (lines) => lines.length === 1,
-        "the refused title of Борис's conversation",
-      );
+      const notStarted = await borisApi.history(borisThread);
+      expect([notStarted.chat.status, notStarted.chat.rootAgentId]).toEqual([
+        'new',
+        null,
+      ]);
       expect([harness.model.calls.length, titles.calls.length]).toEqual([
         callsBefore,
         titlesBefore,
       ]);
       expect(await deniedAudit('model', { boris })).toEqual([
-        `boris ${MODEL_A} rejected no_models_allowed`,
         `boris ${MODEL_A} rejected no_models_allowed`,
       ]);
 
@@ -1250,13 +1313,15 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const dimaTask = 'INT-2 step 4: start agents on B and on D';
       const onB = 'INT-2 step 4: the agent on B';
       const onD = 'INT-2 step 4: the agent on D';
+      const dimaOnB = await agentOn(modelB, dima);
+      const dimaOnD = await agentOn(modelD, dima);
       harness.model.script(
         { task: dimaTask },
         [
           {
             calls: [
-              startAgent('agent on B', onB, modelB),
-              startAgent('agent on D', onD, modelD),
+              startAgent('agent on B', onB, dimaOnB),
+              startAgent('agent on D', onD, dimaOnD),
             ],
           },
           { text: 'two agents started' },
@@ -1343,7 +1408,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       harness.model.script({ task: againTask }, [
         {
           calls: [
-            startAgent('agent on D again', 'INT-2 step 4: D once more', modelD),
+            startAgent(
+              'agent on D again',
+              'INT-2 step 4: D once more',
+              dimaOnD,
+            ),
           ],
         },
         { text: 'D is gone' },
@@ -1505,8 +1574,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       const otherTask = 'INT-3 step 2: start an agent on B';
       const onB = 'INT-3 step 2: the agent on B';
       const bHeld = createLatch();
+      const anyaOnB = await agentOn(modelB, anya);
       harness.model.script({ task: otherTask }, [
-        { calls: [startAgent('agent on B', onB, modelB)], usage: ZERO_TOKENS },
+        { calls: [startAgent('agent on B', onB, anyaOnB)], usage: ZERO_TOKENS },
         { text: 'the agent on B works', usage: ZERO_TOKENS },
       ]);
       // The held answer asks a tool, so the agent on `B` makes one more model call, after `A` is exhausted

@@ -1,5 +1,6 @@
 import type { GrantEffect, GrantTargetBody } from '@agent-os/contracts';
 import {
+  allowedCatalogue,
   effectiveAccess,
   type EffectiveAccess,
   type GrantRow,
@@ -8,6 +9,7 @@ import {
 
 const A = 'anthropic/a';
 const B = 'anthropic/b';
+const C = 'anthropic/c';
 
 let nextId = 0;
 function grant(
@@ -32,12 +34,15 @@ const model = (id: string): GrantTargetBody => ({ kind: 'model', model: id });
 type Question =
   | { kind: 'tools'; server: string; registry: string[] }
   | { kind: 'model'; model: string }
-  | { kind: 'allowedModels' };
+  | { kind: 'allowedModels' }
+  | { kind: 'allowedCatalogue'; catalogue: { id: string; name: string }[] };
 
 function ask(answer: EffectiveAccess, question: Question): unknown {
   if (question.kind === 'tools')
     return question.registry.filter((t) => answer.tool(question.server, t));
   if (question.kind === 'model') return answer.model(question.model);
+  if (question.kind === 'allowedCatalogue')
+    return allowedCatalogue(answer, question.catalogue);
   return answer.allowedModels();
 }
 
@@ -169,6 +174,29 @@ describe('effective rights: a server right covers its tools, a personal tool rig
       ],
       question: { kind: 'allowedModels' },
       expected: [A],
+    },
+    {
+      // custom-agents KD-4: the model choice must not offer a model AccessGate would refuse.
+      name: 'allowed catalogue leaves out a model outside the catalogue and a denied one, in catalogue order',
+      grants: [
+        grant('allow', model(B)),
+        grant('allow', model('anthropic/ghost')),
+        grant('allow', model(A)),
+        grant('allow', model(C)),
+        grant('deny', model(C)),
+      ],
+      question: {
+        kind: 'allowedCatalogue',
+        catalogue: [
+          { id: A, name: 'Alpha' },
+          { id: C, name: 'Beta' },
+          { id: B, name: 'Gamma' },
+        ],
+      },
+      expected: [
+        { id: A, name: 'Alpha' },
+        { id: B, name: 'Gamma' },
+      ],
     },
   ])('$name', ({ grants, question, expected }) => {
     expect(ask(effectiveAccess(grants), question)).toEqual(expected);

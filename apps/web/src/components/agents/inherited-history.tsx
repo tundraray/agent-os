@@ -22,7 +22,7 @@ type Read = { status: "loading" } | { status: "ready"; messages: InheritedMessag
 function toMessage(entry: HistoryEntry): InheritedMessage | null {
   switch (entry.kind) {
     case "task":
-      return { seq: entry.seq, side: "sent", caption: "Задание", text: entry.content.text };
+      return { seq: entry.seq, side: "sent", caption: "Поручение", text: entry.content.text };
     case "user_message":
     case "agent_message":
       return { seq: entry.seq, side: "sent", caption: null, text: entry.content.text };

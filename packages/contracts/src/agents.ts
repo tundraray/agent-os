@@ -75,6 +75,10 @@ export const ToolRefusalReasonSchema = z.enum([
   'not_callable_from_code',
   'changing_in_read_run',
   'not_in_confirmed_script',
+  'record_unavailable',
+  'run_limit',
+  'read_only',
+  'shared',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 

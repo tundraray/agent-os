@@ -1,5 +1,6 @@
 import { act, render, type RenderResult } from '@testing-library/react';
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { RouterContext } from 'next/dist/shared/lib/router-context.shared-runtime';
 import { vi, type Mock } from 'vitest';
 import { ChatShell } from '@/components/shell/chat-shell';
 import { Toaster } from '@/components/ui/sonner';
@@ -108,13 +109,18 @@ export function renderWithRuntime({
   window.history.replaceState(null, '', pathname + search);
   const assign = vi.fn<Location['assign']>();
 
+  // In Vitest `next/link` is the pages-router variant, which ignores a click (and `onNavigate`) without a
+  // RouterContext; the app-dir link production uses calls both. The spies stand in for that router too.
+  const pagesRouter = { ...router, prefetch: () => Promise.resolve() } as unknown as NonNullable<
+    React.ContextType<typeof RouterContext>
+  >;
   const result = render(
-    <>
+    <RouterContext.Provider value={pagesRouter}>
       <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open} location={{ assign }}>
         {null}
       </ChatShell>
       <Toaster />
-    </>,
+    </RouterContext.Provider>,
   );
 
   return {

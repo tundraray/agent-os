@@ -2,11 +2,12 @@
 
 import { useRouter } from 'next/navigation';
 import { PROVIDER_NAME_MAX_LENGTH, type ProviderType } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { adminApi } from '@/lib/admin/admin-api';
 import { providerRules } from '@/lib/admin/form-rules';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminRadioField, AdminTextField, type AdminFormApi, type AdminRadioOption } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE, sectionParent } from '../admin-header';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL } from './providers-table';
 
 /** UXRD MC-27; the title is the UXRD's name of the screen. */
@@ -47,7 +48,7 @@ export function NewProviderForm() {
 
   return (
     <>
-      <AdminPageHeader title={TEXT.title} parent="sign-in" />
+      <PageHeader area={PANEL_TITLE} title={TEXT.title} parent={sectionParent('sign-in')} />
       <AdminForm
         variant="page"
         initialValues={INITIAL}

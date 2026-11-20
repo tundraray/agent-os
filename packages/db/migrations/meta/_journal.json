@@ -148,6 +148,34 @@
       "when": 1794819312594,
       "tag": "0020_cheerful_lockheed",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794947072910,
+      "tag": "0021_secret_luminals",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794952043422,
+      "tag": "0022_broken_crusher_hogan",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794952093249,
+      "tag": "0023_charming_skin",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795092221551,
+      "tag": "0024_ancient_scarlet_witch",
+      "breakpoints": true
     }
   ]
 }

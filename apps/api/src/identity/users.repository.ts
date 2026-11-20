@@ -87,6 +87,19 @@ export async function findUserById(
   return row;
 }
 
+/** Of the employee ids given, those of employees that exist. */
+export async function existingUserIds(
+  executor: Executor,
+  userIds: string[],
+): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const rows = await executor
+    .select({ id: identityUsers.id })
+    .from(identityUsers)
+    .where(inArray(identityUsers.id, userIds));
+  return rows.map((row) => row.id);
+}
+
 /** Position of the last employee of a list page: the order is name, then id. */
 export interface UserListPosition {
   name: string;

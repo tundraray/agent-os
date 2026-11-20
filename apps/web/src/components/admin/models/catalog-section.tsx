@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { BoxIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { AccessErrorCode, type CatalogModel, type PriceRates } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
@@ -12,7 +13,7 @@ import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
@@ -119,11 +120,11 @@ export function CatalogSection() {
 
   return (
     <>
-      <AdminPageHeader title={adminSectionTitle('models')}>
+      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('models')}>
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setEditing({ open: true, model: null })}>
           {MODEL_TEXT.add}
         </Button>
-      </AdminPageHeader>
+      </PageHeader>
       {(models.data?.length ?? 0) > 0 && (
         <div className={cn(CAPTION, 'mb-2 flex flex-col text-muted-foreground')}>
           <p>{MODEL_TEXT.priceUnit}</p>

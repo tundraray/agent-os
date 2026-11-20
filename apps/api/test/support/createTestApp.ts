@@ -7,7 +7,6 @@ import {
   createScriptedModel,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
-import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
@@ -18,16 +17,13 @@ import {
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
 import type { Runtime } from '@agent-os/runtime';
-import { createWorkflows, type Workflows } from '@agent-os/workflows';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
-import { APP_LOGGER } from '../../src/logging/app-logger.js';
 import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
-import { WORKFLOWS } from '../../src/workflows/workflows.tokens.js';
 import { registerFixtureServers } from './mcp-servers.js';
 
 export interface TestAppOptions {
@@ -38,11 +34,6 @@ export interface TestAppOptions {
    * catalogue and allows its employees itself; default — the variable as the environment has it.
    */
   defaultModel?: string;
-  /**
-   * Raw workflow templates in place of the shipped ones (`createWorkflows({ templates })`); default — the shipped
-   * templates.
-   */
-  workflowTemplates?: readonly unknown[];
   /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
   workers?: boolean;
   /** Replaces `AGENT_LIST_PAGE_SIZE` (the page of `GET /agents`), so a cursor walk shows over a few agents. */
@@ -119,14 +110,6 @@ export async function createTestApp(
       builder = builder
         .overrideProvider(AGENT_LIST_PAGE_SIZE)
         .useValue(options.agentPageSize);
-    }
-    const templates = options.workflowTemplates;
-    if (templates !== undefined) {
-      builder = builder.overrideProvider(WORKFLOWS).useFactory({
-        factory: (agents: Agents, logger: Logger): Workflows =>
-          createWorkflows({ agents, logger, templates }),
-        inject: [AGENTS, APP_LOGGER],
-      });
     }
     if (options.providerEndpoints !== undefined) {
       builder = builder

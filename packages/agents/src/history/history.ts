@@ -2,6 +2,7 @@ import {
   AgentStatusSchema,
   HistoryEventSchema,
   ToolOutcomeSchema,
+  ChipRecordSchema,
   ToolRefusalReasonSchema,
   type HistoryEntryKind,
 } from '@agent-os/contracts';
@@ -16,10 +17,10 @@ const ChildEndSchema = AgentStatusSchema.extract(['completed', 'failed', 'stoppe
  * call, linked to the answer by its `seq`.
  */
 export const HistoryContentSchemas = {
-  /** The task text; the agent's first own entry. */
-  task: z.object({ text: z.string() }),
-  /** A message of the employee. */
-  user_message: z.object({ text: z.string() }),
+  /** The task text; the agent's first own entry. At a conversation's root it keeps its first message's chip. */
+  task: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+  /** A message of the employee, with the record chip it carries, if any (design-runtime.md KD-4). */
+  user_message: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
   /** A message of the parent agent. */
   agent_message: z.object({ text: z.string(), agentId: z.string() }),
   /** A child's report: written when the runtime delivers `child_finished`. */
@@ -44,6 +45,8 @@ export const HistoryContentSchemas = {
     args: z.unknown(),
     outcome: ToolOutcomeSchema,
     refusalReason: ToolRefusalReasonSchema.nullable(),
+    /** The refused model of a refusal by model, otherwise `null`. */
+    refusalDetail: z.object({ model: z.string().min(1) }).nullable(),
     text: z.string().nullable(),
     /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
     output: z.string().nullable().optional(),

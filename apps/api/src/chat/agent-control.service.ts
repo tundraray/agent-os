@@ -18,7 +18,7 @@ import {
   type RestartResponse,
   type SpendResponse,
   type StopResponse,
-  type WorkflowRunBrief,
+  type WorkflowRunView,
 } from '@agent-os/contracts';
 import { monthOf, type Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
@@ -30,13 +30,12 @@ import { httpError } from './chat.errors.js';
 import { AGENT_LIST_PAGE_SIZE } from './chat.tokens.js';
 import {
   nextAfterSeqOf,
-  type TemplateTitles,
-  templateTitles,
   toAgentTree,
   toAgentView,
   toConfirmation,
   toHistoryEntry,
   toPending,
+  toWorkflowRunView,
 } from './conversation-view.js';
 import {
   type Conversation,
@@ -77,10 +76,9 @@ export class AgentControlService {
    */
   async page(ownerId: string, cursor?: string): Promise<AgentListPage> {
     const position = cursor === undefined ? undefined : decodeRowCursor(cursor);
-    const templates = templateTitles(this.workflows);
     const rows = await this.conversations.listWithRoot(ownerId);
     const perConversation = await Promise.all(
-      rows.map(async (row) => this.topAgentsOf(row, ownerId, templates)),
+      rows.map(async (row) => this.topAgentsOf(row, ownerId)),
     );
     const page = selectThreadPage({
       sorted: sortThreadsForList(perConversation.flat()),
@@ -131,7 +129,6 @@ export class AgentControlService {
       this.runtime.inbox.listPending(agentId, ownerId),
       this.agents.sessions.confirmations(view.rootId, ownerId),
     ]);
-    const templates = templateTitles(this.workflows);
     // design v1.2 (A-2): the parent's description, unless the parent is the conversation's root.
     const parent = views.find(
       (candidate) => candidate.agentId === view.parentId,
@@ -142,7 +139,7 @@ export class AgentControlService {
         : parent.description;
     return {
       agent: {
-        ...toAgentView(view, templates),
+        ...toAgentView(view),
         threadId: conversation.id,
         threadTitle: toThreadSummary(conversation).title,
         ...(parentDescription === undefined ? {} : { parentDescription }),
@@ -152,8 +149,8 @@ export class AgentControlService {
       pending: toPending(messages, views),
       decisions: confirmations
         .filter((confirmation) => confirmation.agentId === agentId)
-        .map(toConfirmation),
-      children: toAgentTree(views, templates, agentId),
+        .map((confirmation) => toConfirmation(confirmation, views)),
+      children: toAgentTree(views, agentId),
     };
   }
 
@@ -183,11 +180,10 @@ export class AgentControlService {
     return { entries, nextAfterSeq: more ? last.seq : null };
   }
 
-  /** The brief of a coordinator's workflow run; any other agent is `RUN_NOT_FOUND` (from `workflows`). */
-  async run(agentId: string, ownerId: string): Promise<WorkflowRunBrief> {
+  /** A coordinator's workflow run (`WorkflowRunView`); any other agent is `RUN_NOT_FOUND` (from `workflows`). */
+  async run(agentId: string, ownerId: string): Promise<WorkflowRunView> {
     await this.agent(agentId, ownerId);
-    const { brief } = await this.workflows.runs.get(agentId, ownerId);
-    return { brief: { ...brief } };
+    return toWorkflowRunView(await this.workflows.runs.get(agentId, ownerId));
   }
 
   /** A message to the agent; to a finished agent it continues with its history. */
@@ -200,25 +196,10 @@ export class AgentControlService {
     return this.agents.sessions.send({ agentId, ownerId, text });
   }
 
-  /** As the conversation's interrupt (FR-16): `not_active` with a text still sends the text. */
-  async interrupt(
-    agentId: string,
-    ownerId: string,
-    text?: string,
-  ): Promise<InterruptResponse> {
+  /** As the conversation's interrupt (FR-16). */
+  async interrupt(agentId: string, ownerId: string): Promise<InterruptResponse> {
     await this.agent(agentId, ownerId);
-    const outcome = await this.agents.sessions.interrupt({
-      agentId,
-      ownerId,
-      ...(text === undefined ? {} : { text }),
-    });
-    if (outcome === 'interrupted' || text === undefined) return { outcome };
-    const { messageId } = await this.agents.sessions.send({
-      agentId,
-      ownerId,
-      text,
-    });
-    return { outcome: 'not_active', messageId };
+    return { outcome: await this.agents.sessions.interrupt({ agentId, ownerId }) };
   }
 
   async stop(agentId: string, ownerId: string): Promise<StopResponse> {
@@ -226,13 +207,16 @@ export class AgentControlService {
     return { stopped: await this.agents.sessions.stop({ agentId, ownerId }) };
   }
 
-  /** A new agent with the same task; `NOT_FINISHED` and `PARENT_FINISHED` come from the packages. */
+  /**
+   * A new agent with the same task; `NOT_FINISHED`, `PARENT_FINISHED` and `START_REFUSED` (409 with the
+   * reason and the model) come from the packages.
+   */
   async restart(agentId: string, ownerId: string): Promise<RestartResponse> {
     await this.agent(agentId, ownerId);
     return this.agents.sessions.restart({ agentId, ownerId });
   }
 
-  /** Flow 4: a decision on a request of any agent of the owner. */
+  /** Flow 4: a decision on a request of any agent of the owner; edited arguments (a brief's too) pass unchanged. */
   async decide(
     decisionId: string,
     ownerId: string,
@@ -273,14 +257,13 @@ export class AgentControlService {
   private async topAgentsOf(
     row: Conversation,
     ownerId: string,
-    templates: TemplateTitles,
   ): Promise<ListedAgent[]> {
     if (row.rootId === null) return [];
     const views = await unlessDeleted(
       this.agents.sessions.list(row.rootId, ownerId),
     );
     const threadTitle = toThreadSummary(row).title;
-    return toAgentTree(views, templates, row.rootId).map((node) => ({
+    return toAgentTree(views, row.rootId).map((node) => ({
       updatedAt: new Date(node.createdAt),
       id: node.agentId,
       node: { ...node, threadId: row.id, threadTitle },

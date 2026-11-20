@@ -1,18 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  type AgentDefinition,
   type AgentHistoryEntry,
   type Agents,
   type AgentSessions,
   type AgentTurnMessage,
   createAgents,
+  type InCommitAgentTool,
   parseAgentsConfig,
+  type StartResolution,
   secretValuesOf,
 } from '@agent-os/agents';
 import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
+import { type AgentContent, CHAT_BUILTIN_KEY } from '@agent-os/contracts';
 import {
   agentCodeCalls,
   agentToolCalls,
@@ -29,7 +31,14 @@ import {
   type FixtureSource,
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
-import { createAccessGateDouble, type ScriptedModel } from '@agent-os/agents/testing';
+import {
+  type AccessGateDoubleOptions,
+  createAccessGateDouble,
+  createLibraryDouble,
+  type LibraryDouble,
+  type LibraryDoubleRecord,
+  type ScriptedModel,
+} from '@agent-os/agents/testing';
 import {
   createRuntime,
   type ModelPrice,
@@ -40,20 +49,23 @@ import {
   type Task,
 } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { databaseUrl } from './database-url.js';
 import { registerFixtureServers, removeServer, runName } from './mcp-servers.js';
 
 /**
  * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `createRuntime` and
  * `createAgents` over their own pool, without `apps/api`. Postgres, the runtime and every agents component
- * are real; the model is the scripted double under `ModelClient` (plan Notes 9) and MCP is the fixture
+ * are real; the model is the scripted double under `ModelClient` (plan Notes 9), the library of agents and
+ * workflows is the `createLibraryDouble` of the test (a root starts from its `chat` record, a child from
+ * the record its parent names) and MCP is the fixture
  * process over HTTP, registered in the registry under the run's names (`mcp-servers.ts`). A second
- * instance ("the restarted server") is a second harness over the same database and the same fixture
- * files: it starts its own fixture process and points the run's registry rows at it; both processes
- * write the same call log.
+ * instance ("the restarted server") is a second harness over the same database, the same fixture files
+ * and the same library double: it starts its own fixture process and points the run's registry rows at
+ * it; both processes write the same call log.
  */
 
-/** The deployment's default model (`AGENT_DEFAULT_MODEL`): input 1, output 5 USD per million tokens. */
+/** The deployment's default model (`AGENT_DEFAULT_MODEL`) and the model of a test record: input 1, output 5 USD per million tokens. */
 const TEST_MODEL_DEFAULT = 'anthropic/test-default';
 /** A second priced model a launch may name: input 3, output 15 USD per million tokens. */
 export const TEST_MODEL_CHOSEN = 'anthropic/test-chosen';
@@ -87,25 +99,116 @@ const SETTLE_POLL_MS = 25;
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
 
-/** A definition name unique to one test: catalogs of other tests never meet it. */
-export function uniqueName(label: string): string {
-  return `${label}-${randomUUID()}`;
+/**
+ * The author of every test record: an employee of no test. A record's author id is a uuid (it is the
+ * `author.id` of a run's origin, which the snapshot schema checks), while the tests' owners are not.
+ */
+export const TEST_AUTHOR_ID = randomUUID();
+
+/** An agent record of the library double. */
+export type TestRecord = Extract<LibraryDoubleRecord, { kind: 'agent' }>;
+
+/** What a test record may set: the agent's content and the record's id, description, owner and audience. */
+export type TestRecordOverrides = Partial<AgentContent> &
+  Partial<Pick<LibraryDoubleRecord, 'id' | 'description' | 'ownerId' | 'everyone' | 'viewers' | 'offerInChat'>>;
+
+/**
+ * A test agent record: by {@link TEST_AUTHOR_ID}, seen by every employee and offered in the main chat
+ * (so a root may start it), with no tools, no servers, no agents, 20 turns and the default model,
+ * unless overridden.
+ */
+export function testRecord(name: string, overrides: TestRecordOverrides = {}): TestRecord {
+  const {
+    id,
+    description = `Test agent ${name}`,
+    ownerId = TEST_AUTHOR_ID,
+    everyone = true,
+    viewers,
+    offerInChat = true,
+    ...content
+  } = overrides;
+  return {
+    kind: 'agent',
+    name,
+    description,
+    ownerId,
+    everyone,
+    offerInChat,
+    ...(id === undefined ? {} : { id }),
+    ...(viewers === undefined ? {} : { viewers }),
+    content: {
+      prompt: 'You are a test agent.',
+      servers: [],
+      model: TEST_MODEL_DEFAULT,
+      maxTurns: 20,
+      agents: [],
+      tools: [],
+      ...content,
+    },
+  };
 }
 
-/** A test definition: no tools, no servers, no agents, 20 turns, unless overridden. */
-export function testDefinition(
-  name: string,
-  overrides: Partial<Omit<AgentDefinition, 'name'>> = {},
-): AgentDefinition {
+/**
+ * Makes `record` the root of the next `sessions.start`: the double's `chat` record (a system record every
+ * employee sees) gets its name and content — added on the first call, a new version after it. A run
+ * already started keeps its snapshot.
+ */
+export async function setRootRecord(library: LibraryDouble, record: TestRecord): Promise<void> {
+  const body = { kind: 'agent' as const, content: record.content };
+  const chat = (await library.listVisible(TEST_AUTHOR_ID)).find(
+    (header) => header.builtinKey === CHAT_BUILTIN_KEY,
+  );
+  if (chat === undefined) {
+    library.add({ ...body, name: record.name, ownerId: null, everyone: true, builtinKey: CHAT_BUILTIN_KEY });
+    return;
+  }
+  library.edit(chat.id, { name: record.name, body });
+}
+
+/** The tool {@link AgentsHarnessOptions.workflowStarter} registers. */
+export const START_TEST_WORKFLOW = 'start_test_workflow';
+
+const StartTestWorkflowArgsSchema = z.object({
+  workflow: z.string(),
+  prompt: z.string(),
+  description: z.string(),
+});
+
+/**
+ * The test's stand-in for `start_workflow` of `workflows`, which this package's tests do not assemble: at
+ * the root it starts the workflow record by id as the root's child, on the snapshot `resolveStart` gives
+ * the root's owner, and returns a refusal as `start_agent` does.
+ */
+function startTestWorkflowTool(
+  agents: Agents,
+): InCommitAgentTool<z.infer<typeof StartTestWorkflowArgsSchema>, StartResolution> {
   return {
-    name,
-    description: `Test agent ${name}`,
-    prompt: 'You are a test agent.',
-    tools: [],
-    mcpServers: [],
-    agents: [],
-    maxTurns: 20,
-    ...overrides,
+    name: START_TEST_WORKFLOW,
+    description: 'Start a workflow record by its id.',
+    argsSchema: StartTestWorkflowArgsSchema,
+    mode: 'in_commit',
+    rootOnly: true,
+    prepare: ({ args, caller }) =>
+      agents.resolveStart({
+        ownerId: caller.ownerId,
+        source: { kind: 'record', recordId: args.workflow, expected: 'workflow' },
+      }),
+    async execute({ args, startChild, prepared }) {
+      if (prepared === undefined) throw new Error(`${START_TEST_WORKFLOW} runs without its prepare`);
+      if (prepared.kind === 'refused') {
+        return {
+          kind: 'refused',
+          reason: prepared.reason,
+          refusalDetail: prepared.model === null ? null : { model: prepared.model },
+        };
+      }
+      const { agentId } = await startChild({
+        snapshot: prepared.snapshot,
+        prompt: args.prompt,
+        description: args.description,
+      });
+      return { kind: 'done', outcome: 'success', text: `Workflow started, agentId ${agentId}`, childAgentId: agentId };
+    },
   };
 }
 
@@ -113,8 +216,12 @@ export interface AgentsHarnessOptions {
   readonly model: ScriptedModel;
   /** Server rights of the test: employee id (or `*`) → server names of the run (`mcp-servers.ts`); the access gate double. */
   readonly access: Readonly<Record<string, readonly string[]>>;
-  /** Registered before `start()`. */
-  readonly definitions?: readonly AgentDefinition[];
+  /** The library every start asks; shared with a second instance; a fresh double by default. */
+  readonly library?: LibraryDouble;
+  /** Made the library's `chat` record ({@link setRootRecord}) before `start()`: what `sessions.start` runs. */
+  readonly root?: TestRecord;
+  /** Registers {@link START_TEST_WORKFLOW} before `start()`: a root may start a workflow record. */
+  readonly workflowStarter?: boolean;
   /** Shared with a second instance; a fresh directory by default. */
   readonly fixture?: FixtureFiles;
   /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` / `ANTHROPIC_API_KEY` variables over the harness defaults. */
@@ -127,6 +234,8 @@ export interface AgentsHarnessOptions {
   readonly mcpServers?: readonly FixtureSource[];
   /** Owners the access gate double answers `owner_disabled` for; every owner is active by default. */
   readonly refusedOwners?: readonly string[];
+  /** `{ <owner id>: { <model>: <refusal> } }` of the access gate double; read on every question, so a test may withdraw a model mid-run. */
+  readonly ownerModelRefusals?: AccessGateDoubleOptions['ownerModelRefusals'];
   /** The code executor; the real one (`createCodeRunner`) by default. */
   readonly codeRunner?: CodeRunner;
   /** Runtime settings over the harness defaults (workers on, 6 slots, short polls and lease). */
@@ -139,6 +248,8 @@ export interface AgentsHarness {
   readonly runtime: Runtime;
   readonly agents: Agents;
   readonly sessions: AgentSessions;
+  /** The library double every start of this instance asks. */
+  readonly library: LibraryDouble;
   /** The Drizzle client of the harness's pool; the tests only read through it (and `expireLease`). */
   readonly db: Database;
   readonly fixture: FixtureFiles;
@@ -175,6 +286,8 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
   );
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: secretValuesOf(agentsConfig), minLevel: 'debug' });
+  const library = options.library ?? createLibraryDouble();
+  if (options.root !== undefined) await setRootRecord(library, options.root);
   const fixtureProcess = await startFixtureProcess(fixture);
   const database = createDatabase({
     connectionString: databaseUrl(),
@@ -196,11 +309,13 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       servers: options.access,
       prices: TEST_MODEL_PRICES,
       ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
+      ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
     }),
     audit: async () => {},
+    library,
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
   });
-  for (const definition of options.definitions ?? []) agents.definitions.register(definition);
+  if (options.workflowStarter === true) agents.tools.register(startTestWorkflowTool(agents));
 
   const close = async () => {
     try {
@@ -234,6 +349,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     runtime,
     agents,
     sessions: agents.sessions,
+    library,
     db: database.db,
     fixture,
     fixtureProcess,

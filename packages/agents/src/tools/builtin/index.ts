@@ -1,14 +1,17 @@
+import type { Database } from '@agent-os/db';
+
 import type { AgentTool } from '../tool.js';
 import { type BuiltinTasks, createListAgentsTool } from './list-agents.js';
 import { createMessageAgentTool } from './message-agent.js';
-import { createStartAgentTool } from './start-agent.js';
-import type { StartChildDeps } from './start-child.js';
+import { createStartAgentTool, type StartAgentDeps } from './start-agent.js';
 import { createStopAgentTool } from './stop-agent.js';
 
-export { createStartChild, type StartChildDeps } from './start-child.js';
+export { createStartChild } from './start-child.js';
 
-export interface BuiltinToolsDeps extends StartChildDeps {
+export interface BuiltinToolsDeps extends StartAgentDeps {
   readonly tasks: BuiltinTasks;
+  /** `list_agents` reads the sessions of the caller's descendants. */
+  readonly database: Database;
 }
 
 /**

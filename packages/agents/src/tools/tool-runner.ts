@@ -20,10 +20,10 @@ import type { McpAccounts } from '../mcp/mcp-accounts.js';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
-import type { Session } from '../store/sessions.repository.js';
+import { type Session, sessionInputOf } from '../store/sessions.repository.js';
 import { toolCalls } from '../store/tool-calls.repository.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
-import { callTarget, callTargetOf, type SessionTool } from './tool-registry.js';
+import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry.js';
 
 /** One tool call of a model answer, as the model wrote it. */
 export interface RequestedCall {
@@ -93,7 +93,12 @@ export type ToolExecution =
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
-  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      /** The refused model of a refusal by model; absent otherwise. */
+      readonly refusalDetail?: { readonly model: string } | null;
+    };
 
 /**
  * The step's signal was aborted around an outside call: the step's result is rejected by the runtime,
@@ -281,6 +286,7 @@ export function callerOf(ctx: StepContext): ToolCaller {
     rootId: ctx.rootId,
     parentId: ctx.parentId,
     depth: ctx.depth,
+    snapshot: sessionInputOf(ctx.input).snapshot,
   };
 }
 
@@ -313,7 +319,7 @@ interface LoggedCall {
 }
 
 function loggedCall(call: ResolvedCall): LoggedCall {
-  return { callId: call.callId, ...callTarget(call.tool), args: call.args };
+  return { callId: call.callId, ...callTarget(call.tool), args: loggedArgs(call.tool, call.args) };
 }
 
 /** Logs one tool call the runner ran (rule 9 of the plan): ids, tool, server, arguments, outcome, reason, duration. */

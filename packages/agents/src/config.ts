@@ -7,7 +7,7 @@ const positiveInteger = (fallback: number) =>
   z.preprocess(unsetWhenEmpty, z.coerce.number().int().min(1).default(fallback));
 
 /** A model id the package resolves: only Anthropic models (`createResolveModel`). */
-export const MODEL_ID_PATTERN = /^anthropic\/[^/\s]+$/;
+const MODEL_ID_PATTERN = /^anthropic\/[^/\s]+$/;
 
 /** Runtime settings of design-agents.md: env names and defaults. */
 const AgentsEnvSchema = z.object({

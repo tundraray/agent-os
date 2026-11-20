@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { RotateCwIcon } from "lucide-react";
 import { useStore } from "zustand";
 import { AgentTree, AgentTreeSkeleton } from "@/components/agents/agent-tree";
+import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import type { AgentListStore } from "@/lib/agents/agent-list-store";
 import { focusShellTarget } from "@/lib/focus";
@@ -14,8 +15,13 @@ import { focusShellTarget } from "@/lib/focus";
  */
 export function AgentsScreen({ store }: { store: AgentListStore }) {
   const { status, agents, nextCursor, loadingMore, loadMoreFailed, expanded } = useStore(store);
+  const { libraryIndex } = useShellServices();
 
   useEffect(() => store.attach(), [store]);
+  // The «Из библиотеки» labels read the library list on every visit (KD-2).
+  useEffect(() => {
+    void libraryIndex.refresh();
+  }, [libraryIndex]);
 
   // The last row left with its conversation while it held focus: the page title takes it (UXRD «Порядок фокуса»).
   const hadRows = useRef(false);

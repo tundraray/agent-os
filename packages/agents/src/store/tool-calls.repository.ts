@@ -8,12 +8,22 @@ import {
 import { agentToolCalls } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, count, eq, lt, ne, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
-import { START_AGENT_TOOL } from '../definitions/definition.js';
+import { START_AGENT_TOOL } from '../tools/builtin/start-agent.js';
 import { codeCalls, interruptedRunOutcome } from './code-calls.repository.js';
 import type { StoreReader } from './sessions.repository.js';
 
 export type ToolCallRow = typeof agentToolCalls.$inferSelect;
+
+/** What `refusal_detail` holds: the refused model of a refusal by model (design-runtime.md, «Данные для `web`»). */
+const RefusalDetailSchema = z.object({ model: z.string().min(1) }).nullable();
+export type RefusalDetail = z.infer<typeof RefusalDetailSchema>;
+
+/** The refusal detail of a call row; `null` for every call but a start refused by its model. */
+export function refusalDetailOf(call: Pick<ToolCallRow, 'refusalDetail'>): RefusalDetail {
+  return RefusalDetailSchema.parse(call.refusalDetail ?? null);
+}
 
 /** A call of a model answer, written `requested` in the transaction that writes the answer. */
 export interface NewToolCall {
@@ -39,6 +49,8 @@ export interface ToolCallKey {
 export interface ToolCallEnding {
   readonly outcome: ToolOutcome;
   readonly refusalReason?: ToolRefusalReason;
+  /** The refused model of a refusal by model. */
+  readonly refusalDetail?: RefusalDetail;
   readonly resultText?: string;
   /** Script output of a successful `run_code` run (DC-14). */
   readonly output?: string;
@@ -131,6 +143,7 @@ export const toolCalls = {
         state: done,
         outcome: ending.outcome,
         refusalReason: ending.refusalReason ?? null,
+        refusalDetail: ending.refusalDetail ?? null,
         resultText: ending.resultText ?? null,
         output: ending.output ?? null,
         childTaskId: ending.childTaskId ?? null,
@@ -161,8 +174,8 @@ export const toolCalls = {
     return bumped.attempts;
   },
 
-  /** How many children of the given definition the agent's `start_agent` calls started. */
-  async startedCount(tx: RuntimeTx, taskId: string, agentName: string): Promise<number> {
+  /** How many runs of the named executor the coordinator's `start_agent` calls started (KD-5, `run_limit`). */
+  async startedCount(tx: RuntimeTx, taskId: string, executor: string): Promise<number> {
     const [row] = await tx
       .select({ started: count() })
       .from(agentToolCalls)
@@ -171,7 +184,7 @@ export const toolCalls = {
           eq(agentToolCalls.taskId, taskId),
           eq(agentToolCalls.tool, START_AGENT_TOOL),
           eq(agentToolCalls.outcome, ToolOutcomeSchema.enum.success),
-          sql`${agentToolCalls.args} ->> 'agent' = ${agentName}`,
+          sql`${agentToolCalls.args} ->> 'agent' = ${executor}`,
         ),
       );
     return row?.started ?? 0;

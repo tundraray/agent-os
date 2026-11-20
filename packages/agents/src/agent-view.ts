@@ -1,4 +1,4 @@
-import type { AgentStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
+import type { AgentStatus, RunOrigin, TaskStatus, WaitReason } from '@agent-os/contracts';
 import type { Task } from '@agent-os/runtime';
 
 import type { Session } from './store/sessions.repository.js';
@@ -6,15 +6,15 @@ import type { Session } from './store/sessions.repository.js';
 export interface AgentStatusInput {
   readonly taskStatus: TaskStatus;
   readonly waitReason: WaitReason | null;
-  /** An `interrupt` message without text waits in the agent's inbox. */
-  readonly pendingInterruptWithoutText: boolean;
+  /** An `interrupt` message waits in the agent's inbox. */
+  readonly pendingInterrupt: boolean;
   /** The session's mark «прерван». */
   readonly sessionInterrupted: boolean;
 }
 
 /**
  * The status of an agent for the employee (State Transitions, KD-3): «Прерван» is seen at once from a
- * pending `interrupt` without text, and after the step took it, from the session's mark.
+ * pending `interrupt`, and after the step took it, from the session's mark.
  */
 export function agentStatus(input: AgentStatusInput): AgentStatus {
   switch (input.taskStatus) {
@@ -24,9 +24,9 @@ export function agentStatus(input: AgentStatusInput): AgentStatus {
       return input.taskStatus;
     case 'queued':
     case 'running':
-      return input.pendingInterruptWithoutText ? 'interrupted' : 'working';
+      return input.pendingInterrupt ? 'interrupted' : 'working';
     case 'waiting':
-      // Agents always interrupt with a message (KD-3), so the runtime's own `interrupted` reason never occurs.
+      // Agents always interrupt with an `interrupt` message (KD-3), so the runtime's own `interrupted` reason never occurs.
       if (input.waitReason === 'decision') return 'awaiting_confirmation';
       return input.sessionInterrupted ? 'interrupted' : 'working';
   }
@@ -38,7 +38,12 @@ export interface AgentView {
   readonly parentId: string | null;
   readonly rootId: string;
   readonly depth: number;
-  readonly definition: string;
+  /** The run's name from its snapshot. */
+  readonly name: string;
+  /** The record the run started from; `null` for a conversation's root. */
+  readonly origin: RunOrigin | null;
+  /** The owner had no earlier session with this record. */
+  readonly firstRun: boolean;
   readonly description: string;
   readonly model: string;
   readonly status: AgentStatus;
@@ -51,15 +56,11 @@ export interface AgentView {
 }
 
 /** The view of an agent from its runtime task and its session. */
-export function toAgentView(
-  task: Task,
-  session: Session,
-  pendingInterruptWithoutText: boolean,
-): AgentView {
+export function toAgentView(task: Task, session: Session, pendingInterrupt: boolean): AgentView {
   const status = agentStatus({
     taskStatus: task.status,
     waitReason: task.waitReason,
-    pendingInterruptWithoutText,
+    pendingInterrupt,
     sessionInterrupted: session.interrupted,
   });
   return {
@@ -67,7 +68,9 @@ export function toAgentView(
     parentId: task.parentId,
     rootId: task.rootId,
     depth: task.depth,
-    definition: session.definition,
+    name: session.name,
+    origin: session.origin,
+    firstRun: session.firstRun,
     description: session.description,
     model: session.model,
     status,

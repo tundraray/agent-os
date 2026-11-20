@@ -1,0 +1,8 @@
+DELETE FROM "app"."chat_conversations";--> statement-breakpoint
+DELETE FROM "app"."runtime_tasks";--> statement-breakpoint
+ALTER TABLE "app"."agent_code_calls" DROP CONSTRAINT "agent_code_calls_refusal_reason_check";--> statement-breakpoint
+ALTER TABLE "app"."agent_tool_calls" DROP CONSTRAINT "agent_tool_calls_refusal_reason_check";--> statement-breakpoint
+ALTER TABLE "app"."agent_sessions" DROP COLUMN "definition";--> statement-breakpoint
+ALTER TABLE "app"."agent_sessions" DROP COLUMN "limits";--> statement-breakpoint
+ALTER TABLE "app"."agent_code_calls" ADD CONSTRAINT "agent_code_calls_refusal_reason_check" CHECK ("app"."agent_code_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared'));--> statement-breakpoint
+ALTER TABLE "app"."agent_tool_calls" ADD CONSTRAINT "agent_tool_calls_refusal_reason_check" CHECK ("app"."agent_tool_calls"."refusal_reason" in ('tool_not_in_definition', 'no_access', 'not_allowed', 'depth_limit', 'model_not_connected', 'model_not_allowed', 'unknown_agent', 'invalid_arguments', 'not_callable_from_code', 'changing_in_read_run', 'not_in_confirmed_script', 'record_unavailable', 'run_limit', 'read_only', 'shared'));

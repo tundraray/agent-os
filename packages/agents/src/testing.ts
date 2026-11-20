@@ -1,6 +1,10 @@
+import { randomUUID } from 'node:crypto';
+
+import type { RecordBody, RecordHeader, ResolvedRecord } from '@agent-os/contracts';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, ModelVerdict } from './access-gate.js';
+import type { RecordLibrary } from './start/record-library.js';
 import type {
   AgentToolCall,
   AgentTurnCall,
@@ -384,8 +388,15 @@ export interface AccessGateDoubleOptions {
    */
   readonly refusedOwners?: readonly string[];
   /** A refusal per model for every owner, such as `quota_exhausted`; it goes before the catalogue. */
-  readonly refusedModels?: Readonly<Record<string, Extract<ModelVerdict, { readonly kind: 'refused' }>>>;
+  readonly refusedModels?: Readonly<Record<string, ModelRefusal>>;
+  /**
+   * `{ <owner id>: { <model>: <refusal> } }`: a refusal of a model for one owner, before `refusedModels`;
+   * read on every question, so a test may withdraw a model from an owner mid-run by adding to the object.
+   */
+  readonly ownerModelRefusals?: Readonly<Record<string, Readonly<Record<string, ModelRefusal>>>>;
 }
+
+type ModelRefusal = Extract<ModelVerdict, { readonly kind: 'refused' }>;
 
 /** Row of the `servers` option whose servers every owner has. */
 const EVERY_OWNER = '*';
@@ -406,12 +417,176 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
     },
     async model(ownerId, model) {
       if (disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
-      const refusal = options.refusedModels?.[model];
+      const refusal = options.ownerModelRefusals?.[ownerId]?.[model] ?? options.refusedModels?.[model];
       if (refusal !== undefined) return refusal;
       const price = options.prices[model];
       return price === undefined
         ? { kind: 'refused', reason: 'model_not_connected' }
         : { kind: 'allowed', price };
+    },
+  };
+}
+
+/** A record the library double holds: its kind and content, its owner and who sees it. */
+export type LibraryDoubleRecord = RecordBody & {
+  /** A fresh uuid when omitted. */
+  readonly id?: string;
+  readonly name: string;
+  readonly description?: string;
+  /** `null` — a system record. */
+  readonly ownerId: string | null;
+  /** The author's name; the owner id when omitted. */
+  readonly ownerName?: string;
+  /** Every employee sees it. */
+  readonly everyone?: boolean;
+  /** Employees besides the owner who see it. */
+  readonly viewers?: readonly string[];
+  /** The record has holders (AC-18.5). */
+  readonly shared?: boolean;
+  readonly offerInChat?: boolean;
+  readonly builtinKey?: string | null;
+};
+
+/** What `edit` changes; the kind of a new body must be the record's kind. */
+export interface LibraryDoubleEdit {
+  readonly name?: string;
+  readonly description?: string;
+  readonly body?: RecordBody;
+}
+
+/**
+ * The `RecordLibrary` double (ADR-0004; design-runtime.md, «Порт `RecordLibrary`»): records in memory and
+ * the changes an author or an admin makes while runs go on. A record is visible to its owner always, to
+ * others while it is not closed or hidden from them and they are its audience.
+ */
+export interface LibraryDouble extends RecordLibrary {
+  /** Adds a record at version 1 and returns its id. */
+  add(record: LibraryDoubleRecord): string;
+  /** Saves a new version. */
+  edit(recordId: string, change: LibraryDoubleEdit): void;
+  remove(recordId: string): void;
+  /** An admin closes the record: only its owner sees it. */
+  close(recordId: string): void;
+  /** The viewer stops seeing the record, as one taken out of its role. */
+  hideFrom(recordId: string, viewerId: string): void;
+  /** Every `resolve` call in order: who asked for which record. */
+  readonly resolveCalls: readonly { readonly viewerId: string; readonly recordId: string }[];
+}
+
+interface StoredRecord {
+  readonly id: string;
+  name: string;
+  description: string;
+  version: number;
+  body: RecordBody;
+  readonly ownerId: string | null;
+  readonly ownerName: string;
+  readonly everyone: boolean;
+  readonly viewers: ReadonlySet<string>;
+  readonly hiddenFrom: Set<string>;
+  closed: boolean;
+  readonly shared: boolean;
+  readonly offerInChat: boolean;
+  readonly builtinKey: string | null;
+}
+
+export function createLibraryDouble(): LibraryDouble {
+  const records = new Map<string, StoredRecord>();
+  const resolveCalls: { viewerId: string; recordId: string }[] = [];
+
+  function stored(recordId: string): StoredRecord {
+    const record = records.get(recordId);
+    if (record === undefined) throw new Error(`The library double holds no record ${recordId}`);
+    return record;
+  }
+
+  function visibleTo(record: StoredRecord, viewerId: string): boolean {
+    if (record.ownerId === viewerId) return true;
+    if (record.closed || record.hiddenFrom.has(viewerId)) return false;
+    return record.everyone || record.viewers.has(viewerId);
+  }
+
+  function headerOf(record: StoredRecord, viewerId: string): RecordHeader {
+    return {
+      id: record.id,
+      kind: record.body.kind,
+      name: record.name,
+      description: record.description,
+      version: record.version,
+      builtinKey: record.builtinKey,
+      author:
+        record.ownerId === null ? null : { id: record.ownerId, name: record.ownerName, disabled: false },
+      mine: record.ownerId === viewerId,
+      shared: record.shared,
+      offerInChat: record.offerInChat,
+    };
+  }
+
+  function resolvedOf(record: StoredRecord | undefined, viewerId: string): ResolvedRecord | null {
+    if (record === undefined || !visibleTo(record, viewerId)) return null;
+    const { kind: _kind, ...header } = headerOf(record, viewerId);
+    return { ...header, ...structuredClone(record.body) };
+  }
+
+  return {
+    resolveCalls,
+    add(record) {
+      const id = record.id ?? randomUUID();
+      if (records.has(id)) throw new Error(`The library double already holds record ${id}`);
+      const body: RecordBody =
+        record.kind === 'agent'
+          ? { kind: 'agent', content: record.content }
+          : { kind: 'workflow', content: record.content };
+      records.set(id, {
+        id,
+        name: record.name,
+        description: record.description ?? `${record.name} description`,
+        version: 1,
+        body: structuredClone(body),
+        ownerId: record.ownerId,
+        ownerName: record.ownerName ?? record.ownerId ?? 'system',
+        everyone: record.everyone ?? false,
+        viewers: new Set(record.viewers ?? []),
+        hiddenFrom: new Set(),
+        closed: false,
+        shared: record.shared ?? false,
+        offerInChat: record.offerInChat ?? false,
+        builtinKey: record.builtinKey ?? null,
+      });
+      return id;
+    },
+    edit(recordId, change) {
+      const record = stored(recordId);
+      if (change.body !== undefined && change.body.kind !== record.body.kind) {
+        throw new Error(`Record ${recordId} is a ${record.body.kind}, not a ${change.body.kind}`);
+      }
+      record.name = change.name ?? record.name;
+      record.description = change.description ?? record.description;
+      record.body = change.body === undefined ? record.body : structuredClone(change.body);
+      record.version += 1;
+    },
+    remove(recordId) {
+      stored(recordId);
+      records.delete(recordId);
+    },
+    close(recordId) {
+      stored(recordId).closed = true;
+    },
+    hideFrom(recordId, viewerId) {
+      stored(recordId).hiddenFrom.add(viewerId);
+    },
+    async resolve(viewerId, recordId) {
+      resolveCalls.push({ viewerId, recordId });
+      return resolvedOf(records.get(recordId), viewerId);
+    },
+    async resolveBuiltin(viewerId, builtinKey) {
+      const record = [...records.values()].find((candidate) => candidate.builtinKey === builtinKey);
+      return resolvedOf(record, viewerId);
+    },
+    async listVisible(viewerId) {
+      return [...records.values()]
+        .filter((record) => visibleTo(record, viewerId))
+        .map((record) => headerOf(record, viewerId));
     },
   };
 }

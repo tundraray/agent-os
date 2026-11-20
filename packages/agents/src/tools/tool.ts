@@ -1,30 +1,21 @@
 import type { Logger } from '@agent-os/common';
 import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
-import { z } from 'zod';
+import type { z } from 'zod';
 
+import type { RunSnapshot } from '../start/snapshot.js';
 import type { SessionTool } from './tool-registry.js';
 
-/** Agent name of `start_agent` that starts a fork of the caller (KD-7). */
+/** `agent` of `start_agent` that starts a fork of the caller (KD-7). */
 export const FORK_AGENT = 'fork';
 
-/** Limits the caller sets at `start` (design-agents.md, SessionLimits). */
-export const SessionLimitsSchema = z.object({
-  /** Definitions the session may start and how many times each; replaces the definition's `agents`. */
-  agents: z.record(z.string().min(1), z.number().int().min(1)),
-  /** The definition whose `completed` report must be the session's last one (see «Конец хода»). */
-  finalAgent: z.string().min(1).optional(),
-});
-export type SessionLimits = z.infer<typeof SessionLimitsSchema>;
-
-/** What the spawn helper takes: the fields of the `start` operation; owner and parent are the caller's. */
+/** What the spawn helper takes (design-runtime.md, «Операции `agents`»); owner and parent are the caller's. */
 export interface StartChildRequest {
-  readonly definition: string;
+  /** The child's snapshot, resolved by `resolveStart` before the commit. */
+  readonly snapshot: RunSnapshot;
   readonly prompt: string;
   readonly description: string;
-  readonly model?: string;
-  readonly limits?: SessionLimits;
-  /** Set only by the built-in `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
+  /** Set only by `start_agent` with `fork`: the caller's history up to `throughSeq` precedes the child's. */
   readonly forkedFrom?: { readonly agentId: string; readonly throughSeq: number };
 }
 
@@ -43,6 +34,8 @@ export interface ToolCaller {
   readonly parentId: string | null;
   /** 0 for a root session. */
   readonly depth: number;
+  /** The caller's snapshot, from the input of its task (ADR-0017). */
+  readonly snapshot: RunSnapshot;
 }
 
 /** What a tool's execution ends with; a refusal does not reach any external system. */
@@ -56,7 +49,12 @@ export type ToolRunResult =
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
-  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      /** The refused model of a refusal by model; absent or `null` otherwise. */
+      readonly refusalDetail?: { readonly model: string } | null;
+    };
 
 /** Input of a tool executed inside the commit transaction of the step: no external calls. */
 export interface InCommitToolInput<Args, Prepared = unknown> {
@@ -116,6 +114,15 @@ interface AgentToolBase<Args> {
   readonly description: string;
   readonly argsSchema: z.ZodType<Args>;
   readonly confirmation?: ToolConfirmation<Args>;
+  /** Only a session without a parent gets the tool (KD-6, Invariant 4). */
+  readonly rootOnly?: boolean;
+  /**
+   * What of the call's arguments may go to the log, which reaches Sentry: a tool whose arguments carry
+   * a prompt, a record's content or a brief names only the fields that identify the call
+   * (design-runtime.md, «Логирование»). Without it the arguments are logged whole. It may get the
+   * arguments as the model wrote them, before they were checked.
+   */
+  loggedArgs?(args: Args): Record<string, unknown>;
 }
 
 /** Runs in the commit transaction of the step, with its `tx`, `effects` and the spawn helper. */

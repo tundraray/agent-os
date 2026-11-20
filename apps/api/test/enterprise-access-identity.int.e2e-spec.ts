@@ -82,6 +82,7 @@ import {
 } from './support/access.js';
 import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { pointBuiltinsAt } from './support/library.js';
 import {
   ageSession,
   apiOrigin,
@@ -127,6 +128,8 @@ let provider: TestProvider;
 let admin: Session;
 /** The run's role with the default model, for the employees whose agents run (INT-2 row 5). */
 let agentsRole: RunRole | undefined;
+/** Gives the built-in records their models back (`pointBuiltinsAt`). */
+let restoreBuiltins: (() => Promise<void>) | undefined;
 
 /** The employees and providers this file created; `afterAll` deletes exactly these rows. */
 const createdUserIds = new Set<string>();
@@ -507,25 +510,30 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       models: [DEFAULT_MODEL],
       servers: [],
     });
+    restoreBuiltins = await pointBuiltinsAt(harness.app, admin, DEFAULT_MODEL);
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
-    if (harness !== undefined)
-      await removeRunRows(harness.pool, {
-        models: [DEFAULT_MODEL],
-        roles: agentsRole === undefined ? [] : [agentsRole.id],
-      });
-    // Only the rows this run made: their sessions, role assignments and sign-in requests go by cascade.
-    await harness?.pool.query(
-      'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
-      [[...createdUserIds]],
-    );
-    await harness?.pool.query(
-      'DELETE FROM app.identity_providers WHERE id = ANY($1::uuid[])',
-      [[...createdProviderIds]],
-    );
-    await harness?.close();
-    await provider?.close();
+    try {
+      await restoreBuiltins?.();
+    } finally {
+      if (harness !== undefined)
+        await removeRunRows(harness.pool, {
+          models: [DEFAULT_MODEL],
+          roles: agentsRole === undefined ? [] : [agentsRole.id],
+        });
+      // Only the rows this run made: their sessions, role assignments and sign-in requests go by cascade.
+      await harness?.pool.query(
+        'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
+        [[...createdUserIds]],
+      );
+      await harness?.pool.query(
+        'DELETE FROM app.identity_providers WHERE id = ANY($1::uuid[])',
+        [[...createdProviderIds]],
+      );
+      await harness?.close();
+      await provider?.close();
+    }
   }, TEST_TIMEOUT_MS);
 
   // ---------------------------------------------------------------------------------------------------------------

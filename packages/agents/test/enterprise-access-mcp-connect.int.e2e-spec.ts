@@ -26,7 +26,7 @@
 //   - packages/agents/test/code-execution.int.e2e-spec.ts: INT-3 row A (refusals from `run_code`) is adapted to the same harness; INT-1 row D
 //       (a server credential in the script's env masked in the run log) loses its premise - `secretValuesOf` now carries only
 //       `ANTHROPIC_API_KEY` (Security Considerations) - and is dropped by the implementation task.
-//   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; `checkCatalog` keeps the name-form rows.
+//   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; the file keeps only the rows of the settings the package still reads.
 //   - stdio transport, `createMcpClients` cache, `McpStartupError`, `fixtureServersFile` and their tests are deleted with the code.
 //
 // `provenAt: unit` (small tables next to the code, not skeletons): the scheme check of a server or authorization-server address
@@ -55,9 +55,10 @@ import {
   codeCallRowsOf,
   createAgentsHarness,
   historyOf,
-  testDefinition,
+  setRootRecord,
+  type TestRecord,
+  testRecord,
   toolOutputOf,
-  uniqueName,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
@@ -75,7 +76,7 @@ import { newUser } from './support/new-user.js';
 /** Bound of one in-process test; the story settles far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 
-/** A server name the definitions name and the registry never holds (DC-11). */
+/** A server name the records name and the registry never holds (DC-11). */
 const GHOST_SERVER = runName('ghost');
 
 /** The run's tools as the model names them; the registry keeps a server's tools sorted by name. */
@@ -160,13 +161,13 @@ interface Employee {
 async function startEmployee(
   harness: AgentsHarness,
   model: ReturnType<typeof createScriptedModel>,
-  input: { readonly ownerId: string; readonly definition: string; readonly task: string; readonly turns: Turns },
+  input: { readonly ownerId: string; readonly root: TestRecord; readonly task: string; readonly turns: Turns },
 ): Promise<Employee> {
   const turns = { [input.task]: TURN_DONE, ...input.turns };
   const script = model.script({ task: input.task }, [], { thereafter: byMessage(turns) });
+  await setRootRecord(harness.library, input.root);
   const { agentId } = await harness.sessions.start({
     ownerId: input.ownerId,
-    definition: input.definition,
     prompt: input.task,
     description: input.task,
   });
@@ -296,8 +297,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const boris = newUser();
     const gleb = newUser();
     const admin = newUser();
-    const everyServer = uniqueName('every-server');
-    const namedServers = uniqueName('named-servers');
+    const everyServer = testRecord('every-server', { servers: ['*'] });
+    const namedServers = testRecord('named-servers', { servers: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER] });
     const fixture = createFixtureFiles('mcp-connect');
     const model = createScriptedModel();
     const harness = await createAgentsHarness({
@@ -308,10 +309,6 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         [anya]: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER],
         [boris]: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER],
       },
-      definitions: [
-        testDefinition(everyServer, { mcpServers: ['*'] }),
-        testDefinition(namedServers, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER] }),
-      ],
     });
     const { control } = harness.fixtureProcess;
     try {
@@ -319,7 +316,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       //    agents are offered only `run_code`, and `ghost` gives no tool
       const anyaAgent = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня investigates a failed payment',
         turns: {
           [READ_LOGS]: { calls: [{ tool: GET_TRACE, args: TRACE_ANYA }] },
@@ -332,7 +329,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       });
       const borisAgent = await startEmployee(harness, model, {
         ownerId: boris,
-        definition: namedServers,
+        root: namedServers,
         task: 'Борис checks the refunds',
         turns: {
           [READ_LOGS]: { calls: [{ tool: GET_TRACE, args: TRACE_BORIS }] },
@@ -379,6 +376,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       expect((await harness.agents.mcp.connections(anya)).map((c) => `${c.server} ${c.status}`)).toEqual([
         `${BACKOFFICE_SERVER} needs_auth`,
       ]);
+      // KD-4 (custom-agents library): the servers Аня may use are of any mode, not only `oauth`
+      expect(await harness.agents.mcp.usable(anya)).toEqual([BACKOFFICE_SERVER, LOGS_SERVER]);
       for (const [ownerId, account] of [
         [anya, 'anya'],
         [boris, 'boris'],
@@ -464,9 +463,9 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         },
         { text: 'nothing was read' },
       ]);
+      await setRootRecord(harness.library, everyServer);
       const { agentId: glebAgentId } = await harness.sessions.start({
         ownerId: gleb,
-        definition: everyServer,
         prompt: glebTask,
         description: glebTask,
       });
@@ -511,6 +510,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         `mcp__${LOGS_SERVER}__search_logs`,
       ]);
       await harness.agents.mcp.update(LOGS_SERVER, { enabled: false });
+      expect(await harness.agents.mcp.usable(anya)).toEqual([BACKOFFICE_SERVER]);
       const journalBeforeDisabled = readFixtureLog(fixture.callLog).length;
       expect((await turn(harness, anyaAgent, AFTER_DISABLE)).toolNames).toEqual(['run_code']);
       expect((await auditOf(harness, anyaAgent.agentId)).at(-1)).toBe(`${anya} ${GET_TRACE} refused tool_not_in_definition`);
@@ -568,7 +568,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const anya = newUser();
     const boris = newUser();
     const admin = newUser();
-    const everyServer = uniqueName('every-server');
+    const everyServer = testRecord('every-server', { servers: ['*'] });
     const fixture = createFixtureFiles('mcp-connect');
     const model = createScriptedModel();
     const refusedOwners: string[] = [];
@@ -580,7 +580,6 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         [anya]: [LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER],
         [boris]: [BACKOFFICE_SERVER],
       },
-      definitions: [testDefinition(everyServer, { mcpServers: ['*'] })],
       refusedOwners,
     });
     const { control } = harness.fixtureProcess;
@@ -611,7 +610,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       const writeScript = twoTraceReadsScript();
       const anyaFirst = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня reconciles the refunds',
         turns: {
           [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_ANYA }] },
@@ -626,13 +625,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       });
       const anyaSecond = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня checks the chargebacks',
         turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_SECOND_AGENT }] } },
       });
       const borisAgent = await startEmployee(harness, model, {
         ownerId: boris,
-        definition: everyServer,
+        root: everyServer,
         task: 'Борис checks the refunds',
         turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_BORIS }] } },
       });
