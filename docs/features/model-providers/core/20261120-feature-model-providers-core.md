@@ -3,7 +3,7 @@ feature: model-providers
 part: core
 design: design-core.md
 plan: 1 of 1
-status: draft
+status: completed
 temporary: true
 ---
 
@@ -41,7 +41,7 @@ Type: feature
 
 #### Tasks
 
-- [ ] **Task 1.1: Контракты: id модели, провайдеры, каталог, модели по умолчанию, причины, `null` у модели записи** — covers DD KD-4, Contract Definitions (таблица «Где изменения ложатся в `packages/contracts/src`» целиком, `ModelProviderView`, `ModelProviderCheck`, `CatalogModel`, `ModelDefaults`, Error handling), DC-1, DC-2 (схема), DC-5 (причина), FR-01, FR-05, ADR-0018
+- [x] **Task 1.1: Контракты: id модели, провайдеры, каталог, модели по умолчанию, причины, `null` у модели записи** — covers DD KD-4, Contract Definitions (таблица «Где изменения ложатся в `packages/contracts/src`» целиком, `ModelProviderView`, `ModelProviderCheck`, `CatalogModel`, `ModelDefaults`, Error handling), DC-1, DC-2 (схема), DC-5 (причина), FR-01, FR-05, ADR-0018
   - `model-providers.ts` (new, по образцу `mcp.ts`): `ModelProviderNameSchema` (строчные латинские буквы, цифры, дефис, до 32, с буквы или цифры), `MODEL_PROVIDER_NAME_MAX_LENGTH = 32`, `MODEL_PROVIDER_API_KEY_MIN_LENGTH = 8`, `MODEL_PROVIDER_API_KEY_MAX_LENGTH = 512`, `ModelProviderKindSchema` (`anthropic`, `gemini`, `openai_compatible`), `ModelProviderViewSchema` (с `keyRequired`, `state`, `catalogModels`), `ModelProviderCheckSchema`, `CreateModelProviderBodySchema`, `UpdateModelProviderBodySchema` (`apiKey: null` — убрать ключ, `baseUrl: null` — адрес вида), `ModelProviderErrorCode`.
   - `access.ts`: `ModelIdSchema` — первая часть по `ModelProviderNameSchema`, после первой косой черты непустое имя без пробелов, косая черта в имени допустима; `modelProvider(id)`; `CatalogModelSchema` — своя схема ответа, объединение по `purpose` с `provider`; `CreateCatalogModelBodySchema` — объединение по `purpose`; `UpdateCatalogModelBodySchema` получает `inputUsdPerMTok` (строгий объект, хотя бы одно поле; назначение проверяет сервис); `ModelDefaultsSchema`, `UpdateModelDefaultsBodySchema`; `AccessErrorCode` + `MODEL_PROVIDER_INVALID`, `MODEL_DEFAULT_INVALID`; `ModelProviderInvalidReasonSchema`, `ModelDefaultInvalidReasonSchema`, `ModelDefaultInvalidErrorSchema` (несёт `model`); `GrantInvalidReasonSchema` + `embedding_model`; `MyModelSchema.unavailableReason` (обязательное, `ModelUnavailableReasonSchema` или `null`). `type CatalogModel` теперь от `CatalogModelSchema`, а не псевдоним тела.
   - `agents.ts`: `ToolRefusalReasonSchema` + `model_not_configured`, `provider_missing`, `provider_disabled`, `provider_key_missing`; `AgentFailureReasonSchema` + шесть `provider_*`. `threads.ts`: `StartRefusedErrorSchema.reason` берёт и эти четыре (`model` уже `nullable`). `library.ts`: `LibraryChoicesSchema.defaultModel`, модель агента, координатора и исполнителя — `ModelIdSchema.nullable()`.
@@ -52,7 +52,7 @@ Type: feature
   - Тесты: `model-providers.spec.ts` — одна таблица: имя (`Google` и `-x` и 33 знака — нет, `local-2` — да), ключ 7 и 513 знаков — нет, 8 и 512 — да, `apiKey: null` в изменении — да (DC-1, DC-2). В таблице каталога `access.spec.ts` строки id заменяются: `anthropic/a/b` и `local/Qwen/Qwen3-32B` теперь верны, `Foo/x`, `x`, `a/` и `a/b c` — нет, `modelProvider('local/Qwen/Qwen3-32B')` — `local` (ADR-0018). Новых тестов сверх этих строк нет.
   - Проверка: `pnpm --filter @agent-os/contracts typecheck`. Ревьюер читает: каждая строка таблицы дизайна «Где изменения ложатся» есть в diff; ни одно имя не совпадает с именами `identity.ts`.
 
-- [ ] **Task 1.2: Веб компилируется на новых контрактах (без новой видимой работы)** — covers DD Contract Definitions «Для части `web`» (сторона потребителя, минимум), Sibling parts
+- [x] **Task 1.2: Веб компилируется на новых контрактах (без новой видимой работы)** — covers DD Contract Definitions «Для части `web`» (сторона потребителя, минимум), Sibling parts
   - Только правки, без которых `web` не компилируется или его нынешние тесты падают. Экраны провайдеров, моделей по умолчанию, пометки готовности, фильтр моделей чата и тексты новых отказов в чате — часть `web`.
   - `lib/agents/format.ts`: шесть записей `provider_*` в `NAMED_FAILURE_REASON` (слова причин — `uxrd.md` MC-9); `formatModel` принимает `null` и отдаёт подпись «модель по умолчанию».
   - `lib/admin/admin-api.ts`: `list`, `create`, `update` каталога разбирают ответ `CatalogModelSchema`; `CatalogModelListSchema` и комментарий «своей схемы нет» удаляются.
@@ -66,7 +66,7 @@ Type: feature
   - Dependencies: Task 1.1.
   - Проверка: `pnpm turbo build --filter=web^...`, затем `pnpm --filter web typecheck`. Ревьюер читает: нет новых экранов, текстов кроме MC-9 и `modelIdFormat`, нет копии правил `core` в вебе.
 
-- [ ] **Task 1.3: Таблицы `agent_model_providers`, `access_model_defaults`, назначение и размерность у `access_models`; миграция 0025** — covers DD KD-1, KD-4, KD-5, Data Model, Invariants 3 и 4 (база), DC-6 (база), ADR-0019
+- [x] **Task 1.3: Таблицы `agent_model_providers`, `access_model_defaults`, назначение и размерность у `access_models`; миграция 0025** — covers DD KD-1, KD-4, KD-5, Data Model, Invariants 3 и 4 (база), DC-6 (база), ADR-0019
   - Pattern: [settings-row.md](../../../code-system/patterns/settings-row.md) (`access_model_defaults`), [write-only-secret.md](../../../code-system/patterns/write-only-secret.md) (столбец ключа как есть).
   - `agentModelProviders` по образцу `agentMcpServers`: `name` text PK; `kind` text, CHECK через `isOneOf(t.kind, ModelProviderKindSchema.options)`; `base_url` text null; `api_key` text null; `enabled` boolean default true; `created_at`, `updated_at`.
   - `accessModels` + `purpose` text not null default `'chat'`, CHECK через `isOneOf` по `chat`/`embedding`; `dimensions` integer null; CHECK: у `embedding` размерность от 1 до 4096 и нет цен длинного контекста, у `chat` размерности нет. Существующие строки становятся `chat` без переписывания.
@@ -78,7 +78,7 @@ Type: feature
   - Dependencies: Task 1.1.
   - Проверка: `pnpm turbo build --filter=@agent-os/db^...`, затем `pnpm --filter @agent-os/db typecheck`. Ревьюер читает SQL: только `CREATE TABLE`, `ALTER TABLE … ADD COLUMN`, ограничения и одна вставка.
 
-- [ ] **Task 1.4: Память секретов процесса; маска Sentry** — covers DD KD-7 (маска), Contract «Внутри платформы» (`rememberSecret`), Invariant 2 (маска), Security Considerations (Sentry), FR-11 / AC-11.1 (половина Sentry)
+- [x] **Task 1.4: Память секретов процесса; маска Sentry** — covers DD KD-7 (маска), Contract «Внутри платформы» (`rememberSecret`), Invariant 2 (маска), Security Considerations (Sentry), FR-11 / AC-11.1 (половина Sentry)
   - Pattern: [logging.md](../../../code-system/patterns/logging.md).
   - `packages/common/src/logger.ts`: модульная память секретов — `rememberSecret(value)` кладёт значение, пустое и короче 8 знаков не кладёт; память только растёт. `createSecretMasker(secrets)` на каждом вызове скрывает и свой список, и всю память; `createLogger` получает это даром. Экспорт `rememberSecret` из `index.ts`.
   - Sentry: `beforeSend` в `apps/api/src/instrument.ts` выносится в функцию `maskSentryEvent` (`apps/api/src/logging/sentry-mask.ts`), которая прогоняет `exception.value` через `withoutQueryParamsText` и через `createSecretMasker([])`; `instrument.ts` её зовёт.
@@ -99,7 +99,7 @@ Type: feature
 
 #### Tasks
 
-- [ ] **Task 2.1: Реестр `Agents.providers` и `providerReadiness`** — covers DD KD-1, KD-7 (пополнение памяти при чтении и записи), Terms «Готовность провайдера», Contract «Внутри платформы» (`Agents.providers`), Data Model, Invariants 1, 2, 5, DC-1, DC-2, AC-01.3 (правило удаления)
+- [x] **Task 2.1: Реестр `Agents.providers` и `providerReadiness`** — covers DD KD-1, KD-7 (пополнение памяти при чтении и записи), Terms «Готовность провайдера», Contract «Внутри платформы» (`Agents.providers`), Data Model, Invariants 1, 2, 5, DC-1, DC-2, AC-01.3 (правило удаления)
   - Pattern: [repository-over-transaction.md](../../../code-system/patterns/repository-over-transaction.md), [write-only-secret.md](../../../code-system/patterns/write-only-secret.md), [pure-decision.md](../../../code-system/patterns/pure-decision.md) (`providerReadiness`).
   - `provider-kinds.ts`: по виду — адрес по умолчанию (`https://api.anthropic.com/v1`, `https://generativelanguage.googleapis.com/v1beta`, `https://api.openai.com/v1`), `keyRequired` (`anthropic`, `gemini` — да; `openai_compatible` — нет), умеет ли эмбеддинги (`anthropic` — нет). Адаптеры Task 2.2 берут эти факты отсюда.
   - `provider-readiness.ts`: `providerReadiness(row | null)` — `missing`, `disabled`, `key_missing`, `ready`, в этом порядке, первое сработавшее.
@@ -113,7 +113,7 @@ Type: feature
   - Тест: `provider-readiness.spec.ts` — одна таблица `ready` / `missing` / `disabled` / `key_missing` по трём видам; выключенный без ключа — `disabled` (шапка скелета `agents`).
   - Проверка: нет ошибок `tsc` в файлах задачи (`pnpm turbo build --filter=@agent-os/agents^...`, затем `pnpm --filter @agent-os/agents typecheck`). Ревьюер читает: значение ключа не попадает ни в `view`, ни в `before`/`after`, ни в лог; `rememberSecret` стоит в чтении строки и в `create`/`update`.
 
-- [ ] **Task 2.2: Адаптеры трёх видов и проверка подключения; пакеты AI SDK** — covers DD KD-3, FR-15 / AC-15.1, DC-12, «Как разбирается ошибка провайдера» (признак инструментов), Risks «Gemini отклоняет схему инструмента MCP»
+- [x] **Task 2.2: Адаптеры трёх видов и проверка подключения; пакеты AI SDK** — covers DD KD-3, FR-15 / AC-15.1, DC-12, «Как разбирается ошибка провайдера» (признак инструментов), Risks «Gemini отклоняет схему инструмента MCP»
   - Сначала проверки риска (результаты — в Progress Tracking):
     1. Пакеты: `pnpm --filter @agent-os/agents add @ai-sdk/google@^4 @ai-sdk/openai-compatible@^3`; `pnpm why @ai-sdk/provider --filter @agent-os/agents` показывает одну мажорную версию 4 у всех трёх `@ai-sdk/*`. Иначе берутся версии на `@ai-sdk/provider` 4 явно.
     2. Чистка схем Gemini: прочитать, как `mastra-turn.ts` передаёт Mastra инструменты MCP (сырая JSON Schema), и где `@mastra/core` 1.83 зовёт слой `@mastra/schema-compat` (1.4.0) — `GoogleSchemaCompatLayer.shouldApply` смотрит `provider.includes('google')` или `gemini-` в id, а у модели `@ai-sdk/google` провайдер `google.generative-ai`. Если слой применяется к таким инструментам — адаптер ничего не делает. Если нет — адаптер Gemini сам прогоняет схемы через `GoogleSchemaCompatLayer`, а `@mastra/schema-compat` той же версии, что у `@mastra/core`, добавляется прямой зависимостью в этой задаче (резерв дизайна, Risks). Доказательство — INT-1 строка B на gate.
@@ -124,7 +124,7 @@ Type: feature
   - Тест: `adapters.spec.ts` — одна таблица по видам: адрес по умолчанию, метка кеша только у Anthropic, параметры эмбеддинга (`inputType`), признак «инструменты не приняты» на записанном теле ошибки каждого вида, запрос проверки и отображение 200 / 401 / молчание → `works` / `key_rejected` / `unreachable` (AC-15.1, DC-12; таймаут — подставным коротким значением или поддельными таймерами).
   - Проверка: нет ошибок `tsc` в файлах задачи (`pnpm --filter @agent-os/agents typecheck`). Ревьюер читает: всё, что зависит от вида, — только в файлах адаптеров; заголовки запроса не логируются.
 
-- [ ] **Task 2.3: `ModelClient` берёт подключение у реестра; причины сбоя значением; `completeText` на модели по умолчанию** — covers DD KD-2, C4 «вызов модели чата» шаги 2 и 5, «Как разбирается ошибка провайдера», Flow 1 (Failure handling), Contract `ModelClient.call`, `completeText`, `AccessGate.defaultChatModel`, `AccessGate.embedding` (порт), DC-3 (`completeText`), DC-10, DC-11, Invariant 6, AC-04.2, AC-09.2, AC-09.3, AC-09.4, AC-09.5
+- [x] **Task 2.3: `ModelClient` берёт подключение у реестра; причины сбоя значением; `completeText` на модели по умолчанию** — covers DD KD-2, C4 «вызов модели чата» шаги 2 и 5, «Как разбирается ошибка провайдера», Flow 1 (Failure handling), Contract `ModelClient.call`, `completeText`, `AccessGate.defaultChatModel`, `AccessGate.embedding` (порт), DC-3 (`completeText`), DC-10, DC-11, Invariant 6, AC-04.2, AC-09.2, AC-09.3, AC-09.4, AC-09.5
   - `access-gate.ts`: порт получает `defaultChatModel(): Promise<string | null>` и `embedding(ownerId | null)` → `allowed` (`model`, цена ввода, `dimensions`) или `refused` (`owner_disabled`, `model_not_configured`). `createAccessGateDouble` в `testing.ts` получает опции `defaultChatModel` и `embedding` с умолчаниями, при которых нынешние вызовы компилируются. Там же — двойник реестра `createProviderRegistryDouble` (`connection` и `readiness` отвечают «готов» для названных провайдеров, остальные — `missing`); его берут `model-client.spec.ts`, `access-gate.spec.ts`, `resolve-start.spec.ts` (это двойник реестра из Building-block Inventory).
   - `retry-policy.ts`: `classifyRejection(error, adapter)` → статус, `retryable` и причина по таблице дизайна: 401/403 — `provider_key_rejected`, без повтора; 400/422 с признаком адаптера — `provider_tools_rejected`, без повтора; 408, 429, 5xx, сеть, таймаут — повтор до двух, паузы 1 и 3 секунды, затем `provider_unavailable`; прочее — `model_error`. Тело ответа берётся из ошибки AI SDK.
   - `model-client.ts`: после вердикта `AccessGate` — `providers.connection(modelProvider(model))` и `providerReadiness`; не готов → `model_error` с причиной `provider_missing` / `provider_disabled` / `provider_key_missing` без запроса и без строки журнала (DC-10: не пишет `access_denied`). Подключение уходит шву в `AgentTurnCall`. `ModelError` получает `reason`. Лог отказа провайдера: `provider`, `reason`, `statusCode`, `responseBody` (через маску). Ответ без числа входных токенов — оценка, как прерванная попытка, `estimated: true` в логе (DC-11). `completeText` берёт модель из `access.defaultChatModel()`; `null` → отказ `ModelNotConfiguredError` с причиной `model_not_configured`. `ModelClientDeps.config` больше не несёт `defaultModel`.
@@ -134,7 +134,7 @@ Type: feature
   - Тесты: `retry-policy.spec.ts` (new) — одна таблица над `createModelClient` с двойником шва, бросающим ошибку формы `AI_APICallError`: статус и тело × число попыток × причина × строка журнала × `responseBody` в логе (AC-04.2, AC-09.3 — нет строки журнала, AC-09.5, признак инструментов каждого вида). Строки повтора в `model-client.spec.ts`, которые этот стол повторяет, удаляются; остальные строки правятся под новые зависимости (реестр — двойник с готовым провайдером).
   - Проверка: нет ошибок `tsc` в файлах задачи (`pnpm --filter @agent-os/agents typecheck`). Ревьюер читает: порядок «права → готовность → запрос»; отказ провайдера не зовёт `audit`; `not_started` по-прежнему только у отказа `AccessGate`.
 
-- [ ] **Task 2.4: Клиент хода над адаптерами; переменные окружения удалены** — covers DD KD-1 (удаление), KD-3, C4 шаг 3, FR-02 (удаление), Building-block `createMastraTurnClient` (extended), Contract «`createAgents` опции `secrets` не имеет»
+- [x] **Task 2.4: Клиент хода над адаптерами; переменные окружения удалены** — covers DD KD-1 (удаление), KD-3, C4 шаг 3, FR-02 (удаление), Building-block `createMastraTurnClient` (extended), Contract «`createAgents` опции `secrets` не имеет»
   - `mastra-turn.ts`: `createMastraTurnClient()` без аргументов берёт адаптер по `call.connection.kind`, модель AI SDK и метку кеша; метка на системный блок и последнее сообщение — только если адаптер её дал. Удаляются `ResolveModel`, `createResolveModel`, `AnthropicSettings`, `ANTHROPIC_PREFIX`, `CACHE_MARK` (переехал в адаптер Anthropic) и их экспорт из `index.ts`.
   - `config.ts`: из схемы и `AgentsConfig` удаляются `AGENT_DEFAULT_MODEL`, `ANTHROPIC_API_KEY`, `AGENTS_ANTHROPIC_BASE_URL`, `MODEL_ID_PATTERN`, `secretValuesOf`. `create-agents.ts`: маска `run_code` — `createSecretMasker([])` (только память).
   - `apps/api`: `agents.module.ts` — `AGENT_TURN_CLIENT` = `createMastraTurnClient()`, логгер — `createAppLogger(process.env)`; `agents-settings.ts` — три имени из `AGENTS_VARIABLES` удаляются; `logging/app-logger.ts` — `ANTHROPIC_API_KEY` из `collectSecrets` удаляется. `.env.example` и README — три переменные и их описания удаляются, вместо них — «провайдеры и ключ задаются посевом `seed:access` или в панели».
@@ -144,7 +144,7 @@ Type: feature
   - Dependencies: Task 2.3.
   - Проверка: нет ошибок `tsc` в файлах задачи пакета `agents` (`pnpm --filter @agent-os/agents typecheck`); файлы `apps/api` этой задачи проверяет Task 4.1 (до неё `api` читает старый `dist` пакета `agents`). Ревьюер читает: `grep -rn "ANTHROPIC_API_KEY\|AGENTS_ANTHROPIC_BASE_URL\|AGENT_DEFAULT_MODEL\|createResolveModel\|secretValuesOf" apps packages --include=*.ts --include=*.example --include=*.md` находит только `executor-process.e2e-spec.ts`, комментарии скелетов и места Task 4.3 / Phase 5.
 
-- [ ] **Task 2.5: Старт: модель `null` → модель чата по умолчанию; готовность провайдера; четыре причины отказа** — covers DD KD-2 (старт), KD-5, Contract «Отказ старта», DC-3 (старт), DC-7, AC-02.1, AC-09.1, ADR-0017
+- [x] **Task 2.5: Старт: модель `null` → модель чата по умолчанию; готовность провайдера; четыре причины отказа** — covers DD KD-2 (старт), KD-5, Contract «Отказ старта», DC-3 (старт), DC-7, AC-02.1, AC-09.1, ADR-0017
   - Pattern: [run-snapshot.md](../../../code-system/patterns/run-snapshot.md), [pure-decision.md](../../../code-system/patterns/pure-decision.md).
   - `resolve-start.ts`: строя снимок, заменяет `null` в модели агента, координатора и каждого исполнителя на `access.defaultChatModel()`; нет модели по умолчанию, а заменять нужно — отказ `model_not_configured` с `model: null`. Затем, как сегодня, вердикт `access.model` у модели самой записи; затем `providerReadiness` её провайдера → отказ `provider_missing` / `provider_disabled` / `provider_key_missing` с моделью. Исполнители и форки берут модель из снимка, идущий запуск смену не видит.
   - `snapshot.ts`: `RunSnapshotSchema` держит модель агента, координатора и исполнителя как `ModelIdSchema` (не `nullable`): в снимке `null` уже заменён. `snapshot-definition.ts`: модель — строка, как сегодня.
@@ -168,7 +168,7 @@ Type: feature
 
 #### Tasks
 
-- [ ] **Task 3.1: `Agents.embeddings`, шов `EmbeddingClient`, `PLATFORM_OWNER_ID`** — covers DD KD-6, C4 «эмбеддинги», Flow 2, Contract `Agents.embeddings.embed`, `Agents.embeddings.model`, `PLATFORM_OWNER_ID`, DC-8, DC-9, DC-11, Invariant 6, AC-06.3, AC-07.1–AC-07.5 (служба), AC-08.1–AC-08.3 (служба)
+- [x] **Task 3.1: `Agents.embeddings`, шов `EmbeddingClient`, `PLATFORM_OWNER_ID`** — covers DD KD-6, C4 «эмбеддинги», Flow 2, Contract `Agents.embeddings.embed`, `Agents.embeddings.model`, `PLATFORM_OWNER_ID`, DC-8, DC-9, DC-11, Invariant 6, AC-06.3, AC-07.1–AC-07.5 (служба), AC-08.1–AC-08.3 (служба)
   - Pattern: [composition-root.md](../../../code-system/patterns/composition-root.md) (шов как опция `createAgents`).
   - Проверка риска первой: `pnpm --filter @agent-os/agents add ai@<версия, которую линкует @mastra/core 1.83>` (`pnpm why ai --filter @agent-os/agents`; в хранилище 7.0.148 и 7.0.155, `embedMany` подтверждён в 7.0.155); `embedMany` экспортирован. Если нет — `EmbeddingClient` зовёт `doEmbed` модели эмбеддингов пакета провайдера напрямую, без `ai` (резерв внутри шва, контракт не меняется). Результат — в Progress Tracking.
   - `packages/runtime`: `PLATFORM_OWNER_ID = 'platform'` в `token-ledger.ts` (или рядом) и экспорт из `index.ts`.
@@ -189,7 +189,7 @@ Type: feature
 
 #### Tasks
 
-- [ ] **Task 4.1: `AccessService`: назначение моделей, правила каталога, модели по умолчанию, вопросы порта** — covers DD KD-4, KD-5, KD-6 (порт), Contract «Правила каталога», `PUT /api/admin/model-defaults`, `POST /api/admin/grants` (`embedding_model`), `GET /api/access/models` (сервис), `AccessGate.defaultChatModel`, `AccessGate.embedding`, `AccessGate.model` на эмбеддинг, Invariants 3, 4, DC-5, DC-6, AC-05.1, AC-05.2, AC-05.3, AC-06.2
+- [x] **Task 4.1: `AccessService`: назначение моделей, правила каталога, модели по умолчанию, вопросы порта** — covers DD KD-4, KD-5, KD-6 (порт), Contract «Правила каталога», `PUT /api/admin/model-defaults`, `POST /api/admin/grants` (`embedding_model`), `GET /api/access/models` (сервис), `AccessGate.defaultChatModel`, `AccessGate.embedding`, `AccessGate.model` на эмбеддинг, Invariants 3, 4, DC-5, DC-6, AC-05.1, AC-05.2, AC-05.3, AC-06.2
   - Pattern: [pure-decision.md](../../../code-system/patterns/pure-decision.md) (`catalogue-rules.ts`), [settings-row.md](../../../code-system/patterns/settings-row.md) (модели по умолчанию, аудит в транзакции), [repository-over-transaction.md](../../../code-system/patterns/repository-over-transaction.md).
   - `catalogue-rules.ts` (new): добавление модели по факту `providerKind: ModelProviderKind | null` — `null` → `MODEL_PROVIDER_INVALID` `provider_unknown`, эмбеддинг у вида без эмбеддингов → `embeddings_not_supported`; выбор модели по умолчанию по строке каталога — нет → `model_unknown`, не того назначения → `not_chat` / `not_embedding`; изменение с полем другого назначения → `VALIDATION_FAILED`.
   - `models.repository.ts`: назначение и размерность; `countByProvider(name)`; строка `access_model_defaults` — чтение и запись. `access.service.ts`: `createModel(actor, body, providerKind)`, `updateModel` по назначению, `listModels` → `CatalogModel` с `provider`; `modelDefaults()` и `setModelDefaults(actor, body)` — аудит `admin_change` «было/стало» в транзакции записи, лог изменения; `defaultChatModel()`; `embedding(ownerId)` — включён ли сотрудник (если назван) и модель эмбеддингов по умолчанию с ценой ввода и размерностью, без прав и квот; `countModelsOfProvider(name)`; `myModels(ownerId, readiness)` — только модели чата и `unavailableReason` по готовности их провайдеров; `allowedModels` — только модели чата.
@@ -199,7 +199,7 @@ Type: feature
   - Тесты — одна таблица правил каталога (шапка скелета `apps/api`): `catalogue-rules.spec.ts` — AC-05.1 (эмбеддинг к `gemini` принят), AC-05.2 (`embeddings_not_supported`), AC-05.3 (`provider_unknown`), AC-06.2 (`not_chat`, `not_embedding`, `model_unknown`); строка в `grant-rules.spec.ts` — `embedding_model` (DC-5); строка в `model-verdict.spec.ts` — эмбеддинг → `model_not_connected`.
   - Проверка: `pnpm turbo build --filter=api^...`, затем `pnpm --filter api typecheck` — нет ошибок `tsc` в файлах этой задачи и в файлах `apps/api` задач 1.4 и 2.4 (`logging/sentry-mask.ts`, `instrument.ts`, `agents/agents.module.ts`, `agents/agents-settings.ts`, `logging/app-logger.ts`). Ревьюер читает: модели эмбеддингов нет ни в «Мой доступ», ни в разрешённых; `embedding` не читает права.
 
-- [ ] **Task 4.2: Маршруты провайдеров, каталога, моделей по умолчанию и «Мой доступ»; шов эмбеддингов в Nest** — covers DD KD-1 (факты передаёт контроллер), Contract «Для части `web`» (все маршруты), Flow 3, Error handling, Security Considerations, AC-01.1, AC-01.3, AC-01.4, AC-01.5, AC-15.1 (маршрут), ADR-0019
+- [x] **Task 4.2: Маршруты провайдеров, каталога, моделей по умолчанию и «Мой доступ»; шов эмбеддингов в Nest** — covers DD KD-1 (факты передаёт контроллер), Contract «Для части `web`» (все маршруты), Flow 3, Error handling, Security Considerations, AC-01.1, AC-01.3, AC-01.4, AC-01.5, AC-15.1 (маршрут), ADR-0019
   - Pattern: [auth-boundary.md](../../../code-system/patterns/auth-boundary.md), [port-module-split.md](../../../code-system/patterns/port-module-split.md), [write-only-secret.md](../../../code-system/patterns/write-only-secret.md).
   - `admin-model-providers.controller.ts` (new, `AgentsModule`, по образцу `AdminMcpServersController`, `@AdminOnly()`): `GET /`, `POST /`, `GET /:name`, `PATCH /:name`, `DELETE /:name` (число моделей — `AccessService.countModelsOfProvider`), `POST /:name/check`; `catalogModels` в каждом виде — от `AccessService`. Аудит `admin_change` на `model_provider` после операции (`recordProviderChange` по образцу `recordServerChange`); `apiKey: 'changed'` даёт `secret_changed`. Ошибки — `model-providers.errors.ts`: `MODEL_PROVIDER_NOT_FOUND` 404, `MODEL_PROVIDER_NAME_TAKEN` 409, `MODEL_PROVIDER_HAS_MODELS` 409 с `count`.
   - `admin-models.controller.ts`: при добавлении читает `agents.providers.kindOf(modelProvider(body.id))` и передаёт в `createModel`. `admin-model-defaults.controller.ts` (new, `AccessAdminModule`): `GET` и `PUT /api/admin/model-defaults`, `MODEL_DEFAULT_INVALID` 422 с `reason` и `model`.
@@ -210,7 +210,7 @@ Type: feature
   - Тестов своих нет: маршруты проходят INT-2, INT-3, INT-6; проверка подключения — таблица адаптеров (Task 2.2).
   - Проверка: нет ошибок `tsc` в файлах задачи. Ревьюер читает: каждый новый контроллер под `@AdminOnly()`; `AccessModule` не импортирует `AgentsModule`; ни один ответ не несёт ключа.
 
-- [ ] **Task 4.3: Библиотека и чат на модели по умолчанию из базы** — covers DD KD-5, Contract `GET /api/library/choices`, «содержимое записи — модель может быть `null`», «Отказ старта» (HTTP), Flow 1 (заголовок без модели), DC-3, DC-7 (посев встроенных), FR-06
+- [x] **Task 4.3: Библиотека и чат на модели по умолчанию из базы** — covers DD KD-5, Contract `GET /api/library/choices`, «содержимое записи — модель может быть `null`», «Отказ старта» (HTTP), Flow 1 (заголовок без модели), DC-3, DC-7 (посев встроенных), FR-06
   - `library.service.ts`: `choices` и `copy` берут модель по умолчанию у `AccessService.defaultChatModel()` (может быть `null`); `ModelFacts.defaultModel` удаляется. `library.controller.ts`: `modelFacts` без `AGENTS_SETTINGS`. `copy-rules.ts`: шаг 2 правила замены пропускается при `null`. `record-content.ts`: `ContentPart.model: string | null`; `save-rules.ts` и `record-view.ts` читают модели только через `contentParts` и пропускают часть с `null` — по Notes, пункт 6.
   - `builtin-records.ts`: `builtinRecords()` без параметра — модель `null` у главного чата, `general-purpose` и исполнителей глубокого ресерча; координатор `deep-research` — `anthropic/claude-sonnet-5-5`. `builtin-records.seeder.ts`: без `AGENTS_SETTINGS`. `AgentsModule` больше не экспортирует `AGENTS_SETTINGS` (потребителей вне модуля нет).
   - Чат: `chat.errors.ts` отдаёт четыре новые причины в 409 `START_REFUSED` с `model`; `title.service.ts` на `ModelNotConfiguredError` пишет предупреждение с причиной и заголовок не ставит.
@@ -219,7 +219,7 @@ Type: feature
   - Тестов новых нет: `null` → модель по умолчанию доказывает INT-7, отказ первого сообщения — INT-4. Строки `copy-rules.spec.ts` правятся только под тип.
   - Проверка: нет ошибок `tsc` в файлах задачи. Ревьюер читает: `AGENTS_SETTINGS.defaultModel` нигде не читается.
 
-- [ ] **Task 4.4: Посев `seed:access`: провайдеры, модель эмбеддингов, модели по умолчанию; ключи со стандартного ввода** — covers DD FR-17, DC-13, KD-7 (путь стандартного ввода), AC-17.1, AC-17.2 (код; доказательство — ручной прогон)
+- [x] **Task 4.4: Посев `seed:access`: провайдеры, модель эмбеддингов, модели по умолчанию; ключи со стандартного ввода** — covers DD FR-17, DC-13, KD-7 (путь стандартного ввода), AC-17.1, AC-17.2 (код; доказательство — ручной прогон)
   - Стандартный ввод — три строки: пароль администратора, ключ Anthropic, ключ Google; пустая строка — провайдер без ключа. Каждый ключ — в `rememberSecret` сразу после чтения, до первого лога. Ключи не берутся из аргументов.
   - Порядок через API: провайдеры `anthropic` (вид `anthropic`) и `google` (вид `gemini`) — 409 `MODEL_PROVIDER_NAME_TAKEN` пропускается, как `MODEL_ID_TAKEN` сегодня; модели Haiku и Sonnet (`purpose: 'chat'`) и `google/gemini-embedding-001` (`purpose: 'embedding'`, `dimensions: 768`, цена ввода — Notes, пункт 7); `PUT /api/admin/model-defaults` — чат `anthropic/claude-haiku-5-5`, эмбеддинги `google/gemini-embedding-001`; права, как сегодня (только модели чата).
   - Чтение трёх строк — в `common/admin-cli-client.ts` рядом с `readPassword` (`readLines(count)`), если `seed-mcp` и `super-admin` дальше читают пароль прежней функцией.
@@ -241,7 +241,7 @@ Type: feature
 
 #### Tasks
 
-- [ ] **Task 5.1: Опоры `agents`, `workflows` и дочернего процесса `run_code` на строках провайдеров** — covers DD Test Strategy (harness), FR-02 (тесты)
+- [x] **Task 5.1: Опоры `agents`, `workflows` и дочернего процесса `run_code` на строках провайдеров** — covers DD Test Strategy (harness), FR-02 (тесты)
   - `agentsHarness.ts`: модели опор переезжают на провайдера опор (`TEST_MODEL_DEFAULT = 'agents-harness/test-default'`, `TEST_MODEL_CHOSEN = 'agents-harness/test-chosen'`); опора при старте удаляет и заново вставляет строку `agents-harness` (вид `openai_compatible`, без ключа — готов) и удаляет её при закрытии; `AGENT_DEFAULT_MODEL` из `variables` уходит, модель по умолчанию отдаёт двойник гейта; опция `turnClient: 'real'` собирает `createMastraTurnClient()` (для INT-1); двойник эмбеддингов `createScriptedEmbeddings()` передаётся в `createAgents`.
   - То же в `packages/workflows/test/support/workflowsHarness.ts` (`HAIKU_MODEL = 'workflows-harness/claude-haiku-5-5'`, строка `workflows-harness`) и в `packages/agents/test/support/codeRunChild.ts` / `codeRunChildMain.ts` (`CHILD_MODEL` на провайдере опор; строку вставляет родительская опора до старта дочернего процесса), `packages/agents/test/verify/code-run.verify.ts`.
   - Литералы `anthropic/…`, которые эти e2e сравнивают с моделью опор, правятся на константы опор: `packages/agents/test/agent-platform-agents.int.e2e-spec.ts`, `packages/agents/test/custom-agents-runtime.int.e2e-spec.ts`, `packages/workflows/src/runs.spec.ts`, `packages/workflows/src/start-workflow.spec.ts` — только где значение идёт через `ModelClient` или старт; модели вне каталога остаются.
@@ -249,7 +249,7 @@ Type: feature
   - Dependencies: Task 2.5, Task 3.1.
   - Проверка: `pnpm --filter @agent-os/agents typecheck`, `pnpm --filter @agent-os/workflows typecheck`. Ревьюер читает: `grep -rn "AGENT_DEFAULT_MODEL\|ANTHROPIC_API_KEY" packages/agents/test packages/workflows/test` пуст; ни одна опора не создаёт провайдера с именем `anthropic` в базе разработчика.
 
-- [ ] **Task 5.2: Поддельный провайдер трёх форматов и INT-1** — covers DD Test Strategy UC-1, UC-2, DC-4, AC-01.2, AC-02.2, AC-03.1, AC-03.2, AC-03.3, AC-04.1 (половина запроса), AC-05.4, AC-10.1
+- [x] **Task 5.2: Поддельный провайдер трёх форматов и INT-1** — covers DD Test Strategy UC-1, UC-2, DC-4, AC-01.2, AC-02.2, AC-03.1, AC-03.2, AC-03.3, AC-04.1 (половина запроса), AC-05.4, AC-10.1
   - `packages/agents/test/support/fake-provider.ts` (new): локальный HTTP-сервер на формат — Anthropic `messages` SSE, Gemini `streamGenerateContent` SSE, OpenAI `chat/completions` SSE с `usage` в потоке; отвечает сценарием с текстом частями, одним вызовом инструмента и расходом «10 000 входных, из них 8 000 из кеша»; записывает URL, заголовок ключа и тело каждого запроса; умеет держать поток открытым (строка остановки); закрывается в `afterAll`.
   - INT-1 заполняет `packages/agents/test/model-providers-core.int.e2e-spec.ts` по строкам A–E скелета: опора `turnClient: 'real'`; три провайдера с уникальными именами на тест — вида `anthropic`, `gemini` и `openai_compatible` (`mp-a-<run>`, `mp-g-<run>`, `mp-l-<run>`), `baseUrl` каждого — адрес подделки; инструмент MCP фикстуры со схемой, где есть `$schema`, `additionalProperties`, `$ref`, `$defs` и `const`; двойник гейта отдаёт цену каждой модели. Строка D меняет ключ через `Agents.providers.update` между вызовами. Провайдера с именем `anthropic` тест не заводит: в базе разработчика он может быть настоящим (Notes, пункт 10).
   - Если подделка формата окажется слишком дорогой, резерв из шапки скелета — моковые модели AI SDK под адаптерами; тогда в задаче записывается, что строки B (DC-4) и C, D (адрес и ключ) не доказаны, и это идёт в Progress Tracking и в отчёт владельцу.
@@ -258,7 +258,7 @@ Type: feature
   - AC-03.1, AC-03.2, AC-03.3, AC-01.2, AC-02.2, AC-05.4, AC-10.1 (проводка) → INT-1; AC-04.1 → INT-1 (запрос) + ручная проверка.
   - Проверка: `pnpm --filter @agent-os/agents typecheck`. Ревью тестов: да (опора, остановка).
 
-- [ ] **Task 5.3: Опоры `apps/api`: провайдер прогона, модели по умолчанию в базе, двойник эмбеддингов** — covers DD Test Strategy (harness), FR-02 (тесты)
+- [x] **Task 5.3: Опоры `apps/api`: провайдер прогона, модели по умолчанию в базе, двойник эмбеддингов** — covers DD Test Strategy (harness), FR-02 (тесты)
   - `createTestApp`: опция `defaultModel` и `setEnv` для `AGENT_DEFAULT_MODEL` удаляются; новая опция `embeddings?: ScriptedEmbeddings` подменяет `EMBEDDING_CLIENT` (по умолчанию — свежий двойник, сети нет).
   - `support/access.ts`: `runProvider()` — `run-t<runId>`; `runModel(base)` — `<runProvider>/<base>-t<runId>`; `useRunModels(app, admin, { chat, embedding? })` — заводит провайдера прогона (вид `anthropic`, ключ прогона от 8 знаков; 409 — уже есть), добавляет модели и ставит их моделями по умолчанию; возвращает восстановление, которое возвращает прежние модели по умолчанию, если они ещё в каталоге, иначе `null`. `addModel` шлёт `purpose`.
   - `support/library.ts`: `catalogueModels` разбирает `CatalogModelSchema`; восстановление `pointBuiltinsAt` возвращает и прежнее `null`; `builtinRecords('anthropic/builtin-record-ids')` (`:199`) — `builtinRecords()`. То же в `custom-agents-runtime.int.e2e-spec.ts:164` (`builtinRecords(DEFAULT_MODEL)`).
@@ -269,7 +269,7 @@ Type: feature
   - Dependencies: Task 4.4, Task 3.1.
   - Проверка: `pnpm turbo build --filter=api^...`, затем `pnpm --filter api typecheck` — первая проверка всего пакета `api` без ошибок. Ревью тестов: да (опора всех наборов `apps/api`). Ревьюер читает: каждый `beforeAll` с `useRunModels` имеет восстановление в `afterAll`; CI-база без посева получает модели и провайдера из самого набора.
 
-- [ ] **Task 5.4: INT-2, INT-3, INT-6 — ключ, права администратора, удаление** — covers DD Test Strategy UC-E1, UC-E2, UC-E7 (интеграционная часть), Flow 3, Invariants 1, 2, 4, 5, NFR-01
+- [x] **Task 5.4: INT-2, INT-3, INT-6 — ключ, права администратора, удаление** — covers DD Test Strategy UC-E1, UC-E2, UC-E7 (интеграционная часть), Flow 3, Invariants 1, 2, 4, 5, NFR-01
   - Файл `apps/api/test/model-providers-core.int.e2e-spec.ts`, одна `createTestApp({ captureLog: true })` на файл; сотрудники, роли, провайдеры (`mp-<run>`) и модели — свои у каждого случая; `afterAll` удаляет строки прогона и возвращает модели по умолчанию.
   - INT-2: строки 1–4 скелета; строка 4 вставляет строку провайдера прямо в базу и читает её вызовом реестра (`app.agents.providers.get`), затем пишет лог. AC-01.1, AC-01.5, AC-11.1, AC-11.2, NFR-01 → INT-2.
   - INT-3: таблица маршрутов скелета; после записей — чтение администратором без изменений; проверка подключения не послала запроса. AC-01.4 → INT-3.
@@ -279,7 +279,7 @@ Type: feature
   - Dependencies: Task 5.3.
   - Проверка: `pnpm --filter api typecheck`. Ревью тестов: да (секреты).
 
-- [ ] **Task 5.5: INT-4, INT-5, INT-7 — отказы провайдера, эмбеддинги, модель записи `null`** — covers DD Test Strategy UC-3, UC-4, UC-E3, UC-E5 (`owner_disabled`), UC-E6, Flow 1 и Flow 2 (проводка), KD-5, KD-6, DC-3, DC-7, DC-9, DC-10
+- [x] **Task 5.5: INT-4, INT-5, INT-7 — отказы провайдера, эмбеддинги, модель записи `null`** — covers DD Test Strategy UC-3, UC-4, UC-E3, UC-E5 (`owner_disabled`), UC-E6, Flow 1 и Flow 2 (проводка), KD-5, KD-6, DC-3, DC-7, DC-9, DC-10
   - INT-4: строки 1–4 скелета. Строка 3 иначе, чем в скелете: защёлка скриптовой модели стоит в ответе, то есть после проверки готовности (`testing.ts:245`), поэтому держится ответ ПЕРВОГО вызова, который просит следующий вызов модели. Пока он держится, администратор выключает провайдера (потом — `apiKey: null`); после отпускания второй вызов отклоняется до шва с `provider_disabled` (`provider_key_missing`), запись скриптовой модели показывает ровно один вызов. AC-02.1, AC-09.1, AC-09.2, AC-09.4 → INT-4.
   - INT-5: строки A–C скелета через `app.agents.embeddings.embed` и двойник `createTestApp({ embeddings })`; месячный расход Ани и второго сотрудника (строки A и C) — `GET /api/spend` (`ledger.monthSpend` суммирует все строки сотрудника; «Мой доступ» показывает только модели чата); расход против квоты Sonnet — `spendOf` или `GET /api/access/models`. AC-07.5, AC-08.1, AC-08.2, AC-08.3 → INT-5; AC-07.1 → INT-5 (проводка) + unit.
   - INT-7: строки 1–3 скелета; исполнитель workflow, стартующий после смены, требует `workers: true` (как `custom-agents-runtime`). Строка 3 берёт модель новой записи из `GET /api/library/choices`, как редактор веба. AC-06.1 → INT-7; DC-7 → INT-7.
@@ -295,11 +295,11 @@ Type: feature
 **Purpose**: Один quality gate части, аудит тестов и сверка с дизайном.
 
 #### Tasks
-- [ ] Quality gate после последней задачи: `pnpm check` (lint, typecheck, build, unit-тесты всех пакетов и `web`, `knip`), `pnpm --filter @agent-os/db exec drizzle-kit check`, затем на поднятой базе `pnpm db:migrate` и e2e в порядке CI: `pnpm --filter @agent-os/code-runner test:e2e`, `pnpm --filter @agent-os/db test:e2e`, `pnpm --filter @agent-os/runtime test:e2e`, `pnpm --filter @agent-os/agents test:e2e`, `pnpm --filter @agent-os/workflows test:e2e`, `pnpm --filter api test:e2e`. Падения исправляются, gate повторяется.
-- [ ] Аудит тестов части (`test-auditor`): семь INT и unit-таблицы шапок скелетов, ничего сверх них; строки `model-client.spec.ts`, повторённые `retry-policy.spec.ts`, удалены.
-- [ ] Каждый AC FR-01–FR-11, FR-15 доказан тестом по `acProof` скелета `packages/agents/test/model-providers-core.int.e2e-spec.ts` и проходит.
-- [ ] После gate `git status` и `pnpm db:migrate` оставили базу разработчика без строк прогона: `SELECT name FROM app.agent_model_providers` — только провайдеры владельца; `SELECT * FROM app.access_model_defaults` — значения, которые стояли до прогона.
-- [ ] Операционные проверки Phase 1, 2, 4 выполнены; результаты — в Progress Tracking.
+- [x] Quality gate после последней задачи: `pnpm check` (lint, typecheck, build, unit-тесты всех пакетов и `web`, `knip`), `pnpm --filter @agent-os/db exec drizzle-kit check`, затем на поднятой базе `pnpm db:migrate` и e2e в порядке CI: `pnpm --filter @agent-os/code-runner test:e2e`, `pnpm --filter @agent-os/db test:e2e`, `pnpm --filter @agent-os/runtime test:e2e`, `pnpm --filter @agent-os/agents test:e2e`, `pnpm --filter @agent-os/workflows test:e2e`, `pnpm --filter api test:e2e`. Падения исправляются, gate повторяется.
+- [x] Аудит тестов части (`test-auditor`): семь INT и unit-таблицы шапок скелетов, ничего сверх них; строки `model-client.spec.ts`, повторённые `retry-policy.spec.ts`, удалены.
+- [x] Каждый AC FR-01–FR-11, FR-15 доказан тестом по `acProof` скелета `packages/agents/test/model-providers-core.int.e2e-spec.ts` и проходит.
+- [x] После gate `git status` и `pnpm db:migrate` оставили базу разработчика без строк прогона: `SELECT name FROM app.agent_model_providers` — только провайдеры владельца; `SELECT * FROM app.access_model_defaults` — значения, которые стояли до прогона.
+- [x] Операционные проверки Phase 1, 2, 4 выполнены; результаты — в Progress Tracking.
 
 #### Operational Verification Procedures
 
@@ -356,16 +356,22 @@ Type: feature
 9. **knip.** Новые экспорты `contracts`, `common`, `runtime`, `agents` идут через вход пакета; `@ai-sdk/google`, `@ai-sdk/openai-compatible` объявляются в Task 2.2, `ai` — в Task 3.1, `@mastra/schema-compat` — только если взят резерв Task 2.2. Неиспользуемый после Task 4.3 экспорт `AGENTS_SETTINGS` удаляется.
 10. **AC-05.4 в INT-1.** Скелет просит в строке A id `anthropic/…`. E2e пишут в базу разработчика, где провайдер `anthropic` после посева настоящий, поэтому строка A идёт на провайдере вида `anthropic` с именем прогона. Что уже записанный id `anthropic/…` работает без правок, держат две вещи: строка `anthropic/claude-haiku-5-5` в таблице id `access.spec.ts` (Task 1.1) и отсутствие любых проверок префикса на пути вызова (Task 2.4, grep). Если владельцу нужна строка A буквально, тест заводит `anthropic` только при его отсутствии и удаляет его после себя.
 11. **Поиск по коду.** Пути и потребители проверены тремя проходами `code-explorer` (Grep и чтение файлов; LSP не использовался, поэтому списки потребителей — текстовые, прочитанные).
+12. **Итог quality gate (2026-11-20).** Gate зелёный: unit-тесты всех пакетов, `web` (59 файлов, 543 теста), e2e `code-runner` 22, `db` 3, `runtime` 28, `agents` 44, `workflows` 7, `api` 49, `drizzle-kit check`, миграция 0025, `knip`. Что стоит знать:
+    - `pnpm check` одной командой останавливается на первой упавшей задаче turbo, поэтому `knip` и тесты `web` запускались отдельно.
+    - Таймауты vitest в `apps/web` подняты с 20 до 60 секунд: четыре интеграционных теста `custom-agents` веба не укладывались в 20 секунд при параллельной нагрузке.
+    - Вызов модели, который сообщает ноль входных токенов, записывается оценкой (DC-11); из-за этого в одном тесте `enterprise-access` поменялись точные суммы.
+    - Аудит тестов: «слегка раздуто, но строками, а не файлами»; ничего не удалено.
+    - Owner Checklist (ручные проверки владельца) остаётся открытым.
 
 ## Progress Tracking
 
 | Пункт | Задача | Результат |
 |---|---|---|
-| Версии `@ai-sdk/*` на `@ai-sdk/provider` 4 (`pnpm why`) | Task 2.2 | |
-| Чистка схем Gemini: слой Mastra применяется / резерв в адаптере | Task 2.2 | |
-| Версия `ai`, `embedMany` есть / резерв `doEmbed` | Task 3.1 | |
-| Резерв моковых моделей в INT-1 взят? Какие строки не доказаны | Task 5.2 | |
-| Операционные проверки Phase 1, 2, 4 | Final | |
+| Версии `@ai-sdk/*` на `@ai-sdk/provider` 4 (`pnpm why`) | Task 2.2 | Да: `@ai-sdk/anthropic` 4.0.82, `@ai-sdk/google` 4.0.99, `@ai-sdk/openai-compatible` 3.0.71 (точные версии) — все на одной копии `@ai-sdk/provider` 4.0.29 / `provider-utils` 5.0.62 |
+| Чистка схем Gemini: слой Mastra применяется / резерв в адаптере | Task 2.2 | Слой Mastra применяется: `listAssignedTools` передаёт модель агента в `makeCoreTool`, `CoreToolBuilder.build` оборачивает сырую JSON Schema и зовёт `GoogleSchemaCompatLayer` (провайдер модели `google.generative-ai`), который убирает `$schema`, `additionalProperties`, `$ref`/`$defs` и переводит `const` в `enum`. Адаптер Gemini ничего не делает, `@mastra/schema-compat` не добавлен. Доказательство на проводе — INT-1 строка B |
+| Версия `ai`, `embedMany` есть / резерв `doEmbed` | Task 3.1 | Резерв `doEmbed`. `@mastra/core` 1.83 линкует `ai` 7.0.155 (в lock единственная версия; 7.0.148 — только лишняя папка хранилища). `embedMany` есть в обеих, но 7.0.155 стоит на `@ai-sdk/provider` 4.0.34 / `provider-utils` 5.0.70, 7.0.148 — на 4.0.31 / 5.0.65; общей копии 4.0.29 с пакетами провайдеров нет ни у одной. `ai` не добавлен, `package.json` и `pnpm-lock.yaml` не менялись: `EmbeddingClient` зовёт `doEmbed` модели адаптера, повторы — службы. Gemini получает размерность каталога как `providerOptions.google.outputDimensionality` |
+| Резерв моковых моделей в INT-1 взят? Какие строки не доказаны | Task 5.2 | Нет: сетевая подделка трёх форматов (`fake-provider.ts`), строки A–E все заполнены. Инструмент с `$ref`/`$defs`/`const` — `get_trace` фикстуры за прокси в спеке, переписывающим только `tools/list` (в фикстуре таких схем нет) |
+| Операционные проверки Phase 1, 2, 4 | Final | Phase 1: миграция 0025 применена, `drizzle-kit check` чист; в базе разработчика обе таблицы есть, `access_model_defaults` — одна строка с пустыми моделями, обе строки `access_models` — `chat`.<br>Phase 2: `@ai-sdk/anthropic`, `@ai-sdk/google` и `@ai-sdk/openai-compatible` стоят на одной копии `@ai-sdk/provider` 4.0.29 (у `ai` своя 4.0.35, у Mastra внутри — 2.x и 3.x); решение по схемам Gemini — строка Task 2.2, совпадает с адаптером.<br>Phase 4: маршруты провайдеров, каталога и моделей по умолчанию прошли e2e `api` (49), `AppModule` стартует без `ANTHROPIC_API_KEY`; `start:dev` и `seed:access` на базе разработчика не запускались — провайдеров там нет, модели по умолчанию пусты, поэтому чат разработчика до посева отвечает `model_not_configured` (Owner Checklist, AC-17). |
 
 ## Owner Checklist (manual, not tasks)
 
@@ -458,3 +464,4 @@ Type: feature
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0 | 2026-11-20 | Initial version; по проверке черновика: выполнимые проверки типов (сборка `agents` через `workflows`, `api` чист с Task 5.3), `snapshot.ts`, `startDeps`, двойник реестра, `record-content.ts`, расход INT-5 через `GET /api/spend`, защёлка INT-4 на первом вызове |
+| 1.1 | 2026-11-20 | Final Phase отмечена по итогу quality gate; Progress Tracking «Операционные проверки», Notes пункт 12; статус completed |
