@@ -7,6 +7,12 @@ import { type ScriptEnd, runScript } from './sandbox.js';
 // The process layer of the same escapes and limits is E2E-2 (test/).
 
 const LIMITS: RunLimits = { timeoutMs: 300, memoryMb: 8, resultMaxBytes: 1024 };
+/**
+ * The time limit of a row that must end for another reason than time: on a loaded CI machine such a run
+ * took longer than 0.3 s and ended as a timeout. Below the 5 s of the test itself, so a stalled run still
+ * fails with the sandbox's own reason.
+ */
+const ROOMY_TIMEOUT_MS = 4_000;
 
 let quickJs: QuickJSWASMModule;
 
@@ -135,14 +141,14 @@ describe('a script stops at every limit with its reason', () => {
     {
       name: 'growing memory',
       script: 'const items = [];\nfor (;;) items.push({ n: items.length });',
-      // Filling 8 MB took longer than 0.3 s on a loaded CI machine, and the run ended as a timeout.
-      timeoutMs: 10_000,
+      timeoutMs: ROOMY_TIMEOUT_MS,
       end: { op: 'error', reason: 'memory', text: null, line: 2 },
       outputAtLeast: 0,
     },
     {
       name: 'a stream of console.log',
       script: 'for (let i = 0; i < 3000; i++) console.log("line", i);\nreturn "printed";',
+      timeoutMs: ROOMY_TIMEOUT_MS,
       end: { op: 'done', value: '"printed"' },
       lastOutput: '[вывод обрезан]',
       outputAtLeast: 16 * 1024 - 64,
