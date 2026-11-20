@@ -1,2 +1,5 @@
+# Text files are stored with LF; git converts on commit, so the tool used to edit a file does not matter.
+* text=auto eol=lf
+
 # Migration hashes are taken over raw bytes: no line-ending conversion.
 packages/db/migrations/** -text
