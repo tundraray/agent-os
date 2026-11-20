@@ -8,7 +8,8 @@ import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
 import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
 import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn.js';
 import { createProviderRegistryDouble } from '../testing.js';
-import { createModelClient, type TextDelta } from './model-client.js';
+import { CODE_RULE, createModelClient, type TextDelta } from './model-client.js';
+import { DATA_PREAMBLE } from './provider-messages.js';
 
 /** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
 interface PortAttempt {
@@ -270,12 +271,11 @@ describe('ModelClient instructions', () => {
     });
 
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatch(/^You are a chat\./);
-    expect(sent[0]).toContain('Use run_code when a direct tool result came back cut');
-    expect(sent[0]).toContain('count, aggregate or match data');
-    expect(sent[0]).toContain('more than three or four tool calls');
-    expect(sent[0]).toContain('callTool under the same names as in your tool list (mcp__<server>__<tool>)');
-    expect(sent[0]).toContain('to see the message, call that tool directly');
+    expect(sent[0]).toBe(`You are a chat.\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`);
+    // The rule names the tools a stored result is read with, as the wrapper and their descriptions do.
+    for (const name of ['read_tool_result', 'search_tool_result', 'run_code', 'readResult']) {
+      expect(CODE_RULE).toContain(name);
+    }
   });
 });
 
