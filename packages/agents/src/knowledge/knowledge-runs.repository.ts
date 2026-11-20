@@ -6,7 +6,7 @@ import {
   agentSessions,
 } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, desc, eq, getTableColumns, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { StoreReader } from '../store/sessions.repository.js';
@@ -71,14 +71,15 @@ export async function insertKnowledgeRun(
  * on it one at a time (Invariant 1); outside one the lock ends with the statement.
  */
 async function findRun(reader: StoreReader, where: SQL): Promise<KnowledgeRun | undefined> {
-  const [row] = await reader
-    .select({ ...getTableColumns(runs), ownerId: agentSessions.ownerId })
-    .from(runs)
-    .innerJoin(agentSessions, eq(agentSessions.taskId, runs.runId))
-    .where(where)
-    .for('update', { of: runs });
+  // Two statements, not a join with `FOR UPDATE OF`: Postgres takes `OF` unqualified, drizzle writes the schema in.
+  const [row] = await reader.select().from(runs).where(where).for('update');
   if (row === undefined) return undefined;
-  return { ...row, servers: ServersSchema.parse(row.servers) };
+  const [session] = await reader
+    .select({ ownerId: agentSessions.ownerId })
+    .from(agentSessions)
+    .where(eq(agentSessions.taskId, row.runId));
+  if (session === undefined) return undefined;
+  return { ...row, servers: ServersSchema.parse(row.servers), ownerId: session.ownerId };
 }
 
 /** The run row of the coordinator task; `undefined` when the run does not learn or is gone. */
