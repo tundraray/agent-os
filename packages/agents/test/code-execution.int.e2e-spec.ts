@@ -19,7 +19,7 @@
 //   evidence of what reached a server: "the server received nothing" is an empty filtered journal, never a mock's call count.
 // - The executor is the real `packages/code-runner` process with production limits shortened through the `CODE_RUN_*` settings; only INT-4 row C substitutes the `CodeRunner` (a double that holds each run until the test releases it), because that row proves the
 //   admission rule, not the engine.
-// - Isolation (project convention, no truncate): a unique owner `newUser()` per test, a unique definition name per test; each test reads only its own tree. `fileParallelism: false`. No sleeps for ordering: latches the double and the fixture wait on, and rows.
+// - Isolation (project convention, no truncate): a unique owner `newUser()` per test, the test's own library double (the root runs its `chat` record); each test reads only its own tree. `fileParallelism: false`. No sleeps for ordering: latches the double and the fixture wait on, and rows.
 // - Support (test/support): `agentsHarness.ts` takes a `CodeRunner` override and the `CODE_RUN_*` settings through `variables`, and hides the provider key in its logger as `apps/api` does; the journal is read with `fixtureCallsOf` of `@agent-os/mcp-fixture`, the model is `createScriptedModel` of `@agent-os/agents/testing`.
 //
 // Budget: Integration 4 of 3 (base 3, extended by one under the integration-e2e-testing rule). Core: INT-1, INT-2, INT-3. Extra: INT-4.
@@ -43,7 +43,8 @@
 // - AC-01.1, AC-03.2, AC-03.5, AC-04.1, AC-04.2, AC-05.1, AC-08.1, AC-08.2, AC-09.1, DC-2 (wiring), DC-7: INT-1 row A
 // - AC-07.4, AC-10.4 (the model sees the error text), DC-11, DC-12: INT-1 row B
 // - AC-10.3: INT-1 row C. INT-1 row D (a server credential in the script's env masked in the run log, AC-11.1, AC-02.2 in the log half) is dropped by mcp-connect: MCP credentials are no
-//   longer settings, `secretValuesOf` carries only `ANTHROPIC_API_KEY` (design-mcp-connect.md, Security Considerations)
+//   longer settings, and the log mask holds only the keys in the process secret memory, which the provider rows fill (design-mcp-connect.md,
+//   Security Considerations; model-providers design-core.md KD-7)
 // - AC-05.2, AC-05.3, AC-05.4, AC-05.6, AC-03.7, DC-9, DC-10, DC-16, FR-11: INT-2 rows A-E (AC-05.7 once in row A over the unit table)
 // - AC-03.1, AC-03.3, AC-03.4, AC-03.6, AC-05.5, AC-04.3, AC-06.2, DC-5, DC-6, DC-8: INT-3 rows A-C
 // - AC-10.1: INT-4 rows A, B; AC-07.6, DC-18: INT-4 row C
@@ -51,11 +52,11 @@
 import { createHash } from 'node:crypto';
 import type { AgentConfirmation, AgentHistoryEntry, AgentTurnMessage } from '@agent-os/agents';
 import {
+  createLibraryDouble,
   createScriptedModel,
   inputLines,
   type Script,
   type ScriptedModel,
-  type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import type { CodeRunner, RunOutcome } from '@agent-os/code-runner';
 import {
@@ -75,13 +76,13 @@ import {
   historyLines,
   historyOf,
   runLogsOf,
-  testDefinition,
+  testRecord,
   toolCallRowsOf,
   toolOutputOf,
-  uniqueName,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
+import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader.js';
 import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers.js';
 import { newUser } from './support/new-user.js';
 
@@ -91,21 +92,10 @@ const TEST_TIMEOUT_MS = 120_000;
 // A read-class script of INT-1 A reads the full result of a direct `mcp__${LOGS_SERVER}__search_logs` (500 records, more than the slice) by `callId`.
 // The fixture's `totalMatched` is the literal the script's count is compared with.
 
-/** `search_logs` as the model and a script name it. */
-const SEARCH_LOGS = `mcp__${LOGS_SERVER}__search_logs`;
-/** A quarter of an hour of the fixture's week: 629 records, so the first page (500, the default `pageSize`) is not all of them. */
-const WINDOW = { from: '2026-09-15T10:00:00.000Z', to: '2026-09-15T10:15:00.000Z' } as const;
 /** The fixture's `totalMatched` for {@link WINDOW}: 500 on the first page and 129 on the second. */
 const TOTAL_MATCHED = 629;
-/** The direct answer for {@link WINDOW} is 120 598 bytes of JSON; the model's slice keeps 16 384 (`AGENT_TOOL_RESULT_MAX_BYTES`). */
-const CUT_BYTES = 104_214;
-/** One record of {@link WINDOW}: a cheap read call for the rows that count calls. */
-const ONE_RECORD = { ...WINDOW, pageSize: 1 } as const;
-
-/** A `run_code` call of a scripted answer; class `read` unless named. */
-function runCode(description: string, script: string, runClass: 'read' | 'write' = 'read'): ScriptedToolCall {
-  return { tool: 'run_code', args: { description, class: runClass, script } };
-}
+// The direct answer for WINDOW is 120 598 bytes of JSON, longer than the default `storeFromChars` (50 000): the model
+// gets the wrapper with a preview of its start, and the whole answer is stored under the call's callId.
 
 /**
  * The `callId` the cut mark of a direct result names, as the model reads it (inside the data envelope the
@@ -128,7 +118,7 @@ function seenRunResult(data: string): string {
   return `<data source="tool run_code" author="agents">\n${data}\n</data>`;
 }
 
-/** One reader of a test: an agent of a fresh owner whose definition reads the `logs` server. */
+/** One reader of a test: an agent of a fresh owner whose record reads the `logs` server. */
 interface Reader {
   readonly harness: AgentsHarness;
   readonly fixture: FixtureFiles;
@@ -146,17 +136,16 @@ async function startReader(
   options: Pick<AgentsHarnessOptions, 'variables' | 'fixture'> = {},
 ): Promise<Reader> {
   const ownerId = newUser();
-  const definition = uniqueName('reader');
   const fixture = options.fixture ?? createFixtureFiles('code-execution');
   const harness = await createAgentsHarness({
     ...options,
     model,
     fixture,
     access: { [ownerId]: [LOGS_SERVER] },
-    definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+    root: testRecord('reader', { servers: [LOGS_SERVER] }),
   });
   try {
-    const { agentId } = await harness.sessions.start({ ownerId, definition, prompt, description: 'reader' });
+    const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'reader' });
     return { harness, fixture, ownerId, agentId };
   } catch (error) {
     await harness.close();
@@ -205,7 +194,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   count and returns errors per service -> the model gets only the returned value, the history carries the value and the `output`, the audit has one run row and one from-code row linked to it, the log has start, call with outcome and duration, output and end under one `runId`
   // Catches: a run whose pieces work alone but not chained - `readResult` returning the 16 KiB slice instead of the full result (the count is not `totalMatched`), the script output reaching the model, a from-code call row not linked to its run row, or a run missing from the log
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, agent_tool_results, agent_tool_calls, MCP fixture (logs), logger, ScriptedModel, Postgres
+  // @dependency: run_code tool, CodeRunner (real process), ToolRunner.callFromCode, agent_tool_results, tool calls in `agent_messages`, MCP fixture (logs), logger, ScriptedModel, Postgres
   // @complexity: high
   it('INT-1 row A: AC-01.1 a read run counts the full result by callId, reaches the second page, and the model gets only the returned value', async () => {
     // Given: the agent reads a quarter of an hour of logs directly (500 records, more than the slice), then runs a read script
@@ -225,12 +214,16 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
       const [searchCallId, runCallId] = answerCallIds(script);
       if (searchCallId === undefined || runCallId === undefined) throw new Error('the model made no two tool calls');
 
-      // Then: the model saw the slice ending with the cut mark that names the direct call's callId (AC-04.1, DC-7)
-      const seenSlice = toolOutputOf(script.calls[1]?.messages ?? [], searchCallId);
-      expect(seenSlice.startsWith(`<data source="tool search_logs" author="${LOGS_SERVER}">\n`)).toBe(true);
-      expect(seenSlice.endsWith(
-        `\nрезультат обрезан на ${CUT_BYTES} байт; полный — \`readResult(&quot;${searchCallId}&quot;)\` в \`run_code\`\n</data>`,
+      // Then: the model saw the wrapper, not the answer: its size and the direct call's callId with readResult (AC-04.1;
+      // tool-result-reading R-1), and nothing of the answer past the preview - `totalMatched`, the last key of the
+      // canonical JSON, is not there
+      const seenWrapper = toolOutputOf(script.calls[1]?.messages ?? [], searchCallId);
+      expect(seenWrapper.startsWith(
+        `<data source="tool search_logs" author="${LOGS_SERVER}">\n[stored result] Output too large: `,
       )).toBe(true);
+      expect(seenWrapper).toContain(` characters. The full output is stored under callId &quot;${searchCallId}&quot;.\n`);
+      expect(seenWrapper).toContain(`readResult(&quot;${searchCallId}&quot;)`);
+      expect(seenWrapper).not.toContain('totalMatched');
 
       // Then: the read run started without asking the employee (AC-05.1)
       expect(await harness.sessions.confirmations(agentId, ownerId)).toEqual([]);
@@ -304,7 +297,7 @@ describe('INT-1: a read run end to end - the main path, the call limit, the retr
   //   the next model call carries the error text, not a truncated result; the API process still answers
   // Catches: refused calls not counted (a script loops on refusals forever), a burst of parallel calls getting past the limit of 50, data handed to the script past 64 MiB, and the model getting a cut-off result in place of the error
   // @category: edge-case
-  // @dependency: run_code tool, CodeRunner (real process), tool call counter, agent_tool_calls, MCP fixture, ScriptedModel
+  // @dependency: run_code tool, CodeRunner (real process), tool call counter, tool calls in `agent_messages`, MCP fixture, ScriptedModel
   // @complexity: medium
   it('INT-1 row B: AC-07.4 the call and memory limits end the run with the error text the model sees on its next turn (rows: 51 calls, Promise.all of 100, readResult past 64 MiB)', async () => {
     // Given: the agent reads a large page directly, then runs three scripts at the production limits (50 calls, 64 MiB):
@@ -498,13 +491,6 @@ function codeCallLines(rows: Awaited<ReturnType<typeof codeCallRowsOf>>): string
   });
 }
 
-/** The id the model's double gave to call `position` of the script's answer `answer`. */
-function toolCallIdOf(script: Script, answer: number, position = 0): string {
-  const id = script.calls[answer]?.toolCallIds[position];
-  if (id === undefined) throw new Error(`Answer ${answer} of the script has no tool call ${position}`);
-  return id;
-}
-
 /** The ids of the tool calls in the model's own earlier answers, as its input carries them. */
 function answeredCallIds(messages: readonly AgentTurnMessage[]): string[] {
   return messages.flatMap((message) =>
@@ -553,16 +539,16 @@ async function startWriter(
   fixture: FixtureFiles = createFixtureFiles('code-execution'),
 ): Promise<Writer> {
   const ownerId = newUser();
-  const definition = uniqueName('writer');
   const options: AgentsHarnessOptions = {
     model,
     fixture,
     access: { [ownerId]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-    definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+    library: createLibraryDouble(),
+    root: testRecord('writer', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
   };
   const harness = await createAgentsHarness(options);
   try {
-    const { agentId } = await harness.sessions.start({ ownerId, definition, prompt, description: 'writer' });
+    const { agentId } = await harness.sessions.start({ ownerId, prompt, description: 'writer' });
     const request = await untilRequest(harness, agentId, ownerId);
     return { harness, fixture, ownerId, agentId, options, request };
   } catch (error) {
@@ -578,7 +564,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a `write` run whose script calls `mcp__${BACKOFFICE_SERVER}__create_incident_note` three times -> before the decision the fixture journal is empty and the request carries the agent, the description, the class, the full script and the one-item "Может вызвать" list ("меняет") -> approve -> three calls, no new request, the result
   // Catches: a mutating call reaching the server before the employee decided, a request that does not carry the list or the full script the employee will confirm, a confirmed script that asks again for each call
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), agent_tool_calls
+  // @dependency: run_code tool, ToolRunner.check, decision (runtime), CodeRunner (real process), MCP fixture (backoffice), tool calls in `agent_messages`
   // @complexity: high
   it('INT-2 row A: AC-05.3 the request waits with the journal empty and carries script and "Может вызвать"; approve runs the three calls once, with no new request', async () => {
     // Given: a write run of three notes; the fixture holds the first note until the test releases it
@@ -817,7 +803,7 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
   // Behavior: a confirmed script makes three note calls, then calls `mcp__${LOGS_SERVER}__search_logs` by a name built from two parts -> refusal `not_in_confirmed_script` naming the tool, audit row "отказ", the journal has three calls and no `search_logs`, the log's run start carries "подтверждён" and the code hash
   // Catches: a confirmed script reaching a tool the employee never saw in the "Может вызвать" list (the confirmation covers more than what was shown)
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", agent_tool_calls, MCP fixture, logger
+  // @dependency: run_code tool, ToolRunner.callFromCode, decision list "Может вызвать", tool calls in `agent_messages`, MCP fixture, logger
   // @complexity: high
   it('INT-2 row E: AC-03.7 a confirmed script calling a tool absent from the confirmed list is refused not_in_confirmed_script and the server never sees it', async () => {
     // Given: a write script that creates the three notes, then calls `search_logs` by a name built from two parts at run time
@@ -883,7 +869,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   //   `create_incident_note` in a `read` run -> `changing_in_read_run` with tool name and class -> every row has an audit row "отказ" and the fixture journal is empty
   // Catches: a script reaching a server its employee may not use, a built-in tool through the code door (it would start agents or nest runs past the gate), a change slipping into a read run
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, agent_tool_calls, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, MCP access table, tool calls in `agent_messages`, MCP fixture
   // @complexity: high
   it('INT-3 row A: AC-03.1 each refused call from code (built-in, invented, outside the definition, not permitted, changing in read) gets its reason and an audit row, and the server journal stays empty', async () => {
     // Given: the definition names `logs` and `backoffice`; employee A may use `logs` only, employee W both. A's read script
@@ -891,9 +877,8 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
     // `backoffice` tool; W's read script asks for `create_incident_note` (W has the server, so the run class decides)
     const employeeA = newUser();
     const employeeW = newUser();
-    const definition = uniqueName('both-servers');
     const requests = [
-      ['start_agent', { agent: definition, description: 'вложенный агент', prompt: 'Сделай что-нибудь' }],
+      ['start_agent', { agent: 'both-servers', description: 'вложенный агент', prompt: 'Сделай что-нибудь' }],
       ['run_code', { description: 'вложенный запуск', class: 'read', script: 'return 1;' }],
       [`mcp__${LOGS_SERVER}__no_such_tool`, {}],
       [`mcp__${TRACKER_SERVER}__search_tickets`, {}],
@@ -927,19 +912,17 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       model,
       fixture,
       access: { [employeeA]: [LOGS_SERVER], [employeeW]: [LOGS_SERVER, BACKOFFICE_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER] })],
+      root: testRecord('both-servers', { servers: [LOGS_SERVER, BACKOFFICE_SERVER] }),
     });
     try {
       // When: both runs go
       const { agentId: agentA } = await harness.sessions.start({
         ownerId: employeeA,
-        definition,
         prompt: promptA,
         description: 'refused',
       });
       const { agentId: agentW } = await harness.sessions.start({
         ownerId: employeeW,
-        definition,
         prompt: promptW,
         description: 'changing in read',
       });
@@ -988,7 +971,7 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
   // Behavior: the script passes `ownerId` of employee B in the arguments of an allowed read tool -> the call is recorded for A and reaches the server as the direct call with the same arguments does, ending in the same outcome class
   // Catches: an owner taken from the script's arguments instead of from the step (Invariant 1) - one employee acting as another
   // @category: core-functionality
-  // @dependency: run_code tool, ToolRunner.callFromCode, agent_tool_calls, MCP fixture
+  // @dependency: run_code tool, ToolRunner.callFromCode, tool calls in `agent_messages`, MCP fixture
   // @complexity: medium
   it('INT-3 row B: AC-03.3 an ownerId of another employee in the arguments changes nothing: recorded for the owner, same outcome as the direct call', async () => {
     // Given: employee A may use `logs`, employee B no server at all; A's agent calls `search_logs` directly with B's id
@@ -1047,7 +1030,6 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
     // ends in an error (`from` after `to`), then runs a script that reads by each id and by its own
     const employeeA = newUser();
     const employeeB = newUser();
-    const definition = uniqueName('reader');
     const heldPageArgs = { ...WINDOW, pageSize: 2 };
     const unorderedArgs = { from: WINDOW.to, to: WINDOW.from, pageSize: 1 };
     const fixture = createFixtureFiles('code-execution');
@@ -1107,10 +1089,10 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       model,
       fixture,
       access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
     });
     const start = async (ownerId: string, prompt: string) =>
-      (await harness.sessions.start({ ownerId, definition, prompt, description: 'reader' })).agentId;
+      (await harness.sessions.start({ ownerId, prompt, description: 'reader' })).agentId;
     try {
       // When: B's agent reads; A's first run holds at the server; A's second agent runs its script meanwhile
       const agentB = await start(employeeB, promptB);
@@ -1243,7 +1225,7 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   `sending` and closes "исход неизвестен" after the agent continues, without running the script again.
   // Catches: a run that keeps calling tools after the employee said stop (side effects already refused), or an executor process left behind
   // @category: core-functionality
-  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, agent_tool_calls, MCP fixture (held call)
+  // @dependency: run_code tool, CodeRunner (real process), runtime interrupt and stop, tool calls in `agent_messages`, MCP fixture (held call)
   // @complexity: high
   it('INT-4 row A: AC-10.1 interrupting the agent mid-run: no further call reaches the server, no executor process remains, the run and its audit row end "прервано"', async () => {
     // Given: a read script that calls `search_logs` ten times in a row; the fixture holds the third call
@@ -1389,13 +1371,12 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
   //   Row 2: A has two running, one ends in an error, A starts another -> it executes (the slot was freed by the failure)
   // Catches: one employee filling the server's executor slots (and starving everyone else), a refused run spending a read run's attempt, a slot leaked by an error end so the employee is locked out of code
   // @category: edge-case
-  // @dependency: run_code tool, admission counters, CodeRunner (substituted), agent_tool_calls attempts
+  // @dependency: run_code tool, admission counters, CodeRunner (substituted), tool calls in `agent_messages` attempts
   // @complexity: medium
   it('INT-4 row C: AC-07.6 the third concurrent run of an employee is refused without spending an attempt, another employee is served, and any end of a run frees the slot', async () => {
     // Given: employees A and B may read `logs`; the substituted runner holds every run; at most 2 runs of one employee, 4 in all
     const employeeA = newUser();
     const employeeB = newUser();
-    const definition = uniqueName('reader');
     const held = createHeldRunner();
     const model = createScriptedModel();
     const runOf = (prompt: string, label: string) => {
@@ -1414,12 +1395,12 @@ describe('INT-4: a run that is cancelled or limited - interrupt, stop, the per-e
     const harness = await createAgentsHarness({
       model,
       access: { [employeeA]: [LOGS_SERVER], [employeeB]: [LOGS_SERVER] },
-      definitions: [testDefinition(definition, { mcpServers: [LOGS_SERVER] })],
+      root: testRecord('reader', { servers: [LOGS_SERVER] }),
       variables: { CODE_RUN_MAX_CONCURRENT_PER_USER: '2', CODE_RUN_MAX_CONCURRENT: '4' },
       codeRunner: held.runner,
     });
     const start = async (ownerId: string, run: { prompt: string }) =>
-      (await harness.sessions.start({ ownerId, definition, prompt: run.prompt, description: 'reader' })).agentId;
+      (await harness.sessions.start({ ownerId, prompt: run.prompt, description: 'reader' })).agentId;
     const untilEnds = (ownerId: string, agentId: string, run: { replies: Script }) =>
       untilTurnEnds({ harness, fixture: harness.fixture, ownerId, agentId }, run.replies, 2);
     const runRows = async (agentId: string) =>

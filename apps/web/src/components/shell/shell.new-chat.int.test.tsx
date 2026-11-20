@@ -224,5 +224,104 @@ describe('Shell: new chat lifecycle (FR-03, FR-04, AC-03.2 / AC-03.3 / AC-04.1)'
     }
     await waitFor(() => expect(document.title).toBe('Новая беседа — Agent OS'));
   });
+
+  // Defect: the conversation is created (POST /api/threads) before its first message is sent; when the server refused
+  //   that message (409 `START_REFUSED`), the empty conversation stayed in the list.
+  // Behavior: on / type + Enter → POST /api/threads (t-1) → POST /api/threads/t-1/messages answers 409 → DELETE /api/threads/t-1;
+  //   the row is gone, no «Беседа удалена» toast, the URL goes back to / (router.replace), the new-chat composer holds the text
+  //   with the refusal under it; sending again creates a conversation again (t-2).
+  // Fails when: the empty conversation stays in the list, the cleanup shows the delete toast, the text or the notice is lost
+  //   with the removed conversation, or the list item cannot create a conversation a second time
+  // @category: core-functionality
+  // @dependency: useThreadFeedRuntime, ThreadListAdapter (initialize, markEmpty, delete), FeedStore.sendFailure,
+  //   ShellStatus.newThreadSendFailure, Composer, url-sync, MSW
+  // @complexity: high
+  it('a refused first message removes the conversation just created, without a toast, and keeps the text and the refusal on the new chat', async () => {
+    // Arrange: every first message is refused
+    const TEXT = 'Составь план';
+    const REFUSAL = 'Модель Haiku вам недоступна — чат не запустился';
+    const live = createTestLiveSource();
+    let created = 0;
+    const deleteCalls: string[] = [];
+    server.use(
+      http.get(`${API}/api/threads`, () =>
+        HttpResponse.json(threadList([threadSummary({ id: 'old', title: 'Старая беседа' })])),
+      ),
+      http.post(`${API}/api/threads`, () => {
+        created += 1;
+        return HttpResponse.json(threadSummary({ id: `t-${created}`, title: null }), { status: 201 });
+      }),
+      http.get(`${API}/api/threads/:id`, ({ params }) =>
+        HttpResponse.json(threadSummary({ id: String(params.id), title: null })),
+      ),
+      http.get(`${API}/api/threads/:id/history`, ({ params }) =>
+        HttpResponse.json(
+          conversationView({
+            thread: threadSummary({ id: String(params.id), title: null }),
+            chat: { status: 'new', failureReason: null, rootAgentId: null, model: null },
+          }),
+        ),
+      ),
+      http.post(`${API}/api/threads/:id/messages`, () =>
+        HttpResponse.json(
+          {
+            statusCode: 409,
+            message: 'Start refused',
+            errorCode: 'START_REFUSED',
+            reason: 'model_not_allowed',
+            model: 'anthropic/claude-haiku-5-5',
+          },
+          { status: 409 },
+        ),
+      ),
+      http.delete(`${API}/api/threads/:id`, ({ params }) => {
+        deleteCalls.push(String(params.id));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    const { router, setPathname } = renderWithRuntime({ pathname: '/', pointer: 'fine', liveSource: live });
+    const history = screen.getByRole('navigation', { name: 'История бесед' });
+    await within(history).findByRole('link', { name: 'Старая беседа' });
+    const composer = (): HTMLElement => screen.getByRole('textbox', { name: 'Сообщение' });
+    /**
+     * Sends what the field holds as the first message of conversation `id`, which is refused. The pathname follows the
+     * URL as Next does: `/chat/<id>` once the conversation is created, back to `/` once the shell leaves it.
+     */
+    const sendRefusedFirstMessage = async (id: string): Promise<void> => {
+      const watchUrl = `${API}/api/events?watch=thread%3A${id}`;
+      router.replace.mockClear();
+      await user.click(composer());
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(live.current()?.url).toBe(watchUrl));
+      setPathname(`/chat/${id}`);
+      await waitFor(() => expect(live.current()?.url).toBe(watchUrl));
+      live.emit('ready', {});
+      await waitFor(() => expect(deleteCalls).toContain(id));
+      await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
+      setPathname('/');
+    };
+
+    // Act: the first message of a new conversation is refused
+    await user.type(composer(), TEXT);
+    await sendRefusedFirstMessage('t-1');
+
+    // Assert: the empty conversation is gone without a toast; the new chat keeps the text and the refusal
+    await waitFor(() =>
+      expect(within(history).getAllByRole('link').map((link) => link.textContent)).toEqual(['Старая беседа']),
+    );
+    expect(await screen.findByText(REFUSAL)).toBeVisible();
+    await waitFor(() => expect(composer()).toHaveValue(TEXT));
+    expect(screen.getByText('Чем могу помочь?')).toBeVisible();
+    expect(screen.queryByText('Беседа удалена')).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
+
+    // Act + Assert: sending again creates a conversation again, and it is removed the same way
+    await sendRefusedFirstMessage('t-2');
+    expect(deleteCalls).toEqual(['t-1', 't-2']);
+    await waitFor(() => expect(composer()).toHaveValue(TEXT));
+    expect(screen.getByText(REFUSAL)).toBeVisible();
+    expect(screen.queryByText('Беседа удалена')).toBeNull();
+  });
 });
 

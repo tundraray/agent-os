@@ -4,7 +4,6 @@ import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { MenuIcon, PanelLeftIcon, PanelLeftOpenIcon, PanelRightIcon, SquarePenIcon } from 'lucide-react';
-import { AdminHeaderSlot } from '@/components/admin/admin-header';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
@@ -17,6 +16,7 @@ import { selectMainItem } from '@/lib/threads/main-thread';
 import { cn } from '@/lib/utils';
 import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
 import { useMainViewState } from './main-view';
+import { PageHeaderSlot } from './page-header';
 import { useShellActions, useShellStatus } from './shell-actions';
 import { UNTITLED_THREAD_TITLE } from './thread-history-item';
 import { WORKSPACE_ID } from './workspace-panel';
@@ -165,8 +165,8 @@ type ChatHeaderProps = {
 /**
  * HD-01 container: derives the title from the route and the runtime, and wires the shell actions.
  * `/agents` → «Агенты» (MC-4); `/account` → «Мой доступ» (MC-7); an agent page → `AgentHeader` (AV-01),
- * which needs `AgentFeedProvider` above; a panel address → the slot its section screen fills (AD-01);
- * none of them has the workspace button.
+ * which needs `AgentFeedProvider` above; a panel or library address → the slot its screen fills through
+ * `PageHeader` (AD-01, LB-01); none of them has the workspace button.
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();
@@ -189,7 +189,7 @@ export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps
 
 function routeHeading(route: ShellRoute): ReactNode {
   if (route.kind === 'agent') return <AgentHeader />;
-  if (route.kind === 'admin') return <AdminHeaderSlot />;
+  if (route.kind === 'admin' || route.kind === 'library') return <PageHeaderSlot />;
   return undefined;
 }
 

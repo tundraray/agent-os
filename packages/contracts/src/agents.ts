@@ -21,6 +21,10 @@ export const HistoryEntryKindSchema = z.enum([
   'agent_message',
   'child_report',
   'model_answer',
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'run_attempt',
   'tool_result',
   'notice',
   'event',
@@ -39,7 +43,27 @@ export const HistoryEventSchema = z.enum([
 ]);
 export type HistoryEvent = z.infer<typeof HistoryEventSchema>;
 
-/** State of a tool call; the outcome is set exactly when the state is `done`. */
+/**
+ * Kinds that record the state of one tool call and are keyed by its `callId`. A call is the item of a
+ * `model_answer`; its state is which of these records exist (`foldCalls` of the agents package).
+ */
+export const CALL_RECORD_KINDS = [
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'run_attempt',
+  'tool_result',
+] as const satisfies readonly HistoryEntryKind[];
+
+/** Call records a call has at most one of; a `run_code` read run may have two `run_attempt` records. */
+export const SINGLE_CALL_RECORD_KINDS = [
+  'tool_confirmation',
+  'tool_decision',
+  'tool_sent',
+  'tool_result',
+] as const satisfies readonly HistoryEntryKind[];
+
+/** State of a tool call, derived from its records; `done` is a call with a `tool_result`. */
 export const ToolCallStateSchema = z.enum([
   'requested',
   'awaiting_confirmation',
@@ -70,21 +94,36 @@ export const ToolRefusalReasonSchema = z.enum([
   'depth_limit',
   'model_not_connected',
   'model_not_allowed',
+  'model_not_configured',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
   'unknown_agent',
   'invalid_arguments',
   'not_callable_from_code',
   'changing_in_read_run',
   'not_in_confirmed_script',
+  'record_unavailable',
+  'run_limit',
+  'read_only',
+  'shared',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 
 /**
  * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal
- * of the access gate. The runtime's own reasons are `RuntimeFailureReason`.
+ * of the access gate. `provider_*` name a provider state or rejection; `model_error` is any other
+ * provider error. The runtime's own reasons are `RuntimeFailureReason`.
  */
 export const AgentFailureReasonSchema = z.enum([
   'turn_limit',
   'model_error',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_tools_rejected',
   'owner_disabled',
   'quota_exhausted',
   'model_not_connected',

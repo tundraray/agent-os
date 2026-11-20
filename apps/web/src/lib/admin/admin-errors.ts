@@ -5,14 +5,28 @@ import {
   IdentityValidationReason,
   McpCheckFailureReasonSchema,
   McpErrorCode,
+  ModelDefaultInvalidReasonSchema,
+  ModelProviderErrorCode,
+  ModelProviderInvalidReasonSchema,
   ProviderCheckFailure,
   type GrantEffect,
 } from '@agent-os/contracts';
+import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError } from '@/lib/api/api-request';
-import { ADMIN_TEXT, GRANT_EXISTS_TEXT, MCP_CHECK_REASON, providerCheckFailed, saveFailed } from './admin-texts';
+import {
+  ADMIN_TEXT,
+  GRANT_EXISTS_TEXT,
+  MCP_CHECK_REASON,
+  modelDefaultUnknown,
+  modelDefaultWrongPurpose,
+  modelProviderGone,
+  modelProviderUnknown,
+  providerCheckFailed,
+  saveFailed,
+} from './admin-texts';
 
 /** Where a panel form shows an error: under one of its fields or in the form's error block. */
-export type AdminErrorTarget = 'form' | 'login' | 'email' | 'password' | 'name' | 'id' | 'quota';
+export type AdminErrorTarget = 'form' | 'login' | 'email' | 'password' | 'name' | 'modelName' | 'quota';
 
 export type AdminErrorText = { target: AdminErrorTarget; text: string };
 
@@ -22,6 +36,8 @@ export type AdminErrorContext = {
   grantEffect?: GrantEffect;
   /** The form's text around a failed server check (MC-29): «Не удалось зарегистрировать» or «Не удалось сохранить». */
   checkFailed?: (reason: string) => string;
+  /** The model provider the form saves or adds a model of: «провайдера {имя} уже нет» names it. */
+  providerName?: string;
 };
 
 const VALIDATION_FAILED = 'VALIDATION_FAILED';
@@ -78,7 +94,27 @@ export function describeAdminError(error: unknown, context: AdminErrorContext = 
     case McpErrorCode.MCP_SERVER_NAME_TAKEN:
       return { target: 'name', text: ADMIN_TEXT.serverNameTaken };
     case AccessErrorCode.MODEL_ID_TAKEN:
-      return { target: 'id', text: ADMIN_TEXT.modelIdTaken };
+      return { target: 'modelName', text: ADMIN_TEXT.modelIdTaken };
+    case ModelProviderErrorCode.MODEL_PROVIDER_NAME_TAKEN:
+      return { target: 'name', text: ADMIN_TEXT.modelProviderNameTaken };
+    case ModelProviderErrorCode.MODEL_PROVIDER_NOT_FOUND:
+      if (context.providerName !== undefined) return form(modelProviderGone(context.providerName));
+      break;
+    case ModelProviderErrorCode.MODEL_PROVIDER_HAS_MODELS:
+      return form(ADMIN_TEXT.modelProviderHasModels);
+    case AccessErrorCode.MODEL_PROVIDER_INVALID: {
+      const invalid = ModelProviderInvalidReasonSchema.safeParse(reason);
+      if (!invalid.success) break;
+      if (invalid.data === 'embeddings_not_supported') return form(ADMIN_TEXT.embeddingsNotSupported);
+      if (context.providerName !== undefined) return form(modelProviderUnknown(context.providerName));
+      break;
+    }
+    case AccessErrorCode.MODEL_DEFAULT_INVALID: {
+      const invalid = ModelDefaultInvalidReasonSchema.safeParse(reason);
+      if (!invalid.success || typeof error.model !== 'string') break;
+      const model = formatModel(error.model);
+      return form(invalid.data === 'model_unknown' ? modelDefaultUnknown(model) : modelDefaultWrongPurpose(model));
+    }
     case VALIDATION_FAILED:
       if (reason === IdentityValidationReason.WEAK_PASSWORD) return { target: 'password', text: ADMIN_TEXT.passwordLength };
       if (isListChanged(error)) return form(ADMIN_TEXT.listChanged);

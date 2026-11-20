@@ -3,10 +3,13 @@ import {
   type AgentNode,
   type AgentPageView,
   type AgentStatus,
+  type AgentView,
   type AnswerToolCall,
   type ChatStatus,
+  type ChipRecord,
   type Confirmation,
   type ConversationView,
+  type DraftView,
   type HistoryEntry,
   type PendingMessage,
   type ToolCallState,
@@ -28,12 +31,15 @@ import { isChatFailureReason, type ChatFailureReason } from "@/lib/access/access
 export type FeedView =
   | {
       kind: "thread";
+      threadId: string;
       chat: ConversationView["chat"];
       entries: readonly HistoryEntry[];
       pending: readonly PendingMessage[];
       decisions: readonly Confirmation[];
       /** Direct children of the root. */
       children: readonly AgentNode[];
+      /** Every record draft of the conversation (KD-6): not decisions, so the tray and counters never see them. */
+      drafts: readonly DraftView[];
     }
   | {
       kind: "agent";
@@ -44,16 +50,23 @@ export type FeedView =
       children: readonly AgentNode[];
     };
 
+/** A workflow coordinator: started from a workflow record and not as one of its executors. */
+export function isWorkflowCoordinator(agent: Pick<AgentView, "origin">): boolean {
+  return agent.origin?.kind === "workflow" && agent.origin.executor === null;
+}
+
 /** The view of one page read, with that page's entries. */
 export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
   if ("chat" in page) {
     return {
       kind: "thread",
+      threadId: page.thread.id,
       chat: page.chat,
       entries: page.entries,
       pending: page.pending,
       decisions: page.decisions,
       children: page.agents,
+      drafts: page.drafts,
     };
   }
   return {
@@ -70,14 +83,14 @@ export function feedViewOf(page: ConversationView | AgentPageView): FeedView {
 export type OptimisticEntry = {
   localId: string;
   text: string;
-  /** The tray for a busy agent; the end of the feed for an idle one and for «Прервать и отправить». */
+  /** The tray for a busy agent; the end of the feed for an idle one. */
   place: "tray" | "feed";
-  /** From the 202; null for a conversation's first message and for an interrupt that interrupted. */
+  /** From the 202; null for a conversation's first message. */
   messageId: string | null;
   /** The conversation's first message: leaves when the `task` entry appears. */
   first: boolean;
-  /** Sent by «Прервать и отправить» and the agent was interrupted: the queue holds it as an interrupt. */
-  interrupt: boolean;
+  /** The record chip the message was sent with (KD-5); absent for a message without one. */
+  record?: ChipRecord | null;
   createdAt: string;
 };
 
@@ -125,6 +138,7 @@ export const FEED_PART = {
   decision: "decision",
   report: "report",
   event: "event",
+  draft: "draft",
 } as const;
 
 /** The workflow card also shows the question of the brief that started it (agent-run-card.md, part 4). */
@@ -133,6 +147,12 @@ export type DecisionPartData = {
   confirmation: Confirmation;
   /** The conversation's root asks: «Чат хочет выполнить:» (MC-19). */
   byChat: boolean;
+};
+/** A record draft (DC-01) with the conversation's draft before it, whose fields «изменено» compares against. */
+export type DraftPartData = {
+  draft: DraftView;
+  previous: DraftView | null;
+  threadId: string;
 };
 export type ReportPartData = Extract<HistoryEntry, { kind: "child_report" }>["content"] & {
   createdAt: string;
@@ -155,16 +175,21 @@ export type ToolCallArtifact = {
   toolTitle?: AnswerToolCall["toolTitle"];
   argLabels?: AnswerToolCall["argLabels"];
   refusalReason: ToolRefusalReason | null;
+  /** The refused model of a refusal by model (MC-16); absent or null otherwise. */
+  refusalDetail?: ToolResult["refusalDetail"];
   /** What a code run's script printed; null for other tools and for a failed run. */
   output: string | null;
   startedAt: string | null;
   finishedAt: string | null;
 };
 
-/** `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04) and the draft mark. */
+/**
+ * `metadata.custom` of a feed message: the source label (MC-9, MC-10, AV-04), the draft mark and the
+ * record chip an employee's message was sent with (KD-5).
+ */
 export type FeedMessageMeta =
-  | { kind: "task" }
-  | { kind: "user" }
+  | { kind: "task"; record: ChipRecord | null }
+  | { kind: "user"; record: ChipRecord | null }
   | { kind: "parent"; fromConversation: boolean; senderDescription: string | null }
   | { kind: "answer"; report: boolean }
   | { kind: "draft" }
@@ -174,9 +199,12 @@ type LikePart = Exclude<ThreadMessageLike["content"], string>[number];
 type ToolCallLikePart = Extract<LikePart, { type: "tool-call" }>;
 type JsonObject = NonNullable<ToolCallLikePart["args"]>;
 
-const STARTS = new Set(["start_agent", "start_workflow"]);
-/** A start the run card or the brief card already shows (MC-23): only other outcomes draw a block. */
-const START_HIDDEN_OUTCOMES = new Set<ToolOutcome>(["success", "rejected"]);
+/**
+ * Calls another feed piece already shows: a start — the run card or the brief card (MC-23), a draft —
+ * the draft card (DC-01). Only other outcomes draw a block.
+ */
+const SHOWN_ELSEWHERE = new Set(["start_agent", "start_workflow", "draft_record"]);
+const HIDDEN_OUTCOMES = new Set<ToolOutcome>(["success", "rejected"]);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
   "tool_error",
   "transport_failure",
@@ -211,6 +239,7 @@ function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined): Too
     toolTitle: call.toolTitle,
     argLabels: call.argLabels,
     refusalReason: result?.refusalReason ?? null,
+    refusalDetail: result?.refusalDetail ?? null,
     output: result?.output ?? null,
     startedAt: result?.startedAt ?? null,
     finishedAt: result?.finishedAt ?? null,
@@ -228,8 +257,8 @@ function toolCallPart(call: AnswerToolCall, result: ToolResult | undefined): Too
 }
 
 function isDrawnCall(call: AnswerToolCall, result: ToolResult | undefined): boolean {
-  if (!STARTS.has(call.tool)) return true;
-  return result !== undefined && !START_HIDDEN_OUTCOMES.has(result.outcome);
+  if (!SHOWN_ELSEWHERE.has(call.tool)) return true;
+  return result !== undefined && !HIDDEN_OUTCOMES.has(result.outcome);
 }
 
 function dataMessage(id: string, createdAt: string, name: string, data: unknown): ThreadMessageLike {
@@ -250,10 +279,16 @@ function entryMessage(
   const id = `seq-${entry.seq}`;
   const createdAt = new Date(entry.createdAt);
   switch (entry.kind) {
-    case "task":
-      return { id, role: "user", createdAt, content: entry.content.text, metadata: meta({ kind: "task" }) };
-    case "user_message":
-      return { id, role: "user", createdAt, content: entry.content.text, metadata: meta({ kind: "user" }) };
+    case "task": {
+      // A task carries a chip only at the conversation's root, whose task is the conversation's first message.
+      const atRoot = view.kind === "thread" || view.agent.agentId === view.agent.rootId;
+      const record = atRoot ? entry.content.record : null;
+      return { id, role: "user", createdAt, content: entry.content.text, metadata: meta({ kind: "task", record }) };
+    }
+    case "user_message": {
+      const record = entry.content.record;
+      return { id, role: "user", createdAt, content: entry.content.text, metadata: meta({ kind: "user", record }) };
+    }
     case "agent_message": {
       const sender = entry.content.agentId;
       const rootId = view.kind === "thread" ? view.chat.rootAgentId : view.agent.rootId;
@@ -323,17 +358,17 @@ function stringField(value: unknown, key: string): string | undefined {
 
 /**
  * The question of the confirmed brief that started a workflow: the last approved brief of the
- * coordinator's template created not later than it (the run card stands right under that brief).
- * The built `AgentNode` carries no brief, so the feed's own decisions are the source.
+ * coordinator's workflow record created not later than it (the run card stands right under that
+ * brief). The built `AgentNode` carries no brief, so the feed's own decisions are the source.
  */
 function briefQuestionOf(decisions: readonly Confirmation[], node: AgentNode): string | undefined {
-  if (node.template === undefined) return undefined;
+  if (!isWorkflowCoordinator(node)) return undefined;
   const brief = decisions
     .filter(
       (c) =>
         c.kind === WORKFLOWS_BRIEF_CONFIRMATION &&
         c.resolution?.approve === true &&
-        stringField(c.args, "template") === node.definition &&
+        stringField(c.args, "workflow") === node.origin?.recordId &&
         time(c.createdAt) <= time(node.createdAt),
     )
     .sort((a, b) => time(b.createdAt) - time(a.createdAt))[0];
@@ -341,7 +376,20 @@ function briefQuestionOf(decisions: readonly Confirmation[], node: AgentNode): s
   return stringField(brief.resolution.args, "question") ?? stringField(brief.content, "question");
 }
 
-/** Decisions and direct children, by creation time; equal times keep the API's list order. */
+/** A conversation's drafts by creation time, each with the one before it (DC-8). */
+function draftItems(view: FeedView): Floating[] {
+  if (view.kind !== "thread") return [];
+  const drafts = [...view.drafts].sort((a, b) => time(a.createdAt) - time(b.createdAt));
+  return drafts.map((draft, index) => {
+    const data: DraftPartData = { draft, previous: drafts[index - 1] ?? null, threadId: view.threadId };
+    return {
+      createdAt: draft.createdAt,
+      message: dataMessage(`draft-${draft.draftId}`, draft.createdAt, FEED_PART.draft, data),
+    };
+  });
+}
+
+/** Decisions, direct children and drafts, by creation time; equal times keep the API's list order. */
 function floatingItems(view: FeedView): Floating[] {
   const byChatRoot = (c: Confirmation): boolean =>
     view.kind === "thread" && c.agentId === view.chat.rootAgentId;
@@ -359,8 +407,8 @@ function floatingItems(view: FeedView): Floating[] {
       message: dataMessage(`agent-${node.agentId}`, node.createdAt, FEED_PART.runCard, data),
     };
   });
-  // Array.prototype.sort is stable: ties keep decisions, then children, each in API order.
-  return [...decisions, ...children].sort((a, b) => time(a.createdAt) - time(b.createdAt));
+  // Array.prototype.sort is stable: ties keep decisions, then children, then drafts, each in API order.
+  return [...decisions, ...children, ...draftItems(view)].sort((a, b) => time(a.createdAt) - time(b.createdAt));
 }
 
 function optimisticMessage(entry: OptimisticEntry): ThreadMessageLike {
@@ -369,7 +417,7 @@ function optimisticMessage(entry: OptimisticEntry): ThreadMessageLike {
     role: "user",
     createdAt: new Date(entry.createdAt),
     content: entry.text,
-    metadata: meta({ kind: "user" }),
+    metadata: meta({ kind: "user", record: entry.record ?? null }),
   };
 }
 
@@ -388,8 +436,8 @@ function draftMessage(draft: string): ThreadMessageLike {
 }
 
 /**
- * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `local-*`, `draft`): entries by
- * `seq`; each decision and direct child after the last entry created not later than it (KD-3);
+ * Feed messages with stable ids (`seq-*`, `decision-*`, `agent-*`, `draft-*`, `local-*`, `draft`): entries
+ * by `seq`; each decision, direct child and record draft after the last entry created not later than it (KD-3);
  * optimistic feed entries, then the draft, last.
  */
 export function toFeed(
@@ -432,9 +480,7 @@ export function toFeed(
 
 /** Whether a queued message is the one an optimistic feed entry already draws (KD-4). */
 export function drawsPending(entry: OptimisticEntry, pending: PendingMessage): boolean {
-  if (entry.place !== "feed" || pending.source !== "user") return false;
-  if (entry.messageId !== null) return pending.messageId === entry.messageId;
-  return entry.interrupt && pending.interrupt && pending.text === entry.text;
+  return entry.place === "feed" && pending.source === "user" && pending.messageId === entry.messageId;
 }
 
 /** The agent of an agent page's view; null for a conversation and before the first read. */
@@ -444,7 +490,7 @@ export const selectAgent = (view: FeedView | null) => (view?.kind === "agent" ? 
 const statusOf = (view: FeedView | null): ChatStatus | AgentStatus | null =>
   view === null ? null : view.kind === "thread" ? view.chat.status : view.agent.status;
 
-/** «Прервать» / «Прервать и отправить» next to «Отправить»: the agent works. */
+/** «Прервать» next to «Отправить»: the agent works. */
 export const canInterrupt = (view: FeedView | null): boolean => statusOf(view) === "working";
 
 /** The tray's hint «Ждём вашего решения…» with «К запросу». */

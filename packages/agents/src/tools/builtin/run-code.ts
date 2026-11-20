@@ -13,20 +13,17 @@ import type { Database } from '@agent-os/db';
 
 import { OwnerDisabledError } from '../../access-gate.js';
 import type { CodeRunConfig } from '../../config.js';
-import { type DefinitionCatalog, definitionOf } from '../../definitions/catalog.js';
+import { callRecords } from '../../store/call-records.repository.js';
 import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
-import { sessions } from '../../store/sessions.repository.js';
-import { toolCalls } from '../../store/tool-calls.repository.js';
 import { toolResults } from '../../store/tool-results.repository.js';
+import { RESULT_NOT_FOUND } from '../large-result.js';
 import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool.js';
 import { callTargetOf, type ToolRegistry } from '../tool-registry.js';
 import type { CodeCallScope, ToolRunner } from '../tool-runner.js';
 import { canCallOf } from './can-call.js';
 
-/** What the texts of a run name: the settings and the result limit (`AGENT_TOOL_RESULT_MAX_BYTES`). */
-interface RunTextSettings extends Omit<CodeRunConfig, 'maxConcurrent'> {
-  readonly resultMaxBytes: number;
-}
+/** What the texts of a run name: the run settings with its result limit. */
+type RunTextSettings = Omit<CodeRunConfig, 'maxConcurrent'>;
 
 /** Every text a run gives the model (design-code-execution.md, «Error handling»): one table. */
 export interface RunTexts {
@@ -57,7 +54,7 @@ export function runTexts(settings: RunTextSettings): RunTexts {
     },
     perUserLimit: `превышено число одновременных запусков (${settings.maxConcurrentPerUser})`,
     twiceInterrupted: 'запуск дважды прерван рестартом',
-    resultNotFound: 'результат не найден',
+    resultNotFound: RESULT_NOT_FOUND,
   };
 }
 
@@ -129,7 +126,6 @@ export function confirmedNamesOf(confirmed: unknown): ConfirmedNames {
 export interface RunCodeDeps {
   readonly codeRunner: CodeRunner;
   readonly database: Database;
-  readonly catalog: DefinitionCatalog;
   /**
    * Read at execution, not at build: the registry is built with `run_code` in it, so the tool takes
    * it lazily and the build has no cycle.
@@ -137,8 +133,6 @@ export interface RunCodeDeps {
   readonly registry: () => ToolRegistry;
   readonly runner: ToolRunner;
   readonly codeRun: CodeRunConfig;
-  /** `AGENT_TOOL_RESULT_MAX_BYTES`: the limit of a run's result (AC-07.3). */
-  readonly toolResultMaxBytes: number;
   /**
    * The logger's redaction by value over the settings' secrets (FR-11): applied to a run's output and
    * result text before they are stored or given to the model; never to what the script itself gets.
@@ -154,8 +148,8 @@ const DESCRIPTION = [
   '- `callTool(name, args)` calls an MCP tool under the same name and with the same arguments as in your tool',
   '  list (`mcp__<server>__<tool>`) and resolves with its full answer; a refusal or a tool error rejects with',
   "  an error that has `outcome`, `reason` and `text`; the text of a tool error is empty, not the server's.",
-  '- `readResult(callId)` resolves with the full result of an earlier direct tool call of yours whose answer',
-  '  you saw cut, by the `callId` named in the cut mark.',
+  '- `readResult(callId)` resolves with the full result of an earlier direct tool call of yours that came to you',
+  '  as a stored result, by the `callId` the stored result names.',
   '- `console.log`, `console.info`, `console.warn`, `console.error` write to the script output, which the',
   '  employee sees and you do not.',
   'Class `read` runs at once and may call only tools marked read-only; class `write` waits for one decision',
@@ -213,7 +207,7 @@ interface RunScope {
  * script gets its audit row through the step's `guard` before it reaches its server.
  */
 export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeArgs> {
-  const texts = runTexts({ ...deps.codeRun, resultMaxBytes: deps.toolResultMaxBytes });
+  const texts = runTexts(deps.codeRun);
   const seats = createSeats(deps.codeRun.maxConcurrentPerUser);
 
   /** What a run stores and gives the model, with the settings' secrets masked (FR-11, AC-11.1). */
@@ -222,12 +216,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     return typeof result.output === 'string'
       ? { ...result, text, output: deps.maskSecrets(result.output) }
       : { ...result, text };
-  }
-
-  async function definitionOfCaller(caller: ToolCaller) {
-    const session = await sessions.get(deps.database, caller.agentId);
-    if (session === undefined) throw new Error(`Agent ${caller.agentId} has no session`);
-    return definitionOf(deps.catalog, session);
   }
 
   /** A script's tool call: counted, written open through `guard`, run by `callFromCode`, closed. */
@@ -243,9 +231,8 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     }
     const target = callTargetOf(run.codeScope.snapshot, request.name);
     const key = { taskId: run.caller.agentId, runCallId: run.callId, attempt: run.attempt, seq };
-    const startedAt = new Date();
     const opened = await run.guard((tx) =>
-      codeCalls.open(tx, { ...key, ...target, args: request.args, startedAt }),
+      codeCalls.open(tx, { ...key, ...target, args: request.args }),
     );
     if (opened.outcome === 'fenced') {
       run.logger.warn('code call not sent: its audit row was fenced', { seq, ...target });
@@ -303,15 +290,15 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     run: RunScope,
     request: Extract<BridgeRequest, { op: 'read' }>,
   ): Promise<RequestAnswer> {
-    const value = await toolResults.findForRun(deps.database, {
+    const found = await toolResults.findForRun(deps.database, {
       callId: request.resultId,
       taskId: run.caller.agentId,
       ownerId: run.caller.ownerId,
     });
-    run.logger.debug('code run read a full result', { resultId: request.resultId, found: value !== undefined });
-    return value === undefined
+    run.logger.debug('code run read a full result', { resultId: request.resultId, found: found !== undefined });
+    return found === undefined
       ? { kind: 'error', error: { outcome: 'not_found', reason: null, text: texts.resultNotFound } }
-      : { kind: 'value', value };
+      : { kind: 'value', value: found.value };
   }
 
   /** Starts the run and turns its end into the tool's result. */
@@ -331,7 +318,7 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
       limits: {
         timeoutMs: deps.codeRun.timeoutMs,
         memoryMb: deps.codeRun.memoryMb,
-        resultMaxBytes: deps.toolResultMaxBytes,
+        resultMaxBytes: deps.codeRun.resultMaxBytes,
       },
       onRequest: async (request, runSignal) => {
         if (request.op === 'read') return answerRead(run, request);
@@ -358,11 +345,11 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
     return result;
   }
 
-  /** The attempt of a run: 1 for `write` (its `attempts` stays 0); for `read`, counted through `guard` (KD-7). */
+  /** The attempt of a run: 1 for `write` (it has no `run_attempt` record); for `read`, recorded through `guard` (KD-7). */
   async function attemptOf(input: OutsideToolInput<RunCodeArgs>, logger: Logger): Promise<number | DoneResult> {
     if (input.args.class === 'write') return 1;
     const bumped = await input.guard((tx) =>
-      toolCalls.bumpAttempts(tx, { taskId: input.caller.agentId, callId: input.callId }),
+      callRecords.startAttempt(tx, { taskId: input.caller.agentId, callId: input.callId }, input.args),
     );
     if (bumped.outcome === 'fenced') {
       logger.warn('code run not started: its attempt was fenced');
@@ -404,7 +391,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         confirmedNames = confirmed.names;
       }
 
-      const definition = await definitionOfCaller(caller);
       const release = seats.take(caller.ownerId);
       if (release === undefined) {
         logger.warn('code run refused: the employee has no free run place', {
@@ -416,7 +402,8 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
         const attempt = await attemptOf(input, logger);
         if (typeof attempt !== 'number') return attempt;
         const registry = deps.registry();
-        const snapshot = await registry.definitionMcpTools(definition);
+        // The servers of the caller's snapshot, not the library's record now (ADR-0011, ADR-0017).
+        const snapshot = await registry.definitionMcpTools(caller.snapshot);
         return await runScript(
           {
             caller,

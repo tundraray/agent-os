@@ -77,6 +77,18 @@ export function effectiveAccess(rows: readonly GrantRow[]): EffectiveAccess {
   };
 }
 
+/**
+ * The catalogue models the rights allow, in catalogue order (by name, then id — `listModels`), quota
+ * aside: an exhausted quota is temporary (KD-4). A model allowed but missing from the catalogue is left out.
+ */
+export function allowedCatalogue<Model extends { readonly id: string }>(
+  access: EffectiveAccess,
+  catalogue: readonly Model[],
+): Model[] {
+  const allowed = new Set(access.allowedModels());
+  return catalogue.filter((model) => allowed.has(model.id));
+}
+
 /** Quotas are in cents, so the sum is rounded to the cent against float drift. */
 function sumQuotas(quotas: readonly (number | null)[]): number | null {
   if (quotas.some((quota) => quota === null)) return null;

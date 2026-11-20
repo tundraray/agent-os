@@ -1,38 +1,21 @@
-import { type InCommitToolInput, type StartChildRequest, WAITING_RULE } from '@agent-os/agents';
+import type {
+  InCommitToolInput,
+  StartChildRequest,
+  StartRequest,
+  StartResolution,
+  WorkflowSnapshot,
+} from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 
-import { createStartWorkflowTool, type StartWorkflowArgs } from './start-workflow.tool.js';
-import { parseTemplates } from './template.js';
+import {
+  createStartWorkflowTool,
+  type PreparedWorkflowStart,
+  type StartWorkflowArgs,
+} from './start-workflow.tool.js';
 
-const [template] = parseTemplates([
-  {
-    name: 'demo-flow',
-    title: 'Demo flow',
-    description: 'Use for the demo.',
-    coordinator: { prompt: 'Coordinate the executors.', maxTurns: 20 },
-    agents: [
-      {
-        name: 'demo-gather',
-        description: 'Gathers material.',
-        prompt: 'Gather.',
-        tools: [],
-        mcpServers: ['fixture'],
-        maxTurns: 10,
-        maxRuns: 3,
-      },
-      {
-        name: 'demo-answer',
-        description: 'Writes the answer.',
-        prompt: 'Answer.',
-        tools: [],
-        mcpServers: [],
-        maxTurns: 5,
-        maxRuns: 1,
-      },
-    ],
-    finalAgent: 'demo-answer',
-  },
-]);
+const WORKFLOW_ID = '0b7c6a52-3f5e-4d6a-9a43-2f1e8c0d9b11';
+const EDITED_WORKFLOW_ID = '7d2e4f61-1a3b-4c5d-8e9f-0a1b2c3d4e5f';
+const MODEL = 'anthropic/claude-sonnet-5-5';
 
 const silentLogger: Logger = {
   debug: () => undefined,
@@ -42,74 +25,157 @@ const silentLogger: Logger = {
   child: () => silentLogger,
 };
 
-const tool = createStartWorkflowTool({ templates: [template!], logger: silentLogger });
+const snapshot: WorkflowSnapshot = {
+  kind: 'workflow',
+  name: 'Demo flow',
+  origin: {
+    recordId: EDITED_WORKFLOW_ID,
+    kind: 'workflow',
+    version: 4,
+    name: 'Demo flow',
+    author: null,
+    builtinKey: null,
+    executor: null,
+  },
+  content: {
+    coordinator: { rules: '', model: MODEL, maxTurns: 20 },
+    executors: [
+      {
+        name: 'answer',
+        role: 'Writes the answer.',
+        prompt: 'Answer.',
+        servers: [],
+        model: MODEL,
+        maxTurns: 5,
+        maxRuns: 1,
+        tools: [],
+        source: null,
+      },
+    ],
+    finalExecutor: 'answer',
+    selfLearning: false,
+  },
+};
 
-function validBrief(): Record<string, unknown> {
-  return {
-    template: 'demo-flow',
-    question: 'Why did checkout errors rise on Monday?',
-    boundaries: 'Last 7 days, production only',
-    result: 'A short list of causes with numbers',
-  };
+const requested: StartWorkflowArgs = {
+  workflow: WORKFLOW_ID,
+  question: 'Why did checkout errors rise on Monday?',
+  boundaries: 'Last 7 days, production only',
+  result: 'A short list of causes with numbers',
+};
+/** The employee's edit on the brief card: another workflow record and a narrower boundary. */
+const confirmed: StartWorkflowArgs = {
+  ...requested,
+  workflow: EDITED_WORKFLOW_ID,
+  boundaries: 'Last 3 days',
+};
+
+function toolOver(resolution: StartResolution, inLaunchSet = true) {
+  const asked: StartRequest[] = [];
+  const tool = createStartWorkflowTool({
+    agents: {
+      resolveStart: async (request) => {
+        asked.push(request);
+        return resolution;
+      },
+      auditStartRefusal: async () => undefined,
+      rootMayStart: async () => inLaunchSet,
+    },
+    logger: silentLogger,
+  });
+  return { tool, asked };
 }
 
-type Mutate = (brief: Record<string, unknown>) => void;
+const caller = {
+  agentId: 'chat-1',
+  ownerId: 'owner-1',
+  rootId: 'chat-1',
+  parentId: null,
+  depth: 0,
+};
 
-// DC-4, FR-28 (rule): a bad brief never reaches the coordinator; the edit is checked by the same schema.
-// Invariant 2 (rule): the confirmed brief becomes the coordinator's task with the template's limits.
-describe('start_workflow arguments and spawn', () => {
-  it.each<[string, Mutate, boolean]>([
-    ['an unknown template', (b) => (b.template = 'other-flow'), false],
-    ['an empty question', (b) => (b.question = ''), false],
-    ['a question of 4001 characters', (b) => (b.question = 'q'.repeat(4001)), false],
-    ['boundaries of 4001 characters', (b) => (b.boundaries = 'b'.repeat(4001)), false],
-    ['a result of 4001 characters', (b) => (b.result = 'r'.repeat(4001)), false],
-    ['a valid brief with empty boundaries', (b) => (b.boundaries = ''), true],
-    ['a valid brief', () => undefined, true],
-  ])('%s → accepted: %s', (_, mutate, accepted) => {
-    const brief = validBrief();
-    mutate(brief);
+/** `prepare` and `execute` as the runner calls them after the decision, with the confirmed arguments. */
+async function runConfirmed(resolution: StartResolution, inLaunchSet: boolean) {
+  const { tool, asked } = toolOver(resolution, inLaunchSet);
+  const started: StartChildRequest[] = [];
+  const prepared = await tool.prepare?.({ args: confirmed, caller } as never);
+  const result = await tool.execute({
+    callId: 'call-1',
+    args: confirmed,
+    caller,
+    tx: {},
+    effects: {},
+    prepared,
+    startChild: async (request: StartChildRequest) => {
+      started.push(request);
+      return { agentId: 'run-42' };
+    },
+  } as unknown as InCommitToolInput<StartWorkflowArgs, PreparedWorkflowStart>);
+  return { asked, started, result };
+}
 
-    expect(tool.argsSchema.safeParse(brief).success).toBe(accepted);
-  });
+// AC-13.4, Reference Contract (Confirmation): the brief card holds the workflow record and the three
+// fields, no title; the root alone gets the tool.
+describe('start_workflow brief card', () => {
+  it('shows the workflow record and the three fields of the requested brief', () => {
+    const { tool } = toolOver({ kind: 'snapshot', snapshot });
 
-  it('starts the coordinator with the brief as JSON, the question as description and the template limits', async () => {
-    const requests: StartChildRequest[] = [];
-    const args: StartWorkflowArgs = {
-      template: 'demo-flow',
+    expect(tool.rootOnly).toBe(true);
+    expect(tool.confirmation?.content(requested, [])).toEqual({
+      workflow: WORKFLOW_ID,
       question: 'Why did checkout errors rise on Monday?',
       boundaries: 'Last 7 days, production only',
       result: 'A short list of causes with numbers',
-    };
-    const input = {
-      callId: 'call-1',
-      args,
-      caller: { agentId: 'chat-1', ownerId: 'owner-1', rootId: 'chat-1', parentId: null, depth: 0 },
-      tx: {},
-      effects: {},
-      startChild: async (request: StartChildRequest) => {
-        requests.push(request);
-        return { agentId: 'run-42' };
-      },
-    } as unknown as InCommitToolInput<StartWorkflowArgs>;
+    });
+  });
+});
 
-    const result = await tool.execute(input);
+// AC-13.4 (rule), Flow 2: the snapshot is resolved from the confirmed arguments on behalf of the employee,
+// and the coordinator starts on it with the confirmed brief; a refused resolution starts nothing.
+describe('start_workflow on the confirmed brief', () => {
+  const confirmedBrief =
+    '{"question":"Why did checkout errors rise on Monday?","boundaries":"Last 3 days","result":"A short list of causes with numbers"}';
 
-    const briefJson =
-      '{"question":"Why did checkout errors rise on Monday?","boundaries":"Last 7 days, production only","result":"A short list of causes with numbers"}';
-    expect(requests).toEqual([
+  it.each<[string, StartResolution, boolean, StartChildRequest[], unknown]>([
+    [
+      'a resolved workflow starts the coordinator on its snapshot',
+      { kind: 'snapshot', snapshot },
+      true,
+      [{ snapshot, prompt: confirmedBrief, description: 'Why did checkout errors rise on Monday?' }],
+      { kind: 'done', outcome: 'success', childAgentId: 'run-42' },
+    ],
+    [
+      'an unavailable record starts nothing',
+      { kind: 'refused', reason: 'record_unavailable', model: null, denied: null },
+      true,
+      [],
+      { kind: 'refused', reason: 'record_unavailable', refusalDetail: null },
+    ],
+    // AC-15.2: someone else's workflow with «предлагать в главном чате» off is visible but not startable.
+    [
+      'a workflow outside the chat launch set starts nothing',
+      { kind: 'snapshot', snapshot },
+      false,
+      [],
+      { kind: 'refused', reason: 'not_allowed', refusalDetail: null },
+    ],
+    [
+      'a coordinator model not allowed starts nothing and names the model',
+      { kind: 'refused', reason: 'model_not_allowed', model: MODEL, denied: null },
+      true,
+      [],
+      { kind: 'refused', reason: 'model_not_allowed', refusalDetail: { model: MODEL } },
+    ],
+  ])('%s', async (_case, resolution, inLaunchSet, expectedStarts, expectedResult) => {
+    const { asked, started, result } = await runConfirmed(resolution, inLaunchSet);
+
+    expect(asked).toEqual([
       {
-        definition: 'demo-flow',
-        prompt: briefJson,
-        description: 'Why did checkout errors rise on Monday?',
-        limits: { agents: { 'demo-gather': 3, 'demo-answer': 1 }, finalAgent: 'demo-answer' },
+        ownerId: 'owner-1',
+        source: { kind: 'record', recordId: EDITED_WORKFLOW_ID, expected: 'workflow' },
       },
     ]);
-    expect(result).toEqual({
-      kind: 'done',
-      outcome: 'success',
-      text: `Workflow "demo-flow" started in the background, run id run-42. Confirmed brief: ${briefJson}\nIts answer will arrive as a message when it finishes. ${WAITING_RULE}`,
-      childAgentId: 'run-42',
-    });
+    expect(started).toEqual(expectedStarts);
+    expect(result).toMatchObject(expectedResult as object);
   });
 });

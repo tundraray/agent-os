@@ -10,7 +10,7 @@
 //   Postgres - the fixture process runs, and the test registers every server itself through the API under the run's names (`runName`).
 //   Аня, Борис and Глеб are written by `insertEmployee` before the boot and sign in after it; their rights on the run's servers are personal
 //   grants the administrator gives (`grantTo`, test/support/access.ts) once each server is registered, and Аня's chat runs on the run's
-//   default model (`runModel`), added to the catalogue and allowed to her in `beforeAll`; the
+//   default model (`runModel`, made the platform's default chat model by `useRunModels` and restored in `afterAll`), allowed to her in `beforeAll`; the
 //   super administrator comes from `seedSuperAdmin`, the second administrator is an employee given the admin right by a role (taken away in
 //   row 8). The employee connect route reads only the saved public address; the test uses the one the database already holds (the test plays
 //   the browser and calls the callback on the app itself, and the fixture only compares the return address with the registered one), and
@@ -49,14 +49,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { frontendOrigin } from '../src/identity/session-cookie.js';
 import {
-  addModel,
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
+  useRunModels,
 } from './support/access.js';
 import { chatApi, expectBody, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { pointBuiltinsAt } from './support/library.js';
 import {
   authorize,
   beginConnect,
@@ -83,7 +84,7 @@ import { databaseUrl } from './support/migrate.global-setup.js';
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 const PASSWORD = 'e2e-password-12';
-/** The app's default model: a model of the run, allowed to Аня (row 11a runs her chat). */
+/** The model of the built-in records (`pointBuiltinsAt`): a model of the run, allowed to Аня (row 11a runs her chat). */
 const DEFAULT_MODEL = runModel('mcp-connect-haiku');
 /** Row 8: a second `oauth` server at the same fixture path, waiting for its administrator's account. */
 const SECOND_OAUTH_SERVER = runName('backoffice-second');
@@ -153,6 +154,10 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   let adminRoleId: string | undefined;
   /** The sign-in settings as found, kept only when they had no public address and the test saved one. */
   let settingsWithoutPublicUrl: SignInSettings | undefined;
+  /** Gives the built-in records back their models; run in `afterAll` while the app is up. */
+  let restoreBuiltins: (() => Promise<void>) | undefined;
+  /** Gives the platform back its default models (`useRunModels`); run in `afterAll` while the app is up. */
+  let restoreModels: (() => Promise<void>) | undefined;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -183,7 +188,6 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       workers: true,
       captureLog: true,
       mcpServers: [],
-      defaultModel: DEFAULT_MODEL,
     });
     harness.model.completeText({ text: 'MCP conversation' });
     const { app } = harness;
@@ -195,7 +199,10 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     admin2 = await createEmployee(app, admin);
     userIds.push(admin2.id);
     // Аня's chat (row 11a) runs on the run's model; Глеб never gets a right: no MCP server is his.
-    await addModel(app, admin, { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES });
+    restoreModels = await useRunModels(app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
+    });
+    restoreBuiltins = await pointBuiltinsAt(app, admin, DEFAULT_MODEL);
     await grantTo(
       app,
       admin,
@@ -251,18 +258,23 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
 
   afterAll(async () => {
     try {
-      if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
-        await expectBody(
-          apiRequest(
-            harness.app,
-            admin,
-            'put',
-            '/admin/settings/sign-in',
-            settingsWithoutPublicUrl,
-          ),
-          200,
-          SignInSettingsSchema,
-        );
+      try {
+        await restoreBuiltins?.();
+        await restoreModels?.();
+      } finally {
+        if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
+          await expectBody(
+            apiRequest(
+              harness.app,
+              admin,
+              'put',
+              '/admin/settings/sign-in',
+              settingsWithoutPublicUrl,
+            ),
+            200,
+            SignInSettingsSchema,
+          );
+        }
       }
     } finally {
       await harness?.close();
@@ -339,7 +351,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   //       tokens; one scripted run of her chat calls `logs` (success) and `backoffice` (the account is lost on the call: `auth_required`).
   //   deletion
   //   10. AC-13.6: Аня, Борис and the administrator have accounts on `backoffice`; `DELETE /api/admin/mcp-servers/backoffice` -> 204; no row of
-  //       `agent_mcp_accounts` names `backoffice` any more; `agent_tool_calls` history rows of the server stay with the name as text.
+  //       `agent_mcp_accounts` names `backoffice` any more; tool calls in `agent_messages` history rows of the server stay with the name as text.
   //   secrets
   //   11. NFR-02 (UC-E3): the known values (the shared token before and after the administrator replaced it, the wrong token, every access
   //       and refresh token stored, the OAuth client secret if the fixture issued one, every `state` and authorization `code`, the session
@@ -996,16 +1008,21 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
         (await call(admin, 'delete', `/admin/mcp-servers/${BACKOFFICE_SERVER}`))
           .status,
       ).toBe(204);
-      // Then: no account names it; the history of its calls stays with the name as text
+      // Then: no account and no grant names it; the history of its calls stays with the name as text
       expect(await ownersOn(BACKOFFICE_SERVER)).toEqual([]);
+      expect(
+        (await pool.query('SELECT id FROM app.access_grants WHERE server = $1', [BACKOFFICE_SERVER]))
+          .rows,
+      ).toEqual([]);
       const history = await pool.query<{
         server: string | null;
         tool: string;
         outcome: string | null;
       }>(
-        `SELECT c.server, c.tool, c.outcome FROM app.agent_tool_calls c
+        `SELECT c.content ->> 'server' AS server, c.content ->> 'tool' AS tool, c.content ->> 'outcome' AS outcome
+           FROM app.agent_messages c
            JOIN app.agent_sessions s ON s.task_id = c.task_id
-          WHERE s.owner_id = $1 ORDER BY c.position`,
+          WHERE s.owner_id = $1 AND c.kind = 'tool_result' ORDER BY c.created_at, c.seq`,
         [anya.id],
       );
       expect(history.rows).toEqual([
@@ -1025,10 +1042,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       expect(tokenLabels.length).toBe(5);
       const agentRows = await pool.query<{ content: unknown }>(
         `SELECT to_jsonb(m) AS content FROM app.agent_messages m
-           JOIN app.agent_sessions s ON s.task_id = m.task_id WHERE s.owner_id = $1
-         UNION ALL
-         SELECT to_jsonb(c) FROM app.agent_tool_calls c
-           JOIN app.agent_sessions s ON s.task_id = c.task_id WHERE s.owner_id = $1`,
+           JOIN app.agent_sessions s ON s.task_id = m.task_id WHERE s.owner_id = $1`,
         [anya.id],
       );
       const audit = await pool.query<{ row: unknown }>(

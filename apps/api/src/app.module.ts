@@ -9,6 +9,8 @@ import { ChatModule } from './chat/chat.module.js';
 import { IdentityModule } from './identity/identity.module.js';
 import { AccessModule } from './access/access.module.js';
 import { AccessAdminModule } from './access/access-admin.module.js';
+import { LibraryApiModule } from './library/library-api.module.js';
+import { KnowledgeApiModule } from './knowledge/knowledge-api.module.js';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { AccessAdminModule } from './access/access-admin.module.js';
     AccessModule,
     AgentsModule,
     AccessAdminModule,
+    LibraryApiModule,
+    KnowledgeApiModule,
     WorkflowsModule,
     ChatModule,
   ],

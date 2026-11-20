@@ -20,10 +20,12 @@ import type { McpAccounts } from '../mcp/mcp-accounts.js';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
 import type { McpFailureReason } from '../mcp/mcp-failure.js';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
-import type { Session } from '../store/sessions.repository.js';
-import { toolCalls } from '../store/tool-calls.repository.js';
+import { type Session, sessionInputOf } from '../store/sessions.repository.js';
+import { callRecords } from '../store/call-records.repository.js';
+import type { StoredToolResult, ToolResultSettingsRow } from '../store/tool-results.repository.js';
+import { cutText, maskValue, wrapperText } from './large-result.js';
 import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
-import { callTarget, callTargetOf, type SessionTool } from './tool-registry.js';
+import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry.js';
 
 /** One tool call of a model answer, as the model wrote it. */
 export interface RequestedCall {
@@ -85,15 +87,22 @@ export type ToolExecution =
       readonly failureReason?: McpFailureReason;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one. */
       readonly output?: string | null;
-      /**
-       * The full result of a direct MCP call with `success` or `empty`, as a script reads it; the step's
-       * commit stores it with the closing (code-execution KD-5, DC-8).
-       */
+      /** The value a script gets for its call from code with `success` or `empty` (code-execution KD-2). */
       readonly fullResult?: { readonly value: unknown };
+      /**
+       * The full result of a direct MCP call with `success` or `empty`, secrets masked: the step's commit
+       * stores it with the closing, whatever its length (code-execution KD-5, DC-8; tool-result-reading R-4).
+       */
+      readonly stored?: StoredToolResult;
       /** The child a `start_agent`-like call started. */
       readonly childAgentId?: string;
     }
-  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      /** The refused model of a refusal by model; absent otherwise. */
+      readonly refusalDetail?: { readonly model: string } | null;
+    };
 
 /**
  * The step's signal was aborted around an outside call: the step's result is rejected by the runtime,
@@ -157,8 +166,13 @@ export interface ToolRunnerOptions {
   readonly audit: AccessAudit;
   /** `MCP_CALL_TIMEOUT_MS`: bounds one call, the handshake included. */
   readonly callTimeoutMs: number;
-  /** `AGENT_TOOL_RESULT_MAX_BYTES`. */
-  readonly toolResultMaxBytes: number;
+  /**
+   * The settings row of large results (tool-result-reading R-5), read on every direct MCP call that ends
+   * `success` or `tool_error`: its threshold decides whether the model gets the whole text or the wrapper.
+   */
+  readonly resultSettings: () => Promise<ToolResultSettingsRow>;
+  /** The logger's redaction by value: every MCP text the model gets and every stored result passes it. */
+  readonly maskSecrets: (text: string) => string;
   /** Binds `createStartChild` (T3.4) to the commit transaction and the caller; `createAgents` supplies it. */
   readonly startChildFor: (scope: StartChildScope) => StartChild;
 }
@@ -202,6 +216,9 @@ export type CodeCallExecution =
   | Extract<ToolExecution, { kind: 'done' }>
   | CodeCallRefusal
   | AbortedExecution;
+
+/** A resolved call of an MCP tool. */
+type McpCall = ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> };
 
 /** The step context the runner needs for an outside call; the tool gets it in its input. */
 export type OutsideContext = Pick<StepContext, 'signal' | 'logger' | 'guard'>;
@@ -257,7 +274,7 @@ export interface ToolRunner {
    */
   planInCommit(call: InCommitCall, logger: Logger): Promise<InCommitPlan>;
   /**
-   * Sends a confirmed call once (Flow 5): first the intent `sending` through `ctx.guard`; `fenced`, or a
+   * Sends a confirmed call once (Flow 5): first the `tool_sent` intent through `ctx.guard`; `fenced`, or a
    * call no longer awaiting confirmation, is not sent (Invariant 2). `editedArgs` are the arguments the
    * employee edited; they replace the call's. `confirmed` — `content` of the resolved request, given to
    * an `outside` tool in its input (code-execution KD-10).
@@ -281,6 +298,7 @@ export function callerOf(ctx: StepContext): ToolCaller {
     rootId: ctx.rootId,
     parentId: ctx.parentId,
     depth: ctx.depth,
+    snapshot: sessionInputOf(ctx.input).snapshot,
   };
 }
 
@@ -313,7 +331,7 @@ interface LoggedCall {
 }
 
 function loggedCall(call: ResolvedCall): LoggedCall {
-  return { callId: call.callId, ...callTarget(call.tool), args: call.args };
+  return { callId: call.callId, ...callTarget(call.tool), args: loggedArgs(call.tool, call.args) };
 }
 
 /** Logs one tool call the runner ran (rule 9 of the plan): ids, tool, server, arguments, outcome, reason, duration. */
@@ -373,7 +391,7 @@ function withoutServerText(
 
 /** The tool runner of the step (C3 `ToolRunner`; KD-4, KD-5, Flow 5). */
 export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
-  const { client, accounts, access, audit, callTimeoutMs, toolResultMaxBytes } = options;
+  const { client, accounts, access, audit, callTimeoutMs, resultSettings, maskSecrets } = options;
 
   /**
    * The gate's answer for the caller's owner, asked right before a call starts: a disabled owner is logged
@@ -446,10 +464,14 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     return response;
   }
 
+  /**
+   * Sends an MCP call and turns its answer into an execution with `finish`; the step's signal and a server
+   * gone since the check end it before.
+   */
   async function callMcp(
-    call: ResolvedCall & { readonly tool: Extract<SessionTool, { kind: 'mcp' }> },
+    call: McpCall,
     signal: AbortSignal,
-    maxBytes: number,
+    finish: (response: McpCallResponse) => ToolExecution | Promise<ToolExecution>,
   ): Promise<ToolExecution | AbortedExecution> {
     if (signal.aborted) return { kind: 'aborted' };
     const args = MCP_ARGS_SCHEMA.parse(call.args);
@@ -458,20 +480,67 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       const response = await sendMcp({ server, tool, args, ownerId: call.caller.ownerId, signal });
       if (signal.aborted) return { kind: 'aborted' };
       if (response.kind === 'server_gone') return { kind: 'refused', reason: 'tool_not_in_definition' };
-      const result = toOutcome(response, maxBytes, { callId: call.callId, server });
-      const hasValue =
-        response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
-      return {
-        kind: 'done',
-        outcome: result.outcome,
-        text: result.text,
-        ...(result.reason === undefined ? {} : { failureReason: result.reason }),
-        ...(hasValue ? { fullResult: { value: scriptValueOf(response.result) } } : {}),
-      };
+      const execution = await finish(response);
+      return signal.aborted ? { kind: 'aborted' } : execution;
     } catch (error) {
       if (signal.aborted) return { kind: 'aborted' };
       throw error;
     }
+  }
+
+  /**
+   * A direct call's answer for the model (tool-result-reading R-1, R-3, R-4): the text masked; a `success`
+   * longer than `storeFromChars` becomes the wrapper, a `tool_error` is cut there; `success` and `empty`
+   * carry their full result for the step's commit.
+   */
+  async function directExecution(
+    call: McpCall,
+    response: McpCallResponse,
+    logger: Logger,
+  ): Promise<ToolExecution> {
+    const { server, tool } = call.tool.mcp;
+    const result = toOutcome(response, server);
+    const done = {
+      kind: 'done',
+      outcome: result.outcome,
+      ...(result.reason === undefined ? {} : { failureReason: result.reason }),
+    } as const;
+    if (response.kind !== 'result') return { ...done, text: result.text };
+    const text = maskSecrets(result.text);
+    const stored = (): StoredToolResult => ({
+      value: maskValue(scriptValueOf(response.result), maskSecrets),
+      text,
+    });
+    if (result.outcome === 'empty') return { ...done, text, stored: stored() };
+    const settings = await resultSettings();
+    if (result.outcome === 'tool_error') return { ...done, text: cutText(text, settings.storeFromChars) };
+    if (text.length <= settings.storeFromChars) return { ...done, text, stored: stored() };
+    logger.info('tool result wrapped', {
+      callId: call.callId,
+      server,
+      tool,
+      chars: text.length,
+      previewChars: settings.previewChars,
+    });
+    return {
+      ...done,
+      text: wrapperText({ callId: call.callId, text, previewChars: settings.previewChars }),
+      stored: stored(),
+    };
+  }
+
+  /** A script's call's answer, as today: the whole text and, with `success` or `empty`, the value. */
+  function codeExecution(call: McpCall, response: McpCallResponse): ToolExecution {
+    const result = toOutcome(response, call.tool.mcp.server);
+    const hasValue =
+      response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
+    return {
+      kind: 'done',
+      outcome: result.outcome,
+      text: result.text,
+      ...(result.reason === undefined ? {} : { failureReason: result.reason }),
+      ...(hasValue ? { fullResult: { value: scriptValueOf(response.result) } } : {}),
+    };
   }
 
   async function execute(
@@ -480,7 +549,10 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     confirmed?: unknown,
   ): Promise<ToolExecution | AbortedExecution> {
     const { tool } = call;
-    if (tool.kind === 'mcp') return callMcp({ ...call, tool }, ctx.signal, toolResultMaxBytes);
+    if (tool.kind === 'mcp') {
+      const mcpCall: McpCall = { ...call, tool };
+      return callMcp(mcpCall, ctx.signal, (response) => directExecution(mcpCall, response, ctx.logger));
+    }
     if (tool.tool.mode !== 'outside') {
       throw new Error(`Tool ${tool.name} runs in the commit transaction, not outside it`);
     }
@@ -570,7 +642,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     if (scope.runClass === 'read' && !call.tool.mcp.readOnly) {
       return refuse('changing_in_read_run');
     }
-    const execution = await callMcp({ ...call, tool: call.tool }, scope.signal, Number.POSITIVE_INFINITY);
+    const mcpCall: McpCall = { ...call, tool: call.tool };
+    const execution = await callMcp(mcpCall, scope.signal, (response) => codeExecution(mcpCall, response));
     return execution.kind === 'refused' ? refuse(execution.reason) : execution;
   }
 
@@ -654,19 +727,18 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
           kind: 'in_commit',
           commit: async (tx, effects) => {
             const startedAt = Date.now();
-            const intent = await toolCalls.markSending(tx, key);
-            const execution: ToolExecution | NotSent =
-              intent === undefined
-                ? { kind: 'not_sent', reason: 'not_awaiting' }
-                : await runInCommit(inCommit, prepared, tx, effects);
+            const execution: ToolExecution | NotSent = (await callRecords.markSent(tx, key))
+              ? await runInCommit(inCommit, prepared, tx, effects)
+              : { kind: 'not_sent', reason: 'not_awaiting' };
             logCall(ctx.logger, loggedCall(sent), execution, startedAt);
             return execution;
           },
         };
       }
       const startedAt = Date.now();
-      const intent = await ctx.guard((tx) => toolCalls.markSending(tx, key));
-      if (intent.outcome === 'fenced' || intent.value === undefined) {
+      // Committed before the request leaves: a step lost from here on finds the intent and never resends.
+      const intent = await ctx.guard((tx) => callRecords.markSent(tx, key));
+      if (intent.outcome === 'fenced' || !intent.value) {
         const notSent: NotSent = {
           kind: 'not_sent',
           reason: intent.outcome === 'fenced' ? 'fenced' : 'not_awaiting',

@@ -2,11 +2,10 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 import type { McpCallResponse } from './mcp-client.js';
 import { scriptValueOf, toOutcome } from './mcp-outcome.js';
 
-// AC-13.1 (outcomes of a call): an MCP response becomes exactly one outcome.
-// DC-7, DC-8: a cut text ends with the cut note; only a success names readResult with its callId.
+// AC-13.1 (outcomes of a call): an MCP response becomes exactly one outcome with the server's whole text;
+// what the model gets of a long text is decided by the runner (large-result.spec.ts).
 
-const MAX_BYTES = 16;
-const CALL = { callId: 'call-7', server: 'backoffice' };
+const SERVER = 'backoffice';
 
 function result(fields: Partial<CallToolResult>): McpCallResponse {
   return { kind: 'result', result: { content: [], ...fields } };
@@ -51,30 +50,8 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       { kind: 'auth_required' } satisfies McpCallResponse,
       { outcome: 'auth_required', text: 'Нужно подключить аккаунт backoffice на странице «Мой доступ»' },
     ],
-    [
-      'a text longer than the limit is cut at the limit with the number of cut bytes',
-      result({ content: [{ type: 'text', text: 'abcdefghijklmnopqrstuvwxyz' }] }),
-      {
-        outcome: 'success',
-        text: 'abcdefghijklmnop\nрезультат обрезан на 10 байт; полный — `readResult("call-7")` в `run_code`',
-      },
-    ],
-    [
-      'the cut never splits a multi-byte character',
-      // 'ж' is 2 bytes in UTF-8: 15 ASCII bytes + 'ж' crosses the 16-byte limit, so the whole 'ж' goes.
-      result({ content: [{ type: 'text', text: 'abcdefghijklmnoжz' }] }),
-      {
-        outcome: 'success',
-        text: 'abcdefghijklmno\nрезультат обрезан на 3 байт; полный — `readResult("call-7")` в `run_code`',
-      },
-    ],
-    [
-      'a cut tool error says how much was cut but offers no full result',
-      result({ isError: true, content: [{ type: 'text', text: 'abcdefghijklmnopqrstuvwxyz' }] }),
-      { outcome: 'tool_error', text: 'abcdefghijklmnop\nрезультат обрезан на 10 байт' },
-    ],
   ] as const)('%s', (_case, response, expected) => {
-    expect(toOutcome(response, MAX_BYTES, CALL)).toEqual(expected);
+    expect(toOutcome(response, SERVER)).toEqual(expected);
   });
 
   // «API скрипта»: callTool returns structuredContent, else the text parsed as JSON, else the text.

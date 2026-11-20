@@ -24,9 +24,9 @@
 //       succeeds) and INT-3 F (a failing server becomes `transport_failure`): KEPT as the proof for shared-token servers, adapted to the
 //       registry + HTTP fixture harness (`crash_process` is replaced by `drop_connection`, KD-7); INT-1 row 6 adds only the oauth-mode refusal.
 //   - packages/agents/test/code-execution.int.e2e-spec.ts: INT-3 row A (refusals from `run_code`) is adapted to the same harness; INT-1 row D
-//       (a server credential in the script's env masked in the run log) loses its premise - `secretValuesOf` now carries only
-//       `ANTHROPIC_API_KEY` (Security Considerations) - and is dropped by the implementation task.
-//   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; `checkCatalog` keeps the name-form rows.
+//       (a server credential in the script's env masked in the run log) loses its premise - the log mask holds only the keys in the
+//       process secret memory, which the model provider rows fill (Security Considerations) - and is dropped by the implementation task.
+//   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; the file keeps only the rows of the settings the package still reads.
 //   - stdio transport, `createMcpClients` cache, `McpStartupError`, `fixtureServersFile` and their tests are deleted with the code.
 //
 // `provenAt: unit` (small tables next to the code, not skeletons): the scheme check of a server or authorization-server address
@@ -46,18 +46,20 @@ import {
   type ScriptedAnswer,
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
-import { agentMcpAccounts, agentSessions, agentToolCalls } from '@agent-os/db';
+import { agentMcpAccounts, agentSessions } from '@agent-os/db';
 import { FIXTURE_SHARED_TOKEN, createFixtureFiles, fixtureCallsOf, holdCall, readFixtureLog } from '@agent-os/mcp-fixture';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   type AgentsHarness,
   codeCallRowsOf,
   createAgentsHarness,
   historyOf,
-  testDefinition,
+  setRootRecord,
+  type TestRecord,
+  testRecord,
   toolOutputOf,
-  uniqueName,
+  toolCallRowsOf,
   waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness.js';
@@ -75,9 +77,11 @@ import { newUser } from './support/new-user.js';
 /** Bound of one in-process test; the story settles far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 
-/** A server name the definitions name and the registry never holds (DC-11). */
+/** A server name the records name and the registry never holds (DC-11). */
 const GHOST_SERVER = runName('ghost');
 
+/** The tools every session offers its model, before any server's tools. */
+const SESSION_TOOLS = ['read_tool_result', 'search_tool_result', 'run_code'];
 /** The run's tools as the model names them; the registry keeps a server's tools sorted by name. */
 const LOGS_TOOLS = [
   `mcp__${LOGS_SERVER}__aggregate_logs`,
@@ -160,13 +164,13 @@ interface Employee {
 async function startEmployee(
   harness: AgentsHarness,
   model: ReturnType<typeof createScriptedModel>,
-  input: { readonly ownerId: string; readonly definition: string; readonly task: string; readonly turns: Turns },
+  input: { readonly ownerId: string; readonly root: TestRecord; readonly task: string; readonly turns: Turns },
 ): Promise<Employee> {
   const turns = { [input.task]: TURN_DONE, ...input.turns };
   const script = model.script({ task: input.task }, [], { thereafter: byMessage(turns) });
+  await setRootRecord(harness.library, input.root);
   const { agentId } = await harness.sessions.start({
     ownerId: input.ownerId,
-    definition: input.definition,
     prompt: input.task,
     description: input.task,
   });
@@ -201,21 +205,15 @@ async function turn(harness: AgentsHarness, employee: Employee, text: string): P
 
 /** An agent's audit rows with the owner of their session: `<owner> <server>/<tool> <outcome>[ <reason>]`. */
 async function auditOf(harness: AgentsHarness, agentId: string): Promise<string[]> {
-  const rows = await harness.db
-    .select({
-      ownerId: agentSessions.ownerId,
-      tool: agentToolCalls.tool,
-      server: agentToolCalls.server,
-      outcome: agentToolCalls.outcome,
-      refusalReason: agentToolCalls.refusalReason,
-    })
-    .from(agentToolCalls)
-    .innerJoin(agentSessions, eq(agentSessions.taskId, agentToolCalls.taskId))
-    .where(eq(agentToolCalls.taskId, agentId))
-    .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
+  // The calls are folded from the agent's history; their owner is the owner of its session row.
+  const [session] = await harness.db
+    .select({ ownerId: agentSessions.ownerId })
+    .from(agentSessions)
+    .where(eq(agentSessions.taskId, agentId));
+  const rows = await toolCallRowsOf(harness.db, agentId);
   return rows.map((row) =>
     [
-      row.ownerId,
+      session?.ownerId,
       row.server === null ? row.tool : `${row.server}/${row.tool}`,
       row.outcome ?? '-',
       ...(row.refusalReason === null ? [] : [row.refusalReason]),
@@ -262,13 +260,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
   //   пропадают у него со следующего вызова модели, а статус - «нужна аутентификация»". Design: DC-1, DC-2, DC-11; UC-1, UC-2 (calls), UC-4, UC-E4.
   // Behavior: an admin or employee operation on `Agents.mcp` -> the next model call of a running agent builds its set from the database ->
   //   the scripted model asks for tools -> `ToolRunner` asks the one access function, then opens ONE connection with the owner's token ->
-  //   fixture journal and `agent_tool_calls` rows.
+  //   fixture journal and tool calls in `agent_messages`.
   // Steps (one story, literal expectations; the registry is empty at the start; Аня and Борис are permitted `logs` and `backoffice` and Глеб
   //   nothing, server rights of the access gate double keyed by their ids; the definitions name `*` and also `ghost`, which is never registered; an agent of Аня is running):
   //   1. DC-11: startup passed with `ghost` in the definitions; `ghost` yields no tool in any set.
   //   2. AC-12.5 / AC-13.1: the admin registers `logs` (shared token); at Аня's next model call her set holds the `logs` tools, no restart.
   //      Аня's and Борис's agents each call one `logs` tool -> the journal holds two calls with the shared identity, and each
-  //      `agent_tool_calls` row belongs to its own agent and `ownerId`.
+  //      tool calls in `agent_messages` belongs to its own agent and `ownerId`.
   //   3. AC-14.2 / AC-14.3: `backoffice` (personal OAuth) is registered and the admin account is connected. Аня has no account: the set of her
   //      next model call has no `backoffice` tool and her agent keeps working (the scripted model finishes the turn). Аня and Борис connect;
   //      at their next model calls the sets hold the `backoffice` tools.
@@ -296,8 +294,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const boris = newUser();
     const gleb = newUser();
     const admin = newUser();
-    const everyServer = uniqueName('every-server');
-    const namedServers = uniqueName('named-servers');
+    const everyServer = testRecord('every-server', { servers: ['*'] });
+    const namedServers = testRecord('named-servers', { servers: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER] });
     const fixture = createFixtureFiles('mcp-connect');
     const model = createScriptedModel();
     const harness = await createAgentsHarness({
@@ -308,18 +306,14 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         [anya]: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER],
         [boris]: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER],
       },
-      definitions: [
-        testDefinition(everyServer, { mcpServers: ['*'] }),
-        testDefinition(namedServers, { mcpServers: [LOGS_SERVER, BACKOFFICE_SERVER, GHOST_SERVER] }),
-      ],
     });
     const { control } = harness.fixtureProcess;
     try {
       // 1. DC-11: the start passed with `ghost` in a definition; with no server of the run registered, both
-      //    agents are offered only `run_code`, and `ghost` gives no tool
+      //    agents are offered only the tools every session has, and `ghost` gives no tool
       const anyaAgent = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня investigates a failed payment',
         turns: {
           [READ_LOGS]: { calls: [{ tool: GET_TRACE, args: TRACE_ANYA }] },
@@ -332,7 +326,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       });
       const borisAgent = await startEmployee(harness, model, {
         ownerId: boris,
-        definition: namedServers,
+        root: namedServers,
         task: 'Борис checks the refunds',
         turns: {
           [READ_LOGS]: { calls: [{ tool: GET_TRACE, args: TRACE_BORIS }] },
@@ -340,8 +334,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
           [AFTER_DISCONNECT]: TURN_DONE,
         },
       });
-      expect(anyaAgent.script.calls[0]?.toolNames).toEqual(['run_code']);
-      expect(borisAgent.script.calls[0]?.toolNames).toEqual(['run_code']);
+      expect(anyaAgent.script.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
+      expect(borisAgent.script.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
 
       // 2. AC-12.5 / AC-13.1: the admin registers `logs` with the shared token; at the next model call both sets
       //    hold its tools (no restart); both calls reach the server with the shared identity, and each audit row
@@ -352,8 +346,8 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         mode: 'shared',
         sharedToken: FIXTURE_SHARED_TOKEN,
       });
-      expect((await turn(harness, anyaAgent, READ_LOGS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
-      expect((await turn(harness, borisAgent, READ_LOGS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, READ_LOGS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
+      expect((await turn(harness, borisAgent, READ_LOGS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect(journalLines(fixture.callLog)).toEqual(['logs shared get_trace', 'logs shared get_trace']);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_ANYA })).toHaveLength(1);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_BORIS })).toHaveLength(1);
@@ -374,11 +368,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         'admin',
       ]);
       expect(adminConnected.change?.added).toEqual(['create_incident_note', 'get_order', 'search_orders']);
-      expect((await turn(harness, anyaAgent, LOOK_AT_BACKOFFICE)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, LOOK_AT_BACKOFFICE)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect((await harness.sessions.get(anyaAgent.agentId, anya)).status).not.toBe('failed');
       expect((await harness.agents.mcp.connections(anya)).map((c) => `${c.server} ${c.status}`)).toEqual([
         `${BACKOFFICE_SERVER} needs_auth`,
       ]);
+      // KD-4 (custom-agents library): the servers Аня may use are of any mode, not only `oauth`
+      expect(await harness.agents.mcp.usable(anya)).toEqual([BACKOFFICE_SERVER, LOGS_SERVER]);
       for (const [ownerId, account] of [
         [anya, 'anya'],
         [boris, 'boris'],
@@ -398,7 +394,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         "Аня's back-office call to reach the fixture",
       );
       expect((await turn(harness, borisAgent, READ_BACKOFFICE)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         ...BACKOFFICE_TOOLS,
         ...LOGS_TOOLS,
       ]);
@@ -406,7 +402,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       anyaHeld.release();
       await turnEnded(harness, anyaAgent, anyaCallsBefore + 2);
       fixture.setFaults([]);
-      expect(anyaAgent.script.calls[anyaCallsBefore]?.toolNames).toEqual(['run_code', ...BACKOFFICE_TOOLS, ...LOGS_TOOLS]);
+      expect(anyaAgent.script.calls[anyaCallsBefore]?.toolNames).toEqual([...SESSION_TOOLS, ...BACKOFFICE_TOOLS, ...LOGS_TOOLS]);
       const anyaOrders = fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_ANYA });
       const borisOrders = fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_BORIS });
       expect(anyaOrders.map((entry) => `${entry.source} ${entry.account} ${entry.mode}`)).toEqual([
@@ -432,7 +428,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       // 5. AC-14.4: Аня disconnects -> her next set has no `backoffice` tool and her status is `needs_auth`;
       //    Борис's set and status are unchanged
       await harness.agents.mcp.disconnect(anya, BACKOFFICE_SERVER);
-      expect((await turn(harness, anyaAgent, AFTER_DISCONNECT)).toolNames).toEqual(['run_code', ...LOGS_TOOLS]);
+      expect((await turn(harness, anyaAgent, AFTER_DISCONNECT)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS]);
       expect((await harness.agents.mcp.connections(anya)).map((c) => `${c.server} ${c.status}`)).toEqual([
         `${BACKOFFICE_SERVER} needs_auth`,
       ]);
@@ -440,7 +436,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         `${BACKOFFICE_SERVER} connected`,
       ]);
       expect((await turn(harness, borisAgent, AFTER_DISCONNECT)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         ...BACKOFFICE_TOOLS,
         ...LOGS_TOOLS,
       ]);
@@ -464,15 +460,15 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         },
         { text: 'nothing was read' },
       ]);
+      await setRootRecord(harness.library, everyServer);
       const { agentId: glebAgentId } = await harness.sessions.start({
         ownerId: gleb,
-        definition: everyServer,
         prompt: glebTask,
         description: glebTask,
       });
       await glebScript.called(2);
       await waitForTaskStatus(harness, glebAgentId, gleb, 'waiting');
-      expect(glebScript.calls[0]?.toolNames).toEqual(['run_code']);
+      expect(glebScript.calls[0]?.toolNames).toEqual(SESSION_TOOLS);
       const glebRunId = glebScript.calls[0]?.toolCallIds[2] ?? '';
       expect(await auditOf(harness, glebAgentId)).toEqual([
         `${gleb} ${GET_TRACE} refused no_access`,
@@ -504,15 +500,16 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       const refreshed = await harness.agents.mcp.refreshTools(LOGS_SERVER, admin);
       expect([refreshed.added, refreshed.removed]).toEqual([[ADDED_TOOL], []]);
       expect((await turn(harness, anyaAgent, AFTER_REFRESH)).toolNames).toEqual([
-        'run_code',
+        ...SESSION_TOOLS,
         `mcp__${LOGS_SERVER}__aggregate_logs`,
         ADDED_TOOL_NAME,
         `mcp__${LOGS_SERVER}__get_trace`,
         `mcp__${LOGS_SERVER}__search_logs`,
       ]);
       await harness.agents.mcp.update(LOGS_SERVER, { enabled: false });
+      expect(await harness.agents.mcp.usable(anya)).toEqual([BACKOFFICE_SERVER]);
       const journalBeforeDisabled = readFixtureLog(fixture.callLog).length;
-      expect((await turn(harness, anyaAgent, AFTER_DISABLE)).toolNames).toEqual(['run_code']);
+      expect((await turn(harness, anyaAgent, AFTER_DISABLE)).toolNames).toEqual(SESSION_TOOLS);
       expect((await auditOf(harness, anyaAgent.agentId)).at(-1)).toBe(`${anya} ${GET_TRACE} refused tool_not_in_definition`);
       expect(fixtureCallsOf(fixture.callLog, { tool: 'get_trace', args: TRACE_AFTER_DISABLE })).toEqual([]);
       expect(readFixtureLog(fixture.callLog)).toHaveLength(journalBeforeDisabled);
@@ -568,7 +565,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
     const anya = newUser();
     const boris = newUser();
     const admin = newUser();
-    const everyServer = uniqueName('every-server');
+    const everyServer = testRecord('every-server', { servers: ['*'] });
     const fixture = createFixtureFiles('mcp-connect');
     const model = createScriptedModel();
     const refusedOwners: string[] = [];
@@ -580,7 +577,6 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
         [anya]: [LOGS_SERVER, BACKOFFICE_SERVER, TRACKER_SERVER],
         [boris]: [BACKOFFICE_SERVER],
       },
-      definitions: [testDefinition(everyServer, { mcpServers: ['*'] })],
       refusedOwners,
     });
     const { control } = harness.fixtureProcess;
@@ -611,7 +607,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       const writeScript = twoTraceReadsScript();
       const anyaFirst = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня reconciles the refunds',
         turns: {
           [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_ANYA }] },
@@ -626,13 +622,13 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       });
       const anyaSecond = await startEmployee(harness, model, {
         ownerId: anya,
-        definition: everyServer,
+        root: everyServer,
         task: 'Аня checks the chargebacks',
         turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_SECOND_AGENT }] } },
       });
       const borisAgent = await startEmployee(harness, model, {
         ownerId: boris,
-        definition: everyServer,
+        root: everyServer,
         task: 'Борис checks the refunds',
         turns: { [READ_ORDERS_TOGETHER]: { calls: [{ tool: SEARCH_ORDERS, args: ORDERS_BORIS }] } },
       });
@@ -702,7 +698,7 @@ describe('enterprise-access / mcp-connect - agents integration (real Postgres + 
       expect(fixtureCallsOf(fixture.callLog, { tool: 'search_orders', args: ORDERS_REFRESH_REVOKED })).toEqual([]);
       expect(await accountRowOf(harness, anya)).toBeUndefined();
       expect(await connectionLines(harness, anya)).toEqual([`${BACKOFFICE_SERVER} needs_auth`]);
-      expect((await turn(harness, anyaFirst, AFTER_LOSS)).toolNames).toEqual(['run_code', ...LOGS_TOOLS, ...TRACKER_TOOLS]);
+      expect((await turn(harness, anyaFirst, AFTER_LOSS)).toolNames).toEqual([...SESSION_TOOLS, ...LOGS_TOOLS, ...TRACKER_TOOLS]);
       expect(await connectionLines(harness, boris)).toEqual([`${BACKOFFICE_SERVER} connected`]);
       expect((await control.stats('boris')).refreshes).toBe(1);
 

@@ -46,6 +46,8 @@ export interface AgentsMcp {
   refreshTools(name: string, actorId: string): Promise<McpToolsRefresh>;
   remove(name: string): Promise<McpServerRemoval>;
   connections(ownerId: string): Promise<McpConnection[]>;
+  /** Names of the enabled servers of any mode the employee may use, by name; none for a disabled employee. */
+  usable(ownerId: string): Promise<string[]>;
   beginConnect(input: McpConnectBegin): Promise<McpConnectStart>;
   /** Stores the account; an admin's account on a server waiting for its list also fills the list (Flow 1). */
   finishConnect(input: McpConnectReturn): Promise<McpConnectResult>;
@@ -103,6 +105,7 @@ export function createAgentsMcp(registry: McpRegistry, accounts: McpAccounts): A
     refreshTools,
     remove: (name) => registry.remove(name),
     connections: (ownerId) => accounts.connections(ownerId),
+    usable: (ownerId) => accounts.usable(ownerId),
     beginConnect: (input) => accounts.begin(input),
     async finishConnect(input) {
       const finished = await accounts.finish(input);

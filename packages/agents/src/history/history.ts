@@ -2,6 +2,7 @@ import {
   AgentStatusSchema,
   HistoryEventSchema,
   ToolOutcomeSchema,
+  ChipRecordSchema,
   ToolRefusalReasonSchema,
   type HistoryEntryKind,
 } from '@agent-os/contracts';
@@ -10,16 +11,27 @@ import { z } from 'zod';
 /** How a child agent ended, as its parent learns it from `child_finished`. */
 const ChildEndSchema = AgentStatusSchema.extract(['completed', 'failed', 'stopped']);
 
+/** One tool call of a model answer: its place in `toolCalls` is its position in the answer. */
+const AnswerCallSchema = z.object({
+  callId: z.string(),
+  tool: z.string(),
+  /** MCP server id; null for built-in and registered tools. */
+  server: z.string().nullable(),
+  args: z.unknown(),
+});
+export type AnswerCall = z.infer<typeof AnswerCallSchema>;
+
 /**
  * The content of a history entry by its kind (design-agents.md, Contract «HistoryEntry»): the `content`
- * of an `agent_messages` row. The tool calls of a `model_answer` live in `agent_tool_calls`, one row per
- * call, linked to the answer by its `seq`.
+ * of an `agent_messages` row. A tool call is an item of its `model_answer`; what happened to it are the
+ * later call records with its `callId` (`CALL_RECORD_KINDS`), and its state is which of them exist
+ * (`foldCalls`). Nothing is updated in place.
  */
 export const HistoryContentSchemas = {
-  /** The task text; the agent's first own entry. */
-  task: z.object({ text: z.string() }),
-  /** A message of the employee. */
-  user_message: z.object({ text: z.string() }),
+  /** The task text; the agent's first own entry. At a conversation's root it keeps its first message's chip. */
+  task: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
+  /** A message of the employee, with the record chip it carries, if any (design-runtime.md KD-4). */
+  user_message: z.object({ text: z.string(), record: ChipRecordSchema.nullable() }),
   /** A message of the parent agent. */
   agent_message: z.object({ text: z.string(), agentId: z.string() }),
   /** A child's report: written when the runtime delivers `child_finished`. */
@@ -33,9 +45,29 @@ export const HistoryContentSchemas = {
     toolCalls: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative(),
   }),
-  /** The text of a model answer; its calls are the `agent_tool_calls` rows with this `seq`. */
-  model_answer: z.object({ text: z.string() }),
-  /** The result of one tool call. */
+  /** A model answer: its text and the calls it requested, in order. */
+  model_answer: z.object({ text: z.string(), toolCalls: z.array(AnswerCallSchema) }),
+  /** The call was put before the employee: written in the commit that ends the step with `await_decision`. */
+  tool_confirmation: z.object({ callId: z.string() }),
+  /** The employee's decision, written by the step that consumed it; `args` — the edited arguments, if any. */
+  tool_decision: z.object({
+    callId: z.string(),
+    approved: z.boolean(),
+    args: z.unknown().optional(),
+  }),
+  /**
+   * The intent of a confirmed call, committed before the call goes out (KD-4, Invariant 2): a call with
+   * this record and no result may have reached its server and is never sent again. `args` — the
+   * arguments sent when the employee edited them; otherwise the answer's went out.
+   */
+  tool_sent: z.object({
+    callId: z.string(),
+    startedAt: z.iso.datetime(),
+    args: z.unknown().optional(),
+  }),
+  /** The start of one attempt of a `run_code` read run (code-execution KD-7). */
+  run_attempt: z.object({ callId: z.string(), attempt: z.number().int().positive() }),
+  /** The result of one tool call: the record that closes it. */
   tool_result: z.object({
     callId: z.string(),
     tool: z.string(),
@@ -44,11 +76,15 @@ export const HistoryContentSchemas = {
     args: z.unknown(),
     outcome: ToolOutcomeSchema,
     refusalReason: ToolRefusalReasonSchema.nullable(),
+    /** The refused model of a refusal by model, otherwise `null`. */
+    refusalDetail: z.object({ model: z.string().min(1) }).nullable(),
     text: z.string().nullable(),
     /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
     output: z.string().nullable().optional(),
     startedAt: z.iso.datetime().nullable(),
     finishedAt: z.iso.datetime().nullable(),
+    /** The agent a `start_agent` call started; absent for other calls. Kept for incident analysis. */
+    childTaskId: z.string().optional(),
   }),
   /** A message of the package's code to the model, such as a refusal to finish. */
   notice: z.object({ text: z.string() }),
@@ -69,14 +105,3 @@ export type HistoryEntry = {
     readonly content: HistoryContent<K>;
   };
 }[HistoryEntryKind];
-
-/** One tool call of a model answer, as the provider messages are built from it (an `agent_tool_calls` row). */
-export interface ToolCallRecord {
-  readonly callId: string;
-  /** `seq` of the `model_answer` that requested the call. */
-  readonly answerSeq: number;
-  /** Position of the call within its answer. */
-  readonly position: number;
-  readonly tool: string;
-  readonly args: unknown;
-}

@@ -8,7 +8,7 @@ import {
   WaitReasonSchema,
 } from '@agent-os/contracts';
 import { type Database, runtimeInbox } from '@agent-os/db';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { CrashPoints } from './crash-points.js';
 import { RuntimeError } from './errors.js';
 import type { EventLog } from './event-log.js';
@@ -234,7 +234,7 @@ export class Inbox {
     if (messageIds.length === 0) return;
     const rows = await tx
       .update(runtimeInbox)
-      .set({ status: delivered, deliveredStep: stepNo, deliveredAt: sql`now()` })
+      .set({ status: delivered, deliveredStep: stepNo })
       .where(
         and(
           eq(runtimeInbox.recipientId, task.taskId),

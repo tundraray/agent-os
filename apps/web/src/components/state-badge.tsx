@@ -1,11 +1,11 @@
-import { Ban, Circle, CircleCheck, CircleMinus, KeyRound, type LucideIcon } from "lucide-react";
+import { Ban, Circle, CircleCheck, CircleMinus, Info, KeyRound, type LucideIcon } from "lucide-react";
 import { cn } from "cn";
 
 /**
  * States of the «Состояние» variant (design-system state-badge): `ok` «Хорошо», `action` «Нужно действие»,
- * `closed` «Закрыто», `off` «Выключено», `neutral` «Нейтрально».
+ * `closed` «Закрыто», `off` «Выключено», `neutral` «Нейтрально», `info` «Сведения».
  */
-export type StateBadgeState = "ok" | "action" | "closed" | "off" | "neutral";
+export type StateBadgeState = "ok" | "action" | "closed" | "off" | "neutral" | "info";
 
 const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> = {
   ok: { icon: CircleCheck, className: "text-success" },
@@ -13,11 +13,12 @@ const STATES: Record<StateBadgeState, { icon: LucideIcon; className: string }> =
   closed: { icon: Ban, className: "text-destructive" },
   off: { icon: CircleMinus, className: "text-muted-foreground" },
   neutral: { icon: Circle, className: "text-muted-foreground" },
+  info: { icon: Info, className: "text-info" },
 };
 
 export type StateBadgeProps = { children: string } & (
   | { state: StateBadgeState; variant?: "state" }
-  /** «Источник»: what kind of record it is (локальная, встроенная) — a bordered word without an icon. */
+  /** «Источник»: where a record came from or who sees it (локальная, только вы, пишет ответ) — a bordered word without an icon. */
   | { variant: "source"; state?: never }
 );
 

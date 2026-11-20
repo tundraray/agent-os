@@ -8,6 +8,7 @@ import {
   type ProviderView,
   type UpdateProviderBody,
 } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
@@ -19,7 +20,7 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { cn } from '@/lib/utils';
 import { adminPath } from '@/lib/shell-route';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
-import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
+import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
 import { CopyValue } from '../copy-value';
 import { SecretField } from '../secret-field';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL, ProviderEnabledSwitch } from './providers-table';
@@ -97,9 +98,9 @@ export function ProviderPage({ id }: { id: string }) {
 
   return (
     <>
-      <AdminPageHeader
+      <PageHeader area={PANEL_TITLE}
         title={data.name}
-        parent="sign-in"
+        parent={sectionParent('sign-in')}
         badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? PROVIDER_TEXT.enabled : PROVIDER_TEXT.disabled}</StateBadge>}
       />
       <div className="flex max-w-160 flex-col gap-6">

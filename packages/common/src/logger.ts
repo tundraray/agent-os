@@ -60,15 +60,29 @@ export function isSecretFieldName(name: string): boolean {
   return SECRET_FIELD_NAMES.has(name.toLowerCase());
 }
 
+// The process's secret memory: only grows, so a replaced key stays redacted (design-core.md, KD-7).
+const rememberedSecrets = new Set<string>();
+
+/**
+ * Adds a secret read or accepted while the process runs (a provider key) to the process's memory;
+ * every masker from `createSecretMasker` redacts it from now on. A value shorter than
+ * `MIN_SECRET_VALUE_LENGTH` is not kept.
+ */
+export function rememberSecret(value: string): void {
+  if (value.length >= MIN_SECRET_VALUE_LENGTH) rememberedSecrets.add(value);
+}
+
 /**
  * The logger's redaction by value outside the log: replaces every occurrence of a secret at least
- * `MIN_SECRET_VALUE_LENGTH` long with `[redacted]`. Does not truncate.
+ * `MIN_SECRET_VALUE_LENGTH` long — of its own list and of the process's memory at the time of the
+ * call — with `[redacted]`. Does not truncate.
  */
 export function createSecretMasker(secrets: readonly string[]): (text: string) => string {
   const kept = secrets.filter((secret) => secret.length >= MIN_SECRET_VALUE_LENGTH);
   return (text) => {
     let masked = text;
     for (const secret of kept) masked = masked.replaceAll(secret, REDACTED);
+    for (const secret of rememberedSecrets) masked = masked.replaceAll(secret, REDACTED);
     return masked;
   };
 }

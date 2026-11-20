@@ -1,14 +1,26 @@
 import {
   ABSOLUTE_MINUTES_MAX,
   ABSOLUTE_MINUTES_MIN,
+  EMBEDDING_DIMENSIONS_MAX,
+  EMBEDDING_DIMENSIONS_MIN,
   IDLE_MINUTES_MAX,
   IDLE_MINUTES_MIN,
   isHttpsOrLocalhost,
+  KNOWLEDGE_LIMIT_TOKENS_MAX,
+  KNOWLEDGE_LIMIT_TOKENS_MIN,
   McpServerNameSchema,
+  MODEL_PROVIDER_API_KEY_MAX_LENGTH,
+  MODEL_PROVIDER_API_KEY_MIN_LENGTH,
   ModelIdSchema,
+  ModelProviderNameSchema,
   PROVIDER_NAME_MAX_LENGTH,
+  RECORD_MAX_TURNS_MAX,
+  RECORD_MAX_TURNS_MIN,
+  UpdateToolResultSettingsBodySchema,
   type McpServerMode,
+  type ModelPurpose,
   type PriceRates,
+  type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import { ADMIN_TEXT } from './admin-texts';
 
@@ -154,6 +166,69 @@ export function signInSettingsRules({
   return errors;
 }
 
+// ---------- Library settings ----------
+
+/** «Лимит ходов для новой записи»: a whole number within the contract's bounds of a record's «Максимум шагов». */
+export function librarySettingsRules({ defaultMaxTurns }: { defaultMaxTurns: string }): FieldErrors<'defaultMaxTurns'> {
+  const turns = parseDecimal(defaultMaxTurns);
+  const valid =
+    turns !== null && Number.isInteger(turns) && turns >= RECORD_MAX_TURNS_MIN && turns <= RECORD_MAX_TURNS_MAX;
+  return valid ? {} : { defaultMaxTurns: ADMIN_TEXT.defaultMaxTurns };
+}
+
+// ---------- Self-learning settings (self-learning AS-01, MC-8, DC-5) ----------
+
+/** «Место для знаний в запуске, токенов»: a whole number within the contract's bounds. */
+export function knowledgeSettingsRules({ limitTokens }: { limitTokens: string }): FieldErrors<'limitTokens'> {
+  const tokens = parseDecimal(limitTokens);
+  const valid =
+    tokens !== null &&
+    Number.isInteger(tokens) &&
+    tokens >= KNOWLEDGE_LIMIT_TOKENS_MIN &&
+    tokens <= KNOWLEDGE_LIMIT_TOKENS_MAX;
+  return valid ? {} : { limitTokens: ADMIN_TEXT.knowledgeLimitTokens };
+}
+
+// ---------- Large tool results (tool-result-reading R-5) ----------
+
+export type ToolResultSettingsValues = { storeFromChars: string; previewChars: string; readMaxTokens: string };
+
+const TOOL_RESULT_RANGE_TEXT: Readonly<Record<keyof ToolResultSettingsValues, string>> = {
+  storeFromChars: ADMIN_TEXT.toolResultStoreFromChars,
+  previewChars: ADMIN_TEXT.toolResultPreviewChars,
+  readMaxTokens: ADMIN_TEXT.toolResultReadMaxTokens,
+};
+
+const isToolResultField = (key: PropertyKey | undefined): key is keyof ToolResultSettingsValues =>
+  typeof key === 'string' && key in TOOL_RESULT_RANGE_TEXT;
+
+/** The typed texts as the request body; a text that is not a number becomes `NaN`, which the schema refuses. */
+export function toolResultSettingsBodyOf(values: ToolResultSettingsValues): UpdateToolResultSettingsBody {
+  const numberOf = (text: string): number => parseDecimal(text) ?? Number.NaN;
+  return {
+    storeFromChars: numberOf(values.storeFromChars),
+    previewChars: numberOf(values.previewChars),
+    readMaxTokens: numberOf(values.readMaxTokens),
+  };
+}
+
+/**
+ * The contract's body schema decides, as the server's 400 does: whole numbers within its bounds, and the
+ * preview shorter than the threshold (its only custom rule).
+ */
+export function toolResultSettingsRules(values: ToolResultSettingsValues): FieldErrors<keyof ToolResultSettingsValues> {
+  const parsed = UpdateToolResultSettingsBodySchema.safeParse(toolResultSettingsBodyOf(values));
+  const errors: FieldErrors<keyof ToolResultSettingsValues> = {};
+  if (parsed.success) return errors;
+  for (const issue of parsed.error.issues) {
+    const field = issue.path[0];
+    if (!isToolResultField(field) || errors[field] !== undefined) continue;
+    errors[field] =
+      issue.code === 'custom' ? ADMIN_TEXT.toolResultPreviewBelowThreshold : TOOL_RESULT_RANGE_TEXT[field];
+  }
+  return errors;
+}
+
 // ---------- Grants (GR-01, MC-25, DC-14) ----------
 
 /** The quota field's dollars: empty → `null` (no quota). Call after `quotaRules` passed. */
@@ -209,21 +284,53 @@ export function sharedTokenRules({ sharedToken }: { sharedToken: string }): Fiel
     : { sharedToken: ADMIN_TEXT.sharedToken };
 }
 
-// ---------- Model catalogue (AD-11, MC-30) ----------
+// ---------- Model providers (model-providers MP-04, MC-4) ----------
+
+export type ModelProviderValues = { name: string; baseUrl: string; apiKey: string };
+
+/** Name, address and key bounds are those of `contracts`; an empty address or key is not sent. */
+export function modelProviderRules({ name, baseUrl, apiKey }: ModelProviderValues): FieldErrors<keyof ModelProviderValues> {
+  const errors: FieldErrors<keyof ModelProviderValues> = {};
+  if (isBlank(name)) errors.name = ADMIN_TEXT.nameRequired;
+  else if (!ModelProviderNameSchema.safeParse(name).success) errors.name = ADMIN_TEXT.modelProviderNameRule;
+  if (!isBlank(baseUrl)) {
+    const protocol = parseUrl(baseUrl)?.protocol;
+    if (protocol !== 'http:' && protocol !== 'https:') errors.baseUrl = ADMIN_TEXT.modelProviderUrl;
+  }
+  if (apiKey !== '' && (apiKey.length < MODEL_PROVIDER_API_KEY_MIN_LENGTH || apiKey.length > MODEL_PROVIDER_API_KEY_MAX_LENGTH)) {
+    errors.apiKey = ADMIN_TEXT.modelProviderApiKey;
+  }
+  return errors;
+}
+
+// ---------- Model catalogue (AD-11, MC-30; model-providers MP-06, MC-7) ----------
 
 type PriceField = keyof PriceRates;
 type PriceTexts = Record<PriceField, string>;
 
 export type ModelValues = {
-  /** Only when adding: the id never changes. */
-  id?: string;
+  /** `null` until a provider is chosen. */
+  provider: string | null;
+  purpose: ModelPurpose;
+  /** The model's name at the provider: the id is `{provider}/{modelName}`. */
+  modelName: string;
   name: string;
+  /** A chat model has all four; an embedding model only `inputUsdPerMTok`. */
   prices: PriceTexts;
-  /** `null` while «Другие цены для длинных запросов» is off. */
+  /** Chat only; `null` while «Другие цены для длинных запросов» is off. */
   longContext: { aboveInputTokens: string; prices: PriceTexts } | null;
+  /** Embeddings only. */
+  dimensions: string;
 };
 
-type ModelField = 'id' | 'name' | PriceField | 'aboveInputTokens' | `long.${PriceField}`;
+type ModelField =
+  | 'provider'
+  | 'modelName'
+  | 'name'
+  | 'dimensions'
+  | PriceField
+  | 'aboveInputTokens'
+  | `long.${PriceField}`;
 
 const PRICE_FIELDS: readonly PriceField[] = [
   'inputUsdPerMTok',
@@ -237,11 +344,42 @@ const isPrice = (text: string): boolean => {
   return price !== null && price >= 0;
 };
 
-export function modelRules({ id, name, prices, longContext }: ModelValues): FieldErrors<ModelField> {
+/** The name at the provider makes a valid id with it: not empty, no whitespace (the id rule of `contracts`). */
+function isModelName(provider: string | null, modelName: string): boolean {
+  const trimmed = modelName.trim();
+  if (trimmed === '') return false;
+  return provider === null || ModelIdSchema.safeParse(`${provider}/${trimmed}`).success;
+}
+
+function isDimensions(text: string): boolean {
+  const dimensions = parseDecimal(text);
+  return (
+    dimensions !== null &&
+    Number.isInteger(dimensions) &&
+    dimensions >= EMBEDDING_DIMENSIONS_MIN &&
+    dimensions <= EMBEDDING_DIMENSIONS_MAX
+  );
+}
+
+export function modelRules({
+  provider,
+  purpose,
+  modelName,
+  name,
+  prices,
+  longContext,
+  dimensions,
+}: ModelValues): FieldErrors<ModelField> {
   const errors: FieldErrors<ModelField> = {};
-  if (id !== undefined && !ModelIdSchema.safeParse(id.trim()).success) errors.id = ADMIN_TEXT.modelIdFormat;
+  if (provider === null) errors.provider = ADMIN_TEXT.modelProviderRequired;
+  if (!isModelName(provider, modelName)) errors.modelName = ADMIN_TEXT.modelNameAtProviderRequired;
   const nameLength = lengthOf(name.trim());
   if (nameLength < 1 || nameLength > MODEL_NAME_MAX_LENGTH) errors.name = ADMIN_TEXT.modelNameLength;
+  if (purpose === 'embedding') {
+    if (!isPrice(prices.inputUsdPerMTok)) errors.inputUsdPerMTok = ADMIN_TEXT.priceRule;
+    if (!isDimensions(dimensions)) errors.dimensions = ADMIN_TEXT.dimensionsRule;
+    return errors;
+  }
   for (const field of PRICE_FIELDS) {
     if (!isPrice(prices[field])) errors[field] = ADMIN_TEXT.priceRule;
   }

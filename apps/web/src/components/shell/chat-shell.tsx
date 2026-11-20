@@ -7,6 +7,7 @@ import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
 import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
+import { useLeaveGuardHistory } from '@/hooks/use-leave-guard-history';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { setAdminRequiredHandler, setUnauthorizedHandler } from '@/lib/api/api-request';
 import { redirectToLogin } from '@/lib/auth/session-redirect';
@@ -19,6 +20,7 @@ import { ChatHeader } from './chat-header';
 import { ChatRuntimeProvider } from './chat-runtime-provider';
 import { ConnectionBar } from './connection-bar';
 import { DocumentTitle } from './document-title';
+import { LeaveGuardDialog } from './leave-guard-dialog';
 import { MainView } from './main-view';
 import { useShellServices } from './shell-actions';
 import {
@@ -56,6 +58,7 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
         <AdminRightWatch />
         <ShellAnnouncer />
         <GlobalShortcuts />
+        <LeaveGuard />
         <SkipLink />
         <AppSidebar />
         <ShellMain>{children}</ShellMain>
@@ -76,7 +79,7 @@ const focusWorkspaceToggle = (): void => {
  */
 function ShellMain({ children }: { children: ReactNode }) {
   const route = parseShellRoute(usePathname());
-  // Agent routes have no workspace (UXRD KD-1): its button is hidden and an open workspace closes.
+  // Agent, panel and library routes have no workspace (UXRD KD-1): its button is hidden and an open workspace closes.
   const workspaceAllowed = route.kind === 'chat';
   // The user's intent and the dragged width live for the tab session only.
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -168,11 +171,12 @@ function RouteFeedProvider({ route, children }: { route: ShellRoute; children: R
 }
 
 /**
- * First stop in the Tab order; visible only while focused. The panel has no composer: there it leads to the
- * screen's `h1`.
+ * First stop in the Tab order; visible only while focused. The panel and the library have no composer: there it
+ * leads to the screen's `h1`.
  */
 function SkipLink() {
-  const panel = parseShellRoute(usePathname()).kind === 'admin';
+  const kind = parseShellRoute(usePathname()).kind;
+  const panel = kind === 'admin' || kind === 'library';
   const target: FocusTarget = panel ? 'page-title' : 'composer';
   const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     event.preventDefault();
@@ -214,6 +218,12 @@ function ShellAnnouncer() {
 function GlobalShortcuts() {
   useGlobalShortcuts();
   return null;
+}
+
+/** KD-4: closing the tab and «Назад» while unsaved changes are held, and the one MC-11 dialog of the shell. */
+function LeaveGuard() {
+  useLeaveGuardHistory();
+  return <LeaveGuardDialog />;
 }
 
 /** Crossing to ≥ 768 px closes the drawer, so it does not reopen by itself when the window narrows again. */

@@ -1,17 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  type AgentDefinition,
   type AgentHistoryEntry,
   type Agents,
   type AgentSessions,
+  type AgentView,
   createAgents,
   parseAgentsConfig,
 } from '@agent-os/agents';
-import { createAccessGateDouble, type ScriptedModel } from '@agent-os/agents/testing';
+import {
+  createAccessGateDouble,
+  createLibraryDouble,
+  createScriptedEmbeddings,
+  type LibraryDouble,
+  type LibraryDoubleRecord,
+  type ScriptedModel,
+} from '@agent-os/agents/testing';
+
+export { toolCallRowsOf } from '@agent-os/agents/testing';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { createDatabase } from '@agent-os/db';
+import { createDatabase, type Database, type DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
   FIXTURE_SHARED_TOKEN,
@@ -27,26 +36,35 @@ import {
   type RuntimeConfig,
   systemClock,
 } from '@agent-os/runtime';
+import { createWorkflows, type Workflows } from '@agent-os/workflows';
 import { inject } from 'vitest';
-import { createWorkflows, START_WORKFLOW_TOOL, type Workflows } from '@agent-os/workflows';
-import { SHIPPED_TEMPLATES } from '../../src/shipped-templates.js';
 import { databaseUrl } from './database-url.js';
 
 /**
- * Test assembly of the workflows part (design-workflows.md, Test Strategy): `createRuntime`, `createAgents`
+ * Test assembly of the workflows package (design-runtime.md, Test Strategy): `createRuntime`, `createAgents`
  * and `createWorkflows` over their own pool, in the order of the composition root — create, register,
  * `agents.start()`, `runtime.start()`; stop in reverse. Postgres, the runtime, agents and workflows are
- * real; the model is the scripted double of `@agent-os/agents/testing` and MCP is the fixture process of
- * `@agent-os/mcp-fixture` over HTTP, its `logs` source registered in the registry under the run's name
- * {@link LOGS_SERVER}. No logic of the double or of the fixture lives here.
+ * real; the model is the scripted double of `@agent-os/agents/testing`, the library of agents and
+ * workflows is its `createLibraryDouble` (the root runs its `chat` record, a workflow is a record the test
+ * adds) and MCP is the fixture process of `@agent-os/mcp-fixture` over HTTP, its `logs` source registered
+ * in the registry under the run's name {@link LOGS_SERVER}. No logic of the doubles or of the fixture lives here.
+ * The model provider is the row {@link HARNESS_PROVIDER} in the database, which the open harnesses of a test
+ * file keep and the last one deletes.
  */
 
-/** The deployment's default model (`AGENT_DEFAULT_MODEL`): the executors of the shipped template. */
-const HAIKU_MODEL = 'anthropic/claude-haiku-5-5';
-/** The coordinator's model of the shipped `deep-research` template. */
-export const SONNET_MODEL = 'anthropic/claude-sonnet-5-5';
+/**
+ * The model provider of every harness (model-providers design-core.md, Test Strategy): an `openai_compatible`
+ * row without a key, so it is `ready`. Never `anthropic`: the tests run on the developer's database, whose
+ * `anthropic` row may hold a real key.
+ */
+const HARNESS_PROVIDER = 'workflows-harness';
 
-/** The model catalogue of the access gate double: both models of the shipped template. */
+/** The default chat model of the access gate double: the root and the executors of a test workflow. */
+export const HAIKU_MODEL = `${HARNESS_PROVIDER}/claude-haiku-5-5`;
+/** A second priced model: the coordinator of the `deep-research` test workflow. */
+export const SONNET_MODEL = `${HARNESS_PROVIDER}/claude-sonnet-5-5`;
+
+/** The model catalogue of the access gate double: both models. */
 const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   [HAIKU_MODEL]: {
     inputUsdPerMTok: 0.1,
@@ -79,6 +97,12 @@ export const LOGS_SERVER = `logs-t${inject('mcpRunId')}`;
 /** The OAuth return address the registration of {@link LOGS_SERVER} names; a shared-token server never uses it. */
 const MCP_REDIRECT_URL = `http://localhost:3000/api/mcp/oauth/callback/${LOGS_SERVER}`;
 
+/** `builtinKey` of the library's `chat` record (`CHAT_BUILTIN_KEY` of `@agent-os/contracts`): what a root runs. */
+const CHAT_BUILTIN_KEY = 'chat';
+
+/** Name of the test root: the conversation that starts workflows. */
+export const ROOT_NAME = 'workflows-root';
+
 /** Turns of the test root: enough for any conversation of a test. */
 const ROOT_MAX_TURNS = 40;
 
@@ -88,12 +112,85 @@ const SETTLE_POLL_MS = 25;
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
 
+/**
+ * The author of every test workflow unless a test names another: an employee of no test. A record's
+ * author id is a uuid (it is the `author.id` of a run's origin, which the snapshot schema checks), while
+ * the tests' owners are not.
+ */
+export const TEST_AUTHOR_ID = randomUUID();
+
+/** A workflow record of the library double. */
+export type TestWorkflowRecord = Extract<LibraryDoubleRecord, { kind: 'workflow' }>;
+export type TestWorkflowContent = TestWorkflowRecord['content'];
+export type TestExecutor = TestWorkflowContent['executors'][number];
+/** An agent record of the library double. */
+export type TestAgentRecord = Extract<LibraryDoubleRecord, { kind: 'agent' }>;
+
+/** What a test workflow record may set besides its content: its id, description, owner and audience. */
+export type TestWorkflowOverrides = Partial<
+  Pick<TestWorkflowRecord, 'id' | 'description' | 'ownerId' | 'ownerName' | 'everyone' | 'viewers' | 'offerInChat'>
+>;
+
+/**
+ * An executor of a test workflow: a role line and a prompt by its name, no servers or tools, 2 turns, one
+ * run and the default model, copied from no record, unless overridden.
+ */
+export function testExecutor(name: string, overrides: Partial<TestExecutor> = {}): TestExecutor {
+  return {
+    name,
+    role: `The ${name} of the team`,
+    prompt: `You are the test executor ${name}.`,
+    servers: [],
+    model: HAIKU_MODEL,
+    maxTurns: 2,
+    maxRuns: 1,
+    tools: [],
+    source: null,
+    ...overrides,
+  };
+}
+
+/**
+ * A test workflow record: by {@link TEST_AUTHOR_ID}, seen by every employee and offered in the main chat
+ * (so the root may start it), unless overridden.
+ */
+export function testWorkflow(
+  name: string,
+  content: TestWorkflowContent,
+  overrides: TestWorkflowOverrides = {},
+): TestWorkflowRecord {
+  return {
+    kind: 'workflow',
+    name,
+    ownerId: TEST_AUTHOR_ID,
+    everyone: true,
+    offerInChat: true,
+    ...overrides,
+    content,
+  };
+}
+
+/** The root every `sessions.start` runs: no tools of its own, so `start_workflow` (root-only) is all it may call. */
+const ROOT_RECORD: TestAgentRecord = {
+  kind: 'agent',
+  name: ROOT_NAME,
+  ownerId: null,
+  everyone: true,
+  builtinKey: CHAT_BUILTIN_KEY,
+  content: {
+    prompt: 'You are a test conversation. Start a workflow with start_workflow when asked.',
+    servers: [],
+    model: HAIKU_MODEL,
+    maxTurns: ROOT_MAX_TURNS,
+    agents: [],
+    tools: [],
+  },
+};
+
 export interface WorkflowsHarnessOptions {
   readonly model: ScriptedModel;
   /** Owners of the test: the access gate double gives each of them the `logs` server. */
   readonly owners: readonly string[];
-  /** Raw templates for `createWorkflows`; the shipped ones by default. */
-  readonly templates?: readonly unknown[];
   /** Fixture files whose fault rules (a held read) the test wrote; fresh ones by default. */
   readonly fixture?: FixtureFiles;
 }
@@ -103,31 +200,52 @@ export interface WorkflowsHarness {
   readonly agents: Agents;
   readonly sessions: AgentSessions;
   readonly workflows: Workflows;
-  /** Name of the test root's definition: its only tool is `start_workflow`. */
-  readonly rootDefinition: string;
+  /** The library every start asks: its `chat` record is the root; the test adds and edits workflows in it. */
+  readonly library: LibraryDouble;
+  /** The Drizzle client of the harness's pool; the tests only read through it. */
+  readonly db: Database;
   readonly fixture: FixtureFiles;
   /** The harness's fixture process, writing into {@link fixture}. */
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime, agents and workflows logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
+  /**
+   * Stops the workers, the agents, deletes the provider row when this is the file's last open harness, closes
+   * the pool, then the fixture process — each also when the one before fails.
+   */
   close(): Promise<void>;
 }
 
-/** The tree root of the tests (the `chat` part's conversation does not exist here): `start_workflow` only. */
-function rootDefinitionOf(name: string): AgentDefinition {
-  return {
-    name,
-    description: 'Test conversation that starts workflows',
-    prompt: 'You are a test conversation. Start a workflow with start_workflow when asked.',
-    tools: [START_WORKFLOW_TOOL],
-    mcpServers: [],
-    agents: [],
-    maxTurns: ROOT_MAX_TURNS,
-  };
+/** Open harnesses of this test file (files run one at a time): the provider row lives while one of them does. */
+let openHarnesses = 0;
+
+/**
+ * The first open harness of the file sets the row {@link HARNESS_PROVIDER} to `openai_compatible`, the kind's
+ * address, no key, enabled, replacing a row an earlier run left or changed; a later harness of the file leaves
+ * it as it is. SQL through the pool: `drizzle-orm` is not a dependency of this package.
+ */
+async function openHarnessProvider(database: DatabaseConnection): Promise<void> {
+  openHarnesses += 1;
+  if (openHarnesses > 1) return;
+  await database.pool.query(
+    `INSERT INTO app.agent_model_providers (name, kind) VALUES ($1, 'openai_compatible')
+     ON CONFLICT (name) DO UPDATE
+       SET kind = 'openai_compatible', base_url = NULL, api_key = NULL, enabled = true, updated_at = now()`,
+    [HARNESS_PROVIDER],
+  );
 }
 
-/** Builds runtime + agents + workflows with the scripted model against the test database and starts them. */
+/** The last harness of the file to close deletes the row: the developer's database keeps only its own providers. */
+async function closeHarnessProvider(database: DatabaseConnection): Promise<void> {
+  openHarnesses -= 1;
+  if (openHarnesses > 0) return;
+  await database.pool.query('DELETE FROM app.agent_model_providers WHERE name = $1', [HARNESS_PROVIDER]);
+}
+
+/**
+ * Builds runtime + agents + workflows against the test database and starts them: the scripted model and
+ * embeddings, and the access gate double whose default chat model is {@link HAIKU_MODEL}.
+ */
 export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): Promise<WorkflowsHarness> {
   const fixture = options.fixture ?? createFixtureFiles('workflows-e2e');
   const runtimeConfig: RuntimeConfig = {
@@ -141,14 +259,11 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     shutdownGraceMs: 1_000,
     dbPoolMax: 8,
   };
-  const agentsConfig = parseAgentsConfig(
-    {
-      AGENT_DEFAULT_MODEL: HAIKU_MODEL,
-      NODE_ENV: 'test',
-    },
-  );
+  const agentsConfig = parseAgentsConfig({ NODE_ENV: 'test' });
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
+  const library = createLibraryDouble();
+  library.add(ROOT_RECORD);
   const fixtureProcess = await startFixtureProcess(fixture);
   const database = createDatabase({
     connectionString: databaseUrl(),
@@ -166,16 +281,17 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
+    embeddingClient: createScriptedEmbeddings().client,
     // Every owner of these tests is active; no test here asserts the audit hook.
     access: createAccessGateDouble({
       servers: Object.fromEntries(options.owners.map((ownerId) => [ownerId, [LOGS_SERVER]])),
       prices: MODEL_PRICES,
+      defaultChatModel: HAIKU_MODEL,
     }),
     audit: async () => {},
+    library,
   });
-  const workflows = createWorkflows({ agents, logger, templates: options.templates });
-  const rootDefinition = `workflows-root-${randomUUID()}`;
-  agents.definitions.register(rootDefinitionOf(rootDefinition));
+  const workflows = createWorkflows({ agents, logger });
 
   const close = async () => {
     try {
@@ -185,14 +301,20 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
         await agents.stop();
       } finally {
         try {
-          await database.close();
+          await closeHarnessProvider(database);
         } finally {
-          await fixtureProcess.stop();
+          try {
+            await database.close();
+          } finally {
+            await fixtureProcess.stop();
+          }
         }
       }
     }
   };
   try {
+    // First in the block: `close` below then always pairs with this open.
+    await openHarnessProvider(database);
     await agents.start();
     await registerLogsServer(agents, fixtureProcess);
   } catch (error) {
@@ -206,7 +328,8 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     agents,
     sessions: agents.sessions,
     workflows,
-    rootDefinition,
+    library,
+    db: database.db,
     fixture,
     fixtureProcess,
     logs: sink.records,
@@ -253,6 +376,32 @@ export async function waitFor<T>(
   return value;
 }
 
+/** Waits until the agent has `status` (a finished one: 60 s) and returns its view. */
+export function waitForStatus(
+  harness: WorkflowsHarness,
+  agentId: string,
+  ownerId: string,
+  status: AgentView['status'],
+): Promise<AgentView> {
+  return waitFor(
+    () => harness.sessions.get(agentId, ownerId),
+    (view) => view.status === status,
+    `agent ${agentId} to be ${status}`,
+    60_000,
+  );
+}
+
+/** The coordinators of workflow runs in the root's tree: agents started from a workflow record, not its executors. */
+export async function coordinatorsUnder(
+  harness: WorkflowsHarness,
+  rootId: string,
+  ownerId: string,
+): Promise<AgentView[]> {
+  return (await harness.sessions.list(rootId, ownerId)).filter(
+    (view) => view.origin?.kind === 'workflow' && view.origin.executor === null,
+  );
+}
+
 /** The whole history of an agent through `agents.sessions.history`. */
 export function historyOf(
   harness: WorkflowsHarness,
@@ -267,41 +416,4 @@ export async function childReportsOf(harness: WorkflowsHarness, agentId: string,
   return (await historyOf(harness, agentId, ownerId)).flatMap((entry) =>
     entry.kind === 'child_report' ? [entry.content] : [],
   );
-}
-
-/** Name of the INT-3 test template and of its coordinator's definition. */
-export const LIMITS_TEMPLATE_NAME = 'limits-check';
-/** The only executor of the INT-3 test template and its final agent. */
-export const LIMITS_ANSWER_AGENT = 'answer';
-
-/**
- * The INT-3 test template (raw, parsed by the same `createWorkflows` path as the shipped one): a cheap
- * coordinator with `maxTurns` 6 (plan Notes 3) and one executor `answer`, started at most twice, as
- * `finalAgent`.
- */
-export const LIMITS_TEMPLATE = {
-  name: LIMITS_TEMPLATE_NAME,
-  title: 'Limits check',
-  description: 'Test template of the workflows integration tests: one executor that must write the answer.',
-  coordinator: {
-    prompt: 'You coordinate the limits check: start the agent answer with start_agent and wait for its report.',
-    maxTurns: 6,
-  },
-  agents: [
-    {
-      name: LIMITS_ANSWER_AGENT,
-      description: 'Writes the answer of the limits check.',
-      prompt: 'You write the answer of the limits check from your assignment.',
-      tools: [],
-      mcpServers: [],
-      maxTurns: 2,
-      maxRuns: 2,
-    },
-  ],
-  finalAgent: LIMITS_ANSWER_AGENT,
-} as const;
-
-/** The shipped templates and the test ones, for `templates` of {@link createWorkflowsHarness}. */
-export function shippedTemplatesWith(...extra: readonly unknown[]): unknown[] {
-  return [...SHIPPED_TEMPLATES, ...extra];
 }

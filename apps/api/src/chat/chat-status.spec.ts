@@ -3,8 +3,8 @@ import { chatStatus } from './chat-status.js';
 
 type Row = {
   name: string;
-  root: { status: AgentStatus; failureReason: string | null } | null;
-  task: { status: TaskStatus; waitReason: WaitReason | null } | null;
+  root: { status: AgentStatus; failureReason: string | null };
+  task: { status: TaskStatus; waitReason: WaitReason | null };
   expected: { status: ChatStatus; failureReason: string | null };
 };
 
@@ -12,13 +12,7 @@ type Row = {
 describe('chat status', () => {
   it.each<Row>([
     {
-      name: 'no root yet',
-      root: null,
-      task: null,
-      expected: { status: 'new', failureReason: null },
-    },
-    {
-      name: 'root interrupted without text',
+      name: 'root interrupted',
       root: { status: 'interrupted', failureReason: null },
       task: { status: 'waiting', waitReason: 'messages' },
       expected: { status: 'interrupted', failureReason: null },

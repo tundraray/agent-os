@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import type { RoleList as Roles, RoleSummary } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { RoleNameDialog } from './role-name-dialog';
@@ -60,11 +61,11 @@ export function RoleList() {
 
   return (
     <>
-      <AdminPageHeader title={adminSectionTitle('roles')}>
+      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('roles')}>
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
           {TEXT.create}
         </Button>
-      </AdminPageHeader>
+      </PageHeader>
       <DataTable caption={adminSectionTitle('roles')} columns={COLUMNS} state={state} />
       <RoleNameDialog open={creating} onOpenChange={setCreating} />
     </>

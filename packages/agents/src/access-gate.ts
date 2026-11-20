@@ -26,12 +26,30 @@ export type ModelVerdict =
     };
 
 /**
- * Rights, quotas and the model catalogue as the agents see them (design-access.md, «Пакеты»; ADR-0015).
- * The upper part supplies it to `createAgents`; the package reads no environment.
+ * Whether a call of the default embedding model may run (design-core.md, `AccessGate.embedding`): no right and
+ * no quota is read. An allowed call carries the model, its input price and the dimensions of its vectors.
+ */
+export type EmbeddingVerdict =
+  | {
+      readonly kind: 'allowed';
+      readonly model: string;
+      readonly inputUsdPerMTok: number;
+      readonly dimensions: number;
+    }
+  | { readonly kind: 'refused'; readonly reason: 'owner_disabled' | 'model_not_configured' };
+
+/**
+ * Rights, quotas, the model catalogue and the default models as the agents see them (design-access.md,
+ * «Пакеты»; ADR-0015; design-core.md KD-5, KD-6). The upper part supplies it to `createAgents`; the package
+ * reads no environment.
  */
 export interface AccessGate {
   tools(ownerId: string): Promise<ToolAccess>;
   model(ownerId: string, model: string): Promise<ModelVerdict>;
+  /** The id of the default chat model, or `null` while none is chosen. */
+  defaultChatModel(): Promise<string | null>;
+  /** `ownerId` `null` — the platform's own call, written on the `platform` owner. */
+  embedding(ownerId: string | null): Promise<EmbeddingVerdict>;
 }
 
 /** A refused tool or model call in the shape of the API audit log's `access_denied` record. */
@@ -55,6 +73,16 @@ export class OwnerDisabledError extends Error {
 
   constructor(readonly ownerId: string) {
     super(`Owner ${ownerId} is disabled or unknown`);
+  }
+}
+
+/** `completeText` has no model to call: no default chat model is chosen (DC-3); the call does not start. */
+export class ModelNotConfiguredError extends Error {
+  override readonly name = 'ModelNotConfiguredError';
+  readonly reason = 'model_not_configured';
+
+  constructor() {
+    super('No default chat model is chosen');
   }
 }
 

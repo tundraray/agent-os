@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import type { WorkflowRunBrief } from "@agent-os/contracts";
+import type { WorkflowRunView } from "@agent-os/contracts";
 import { AgentMeta } from "@/components/agents/agent-meta";
 import { InheritedHistory } from "@/components/agents/inherited-history";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
@@ -10,12 +10,12 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { ThreadNotice } from "@/components/shell/thread-notice";
 import { agentComposerPlaceholder, BRIEF_PARTS } from "@/lib/agents/format";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
-import { selectAgent } from "@/lib/feed/to-feed";
+import { isWorkflowCoordinator, selectAgent } from "@/lib/feed/to-feed";
 import { useFeedRuntime } from "@/lib/feed/use-feed-runtime";
 import { logger } from "@/lib/logger";
 import { describeApiError } from "@/lib/api/api-request";
 
-type Brief = WorkflowRunBrief["brief"];
+type Brief = WorkflowRunView["brief"];
 
 /** The page has no welcome: an agent always starts with its task. */
 const NoWelcome = () => null;
@@ -87,10 +87,15 @@ export function AgentScreen() {
   if (feed === null) throw new Error("AgentScreen must be used inside AgentFeedProvider");
 
   const runtime = useFeedRuntime(feed);
+  const { libraryIndex } = useShellServices();
+  // The record labels and «изменён после запуска» read the library list on every visit (KD-2).
+  useEffect(() => {
+    void libraryIndex.refresh();
+  }, [libraryIndex, feed]);
   const agent = useFeedSelector((state) => selectAgent(state.view), null);
   const loaded = useFeedSelector((state) => state.loaded, false);
   const loadError = useFeedSelector((state) => state.loadError, null);
-  const brief = useCoordinatorBrief(agent?.agentId ?? null, agent?.template !== undefined);
+  const brief = useCoordinatorBrief(agent?.agentId ?? null, agent !== null && isWorkflowCoordinator(agent));
   // «Повторить» shows the loading state until the read settles; the store keeps its error meanwhile.
   const [retrying, setRetrying] = useState(false);
 

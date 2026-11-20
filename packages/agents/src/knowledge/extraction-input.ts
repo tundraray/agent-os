@@ -1,0 +1,290 @@
+import { agentCodeCalls, agentMessages } from '@agent-os/db';
+import type { Runtime } from '@agent-os/runtime';
+import { and, asc, eq, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+
+import { envelope } from '../model/provider-messages.js';
+import { utf8Bytes } from '../model/token-estimate.js';
+import type { StoreReader } from '../store/sessions.repository.js';
+import { descendantsOf } from '../tools/builtin/list-agents.js';
+import type { RoundCall, RoundCallOutcome } from './check-operations.js';
+import type { KnowledgeRun } from './knowledge-runs.repository.js';
+
+/*
+ * The input of an extraction round (design-core.md, Contract «Вход извлечения», KD-3): the MCP calls
+ * of the coordinator's subtree that finished after the run's extracted-up-to mark and not later than
+ * the read, cut to the sizes below. It only reads; it neither calls a model nor writes the graph,
+ * and it logs nothing — the caller logs the counts, never the text.
+ */
+
+/** A call's result text in the input is cut to this many UTF-8 bytes. */
+const EXTRACTION_RESULT_BYTES = 2_000;
+/** A call's arguments (as JSON) in the input are cut to this many UTF-8 bytes. */
+const EXTRACTION_ARGS_BYTES = 500;
+/** Calls past this many UTF-8 bytes of input give only tool, arguments and outcome, without result. */
+const EXTRACTION_INPUT_BYTES = 48_000;
+
+/** The only outcomes taken: refused, rejected, interrupted and the other outcomes are left out (F12). */
+const ROUND_OUTCOMES: readonly RoundCallOutcome[] = ['success', 'empty', 'tool_error'];
+
+const ENVELOPE_SOURCE = 'tool calls';
+const ENVELOPE_AUTHOR = 'this run of the workflow';
+
+/** What the round knows of its run: the row of `agent_knowledge_runs` with the coordinator's owner. */
+export type ExtractionRun = Pick<KnowledgeRun, 'runId' | 'ownerId' | 'extractedUpTo'>;
+
+export interface ExtractionInputDeps {
+  readonly database: StoreReader;
+  readonly tasks: Pick<Runtime['tasks'], 'get' | 'listTree'>;
+}
+
+/** What is told to the log about the input: numbers only. */
+export interface ExtractionInputCounts {
+  /** Calls in the input, both kinds. */
+  readonly calls: number;
+  /** Of them, calls made inside `run_code`. */
+  readonly codeCalls: number;
+  /** UTF-8 bytes of the input text, envelope included. */
+  readonly bytes: number;
+  /** Results cut to `EXTRACTION_RESULT_BYTES`. */
+  readonly cutResults: number;
+  /** Arguments cut to `EXTRACTION_ARGS_BYTES`. */
+  readonly cutArgs: number;
+  /** Direct calls whose result was left out past `EXTRACTION_INPUT_BYTES`. */
+  readonly withoutResult: number;
+}
+
+export interface ExtractionInput {
+  /** The calls as data in the envelope, numbered `c1…` by end time. */
+  readonly text: string;
+  /** `c…` → the call, as `checkOperations` takes it. */
+  readonly calls: ReadonlyMap<string, RoundCall>;
+  /** The upper bound of the window: a successful round moves the mark to it. */
+  readonly readAt: Date;
+  readonly counts: ExtractionInputCounts;
+}
+
+/** One call read from either source, before it is numbered and written as text. */
+interface InputCall {
+  readonly server: string;
+  readonly tool: string;
+  readonly outcome: RoundCallOutcome;
+  readonly args: unknown;
+  /** `null` for a call inside `run_code`: its result is not stored. */
+  readonly resultText: string | null;
+  readonly inCode: boolean;
+  readonly finishedAt: Date;
+}
+
+interface CutText {
+  readonly text: string;
+  readonly cut: boolean;
+}
+
+/** Cuts a text to `maxBytes` of UTF-8 on a character boundary and says how much was cut. */
+function cutToBytes(text: string, maxBytes: number): CutText {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return { text, cut: false };
+  let cut = maxBytes;
+  // A UTF-8 continuation byte (10xxxxxx) is the middle of a character: step back to its first byte.
+  while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) cut -= 1;
+  return {
+    text: `${bytes.subarray(0, cut).toString('utf8')}\n[cut: ${bytes.length - cut} more bytes]`,
+    cut: true,
+  };
+}
+
+/**
+ * The tasks whose calls the round may read: the coordinator and its descendants in its own tree and
+ * of its owner — never sibling runs of the same conversation, another tree or another owner.
+ */
+async function subtreeTaskIds(deps: ExtractionInputDeps, run: ExtractionRun): Promise<string[]> {
+  const coordinator = await deps.tasks.get(run.runId, run.ownerId);
+  const tree = await deps.tasks.listTree(coordinator.rootId, run.ownerId);
+  return [run.runId, ...descendantsOf(tree, run.runId).map((task) => task.taskId)];
+}
+
+/** `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round. */
+function inWindow(
+  finishedAt: typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
+  run: ExtractionRun,
+  readAt: Date,
+): SQL | undefined {
+  return and(
+    isNotNull(finishedAt),
+    lte(finishedAt, readAt),
+    run.extractedUpTo === null ? undefined : gt(finishedAt, run.extractedUpTo),
+  );
+}
+
+/** A text field of a `tool_result`'s content. */
+function resultField(name: string): SQL<string | null> {
+  return sql<string | null>`${agentMessages.content} ->> ${name}`;
+}
+
+/**
+ * The direct MCP calls: their `tool_result` entries, read through the promoted `finished_at`
+ * (`agent_messages_result_idx`). Results of one task that ended at the same moment keep the order
+ * they were written in, which is the order of their calls.
+ */
+async function readDirectCalls(
+  reader: StoreReader,
+  taskIds: readonly string[],
+  run: ExtractionRun,
+  readAt: Date,
+): Promise<InputCall[]> {
+  const server = resultField('server');
+  const outcome = resultField('outcome');
+  const rows = await reader
+    .select({
+      server,
+      tool: resultField('tool'),
+      outcome,
+      args: sql<unknown>`${agentMessages.content} -> 'args'`,
+      resultText: resultField('text'),
+      finishedAt: agentMessages.finishedAt,
+    })
+    .from(agentMessages)
+    .where(
+      and(
+        inArray(agentMessages.taskId, [...taskIds]),
+        eq(agentMessages.kind, 'tool_result'),
+        isNotNull(server),
+        inArray(outcome, [...ROUND_OUTCOMES]),
+        inWindow(agentMessages.finishedAt, run, readAt),
+      ),
+    )
+    .orderBy(asc(agentMessages.finishedAt), asc(agentMessages.taskId), asc(agentMessages.seq));
+  return rows.map((row) => ({
+    server: row.server as string,
+    tool: row.tool as string,
+    outcome: row.outcome as RoundCallOutcome,
+    args: row.args,
+    resultText: row.resultText ?? '',
+    inCode: false,
+    finishedAt: row.finishedAt as Date,
+  }));
+}
+
+/**
+ * Calls a `run_code` script made, of its latest attempt only: a re-run script repeats its calls, and
+ * an earlier attempt would give the same call twice (Invariant 3). The latest attempt is the number of
+ * the run's `run_attempt` records (a `write` run has none and runs once, as attempt 1).
+ */
+async function readCodeCalls(
+  reader: StoreReader,
+  taskIds: readonly string[],
+  run: ExtractionRun,
+  readAt: Date,
+): Promise<InputCall[]> {
+  const attempts = sql`(
+    select count(*) from ${agentMessages}
+     where ${agentMessages.taskId} = ${agentCodeCalls.taskId}
+       and ${agentMessages.callId} = ${agentCodeCalls.runCallId}
+       and ${agentMessages.kind} = 'run_attempt')`;
+  const rows = await reader
+    .select({
+      server: agentCodeCalls.server,
+      tool: agentCodeCalls.tool,
+      outcome: agentCodeCalls.outcome,
+      args: agentCodeCalls.args,
+      finishedAt: agentCodeCalls.finishedAt,
+    })
+    .from(agentCodeCalls)
+    .where(
+      and(
+        inArray(agentCodeCalls.taskId, [...taskIds]),
+        eq(agentCodeCalls.attempt, sql`greatest(${attempts}, 1)`),
+        isNotNull(agentCodeCalls.server),
+        inArray(agentCodeCalls.outcome, [...ROUND_OUTCOMES]),
+        inWindow(agentCodeCalls.finishedAt, run, readAt),
+      ),
+    )
+    .orderBy(
+      asc(agentCodeCalls.finishedAt),
+      asc(agentCodeCalls.taskId),
+      asc(agentCodeCalls.runCallId),
+      asc(agentCodeCalls.seq),
+    );
+  return rows.map((row) => ({
+    server: row.server as string,
+    tool: row.tool,
+    outcome: row.outcome as RoundCallOutcome,
+    args: row.args,
+    resultText: null,
+    inCode: true,
+    finishedAt: row.finishedAt as Date,
+  }));
+}
+
+/** The head of a call: number, server, tool, outcome and the cut arguments. */
+function callHead(key: string, call: InputCall, args: string): string {
+  const where = call.inCode ? ' (inside run_code; its result is not stored)' : '';
+  return `${key} server=${call.server} tool=${call.tool} outcome=${call.outcome}${where}\nargs: ${args}`;
+}
+
+/** Numbers the calls by end time and writes them, the results only while the input fits its limit. */
+function writeInput(ordered: readonly InputCall[]): Omit<ExtractionInput, 'readAt'> {
+  const calls = new Map<string, RoundCall>();
+  const blocks: string[] = [];
+  let dataBytes = 0;
+  let overLimit = false;
+  let cutResults = 0;
+  let cutArgs = 0;
+  let withoutResult = 0;
+  ordered.forEach((call, index) => {
+    const key = `c${index + 1}`;
+    calls.set(key, { server: call.server, tool: call.tool, outcome: call.outcome });
+    const args = cutToBytes(JSON.stringify(call.args), EXTRACTION_ARGS_BYTES);
+    if (args.cut) cutArgs += 1;
+    const head = callHead(key, call, args.text);
+    let block = head;
+    if (call.resultText !== null) {
+      const result = cutToBytes(call.resultText, EXTRACTION_RESULT_BYTES);
+      const full = `${head}\nresult:\n${result.text}`;
+      overLimit ||= dataBytes + utf8Bytes(full) > EXTRACTION_INPUT_BYTES;
+      if (overLimit) {
+        block = `${head}\nresult: left out, the input limit is reached`;
+        withoutResult += 1;
+      } else {
+        block = full;
+        if (result.cut) cutResults += 1;
+      }
+    }
+    blocks.push(block);
+    dataBytes += utf8Bytes(block) + 2;
+  });
+  const text = envelope(ENVELOPE_SOURCE, ENVELOPE_AUTHOR, blocks.join('\n\n'));
+  return {
+    text,
+    calls,
+    counts: {
+      calls: ordered.length,
+      codeCalls: ordered.filter((call) => call.inCode).length,
+      bytes: utf8Bytes(text),
+      cutResults,
+      cutArgs,
+      withoutResult,
+    },
+  };
+}
+
+/**
+ * Reads the round's input. `readAt` is taken first, before the tree and the calls are read; a call
+ * that finishes later goes to the next round, whose window starts at `readAt` once this round has
+ * moved the mark to it. A call that finished by `readAt` but was committed after the read is missed
+ * by both rounds — lost, never doubled (design-core.md, Risks).
+ */
+export async function readExtractionInput(
+  deps: ExtractionInputDeps,
+  run: ExtractionRun,
+): Promise<ExtractionInput> {
+  const readAt = new Date();
+  const taskIds = await subtreeTaskIds(deps, run);
+  const direct = await readDirectCalls(deps.database, taskIds, run, readAt);
+  const inCode = await readCodeCalls(deps.database, taskIds, run, readAt);
+  // A stable sort: calls ending at the same moment keep their order within each table.
+  const ordered = [...direct, ...inCode].sort(
+    (a, b) => a.finishedAt.getTime() - b.finishedAt.getTime(),
+  );
+  return { ...writeInput(ordered), readAt };
+}

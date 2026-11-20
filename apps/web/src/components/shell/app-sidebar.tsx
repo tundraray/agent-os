@@ -1,9 +1,8 @@
 'use client';
 
 import { useRef, type MouseEvent } from 'react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BotIcon, DiamondIcon, HandIcon, SquarePenIcon, XIcon } from 'lucide-react';
+import { BotIcon, DiamondIcon, HandIcon, LibraryBigIcon, SquarePenIcon, XIcon, type LucideIcon } from 'lucide-react';
 import { pressable } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,9 +22,10 @@ import { useShortcutLabel } from '@/hooks/use-global-shortcuts';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useAwaitingCount } from '@/lib/agents/awaiting-count';
 import { focusShellTarget } from '@/lib/focus';
-import { AGENTS_PATH, parseShellRoute } from '@/lib/shell-route';
+import { AGENTS_PATH, libraryPath, parseShellRoute, type ShellRoute } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { useShellActions } from './shell-actions';
+import { ShellLink } from './shell-link';
 import { THREAD_LINK_ATTRIBUTE } from './thread-history-item';
 import { ThreadHistoryList } from './thread-history-list';
 import { UserMenu } from './user-menu';
@@ -45,8 +45,8 @@ const focusMenuButton = (): HTMLElement | null =>
 /**
  * SB-01: the built-in sidebar (256 px or the 48 px icon strip) at ≥ 768 px and the modal drawer SB-13 below.
  * The thread list mounts inside `nav «История бесед»`; the icon strip shows no list. On a panel address the
- * panel's sections take the place of «Новый чат», «Агенты» and the list, unless the employee has no right
- * there (AD-02 keeps the ordinary sidebar).
+ * panel's sections take the place of «Новый чат», «Агенты», «Библиотека» and the list, unless the employee has
+ * no right there (AD-02 keeps the ordinary sidebar).
  */
 export function AppSidebar() {
   const { newChat } = useShellActions();
@@ -90,7 +90,7 @@ export function AppSidebar() {
             <SidebarMenuButton
               tooltip={isMobile ? undefined : 'Agent OS'}
               className={cn('font-semibold', isMobile ? 'h-11' : 'h-10')}
-              render={<Link href="/" />}
+              render={<ShellLink href="/" />}
             >
               <DiamondIcon aria-hidden />
               <span>Agent OS</span>
@@ -130,7 +130,7 @@ export function AppSidebar() {
                   )}
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <AgentsNavItem onMobilePick={onMobilePick} />
+              <SectionNavItems route={route} onMobilePick={onMobilePick} />
             </>
           )}
         </SidebarMenu>
@@ -155,21 +155,51 @@ export function AppSidebar() {
   );
 }
 
-/** MC-1: the item's name and its strip tooltip. */
-const agentsLabel = (awaiting: number): string => (awaiting > 0 ? `Агенты, ждут решения: ${awaiting}` : 'Агенты');
+/** The employee's sections; mounted off the panel only, so the panel never reads the awaiting count. */
+function SectionNavItems({ route, onMobilePick }: { route: ShellRoute; onMobilePick: () => void }) {
+  const awaiting = useAwaitingCount();
+  return (
+    <>
+      <SectionNavItem
+        href={AGENTS_PATH}
+        label="Агенты"
+        icon={BotIcon}
+        isActive={route.kind === 'agents' || route.kind === 'agent'}
+        awaiting={awaiting}
+        onMobilePick={onMobilePick}
+      />
+      <SectionNavItem
+        href={libraryPath()}
+        label="Библиотека"
+        icon={LibraryBigIcon}
+        isActive={route.kind === 'library'}
+        onMobilePick={onMobilePick}
+      />
+    </>
+  );
+}
+
+type SectionNavItemProps = {
+  href: string;
+  /** The item's visible name (agent-platform MC-1, custom-agents MC-1). */
+  label: string;
+  icon: LucideIcon;
+  /** Selected on every page of its section, like the active thread (SB-06). */
+  isActive: boolean;
+  /** Decisions waiting (NV-01, «Агенты» only). */
+  awaiting?: number;
+  onMobilePick: () => void;
+};
 
 /**
- * NV-01: «Агенты» under SB-03, selected on `/agents` and `/agents/<id>` like the active thread (SB-06).
+ * A section of the employee's sidebar under SB-03: «Агенты» (NV-01) and «Библиотека» (LB-01).
  * With decisions waiting: `Hand` and the number in `--approval` on the right, in the strip a 6 px dot;
  * the number swaps without animation.
  */
-function AgentsNavItem({ onMobilePick }: { onMobilePick: () => void }) {
+function SectionNavItem({ href, label, icon: Icon, isActive, awaiting = 0, onMobilePick }: SectionNavItemProps) {
   const { isMobile, state } = useSidebar();
-  const route = parseShellRoute(usePathname());
-  const awaiting = useAwaitingCount();
   const isStrip = !isMobile && state === 'collapsed';
-  const isActive = route.kind === 'agents' || route.kind === 'agent';
-  const label = agentsLabel(awaiting);
+  const name = awaiting > 0 ? `${label}, ждут решения: ${awaiting}` : label;
 
   // As a thread link (UXRD 7.4): a tap or a pick from the drawer focuses the page h1; a fine pointer leaves focus be.
   const onClick = (): void => {
@@ -182,23 +212,23 @@ function AgentsNavItem({ onMobilePick }: { onMobilePick: () => void }) {
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={isActive}
-        tooltip={isMobile ? undefined : label}
-        aria-label={awaiting > 0 ? label : undefined}
+        tooltip={isMobile ? undefined : name}
+        aria-label={awaiting > 0 ? name : undefined}
         className={cn(
           'pointer-coarse:h-11',
           isMobile ? 'h-11' : 'h-9',
           // Selected marker as on SB-06: the --sidebar-accent background alone is below 3:1.
           'relative data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-0.75 data-active:before:rounded-full data-active:before:bg-sidebar-primary',
         )}
-        render={<Link href={AGENTS_PATH} aria-current={isActive ? 'page' : undefined} onClick={onClick} />}
+        render={<ShellLink href={href} aria-current={isActive ? 'page' : undefined} onClick={onClick} />}
       >
         <span aria-hidden className="relative flex shrink-0">
-          <BotIcon />
+          <Icon />
           {isStrip && awaiting > 0 && (
             <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-approval" />
           )}
         </span>
-        <span className="flex-1 truncate">Агенты</span>
+        <span className="flex-1 truncate">{label}</span>
         {!isStrip && awaiting > 0 && (
           <span aria-hidden className="flex shrink-0 items-center gap-1 text-approval tabular-nums">
             <HandIcon />

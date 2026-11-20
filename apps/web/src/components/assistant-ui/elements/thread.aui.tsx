@@ -23,10 +23,12 @@ import {
 } from "@/components/assistant-ui/elements/tool-group.aui";
 import { AgentReport } from "@/components/agents/agent-report";
 import { DecisionCard } from "@/components/agents/decision-card";
+import { DraftCard } from "@/components/agents/draft-card";
 import { EventLine } from "@/components/agents/event-line";
 import { InterruptButton } from "@/components/agents/interrupt-button";
 import { QueueTray } from "@/components/agents/queue-tray";
 import { RunCard } from "@/components/agents/run-card";
+import { RecordLabel } from "@/components/library/record-label";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,13 +39,20 @@ import {
   FEED_PART,
   trayEntries,
   type DecisionPartData,
+  type DraftPartData,
   type EventPartData,
   type OptimisticEntry,
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
 import { chatFailureText } from "@/lib/access/access-texts";
+import { focusShellTarget } from "@/lib/focus";
+import { recordPath } from "@/lib/shell-route";
+import type { SeedTarget } from "@/lib/threads/composer-seed";
+import type { SendFailure } from "@/lib/threads/shell-status-store";
 import { cn } from "@/lib/utils";
+import { ChipRecordSchema, type ChipRecord } from "@agent-os/contracts";
+import { useStore } from "zustand";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -88,6 +97,7 @@ import {
   type FC,
   type FormEvent,
   type PropsWithChildren,
+  type ReactNode,
 } from "react";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
@@ -134,7 +144,7 @@ const reasoningDuration = (timing: ThreadGroupPart["timing"]) =>
  * renders after the feed in place of the tray and the composer.
  * `FeedHeader` renders above the first message of the feed (the agent page's
  * meta line and inherited history). `TaskBrief`, when set, replaces the task's
- * text with the workflow brief under the caption «Бриф» (AV-03).
+ * text with the workflow brief under the caption «Задание» (AV-03, MC-21).
  */
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
@@ -192,6 +202,11 @@ export type ThreadProps = {
   historyPending?: boolean | undefined;
   /** The composer's placeholder: the conversation's by default, MC-12 on an agent page. */
   composerPlaceholder?: string | undefined;
+  /**
+   * The conversation's `composerSeed` target (custom-agents KD-5): its id, or `NEW_THREAD_TARGET` on `/`.
+   * The composer takes the target's template text once and shows its chip; without it — no seed.
+   */
+  seedTarget?: SeedTarget | undefined;
 };
 
 const DEFAULT_PLACEHOLDER = "Спросите что-нибудь…";
@@ -241,6 +256,7 @@ export const Thread: FC<ThreadProps> = ({
   components = EMPTY_COMPONENTS,
   historyPending = false,
   composerPlaceholder = DEFAULT_PLACEHOLDER,
+  seedTarget,
 }) => {
   const isNewChat = useAuiState(isNewChatView);
 
@@ -250,6 +266,7 @@ export const Thread: FC<ThreadProps> = ({
         isEmpty={isNewChat && !historyPending}
         historyPending={historyPending}
         placeholder={composerPlaceholder}
+        seedTarget={seedTarget}
       />
     </ThreadComponentsContext.Provider>
   );
@@ -259,7 +276,8 @@ const ThreadRoot: FC<{
   isEmpty: boolean;
   historyPending: boolean;
   placeholder: string;
-}> = ({ isEmpty, historyPending, placeholder }) => {
+  seedTarget: SeedTarget | undefined;
+}> = ({ isEmpty, historyPending, placeholder, seedTarget }) => {
   const { Welcome = ThreadWelcome, DeletedNotice, FeedHeader } = useContext(ThreadComponentsContext);
 
   return (
@@ -329,7 +347,11 @@ const ThreadRoot: FC<{
             ) : (
               <>
                 <FeedTray />
-                <Composer sendBlocked={historyPending} placeholder={placeholder} />
+                {seedTarget === undefined ? (
+                  <Composer sendBlocked={historyPending} placeholder={placeholder} chip={null} />
+                ) : (
+                  <SeededComposer sendBlocked={historyPending} placeholder={placeholder} target={seedTarget} />
+                )}
               </>
             )}
             {!historyPending && (
@@ -361,14 +383,14 @@ const ThreadMessage: FC = () => {
 const feedKindOf = (s: AssistantState): unknown => s.message.metadata.custom["kind"];
 
 /**
- * MC-9, MC-10: the caption above a message or an answer. On a conversation the task is the first
+ * MC-9, MC-10 (the task captions — custom-agents MC-21): the caption above a message or an answer. On a conversation the task is the first
  * message with no caption, an employee's message never has one; a message the employee did not write
  * names its source, and on an agent page the answer that ended a turn is «Отчёт» (AV-04).
  */
 function sourceCaption(custom: Record<string, unknown>, onAgentPage: boolean): string | null {
   switch (custom["kind"]) {
     case "task":
-      return onAgentPage ? "Задание" : null;
+      return onAgentPage ? "Поручение" : null;
     case "parent": {
       if (custom["fromConversation"] === true) return "От беседы";
       const sender = custom["senderDescription"];
@@ -413,6 +435,20 @@ const DecisionPart: DataMessagePartComponent<DecisionPartData> = ({ data }) => {
   );
 };
 
+const DraftPart: DataMessagePartComponent<DraftPartData> = ({ data }) => {
+  const feed = useFeed();
+  // Draft parts come only from a conversation's feed, whose store sends the draft's actions.
+  if (feed === null) return null;
+  return (
+    <DraftCard
+      draft={data.draft}
+      previous={data.previous}
+      threadId={data.threadId}
+      onAction={(action) => feed.draftAction(data.draft.draftId, action)}
+    />
+  );
+};
+
 const ReportPart: DataMessagePartComponent<ReportPartData> = ({ data }) => (
   <AgentReport data={data} />
 );
@@ -429,6 +465,7 @@ const FEED_PART_COMPONENTS = {
       [FEED_PART.decision]: DecisionPart,
       [FEED_PART.report]: ReportPart,
       [FEED_PART.event]: EventPart,
+      [FEED_PART.draft]: DraftPart,
     },
   },
 };
@@ -668,11 +705,14 @@ const returnedFailures = new WeakSet<object>();
 
 /**
  * KD-4: the server did not take the message — the field gets its text back (the library cleared it
- * before sending) and MC-27 stands under it until the next send. Text typed meanwhile stays after it.
+ * before sending) and the failure line stands under it until the next send: MC-16 for a library
+ * refusal (custom-agents Flow 2), MC-27 otherwise. Text typed meanwhile stays after it.
+ * `newThreadFailure` — the failure of a new conversation's first message: that conversation was removed,
+ * so the composer without a feed shows it.
  */
-const useSendFailure = (): boolean => {
+const useSendFailure = (newThreadFailure: SendFailure | null): string | null => {
   const aui = useAui();
-  const failure = useFeedSelector((state) => state.sendFailure, null);
+  const failure = useFeedSelector((state) => state.sendFailure, newThreadFailure);
 
   useEffect(() => {
     if (failure === null || returnedFailures.has(failure)) return;
@@ -681,7 +721,59 @@ const useSendFailure = (): boolean => {
     aui.composer.setText(typed === "" ? failure.text : `${failure.text}\n${typed}`);
   }, [aui, failure]);
 
-  return failure !== null;
+  return failure === null ? null : (failure.notice ?? SEND_FAILED);
+};
+
+/** Chips already announced (MC-19): a remounted composer, or the chip following a new conversation, stays quiet. */
+const announcedChips = new WeakSet<ChipRecord>();
+
+/** custom-agents MC-20: the field's hint under a chip. */
+const chipPlaceholder = (chip: ChipRecord): string =>
+  chip.kind === "agent"
+    ? `Опишите задачу для «${chip.name}»…`
+    : `Опишите, что разобрать, — чат подготовит задание для «${chip.name}»…`;
+
+/**
+ * custom-agents KD-5, CH-01: the composer of a conversation takes its target's template text once and
+ * shows its chip until an accepted send, «✕» or a new chip; a new chip is announced (MC-19). Focus is
+ * put in the field by whoever put the seed (`useInChat`).
+ */
+const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: SeedTarget }> = ({
+  sendBlocked,
+  placeholder,
+  target,
+}) => {
+  const aui = useAui();
+  const { composerSeed, announcer, status } = useShellServices();
+  const newThreadFailure = useStore(status, (state) => state.newThreadSendFailure);
+  const chip = useStore(composerSeed, (state) => state.chips.get(target) ?? null);
+  const textWaiting = useStore(composerSeed, (state) => state.texts.has(target));
+
+  useEffect(() => {
+    if (!textWaiting) return;
+    const text = composerSeed.takeText(target);
+    if (text !== null) aui.composer.setText(text);
+  }, [aui, composerSeed, target, textWaiting]);
+
+  useEffect(() => {
+    if (chip === null || announcedChips.has(chip)) return;
+    announcedChips.add(chip);
+    announcer.getState().announce(`«${chip.name}» в поле сообщения — опишите задачу и отправьте`);
+  }, [announcer, chip]);
+
+  const removeChip = (): void => {
+    composerSeed.clear(target);
+    focusShellTarget("composer");
+  };
+
+  return (
+    <Composer
+      sendBlocked={sendBlocked}
+      placeholder={chip === null ? placeholder : chipPlaceholder(chip)}
+      newThreadFailure={newThreadFailure}
+      chip={chip === null ? null : <RecordLabel chip={chip} variant="chip" onRemove={removeChip} className="self-start" />}
+    />
+  );
 };
 
 /** CV-04: the queue tray of the screen's feed above the composer; nothing without a feed. */
@@ -696,8 +788,14 @@ const FeedQueueTray: FC = () => {
   return <QueueTray tray={tray} />;
 };
 
-const Composer: FC<{ sendBlocked: boolean; placeholder: string }> = ({ sendBlocked, placeholder }) => {
-  const sendFailed = useSendFailure();
+const Composer: FC<{
+  sendBlocked: boolean;
+  placeholder: string;
+  chip: ReactNode;
+  newThreadFailure?: SendFailure | null;
+}> = ({ sendBlocked, placeholder, chip, newThreadFailure = null }) => {
+  const failure = useSendFailure(newThreadFailure);
+  const sendFailed = failure !== null;
   const failureId = useId();
 
   return (
@@ -711,6 +809,7 @@ const Composer: FC<{ sendBlocked: boolean; placeholder: string }> = ({ sendBlock
         className="border-foreground/10 focus-within:border-foreground/25 flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] motion-reduce:transition-none"
       >
         <ComposerAttachments />
+        {chip}
         <ComposerPrimitive.Input
           placeholder={placeholder}
           className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
@@ -728,10 +827,11 @@ const Composer: FC<{ sendBlocked: boolean; placeholder: string }> = ({ sendBlock
       {sendFailed && (
         <p
           id={failureId}
+          role="alert"
           data-slot="aui_composer-send-failure"
           className="text-destructive mt-1 px-2.5 text-xs leading-4 font-medium"
         >
-          {SEND_FAILED}
+          {failure}
         </p>
       )}
     </ComposerPrimitive.Root>
@@ -746,7 +846,7 @@ const FeedInterrupt: FC = () => {
   const feed = useFeed();
   const interruptible = useFeedSelector((state) => canInterrupt(state.view), false);
   if (feed === null || !interruptible) return null;
-  return <InterruptButton onInterrupt={(text) => feed.interrupt(text)} />;
+  return <InterruptButton onInterrupt={() => feed.interrupt()} />;
 };
 
 /** «Отправить» stays available while the agent works (FR-16); stopping the agent is «Прервать». */
@@ -1029,13 +1129,20 @@ const UserImagePart: ImageMessagePartComponent = (part) => (
   </div>
 );
 
+function isChipRecord(value: unknown): value is ChipRecord {
+  return ChipRecordSchema.safeParse(value).success;
+}
+
 const UserMessage: FC = () => {
   const { TaskBrief } = useContext(ThreadComponentsContext);
   const isTask = useAuiState((s) => feedKindOf(s) === "task");
+  // custom-agents KD-5: the record chip the message was sent with (`FeedMessageMeta.record`).
+  const sentRecord = useAuiState((s): unknown => s.message.metadata.custom["record"]);
+  const record = isChipRecord(sentRecord) ? sentRecord : null;
   // AV-03: a workflow coordinator's task reads as its brief.
   const Brief = isTask ? TaskBrief : undefined;
   const sourceCaptionText = useSourceCaption();
-  const caption = Brief ? "Бриф" : sourceCaptionText;
+  const caption = Brief ? "Задание" : sourceCaptionText;
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -1044,6 +1151,14 @@ const UserMessage: FC = () => {
     >
       {caption !== null && (
         <SourceCaption text={caption} className="col-start-2 -mb-1 justify-self-end" />
+      )}
+      {record !== null && (
+        <RecordLabel
+          chip={record}
+          variant="under"
+          href={recordPath(record.id)}
+          className="col-start-2 -mb-1 justify-self-end"
+        />
       )}
       <UserMessageAttachments />
 

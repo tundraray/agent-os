@@ -11,6 +11,7 @@
 - **Пометка `@AdminOnly()`** пускает только сотрудника с `isAdmin`; иначе 403 `ADMIN_REQUIRED` и запись аудита `access_denied`.
 - **Обработчик** берёт владельца в первой строке (`const ownerId = req.user.id`) и передаёт строку вниз. Владельца из тела, параметров или заголовков он не берёт.
 - **Поиск по владельцу**: сервис или пакет ищет объект по id вместе с владельцем, и чужой объект отвечает так же, как отсутствующий (`*_NOT_FOUND`, одно тело на оба случая).
+- **Поиск по видимости** — для объектов, которыми делятся: вместо владельца стоит одно условие видимости в репозитории, и через него идёт каждое чтение. Невидимый объект отвечает так же, как отсутствующий; видимый, но чужой для правки — отдельным отказом. Пример — записи библиотеки ([design-library.md](../../features/custom-agents/design-library.md), KD-2).
 - Пакеты ниже `apps/api` о сеансе не знают: они получают строку владельца параметром.
 
 Контракт — [design-identity.md](../../features/enterprise-access/design-identity.md#contract-definitions).
@@ -26,10 +27,11 @@
 |---|---|
 | вызов от другой системы с токеном (вебхук) | открытый маршрут `@Public()` со своей проверкой токена |
 | право на MCP-инструмент или модель | одна проверка прав части `access`, а не пометка маршрута |
-| работа агента в фоне без запроса | владелец из задачи runtime и порт `OwnerGate`, а не `req.user` |
+| работа агента в фоне без запроса | владелец из задачи runtime и порт `AccessGate`, а не `req.user` |
 
 ## Used In
 
 - [design-identity.md](../../features/enterprise-access/design-identity.md) — KD-3, `SessionGuard`, `@Public()`, `@AdminOnly()`
 - [design-chat.md](../../features/agent-platform/design-chat.md) — владелец в обработчиках бесед и агентов
 - [design-mcp-connect.md](../../features/enterprise-access/design-mcp-connect.md) — подключение аккаунта и возврат из OAuth под сеансом без `@Public()`; реестр под `@AdminOnly()` (KD-6)
+- [design-library.md](../../features/custom-agents/design-library.md) — поиск по видимости, `RECORD_READ_ONLY`, маршруты панели под `@AdminOnly()` (KD-2)

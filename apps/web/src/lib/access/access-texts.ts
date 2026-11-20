@@ -1,5 +1,12 @@
 import type { MyModel, MyModels, ToolRefusalReason } from '@agent-os/contracts';
-import { failureReasonText, formatModel } from '@/lib/agents/format';
+import {
+  capitalize,
+  failureReasonText,
+  formatModel,
+  isProviderFailureReason,
+  PROVIDER_FAILURE_REASONS,
+  providerReasonText,
+} from '@/lib/agents/format';
 import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from './money';
 
 /**
@@ -32,7 +39,13 @@ export function refusalText(reason: ToolRefusalReason, model: string | null): st
 }
 
 /** Failure reasons of the conversation's root that read as the reply error block TH-08. */
-export const CHAT_FAILURE_REASONS = ['model_error', 'model_not_allowed', 'model_not_connected', 'no_models_allowed'] as const;
+export const CHAT_FAILURE_REASONS = [
+  'model_error',
+  'model_not_allowed',
+  'model_not_connected',
+  'no_models_allowed',
+  ...PROVIDER_FAILURE_REASONS,
+] as const;
 export type ChatFailureReason = (typeof CHAT_FAILURE_REASONS)[number];
 
 export const isChatFailureReason = (reason: string | null): reason is ChatFailureReason =>
@@ -43,9 +56,14 @@ const REPLY_FAILED = 'Не удалось получить ответ.';
 /**
  * MC-11 by the reason, «Не удалось получить ответ.» for a model error (chat-shell TH-08) and for any
  * other error of a reply; `model` is the root's model ID, null only while the conversation has no root.
+ * A provider reason names the model by its ID label (model-providers design-web.md, «Отличия от UXRD»).
  */
 export function chatFailureText(reason: string | null, model: string | null): string {
   if (reason === 'no_models_allowed') return NO_MODELS_ALLOWED;
+  if (isProviderFailureReason(reason)) {
+    const text = capitalize(providerReasonText(reason, model === null ? undefined : formatModel(model)));
+    return reason === 'provider_unavailable' ? `${text}. Попробуйте перегенерировать позже.` : `${text}. ${ASK_ADMIN}`;
+  }
   if (model === null) return REPLY_FAILED;
   if (reason === 'model_not_allowed') return `Модель ${formatModel(model)} вам не разрешена. ${ASK_ADMIN}`;
   if (reason === 'model_not_connected') return `Модель ${formatModel(model)} не подключена. ${ASK_ADMIN}`;

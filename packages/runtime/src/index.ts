@@ -27,4 +27,9 @@ export { monthOf } from './month.js';
 export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
 export type { RuntimeTx } from './runtime-tx.js';
 export type { InterruptMessage, InterruptOutcome, Task } from './task-control.js';
-export type { ModelCallRecord, MonthSpend, RecordedCall } from './token-ledger.js';
+export {
+  type ModelCallRecord,
+  type MonthSpend,
+  PLATFORM_OWNER_ID,
+  type RecordedCall,
+} from './token-ledger.js';

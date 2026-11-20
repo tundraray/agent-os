@@ -5,7 +5,6 @@ import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import type { AgentDefinition } from '@agent-os/agents';
 import type { LogRecord } from '@agent-os/common';
 import type { RunCodeArgs } from '@agent-os/contracts';
 import type { ChildMessage, HarnessMessage } from './codeRunChildMain.js';
@@ -17,7 +16,7 @@ import { databaseUrl } from './database-url.js';
  * build older than its sources is refused before anything is spawned. The test never talks to the
  * agents inside a child: it starts one, kills it from outside while a call of the script is held on
  * the MCP fixture, starts a fresh one over the same database and fixture files, and reads the rows and
- * the child's log. One scenario serves every row: one definition, a read run and a write run, over the
+ * the child's log. One scenario serves every row: one agent record, a read run and a write run, over the
  * run's servers that the test registered at its own fixture process before the first child starts (a
  * child registers nothing: the registry rows are in the database). The module is compiled into the
  * child, so it takes the run's server names as values and imports no vitest helper.
@@ -29,8 +28,12 @@ const CHILD_ENTRY = join(PACKAGE_ROOT, 'dist/test-child/test/support/codeRunChil
 /** The variable that hands the child its {@link ChildScenario}. */
 export const CHILD_SCENARIO_ENV = 'CODE_RUN_CHILD_SCENARIO';
 
-/** The default model of the child: the default of `agentsHarness.ts`, so a launch of the test process is priced in the child. */
-export const CHILD_MODEL = 'anthropic/test-default';
+/**
+ * The default model of the child: the default of `agentsHarness.ts` (`TEST_MODEL_DEFAULT`, which this module, compiled
+ * into the child, cannot import), so a launch of the test process is priced in the child. Its provider row
+ * `agents-harness` is written by the test process's own harness before the first child starts; a child writes none.
+ */
+export const CHILD_MODEL = 'agents-harness/test-default';
 
 /**
  * Runtime settings of the child, copied from `KILL_MATRIX_SETTINGS` of the runtime's E2E harness: a
@@ -54,18 +57,12 @@ export interface ScenarioServers {
   readonly backoffice: string;
 }
 
-/** The one definition of the scenario: both fixture servers. */
-export function codeRunDefinition(servers: ScenarioServers): AgentDefinition {
-  const name = 'code-run-restart';
-  return {
-    name,
-    description: `Test agent ${name}`,
-    prompt: 'You are a test agent.',
-    tools: [],
-    mcpServers: [servers.logs, servers.backoffice],
-    agents: [],
-    maxTurns: 20,
-  };
+/**
+ * The one agent record of the scenario, the root the test process starts: its name and both fixture
+ * servers. A child never asks the library: a step reads the run's snapshot from the task input.
+ */
+export function codeRunRecord(servers: ScenarioServers): { readonly name: string; readonly servers: string[] } {
+  return { name: 'code-run-restart', servers: [servers.logs, servers.backoffice] };
 }
 
 /** The trace the read script reads (`get_trace` of the `logs` server). */
@@ -134,7 +131,6 @@ export function childScenario(
 ): ChildScenario {
   return {
     variables: {
-      AGENT_DEFAULT_MODEL: CHILD_MODEL,
       MCP_CALL_TIMEOUT_MS: '90000',
       NODE_ENV: 'test',
     },

@@ -8,12 +8,16 @@ import { agentCodeCalls, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
-import type { ToolCallKey } from './tool-calls.repository.js';
+/** One call of an agent: its session and the call id its provider gave. */
+export interface CallKey {
+  readonly taskId: string;
+  readonly callId: string;
+}
 
 /** One tool call a `run_code` script asked for, written before it goes to its server (KD-6). */
 export interface NewCodeCall {
   readonly taskId: string;
-  /** `callId` of the `run_code` row. */
+  /** `callId` of the `run_code` call. */
   readonly runCallId: string;
   readonly attempt: number;
   /** Number of the call within its attempt. */
@@ -22,7 +26,6 @@ export interface NewCodeCall {
   /** MCP server id; null for built-in and registered tools. */
   readonly server: string | null;
   readonly args: unknown;
-  readonly startedAt: Date;
 }
 
 /** One call from code: the key of its row. */
@@ -65,7 +68,7 @@ function byKey(call: CodeCallKey) {
 
 /**
  * `agent_code_calls` (repository over a transaction): the audit of the calls a script made, one row per
- * request, linked to its `run_code` row (KD-6). A row gets at most one outcome (Invariant 4): every
+ * request, of the `run_code` call `(task_id, run_call_id)` of its session (KD-6). A row gets at most one outcome (Invariant 4): every
  * closing write is guarded by `outcome is null`.
  */
 export const codeCalls = {
@@ -93,7 +96,7 @@ export const codeCalls = {
   },
 
   /** Closes every open row of the run, of any attempt, with the given outcome. */
-  async closeOpenOfRun(tx: RuntimeTx, run: ToolCallKey, outcome: ToolOutcome): Promise<void> {
+  async closeOpenOfRun(tx: RuntimeTx, run: CallKey, outcome: ToolOutcome): Promise<void> {
     await tx
       .update(agentCodeCalls)
       .set({ outcome, finishedAt: sql`now()` })

@@ -31,13 +31,24 @@ const toRemoteMetadata = (thread: ThreadSummary): RemoteThreadMetadata => ({
   lastMessageAt: new Date(thread.updatedAt),
 });
 
+export type ThreadListAdapter = RemoteThreadListAdapter & {
+  /**
+   * The conversation was created for a first message the server did not accept: its coming delete is a
+   * cleanup the employee did not ask for — no toast, a failure is only logged.
+   */
+  markEmpty: (remoteId: string) => void;
+};
+
 export function createThreadListAdapter({
   api,
   status,
   notify,
   feeds,
-}: ThreadListAdapterDeps): RemoteThreadListAdapter {
+}: ThreadListAdapterDeps): ThreadListAdapter {
+  const empty = new Set<string>();
+
   return {
+    markEmpty: (remoteId) => void empty.add(remoteId),
     async list(params) {
       const isNextPage = params?.after !== undefined;
       try {
@@ -79,22 +90,29 @@ export function createThreadListAdapter({
       }
     },
     async delete(remoteId) {
+      const cleanup = empty.delete(remoteId);
       try {
         await api.deleteThread(remoteId);
       } catch (error) {
         // 404: the thread is already gone (AC-16.3) — the user's intent is fulfilled.
         if (!(isApiRequestError(error) && error.kind === "not_found")) {
-          logger.error("[web-shell] thread delete failed", {
-            remoteId,
-            ...describeApiError(error),
-          });
-          notify.deleteFailed();
+          if (cleanup) {
+            // The row stays in the list; the employee can delete it by hand.
+            logger.warn("[web-shell] empty thread cleanup failed", { remoteId, ...describeApiError(error) });
+          } else {
+            logger.error("[web-shell] thread delete failed", {
+              remoteId,
+              ...describeApiError(error),
+            });
+            notify.deleteFailed();
+          }
           throw error;
         }
       }
       feeds.forget(remoteId);
       status.getState().forgetThread(remoteId);
-      notify.deleted();
+      if (cleanup) logger.info("[web-shell] empty thread cleanup done", { remoteId, outcome: "deleted" });
+      else notify.deleted();
     },
     archive: () => Promise.reject(new Error("Archive is not supported")),
     // The library asks once, right after `initialize()` and before any answer, which the poll closes at

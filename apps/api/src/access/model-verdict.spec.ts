@@ -20,11 +20,28 @@ const LONG_PRICES = {
   cacheReadUsdPerMTok: 0.2,
 };
 /** The catalogue row of `A` with one price. */
-const MODEL_A: CatalogModel = {
+const MODEL_A = {
   id: A,
   name: 'A',
+  purpose: 'chat',
+  provider: 'anthropic',
   prices: PRICES,
   longContext: null,
+} satisfies CatalogModel;
+/** An embedding model of the catalogue under an allow (model-providers design-core.md, `AccessGate.model`). */
+const EMBEDDING: CatalogModel = {
+  id: 'google/e',
+  name: 'E',
+  purpose: 'embedding',
+  provider: 'google',
+  inputUsdPerMTok: 0.15,
+  dimensions: 768,
+};
+const allowEmbedding: GrantRow = {
+  id: 'g5',
+  effect: 'allow',
+  target: { kind: 'model', model: EMBEDDING.id },
+  quotaUsd: null,
 };
 const ALLOWED: ModelVerdict = { kind: 'allowed', price: PRICES };
 
@@ -79,6 +96,14 @@ describe('the model verdict checks the employee, the catalogue, the rights and t
       active: true,
       catalogued: null,
       grants: [allowA20],
+      spentUsd: 0,
+      expected: { kind: 'refused', reason: 'model_not_connected' },
+    },
+    {
+      name: 'an embedding model is not connected for a model call, even under an allow',
+      active: true,
+      catalogued: EMBEDDING,
+      grants: [allowEmbedding],
       spentUsd: 0,
       expected: { kind: 'refused', reason: 'model_not_connected' },
     },

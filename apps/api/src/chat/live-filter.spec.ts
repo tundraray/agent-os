@@ -4,12 +4,12 @@ import {
   parseWatch,
   type DeltaAddress,
   type LiveStream,
-  type RootConversation,
   type Watch,
 } from './live-filter.js';
 
-const THREAD = '11111111-1111-4111-8111-111111111111';
 const ROOT = '22222222-2222-4222-8222-222222222222';
+/** A conversation's id is its root's. */
+const THREAD = ROOT;
 const CHILD = '33333333-3333-4333-8333-333333333333';
 
 type NamedStream = LiveStream & { readonly name: string };
@@ -28,7 +28,6 @@ const strangerAgent = stream('stranger agent', 'stranger', { kind: 'agent', agen
 const strangerThread = stream('stranger thread', 'stranger', { kind: 'thread', threadId: THREAD });
 const streams = [ownerThread, ownerAgent, ownerRootAgent, ownerPlain, strangerAgent, strangerThread];
 
-const conversation: RootConversation = { threadId: THREAD, ownerId: 'owner' };
 const rootPart: DeltaAddress = { ownerId: 'owner', rootId: ROOT, agentId: ROOT };
 const childPart: DeltaAddress = { ownerId: 'owner', rootId: ROOT, agentId: CHILD };
 
@@ -41,7 +40,6 @@ type Row =
       name: string;
       rule: 'delta';
       delta: DeltaAddress;
-      found: RootConversation | null;
       expected: string[];
     };
 
@@ -73,39 +71,27 @@ describe('live notes go to the owner\'s streams and text parts only to the owner
       name: "a child's part reaches only the owner's stream watching that agent",
       rule: 'delta',
       delta: childPart,
-      found: conversation,
       expected: ['owner agent'],
     },
     {
       name: "a root's part reaches the owner's thread stream and the owner's stream watching the root",
       rule: 'delta',
       delta: rootPart,
-      found: conversation,
       expected: ['owner root agent', 'owner thread'],
-    },
-    {
-      // A `thread:` stream opened before the first message: the same stream gets the root's part
-      // once the conversation is found (the row above).
-      name: "a root's part before its conversation is found reaches no thread stream",
-      rule: 'delta',
-      delta: rootPart,
-      found: null,
-      expected: ['owner root agent'],
     },
     {
       name: "a part of another owner's tree reaches none of the owner's streams",
       rule: 'delta',
       delta: { ownerId: 'third', rootId: ROOT, agentId: CHILD },
-      found: null,
       expected: [],
     },
   ])('$name', (row) => {
     if (row.rule === 'watch') {
       expect(parseWatch(row.value)).toStrictEqual(row.expected);
     } else if (row.rule === 'note') {
-      expect(names(noteTargets(conversation, streams))).toStrictEqual(row.expected);
+      expect(names(noteTargets('owner', streams))).toStrictEqual(row.expected);
     } else {
-      expect(names(deltaTargets(row.delta, row.found, streams))).toStrictEqual(row.expected);
+      expect(names(deltaTargets(row.delta, streams))).toStrictEqual(row.expected);
     }
   });
 });

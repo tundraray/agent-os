@@ -1,29 +1,24 @@
 import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
-import { z } from 'zod';
 
-import type { NewHistoryEntry } from '../store/history.repository.js';
-import { type Session, type SessionInput, type SessionPatch, sessions } from '../store/sessions.repository.js';
-import { type ToolCallRow, toolCalls } from '../store/tool-calls.repository.js';
-import { SessionLimitsSchema } from '../tools/tool.js';
+import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
+import { embedQuestion } from '../knowledge/question-vector.js';
+import { type CallState, openCalls } from '../history/call-state.js';
+import type { HistoryEntry } from '../history/history.js';
+import { callRecords, interruptedResults } from '../store/call-records.repository.js';
+import { history, type NewHistoryEntry } from '../store/history.repository.js';
+import {
+  AgentTaskInputSchema,
+  type Session,
+  type SessionPatch,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
 import { compactionDue, type CompactionStep } from './compaction-step.js';
-import { type Continuation, continuationOf, stopRecords } from './continuation.js';
-import { closedView, closeOpen, entriesOf, interruptText, toolResultEntry } from './deliver.js';
+import { type Continuation, continuationOf, stopEvent } from './continuation.js';
 import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step.js';
 import type { ToolStep } from './tool-step.js';
-
-/** The input of an `agent` task (plan Notes 3): the model is chosen already; the first step makes the session from it. */
-const AgentTaskInputSchema = z.object({
-  definition: z.string().min(1),
-  description: z.string(),
-  prompt: z.string(),
-  model: z.string().min(1),
-  limits: SessionLimitsSchema.optional(),
-  forkedFrom: z
-    .object({ agentId: z.string().min(1), throughSeq: z.number().int().nonnegative() })
-    .optional(),
-}) satisfies z.ZodType<SessionInput>;
 
 const { interrupt } = AgentMessageKindSchema.enum;
 
@@ -41,13 +36,15 @@ const INTERRUPTED_EVENT: NewHistoryEntry = {
 };
 
 export interface AgentStepHandlerDeps {
-  /** Reads the session and its open calls outside the commit: only steps of this agent write them. */
+  /** Reads the session and its history outside the commit: only steps of this agent write them. */
   readonly database: Database;
   readonly toolStep: ToolStep;
   readonly modelStep: ModelStep;
   readonly compactionStep: CompactionStep;
   /** `AGENT_COMPACT_AT_TOKENS`. */
   readonly compactAtTokens: number;
+  /** The question vector of a session that learns (self-learning KD-6); the only caller in a run. */
+  readonly embeddings: Pick<AgentsEmbeddings, 'embed'>;
 }
 
 /** What the step found in its messages and its session before choosing the kind of work. */
@@ -55,12 +52,10 @@ interface StepPlan {
   readonly continuation: Continuation | undefined;
   /** The step took an `interrupt` message (KD-3). */
   readonly interrupted: boolean;
-  /** One of the `interrupt` messages carries the employee's text. */
-  readonly interruptWithText: boolean;
   /** A message of another kind than `interrupt` is delivered: the `interrupted` mark goes (KD-3). */
   readonly otherMessages: boolean;
   /** Open calls of the agent before the step. */
-  readonly open: readonly ToolCallRow[];
+  readonly open: readonly CallState[];
 }
 
 /** A stop or an interrupt closes the open calls in the prelude: they are never run. */
@@ -69,19 +64,16 @@ function closesOpen(plan: StepPlan): boolean {
 }
 
 /**
- * The entries of the prelude over the calls it closes (Flow 6, Flow 7, KD-3): for a stopped agent its
- * stop records — the ones `history` showed derived until now — then `continued`; on an `interrupt`
- * the closed calls, unless the stop records hold them, and the `interrupted` event.
+ * The events of the prelude, which follow the results of the calls it closes (Flow 6, Flow 7, KD-3):
+ * for a stopped agent its stop event — the one `history` showed derived until now — then `continued`;
+ * on an `interrupt` the `interrupted` event.
  */
-function preludeEntries(plan: StepPlan, closed: readonly ToolCallRow[]): NewHistoryEntry[] {
+function preludeEvents(plan: StepPlan): NewHistoryEntry[] {
   const stop = plan.continuation?.stop ?? null;
   const entries: NewHistoryEntry[] = [];
-  if (stop !== null) entries.push(...stopRecords(closed, stop.withParent));
+  if (stop !== null) entries.push(stopEvent(stop.withParent));
   if (plan.continuation !== undefined) entries.push(CONTINUED_EVENT);
-  if (plan.interrupted) {
-    if (stop === null) entries.push(...closed.map(toolResultEntry));
-    entries.push(INTERRUPTED_EVENT);
-  }
+  if (plan.interrupted) entries.push(INTERRUPTED_EVENT);
   return entries;
 }
 
@@ -93,10 +85,10 @@ function preludeEntries(plan: StepPlan, closed: readonly ToolCallRow[]): NewHist
  */
 function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrelude | undefined {
   const closes = closesOpen(plan);
-  const now = new Date();
-  const entries = preludeEntries(plan, closes ? plan.open.map((call) => closedView(call, now)) : []);
+  const events = preludeEvents(plan);
+  const entries = [...(closes ? interruptedResults(plan.open, new Date()) : []), ...events];
 
-  const clearsMark = session.interrupted && (plan.otherMessages || plan.interruptWithText);
+  const clearsMark = session.interrupted && plan.otherMessages;
   const patch: SessionPatch = {
     ...(plan.continuation === undefined ? {} : CONTINUATION_PATCH),
     ...(clearsMark ? { interrupted: false } : {}),
@@ -106,7 +98,11 @@ function preludeOf(ctx: StepContext, session: Session, plan: StepPlan): StepPrel
   return {
     entries,
     patch,
-    write: async (tx) => preludeEntries(plan, closes ? await closeOpen(tx, ctx.taskId) : []),
+    write: async (tx) => {
+      // The results are appended here, ahead of the events the caller appends.
+      if (closes) await callRecords.closeOpen(tx, ctx.taskId);
+      return events;
+    },
   };
 }
 
@@ -128,7 +124,7 @@ function withPrelude(ctx: StepContext, result: StepResult, prelude: StepPrelude 
 }
 
 /**
- * An `interrupt` without text and no other message (KD-3): the open calls closed, the `interrupted`
+ * An `interrupt` and no other message (KD-3): the open calls closed, the `interrupted`
  * event, the session marked «прерван» with its turn counter reset; the agent waits for a message.
  */
 function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number): StepResult {
@@ -136,8 +132,8 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
   return {
     outcome: 'wait',
     commit: async (tx, effects) => {
-      const entries = [...(await prelude.write(tx)), ...(await entriesOf(tx, ctx.messages))];
-      await appendWithEvent(tx, effects, ctx.taskId, entries);
+      // The step's only messages are `interrupt`s: they add no entry of their own.
+      await appendWithEvent(tx, effects, ctx.taskId, await prelude.write(tx));
       await sessions.update(tx, ctx.taskId, {
         ...prelude.patch,
         interrupted: true,
@@ -147,27 +143,39 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
   };
 }
 
+/** A step whose guarded write was fenced or whose signal was aborted: nothing is written. */
+function abandoned(ctx: StepContext, reason: string): StepResult {
+  ctx.logger.info('agent step abandoned without writes', {
+    agentId: ctx.taskId,
+    stepNo: ctx.stepNo,
+    reason,
+  });
+  return { outcome: 'continue' };
+}
+
 /**
  * Builds the handler of `agent` tasks (design-agents.md: C3 `AgentStepHandler`, «Как шаг выбирает
  * работу», KD-3, Flow 6). Between steps it keeps nothing in memory: each step reads the session.
  *
- * 1. The session is made from the task input if the starter did not make it (through `guard`).
+ * 1. The session is made from the task input — the snapshot written at the start (ADR-0017) — if the
+ *    starter did not make it (through `guard`). A session that learns gets its question vector on a
+ *    new question (self-learning KD-6, `embedQuestion`).
  * 2. A finished agent continues (`continuationOf`): its stop entries and `continued` go first.
- * 3. An `interrupt` closes the open calls and writes `interrupted`; with text the model is called at
- *    once, without text (and no other message) the agent is marked and waits.
+ * 3. An `interrupt` closes the open calls and writes `interrupted`; with no other message the agent is
+ *    marked and waits, with one the step goes on to its work.
  * 4. Otherwise: open calls → the tool step; input of the previous call at the threshold → compaction;
  *    else the model step (its turn limit check is d3).
  */
 export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler {
   const { database } = deps;
 
-  /** The session of the agent, made from the task input when missing; `undefined` when the attempt is fenced. */
+  /** The session of the agent, made from the snapshot in the task input when missing; `undefined` when the attempt is fenced. */
   async function sessionOf(ctx: StepContext): Promise<Session | undefined> {
     const existing = await sessions.get(database, ctx.taskId);
     if (existing !== undefined) return existing;
-    const input = AgentTaskInputSchema.parse(ctx.input);
+    const input = sessionInputOf(ctx.input);
     const made = await ctx.guard((tx: RuntimeTx) =>
-      sessions.ensureSession(tx, ctx.taskId, input, ctx.ownerId),
+      sessions.ensureSession(tx, ctx, input),
     );
     if (made.outcome === 'fenced') return undefined;
     const session = await sessions.get(database, ctx.taskId);
@@ -178,39 +186,36 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
   async function step(ctx: StepContext): Promise<StepResult> {
     const startedAt = Date.now();
     const session = await sessionOf(ctx);
-    if (session === undefined) {
-      ctx.logger.info('agent step abandoned without writes', {
-        agentId: ctx.taskId,
-        stepNo: ctx.stepNo,
-        reason: 'session write fenced',
-      });
-      return { outcome: 'continue' };
+    if (session === undefined) return abandoned(ctx, 'session write fenced');
+    if (!(await embedQuestion(deps, ctx, session))) {
+      return abandoned(ctx, 'question write fenced or cancelled');
     }
 
-    const interrupts = ctx.messages.filter((message) => message.kind === interrupt);
+    // One read of the history for the whole step: from the last compaction on, where every open call
+    // and everything the model sees is. Nothing is cached between steps — any worker runs the next one.
+    const own: HistoryEntry[] = await history.visible(database, ctx.taskId);
     const plan: StepPlan = {
       continuation: continuationOf({ session, messages: ctx.messages }),
-      interrupted: interrupts.length > 0,
-      interruptWithText: interrupts.some((message) => interruptText(message) !== undefined),
+      interrupted: ctx.messages.some((message) => message.kind === interrupt),
       otherMessages: ctx.messages.some((message) => message.kind !== interrupt),
-      open: await toolCalls.open(database, ctx.taskId),
+      open: openCalls(own),
     };
     const prelude = preludeOf(ctx, session, plan);
 
-    if (plan.interrupted) {
-      if (plan.interruptWithText) return deps.modelStep(ctx, session, prelude);
-      // `prelude` is set: an interrupt always writes its event.
-      if (!plan.otherMessages && prelude !== undefined) return interruptWait(ctx, prelude, startedAt);
+    // `prelude` is set: an interrupt always writes its event.
+    if (plan.interrupted && !plan.otherMessages && prelude !== undefined) {
+      return interruptWait(ctx, prelude, startedAt);
     }
 
-    const openCalls = closesOpen(plan) ? [] : plan.open;
-    if (openCalls.length > 0) {
-      return withPrelude(ctx, await deps.toolStep(ctx, session, openCalls), prelude);
+    const toRun = closesOpen(plan) ? [] : plan.open;
+    if (toRun.length > 0) {
+      return withPrelude(ctx, await deps.toolStep(ctx, session, toRun), prelude);
     }
+    // A compaction is written only here, with no call left open: `history.visible` relies on it.
     if (compactionDue(session, deps.compactAtTokens)) {
-      return deps.compactionStep(ctx, session, prelude);
+      return deps.compactionStep(ctx, session, own, prelude);
     }
-    return deps.modelStep(ctx, session, prelude);
+    return deps.modelStep(ctx, session, own, prelude);
   }
 
   return { type: AGENT_TASK_TYPE, inputSchema: AgentTaskInputSchema, step };

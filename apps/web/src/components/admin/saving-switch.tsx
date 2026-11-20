@@ -26,6 +26,8 @@ export type SavingSwitchProps = {
    * saves by itself; the re-read resource then moves the switch.
    */
   confirmOn?: () => void;
+  /** Switching off needs a confirmation, the same way: called in place of the save, the switch stays on. */
+  confirmOff?: () => void;
   /** The position cannot be changed here, e.g. the built-in role's admin right (DC-5). */
   disabled?: boolean;
 };
@@ -43,6 +45,7 @@ export function SavingSwitch({
   onSave,
   logEvent,
   confirmOn,
+  confirmOff,
   disabled = false,
 }: SavingSwitchProps) {
   const id = useId();
@@ -62,6 +65,10 @@ export function SavingSwitch({
     setError(null);
     if (next && confirmOn !== undefined) {
       confirmOn();
+      return;
+    }
+    if (!next && confirmOff !== undefined) {
+      confirmOff();
       return;
     }
     setTarget(next);

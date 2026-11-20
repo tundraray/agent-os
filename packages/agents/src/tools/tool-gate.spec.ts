@@ -1,24 +1,62 @@
 import { createLogger } from '@agent-os/common';
-import { RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
+import { type RecordHeader, RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
 import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate.js';
-import { createCatalog } from '../definitions/catalog.js';
-import type { AgentDefinition } from '../definitions/definition.js';
+import type { AgentSnapshot } from '../start/snapshot.js';
+import type { CallState } from '../history/call-state.js';
 import { createToolStep } from '../step/tool-step.js';
-import type { Session } from '../store/sessions.repository.js';
-import type { ToolCallRow } from '../store/tool-calls.repository.js';
+import type { Session, SessionInput } from '../store/sessions.repository.js';
+import { createLibraryDouble } from '../testing.js';
 import type { AgentTool, ToolCaller } from './tool.js';
-import { gateStart, type StartGateInput } from './tool-gate.js';
+import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate.js';
 import { createToolRegistry, type SessionTool } from './tool-registry.js';
 import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner.js';
 
-// AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.2,
-// DC-4 (the caller's list and count), AC-10.3 (depth); design-access.md DC-1, DC-4, AC-16.1, AC-17.1,
-// AC-18.1 (the server–tool pair, one audit record per refusal).
+// AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
+// (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`, the
+// coordinator's team and its `maxRuns`); design-access.md DC-1, DC-4, AC-16.1, AC-17.1, AC-18.1 (the
+// server–tool pair, one audit record per refusal).
 const OWNER = 'employee-1';
-const CALLER: ToolCaller = { agentId: 'agent-1', ownerId: OWNER, rootId: 'agent-1', parentId: null, depth: 0 };
+
+/** A uuid whose last group is `n`. */
+function id(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString().padStart(12, '0')}`;
+}
+
+/** An agent's snapshot that names no tool and no server (code-execution AC-01.2, UC-3). */
+const NO_TOOLS: AgentSnapshot = {
+  kind: 'agent',
+  name: 'no-tools',
+  origin: {
+    recordId: id(1),
+    kind: 'agent',
+    version: 1,
+    name: 'no-tools',
+    author: { id: id(900), name: 'Аня' },
+    builtinKey: null,
+    executor: null,
+  },
+  content: {
+    prompt: 'Answer.',
+    servers: [],
+    model: 'anthropic/claude-haiku-5-5',
+    maxTurns: 10,
+    agents: [],
+    tools: [],
+  },
+  agents: [],
+};
+
+const CALLER: ToolCaller = {
+  agentId: 'agent-1',
+  ownerId: OWNER,
+  rootId: 'agent-1',
+  parentId: null,
+  depth: 0,
+  snapshot: NO_TOOLS,
+};
 
 const MCP_TOOL: SessionTool = {
   kind: 'mcp',
@@ -70,7 +108,7 @@ const START_AGENT_CALL: CallCheckInput = {
   toolName: 'start_agent',
   sessionTools: [START_AGENT_TOOL],
   ownerPairs: [],
-  args: { description: 'gather', agent: 'general-purpose', prompt: 'look' },
+  args: { description: 'gather', agent: id(2), prompt: 'look' },
 };
 
 const NO_SERVER_CALLS = async (): Promise<never> => {
@@ -110,7 +148,13 @@ function runnerOf(doubles: RunnerDoubles = {}): ToolRunner {
       doubles.audits?.push(entry);
     },
     callTimeoutMs: 1000,
-    toolResultMaxBytes: 1024,
+    resultSettings: async () => ({
+      storeFromChars: 50_000,
+      previewChars: 2_000,
+      readMaxTokens: 25_000,
+      updatedAt: null,
+    }),
+    maskSecrets: (text) => text,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
   });
 }
@@ -136,17 +180,6 @@ async function sendToGoneServer(): Promise<Gate> {
   return kindOf(execution);
 }
 
-// code-execution AC-01.2, UC-3: `run_code` is in the set of a definition that names no tool.
-const NO_TOOLS: AgentDefinition = {
-  name: 'no-tools',
-  description: 'Names no tool.',
-  prompt: 'Answer.',
-  tools: [],
-  mcpServers: [],
-  agents: [],
-  maxTurns: 10,
-};
-
 const RUN_CODE_STUB: AgentTool = {
   name: RUN_CODE_TOOL,
   description: 'Runs a script',
@@ -155,17 +188,23 @@ const RUN_CODE_STUB: AgentTool = {
   execute: async () => ({ kind: 'done', outcome: 'success', text: '' }),
 };
 
-/** `check` of a `run_code` call against the set the registry builds for `NO_TOOLS`. */
+/** `check` of a `run_code` call against the set the registry builds for a child running `NO_TOOLS`. */
 async function checkRunCode(runClass: 'read' | 'write', script: string): Promise<Gate> {
   const registry = createToolRegistry({
     builtins: [],
     runCode: RUN_CODE_STUB,
-    catalog: createCatalog(),
-    // A definition that names no server reads nothing of the registry.
+    // A snapshot that names no server reads nothing of the registry.
     database: {} as Database,
     access: gateOf([]),
+    library: createLibraryDouble(),
+    logger: SILENT,
   });
-  const sessionTools = await registry.sessionTools({ definition: NO_TOOLS, limits: null, ownerId: OWNER });
+  const sessionTools = await registry.sessionTools({
+    snapshot: NO_TOOLS,
+    ownerId: OWNER,
+    agentId: CALLER.agentId,
+    root: false,
+  });
   return kindOf(
     checkCall({
       toolName: RUN_CODE_TOOL,
@@ -186,21 +225,52 @@ const INLINE_LINE_BREAKS = [
 ] as const;
 const RUN_CLASSES = ['read', 'write'] as const;
 
+/** A header of the starter's `listVisible`: another's agent the chat offers, unless overridden. */
+function header(n: number, overrides: Partial<RecordHeader> = {}): RecordHeader {
+  return {
+    id: id(n),
+    kind: 'agent',
+    name: `Агент ${n}`,
+    description: 'Работает',
+    version: 1,
+    builtinKey: null,
+    author: { id: id(900), name: 'Аня', disabled: false },
+    mine: false,
+    shared: false,
+    offerInChat: true,
+    ...overrides,
+  };
+}
+
+/** The root's set: an offered agent, own and another's records without the switch, a workflow. */
+const ROOT: LaunchSet = {
+  kind: 'root',
+  tool: 'agent',
+  headers: [
+    header(2),
+    header(3, { mine: true, offerInChat: false }),
+    header(4, { offerInChat: false }),
+    header(5, { kind: 'workflow' }),
+  ],
+};
+
+/** An agent whose snapshot's `agents` hold one record. */
+const AGENT_SET: LaunchSet = { kind: 'agents', ids: [id(2)] };
+
+/** A coordinator's team: `gather` may run twice. */
+const TEAM: LaunchSet = { kind: 'team', executors: [{ name: 'gather', maxRuns: 2 }] };
+
 const START: StartGateInput = {
-  agent: 'general-purpose',
-  definitionAgents: ['general-purpose'],
-  limits: null,
-  startedCount: 0,
+  launchSet: AGENT_SET,
+  target: { kind: 'record', recordId: id(2) },
   depth: 1,
   maxDepth: 3,
 };
 
-const LIMITED: StartGateInput = {
-  ...START,
-  agent: 'gather',
-  definitionAgents: [],
-  limits: { agents: { gather: 2 }, finalAgent: 'answer' },
-};
+/** `gateStart` of `START` with the given launch set and target. */
+function gate(launchSet: LaunchSet, target: StartGateInput['target']): Gate {
+  return kindOf(gateStart({ ...START, launchSet, target }));
+}
 
 type Gate = { kind: 'allowed' } | { kind: 'refused'; reason: string };
 
@@ -267,27 +337,44 @@ describe('a tool call is refused with its reason or allowed', () => {
       { kind: 'allowed' },
     ]),
     [
-      "an agent outside the definition's agents",
-      () => kindOf(gateStart({ ...START, agent: 'answer' })),
+      "a record outside the agent's agents",
+      () => gate(AGENT_SET, { kind: 'record', recordId: id(3) }),
+      { kind: 'refused', reason: 'not_allowed' },
+    ],
+    ["a record of the agent's agents", () => gate(AGENT_SET, { kind: 'record', recordId: id(2) }), { kind: 'allowed' }],
+    [
+      'an executor that reached its maxRuns',
+      () => gate(TEAM, { kind: 'executor', name: 'gather', startedCount: 2 }),
+      { kind: 'refused', reason: 'run_limit' },
+    ],
+    [
+      'an executor under its maxRuns',
+      () => gate(TEAM, { kind: 'executor', name: 'gather', startedCount: 1 }),
+      { kind: 'allowed' },
+    ],
+    [
+      'a name outside the team',
+      () => gate(TEAM, { kind: 'executor', name: 'answer', startedCount: 0 }),
+      { kind: 'refused', reason: 'not_allowed' },
+    ],
+    ['a fork at a coordinator', () => gate(TEAM, { kind: 'fork' }), { kind: 'refused', reason: 'not_allowed' }],
+    ['a fork at an agent', () => gate(AGENT_SET, { kind: 'fork' }), { kind: 'allowed' }],
+    ['the root starts an agent the chat offers', () => gate(ROOT, { kind: 'record', recordId: id(2) }), { kind: 'allowed' }],
+    [
+      'the root starts its own agent without «предлагать в главном чате»',
+      () => gate(ROOT, { kind: 'record', recordId: id(3) }),
+      { kind: 'allowed' },
+    ],
+    [
+      "the root starts another's agent without «предлагать в главном чате»",
+      () => gate(ROOT, { kind: 'record', recordId: id(4) }),
       { kind: 'refused', reason: 'not_allowed' },
     ],
     [
-      "an agent outside the caller's limits",
-      () => kindOf(gateStart({ ...LIMITED, agent: 'general-purpose', definitionAgents: ['general-purpose'] })),
+      'the root starts a workflow with start_agent',
+      () => gate(ROOT, { kind: 'record', recordId: id(5) }),
       { kind: 'refused', reason: 'not_allowed' },
     ],
-    [
-      'a start beyond the count',
-      () => kindOf(gateStart({ ...LIMITED, startedCount: 2 })),
-      { kind: 'refused', reason: 'not_allowed' },
-    ],
-    ['a start within the count', () => kindOf(gateStart({ ...LIMITED, startedCount: 1 })), { kind: 'allowed' }],
-    [
-      'fork in a session started with limits',
-      () => kindOf(gateStart({ ...LIMITED, agent: 'fork' })),
-      { kind: 'refused', reason: 'not_allowed' },
-    ],
-    ['fork in a session without limits', () => kindOf(gateStart({ ...START, agent: 'fork' })), { kind: 'allowed' }],
     [
       'a depth over the limit',
       () => kindOf(gateStart({ ...START, depth: 3 })),
@@ -308,11 +395,17 @@ const CHANGING_TOOL: SessionTool = {
   mcp: { ...MCP_TOOL.mcp, name: 'mcp__logs__purge', tool: 'purge', description: 'Purge log lines', readOnly: false },
 };
 
-const AGENT_DEFINITION: AgentDefinition = { ...NO_TOOLS, name: 'helper', mcpServers: ['logs'] };
+/** An agent whose snapshot names the `logs` server. */
+const HELPER: AgentSnapshot = {
+  ...NO_TOOLS,
+  name: 'helper',
+  content: { ...NO_TOOLS.content, servers: ['logs'] },
+};
+
+const HELPER_INPUT: SessionInput = { snapshot: HELPER, prompt: 'Clean up the logs', description: 'Clean up' };
 
 /** The denied tool was not offered, so the model step stored the name as asked, without a server. */
-const OPEN_PURGE: ToolCallRow = {
-  taskId: CALLER.agentId,
+const OPEN_PURGE: CallState = {
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
@@ -320,24 +413,21 @@ const OPEN_PURGE: ToolCallRow = {
   server: null,
   args: {},
   state: 'requested',
-  outcome: null,
-  refusalReason: null,
-  resultText: null,
-  childTaskId: null,
-  startedAt: null,
-  finishedAt: null,
+  sentAt: null,
   attempts: 0,
-  output: null,
+  result: null,
 };
 
 const SESSION: Session = {
   taskId: CALLER.agentId,
+  parentId: CALLER.parentId,
   ownerId: OWNER,
-  definition: AGENT_DEFINITION.name,
-  description: 'Clean up',
-  model: 'anthropic/claude-haiku-5-5',
-  prompt: 'Clean up the logs',
-  limits: null,
+  name: HELPER.name,
+  origin: HELPER.origin,
+  firstRun: true,
+  description: HELPER_INPUT.description,
+  model: HELPER.content.model,
+  prompt: HELPER_INPUT.prompt,
   forkedFromTaskId: null,
   forkedThroughSeq: null,
   turns: 0,
@@ -355,7 +445,7 @@ function stepContext(): StepContext {
     ownerId: OWNER,
     depth: 0,
     type: 'agent',
-    input: {},
+    input: HELPER_INPUT,
     stepNo: 3,
     resumedAfterLoss: false,
     messages: [],
@@ -471,10 +561,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
       'a denied changing tool in the tool step: no confirmation request, the agent goes on',
       () =>
         admission(['logs/search'], async (runner, audits) => {
-          const catalog = createCatalog();
-          catalog.register(AGENT_DEFINITION);
           const step = createToolStep({
-            catalog,
             registry: { checkTools: async () => [MCP_TOOL, CHANGING_TOOL] },
             runner,
             access: gateOf(['logs/search']),

@@ -1,29 +1,21 @@
 import { z } from 'zod';
 
+/** The limit of a `run_code` result, bytes (AC-07.3): the executor's protocol, not a setting. */
+const CODE_RUN_RESULT_MAX_BYTES = 16_384;
+
 /** An empty variable (`NAME=` in `.env`) means "not set": the default applies. */
 const unsetWhenEmpty = (value: unknown) => (value === '' ? undefined : value);
 
 const positiveInteger = (fallback: number) =>
   z.preprocess(unsetWhenEmpty, z.coerce.number().int().min(1).default(fallback));
 
-/** A model id the package resolves: only Anthropic models (`createResolveModel`). */
-export const MODEL_ID_PATTERN = /^anthropic\/[^/\s]+$/;
-
-/** Runtime settings of design-agents.md: env names and defaults. */
+/**
+ * Runtime settings of design-agents.md: env names and defaults. Model providers, their keys and the
+ * default models live in the database, never here (model-providers FR-02).
+ */
 const AgentsEnvSchema = z.object({
-  AGENT_DEFAULT_MODEL: z.preprocess(
-    unsetWhenEmpty,
-    z
-      .string()
-      .regex(MODEL_ID_PATTERN, 'expected anthropic/<model id>')
-      .default('anthropic/claude-haiku-5-5'),
-  ),
-  // May stay empty: a deployment without a key starts, and the provider refuses its calls.
-  ANTHROPIC_API_KEY: z.preprocess(unsetWhenEmpty, z.string().default('')),
-  AGENTS_ANTHROPIC_BASE_URL: z.preprocess(unsetWhenEmpty, z.string().default('https://api.anthropic.com')),
   AGENT_MAX_OUTPUT_TOKENS: positiveInteger(16_000),
   AGENT_MAX_DEPTH: positiveInteger(3),
-  AGENT_TOOL_RESULT_MAX_BYTES: positiveInteger(16_384),
   AGENT_COMPACT_AT_TOKENS: positiveInteger(200_000),
   MCP_CALL_TIMEOUT_MS: positiveInteger(60_000),
   // design-code-execution.md, Runtime settings.
@@ -37,24 +29,16 @@ const AgentsEnvSchema = z.object({
 });
 
 export interface AgentsConfig {
-  /** `AGENT_DEFAULT_MODEL`: the model when neither the launch nor the definition names one. */
-  readonly defaultModel: string;
-  /** `ANTHROPIC_API_KEY`: a secret of the logger; empty when not set. */
-  readonly anthropicApiKey: string;
-  /** `AGENTS_ANTHROPIC_BASE_URL`. */
-  readonly anthropicBaseUrl: string;
   readonly maxOutputTokens: number;
   /** `AGENT_MAX_DEPTH`: the largest depth of an agent; a conversation is at depth 0. */
   readonly maxDepth: number;
-  /** `AGENT_TOOL_RESULT_MAX_BYTES`: a longer result is cut. */
-  readonly toolResultMaxBytes: number;
   /** `AGENT_COMPACT_AT_TOKENS`: input tokens of the previous call that start compaction. */
   readonly compactAtTokens: number;
   /** `MCP_CALL_TIMEOUT_MS`: limit of one MCP call. */
   readonly mcpCallTimeoutMs: number;
   /** `NODE_ENV` is not `production`: `http` server and authorization addresses pass the address rule. */
   readonly allowHttpUrls: boolean;
-  /** `CODE_RUN_*`; a run's result limit is `toolResultMaxBytes`. */
+  /** `CODE_RUN_*` and the run's result limit. */
   readonly codeRun: CodeRunConfig;
 }
 
@@ -70,14 +54,8 @@ export interface CodeRunConfig {
   readonly maxConcurrent: number;
   /** `CODE_RUN_MAX_CONCURRENT_PER_USER`: runs of one employee at once in one API process (KD-11). */
   readonly maxConcurrentPerUser: number;
-}
-
-/**
- * The secret values of the settings (FR-11): the provider key. The logger redacts it, and `run_code` masks
- * it in a run's output and result. MCP tokens live in the database, never in the settings.
- */
-export function secretValuesOf(config: AgentsConfig): string[] {
-  return [config.anthropicApiKey].filter((secret) => secret !== '');
+  /** The limit of a run's result, bytes: the executor's protocol, not a setting (AC-07.3). */
+  readonly resultMaxBytes: number;
 }
 
 /**
@@ -89,12 +67,8 @@ export function secretValuesOf(config: AgentsConfig): string[] {
 export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>): AgentsConfig {
   const env = parseOrThrow(AgentsEnvSchema, variables, 'Invalid agents settings');
   return {
-    defaultModel: env.AGENT_DEFAULT_MODEL,
-    anthropicApiKey: env.ANTHROPIC_API_KEY,
-    anthropicBaseUrl: env.AGENTS_ANTHROPIC_BASE_URL,
     maxOutputTokens: env.AGENT_MAX_OUTPUT_TOKENS,
     maxDepth: env.AGENT_MAX_DEPTH,
-    toolResultMaxBytes: env.AGENT_TOOL_RESULT_MAX_BYTES,
     compactAtTokens: env.AGENT_COMPACT_AT_TOKENS,
     mcpCallTimeoutMs: env.MCP_CALL_TIMEOUT_MS,
     allowHttpUrls: env.NODE_ENV !== 'production',
@@ -104,6 +78,7 @@ export function parseAgentsConfig(variables: Readonly<Record<string, unknown>>):
       maxToolCalls: env.CODE_RUN_MAX_TOOL_CALLS,
       maxConcurrent: env.CODE_RUN_MAX_CONCURRENT,
       maxConcurrentPerUser: env.CODE_RUN_MAX_CONCURRENT_PER_USER,
+      resultMaxBytes: CODE_RUN_RESULT_MAX_BYTES,
     },
   };
 }

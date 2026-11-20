@@ -32,7 +32,6 @@
 
 import {
   AccessErrorCode,
-  CreateCatalogModelBodySchema,
   CreateGrantBodySchema,
   CreateLocalUserBodySchema,
   CreateProviderBodySchema,
@@ -164,7 +163,6 @@ const BUILTIN_ROLE = fixtureId(10);
 const SRE = fixtureId(100);
 const DUTY = fixtureId(101);
 const SONNET = 'anthropic/claude-sonnet-4-5';
-const HAIKU = 'anthropic/claude-haiku-4-5';
 /** Role grants of «SRE»: one tool the registry still has, one tool it no longer has, one server that is gone. */
 const SRE_TOOL_GRANT = fixtureId(200);
 const ORPHAN_TOOL_GRANT = fixtureId(201);
@@ -192,16 +190,7 @@ function adminBackend() {
       grant({ id: ORPHAN_TOOL_GRANT, target: { kind: 'tool', server: 'sentry', tool: 'delete_issue' } }),
       grant({ id: ORPHAN_SERVER_GRANT, target: { kind: 'server', server: 'gitlab' } }),
     ] as Grant[],
-    models: [
-      catalogModel({
-        id: SONNET,
-        name: 'Claude Sonnet 4.5',
-        longContext: {
-          aboveInputTokens: 200_000,
-          prices: { inputUsdPerMTok: 6, outputUsdPerMTok: 22.5, cacheWriteUsdPerMTok: 7.5, cacheReadUsdPerMTok: 0.6 },
-        },
-      }),
-    ] as CatalogModel[],
+    models: [catalogModel({ id: SONNET, name: 'Claude Sonnet 4.5' })] as CatalogModel[],
   };
   let nextGrant = 300;
 
@@ -339,20 +328,6 @@ function adminBackend() {
     ),
     // Models
     http.get(`${API}/api/admin/models`, () => HttpResponse.json(store.models)),
-    http.post(`${API}/api/admin/models`, ({ request }) =>
-      withBody(request, CreateCatalogModelBodySchema, (body) => {
-        const created = catalogModel(body);
-        store.models.push(created);
-        return HttpResponse.json(created, { status: 201 });
-      }),
-    ),
-    http.delete(`${API}/api/admin/models/:id`, ({ params }) => {
-      // The API removes the model's rights and denies with it.
-      const id = decodeURIComponent(String(params.id));
-      store.models = store.models.filter((model) => model.id !== id);
-      store.grants = store.grants.filter((entry) => entry.target.kind !== 'model' || entry.target.model !== id);
-      return new HttpResponse(null, { status: 204 });
-    }),
   ];
 
   return { store, handlers };
@@ -524,7 +499,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      no «Панель администратора» in the user menu; ZERO requests to `/api/admin/*` for the whole test ([support] request counter on
   //      `server.events` `request:start`, because the screen could swallow the unhandled-request error); «В чат» leaves without a chat restart
   //   2. an administrator (`isAdmin: true`) opens the user menu and chooses «Панель администратора»: «Сотрудники» is open, the sidebar shows «К чату»
-  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели» (no «Журнал», no pauses), the focus is on the `h1`
+  //      and exactly the sections «Сотрудники», «Роли», «Авторизация», «MCP-серверы», «Модели», «Агенты и workflow» (no «Журнал», no pauses), the focus is on the `h1`
   //      «Сотрудники», `document.title` is «Сотрудники — Панель — Agent OS»; the first request after `GET /api/auth/me` is `GET /api/admin/users`
   //   3. the administrator on `/admin/roles` presses «Создать роль» and creates one: `POST /api/admin/roles` answers `403 ADMIN_REQUIRED` - the SAME
   //      address now shows «Нет доступа», the ordinary sidebar, the menu without the panel item, no role row left on screen, and no further
@@ -535,7 +510,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   // @category: core-functionality
   // @dependency: parseShellRoute, AdminGate, CurrentUser store, AppSidebar, UserMenu, MainView, ThreadNotice, apiRequest 403 handler, adminApi, MSW, next/navigation mock
   // @complexity: medium
-  it('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its five sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place', async () => {
+  it('INT-1 / UC-1 / UC-E1 / UC-E2: a non-administrator gets «Нет доступа» and sends no panel request; an administrator gets the panel with its six sections; a 403 ADMIN_REQUIRED turns the open panel into «Нет доступа» in place', async () => {
     // Arrange: the conversation list both employees have, the panel's reads and the refused «Создать роль»
     let threadReads = 0;
     server.use(
@@ -574,10 +549,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     const employee = trackRequests(server);
     const employeeView = renderWithRuntime({ pathname: '/admin/roles' });
 
-    // Assert (row 1, «Право ещё не известно»): the table's Loading named «Роли», five skeleton rows in place of the sections
+    // Assert (row 1, «Право ещё не известно»): the table's Loading named «Роли», six skeleton rows in place of the sections
     expect(await screen.findByRole('status', { name: 'Роли' })).toBeInTheDocument();
     const unknownNav = screen.getByRole('navigation', { name: 'Панель' });
-    expect(unknownNav.querySelectorAll('[data-slot="sidebar-menu-skeleton"]')).toHaveLength(5);
+    expect(unknownNav.querySelectorAll('[data-slot="sidebar-menu-skeleton"]')).toHaveLength(6);
     expect(within(unknownNav).getAllByRole('link').map((link) => link.textContent)).toEqual(['К чату']);
     await waitFor(() => expect(employee.requests.map((request) => request.path)).toContain('/api/auth/me'));
     expect(employee.adminCount()).toBe(0);
@@ -628,7 +603,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     await user.click(await screen.findByRole('button', { name: 'Меню пользователя Игорь Петров' }));
     await followLink(user, await screen.findByRole('menuitem', { name: 'Панель администратора' }), adminView.setPathname);
 
-    // Assert (row 2): «Сотрудники» with its h1 focused and its tab title; «К чату», «Панель» and exactly the five sections
+    // Assert (row 2): «Сотрудники» with its h1 focused and its tab title; «К чату», «Панель» and exactly the six sections
     const usersTitle = await screen.findByRole('heading', { level: 1, name: 'Сотрудники' });
     await waitFor(() => expect(usersTitle).toHaveFocus());
     await waitFor(() => expect(document.title).toBe('Сотрудники — Панель — Agent OS'));
@@ -641,6 +616,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       'Авторизация',
       'MCP-серверы',
       'Модели',
+      'Агенты и workflow',
     ]);
     expect(within(panelNav).getByRole('link', { name: 'Сотрудники' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('navigation', { name: 'История бесед' })).toBeNull();
@@ -720,26 +696,20 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //      OPEN with the fields kept and the text of the refusal in the form error; no grant row appears or changes
   //   7. orphan (DC-13): a role grant whose tool is no longer in `tools` of its server (and one whose server is gone) shows «Нет в реестре» with the single
   //      action «Убрать» -> `DELETE /api/admin/grants/:id`
-  //   8. catalogue (AD-11): `GET /api/admin/models` shows name, the ID in Mono and four prices per million tokens, the long-context prices as a nested
-  //      row «свыше {порог} входных токенов»; «Добавить модель» with prices typed with a comma sends `POST /api/admin/models` with numbers and
-  //      `longContext: null`; `409 MODEL_ID_TAKEN` is a field error at «ID модели»; «Убрать из каталога» -> «Убрать модель «{название}» из каталога?»
-  //      with the line that all rights to it are deleted -> ONE `DELETE /api/admin/models/anthropic%2F<name>` (the id with `/` encoded) -> the list is read
-  //      again without the model
-  //   9. confirmed destructive and rights-changing actions (UC-4, UC-6; one table: block, delete role, remove model - row 8 - and delete grant): the
+  //   9. confirmed destructive and rights-changing actions (UC-4, UC-6; one table: block, delete role and delete grant): the
   //      dialog names the object («Заблокировать {имя}?», «Удалить роль «{роль}»?»); «Отмена» and Escape send NOTHING; «Заблокировать» sends one
   //      `POST /api/admin/users/:id/block` and the page shows «Отключён» with «Разблокировать» and promises no instant stop of the agents; «Удалить» sends
   //      one `DELETE /api/admin/roles/:id`, opens the role list, toast «Роль удалена», focus on the `h1`; a `404` (`USER_NOT_FOUND`, `ROLE_NOT_FOUND`) or
   //      `409 BUILTIN_ROLE` answer is shown in words at the action and the resource is read again; while the request is open the confirm button
   //      is disabled (one request, not two)
   // Catches: a deny sent as an allow (or the reverse) or a right created on the wrong holder, the one mistake that silently opens or closes a server
-  //   or tool; a tool typed by hand or a server without tools offered, creating a right that matches nothing; a model id with `/` sent unencoded
-  //   (404 on delete); a quota that the list shows from the client's own arithmetic instead of the new read; a destructive request sent without the
+  //   or tool; a tool typed by hand or a server without tools offered, creating a right that matches nothing; a quota that the list shows from the client's own arithmetic instead of the new read; a destructive request sent without the
   //   confirmation, twice, or for another object than the dialog named; a refused action that still changes the screen; the password kept in the
   //   dialog after the reset or reaching a toast or a log record; a built-in role offered «Удалить».
   // @category: core-functionality
-  // @dependency: employees, roles, rights and models screens, grant dialog (GR-01), adminApi (users, roles, grants, servers, models), useResource, DataTable, AdminForm, alert-dialog, toast, focus service, logger stand-in, MSW
+  // @dependency: employees, roles and rights screens, grant dialog (GR-01), adminApi (users, roles, grants, servers, models), useResource, DataTable, AdminForm, alert-dialog, toast, focus service, logger stand-in, MSW
   // @complexity: high
-  it('INT-2 / UC-2..UC-6 / UC-E6 / UC-E9: local accounts and password reset, roles of an employee, the built-in role, rights and denies with their quotas, the model catalogue, and the confirmed destructive actions send exactly the confirmed request and show the server\'s refusal', async () => {
+  it('INT-2 / UC-2..UC-6 / UC-E6 / UC-E9: local accounts and password reset, roles of an employee, the built-in role, rights and denies with their quotas, and the confirmed destructive actions send exactly the confirmed request and show the server\'s refusal', async () => {
     // Arrange: an administrator, the admin API as a store (Аня with «SRE» and «Дежурный», three roles, the rights of
     // «SRE», the registry with `jira` and `sentry`, the catalogue with Sonnet)
     const { store, handlers } = adminBackend();
@@ -1111,76 +1081,6 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(within(rights).queryByText('sentry → delete_issue')).toBeNull());
-
-    // Row 8 - the catalogue (AD-11): name, ID, four prices and the long-request prices as a nested row
-    await open('/admin/models', 'Модели');
-    const catalogue = await screen.findByRole('table', { name: 'Модели' });
-    expect(rowCells(catalogue, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5anthropic/claude-sonnet-4-5', '3 $', '15 $', '3,75 $', '0,3 $', '']);
-    expect(rowCells(catalogue, 'в Claude Sonnet 4.5: ')).toEqual([
-      'в Claude Sonnet 4.5: свыше 200 000 входных токенов',
-      '6 $',
-      '22,5 $',
-      '7,5 $',
-      '0,6 $',
-      '',
-    ]);
-
-    // Row 8: «Добавить модель» with comma prices; `409 MODEL_ID_TAKEN` is the error of «ID модели»
-    await user.click(screen.getByRole('button', { name: 'Добавить модель' }));
-    const addModel = await screen.findByRole('dialog', { name: 'Добавить модель' });
-    await user.type(within(addModel).getByLabelText('ID модели'), SONNET);
-    await user.type(within(addModel).getByLabelText('Название'), 'Claude Haiku 4.5');
-    await user.type(within(addModel).getByLabelText('Вход'), '1');
-    await user.type(within(addModel).getByLabelText('Выход'), '5');
-    await user.type(within(addModel).getByLabelText('Запись в кэш'), '1,25');
-    await user.type(within(addModel).getByLabelText('Чтение из кэша'), '0,1');
-    server.use(
-      http.post(`${API}/api/admin/models`, () => apiError(409, AccessErrorCode.MODEL_ID_TAKEN, 'Model id taken'), { once: true }),
-    );
-    mark = api.requests.length;
-    await user.click(within(addModel).getByRole('button', { name: 'Добавить модель' }));
-    expect(await within(addModel).findByText('Модель с таким ID уже есть в каталоге')).toBeInTheDocument();
-    expect(within(addModel).getByLabelText('ID модели')).toHaveAttribute('aria-invalid', 'true');
-    await user.clear(within(addModel).getByLabelText('ID модели'));
-    await user.type(within(addModel).getByLabelText('ID модели'), HAIKU);
-    await user.click(within(addModel).getByRole('button', { name: 'Добавить модель' }));
-    const haikuBody = {
-      name: 'Claude Haiku 4.5',
-      prices: { inputUsdPerMTok: 1, outputUsdPerMTok: 5, cacheWriteUsdPerMTok: 1.25, cacheReadUsdPerMTok: 0.1 },
-      longContext: null,
-    };
-    await expectSent(
-      api,
-      mark,
-      [
-        { method: 'POST', path: '/api/admin/models', body: { id: SONNET, ...haikuBody } },
-        { method: 'POST', path: '/api/admin/models', body: { id: HAIKU, ...haikuBody } },
-      ],
-      '/api/admin/models',
-    );
-    await waitFor(() =>
-      expect(rowCells(catalogue, 'Claude Haiku 4.5')).toEqual(['Claude Haiku 4.5anthropic/claude-haiku-4-5', '1 $', '5 $', '1,25 $', '0,1 $', '']),
-    );
-    expect(await screen.findByText('Модель добавлена')).toBeInTheDocument();
-
-    // Row 8 and row 9 - «Убрать из каталога»: the confirmation names the lost rights and sends ONE DELETE with the id
-    // encoded; the list is read again without the model, and the focus goes to the `h1` - the row's «⋯» is gone
-    mark = api.requests.length;
-    await user.click(within(catalogue).getByRole('button', { name: 'Действия: Claude Sonnet 4.5' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Убрать из каталога' }));
-    confirm = await screen.findByRole('alertdialog', { name: 'Убрать модель «Claude Sonnet 4.5» из каталога?' });
-    expect(
-      within(confirm).getByText(
-        'Все права и личные запреты на эту модель будут удалены. Агенты больше не смогут её выбрать, а работающие на ней завершатся сбоем «модель не подключена».',
-      ),
-    ).toBeInTheDocument();
-    await user.click(within(confirm).getByRole('button', { name: 'Убрать из каталога' }));
-    await expectSent(api, mark, [{ method: 'DELETE', path: '/api/admin/models/anthropic%2Fclaude-sonnet-4-5', body: null }], '/api/admin/models');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    await waitFor(() => expect(within(catalogue).queryByText('Claude Sonnet 4.5')).toBeNull());
-    expect(await screen.findByText('Модель убрана из каталога')).toBeInTheDocument();
-    expect(within(catalogue).getByText('Claude Haiku 4.5')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Модели' })).toHaveFocus());
 
     // Row 1 - a local account (AC-25.3); the account rows come last, so a defect in them does not hide the rights rows
     await open('/admin/users', 'Сотрудники');

@@ -1,55 +1,36 @@
-import type { Agents, AgentSessions } from '@agent-os/agents';
+import { type Agents, type AgentSessions, START_WORKFLOW_TOOL } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 
 import { createWorkflowRuns, type WorkflowRuns } from './runs.js';
-import { SHIPPED_TEMPLATES } from './shipped-templates.js';
 import { createStartWorkflowTool } from './start-workflow.tool.js';
-import { parseTemplates, toDefinitions, type WorkflowTemplateHeader } from './template.js';
 
 /** The part of `agents` the workflows package uses. */
 export interface WorkflowsAgents {
-  readonly definitions: Pick<Agents['definitions'], 'register'>;
   readonly tools: Pick<Agents['tools'], 'register'>;
-  readonly sessions: Pick<AgentSessions, 'get' | 'list' | 'history'>;
+  readonly sessions: Pick<AgentSessions, 'get' | 'list' | 'history' | 'snapshot'>;
+  readonly resolveStart: Agents['resolveStart'];
+  readonly auditStartRefusal: Agents['auditStartRefusal'];
+  readonly rootMayStart: Agents['rootMayStart'];
 }
 
 export interface WorkflowsOptions {
   readonly agents: WorkflowsAgents;
   readonly logger: Logger;
-  /** Raw template data; the shipped templates by default (`apps/api` does not pass it). */
-  readonly templates?: readonly unknown[];
 }
 
-/** The workflows package (design-workflows.md, Contract «Сборка»): no settings, no background work. */
+/** The workflows package (design-runtime.md, KD-5): the brief, `start_workflow` and the run view. */
 export interface Workflows {
-  readonly templates: { list(): WorkflowTemplateHeader[] };
   readonly runs: WorkflowRuns;
 }
 
 /**
- * Parses the templates and registers their definitions and the `start_workflow` tool in `agents`.
- * Called after `createAgents` and before `agents.start()`; a bad template throws before anything is
- * registered, so the start stops (DC-1).
+ * Registers the `start_workflow` tool in `agents`. Called after `createAgents` and before
+ * `agents.start()`; workflows themselves are records of the library, read at each start.
  */
 export function createWorkflows(options: WorkflowsOptions): Workflows {
   const { agents } = options;
   const logger = options.logger.child({ component: 'workflows' });
-  const templates = parseTemplates(options.templates ?? SHIPPED_TEMPLATES);
-  const tool = createStartWorkflowTool({ templates, logger });
-
-  for (const template of templates) {
-    for (const definition of toDefinitions(template)) agents.definitions.register(definition);
-  }
-  agents.tools.register(tool);
-  logger.info('workflow templates parsed', { templates: templates.map((template) => template.name) });
-
-  const headers: WorkflowTemplateHeader[] = templates.map(({ name, title, description }) => ({
-    name,
-    title,
-    description,
-  }));
-  return {
-    templates: { list: () => headers.map((header) => ({ ...header })) },
-    runs: createWorkflowRuns({ sessions: agents.sessions, templates: headers }),
-  };
+  agents.tools.register(createStartWorkflowTool({ agents, logger }));
+  logger.info('workflows registered', { tools: [START_WORKFLOW_TOOL] });
+  return { runs: createWorkflowRuns({ sessions: agents.sessions }) };
 }

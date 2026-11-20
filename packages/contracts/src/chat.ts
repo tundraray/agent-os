@@ -8,6 +8,14 @@ import {
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
 } from './agents.js';
+import {
+  IdSchema,
+  RECORD_NAME_MAX_LENGTH,
+  RecordKindSchema,
+  SaveOwnRefusalSchema,
+  VersionSchema,
+  withContentByKind,
+} from './library.js';
 import { DecisionStatusSchema } from './runtime.js';
 import { ThreadListQuerySchema, ThreadSummarySchema } from './threads.js';
 
@@ -32,13 +40,30 @@ const SeqSchema = z.number().int().nonnegative();
 // ---------------------------------------------------------------------------------------------------
 // Requests
 
-/** Body of POST /threads/:threadId/messages and POST /agents/:agentId/messages. */
-export const SendMessageRequestSchema = z.object({ text: ChatTextSchema });
+/**
+ * Body of POST /threads/:threadId/messages and POST /agents/:agentId/messages. `recordId` is the
+ * record chip; it is not checked as a UUID here: the service answers any id it cannot start with the
+ * same 404 as an invisible record.
+ */
+export const SendMessageRequestSchema = z.object({
+  text: ChatTextSchema,
+  recordId: z.string().min(1).optional(),
+});
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 
-/** Body of POST /threads/:threadId/interrupt and POST /agents/:agentId/interrupt. */
-export const InterruptRequestSchema = z.object({ text: ChatTextSchema.optional() });
-export type InterruptRequest = z.infer<typeof InterruptRequestSchema>;
+/**
+ * Body of POST /threads/:threadId/drafts/:draftId: save the draft (optionally under another name),
+ * reject it, or mark it saved through the editor as the employee's own record `recordId`.
+ */
+export const DraftActionRequestSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('save'),
+    name: z.string().trim().min(1).max(RECORD_NAME_MAX_LENGTH).optional(),
+  }),
+  z.object({ action: z.literal('reject') }),
+  z.object({ action: z.literal('saved_in_editor'), recordId: z.string().min(1) }),
+]);
+export type DraftActionRequest = z.infer<typeof DraftActionRequestSchema>;
 
 /** Query of the history routes: entries with a greater `seq`; 0 by default. */
 export const HistoryQuerySchema = z.object({
@@ -70,11 +95,8 @@ export type EventsQuery = z.infer<typeof EventsQuerySchema>;
 export const SendMessageResponseSchema = z.object({ messageId: z.string().min(1).nullable() });
 export type SendMessageResponse = z.infer<typeof SendMessageResponseSchema>;
 
-/** 200 of an interrupt; `messageId` is set when `not_active` sent the text as a message. */
-export const InterruptResponseSchema = z.object({
-  outcome: z.enum(['interrupted', 'not_active']),
-  messageId: z.string().min(1).optional(),
-});
+/** 200 of POST /threads/:threadId/interrupt and POST /agents/:agentId/interrupt; the request has no body. */
+export const InterruptResponseSchema = z.object({ outcome: z.enum(['interrupted', 'not_active']) });
 export type InterruptResponse = z.infer<typeof InterruptResponseSchema>;
 
 /** 200 of POST /agents/:agentId/stop: the ids of the stopped agents. */
@@ -105,20 +127,35 @@ export type AwaitingCount = z.infer<typeof AwaitingCountSchema>;
 // ---------------------------------------------------------------------------------------------------
 // Agents
 
-/** The template of a workflow coordinator: its definition name equals the template name. */
-export const AgentTemplateSchema = z.object({ name: z.string().min(1), title: z.string().min(1) });
-export type AgentTemplate = z.infer<typeof AgentTemplateSchema>;
+/**
+ * The record a run started from, as it was at the start (design-runtime.md, «Данные для `web`»):
+ * `author` is `null` for a system record, `executor` is the executor's name for a workflow step.
+ * The record's live state the web reads from GET /api/library by `recordId`.
+ */
+export const RunOriginSchema = z.object({
+  recordId: IdSchema,
+  kind: RecordKindSchema,
+  version: VersionSchema,
+  name: z.string().min(1),
+  author: z.object({ id: IdSchema, name: z.string() }).nullable(),
+  builtinKey: z.string().min(1).nullable(),
+  executor: z.string().min(1).nullable(),
+});
+export type RunOrigin = z.infer<typeof RunOriginSchema>;
 
 /**
- * An agent (design-agents.md, AgentView) as the API returns it; `template` only for a workflow
- * coordinator — the field is absent for other agents.
+ * An agent (design-agents.md, AgentView) as the API returns it. `name` is the run's name from its
+ * snapshot; `origin` is `null` for a conversation's root; `firstRun` — the owner had no earlier
+ * session with this record.
  */
 export const AgentViewSchema = z.object({
   agentId: z.string().min(1),
   parentId: z.string().min(1).nullable(),
   rootId: z.string().min(1),
   depth: z.number().int().nonnegative(),
-  definition: z.string().min(1),
+  name: z.string().min(1),
+  origin: RunOriginSchema.nullable(),
+  firstRun: z.boolean(),
   description: z.string(),
   model: z.string().min(1),
   status: AgentStatusSchema,
@@ -126,7 +163,6 @@ export const AgentViewSchema = z.object({
   forkedFrom: z.object({ agentId: z.string().min(1), throughSeq: SeqSchema }).nullable(),
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
-  template: AgentTemplateSchema.optional(),
 });
 export type AgentView = z.infer<typeof AgentViewSchema>;
 
@@ -188,13 +224,22 @@ export const AnswerToolCallSchema = z.object({
 });
 export type AnswerToolCall = z.infer<typeof AnswerToolCallSchema>;
 
+/** The record chip of a message (custom-agents design-runtime.md, KD-4): shown next to its text. */
+export const ChipRecordSchema = z.object({
+  id: IdSchema,
+  kind: RecordKindSchema,
+  name: z.string().min(1),
+});
+export type ChipRecord = z.infer<typeof ChipRecordSchema>;
+
 /**
  * One entry of an agent's history (design-agents.md, HistoryEntry) as the agents' `history` returns it:
- * a `model_answer` carries its tool calls.
+ * a `model_answer` carries its tool calls. A `task` carries a chip only at a conversation's root: its
+ * first message becomes the root's task.
  */
 export const HistoryEntrySchema = z.discriminatedUnion('kind', [
-  entry('task', z.object({ text: z.string() })),
-  entry('user_message', z.object({ text: z.string() })),
+  entry('task', z.object({ text: z.string(), record: ChipRecordSchema.nullable() })),
+  entry('user_message', z.object({ text: z.string(), record: ChipRecordSchema.nullable() })),
   entry('agent_message', z.object({ text: z.string(), agentId: z.string() })),
   entry(
     'child_report',
@@ -221,6 +266,8 @@ export const HistoryEntrySchema = z.discriminatedUnion('kind', [
       args: z.unknown(),
       outcome: ToolOutcomeSchema,
       refusalReason: ToolRefusalReasonSchema.nullable(),
+      /** The refused model of a refusal by model, otherwise `null`. */
+      refusalDetail: z.object({ model: z.string().min(1) }).nullable(),
       text: z.string().nullable(),
       /** Script output of a `run_code` call: `null` when the run failed, absent for other tools. */
       output: z.string().nullable().optional(),
@@ -239,15 +286,12 @@ export const PendingMessageSchema = z.discriminatedUnion('source', [
   z.object({
     messageId: z.string().min(1),
     source: z.enum(['user', 'parent']),
-    /** «Прервать и отправить». */
-    interrupt: z.boolean(),
     text: z.string(),
     createdAt: z.iso.datetime(),
   }),
   z.object({
     messageId: z.string().min(1),
     source: z.literal('report'),
-    interrupt: z.boolean(),
     agentDescription: z.string(),
     status: ChildEndSchema,
     createdAt: z.iso.datetime(),
@@ -270,12 +314,14 @@ export const ConfirmationSchema = z.object({
   agentId: z.string().min(1),
   /** The agent's description. */
   description: z.string(),
+  /** The record the asking agent started from; `null` for a conversation's root. */
+  origin: RunOriginSchema.nullable(),
   kind: ConfirmationKindSchema,
   tool: z.string().min(1),
   server: z.string().nullable(),
   /** The arguments the model requested. */
   args: z.unknown(),
-  /** The card content: the tool's confirmation content (for a brief: `title` and its three fields). */
+  /** The card content: the tool's confirmation content (for a brief: `workflow` and its three fields). */
   content: z.unknown(),
   status: DecisionStatusSchema,
   /** Set when `resolved`: the decision and the arguments the call ran with. */
@@ -303,6 +349,36 @@ export type ChatStatus = z.infer<typeof ChatStatusSchema>;
 /** Next `afterSeq` to read from, or null when everything is read. */
 const NextAfterSeqSchema = SeqSchema.nullable();
 
+/** State of a record draft (design-runtime.md, State Transitions): only `pending` waits. */
+export const DraftStateSchema = z.enum([
+  'pending',
+  'saved',
+  'saved_in_editor',
+  'rejected',
+  'superseded',
+]);
+export type DraftState = z.infer<typeof DraftStateSchema>;
+
+/**
+ * A record draft of a conversation (design-runtime.md, «Данные для `web`»): `callId` is the
+ * `draft_record` call its card stands at; `recordId` and `baseVersion` are the edited record or
+ * `null` for a new one; `refusal` is the reason of the last refused `saveOwn`.
+ */
+export const DraftViewSchema = withContentByKind({
+  draftId: z.string().min(1),
+  callId: z.string().min(1),
+  name: z.string(),
+  description: z.string(),
+  recordId: IdSchema.nullable(),
+  baseVersion: VersionSchema.nullable(),
+  state: DraftStateSchema,
+  refusal: SaveOwnRefusalSchema.nullable(),
+  savedRecordId: IdSchema.nullable(),
+  createdAt: z.iso.datetime(),
+  resolvedAt: z.iso.datetime().nullable(),
+});
+export type DraftView = z.infer<typeof DraftViewSchema>;
+
 /** GET /threads/:threadId/history. */
 export const ConversationViewSchema = z.object({
   thread: ThreadSummarySchema,
@@ -319,6 +395,8 @@ export const ConversationViewSchema = z.object({
   pending: z.array(PendingMessageSchema),
   decisions: z.array(ConfirmationSchema),
   agents: z.array(AgentNodeSchema),
+  /** Every draft of the conversation. */
+  drafts: z.array(DraftViewSchema),
 });
 export type ConversationView = z.infer<typeof ConversationViewSchema>;
 
@@ -345,11 +423,29 @@ export const InheritedHistorySchema = z.object({
 });
 export type InheritedHistory = z.infer<typeof InheritedHistorySchema>;
 
-/** GET /agents/:agentId/run: the brief a workflow run was started with. */
-export const WorkflowRunBriefSchema = z.object({
+/**
+ * GET /agents/:agentId/run (design-runtime.md, «Данные для `web`»): the workflow record the run
+ * started from, its brief, the coordinator and the team of its snapshot. `steps` are the
+ * coordinator's children in creation order, each with `origin.executor`; executors of `team` outside
+ * `steps` were not called. `limitRefusals` — every `run_limit` refusal.
+ */
+export const WorkflowRunViewSchema = z.object({
+  origin: RunOriginSchema,
   brief: z.object({ question: z.string().min(1), boundaries: z.string(), result: z.string() }),
+  coordinator: AgentViewSchema,
+  team: z.array(
+    z.object({
+      name: z.string().min(1),
+      role: z.string().min(1),
+      maxRuns: z.number().int().positive(),
+      /** The executor whose report becomes the answer. */
+      final: z.boolean(),
+    }),
+  ),
+  steps: z.array(AgentViewSchema),
+  limitRefusals: z.array(z.object({ executor: z.string().min(1), at: z.iso.datetime() })),
 });
-export type WorkflowRunBrief = z.infer<typeof WorkflowRunBriefSchema>;
+export type WorkflowRunView = z.infer<typeof WorkflowRunViewSchema>;
 
 // ---------------------------------------------------------------------------------------------------
 // Live stream

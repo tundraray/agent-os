@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CreateCatalogModelBodySchema, UpdateCatalogModelBodySchema } from './access.js';
+import { CreateCatalogModelBodySchema, UpdateCatalogModelBodySchema, modelProvider } from './access.js';
 
 // One row type for both bodies: the table mixes the two schemas.
 type Row = {
@@ -17,16 +17,30 @@ const prices = {
   cacheWriteUsdPerMTok: 1.25,
   cacheReadUsdPerMTok: 0.1,
 };
-const model = { id: 'anthropic/claude-haiku-5-5', name: 'Haiku', prices, longContext: null };
+const model = {
+  id: 'anthropic/claude-haiku-5-5',
+  name: 'Haiku',
+  purpose: 'chat',
+  prices,
+  longContext: null,
+};
 
-// DD Security Considerations / Input Validation: the schema is the boundary that keeps an invalid
-// catalogue body from reaching the service.
-describe('catalogue bodies: a model id is `anthropic/<name>` with one segment, and an update changes at least one field', () => {
+// DD Security Considerations / Input Validation, ADR-0018: the schema is the boundary that keeps an
+// invalid catalogue body from reaching the service.
+describe('catalogue bodies: a model id is `<provider>/<name>` split at the first slash, and an update changes at least one field', () => {
   it.each<Row>([
-    { label: 'id openai/x', schema: create, body: { ...model, id: 'openai/x' }, valid: false },
-    { label: 'id anthropic/a/b', schema: create, body: { ...model, id: 'anthropic/a/b' }, valid: false },
+    { label: 'id anthropic/a/b', schema: create, body: { ...model, id: 'anthropic/a/b' }, valid: true },
+    { label: 'id local/Qwen/Qwen3-32B', schema: create, body: { ...model, id: 'local/Qwen/Qwen3-32B' }, valid: true },
+    { label: 'id Foo/x', schema: create, body: { ...model, id: 'Foo/x' }, valid: false },
+    { label: 'id x', schema: create, body: { ...model, id: 'x' }, valid: false },
+    { label: 'id a/', schema: create, body: { ...model, id: 'a/' }, valid: false },
+    { label: 'id a/b c', schema: create, body: { ...model, id: 'a/b c' }, valid: false },
     { label: 'empty update', schema: update, body: {}, valid: false },
   ])('$label -> valid: $valid', ({ schema, body, valid }) => {
     expect(schema.safeParse(body).success).toBe(valid);
+  });
+
+  it('takes the provider from the part before the first slash', () => {
+    expect(modelProvider('local/Qwen/Qwen3-32B')).toBe('local');
   });
 });

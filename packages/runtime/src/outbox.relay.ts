@@ -349,7 +349,6 @@ function toStoredEvent(event: EventRow): StoredEvent {
     taskId: event.taskId,
     causationId: event.causationId,
     stateRevision: event.stateRevision,
-    payloadRef: event.payloadRef,
     payload: event.payload,
     createdAt: event.createdAt,
   };

@@ -1,7 +1,8 @@
-// agent-platform / chat - performance of the conversation list over `chat_conversations`
+// agent-platform / chat - performance of the conversation list over the root sessions
 // Design Doc: docs/features/agent-platform/design-chat.md (v1.2), «Не меняется»: the list's performance budget (NFR-03)
 // stays as it was. Rewritten from the Mastra-based `threads.perf.e2e-spec.ts` (work plan T6.4): the rows are
-// `chat_conversations` created through `POST /threads`; the former `/messages` measurement is removed (the route is gone).
+// root sessions, each created by the first message of a conversation (`POST /threads`, then `POST .../messages`);
+// the former `/messages` measurement is removed (the route is gone).
 //
 // Method (unchanged): 5 warm-up + 50 sequential requests, durations sorted ascending,
 // p95 = durations[ceil(0.95 * n) - 1] = durations[47] for n = 50. Local Postgres (`pnpm db:up`), a fresh employee (`createEmployee`),
@@ -15,10 +16,14 @@ import {
 } from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chatApi } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
 import { removeRunRows } from './support/access.js';
-import { createEmployee, seedSuperAdmin } from './support/session.js';
+import {
+  type ConversationsSetup,
+  conversationsSetup,
+  startConversation,
+} from './support/library.js';
+import { seedSuperAdmin } from './support/session.js';
 
 const WARM_UP_REQUESTS = 5;
 const TIMED_REQUESTS = 50;
@@ -33,24 +38,32 @@ const PERF_TEST_TIMEOUT_MS = 120_000;
 let harness: TestApp;
 /** The administrator the case makes; deleted in `afterAll`. */
 let adminId: string | undefined;
+/** What the employee needs to start a conversation. */
+let setup: ConversationsSetup | undefined;
 
 beforeAll(async () => {
   harness = await createTestApp();
+  // Every first message starts a title in the background; it answers, so no title call fails.
+  harness.model.completeText({ text: 'Заголовок' });
 });
 
 afterAll(async () => {
   if (harness === undefined) return;
   try {
-    if (adminId !== undefined)
-      await removeRunRows(harness.pool, {
-        models: [],
-        roles: [],
-        users: [adminId],
-      });
+    try {
+      await setup?.restore();
+    } finally {
+      if (adminId !== undefined)
+        await removeRunRows(harness.pool, {
+          models: setup === undefined ? [] : [setup.model],
+          roles: setup === undefined ? [] : [setup.roleId],
+          users: [adminId],
+        });
+    }
   } finally {
     await harness.close();
   }
-});
+}, PERF_TEST_TIMEOUT_MS);
 
 /**
  * Sends `send()` 5 times (discarded), then 50 times sequentially, timing each with `performance.now()`;
@@ -75,7 +88,7 @@ describe('agent-platform / chat - conversation list performance (local Postgres)
   // NFR-03 (list budget unchanged), former AC-13.4: "The system shall отвечать на GET /api/threads с p95 ≤ 300 мс при
   //   200 беседах пользователя на локальном Postgres."
   // Catches: a list that reads or sorts all of the owner's conversations per request instead of one keyset page
-  //   over `chat_conversations_owner_page_idx`, pushing p95 over the budget.
+  //   over `agent_sessions_owner_page_idx`, pushing p95 over the budget.
   it(
     'GET /threads answers with p95 <= 300 ms for an owner with 200 conversations',
     async () => {
@@ -84,12 +97,10 @@ describe('agent-platform / chat - conversation list performance (local Postgres)
         `e2e-admin-${randomUUID()}`,
       );
       adminId = admin.id;
-      const api = chatApi(
-        harness.app,
-        await createEmployee(harness.app, admin),
-      );
+      setup = await conversationsSetup(harness.app, admin);
+      const api = await setup.newEmployee();
       for (let index = 0; index < CONVERSATIONS; index += 1)
-        await api.createThread();
+        await startConversation(api);
 
       const durations = await measureSequential(
         () => api.raw('get', '/threads'),

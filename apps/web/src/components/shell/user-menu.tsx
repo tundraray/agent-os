@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
-import Link from 'next/link';
 import {
   ChevronUpIcon,
   KeyRoundIcon,
@@ -36,6 +35,7 @@ import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
 import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';
+import { ShellLink } from './shell-link';
 
 const SIGN_OUT_FAILED_TEXT = 'Не удалось выйти. Попробуйте ещё раз.';
 
@@ -101,7 +101,7 @@ export function UserMenu() {
   const spend = useSpend();
   const spendId = useId();
   const needsAuth = useNeedsAuthCount();
-  const { currentUser } = useShellServices();
+  const { currentUser, leaveGuard } = useShellServices();
   const user = useStore(currentUser, (current) => current.user);
   const name = user === null ? null : displayName(user);
 
@@ -109,12 +109,18 @@ export function UserMenu() {
     currentUser.load();
   }, [currentUser]);
 
+  // Unsaved changes are asked about in the app before the session ends: once it has ended, «Остаться» would keep
+  // another user's form in the tab. «Уйти без сохранения» drops the hold, so the browser asks nothing more; a failed
+  // sign-out puts it back, the form is still on screen.
   const signOut = async (): Promise<void> => {
+    const { held } = leaveGuard.getState();
+    if (!(await leaveGuard.confirmLeave())) return;
     try {
       await currentUser.signOut();
     } catch (error) {
       logger.error('sign-out failed', describeApiError(error));
       toast.error(SIGN_OUT_FAILED_TEXT);
+      if (held !== null) leaveGuard.hold(held);
     }
   };
 
@@ -192,7 +198,7 @@ export function UserMenu() {
               )}
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem render={<Link href={ACCOUNT_PATH} />}>
+            <DropdownMenuItem render={<ShellLink href={ACCOUNT_PATH} />}>
               <KeyRoundIcon aria-hidden />
               Мой доступ
               {/* The trigger's name already tells a screen reader the count. */}
@@ -204,7 +210,7 @@ export function UserMenu() {
               )}
             </DropdownMenuItem>
             {user?.isAdmin === true && (
-              <DropdownMenuItem render={<Link href={adminPath('users')} />}>
+              <DropdownMenuItem render={<ShellLink href={adminPath('users')} />}>
                 <ShieldCheckIcon aria-hidden />
                 Панель администратора
               </DropdownMenuItem>

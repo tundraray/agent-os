@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ServerIcon } from 'lucide-react';
 import type { McpServerMode, McpServerStatus, McpServerSummary } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import { buttonVariants } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
@@ -10,9 +11,10 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { adminNewPath, adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
+import { ToolResultSettingsForm } from './tool-result-settings-form';
 
 /** UXRD MC-29. */
 const TEXT = {
@@ -74,7 +76,10 @@ const toRow = (server: McpServerSummary): DataTableRow => ({
   ],
 });
 
-/** UXRD AD-08: the registered servers as link rows in the server's order (by name). */
+/**
+ * UXRD AD-08: the registered servers as link rows in the server's order (by name); under them the settings of
+ * large tool results (tool-result-reading R-5).
+ */
 export function ServerList() {
   const servers = useResource(adminApi.servers.list, 'servers');
 
@@ -85,13 +90,14 @@ export function ServerList() {
 
   return (
     <>
-      <AdminPageHeader title={adminSectionTitle('servers')}>
+      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('servers')}>
         <Link href={adminNewPath('servers')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
           {TEXT.register}
         </Link>
-      </AdminPageHeader>
-      <div className="max-w-240">
+      </PageHeader>
+      <div className="flex max-w-240 flex-col gap-8">
         <DataTable caption={adminSectionTitle('servers')} columns={COLUMNS} state={state} />
+        <ToolResultSettingsForm />
       </div>
     </>
   );

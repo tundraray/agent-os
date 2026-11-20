@@ -1,34 +1,71 @@
 import type { INestApplication } from '@nestjs/common';
 import {
   AdminUserDetailSchema,
-  CreateCatalogModelBodySchema,
+  ApiErrorSchema,
+  CatalogModelSchema,
   GrantSchema,
+  ModelDefaultsSchema,
+  ModelProviderErrorCode,
+  ModelProviderViewSchema,
   RoleSummarySchema,
+  modelProvider,
   type CatalogModel,
   type GrantEffect,
   type GrantTargetBody,
   type LongContext,
+  type ModelProviderKind,
   type PriceRates,
 } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
+import { z } from 'zod';
 import { expectBody } from './api.js';
 import { runName } from './mcp-servers.js';
 import { apiRequest, type Session } from './session.js';
 
 /**
- * The model catalogue and rights of the tests (design-access.md; plan rule 11). The suites run on the developer's
- * database, whose catalogue holds the developer's own models and whose built-in role holds his rights (`seed:access`),
- * and on an empty catalogue in CI. So a suite never names, changes or grants a row it did not make: every model is
- * `runModel(base)`, every role is `<name>-t<runId>`, both made through the admin operations and removed by the suite
- * (and by the global teardown). The test administrator of `seedSuperAdmin` sits in the built-in role and so sees the
+ * The model providers, catalogue, default models and rights of the tests (design-access.md; model-providers
+ * design-core.md, Test Strategy). The suites run on the developer's database, whose providers, catalogue and default
+ * models are the developer's own and whose built-in role holds his rights (`seed:access`), and on an empty database in
+ * CI. So a suite never names, changes or grants a row it did not make: its providers are `runProvider()` and
+ * `runEmbeddingProvider()` (never the developer's `anthropic`), its models `runModel(base)` and
+ * `runEmbeddingModel(base)`, its roles `<name>-t<runId>`, all made through the admin operations.
+ *
+ * The one shared row a suite changes is the default models (`access_model_defaults`, one row per database):
+ * `useRunModels` points them at the run's models and returns the restore, which the suite runs in `afterAll` before
+ * `removeRunRows`. Who creates and who removes what:
+ *   - run providers: created by `useRunModels` (once per run; a later suite finds them), removed by the global teardown
+ *     (`migrate.global-setup.ts`);
+ *   - run models: created by `useRunModels` / `addModel`, removed by the suite's `removeRunRows` (and the teardown);
+ *   - default models: set by `useRunModels`, set back by the restore it returns.
+ * Only an aborted run leaves the developer's default models on the run's models (`null` once the teardown deletes
+ * them): `pnpm --filter api seed:access` fills an empty default again, or the administrator sets one with
+ * `PUT /api/admin/model-defaults`. The test administrator of `seedSuperAdmin` sits in the built-in role and so sees the
  * developer's rights: no test asserts anything about the administrator's own rights.
  */
 
-/** The run's model id: `anthropic/<base>-t<runId>`. */
-export function runModel(base: string): string {
-  return `anthropic/${runName(base)}`;
+/** The run's chat provider: `run-t<runId>`, of the kind `anthropic`. */
+function runProvider(): string {
+  return runName('run');
 }
+
+/** The run's embedding provider: `run-embed-t<runId>`, of the kind `gemini` (the kind `anthropic` serves no embeddings). */
+function runEmbeddingProvider(): string {
+  return runName('run-embed');
+}
+
+/** The run's chat model id: `run-t<runId>/<base>-t<runId>`. */
+export function runModel(base: string): string {
+  return `${runProvider()}/${runName(base)}`;
+}
+
+/** The run's embedding model id: `run-embed-t<runId>/<base>-t<runId>`. */
+export function runEmbeddingModel(base: string): string {
+  return `${runEmbeddingProvider()}/${runName(base)}`;
+}
+
+/** The fake key of the run's providers: the scripted doubles answer every call, so it never reaches a provider. */
+const RUN_PROVIDER_KEY = 'run-provider-fake-key';
 
 /** Prices of a catalogue model as `POST /api/admin/models` takes them. */
 export interface ModelPrices {
@@ -61,22 +98,155 @@ export const HAIKU_TEST_PRICES: ModelPrices = {
 
 type TestApp = INestApplication<App>;
 
-/** Adds a model to the catalogue through `POST /api/admin/models`; the name is the id unless given. */
+/** A chat model as `addModel` takes it. */
+export type ChatModelInput = ModelPrices & {
+  readonly id: string;
+  readonly name?: string;
+};
+
+/** An embedding model as `addModel` takes it. */
+export interface EmbeddingModelInput {
+  readonly purpose: 'embedding';
+  readonly id: string;
+  readonly name?: string;
+  readonly inputUsdPerMTok: number;
+  readonly dimensions: number;
+}
+
+/**
+ * Adds a model to the catalogue through `POST /api/admin/models`: a chat model unless `purpose: 'embedding'`; the name
+ * is the id unless given. The model's provider must be registered (`useRunModels` registers the run's).
+ */
 export function addModel(
   app: TestApp,
   admin: Session,
-  model: ModelPrices & { readonly id: string; readonly name?: string },
+  model: ChatModelInput | EmbeddingModelInput,
 ): Promise<CatalogModel> {
+  const name = model.name ?? model.id;
+  const body =
+    'purpose' in model
+      ? {
+          purpose: model.purpose,
+          id: model.id,
+          name,
+          inputUsdPerMTok: model.inputUsdPerMTok,
+          dimensions: model.dimensions,
+        }
+      : {
+          purpose: 'chat',
+          id: model.id,
+          name,
+          prices: model.prices,
+          longContext: model.longContext ?? null,
+        };
   return expectBody(
-    apiRequest(app, admin, 'post', '/admin/models', {
-      id: model.id,
-      name: model.name ?? model.id,
-      prices: model.prices,
-      longContext: model.longContext ?? null,
-    }),
+    apiRequest(app, admin, 'post', '/admin/models', body),
     201,
-    CreateCatalogModelBodySchema,
+    CatalogModelSchema,
   );
+}
+
+/** `GET /api/admin/models`, 200: the ids of the catalogue. */
+export async function catalogueModelIds(
+  app: TestApp,
+  admin: Session,
+): Promise<Set<string>> {
+  const models = await expectBody(
+    apiRequest(app, admin, 'get', '/admin/models'),
+    200,
+    z.array(CatalogModelSchema),
+  );
+  return new Set(models.map((model) => model.id));
+}
+
+/**
+ * Registers a run provider through `POST /api/admin/model-providers`, enabled and with the run's fake key; a 409
+ * `MODEL_PROVIDER_NAME_TAKEN` means an earlier suite of the run has registered it.
+ */
+async function registerRunProvider(
+  app: TestApp,
+  admin: Session,
+  provider: { readonly name: string; readonly kind: ModelProviderKind },
+): Promise<void> {
+  const response = await apiRequest(
+    app,
+    admin,
+    'post',
+    '/admin/model-providers',
+    { ...provider, apiKey: RUN_PROVIDER_KEY },
+  );
+  if (
+    response.status === 409 &&
+    ApiErrorSchema.parse(response.body).errorCode ===
+      ModelProviderErrorCode.MODEL_PROVIDER_NAME_TAKEN
+  )
+    return;
+  await expectBody(response, 201, ModelProviderViewSchema);
+}
+
+/** `PUT /api/admin/model-defaults`, 200. */
+function putModelDefaults(
+  app: TestApp,
+  admin: Session,
+  defaults: {
+    readonly chatModel: string | null;
+    readonly embeddingModel: string | null;
+  },
+) {
+  return expectBody(
+    apiRequest(app, admin, 'put', '/admin/model-defaults', defaults),
+    200,
+    ModelDefaultsSchema,
+  );
+}
+
+/**
+ * Makes the run's models the platform's default models (FR-02: a start reads the default chat model from the
+ * database): registers the provider of each model (`run-t<runId>` of the kind `anthropic`, `run-embed-t<runId>` of
+ * the kind `gemini`), adds the models (`addModel`) and sets them through `PUT /api/admin/model-defaults`; without
+ * `embedding` the default embedding model stays as it is. `chat.id` is a `runModel(base)`, `embedding.id` a
+ * `runEmbeddingModel(base)`; rights are the suite's (`allowRole`, `grantTo`). Returns the restore: it sets back the
+ * default models read before, each only while it is still in the catalogue, otherwise `null` (not chosen). Run it in
+ * `afterAll` while the app lives, before `removeRunRows` removes the models.
+ */
+export async function useRunModels(
+  app: TestApp,
+  admin: Session,
+  models: {
+    readonly chat: ChatModelInput;
+    readonly embedding?: Omit<EmbeddingModelInput, 'purpose'>;
+  },
+): Promise<() => Promise<void>> {
+  const before = await expectBody(
+    apiRequest(app, admin, 'get', '/admin/model-defaults'),
+    200,
+    ModelDefaultsSchema,
+  );
+  await registerRunProvider(app, admin, {
+    name: modelProvider(models.chat.id),
+    kind: 'anthropic',
+  });
+  await addModel(app, admin, models.chat);
+  if (models.embedding !== undefined) {
+    await registerRunProvider(app, admin, {
+      name: modelProvider(models.embedding.id),
+      kind: 'gemini',
+    });
+    await addModel(app, admin, { ...models.embedding, purpose: 'embedding' });
+  }
+  await putModelDefaults(app, admin, {
+    chatModel: models.chat.id,
+    embeddingModel: models.embedding?.id ?? before.embeddingModel,
+  });
+  return async () => {
+    const catalogue = await catalogueModelIds(app, admin);
+    const kept = (model: string | null) =>
+      model !== null && catalogue.has(model) ? model : null;
+    await putModelDefaults(app, admin, {
+      chatModel: kept(before.chatModel),
+      embeddingModel: kept(before.embeddingModel),
+    });
+  };
 }
 
 /** The holder of a grant: a role or one employee. */
@@ -165,10 +335,6 @@ export async function removeRunRows(
   },
 ): Promise<void> {
   const users = rows.users ?? [];
-  await pool.query(
-    'DELETE FROM app.chat_conversations WHERE owner_id = ANY($1::text[])',
-    [users],
-  );
   await pool.query(
     'DELETE FROM app.runtime_tasks WHERE owner_id = ANY($1::text[])',
     [users],

@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import type { HistoryEntry, ToolCallRecord } from '../history/history.js';
+import type { AnswerCall, HistoryEntry } from '../history/history.js';
 import type { AgentTurnMessage } from './mastra-turn.js';
 import { buildProviderMessages, envelope, type ProviderMessagesInput } from './provider-messages.js';
 
@@ -7,12 +7,12 @@ import { buildProviderMessages, envelope, type ProviderMessagesInput } from './p
 
 const AT = new Date('2026-11-14T10:00:00.000Z');
 
-const task = (seq: number, text: string): HistoryEntry => ({ seq, kind: 'task', createdAt: AT, content: { text } });
+const task = (seq: number, text: string): HistoryEntry => ({ seq, kind: 'task', createdAt: AT, content: { text, record: null } });
 const userMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
   kind: 'user_message',
   createdAt: AT,
-  content: { text },
+  content: { text, record: null },
 });
 const agentMessage = (seq: number, text: string): HistoryEntry => ({
   seq,
@@ -20,11 +20,17 @@ const agentMessage = (seq: number, text: string): HistoryEntry => ({
   createdAt: AT,
   content: { text, agentId: 'parent-1' },
 });
-const answer = (seq: number, text: string): HistoryEntry => ({
+const call = (callId: string, args: unknown = {}): AnswerCall => ({
+  callId,
+  tool: 'search_logs',
+  server: 'logs',
+  args,
+});
+const answer = (seq: number, text: string, toolCalls: AnswerCall[] = []): HistoryEntry => ({
   seq,
   kind: 'model_answer',
   createdAt: AT,
-  content: { text },
+  content: { text, toolCalls },
 });
 const result = (seq: number, callId: string, text: string): HistoryEntry => ({
   seq,
@@ -37,6 +43,7 @@ const result = (seq: number, callId: string, text: string): HistoryEntry => ({
     args: {},
     outcome: 'success',
     refusalReason: null,
+    refusalDetail: null,
     text,
     startedAt: null,
     finishedAt: null,
@@ -48,12 +55,24 @@ const compaction = (seq: number, summary: string, throughSeq: number): HistoryEn
   createdAt: AT,
   content: { summary, throughSeq },
 });
-const call = (callId: string, answerSeq: number, position: number): ToolCallRecord => ({
-  callId,
-  answerSeq,
-  position,
-  tool: 'mcp__logs__search_logs',
-  args: {},
+/** The state records of a confirmed call, in the order a step writes them. */
+const confirmation = (seq: number, callId: string): HistoryEntry => ({
+  seq,
+  kind: 'tool_confirmation',
+  createdAt: AT,
+  content: { callId },
+});
+const decision = (seq: number, callId: string, args?: unknown): HistoryEntry => ({
+  seq,
+  kind: 'tool_decision',
+  createdAt: AT,
+  content: { callId, approved: true, ...(args === undefined ? {} : { args }) },
+});
+const sent = (seq: number, callId: string, args?: unknown): HistoryEntry => ({
+  seq,
+  kind: 'tool_sent',
+  createdAt: AT,
+  content: { callId, startedAt: AT.toISOString(), ...(args === undefined ? {} : { args }) },
 });
 
 const resultMessage = (callId: string, text: string) => ({
@@ -61,7 +80,7 @@ const resultMessage = (callId: string, text: string) => ({
   toolName: 'mcp__logs__search_logs',
   output: envelope('tool search_logs', 'logs', text),
 });
-const toolCall = (callId: string) => ({ toolCallId: callId, toolName: 'mcp__logs__search_logs', args: {} });
+const toolCall = (callId: string, args: unknown = {}) => ({ toolCallId: callId, toolName: 'mcp__logs__search_logs', args });
 
 describe("history becomes provider messages with every message after its answer's last result", () => {
   it.each<[string, ProviderMessagesInput, AgentTurnMessage[]]>([
@@ -70,13 +89,12 @@ describe("history becomes provider messages with every message after its answer'
       {
         entries: [
           task(1, 'find the incident'),
-          answer(2, 'searching'),
+          answer(2, 'searching', [call('c1')]),
           result(3, 'c1', 'found'),
           userMessage(4, 'also check yesterday'),
           agentMessage(5, 'hurry up'),
           answer(6, 'done'),
         ],
-        calls: [call('c1', 2, 0)],
       },
       [
         { role: 'user', content: 'find the incident' },
@@ -92,13 +110,12 @@ describe("history becomes provider messages with every message after its answer'
       {
         entries: [
           task(1, 'find the incident'),
-          answer(2, 'two searches'),
+          answer(2, 'two searches', [call('c1'), call('c2')]),
           result(3, 'c1', 'first'),
           userMessage(4, 'stop after this'),
           result(5, 'c2', 'second'),
           answer(6, 'done'),
         ],
-        calls: [call('c2', 2, 1), call('c1', 2, 0)],
       },
       [
         { role: 'user', content: 'find the incident' },
@@ -115,15 +132,13 @@ describe("history becomes provider messages with every message after its answer'
           throughSeq: 4,
           entries: [
             task(1, 'parent task'),
-            answer(2, 'looking'),
+            answer(2, 'looking', [call('p1')]),
             result(3, 'p1', 'parent data'),
             userMessage(4, 'parent message'),
-            answer(5, 'starting a fork'),
+            answer(5, 'starting a fork', [call('p2')]),
           ],
-          calls: [call('p1', 2, 0), call('p2', 5, 0)],
         },
         entries: [task(1, 'fork task')],
-        calls: [],
       },
       [
         { role: 'user', content: 'parent task' },
@@ -136,19 +151,46 @@ describe("history becomes provider messages with every message after its answer'
     [
       'the last compaction summary replaces every entry through its number',
       {
-        forkPrefix: { throughSeq: 1, entries: [task(1, 'parent task')], calls: [] },
+        forkPrefix: { throughSeq: 1, entries: [task(1, 'parent task')] },
         entries: [
           task(1, 'own task'),
-          answer(2, 'looking'),
+          answer(2, 'looking', [call('c1')]),
           result(3, 'c1', 'old data'),
           compaction(4, 'the incident is in the logs', 3),
           userMessage(5, 'what next?'),
         ],
-        calls: [call('c1', 2, 0)],
       },
       [
         { role: 'user', content: envelope('summary of the earlier history', 'agents', 'the incident is in the logs') },
         { role: 'user', content: 'what next?' },
+      ],
+    ],
+    [
+      'the state records of a call are no messages, and a call the employee edited keeps the edited arguments',
+      {
+        entries: [
+          task(1, 'find the incident'),
+          answer(2, 'two searches', [call('c1', { level: 'info' }), call('c2', { level: 'info' })]),
+          confirmation(3, 'c1'),
+          decision(4, 'c1', { level: 'error' }),
+          sent(5, 'c1', { level: 'error' }),
+          result(6, 'c1', 'first'),
+          userMessage(7, 'stop after this'),
+          confirmation(8, 'c2'),
+          decision(9, 'c2'),
+          sent(10, 'c2'),
+          result(11, 'c2', 'second'),
+        ],
+      },
+      [
+        { role: 'user', content: 'find the incident' },
+        {
+          role: 'assistant',
+          content: 'two searches',
+          toolCalls: [toolCall('c1', { level: 'error' }), toolCall('c2', { level: 'info' })],
+        },
+        { role: 'tool', results: [resultMessage('c1', 'first'), resultMessage('c2', 'second')] },
+        { role: 'user', content: 'stop after this' },
       ],
     ],
   ])('%s', (_, input, expected) => {
@@ -181,7 +223,6 @@ describe("history becomes provider messages with every message after its answer'
     fc.assert(
       fc.property(fc.array(answerShape, { minLength: 1, maxLength: 6 }), (answers) => {
         const entries: HistoryEntry[] = [task(1, 'task')];
-        const calls: ToolCallRecord[] = [];
         let messageCount = 0;
         const append = (make: (seq: number) => HistoryEntry): void => {
           entries.push(make(entries.length + 1));
@@ -196,19 +237,17 @@ describe("history becomes provider messages with every message after its answer'
 
         answers.forEach((shape, answerIndex) => {
           appendMessages(shape.before);
-          append((seq) => answer(seq, `answer ${answerIndex}`));
-          const answerSeq = entries.length;
           const callCount = shape.afterResults.length - 1;
+          const callIds = Array.from({ length: callCount }, (_, position) => `a${answerIndex}c${position}`);
+          append((seq) => answer(seq, `answer ${answerIndex}`, callIds.map((callId) => call(callId))));
           appendMessages(shape.afterResults[0] ?? 0);
-          for (let position = 0; position < callCount; position += 1) {
-            const callId = `a${answerIndex}c${position}`;
-            calls.push(call(callId, answerSeq, position));
+          for (const [position, callId] of callIds.entries()) {
             append((seq) => result(seq, callId, `result ${callId}`));
             appendMessages(shape.afterResults[position + 1] ?? 0);
           }
         });
 
-        const messages = buildProviderMessages({ entries, calls });
+        const messages = buildProviderMessages({ entries });
 
         messages.forEach((message, index) => {
           if (message.role !== 'assistant' || message.toolCalls.length === 0) return;

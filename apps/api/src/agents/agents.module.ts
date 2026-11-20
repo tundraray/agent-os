@@ -7,13 +7,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   createAgents,
+  createEmbeddingClient,
   createMastraTurnClient,
-  createResolveModel,
-  secretValuesOf,
   type AccessAudit,
   type Agents,
   type AgentsConfig,
   type AgentTurnModelClient,
+  type EmbeddingClient,
 } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
@@ -22,6 +22,8 @@ import { AccessModule } from '../access/access.module.js';
 import { AccessService } from '../access/access.service.js';
 import { AuditLog } from '../audit/audit-log.js';
 import { IdentityModule } from '../identity/identity.module.js';
+import { LibraryModule } from '../library/library.module.js';
+import { LibraryService } from '../library/library.service.js';
 import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
 import { RuntimeModule } from '../runtime/runtime.module.js';
 import {
@@ -30,12 +32,15 @@ import {
   RUNTIME_DATABASE,
 } from '../runtime/runtime.tokens.js';
 import { AdminMcpServersController } from './admin-mcp-servers.controller.js';
+import { AdminModelProvidersController } from './admin-model-providers.controller.js';
+import { AdminToolResultsController } from './admin-tool-results.controller.js';
 import { readAgentsSettings } from './agents-settings.js';
 import {
   AGENT_TURN_CLIENT,
   AGENTS,
   AGENTS_SETTINGS,
   DELTA_PUBLISHER,
+  EMBEDDING_CLIENT,
 } from './agents.tokens.js';
 import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
 import { McpConnectionsController } from './mcp-connections.controller.js';
@@ -62,21 +67,29 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
 /**
  * Composition root of the agents package in `apps/api` (composition-root.md, design-agents.md C2 `api`,
  * design-chat.md «Сборка»): reads the settings and assembles the package on the
- * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` (the one token tests replace) and
- * the `DeltaPublisher` as the `onTextDelta` hook, `AccessService` as the `AccessGate` port and `AuditLog` behind
- * the `audit` hook (design-access.md KD-1, KD-6). The `agent` handler and the `task.failed` consumer are
- * registered in the `AGENTS` factory; upper modules register their definitions and tools in their own
- * factories injecting `AGENTS`.
+ * runtime and its pool, with the model client of `AGENT_TURN_CLIENT` and the embedding client of
+ * `EMBEDDING_CLIENT` (the tokens tests replace), the `DeltaPublisher` as the `onTextDelta` hook,
+ * `AccessService` as the `AccessGate` port, `AuditLog` behind the `audit` hook (design-access.md KD-1, KD-6) and `LibraryService` as the `RecordLibrary` port
+ * (design-runtime.md, port-module-split.md: `LibraryModule` does not import this module). The `agent`
+ * handler and the `task.failed` consumer are registered in the `AGENTS` factory; upper modules register
+ * their tools in their own factories injecting `AGENTS`.
  *
- * Phases: `onModuleInit` — `start()` (catalog check), before `RuntimeModule` starts the
+ * Phases: `onModuleInit` — `start()` (closes the tool registration), before `RuntimeModule` starts the
  * workers in `onApplicationBootstrap`; `onApplicationShutdown` — `stop()`, after the runtime has stopped
  * its steps in `beforeApplicationShutdown`.
  *
- * Its controllers are the HTTP layer of `Agents.mcp`: an employee's MCP accounts and the admin's registry.
+ * Its controllers are the HTTP layer of `Agents.mcp` (an employee's MCP accounts and the admin's registry),
+ * of `Agents.providers` (the admin's model provider registry) and of `Agents.toolResults` (the admin's
+ * settings of large tool results).
  */
 @Module({
-  imports: [RuntimeModule, IdentityModule, AccessModule],
-  controllers: [McpConnectionsController, AdminMcpServersController],
+  imports: [RuntimeModule, IdentityModule, AccessModule, LibraryModule],
+  controllers: [
+    McpConnectionsController,
+    AdminMcpServersController,
+    AdminToolResultsController,
+    AdminModelProvidersController,
+  ],
   providers: [
     {
       provide: AGENTS_SETTINGS,
@@ -86,14 +99,11 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
     },
     {
       provide: AGENT_TURN_CLIENT,
-      useFactory: (settings: AgentsConfig): AgentTurnModelClient =>
-        createMastraTurnClient(
-          createResolveModel({
-            anthropicBaseUrl: settings.anthropicBaseUrl,
-            anthropicApiKey: settings.anthropicApiKey,
-          }),
-        ),
-      inject: [AGENTS_SETTINGS],
+      useFactory: (): AgentTurnModelClient => createMastraTurnClient(),
+    },
+    {
+      provide: EMBEDDING_CLIENT,
+      useFactory: (): EmbeddingClient => createEmbeddingClient(),
     },
     {
       provide: DELTA_PUBLISHER,
@@ -121,24 +131,27 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
         runtime: Runtime,
         database: DatabaseConnection,
         turnClient: AgentTurnModelClient,
+        embeddingClient: EmbeddingClient,
         deltaPublisher: DeltaPublisher,
         access: AccessService,
         auditLog: AuditLog,
+        library: LibraryService,
         appLogger: Logger,
       ): Agents =>
         createAgents({
           database: database.db,
           runtime,
-          // The application logger plus the agents settings' secret (the provider key) — the same
-          // list `run_code` masks in a run's output and result.
-          logger: createAppLogger(process.env, secretValuesOf(settings)),
+          // Provider keys reach the mask through the process's secret memory, not a list (KD-7).
+          logger: createAppLogger(process.env),
           config: settings,
           turnClient,
+          embeddingClient,
           access,
           audit: accessAudit(
             auditLog,
             appLogger.child({ service: 'agents.audit' }),
           ),
+          library,
           onTextDelta: (delta) => deltaPublisher.publish(delta),
         }),
       inject: [
@@ -146,9 +159,11 @@ function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
         RUNTIME,
         RUNTIME_DATABASE,
         AGENT_TURN_CLIENT,
+        EMBEDDING_CLIENT,
         DELTA_PUBLISHER,
         AccessService,
         AuditLog,
+        LibraryService,
         APP_LOGGER,
       ],
     },

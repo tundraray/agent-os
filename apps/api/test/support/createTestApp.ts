@@ -4,10 +4,11 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Agents } from '@agent-os/agents';
 import {
+  createScriptedEmbeddings,
   createScriptedModel,
+  type ScriptedEmbeddings,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
-import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
@@ -18,31 +19,24 @@ import {
   startFixtureProcess,
 } from '@agent-os/mcp-fixture';
 import type { Runtime } from '@agent-os/runtime';
-import { createWorkflows, type Workflows } from '@agent-os/workflows';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
-import { AGENTS, AGENT_TURN_CLIENT } from '../../src/agents/agents.tokens.js';
+import {
+  AGENTS,
+  AGENT_TURN_CLIENT,
+  EMBEDDING_CLIENT,
+} from '../../src/agents/agents.tokens.js';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
-import { APP_LOGGER } from '../../src/logging/app-logger.js';
 import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
-import { WORKFLOWS } from '../../src/workflows/workflows.tokens.js';
 import { registerFixtureServers } from './mcp-servers.js';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
   model?: ScriptedModel;
-  /**
-   * `AGENT_DEFAULT_MODEL` for the boot: a model of the run (`access.ts` `runModel`) that the suite adds to the
-   * catalogue and allows its employees itself; default — the variable as the environment has it.
-   */
-  defaultModel?: string;
-  /**
-   * Raw workflow templates in place of the shipped ones (`createWorkflows({ templates })`); default — the shipped
-   * templates.
-   */
-  workflowTemplates?: readonly unknown[];
+  /** The scripted embeddings double behind `EMBEDDING_CLIENT`; default — a fresh one, so no request leaves the process. */
+  embeddings?: ScriptedEmbeddings;
   /** Runs the runtime workers (`RUNTIME_WORKERS=on`); default — as `vitest.config.e2e.ts` sets it (off). */
   workers?: boolean;
   /** Replaces `AGENT_LIST_PAGE_SIZE` (the page of `GET /agents`), so a cursor walk shows over a few agents. */
@@ -68,6 +62,7 @@ export interface TestApp {
   /** Initialised app with `configureApp` applied: requests go to `/api/...`. */
   app: INestApplication<App>;
   model: ScriptedModel;
+  embeddings: ScriptedEmbeddings;
   /** The fixture files of this app: the call log of its fixture process, fault rules, latches. */
   fixtureLog: FixtureFiles;
   /** The fixture process started for `mcpServers`; reading it without that option throws. */
@@ -86,16 +81,18 @@ export interface TestApp {
 
 /**
  * Boots the real `AppModule` against the docker-compose Postgres (`pnpm db:up`) with only
- * `AGENT_TURN_CLIENT` replaced by the scripted double of `@agent-os/agents/testing` — no network,
- * no provider keys. With `mcpServers` the MCP servers are one fixture process writing into this app's
- * call log, registered in the registry under the run's names after the boot. `AGENT_DEFAULT_MODEL` and
- * `RUNTIME_WORKERS` are set for the boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
+ * `AGENT_TURN_CLIENT` and `EMBEDDING_CLIENT` replaced by the scripted doubles of `@agent-os/agents/testing` —
+ * no network, no provider keys. The providers, the catalogue and the default models are the database's: a suite
+ * sets its own through `access.ts` `useRunModels`. With `mcpServers` the MCP servers are one fixture process writing
+ * into this app's call log, registered in the registry under the run's names after the boot. `RUNTIME_WORKERS` is
+ * set for the boot only and restored once the app is initialised. The app listens on a port of `127.0.0.1`, and the
  * helpers reach it as `http://localhost:<port>` (session.ts `apiOrigin`).
  */
 export async function createTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
   const model = options.model ?? createScriptedModel();
+  const embeddings = options.embeddings ?? createScriptedEmbeddings();
   const fixtureLog = createFixtureFiles('api-e2e');
   if (options.faults) fixtureLog.setFaults(options.faults(fixtureLog));
   const fixtureProcess =
@@ -103,30 +100,19 @@ export async function createTestApp(
       ? undefined
       : await startFixtureProcess(fixtureLog);
 
-  const restoreEnv = setEnv({
-    ...(options.defaultModel === undefined
-      ? {}
-      : { AGENT_DEFAULT_MODEL: options.defaultModel }),
-    ...(options.workers ? { RUNTIME_WORKERS: 'on' } : {}),
-  });
+  const restoreEnv = setEnv(options.workers ? { RUNTIME_WORKERS: 'on' } : {});
   const log = options.captureLog ? captureConsole() : undefined;
   let app: INestApplication<App>;
   try {
     let builder = Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(AGENT_TURN_CLIENT)
-      .useValue(model.turnClient);
+      .useValue(model.turnClient)
+      .overrideProvider(EMBEDDING_CLIENT)
+      .useValue(embeddings.client);
     if (options.agentPageSize !== undefined) {
       builder = builder
         .overrideProvider(AGENT_LIST_PAGE_SIZE)
         .useValue(options.agentPageSize);
-    }
-    const templates = options.workflowTemplates;
-    if (templates !== undefined) {
-      builder = builder.overrideProvider(WORKFLOWS).useFactory({
-        factory: (agents: Agents, logger: Logger): Workflows =>
-          createWorkflows({ agents, logger, templates }),
-        inject: [AGENTS, APP_LOGGER],
-      });
     }
     if (options.providerEndpoints !== undefined) {
       builder = builder
@@ -168,6 +154,7 @@ export async function createTestApp(
   return {
     app,
     model,
+    embeddings,
     fixtureLog,
     get fixture(): FixtureProcess {
       if (fixtureProcess === undefined) {

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantRules, quotaUsdOf, type GrantValues } from '@/lib/admin/form-rules';
+import { modelOptions, modelUnavailableReason } from '@/lib/admin/model-providers';
 import { cn } from '@/lib/utils';
 import {
   AdminForm,
@@ -109,7 +110,12 @@ export function GrantDialog({ open, onOpenChange, effect, ...form }: GrantDialog
 /** Mounted with the dialog's content, so the catalogue is read on every opening (read-on-open). */
 function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialogProps, 'open' | 'onOpenChange'>) {
   const models = useResource(adminApi.models.list, 'models');
+  const providers = useResource(adminApi.modelProviders.list, 'model-providers');
   const held = heldTargets(grants, effect);
+  // UXRD MP-08: only chat models whose provider works; until the providers are read, none.
+  const modelChoices = modelOptions(models.data ?? [], 'chat', (modelId) =>
+    modelUnavailableReason(modelId, providers.data ?? []),
+  ).filter((option) => option.unavailableReason === null);
   const initialValues: GrantValues = {
     kind: 'server',
     server: '',
@@ -147,10 +153,10 @@ function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialo
               label={TEXT.model}
               value={form.values.model}
               onChange={(model) => form.set('model', model)}
-              options={(models.data ?? []).map((model) => ({
-                value: model.id,
-                label: model.name,
-                held: held.has(targetKey({ kind: 'model', model: model.id })),
+              options={modelChoices.map((option) => ({
+                value: option.value,
+                label: option.label,
+                held: held.has(targetKey({ kind: 'model', model: option.value })),
               }))}
             />
           )}

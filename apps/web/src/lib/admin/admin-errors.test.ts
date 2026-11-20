@@ -3,7 +3,7 @@ import { ApiRequestError } from '@/lib/api/api-request';
 import { describeAdminError, type AdminErrorContext, type AdminErrorText } from './admin-errors';
 
 /** An API refusal as `apiRequest` builds it from the error body. */
-const refusal = (status: number, code: string, reason?: string, message?: string) =>
+const refusal = (status: number, code: string, reason?: string, message?: string, model?: string) =>
   new ApiRequestError({
     kind: status === 404 ? 'not_found' : 'http',
     method: 'POST',
@@ -12,6 +12,7 @@ const refusal = (status: number, code: string, reason?: string, message?: string
     code,
     reason,
     bodyMessage: message,
+    model,
   });
 
 const form = (text: string): AdminErrorText => ({ target: 'form', text });
@@ -34,7 +35,61 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       {},
       { target: 'name', text: 'Сервер с таким именем уже есть' },
     ],
-    ['MODEL_ID_TAKEN', refusal(409, 'MODEL_ID_TAKEN'), {}, { target: 'id', text: 'Модель с таким ID уже есть в каталоге' }],
+    [
+      'MODEL_ID_TAKEN at the model name field',
+      refusal(409, 'MODEL_ID_TAKEN'),
+      {},
+      { target: 'modelName', text: 'Модель с таким ID уже есть в каталоге' },
+    ],
+    // model-providers MC-4, MC-5, MC-7, MC-2
+    [
+      'MODEL_PROVIDER_NAME_TAKEN at the name field',
+      refusal(409, 'MODEL_PROVIDER_NAME_TAKEN'),
+      {},
+      { target: 'name', text: 'Провайдер с таким именем уже есть' },
+    ],
+    [
+      'MODEL_PROVIDER_NOT_FOUND names the provider',
+      refusal(404, 'MODEL_PROVIDER_NOT_FOUND'),
+      { providerName: 'google' },
+      form('Не удалось сохранить: провайдера google уже нет. Закройте окно — список обновится.'),
+    ],
+    [
+      'MODEL_PROVIDER_HAS_MODELS',
+      refusal(409, 'MODEL_PROVIDER_HAS_MODELS'),
+      {},
+      form('Не удалось удалить: у провайдера есть модели в каталоге. Сначала уберите их.'),
+    ],
+    [
+      'MODEL_PROVIDER_INVALID provider_unknown names the provider',
+      refusal(422, 'MODEL_PROVIDER_INVALID', 'provider_unknown'),
+      { providerName: 'google' },
+      form('Не удалось сохранить: провайдера google больше нет. Закройте окно и откройте его снова.'),
+    ],
+    [
+      'MODEL_PROVIDER_INVALID embeddings_not_supported',
+      refusal(422, 'MODEL_PROVIDER_INVALID', 'embeddings_not_supported'),
+      {},
+      form('Не удалось сохранить: провайдер этого типа не считает эмбеддинги'),
+    ],
+    [
+      'MODEL_DEFAULT_INVALID not_chat names the model from the body',
+      refusal(422, 'MODEL_DEFAULT_INVALID', 'not_chat', undefined, 'google/gemini-embedding-001'),
+      {},
+      form('Не удалось сохранить: модель google/gemini-embedding-001 другого назначения'),
+    ],
+    [
+      'MODEL_DEFAULT_INVALID not_embedding names the model from the body',
+      refusal(422, 'MODEL_DEFAULT_INVALID', 'not_embedding', undefined, 'google/gemini-2.5-flash'),
+      {},
+      form('Не удалось сохранить: модель google/gemini-2.5-flash другого назначения'),
+    ],
+    [
+      'MODEL_DEFAULT_INVALID model_unknown names the model from the body',
+      refusal(422, 'MODEL_DEFAULT_INVALID', 'model_unknown', undefined, 'google/gemini-2.5-flash'),
+      {},
+      form('Не удалось сохранить: модели google/gemini-2.5-flash больше нет в каталоге'),
+    ],
     [
       'quota_out_of_range',
       refusal(422, 'GRANT_INVALID', 'quota_out_of_range'),

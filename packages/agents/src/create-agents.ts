@@ -1,13 +1,19 @@
 import { type CodeRunner, createCodeRunner } from '@agent-os/code-runner';
 import { createSecretMasker, type Logger } from '@agent-os/common';
+import type { RecordKind } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
 import type { AccessAudit, AccessGate } from './access-gate.js';
-import { type AgentsConfig, secretValuesOf } from './config.js';
-import { checkCatalog, createCatalog, type DefinitionCatalog } from './definitions/catalog.js';
-import { GENERAL_PURPOSE } from './definitions/definition.js';
+import type { AgentsConfig } from './config.js';
+import { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client.js';
+import { type AgentsEmbeddings, createEmbeddings } from './embeddings/embeddings.js';
 import { createStopChildrenOnFailure } from './events/stop-children-on-failure.js';
+import { createKnowledgeEmbedHandler } from './knowledge/embed.handler.js';
+import { createKnowledgeExtractHandler } from './knowledge/extract.handler.js';
+import { type AgentsKnowledge, createAgentsKnowledge } from './knowledge/knowledge.js';
+import { createKnowledgeTrigger } from './knowledge/knowledge-trigger.js';
+import { createPgvectorStore } from './knowledge/pgvector-store.js';
 import { ConnectRequests } from './mcp/connect-requests.js';
 import { type AgentsMcp, createAgentsMcp } from './mcp/mcp.js';
 import { McpAccounts } from './mcp/mcp-accounts.js';
@@ -16,13 +22,25 @@ import { McpRegistry } from './mcp/mcp-registry.js';
 import type { AgentTurnModelClient } from './model/mastra-turn.js';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
+import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry.js';
+import type { RecordLibrary } from './start/record-library.js';
+import {
+  auditStartRefusal,
+  resolveStart,
+  type StartRefusal,
+  type StartRequest,
+  type StartResolution,
+} from './start/resolve-start.js';
 import { createAgentStepHandler } from './step/agent-step.handler.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
+import { toolResults } from './store/tool-results.repository.js';
 import { createBuiltinTools, createStartChild } from './tools/builtin/index.js';
 import { createRunCodeTool } from './tools/builtin/run-code.js';
 import { createToolRegistry, type ToolRegistry } from './tools/tool-registry.js';
+import { rootMayStartRecord } from './tools/tool-gate.js';
+import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings.js';
 import { createToolRunner } from './tools/tool-runner.js';
 
 export interface AgentsOptions {
@@ -42,6 +60,11 @@ export interface AgentsOptions {
   /** Writes the `access_denied` record of every refused tool or model call (KD-6). */
   readonly audit: AccessAudit;
   /**
+   * The library of agents and workflows (design-runtime.md, «Порт `RecordLibrary`»): every start asks it
+   * for the record on behalf of the starter; `apps/api` passes `LibraryService`.
+   */
+  readonly library: RecordLibrary;
+  /**
    * Gets every text part of an agent's answer with `ownerId`, `rootId`, `agentId`, `offset` (KD-3);
    * none by default. A failure of the hook is logged and does not break the step.
    */
@@ -51,28 +74,69 @@ export interface AgentsOptions {
    * `createCodeRunner` with `CODE_RUN_MAX_CONCURRENT`.
    */
   readonly codeRunner?: CodeRunner;
+  /** The seam of the embeddings provider: `createScriptedEmbeddings().client` in tests; the real one by default. */
+  readonly embeddingClient?: EmbeddingClient;
+}
+
+/** What `rootMayStart` asks: the conversation root's owner and the record the call names. */
+export interface RootStartQuery {
+  readonly ownerId: string;
+  readonly recordId: string;
+  /** The kind the calling tool starts. */
+  readonly kind: RecordKind;
 }
 
 /** The agents package (design-agents.md, Contract «Сборка»). */
 export interface Agents {
-  /** The catalog of definitions; upper parts register theirs before `start()`. */
-  readonly definitions: Pick<DefinitionCatalog, 'register'>;
   /** Tools of upper parts, registered before `start()`. */
   readonly tools: Pick<ToolRegistry, 'register'>;
   /** The agent operations. */
   readonly sessions: AgentSessions;
+  /**
+   * The one start procedure (KD-2): the snapshot of a start on behalf of the starter, or its refusal.
+   * `workflows` calls it in the `prepare` of `start_workflow`, before the commit.
+   */
+  resolveStart(request: StartRequest): Promise<StartResolution>;
+  /**
+   * Writes the `access_denied` record of a start refused for its model; nothing for any other refusal.
+   * `workflows` calls it in the `execute` of `start_workflow` when that refusal is the call's outcome.
+   */
+  auditStartRefusal(refusal: StartRefusal): Promise<void>;
+  /**
+   * Whether the conversation root of `ownerId` may start the record of this kind (KD-4, AC-15.2): the
+   * rule `start_agent` applies at the root, read live from the owner's library view. `workflows` asks it
+   * in the `prepare` of `start_workflow`, before the commit.
+   */
+  rootMayStart(request: RootStartQuery): Promise<boolean>;
   /** The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014). */
   readonly mcp: AgentsMcp;
+  /** The model provider registry: the only entry point of `apps/api` to `agent_model_providers` (ADR-0019). */
+  readonly providers: AgentsProviders;
   /**
-   * One call of `AGENT_DEFAULT_MODEL` outside any task, without tools (the conversation title): the
+   * Vectors on the default embedding model for the platform's own features (KD-6): the spend on the named
+   * employee or on the platform, every refusal and failure a value.
+   */
+  readonly embeddings: AgentsEmbeddings;
+  /**
+   * The knowledge graphs of self-learning workflows and their settings (self-learning KD-1, KD-7): the only
+   * entry point of `apps/api` to `agent_knowledge_*`. Who may call is the library's rule, asked first.
+   */
+  readonly knowledge: AgentsKnowledge;
+  /**
+   * The settings of large tool results (tool-result-reading R-5): the only entry point of `apps/api` to
+   * `agent_tool_result_settings`. Admin-only is the route's rule.
+   */
+  readonly toolResults: AgentsToolResults;
+  /**
+   * One call of the default chat model outside any task, without tools (the conversation title): the
    * retries and cancel of an agent's call, a token ledger row without `taskId`, no text parts to the
-   * hook. A provider that keeps failing rejects.
+   * hook. No default chat model rejects with `ModelNotConfiguredError`; a provider that is not ready or
+   * keeps failing rejects.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
   /**
-   * Registers `general-purpose`, closes registration and checks the catalog against the tools and the form
-   * of server names; models are checked at their calls. Called before the runtime workers start; no MCP
-   * connection is opened (a connection lives for one call).
+   * Closes the registration of tools; records and their models are checked at each start. Called before
+   * the runtime workers start; no MCP connection is opened (a connection lives for one call).
    */
   start(): Promise<void>;
   /** Logs the stop; nothing of MCP outlives a call, so nothing is closed. */
@@ -81,15 +145,15 @@ export interface Agents {
 
 /**
  * Builds the agents package from the database, the runtime, the logger and the parsed settings. The
- * `agent` task handler and the `task.failed` consumer are registered in the runtime at once (plan
- * Notes 8). In memory it keeps only the catalog, the tool registry, the open MCP connection requests and
- * the token refreshes in flight; the MCP registry and accounts are in Postgres (ADR-0001).
+ * `agent`, `knowledge.extract` and `knowledge.embed` task handlers and the `task.failed` and knowledge
+ * trigger consumers are registered in the runtime at once (plan Notes 8). In memory it keeps only the tool registry, the open MCP connection requests and the token
+ * refreshes in flight; the MCP registry, the accounts and every run's snapshot are in Postgres (ADR-0001,
+ * ADR-0017).
  */
 export function createAgents(options: AgentsOptions): Agents {
-  const { database, runtime, config, access, audit } = options;
+  const { database, runtime, config, access, audit, library } = options;
   const logger = options.logger.child({ component: 'agents' });
 
-  const catalog = createCatalog();
   const mcpLogger = logger.child({ service: 'agents.mcp' });
   const mcpClient = new McpClient();
   const accounts = new McpAccounts({
@@ -107,22 +171,22 @@ export function createAgents(options: AgentsOptions): Agents {
     callTimeoutMs: config.mcpCallTimeoutMs,
     allowHttp: config.allowHttpUrls,
   });
-  const startChildDeps = {
+  const providers = createProviderRegistry({
     database,
-    catalog,
-    maxDepth: config.maxDepth,
-    defaultModel: config.defaultModel,
-    access,
-    audit,
-  };
+    logger: logger.child({ service: 'agents.providers' }),
+  });
+  const startDeps = { library, access, providers, audit };
+  // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
+  const maskSecrets = createSecretMasker([]);
   const runner = createToolRunner({
     client: mcpClient,
     accounts,
     access,
     audit,
     callTimeoutMs: config.mcpCallTimeoutMs,
-    toolResultMaxBytes: config.toolResultMaxBytes,
-    startChildFor: createStartChild(startChildDeps),
+    resultSettings: () => toolResults.readSettings(database),
+    maskSecrets,
+    startChildFor: createStartChild({ maxDepth: config.maxDepth }),
   });
   const codeRunner =
     options.codeRunner ??
@@ -133,20 +197,25 @@ export function createAgents(options: AgentsOptions): Agents {
   const runCode = createRunCodeTool({
     codeRunner,
     database,
-    catalog,
     // `run_code` is in the registry, so it reads the registry lazily (no build cycle).
     registry: () => registry,
     runner,
     codeRun: config.codeRun,
-    toolResultMaxBytes: config.toolResultMaxBytes,
-    maskSecrets: createSecretMasker(secretValuesOf(config)),
+    maskSecrets,
   });
   const registry: ToolRegistry = createToolRegistry({
-    builtins: createBuiltinTools({ ...startChildDeps, tasks: runtime.tasks }),
+    builtins: createBuiltinTools({
+      ...startDeps,
+      maxDepth: config.maxDepth,
+      logger,
+      database,
+      tasks: runtime.tasks,
+    }),
     runCode,
-    catalog,
     database,
     access,
+    library,
+    logger,
   });
   const modelClient = createModelClient({
     turnClient: options.turnClient,
@@ -154,52 +223,77 @@ export function createAgents(options: AgentsOptions): Agents {
     config,
     logger: logger.child({ service: 'agents.model' }),
     access,
+    providers,
     audit,
     ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
   });
+  const embeddings = createEmbeddings({
+    client: options.embeddingClient ?? createEmbeddingClient(),
+    access,
+    providers,
+    ledger: runtime.ledger,
+  });
+  // One store of the knowledge vectors for every reader and writer (self-learning KD-8).
+  const vectorStore = createPgvectorStore(database);
 
   runtime.handlers.register(
     createAgentStepHandler({
       database,
-      toolStep: createToolStep({ catalog, registry, runner, access, audit }),
+      toolStep: createToolStep({ registry, runner, access, audit }),
       modelStep: createModelStep({
         database,
-        catalog,
         registry,
         modelClient,
         audit,
         tasks: runtime.tasks,
         inbox: runtime.inbox,
+        vectorStore,
       }),
-      compactionStep: createCompactionStep({ database, catalog, registry, modelClient, audit }),
+      compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
       compactAtTokens: config.compactAtTokens,
+      embeddings,
     }),
   );
+  runtime.handlers.register(
+    createKnowledgeExtractHandler({
+      database,
+      tasks: runtime.tasks,
+      modelClient,
+      embeddings,
+      store: vectorStore,
+    }),
+  );
+  runtime.handlers.register(
+    createKnowledgeEmbedHandler({ database, embeddings, store: vectorStore }),
+  );
   runtime.eventConsumers.register(createStopChildrenOnFailure({ tasks: runtime.tasks, logger }));
+  runtime.eventConsumers.register(createKnowledgeTrigger({ tasks: runtime.tasks, logger }));
 
-  const sessions = createAgentSessions({
-    database,
-    runtime,
-    catalog,
-    registry,
-    config,
-    logger,
-  });
+  const sessions = createAgentSessions({ database, runtime, registry, ...startDeps, logger });
 
   return {
-    definitions: { register: (definition) => catalog.register(definition) },
     tools: { register: (tool) => registry.register(tool) },
     sessions,
+    resolveStart: (request) => resolveStart(request, startDeps),
+    auditStartRefusal: (refusal) => auditStartRefusal(audit, refusal),
+    rootMayStart: async ({ ownerId, recordId, kind }) =>
+      rootMayStartRecord(await library.listVisible(ownerId), kind, recordId),
     mcp: createAgentsMcp(mcpRegistry, accounts),
+    providers,
+    embeddings,
+    knowledge: createAgentsKnowledge({
+      database,
+      tasks: runtime.tasks,
+      embeddings,
+      store: vectorStore,
+      logger,
+    }),
+    toolResults: createAgentsToolResults({ database, logger }),
     completeText: (request) => modelClient.completeText(request),
     async start() {
       const startedAt = Date.now();
-      catalog.register(GENERAL_PURPOSE);
-      catalog.seal();
       registry.seal();
-      checkCatalog({ definitions: catalog.all(), toolNames: registry.toolNames() });
       logger.info('agents started', {
-        definitions: catalog.all().map((definition) => definition.name),
         tools: registry.toolNames(),
         allowHttpUrls: config.allowHttpUrls,
         durationMs: Date.now() - startedAt,

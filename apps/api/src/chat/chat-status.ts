@@ -2,10 +2,10 @@ import type { AgentView } from '@agent-os/agents';
 import type { ChatStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
 
 export interface ChatStatusInput {
-  /** The root's view; `null` while the conversation has no root. */
-  readonly root: Pick<AgentView, 'status' | 'failureReason'> | null;
-  /** The root's runtime task; `null` while the conversation has no root. */
-  readonly task: { readonly status: TaskStatus; readonly waitReason: WaitReason | null } | null;
+  /** The root's view. */
+  readonly root: Pick<AgentView, 'status' | 'failureReason'>;
+  /** The root's runtime task. */
+  readonly task: { readonly status: TaskStatus; readonly waitReason: WaitReason | null };
 }
 
 export interface ChatState {
@@ -20,7 +20,6 @@ export interface ChatState {
  * tells apart by the root's task. A root stopped other than by delete is `idle`: a message revives it.
  */
 export function chatStatus({ root, task }: ChatStatusInput): ChatState {
-  if (root === null || task === null) return { status: 'new', failureReason: null };
   switch (root.status) {
     case 'interrupted':
     case 'awaiting_confirmation':

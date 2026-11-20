@@ -1,7 +1,8 @@
+import { STATUS_CODES } from 'node:http';
 import { HttpException, InternalServerErrorException } from '@nestjs/common';
-import { AgentsError } from '@agent-os/agents';
+import { AgentsError, type StartRefusalDetail } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
-import type { ThreadsErrorCode } from '@agent-os/contracts';
+import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
 import { WorkflowsError } from '@agent-os/workflows';
 import { apiError } from '../common/api-error.js';
@@ -32,12 +33,34 @@ const ANSWERS: Record<ThreadsErrorCode, { status: number; message: string }> = {
   INVALID_ARGUMENTS: { status: 400, message: 'Invalid arguments' },
   NOT_FINISHED: { status: 409, message: 'Agent is not finished' },
   PARENT_FINISHED: { status: 409, message: 'Parent agent is finished' },
+  START_REFUSED: { status: 409, message: 'Start refused' },
+  DRAFT_NOT_FOUND: { status: 404, message: 'Draft not found' },
+  DRAFT_RESOLVED: { status: 409, message: 'Draft is resolved' },
 };
 
 /** The HTTP answer of one API error code, body `ApiErrorSchema`. */
 export function httpError(code: ThreadsErrorCode): HttpException {
   const { status, message } = ANSWERS[code];
   return apiError(status, code, message);
+}
+
+/**
+ * 409 START_REFUSED of the first message and of a restart (design-runtime.md, Error handling): the
+ * reason — a model refusal, `model_not_configured` or a provider refusal (`provider_missing`,
+ * `provider_disabled`, `provider_key_missing`) — and the refused model, `null` on
+ * `record_unavailable` and `model_not_configured`.
+ */
+function startRefused(refusal: StartRefusalDetail): HttpException {
+  const { status, message } = ANSWERS.START_REFUSED;
+  const body = {
+    statusCode: status,
+    error: STATUS_CODES[status],
+    errorCode: 'START_REFUSED',
+    message,
+    reason: refusal.reason,
+    model: refusal.model,
+  } satisfies StartRefusedError;
+  return new HttpException(body, status);
 }
 
 /** 404 THREAD_NOT_FOUND: missing, foreign and deleted threads stay indistinguishable to the client. */
@@ -78,12 +101,15 @@ function codeOf(
 
 /**
  * Translates any error of a command into its HTTP answer: an `HttpException` (validation, cursor, the
- * service's own codes) as is, an expected refusal of `agents`, `runtime` or `workflows` into its code
- * with a constant message, anything else into a bare 500 with neither text nor stack (the caller logs
+ * service's own codes) as is, a refused start into 409 START_REFUSED with its reason and model, an
+ * expected refusal of `agents`, `runtime` or `workflows` into its code with a constant message, anything else into a bare 500 with neither text nor stack (the caller logs
  * the original error in the field `error`).
  */
 function toHttpError(error: unknown, notFound: NotFoundCode): HttpException {
   if (error instanceof HttpException) return error;
+  if (error instanceof AgentsError && error.code === 'START_REFUSED' && error.refusal !== null) {
+    return startRefused(error.refusal);
+  }
   const code = codeOf(error, notFound);
   return code === undefined
     ? new InternalServerErrorException()
@@ -96,6 +122,11 @@ export type CommandFields = {
   readonly threadId?: string;
   readonly agentId?: string;
   readonly decisionId?: string;
+  /** The record chip of a message. */
+  readonly recordId?: string;
+  /** A record draft and the employee's action on it. */
+  readonly draftId?: string;
+  readonly action?: string;
 };
 
 /** One API command: its route, ids, the work, and the outcome fields read from the result. */

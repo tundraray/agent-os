@@ -30,6 +30,8 @@
     "@agent-os/db": "workspace:*",
     "@agent-os/runtime": "workspace:*",
     "@ai-sdk/anthropic": "4.0.82",
+    "@ai-sdk/google": "4.0.99",
+    "@ai-sdk/openai-compatible": "3.0.71",
     "@mastra/core": "^1.80.0",
     "@modelcontextprotocol/client": "2.4.0",
     "drizzle-orm": "0.45.4",

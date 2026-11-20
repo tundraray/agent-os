@@ -1,9 +1,12 @@
 import {
   WORKFLOWS_BRIEF_CONFIRMATION,
+  type ChipRecord,
   type Confirmation,
   type ConversationView,
   type AgentPageView,
   type DecisionRequest,
+  type DraftActionRequest,
+  type DraftView,
   type HistoryEntry,
   type InterruptResponse,
   type RestartResponse,
@@ -15,9 +18,10 @@ import { pluralRu } from "@/lib/i18n/plural-ru";
 import { createCoalescedRunner } from "@/lib/live/coalesced-runner";
 import type { AnnouncerStore } from "@/lib/live/announcer-store";
 import type { logger as appLogger } from "@/lib/logger";
-import type { HistoryStatus, ShellStatusStore } from "@/lib/threads/shell-status-store";
+import type { HistoryStatus, SendFailure, ShellStatusStore } from "@/lib/threads/shell-status-store";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
+import { describeLibraryError } from "@/lib/library/library-errors";
 
 import {
   applyDraftPart,
@@ -45,8 +49,12 @@ export type FeedState = {
   loaded: boolean;
   /** The screen's error state: the first read failed, or a read or command found nothing. */
   loadError: "not_found" | "failed" | null;
-  /** The last message the server did not accept: the composer returns its text with MC-27. */
-  sendFailure: { text: string } | null;
+  /**
+   * The last message the server did not accept: the composer returns its text with `notice` under the
+   * field — MC-16 for a library refusal (an unavailable chip, a refused first message), null for MC-27.
+   * The chip itself never leaves `composerSeed` until the send is accepted (KD-5).
+   */
+  sendFailure: SendFailure | null;
 };
 
 export type FeedStore = StoreApi<FeedState> & {
@@ -56,10 +64,20 @@ export type FeedStore = StoreApi<FeedState> & {
    */
   load: () => Promise<void>;
   applyDelta: (part: DraftPart) => void;
-  /** Rejects when the server did not accept the message. */
-  send: (text: string) => Promise<void>;
-  interrupt: (text?: string) => Promise<void>;
+  /**
+   * Rejects when the server did not accept the message. `record` — the composer's chip: the message
+   * carries its id (KD-5, Invariant 4); an agent page has no chip.
+   */
+  send: (text: string, record?: ChipRecord) => Promise<void>;
+  /** Stops the agent's work; a message is never part of it. Rejects when the server did not take it. */
+  interrupt: () => Promise<void>;
   decide: (decisionId: string, approve: boolean, args?: Record<string, unknown>) => Promise<void>;
+  /**
+   * A record draft's action (KD-6), then a re-read. Resolves with the draft as the server answered — a refused
+   * save is a 200 with `refusal` — or `null` when another tab had resolved it (409 `DRAFT_RESOLVED`): the
+   * re-read shows that outcome, with no error (DC-9). Rejects on any other failure.
+   */
+  draftAction: (draftId: string, action: DraftActionRequest) => Promise<DraftView | null>;
   stop: () => Promise<void>;
   /** Resolves with the new agent the caller opens. */
   restart: () => Promise<RestartResponse>;
@@ -67,7 +85,7 @@ export type FeedStore = StoreApi<FeedState> & {
   dispose: () => void;
 };
 
-type FeedLogger = Pick<typeof appLogger, "warn">;
+type FeedLogger = Pick<typeof appLogger, "info" | "warn">;
 
 export type CreateFeedStoreInput = {
   source: FeedSource;
@@ -82,17 +100,24 @@ export type CreateFeedStoreInput = {
 
 const DECISION_NOUN = ["запрос", "запроса", "запросов"] as const;
 
-/** MC-25 for decisions that opened since the previous read. */
+/** MC-25 for decisions that opened since the previous read; a workflow task — custom-agents MC-21. */
 function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): string | null {
   if (opened.length === 0) return null;
   if (opened.length > 1) {
     return `Нужно ваше решение: ${opened.length} ${pluralRu(opened.length, DECISION_NOUN)}`;
   }
   const [decision] = opened;
-  if (decision.kind === WORKFLOWS_BRIEF_CONFIRMATION) return "Бриф готов — нужно ваше решение";
+  if (decision.kind === WORKFLOWS_BRIEF_CONFIRMATION) return "Задание готово — нужно ваше решение";
   const byChat = view.kind === "thread" && decision.agentId === view.chat.rootAgentId;
   const who = byChat ? "Чат" : `Агент «${decision.description}»`;
   return `Нужно ваше решение: ${who} хочет выполнить ${decision.tool}`;
+}
+
+/** Waiting drafts a re-read found for the first time (MC-19 «Черновик «{имя}» готов»). */
+function newDrafts(previous: FeedView, next: FeedView): DraftView[] {
+  if (next.kind !== "thread") return [];
+  const known = new Set(previous.kind === "thread" ? previous.drafts.map((d) => d.draftId) : []);
+  return next.drafts.filter((d) => d.state === "pending" && !known.has(d.draftId));
 }
 
 export function createFeedStore({
@@ -135,6 +160,9 @@ export function createFeedStore({
     const opened = next.decisions.filter((d) => d.status === "open" && !known.has(d.decisionId));
     const decisionText = decisionAnnouncement(next, opened);
     if (decisionText !== null) announcer.getState().announce(decisionText);
+    for (const draft of newDrafts(previous, next)) {
+      announcer.getState().announce(`Черновик «${draft.name}» готов — проверьте и сохраните`);
+    }
     for (const entry of added) {
       if (entry.kind === "child_report") {
         announcer.getState().announce(`Пришёл отчёт: ${entry.content.description}`);
@@ -250,7 +278,15 @@ export function createFeedStore({
     }
   }
 
-  type Accepted = Pick<OptimisticEntry, "messageId" | "first" | "interrupt">;
+  type Accepted = Pick<OptimisticEntry, "messageId" | "first">;
+
+  /** The conversation has no task yet: this message would start its root (409 `START_REFUSED`, Flow 2). */
+  function firstMessage(): boolean {
+    if (source.kind !== "thread") return false;
+    const { view, optimistic } = get();
+    const hasTask = view?.entries.some((entry) => entry.kind === "task") ?? false;
+    return !hasTask && !optimistic.some((entry) => entry.first);
+  }
 
   /**
    * Sends text; once the server accepted it, puts the optimistic entry where KD-4 says and re-reads.
@@ -260,33 +296,39 @@ export function createFeedStore({
     text: string,
     call: () => Promise<Accepted>,
     place: OptimisticEntry["place"],
+    record: ChipRecord | null = null,
   ): Promise<void> {
+    const where = firstMessage() ? "first_message" : "message";
     set({ sendFailure: null });
     let accepted: Accepted;
     try {
       accepted = await call();
     } catch (error) {
-      set({ sendFailure: { text } });
+      const notice = describeLibraryError(error, record === null ? { where } : { where, kind: record.kind });
+      set({ sendFailure: { text, notice: notice?.text ?? null } });
       throw error;
     }
-    addOptimistic({ text, place, ...accepted });
+    addOptimistic({ text, place, record, ...accepted });
     onActivity?.();
     await reads.request();
   }
 
-  const sendCall = (text: string): Promise<SendMessageResponse> =>
+  const sendCall = (text: string, record: ChipRecord | null): Promise<SendMessageResponse> =>
     source.kind === "thread"
-      ? api.sendThreadMessage(source.threadId, text)
+      ? api.sendThreadMessage(source.threadId, text, record?.id)
       : api.sendAgentMessage(source.agentId, text);
 
-  const interruptCall = (text?: string): Promise<InterruptResponse> =>
-    source.kind === "thread"
-      ? api.interruptThread(source.threadId, text)
-      : api.interruptAgent(source.agentId, text);
+  const interruptCall = (): Promise<InterruptResponse> =>
+    source.kind === "thread" ? api.interruptThread(source.threadId) : api.interruptAgent(source.agentId);
 
   function agentOnly(name: string): string {
     if (source.kind !== "agent") throw new Error(`${name} is an agent page command`);
     return source.agentId;
+  }
+
+  function threadOnly(name: string): string {
+    if (source.kind !== "thread") throw new Error(`${name} is a conversation command`);
+    return source.threadId;
   }
 
   return Object.assign(store, {
@@ -295,39 +337,47 @@ export function createFeedStore({
       const draft = applyDraftPart(get().draft, part);
       if (draft !== get().draft) set({ draft });
     },
-    send: (text: string) =>
-      deliver(
+    send: (text: string, record?: ChipRecord) => {
+      // Only a conversation's message carries a chip (KD-5).
+      const chip = source.kind === "thread" ? (record ?? null) : null;
+      return deliver(
         text,
         async () => {
-          const { messageId } = await command("send", () => sendCall(text));
+          // A refusal of a message with a chip is logged by `command` with `recordId` and its code.
+          const extra: Record<string, string> = chip === null ? {} : { recordId: chip.id };
+          const { messageId } = await command("send", () => sendCall(text, chip), extra);
+          if (chip !== null) logger.info("feed command send done", { ...ids, recordId: chip.id, outcome: "accepted" });
           // A null `messageId` is the conversation's first message: it becomes the task.
-          return { messageId, first: messageId === null, interrupt: false };
+          return { messageId, first: messageId === null };
         },
         isBusy(get().view) ? "tray" : "feed",
-      ),
-    interrupt: async (text?: string) => {
-      if (text === undefined) {
-        await command("interrupt", () => interruptCall());
-        await reads.request();
-        return;
-      }
-      // «Прервать и отправить»: the message goes to the end of the feed (KD-4); `not_active` sent it as
-      // an ordinary message with a `messageId`.
-      await deliver(
-        text,
-        async () => {
-          const response = await command("interrupt", () => interruptCall(text));
-          return response.outcome === "not_active"
-            ? { messageId: response.messageId ?? null, first: false, interrupt: false }
-            : { messageId: null, first: false, interrupt: true };
-        },
-        "feed",
+        chip,
       );
+    },
+    interrupt: async () => {
+      await command("interrupt", interruptCall);
+      await reads.request();
     },
     decide: async (decisionId: string, approve: boolean, args?: Record<string, unknown>) => {
       const body: DecisionRequest = args === undefined ? { approve } : { approve, args };
       await command("decide", () => api.decide(decisionId, body), { decisionId });
       await reads.request();
+    },
+    draftAction: async (draftId: string, action: DraftActionRequest) => {
+      const threadId = threadOnly("draft");
+      // A failure is logged by `command` with `threadId`, `draftId`, the action and its code.
+      const fields = { draftId, action: action.action };
+      let draft: DraftView;
+      try {
+        draft = await command("draft", () => api.draftAction(threadId, draftId, action), fields);
+      } catch (error) {
+        if (!isApiRequestError(error) || error.code !== "DRAFT_RESOLVED") throw error;
+        await reads.request();
+        return null;
+      }
+      logger.info("feed command draft done", { threadId, ...fields, outcome: draft.state, refusal: draft.refusal });
+      await reads.request();
+      return draft;
     },
     stop: async () => {
       const agentId = agentOnly("stop");
@@ -336,7 +386,9 @@ export function createFeedStore({
     },
     restart: async () => {
       const agentId = agentOnly("restart");
+      // A refusal (409 `START_REFUSED` included) is logged by `command` with `agentId` and its code.
       const response = await command("restart", () => api.restartAgent(agentId));
+      logger.info("feed command restart done", { agentId, outcome: "started", newAgentId: response.agentId });
       await reads.request();
       return response;
     },

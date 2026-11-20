@@ -72,3 +72,5 @@ https://agent-os.corp/auth/oidc/7/callback  [⧉]  5 значение для к�
 ## Used In
 
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — форма входа, смена пароля, формы и диалоги панели администратора.
+- [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — настройки самообучения в панели (AS-01).
+- [docs/features/model-providers/uxrd.md](../../features/model-providers/uxrd.md) — модели по умолчанию (MP-01), диалоги провайдера и модели (MP-04, MP-06).

@@ -1,8 +1,8 @@
 /** Providers of `AgentsModule`, the composition root of the agents package in `apps/api` (design-agents.md, C2 `api`). */
 
 /**
- * The assembled agents package (`Agents` of `@agent-os/agents`). Upper modules register their definitions
- * and tools on it in their providers' factories, before `AgentsModule.onModuleInit` calls `start()`.
+ * The assembled agents package (`Agents` of `@agent-os/agents`). Upper modules register their tools on
+ * it in their providers' factories, before `AgentsModule.onModuleInit` calls `start()`.
  */
 export const AGENTS = Symbol('AGENTS');
 
@@ -17,3 +17,9 @@ export const AGENT_TURN_CLIENT = Symbol('AGENT_TURN_CLIENT');
 
 /** The `DeltaPublisher`: the `onTextDelta` hook publishing agents' text parts to NOTIFY. */
 export const DELTA_PUBLISHER = Symbol('DELTA_PUBLISHER');
+
+/**
+ * The embedding seam (`EmbeddingClient`) of `Agents.embeddings`: the AI SDK client in production; a test
+ * replaces this one token with the scripted double of `@agent-os/agents/testing`.
+ */
+export const EMBEDDING_CLIENT = Symbol('EMBEDDING_CLIENT');

@@ -39,7 +39,7 @@ type AdminGateProps = { route: Extract<ShellRoute, { kind: 'admin' }> };
  */
 export function AdminGate({ route }: AdminGateProps) {
   const right = useAdminRight();
-  // An administrator's screen titles the tab itself (`AdminPageHeader`); until the right is known the tab
+  // An administrator's screen titles the tab itself (`PageHeader`); until the right is known the tab
   // names the panel only, so a refused employee never sees a section's title.
   useDocumentTitle(right === 'denied' ? NO_ACCESS_TITLE : right === 'unknown' ? pageTitle(PANEL_TITLE) : undefined);
 

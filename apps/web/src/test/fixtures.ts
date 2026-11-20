@@ -4,29 +4,49 @@ import {
   AdminUserPageSchema,
   AdminUserSummarySchema,
   AgentListPageSchema,
+  AgentContentSchema,
   AgentNodeSchema,
   AgentPageViewSchema,
   AgentViewSchema,
   ConfirmationSchema,
   ConversationViewSchema,
-  CreateCatalogModelBodySchema,
+  CopyResultSchema,
+  CatalogModelSchema,
   CurrentUserSchema,
+  DraftViewSchema,
   GrantSchema,
   HistoryEntrySchema,
+  KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+  KnowledgeItemSchema,
+  KnowledgeSettingsSchema,
+  KnowledgeViewSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  ModelDefaultsSchema,
+  ModelProviderViewSchema,
   PendingMessageSchema,
+  RunOriginSchema,
   ProviderSummarySchema,
   ProviderViewSchema,
+  RecordDetailSchema,
+  RecordSummarySchema,
   RoleDetailSchema,
   RoleSummarySchema,
   SignInSettingsSchema,
   ThreadListResponseSchema,
   ThreadSummarySchema,
+  TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+  TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
+  TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+  ToolResultSettingsSchema,
+  WorkflowContentSchema,
+  WorkflowRunViewSchema,
+  modelProvider,
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
   type AgentListNode,
+  type AgentContent,
   type AgentListPage,
   type AgentNode,
   type AgentPageView,
@@ -34,21 +54,35 @@ import {
   type CatalogModel,
   type Confirmation,
   type ConversationView,
+  type CopyResult,
   type CurrentUser,
+  type DraftView,
+  type ExecutorSourceState,
   type Grant,
   type HistoryEntry,
+  type KnowledgeItem,
+  type KnowledgeSettings,
+  type KnowledgeView,
   type McpServerSummary,
   type McpServerView,
   type McpToolView,
+  type ModelDefaults,
+  type ModelProviderView,
   type PendingMessage,
   type ProviderOptionsView,
   type ProviderSummary,
   type ProviderView,
+  type RecordDetail,
+  type RecordSummary,
   type RoleDetail,
   type RoleSummary,
+  type RunOrigin,
   type SignInSettings,
   type ThreadListResponse,
   type ThreadSummary,
+  type ToolResultSettings,
+  type WorkflowContent,
+  type WorkflowRunView,
 } from '@agent-os/contracts';
 
 const FIXTURE_TIME = '2026-10-28T10:00:00.000Z';
@@ -96,7 +130,9 @@ function agentView(overrides: Partial<AgentView> & Pick<AgentView, 'agentId'>): 
     parentId: 'root',
     rootId: 'root',
     depth: 1,
-    definition: 'researcher',
+    name: 'researcher',
+    origin: null,
+    firstRun: false,
     description: 'Агент',
     model: FIXTURE_MODEL,
     status: 'working',
@@ -105,6 +141,22 @@ function agentView(overrides: Partial<AgentView> & Pick<AgentView, 'agentId'>): 
     createdAt: FIXTURE_TIME,
     finishedAt: null,
     ...overrides,
+  });
+}
+
+/** The id of the workflow record `research` «Исследование» the workflow fixtures start from. */
+export const WORKFLOW_RECORD_ID = '0b9a4b8e-6c1e-4f43-9a52-3f0d1c2e5a71';
+
+/** The origin of a workflow coordinator: the system workflow «Исследование», version 1. */
+export function workflowOrigin(): RunOrigin {
+  return RunOriginSchema.parse({
+    recordId: WORKFLOW_RECORD_ID,
+    kind: 'workflow',
+    version: 1,
+    name: 'Исследование',
+    author: null,
+    builtinKey: 'research',
+    executor: null,
   });
 }
 
@@ -125,8 +177,8 @@ type FixtureEntryKind =
 type EntryContent<K extends FixtureEntryKind> = Extract<HistoryEntry, { kind: K }>['content'];
 
 const ENTRY_CONTENT: { [K in FixtureEntryKind]: EntryContent<K> } = {
-  task: { text: 'Задача' },
-  user_message: { text: 'Сообщение' },
+  task: { text: 'Задача', record: null },
+  user_message: { text: 'Сообщение', record: null },
   agent_message: { text: 'Сообщение агента', agentId: 'a1' },
   child_report: {
     agentId: 'a1',
@@ -145,6 +197,7 @@ const ENTRY_CONTENT: { [K in FixtureEntryKind]: EntryContent<K> } = {
     args: { query: 'ошибки' },
     outcome: 'success',
     refusalReason: null,
+    refusalDetail: null,
     text: 'Результат',
     startedAt: FIXTURE_TIME,
     finishedAt: fixtureTime(1),
@@ -170,11 +223,10 @@ export function historyEntry<K extends FixtureEntryKind>({
   });
 }
 
-/** A queued message: from the user, without interrupt, by default. */
+/** A queued message: from the user by default. */
 export function pendingMessage(overrides: Partial<PendingMessage> & Pick<PendingMessage, 'messageId'>): PendingMessage {
   return PendingMessageSchema.parse({
     source: 'user',
-    interrupt: false,
     text: 'Сообщение в очереди',
     createdAt: FIXTURE_TIME,
     ...overrides,
@@ -186,6 +238,7 @@ export function confirmation(overrides: Partial<Confirmation> & Pick<Confirmatio
   return ConfirmationSchema.parse({
     agentId: 'a1',
     description: 'Агент',
+    origin: null,
     kind: AGENTS_TOOL_CONFIRMATION,
     tool: 'create_ticket',
     server: 'backoffice',
@@ -209,6 +262,7 @@ export function conversationView(overrides: Partial<ConversationView> = {}): Con
     pending: [],
     decisions: [],
     agents: [],
+    drafts: [],
     ...overrides,
   });
 }
@@ -388,12 +442,265 @@ export function mcpServerView(overrides: Partial<McpServerView> & Pick<McpServer
   });
 }
 
-/** Row of GET /api/admin/models (the create body's fields): one price, no long-context rates. */
+/** Row of GET /api/admin/models: a chat model with one price, no long-context rates. */
 export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id'>): CatalogModel {
-  return CreateCatalogModelBodySchema.parse({
+  return CatalogModelSchema.parse({
     name: 'Claude Sonnet 4.5',
+    purpose: 'chat',
+    provider: modelProvider(overrides.id),
     prices: { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheWriteUsdPerMTok: 3.75, cacheReadUsdPerMTok: 0.3 },
     longContext: null,
+    ...overrides,
+  });
+}
+
+/** Row of GET /api/admin/model-providers: `anthropic`, enabled, key set, ready, no catalogue models. */
+export function modelProviderView(overrides: Partial<ModelProviderView> = {}): ModelProviderView {
+  return ModelProviderViewSchema.parse({
+    servesEmbeddings: (overrides.kind ?? 'anthropic') !== 'anthropic',
+    name: 'anthropic',
+    kind: 'anthropic',
+    baseUrl: null,
+    effectiveBaseUrl: 'https://api.anthropic.com',
+    enabled: true,
+    apiKeySet: true,
+    apiKeyLast4: 'x7Qa',
+    keyRequired: true,
+    state: 'ready',
+    catalogModels: 0,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/model-defaults: neither model chosen, never set. */
+export function modelDefaults(overrides: Partial<ModelDefaults> = {}): ModelDefaults {
+  return ModelDefaultsSchema.parse({
+    chatModel: null,
+    embeddingModel: null,
+    updatedAt: null,
+    updatedBy: null,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/knowledge/settings: the defaults, never set. */
+export function knowledgeSettings(overrides: Partial<KnowledgeSettings> = {}): KnowledgeSettings {
+  return KnowledgeSettingsSchema.parse({
+    limitTokens: KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+    lessonsEnabled: true,
+    updatedAt: null,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/tool-results/settings: the defaults, never set. */
+export function toolResultSettings(overrides: Partial<ToolResultSettings> = {}): ToolResultSettings {
+  return ToolResultSettingsSchema.parse({
+    storeFromChars: TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+    previewChars: TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+    readMaxTokens: TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
+    updatedAt: null,
+    ...overrides,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Knowledge graph fixtures (self-learning): each one passes its `@agent-os/contracts` schema.
+
+type KnowledgeEntity = Extract<KnowledgeItem, { type: 'entity' }>;
+type KnowledgeFact = Extract<KnowledgeItem, { type: 'relation'; kind: 'fact' }>;
+type KnowledgeLesson = Extract<KnowledgeItem, { kind: 'lesson' }>;
+type KnowledgeSearchedNothing = Extract<KnowledgeItem, { kind: 'searched_nothing' }>;
+
+/** What every record has by default: added once at FIXTURE_TIME, active, no placement mark. */
+const KNOWLEDGE_ITEM = { confirmations: 1, date: FIXTURE_TIME, state: 'active', placement: null } as const;
+
+/** An entity (always a fact): «billing-api», «Сервис списаний». */
+export function knowledgeEntity(overrides: Partial<KnowledgeEntity> & Pick<KnowledgeEntity, 'id'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    name: 'billing-api',
+    description: 'Сервис списаний',
+    ...overrides,
+    type: 'entity',
+    kind: 'fact',
+  });
+}
+
+/** A relation fact «{from} → владеет → {to}» between two entities. */
+export function knowledgeFact(overrides: Partial<KnowledgeFact> & Pick<KnowledgeFact, 'id' | 'from' | 'to'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({ ...KNOWLEDGE_ITEM, label: 'владеет', ...overrides, type: 'relation', kind: 'fact' });
+}
+
+/** A lesson of `logs.search` on «ошибки оплаты». */
+export function knowledgeLesson(overrides: Partial<KnowledgeLesson> & Pick<KnowledgeLesson, 'id'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    server: 'logs',
+    tool: 'search',
+    question: 'ошибки оплаты',
+    hint: 'Искать в логах billing-api',
+    outcome: 'ошибки нашлись',
+    ...overrides,
+    type: 'relation',
+    kind: 'lesson',
+  });
+}
+
+/** «Искал — не нашёл» of `jira.search_issues` on «инциденты оплаты». */
+export function knowledgeSearchedNothing(
+  overrides: Partial<KnowledgeSearchedNothing> & Pick<KnowledgeSearchedNothing, 'id'>,
+): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    server: 'jira',
+    tool: 'search_issues',
+    question: 'инциденты оплаты',
+    ...overrides,
+    type: 'relation',
+    kind: 'searched_nothing',
+  });
+}
+
+/**
+ * GET /api/library/:id/knowledge: self-learning and lessons on, selection by meaning on, no records, zero counts,
+ * no round yet. `counts` are the server's own numbers and never follow `items` here.
+ */
+export function knowledgeView(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
+  return KnowledgeViewSchema.parse({
+    selfLearning: true,
+    lessonsEnabled: true,
+    selection: { state: 'on' },
+    counts: { active: 0, always: 0, beyond: 0, outdated: 0, percent: 0 },
+    items: [],
+    lastExtraction: null,
+    ...overrides,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Library fixtures (custom-agents): each one passes its `@agent-os/contracts` schema; ids are UUIDs.
+
+/** A model id as record content holds it (`ModelIdSchema`). */
+const FIXTURE_RECORD_MODEL = 'anthropic/claude-haiku-4-5';
+
+/** Content of an agent record: one system, no agents to start, no tools. */
+export function agentContent(overrides: Partial<AgentContent> = {}): AgentContent {
+  return AgentContentSchema.parse({
+    prompt: 'Найди в логах причины ошибок и перечисли их.',
+    servers: ['logs'],
+    model: FIXTURE_RECORD_MODEL,
+    maxTurns: 20,
+    agents: [],
+    tools: [],
+    ...overrides,
+  });
+}
+
+/** Content of a workflow record: one executor «Аналитик» without a source; the coordinator writes the answer. */
+export function workflowContent(overrides: Partial<WorkflowContent> = {}): WorkflowContent {
+  return WorkflowContentSchema.parse({
+    coordinator: { rules: '', model: FIXTURE_RECORD_MODEL, maxTurns: 30 },
+    executors: [
+      {
+        name: 'Аналитик',
+        role: 'Ищет причины ошибок',
+        prompt: 'Найди причины ошибок.',
+        servers: ['logs'],
+        model: FIXTURE_RECORD_MODEL,
+        maxTurns: 20,
+        maxRuns: 3,
+        tools: [],
+        source: null,
+      },
+    ],
+    finalExecutor: null,
+    ...overrides,
+  });
+}
+
+/** Row of GET /api/library: the viewer's own personal agent «Разбор логов», version 1, every action allowed. */
+export function recordSummary(overrides: Partial<RecordSummary> & Pick<RecordSummary, 'id'>): RecordSummary {
+  return RecordSummarySchema.parse({
+    kind: 'agent',
+    name: 'Разбор логов',
+    description: 'Ищет причины ошибок в логах',
+    version: 1,
+    updatedAt: FIXTURE_TIME,
+    offerInChat: false,
+    builtinKey: null,
+    mine: true,
+    author: { id: fixtureId(1), name: 'Аня Смирнова', disabled: false },
+    audience: { roles: [] },
+    ban: null,
+    missingRights: [],
+    canEdit: true,
+    canShare: true,
+    canDelete: true,
+    ...overrides,
+  });
+}
+
+/** GET /api/library/:id: the summary fields of `recordSummary` with the content of its kind. */
+export function recordDetail(
+  overrides: Partial<RecordSummary> &
+    Pick<RecordSummary, 'id'> & { content?: AgentContent | WorkflowContent; executorSources?: ExecutorSourceState[] },
+): RecordDetail {
+  const { content, executorSources = [], ...summary } = overrides;
+  const row = recordSummary(summary);
+  return RecordDetailSchema.parse({
+    ...row,
+    content: content ?? (row.kind === 'workflow' ? workflowContent() : agentContent()),
+    executorSources,
+  });
+}
+
+/** POST /api/library/:id/copy: a copy `fixtureId(201)` with nothing dropped or replaced. */
+export function copyResult(overrides: Partial<CopyResult> = {}): CopyResult {
+  return CopyResultSchema.parse({
+    record: recordDetail({ id: fixtureId(201) }),
+    removedServers: [],
+    replacedModels: [],
+    removedAgents: [],
+    ...overrides,
+  });
+}
+
+/** A pending draft `d1` of a new agent record at the `draft_record` call `c1`. */
+export function draftView(
+  overrides: Partial<Omit<DraftView, 'kind' | 'content'>> & {
+    kind?: DraftView['kind'];
+    content?: AgentContent | WorkflowContent;
+  } = {},
+): DraftView {
+  const { kind = 'agent', content, ...fields } = overrides;
+  return DraftViewSchema.parse({
+    draftId: 'd1',
+    callId: 'c1',
+    name: 'Разбор логов',
+    description: 'Ищет причины ошибок в логах',
+    recordId: null,
+    baseVersion: null,
+    state: 'pending',
+    refusal: null,
+    savedRecordId: null,
+    createdAt: FIXTURE_TIME,
+    resolvedAt: null,
+    ...fields,
+    kind,
+    content: content ?? (kind === 'workflow' ? workflowContent() : agentContent()),
+  });
+}
+
+/** GET /agents/:id/run of the coordinator `coord` of «Исследование»: one executor «Аналитик», nothing called yet. */
+export function workflowRunView(overrides: Partial<WorkflowRunView> = {}): WorkflowRunView {
+  return WorkflowRunViewSchema.parse({
+    origin: workflowOrigin(),
+    brief: { question: 'Почему падают платежи?', boundaries: '', result: '' },
+    coordinator: agentView({ agentId: 'coord', name: 'Исследование', origin: workflowOrigin() }),
+    team: [{ name: 'Аналитик', role: 'Ищет причины ошибок', maxRuns: 3, final: false }],
+    steps: [],
+    limitRefusals: [],
     ...overrides,
   });
 }

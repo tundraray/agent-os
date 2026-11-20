@@ -49,15 +49,14 @@ export async function readSettings(executor: Executor): Promise<SettingsRow> {
   return row;
 }
 
-/** Writes the administrator's change with who and when; returns the row after it. */
+/** Writes the administrator's change with its time; returns the row after it. */
 export async function writeSettings(
   executor: Executor,
   change: SettingsChange,
-  actorId: string,
 ): Promise<SettingsRow> {
   const [row] = await executor
     .update(identitySettings)
-    .set({ ...change, updatedAt: new Date(), updatedBy: actorId })
+    .set({ ...change, updatedAt: new Date() })
     .returning(settingsColumns);
   if (row === undefined) throw new Error('identity_settings row is missing');
   return row;

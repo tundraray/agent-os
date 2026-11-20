@@ -4,6 +4,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { LoaderCircleIcon, ShieldIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { IdentityErrorCode, type AdminUserDetail } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -14,7 +15,7 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE, describeRefusal } from '../admin-form';
-import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
+import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
@@ -174,9 +175,9 @@ export function UserPage({ id }: UserPageProps) {
 
   return (
     <>
-      <AdminPageHeader
+      <PageHeader area={PANEL_TITLE}
         title={detail.name}
-        parent="users"
+        parent={sectionParent('users')}
         badge={
           <>
             {/* The email gives way before the name does: the title stays readable in a narrow header. */}
@@ -204,7 +205,7 @@ export function UserPage({ id }: UserPageProps) {
         >
           {active ? TEXT.block : TEXT.unblock}
         </ActionButton>
-      </AdminPageHeader>
+      </PageHeader>
 
       <div className="flex max-w-240 flex-col gap-8">
         {errorAt('status') !== undefined && <ActionError>{errorAt('status')}</ActionError>}

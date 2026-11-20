@@ -1,4 +1,4 @@
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import { ApiErrorSchema, IdentityErrorCode } from "@agent-os/contracts";
 import { apiBaseUrl } from "@/lib/config";
 
@@ -16,6 +16,8 @@ type ApiRequestErrorInit = {
   reason?: string;
   /** `message` of the API error body; replaces the classification text when present. */
   bodyMessage?: string;
+  /** `model` of the error body when it has one: the refused model of START_REFUSED or MODEL_DEFAULT_INVALID. */
+  model?: string | null;
 };
 
 export class ApiRequestError extends Error {
@@ -26,8 +28,9 @@ export class ApiRequestError extends Error {
   readonly status?: number;
   readonly code?: string;
   readonly reason?: string;
+  readonly model?: string | null;
 
-  constructor({ kind, method, path, status, code, reason, bodyMessage }: ApiRequestErrorInit) {
+  constructor({ kind, method, path, status, code, reason, bodyMessage, model }: ApiRequestErrorInit) {
     super(
       bodyMessage ??
         `API request failed: ${kind}${status === undefined ? "" : ` (${status})`}${code === undefined ? "" : ` ${code}`}`,
@@ -39,6 +42,7 @@ export class ApiRequestError extends Error {
     this.status = status;
     this.code = code;
     this.reason = reason;
+    this.model = model;
   }
 }
 
@@ -142,10 +146,16 @@ export async function apiRequest<T>({
   return result.data;
 }
 
-/** Code, reason and message of an ApiError body; a body that is not JSON or not an ApiError has none. */
+/** `model` of an error body: START_REFUSED (`null` when not by model) and MODEL_DEFAULT_INVALID carry it. */
+const ErrorModelSchema = z.object({ model: z.string().nullable() });
+
+/**
+ * Code, reason and message of an ApiError body, and its `model` when the body has one; a body that is
+ * not JSON or not an ApiError has none.
+ */
 async function errorDetailsOf(
   response: Response,
-): Promise<{ code?: string; reason?: string; bodyMessage?: string }> {
+): Promise<{ code?: string; reason?: string; bodyMessage?: string; model?: string | null }> {
   let data: unknown;
   try {
     data = await response.json();
@@ -155,9 +165,11 @@ async function errorDetailsOf(
   const result = ApiErrorSchema.safeParse(data);
   if (!result.success) return {};
   const { errorCode, reason, message } = result.data;
+  const model = ErrorModelSchema.safeParse(data);
   return {
     code: errorCode,
     reason,
     bodyMessage: Array.isArray(message) ? message.join("; ") : message,
+    ...(model.success ? { model: model.data.model } : {}),
   };
 }

@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
+import { toast } from 'sonner';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from './msw-server';
 
@@ -141,6 +142,8 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
+  // Sonner keeps its toasts in module state: one test's notice must not reach the next.
+  toast.dismiss();
   server.resetHandlers();
   vi.restoreAllMocks();
   liveQueryLists.clear();

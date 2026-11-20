@@ -2,7 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { LoaderCircleIcon, MoreHorizontalIcon, RotateCwIcon, type LucideIcon } from 'lucide-react';
+import { CircleXIcon, LoaderCircleIcon, MoreHorizontalIcon, RotateCwIcon, type LucideIcon } from 'lucide-react';
+import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,7 +44,7 @@ export type DataTableAction = {
   onSelect: () => void;
   /** The action is in progress: its control shows a spinner and the row's actions are unavailable. */
   pending?: boolean;
-  /** Unavailable while another action of the screen runs. */
+  /** Unavailable while another action of the screen runs; in the «⋯» menu only this item is unavailable. */
   disabled?: boolean;
 };
 
@@ -62,7 +63,18 @@ export type DataTableRow = {
   nested?: ReadonlyArray<{ key: string; cells: readonly ReactNode[] }>;
   /** The last action on the row failed: the text is shown under the row. */
   error?: string;
+  /** The outcome of an action that stays visible after the answer, such as a connection check (data-table «Итог действия»). */
+  result?: DataTableResult;
 };
+
+/**
+ * The line under a row with an action's outcome. `text` is the visible text (with `ok`, the time next to the badge);
+ * `announcement` is what screen readers hear politely when the line appears or changes.
+ */
+export type DataTableResult =
+  | { state: 'pending'; text: string; announcement: string }
+  | { state: 'ok'; badge: string; text: string; announcement: string }
+  | { state: 'failed'; text: string; announcement: string };
 
 export type DataTableEmpty = { Icon: LucideIcon; title: string; description?: string };
 
@@ -221,9 +233,11 @@ export function DataTable({ caption, columns, state, actionsAs = 'buttons' }: Da
 
   const hasActions = state.rows.some((row) => row.actions !== undefined && row.actions.length > 0);
   const columnCount = columns.length + (hasActions ? 1 : 0);
+  // A result line is as wide as the visible block (`100cqw`), so it wraps there instead of scrolling with the table.
+  const hasResult = [...state.rows, ...leaving.map((entry) => entry.row)].some((row) => row.result !== undefined);
 
   return (
-    <div className="flex flex-col">
+    <div className={cn('flex flex-col', hasResult && '@container')}>
       {/* `mb-px`: the table's scroll container would cut the last row's 3 px focus ring by its last pixel. */}
       <Table className="mb-px text-data text-foreground">
         <TableCaption className="sr-only">{caption}</TableCaption>
@@ -324,7 +338,8 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
   const rowClass =
     'group/row h-8 border-border transition-[height] duration-(--duration-fast) hover:bg-transparent data-leaving:h-0 motion-reduce:transition-none pointer-coarse:h-11 pointer-coarse:data-leaving:h-0';
   const columnCount = columns.length + (withActions ? 1 : 0);
-  const followed = (row.nested?.length ?? 0) > 0 || row.error !== undefined;
+  const lineUnder = row.result !== undefined || row.error !== undefined;
+  const followed = (row.nested?.length ?? 0) > 0 || lineUnder;
 
   return (
     <>
@@ -353,7 +368,7 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
           {...groupProps}
           className={cn(
             rowClass,
-            (nestedIndex < (row.nested?.length ?? 0) - 1 || row.error !== undefined) && 'border-b-0',
+            (nestedIndex < (row.nested?.length ?? 0) - 1 || lineUnder) && 'border-b-0',
           )}
         >
           {nested.cells.map((cell, index) => (
@@ -370,6 +385,13 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
           {withActions && <TableCell className={cellClass} />}
         </TableRow>
       ))}
+      {row.result !== undefined && (
+        <TableRow {...groupProps} className={cn('border-border hover:bg-transparent', row.error !== undefined && 'border-b-0')}>
+          <TableCell colSpan={columnCount} className="p-0 whitespace-normal">
+            <ResultLine result={row.result} />
+          </TableCell>
+        </TableRow>
+      )}
       {row.error !== undefined && (
         <TableRow {...groupProps} className="border-border hover:bg-transparent">
           <TableCell colSpan={columnCount} className="px-3 pb-1.5 whitespace-normal">
@@ -382,6 +404,36 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
         </TableRow>
       )}
     </>
+  );
+}
+
+/**
+ * data-table «Итог действия»: a Caption line under the row. It sticks to the visible block's left edge at the block's
+ * width, so it wraps instead of scrolling with a wide table; the region `status` announces start and outcome politely.
+ */
+function ResultLine({ result }: { result: DataTableResult }) {
+  return (
+    <div className="sticky left-0 w-[100cqw] px-3 pb-1.5">
+      <Collapsible shrinks>
+        <span role="status" className="sr-only">
+          {result.announcement}
+        </span>
+        <p
+          aria-hidden
+          className={cn(
+            'flex items-start gap-1 text-xs leading-4 font-medium',
+            result.state === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+          )}
+        >
+          {result.state === 'pending' && (
+            <LoaderCircleIcon aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+          )}
+          {result.state === 'failed' && <CircleXIcon aria-hidden className="size-3.5 shrink-0" />}
+          {result.state === 'ok' && <StateBadge state="ok">{result.badge}</StateBadge>}
+          <span className="min-w-0 break-words">{result.text}</span>
+        </p>
+      </Collapsible>
+    </div>
   );
 }
 
@@ -447,7 +499,12 @@ export function ActionsMenu({ name, actions }: { name: string; actions: readonly
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-40">
         {actions.map((action) => (
-          <DropdownMenuItem key={action.label} onClick={action.onSelect} className="pointer-coarse:min-h-11">
+          <DropdownMenuItem
+            key={action.label}
+            disabled={action.disabled === true}
+            onClick={action.onSelect}
+            className="pointer-coarse:min-h-11"
+          >
             {action.label}
           </DropdownMenuItem>
         ))}

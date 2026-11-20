@@ -6,6 +6,12 @@ import type { Clock } from './clock.js';
 import { type CallUsage, callCostUsd, type ModelPrice } from './model-cost.js';
 import { monthWindowUtc } from './month.js';
 
+/**
+ * The owner of a ledger row without an employee: the platform's own embeddings call (design-core.md KD-6).
+ * Employee ids are uuids, so it is nobody's spend; a background task may be owned by it too.
+ */
+export const PLATFORM_OWNER_ID = 'platform';
+
 /** One finished model call as the caller reports it. */
 export interface ModelCallRecord {
   ownerId: string;

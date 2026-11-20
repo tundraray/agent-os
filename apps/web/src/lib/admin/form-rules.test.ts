@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   accountRules,
   hoursToMinutes,
+  knowledgeSettingsRules,
   minutesToHours,
+  modelProviderRules,
   modelRules,
   providerRules,
   quotaRules,
@@ -10,6 +12,7 @@ import {
   roleNameRules,
   serverRules,
   signInSettingsRules,
+  toolResultSettingsRules,
   type ModelValues,
 } from './form-rules';
 
@@ -17,8 +20,25 @@ const account = { login: 'anna', name: 'Анна', email: 'anna@example.com' };
 const settings = { publicUrl: 'https://agent-os.example', idleHours: '8', absoluteHours: '24' };
 const oauthServer = { name: 'sentry-prod', url: 'https://mcp.sentry.dev/mcp', mode: 'oauth', sharedToken: '' } as const;
 const prices = { inputUsdPerMTok: '1', outputUsdPerMTok: '5', cacheWriteUsdPerMTok: '1,25', cacheReadUsdPerMTok: '0,1' };
-const model: ModelValues = { id: 'anthropic/claude-haiku-4-5', name: 'Claude Haiku 4.5', prices, longContext: null };
+const model: ModelValues = {
+  provider: 'anthropic',
+  purpose: 'chat',
+  modelName: 'claude-haiku-4-5',
+  name: 'Claude Haiku 4.5',
+  prices,
+  longContext: null,
+  dimensions: '',
+};
+const embedding: ModelValues = {
+  ...model,
+  provider: 'google',
+  purpose: 'embedding',
+  modelName: 'gemini-embedding-001',
+  prices: { inputUsdPerMTok: '0,15', outputUsdPerMTok: '', cacheWriteUsdPerMTok: '', cacheReadUsdPerMTok: '' },
+  dimensions: '768',
+};
 const withThreshold = (aboveInputTokens: string): ModelValues => ({ ...model, longContext: { aboveInputTokens, prices } });
+const modelProvider = { name: 'local-2', baseUrl: 'http://vllm.corp:8000/v1', apiKey: '' };
 
 const PASSWORD = 'Пароль — от 12 до 256 знаков';
 const IDLE = 'Введите от 0,25 до 24 часов с шагом 0,25';
@@ -26,6 +46,14 @@ const QUOTA = 'Квота — от 0,01 до 1 000 000 $, не больше дв
 const SERVER_NAME = 'Имя — от 1 до 32 знаков: строчные латинские буквы, цифры и дефис, например sentry-prod';
 const SERVER_URL = 'Введите адрес, который начинается с https://';
 const THRESHOLD = 'Порог — целое число больше нуля';
+const PROVIDER_NAME = 'Имя — до 32 знаков: строчные латинские буквы, цифры и дефис, не с дефиса, например local-2';
+const API_KEY = 'Ключ — от 8 до 512 символов';
+const DIMENSIONS = 'Размерность — целое число больше нуля';
+const KNOWLEDGE_LIMIT = 'Нужно целое число от 1000 до 32000';
+const tools = { storeFromChars: '50000', previewChars: '2000', readMaxTokens: '25000' };
+const STORE_FROM = 'Нужно целое число от 1000 до 1000000';
+const PREVIEW = 'Нужно целое число от 200 до 20000';
+const PREVIEW_BELOW = 'Начало должно быть меньше длины, с которой ответ заменяется ссылкой';
 
 describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16)', () => {
   it.each<[string, () => unknown, unknown]>([
@@ -80,9 +108,26 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['a shared token of 4097 characters', () => serverRules({ ...oauthServer, mode: 'shared', sharedToken: 't'.repeat(4097) }), {
       sharedToken: 'Введите токен — до 4096 знаков',
     }],
+    // model-providers DC-1, MC-4
+    ['provider name «Google»', () => modelProviderRules({ ...modelProvider, name: 'Google' }), { name: PROVIDER_NAME }],
+    ['provider name «-x»', () => modelProviderRules({ ...modelProvider, name: '-x' }), { name: PROVIDER_NAME }],
+    ['a provider name of 33 characters', () => modelProviderRules({ ...modelProvider, name: 'a'.repeat(33) }), { name: PROVIDER_NAME }],
+    ['provider name «local-2», http address, no key', () => modelProviderRules(modelProvider), {}],
+    ['a key of 7 characters', () => modelProviderRules({ ...modelProvider, apiKey: 'k'.repeat(7) }), { apiKey: API_KEY }],
+    ['a key of 8 characters', () => modelProviderRules({ ...modelProvider, apiKey: 'k'.repeat(8) }), {}],
+    ['a key of 512 characters', () => modelProviderRules({ ...modelProvider, apiKey: 'k'.repeat(512) }), {}],
+    ['a key of 513 characters', () => modelProviderRules({ ...modelProvider, apiKey: 'k'.repeat(513) }), { apiKey: API_KEY }],
+    ['provider address «vllm.corp»', () => modelProviderRules({ ...modelProvider, baseUrl: 'vllm.corp' }), {
+      baseUrl: 'Введите полный адрес, например https://api.example.com/v1',
+    }],
+    // model-providers DC-2, MC-7
+    ['a model without a provider', () => modelRules({ ...model, provider: null }), { provider: 'Выберите провайдера' }],
+    ['a model name at the provider with a space', () => modelRules({ ...model, modelName: 'claude haiku' }), {
+      modelName: 'Введите имя модели',
+    }],
+    ['an embedding model of dimensions «0»', () => modelRules({ ...embedding, dimensions: '0' }), { dimensions: DIMENSIONS }],
+    ['an embedding model of dimensions «1,5»', () => modelRules({ ...embedding, dimensions: '1,5' }), { dimensions: DIMENSIONS }],
     // AD-11
-    ['model id openai/x', () => modelRules({ ...model, id: 'openai/x' }), { id: 'ID — в виде anthropic/<имя>' }],
-    ['model id anthropic/a/b', () => modelRules({ ...model, id: 'anthropic/a/b' }), { id: 'ID — в виде anthropic/<имя>' }],
     ['a model name of 81 characters', () => modelRules({ ...model, name: 'м'.repeat(81) }), {
       name: 'Название — от 1 до 80 знаков',
     }],
@@ -93,6 +138,22 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['threshold «0»', () => modelRules(withThreshold('0')), { aboveInputTokens: THRESHOLD }],
     ['threshold «1,5»', () => modelRules(withThreshold('1,5')), { aboveInputTokens: THRESHOLD }],
     ['threshold «200000»', () => modelRules(withThreshold('200000')), {}],
+    // self-learning DC-5, MC-8: a place for knowledge out of bounds is not sent
+    ['knowledge place «999»', () => knowledgeSettingsRules({ limitTokens: '999' }), { limitTokens: KNOWLEDGE_LIMIT }],
+    ['knowledge place «32001»', () => knowledgeSettingsRules({ limitTokens: '32001' }), { limitTokens: KNOWLEDGE_LIMIT }],
+    ['knowledge place «12000,5»', () => knowledgeSettingsRules({ limitTokens: '12000,5' }), { limitTokens: KNOWLEDGE_LIMIT }],
+    ['an empty knowledge place', () => knowledgeSettingsRules({ limitTokens: '' }), { limitTokens: KNOWLEDGE_LIMIT }],
+    ['knowledge place «1000»', () => knowledgeSettingsRules({ limitTokens: '1000' }), {}],
+    ['knowledge place «32000»', () => knowledgeSettingsRules({ limitTokens: '32000' }), {}],
+    // tool-result-reading R-5
+    ['tool result threshold «999»', () => toolResultSettingsRules({ ...tools, storeFromChars: '999', previewChars: '200' }), { storeFromChars: STORE_FROM }],
+    ['tool result threshold «1000001»', () => toolResultSettingsRules({ ...tools, storeFromChars: '1000001' }), { storeFromChars: STORE_FROM }],
+    ['tool result threshold «50000,5»', () => toolResultSettingsRules({ ...tools, storeFromChars: '50000,5' }), { storeFromChars: STORE_FROM }],
+    ['tool result preview «2000» equal to the threshold «2000»', () => toolResultSettingsRules({ ...tools, storeFromChars: '2000' }), { previewChars: PREVIEW_BELOW }],
+    ['tool result preview «3000» above the threshold «2000»', () => toolResultSettingsRules({ ...tools, storeFromChars: '2000', previewChars: '3000' }), { previewChars: PREVIEW_BELOW }],
+    ['tool result preview «20001»', () => toolResultSettingsRules({ ...tools, previewChars: '20001' }), { previewChars: PREVIEW }],
+    ['tool result bounds «1000» / «200» / «2000»', () => toolResultSettingsRules({ storeFromChars: '1000', previewChars: '200', readMaxTokens: '2000' }), {}],
+    ['tool result bounds «1000000» / «20000» / «100000»', () => toolResultSettingsRules({ storeFromChars: '1000000', previewChars: '20000', readMaxTokens: '100000' }), {}],
     // MC-26, MC-27
     ['an empty role name', () => roleNameRules({ name: '  ' }), { name: 'Введите название' }],
     ['a provider name of 61 characters', () => providerRules({ name: 'G'.repeat(61) }), {

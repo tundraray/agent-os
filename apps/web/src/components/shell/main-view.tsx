@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { AccountScreen } from '@/components/account/account-screen';
@@ -8,7 +8,12 @@ import { AdminGate } from '@/components/admin/admin-gate';
 import { AgentScreen } from '@/components/agents/agent-screen';
 import { AgentsScreen } from '@/components/agents/agents-screen';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
+import { KnowledgePage } from '@/components/library/knowledge-page';
+import { LibraryScreen } from '@/components/library/library-screen';
+import { NewRecordPage, RecordPage } from '@/components/library/record-page';
 import { FeedProvider } from '@/lib/feed/feed-context';
+import { focusShellTarget } from '@/lib/focus';
+import { NEW_THREAD_TARGET } from '@/lib/threads/composer-seed';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { resolveMainView, type MainView as MainViewKind } from '@/lib/threads/resolve-main-view';
 import { parseShellRoute } from '@/lib/shell-route';
@@ -46,7 +51,7 @@ const DELETED_THREAD_COMPONENTS: ThreadComponents = { Welcome: ShellWelcome, Del
  * The main area by route: `/agents` — the agent tree (Screen 2); `/agents/<id>` — the agent page (Screen 3)
  * under the shell's `AgentFeedProvider`; `/account` — «Мой доступ»; a conversation — the feed (its skeleton
  * with a send-blocked composer while the URL thread resolves; E-8 notice once deleted), or TH-06 / TH-07;
- * `/admin/…` — the panel behind `AdminGate`.
+ * `/admin/…` — the panel behind `AdminGate`; `/library` — the library list; `/library/<id>` — the record page.
  */
 export function MainView() {
   const route = parseShellRoute(usePathname());
@@ -56,13 +61,24 @@ export function MainView() {
   if (route.kind === 'agent') return <AgentScreen />;
   if (route.kind === 'account') return <AccountScreen currentUser={services.currentUser} />;
   if (route.kind === 'admin') return <AdminGate route={route} />;
+  if (route.kind === 'library' && route.page.kind === 'list') return <LibraryScreen />;
+  // Self-learning KD-2: a workflow's knowledge; a new key per workflow, so nothing of one carries over to the next.
+  if (route.kind === 'library' && route.page.kind === 'knowledge') {
+    return <KnowledgePage key={route.page.id} id={route.page.id} variant="library" />;
+  }
+  // A new key per record: the copy dialog and focus of one record never carry over to the next.
+  if (route.kind === 'library' && route.page.kind === 'record') return <RecordPage key={route.page.id} id={route.page.id} />;
+  // A new key per kind: the form of a new agent never carries over to a new workflow.
+  if (route.kind === 'library' && route.page.kind === 'new') {
+    return <NewRecordPage key={route.page.recordKind} kind={route.page.recordKind} />;
+  }
   return <ConversationView />;
 }
 
 function ConversationView() {
   const { view, routeThreadId, mainRemoteId } = useMainViewState();
-  const { newChat, retrySwitch, retryHistory } = useShellActions();
-  const { feeds } = useShellServices();
+  const { newChat, leaveTo, retrySwitch, retryHistory } = useShellActions();
+  const { feeds, libraryIndex, composerSeed } = useShellServices();
   // The list item that lifts in the list on activity; the store keeps the one it was created with.
   const mainItemId = useAuiState((s) => s.threadListItem.id);
   // The conversation's store, the same one its runtime reads; none on `/` before the first message.
@@ -70,9 +86,23 @@ function ConversationView() {
     () => (mainRemoteId === undefined ? null : feeds.forThread(mainRemoteId, mainItemId)),
     [feeds, mainRemoteId, mainItemId],
   );
+  // The run labels and the cards read the library list on entering each conversation (KD-2).
+  useEffect(() => {
+    void libraryIndex.refresh();
+  }, [libraryIndex, routeThreadId]);
   // Until the runtime has put the first read into the thread, a URL thread keeps the skeleton
   // (no welcome flash while the list is still loading).
   const bodyLoading = useAuiState((s) => s.thread.isLoading && s.thread.messages.length === 0);
+  const notFound = view.kind === 'not-found';
+  // custom-agents Flow 3: the conversation a chip was put for is gone — the chip goes to a new one (CH-01).
+  useEffect(() => {
+    if (!notFound || routeThreadId === undefined || !composerSeed.getState().chips.has(routeThreadId)) return;
+    composerSeed.move(routeThreadId, NEW_THREAD_TARGET);
+    leaveTo('/');
+    focusShellTarget('composer');
+  }, [notFound, routeThreadId, composerSeed, leaveTo]);
+  // The composer's seed target: the conversation, or the new one on `/` until its first message creates it.
+  const seedTarget = routeThreadId ?? mainRemoteId ?? NEW_THREAD_TARGET;
 
   switch (view.kind) {
     // One element for both kinds: the composer is not remounted when the history arrives.
@@ -83,6 +113,7 @@ function ConversationView() {
           <Thread
             components={view.kind === 'thread' && view.deleted ? DELETED_THREAD_COMPONENTS : THREAD_COMPONENTS}
             historyPending={view.kind === 'switching' || (routeThreadId !== undefined && bodyLoading)}
+            seedTarget={seedTarget}
           />
         </FeedProvider>
       );

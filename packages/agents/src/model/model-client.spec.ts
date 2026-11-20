@@ -1,12 +1,13 @@
 // KD-3 (offset), Flow 1 Failure handling (a retry starts the parts again at offset 0), Invariant 4 (a
 // `completeText` call is a ledger row without `taskId`), Contract «Расширения нижних пакетов» (a failing
 // hook is logged and does not break the step); an answered attempt is one ledger row, an attempt cut by a
-// cancel or failed after its answer began is one with an estimate from UTF-8 bytes, and an attempt the provider
-// rejected before any output is none. The port and the ledger are doubles; the clock fires the retry pause at once.
+// cancel or failed after its answer began is one with an estimate from UTF-8 bytes. The port, the gate, the
+// provider registry and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
 import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
 import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn.js';
+import { createProviderRegistryDouble } from '../testing.js';
 import { createModelClient, type TextDelta } from './model-client.js';
 
 /** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
@@ -26,10 +27,14 @@ const VERDICT_PRICE: ModelPrice = {
   cacheWriteUsdPerMTok: 3.75,
 };
 
-/** A gate that allows every model at `VERDICT_PRICE`; the model client asks only about models. */
-const ALLOWING_GATE: Pick<AccessGate, 'model'> = {
+/** A gate that allows every model at `VERDICT_PRICE`, with `anthropic/claude-default` as the default chat model. */
+const ALLOWING_GATE: Pick<AccessGate, 'model' | 'defaultChatModel'> = {
   model: async () => ({ kind: 'allowed', price: VERDICT_PRICE }),
+  defaultChatModel: async () => 'anthropic/claude-default',
 };
+
+/** The provider of every model of these tests, ready. */
+const READY_PROVIDERS = createProviderRegistryDouble({ anthropic: 'ready' });
 
 /** `cancel` aborts the call's signal: a `cancelled` attempt calls it after its parts and rejects as the port does. */
 function portDouble(attempts: readonly PortAttempt[], cancel: () => void = () => {}): AgentTurnModelClient {
@@ -175,7 +180,8 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
           return { callId: 'model-call-1', costUsd: 0 };
         },
       },
-      config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
+      config: { maxOutputTokens: 100 },
+      providers: READY_PROVIDERS,
       logger,
       access: ALLOWING_GATE,
       audit: async () => {},
@@ -204,7 +210,7 @@ describe('ModelClient streams text parts with running offsets, restarts them on 
             })
             .then((result) => {
               if (result.kind === 'answer') return result.text;
-              return result.kind === 'model_error' ? `model_error ${result.error.statusCode}` : result.kind;
+              return result.kind === 'model_error' ? `model_error ${result.statusCode}` : result.kind;
             })
         : await client.completeText({
             ownerId: 'owner-1',
@@ -242,7 +248,8 @@ describe('ModelClient instructions', () => {
         },
       },
       ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
-      config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
+      config: { maxOutputTokens: 100 },
+      providers: READY_PROVIDERS,
       logger,
       access: ALLOWING_GATE,
       audit: async () => {},
@@ -314,8 +321,8 @@ function deniedTitle(reason: string): AccessDeniedEntry {
   };
 }
 
-// UC-6, DC-7, KD-3, KD-4.
-describe('the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict\'s price, an attempt the provider rejected before any output is not, retries do not ask again, and a refused title calls the audit hook once', () => {
+// UC-6, DC-7, KD-3, KD-4. Provider rejections, their retries and ledger rows: retry-policy.spec.ts.
+describe('the model verdict comes before the first attempt: a refusal makes no call, every billed attempt is recorded at the verdict\'s price, and a refused title calls the audit hook once', () => {
   it.each<[string, VerdictRow]>([
     [
       'a refused call does not start: no provider call and no ledger row',
@@ -351,22 +358,6 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
         outcome: 'answer',
         providerCalls: 1,
         ledgerRows: [{ price: OTHER_PRICE }],
-        audits: [],
-      },
-    ],
-    [
-      'a 529 on all three attempts does not ask the gate again and leaves no ledger row: the provider rejected each before any output',
-      {
-        act: 'call',
-        verdict: { kind: 'allowed', price: VERDICT_PRICE },
-        attempts: [
-          { parts: [], failWith: 529 },
-          { parts: [], failWith: 529 },
-          { parts: [], failWith: 529 },
-        ],
-        outcome: 'model_error',
-        providerCalls: 3,
-        ledgerRows: [],
         audits: [],
       },
     ],
@@ -417,13 +408,15 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
           return { callId: 'model-call-1', costUsd: 0 };
         },
       },
-      config: { maxOutputTokens: 100, defaultModel: 'anthropic/claude-default' },
+      config: { maxOutputTokens: 100 },
+      providers: READY_PROVIDERS,
       logger,
       access: {
         model: async (ownerId, model) => {
           verdictAsks.push(`${ownerId} ${model}`);
           return row.verdict;
         },
+        defaultChatModel: async () => 'anthropic/claude-default',
       },
       audit: async (entry) => {
         audits.push(entry);

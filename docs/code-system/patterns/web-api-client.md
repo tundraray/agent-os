@@ -28,3 +28,4 @@
 ## Used In
 
 - [design-admin.md](../../features/enterprise-access/design-admin.md) — KD-3: ядро `apiRequest`, `adminApi`
+- [design-web.md](../../features/custom-agents/design-web.md) — `libraryApi`, `adminApi.library`, `describeLibraryError`

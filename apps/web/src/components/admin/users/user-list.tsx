@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
 import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { AdminPageHeader } from '@/components/admin/admin-header';
+import { PANEL_TITLE } from '@/components/admin/admin-header';
 import { adminSectionTitle } from '@/components/admin/admin-sections';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
+import { PageHeader } from '@/components/shell/page-header';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -136,7 +137,7 @@ export function UserList() {
 
   return (
     <>
-      <AdminPageHeader title={title}>
+      <PageHeader area={PANEL_TITLE} title={title}>
         <Input
           type="search"
           value={query}
@@ -148,7 +149,7 @@ export function UserList() {
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
           {TEXT.create}
         </Button>
-      </AdminPageHeader>
+      </PageHeader>
       <DataTable caption={title} columns={COLUMNS} state={state} />
       <AccountDialog open={creating} onOpenChange={setCreating} onCreated={list.reload} />
     </>

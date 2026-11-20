@@ -2,8 +2,13 @@ import {
   ABSOLUTE_MINUTES_DEFAULT,
   ABSOLUTE_MINUTES_MAX,
   ABSOLUTE_MINUTES_MIN,
+  CALL_RECORD_KINDS,
   DecisionStatusSchema,
   DeliveryStatusSchema,
+  DraftStateSchema,
+  EmbeddingFailureReasonSchema,
+  EMBEDDING_DIMENSIONS_MAX,
+  EMBEDDING_DIMENSIONS_MIN,
   EVENT_PAYLOAD_MAX_BYTES,
   GrantEffectSchema,
   GrantTargetKindSchema,
@@ -11,11 +16,34 @@ import {
   IDLE_MINUTES_DEFAULT,
   IDLE_MINUTES_MAX,
   IDLE_MINUTES_MIN,
+  KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+  KNOWLEDGE_LIMIT_TOKENS_MAX,
+  KNOWLEDGE_LIMIT_TOKENS_MIN,
+  KnowledgeItemKindSchema,
+  KnowledgeItemTypeSchema,
+  LastExtractionReasonSchema,
+  LastExtractionStatusSchema,
   McpServerModeSchema,
   MessageStatusSchema,
+  ModelProviderKindSchema,
+  ModelPurposeSchema,
   ProviderTypeSchema,
+  RECORD_MAX_TURNS_DEFAULT,
+  RECORD_MAX_TURNS_MAX,
+  RECORD_MAX_TURNS_MIN,
+  RecordKindSchema,
+  SaveOwnRefusalSchema,
+  SINGLE_CALL_RECORD_KINDS,
   TaskStatusSchema,
-  ToolCallStateSchema,
+  TOOL_RESULT_PREVIEW_CHARS_DEFAULT,
+  TOOL_RESULT_PREVIEW_CHARS_MAX,
+  TOOL_RESULT_PREVIEW_CHARS_MIN,
+  TOOL_RESULT_READ_MAX_TOKENS_DEFAULT,
+  TOOL_RESULT_READ_MAX_TOKENS_MAX,
+  TOOL_RESULT_READ_MAX_TOKENS_MIN,
+  TOOL_RESULT_STORE_FROM_CHARS_DEFAULT,
+  TOOL_RESULT_STORE_FROM_CHARS_MAX,
+  TOOL_RESULT_STORE_FROM_CHARS_MIN,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
   UserStatusSchema,
@@ -27,6 +55,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -34,6 +63,7 @@ import {
   numeric,
   pgSchema,
   primaryKey,
+  real,
   text,
   timestamp,
   unique,
@@ -129,12 +159,16 @@ export const runtimeTasks = app.table(
       'runtime_tasks_waiting_check',
       sql`(${t.status} = ${literal(TaskStatusSchema.enum.waiting)}) = (${t.waitReason} is not null)`,
     ),
+    /** The claim: the oldest `queued` task of the registered types, in this order. */
     index('runtime_tasks_ready_idx')
-      .on(t.status, t.type, t.createdAt)
+      .on(t.createdAt, t.taskId)
       .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.queued)}`),
+    /** The recovery sweeper: `running` tasks whose lease has expired, oldest first. */
+    index('runtime_tasks_lease_idx')
+      .on(t.leaseExpiresAt)
+      .where(sql`${t.status} = ${literal(TaskStatusSchema.enum.running)}`),
     index('runtime_tasks_root_idx').on(t.rootId),
     index('runtime_tasks_parent_idx').on(t.parentId),
-    index('runtime_tasks_owner_idx').on(t.ownerId),
   ],
 );
 
@@ -158,7 +192,6 @@ export const runtimeInbox = app.table(
     /** Step that received the message; null while pending. */
     deliveredStep: integer('delivered_step'),
     createdAt: createdAt(),
-    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
   },
   (t) => [
     unique('runtime_inbox_recipient_seq_key').on(t.recipientId, t.seq),
@@ -199,6 +232,8 @@ export const runtimeDecisions = app.table(
     uniqueIndex('runtime_decisions_open_task_idx')
       .on(t.taskId)
       .where(sql`${t.status} = ${literal(DecisionStatusSchema.enum.open)}`),
+    /** Serves the cascade from the task; the partial index above covers only open requests. */
+    index('runtime_decisions_task_idx').on(t.taskId),
     index('runtime_decisions_root_idx').on(t.rootId),
   ],
 );
@@ -218,9 +253,10 @@ export const runtimeEvents = app.table(
       .notNull()
       .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
     taskId: uuid('task_id'),
+    /** Kept for incident analysis; no code reads it. */
     causationId: uuid('causation_id'),
+    /** Kept for incident analysis; no code reads it. */
     stateRevision: integer('state_revision').notNull(),
-    payloadRef: text('payload_ref'),
     payload: jsonb('payload').notNull(),
     createdAt: createdAt(),
   },
@@ -230,8 +266,6 @@ export const runtimeEvents = app.table(
       sql`octet_length(${t.payload}::text) <= ${sql.raw(String(EVENT_PAYLOAD_MAX_BYTES))}`,
     ),
     index('runtime_events_root_seq_idx').on(t.rootId, t.seq),
-    index('runtime_events_causation_idx').on(t.causationId),
-    index('runtime_events_task_seq_idx').on(t.taskId, t.seq),
   ],
 );
 
@@ -292,33 +326,76 @@ export const runtimeModelCalls = app.table(
 // id, so deleting a task tree deletes its sessions, histories and tool calls.
 // ---------------------------------------------------------------------------------------------
 
-export const agentSessions = app.table('agent_sessions', {
-  taskId: uuid('task_id')
-    .primaryKey()
-    .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
-  /** Owner of the task; read only by the `task.failed` consumer. */
-  ownerId: text('owner_id').notNull(),
-  definition: text('definition').notNull(),
-  description: text('description').notNull(),
-  /** Model chosen at start; every call of the session uses it. */
-  model: text('model').notNull(),
-  /** Task text; `restart` starts a new agent with it. */
-  prompt: text('prompt').notNull(),
-  /** Session limits set by the caller at start. */
-  limits: jsonb('limits'),
-  /** Fork source: the parent's history up to `forked_through_seq` precedes this one. No FK. */
-  forkedFromTaskId: uuid('forked_from_task_id'),
-  forkedThroughSeq: integer('forked_through_seq'),
-  turns: integer('turns').notNull().default(0),
-  interrupted: boolean('interrupted').notNull().default(false),
-  /** Set when the agent itself finished (`complete` or `fail`). */
-  closed: boolean('closed').notNull().default(false),
-  /** Input tokens of the last model call; drives compaction. */
-  lastInputTokens: integer('last_input_tokens'),
-  createdAt: createdAt(),
-});
+export const agentSessions = app.table(
+  'agent_sessions',
+  {
+    taskId: uuid('task_id')
+      .primaryKey()
+      .references(() => runtimeTasks.taskId, { onDelete: 'cascade' }),
+    /**
+     * The task's parent and root, copied from `runtime_tasks` when the row is written (a root names
+     * itself as its root), so the chain reads from this table. No FK: the row is deleted by the cascade
+     * of `task_id` alone.
+     */
+    parentId: uuid('parent_id'),
+    rootId: uuid('root_id').notNull(),
+    /** Owner of the task. */
+    ownerId: text('owner_id').notNull(),
+    /**
+     * Set only on a root session, which the owner sees as a conversation: its title (empty until one
+     * is written) and its last change, the key of the owner's list. Null on every other session.
+     */
+    title: text('title'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Name of the run from its snapshot (custom-agents/design-runtime.md, KD-3). */
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    /** Model of the snapshot; every call of the session uses it. */
+    model: text('model').notNull(),
+    /** Task text; `restart` starts a new agent with it. */
+    prompt: text('prompt').notNull(),
+    /**
+     * Origin of the run: the library record it started from, as it was at the start; a root session
+     * carries the builtin record `chat`. No FK: the record may be deleted. The snapshot itself lives
+     * only in the task input (ADR-0017).
+     */
+    recordId: uuid('record_id').notNull(),
+    recordKind: text('record_kind').notNull(),
+    recordVersion: integer('record_version').notNull(),
+    recordName: text('record_name').notNull(),
+    authorId: uuid('author_id'),
+    authorName: text('author_name'),
+    builtinKey: text('builtin_key'),
+    /** Executor name of a workflow step; null otherwise. */
+    executor: text('executor'),
+    /** The owner had no earlier session with this record. */
+    firstRun: boolean('first_run').notNull().default(false),
+    /** Fork source: the parent's history up to `forked_through_seq` precedes this one. No FK. */
+    forkedFromTaskId: uuid('forked_from_task_id'),
+    forkedThroughSeq: integer('forked_through_seq'),
+    turns: integer('turns').notNull().default(0),
+    interrupted: boolean('interrupted').notNull().default(false),
+    /** Set when the agent itself finished (`complete` or `fail`). */
+    closed: boolean('closed').notNull().default(false),
+    /** Input tokens of the last model call; drives compaction. */
+    lastInputTokens: integer('last_input_tokens'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    /** Counts the owner's runs of a record for the chat listing. */
+    index('agent_sessions_owner_record_idx').on(t.ownerId, t.recordId),
+    index('agent_sessions_root_idx').on(t.rootId),
+    /** The owner's list of root sessions: last changed first. */
+    index('agent_sessions_owner_page_idx')
+      .on(t.ownerId, t.updatedAt.desc(), t.taskId.desc())
+      .where(sql`${t.updatedAt} IS NOT NULL`),
+  ],
+);
 
-/** History of an agent: append-only, `seq` grows within the session. */
+/**
+ * History of an agent: append-only, `seq` grows within the session. A tool call is an item of its
+ * `model_answer`; what happened to it are later rows keyed by `call_id` — nothing is updated in place.
+ */
 export const agentMessages = app.table(
   'agent_messages',
   {
@@ -328,94 +405,92 @@ export const agentMessages = app.table(
     seq: integer('seq').notNull(),
     kind: text('kind').notNull(),
     content: jsonb('content').notNull(),
-    /** Token ledger row of a `model_answer`; no FK, the ledger outlives the tree. */
+    /**
+     * Token ledger row of a `model_answer`; no FK, the ledger outlives the tree. Kept for incident
+     * analysis; no code reads it.
+     */
     modelCallId: uuid('model_call_id'),
+    /** The call a call record is about (`CALL_RECORD_KINDS`); null for every other kind. */
+    callId: text('call_id'),
+    /** When the call of a `tool_result` ended: the window and the order of the extraction input. */
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.seq] }),
+    index('agent_messages_call_idx').on(t.taskId, t.callId),
+    /** A call has at most one result, one confirmation request, one decision and one intent. */
+    uniqueIndex('agent_messages_call_once_idx')
+      .on(t.taskId, t.callId, t.kind)
+      .where(isOneOf(t.kind, SINGLE_CALL_RECORD_KINDS)),
+    /** The results of a task by end time: the extraction window and the count of started runs. */
+    index('agent_messages_result_idx')
+      .on(t.taskId, t.finishedAt)
+      .where(sql`${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)}`),
     check(
       'agent_messages_kind_check',
       isOneOf(t.kind, HistoryEntryKindSchema.options),
     ),
+    check(
+      'agent_messages_call_id_check',
+      sql`(${t.callId} is not null) = (${isOneOf(t.kind, CALL_RECORD_KINDS)})`,
+    ),
+    check(
+      'agent_messages_finished_at_check',
+      sql`(${t.finishedAt} is not null) = (${t.kind} = ${literal(HistoryEntryKindSchema.enum.tool_result)})`,
+    ),
   ],
 );
 
-/** One row per tool call of a model answer: the audit record of the call. */
-export const agentToolCalls = app.table(
-  'agent_tool_calls',
+/**
+ * Full result of a successful or empty direct MCP call (code-execution KD-5; tool-result-reading R-1, R-4):
+ * the one place of the full result, keyed by the call of its session's history, with the known secrets
+ * masked.
+ */
+export const agentToolResults = app.table(
+  'agent_tool_results',
   {
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
-    /** Call id given by the provider. */
     callId: text('call_id').notNull(),
-    /** `seq` of the `model_answer` that requested the call. */
-    answerSeq: integer('answer_seq').notNull(),
-    /** Position of the call within its answer. */
-    position: integer('position').notNull(),
-    tool: text('tool').notNull(),
-    /** MCP server id; null for built-in and registered tools. */
-    server: text('server'),
-    args: jsonb('args').notNull(),
-    state: text('state')
-      .notNull()
-      .default(ToolCallStateSchema.enum.requested),
-    /** Set exactly while the state is `done`. */
-    outcome: text('outcome'),
-    refusalReason: text('refusal_reason'),
-    resultText: text('result_text'),
-    /** Agent started by `start_agent`. */
-    childTaskId: uuid('child_task_id'),
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    finishedAt: timestamp('finished_at', { withTimezone: true }),
-    /** How many times a `run_code` read run has started (code-execution KD-7). */
-    attempts: integer('attempts').notNull().default(0),
-    /** Script output of a successful `run_code` run. */
-    output: text('output'),
-  },
-  (t) => [
-    primaryKey({ columns: [t.taskId, t.callId] }),
-    check(
-      'agent_tool_calls_state_check',
-      isOneOf(t.state, ToolCallStateSchema.options),
-    ),
-    check(
-      'agent_tool_calls_outcome_check',
-      isOneOf(t.outcome, ToolOutcomeSchema.options),
-    ),
-    check(
-      'agent_tool_calls_refusal_reason_check',
-      isOneOf(t.refusalReason, ToolRefusalReasonSchema.options),
-    ),
-    check(
-      'agent_tool_calls_done_check',
-      sql`(${t.state} = ${literal(ToolCallStateSchema.enum.done)}) = (${t.outcome} is not null)`,
-    ),
-    index('agent_tool_calls_awaiting_idx')
-      .on(t.state)
-      .where(
-        sql`${t.state} = ${literal(ToolCallStateSchema.enum.awaiting_confirmation)}`,
-      ),
-  ],
-);
-
-/** Full result of a successful direct MCP call, as a value for scripts (code-execution KD-5). */
-export const agentToolResults = app.table(
-  'agent_tool_results',
-  {
-    taskId: uuid('task_id').notNull(),
-    callId: text('call_id').notNull(),
+    /** The value a script reads with `readResult`. */
     value: jsonb('value').notNull(),
+    /** The full text the reading tools page through and search. */
+    text: text('text').notNull(),
     createdAt: createdAt(),
   },
+  (t) => [primaryKey({ columns: [t.taskId, t.callId] })],
+);
+
+/** The single row of the large tool result settings (tool-result-reading R-5); the migration creates it. */
+export const agentToolResultSettings = app.table(
+  'agent_tool_result_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    storeFromChars: integer('store_from_chars')
+      .notNull()
+      .default(TOOL_RESULT_STORE_FROM_CHARS_DEFAULT),
+    previewChars: integer('preview_chars').notNull().default(TOOL_RESULT_PREVIEW_CHARS_DEFAULT),
+    readMaxTokens: integer('read_max_tokens').notNull().default(TOOL_RESULT_READ_MAX_TOKENS_DEFAULT),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
   (t) => [
-    primaryKey({ columns: [t.taskId, t.callId] }),
-    foreignKey({
-      name: 'agent_tool_results_call_fk',
-      columns: [t.taskId, t.callId],
-      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
-    }).onDelete('cascade'),
+    check('agent_tool_result_settings_single_row_check', sql`${t.id}`),
+    check(
+      'agent_tool_result_settings_store_from_chars_check',
+      isWithin(t.storeFromChars, TOOL_RESULT_STORE_FROM_CHARS_MIN, TOOL_RESULT_STORE_FROM_CHARS_MAX),
+    ),
+    check(
+      'agent_tool_result_settings_preview_chars_check',
+      isWithin(t.previewChars, TOOL_RESULT_PREVIEW_CHARS_MIN, TOOL_RESULT_PREVIEW_CHARS_MAX),
+    ),
+    check(
+      'agent_tool_result_settings_read_max_tokens_check',
+      isWithin(t.readMaxTokens, TOOL_RESULT_READ_MAX_TOKENS_MIN, TOOL_RESULT_READ_MAX_TOKENS_MAX),
+    ),
   ],
 );
 
@@ -423,8 +498,10 @@ export const agentToolResults = app.table(
 export const agentCodeCalls = app.table(
   'agent_code_calls',
   {
-    taskId: uuid('task_id').notNull(),
-    /** `callId` of the `run_code` row. */
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    /** `callId` of the `run_code` call in the session's history. */
     runCallId: text('run_call_id').notNull(),
     attempt: integer('attempt').notNull(),
     /** Number of the call within its attempt. */
@@ -435,16 +512,10 @@ export const agentCodeCalls = app.table(
     args: jsonb('args').notNull(),
     outcome: text('outcome'),
     refusalReason: text('refusal_reason'),
-    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.taskId, t.runCallId, t.attempt, t.seq] }),
-    foreignKey({
-      name: 'agent_code_calls_run_call_fk',
-      columns: [t.taskId, t.runCallId],
-      foreignColumns: [agentToolCalls.taskId, agentToolCalls.callId],
-    }).onDelete('cascade'),
     check(
       'agent_code_calls_outcome_check',
       isOneOf(t.outcome, ToolOutcomeSchema.options),
@@ -507,48 +578,75 @@ export const agentMcpAccounts = app.table(
     server: text('server')
       .notNull()
       .references(() => agentMcpServers.name, { onDelete: 'cascade' }),
-    /** How the token was obtained; `oauth` is the only type so far. */
-    tokenType: text('token_type').notNull(),
     accessToken: text('access_token').notNull(),
     refreshToken: text('refresh_token'),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
-    connectedAt: timestamp('connected_at', { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    refreshedAt: timestamp('refreshed_at', { withTimezone: true }),
   },
-  (t) => [
-    primaryKey({ columns: [t.ownerId, t.server] }),
-    check('agent_mcp_accounts_token_type_check', isOneOf(t.tokenType, ['oauth'])),
-  ],
+  (t) => [primaryKey({ columns: [t.ownerId, t.server] })],
 );
 
 // ---------------------------------------------------------------------------------------------
-// Chat conversations (agent-platform/design-chat.md, Data Model, KD-1). No FK to the root task:
-// the row is locked during the tree's deletion and removed after the tree.
+// Model providers (model-providers/design-core.md, Data Model, KD-1). Owned by the `agents` package.
+// A catalogue model names its provider by the first part of its id, as text without FK (ADR-0018).
+// The key is stored as is.
 // ---------------------------------------------------------------------------------------------
 
-export const chatConversations = app.table(
-  'chat_conversations',
+export const agentModelProviders = app.table(
+  'agent_model_providers',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: text('owner_id').notNull(),
-    /** Empty string until the title is written; the API returns `null` for it. */
-    title: text('title').notNull().default(''),
-    /** The root session of agent `chat`; null until the first message. One root, one conversation. */
-    rootId: uuid('root_id'),
+    /** Never changes: model ids carry it as their first part. */
+    name: text('name').primaryKey(),
+    /** Never changes after registration. */
+    kind: text('kind').notNull(),
+    /** Null — the kind's default address. */
+    baseUrl: text('base_url'),
+    /** Null — no key set. */
+    apiKey: text('api_key'),
+    enabled: boolean('enabled').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex('chat_conversations_root_idx').on(t.rootId),
-    index('chat_conversations_owner_page_idx').on(
-      t.ownerId,
-      t.updatedAt.desc(),
-      t.id.desc(),
-    ),
+    check('agent_model_providers_kind_check', isOneOf(t.kind, ModelProviderKindSchema.options)),
+  ],
+);
+
+/**
+ * A record draft of a conversation (custom-agents/design-runtime.md, KD-6): written by `draft_record`
+ * of the root, resolved by the conversation's route. The conversation is its root session, and the
+ * drafts go with it. `record_id` and `saved_record_id` have no FK: the record may be deleted.
+ */
+export const chatDrafts = app.table(
+  'chat_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    ownerId: text('owner_id').notNull(),
+    /** The `draft_record` call in the root's history the card stands at. */
+    callId: text('call_id').notNull(),
+    kind: text('kind').notNull(),
+    /** The edited record and its version at the draft; null for a new record. */
+    recordId: uuid('record_id'),
+    baseVersion: integer('base_version'),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    content: jsonb('content').notNull(),
+    state: text('state').notNull().default(DraftStateSchema.enum.pending),
+    savedRecordId: uuid('saved_record_id'),
+    /** Reason of the last refused `saveOwn`; null when none. */
+    refusal: text('refusal'),
+    createdAt: createdAt(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('chat_drafts_conversation_idx').on(t.conversationId),
+    check('chat_drafts_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
+    check('chat_drafts_state_check', isOneOf(t.state, DraftStateSchema.options)),
+    check('chat_drafts_refusal_check', isOneOf(t.refusal, SaveOwnRefusalSchema.options)),
   ],
 );
 
@@ -679,8 +777,6 @@ export const identitySettings = app.table(
     absoluteMinutes: integer('absolute_minutes').notNull().default(ABSOLUTE_MINUTES_DEFAULT),
     /** Null while the defaults stand. */
     updatedAt: timestamp('updated_at', { withTimezone: true }),
-    /** Employee id or `system`; null while the defaults stand. */
-    updatedBy: text('updated_by'),
   },
   (t) => [
     check('identity_settings_single_row_check', sql`${t.id}`),
@@ -708,6 +804,7 @@ export const identitySettings = app.table(
 /** Price in USD per million tokens. */
 const usdPerMTok = (name: string) => numeric(name, { precision: 18, scale: 9, mode: 'number' });
 
+
 /** Model catalogue: a model is callable only when it is here. */
 export const accessModels = app.table(
   'access_models',
@@ -725,6 +822,10 @@ export const accessModels = app.table(
     longContextOutputUsdPerMTok: usdPerMTok('long_context_output_usd_per_mtok'),
     longContextCacheWriteUsdPerMTok: usdPerMTok('long_context_cache_write_usd_per_mtok'),
     longContextCacheReadUsdPerMTok: usdPerMTok('long_context_cache_read_usd_per_mtok'),
+    /** Never changes after the model is added. */
+    purpose: text('purpose').notNull().default(ModelPurposeSchema.enum.chat),
+    /** Vector length of an embedding model; null for a chat model. */
+    dimensions: integer('dimensions'),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -753,7 +854,39 @@ export const accessModels = app.table(
           ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
           ${t.longContextCacheReadUsdPerMTok}) = 5`,
     ),
+    check('access_models_purpose_check', isOneOf(t.purpose, ModelPurposeSchema.options)),
+    /**
+     * An embedding model has dimensions and no long-context prices; a chat model has no dimensions.
+     * `is not null` keeps a null from passing: `null between …` is not false.
+     */
+    check(
+      'access_models_dimensions_check',
+      sql`(${t.purpose} = ${literal(ModelPurposeSchema.enum.embedding)}
+          and ${t.dimensions} is not null
+          and ${isWithin(t.dimensions, EMBEDDING_DIMENSIONS_MIN, EMBEDDING_DIMENSIONS_MAX)}
+          and ${t.longContextAboveInputTokens} is null)
+        or (${t.purpose} = ${literal(ModelPurposeSchema.enum.chat)} and ${t.dimensions} is null)`,
+    ),
   ],
+);
+
+/** The single row of the default models (ModelDefaults); the migration creates it. */
+export const accessModelDefaults = app.table(
+  'access_model_defaults',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** Null — not chosen; deleting the model clears the choice (DC-6). */
+    chatModel: text('chat_model').references(() => accessModels.id, { onDelete: 'set null' }),
+    embeddingModel: text('embedding_model').references(() => accessModels.id, {
+      onDelete: 'set null',
+    }),
+    /** Null while nothing was changed. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id; null while nothing was changed. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [check('access_model_defaults_single_row_check', sql`${t.id}`)],
 );
 
 /** A grant of a role or an employee on a server, a tool or a model; one per holder, effect, target. */
@@ -776,7 +909,7 @@ export const accessGrants = app.table(
     unique('access_grants_holder_target_key')
       .on(t.roleId, t.userId, t.effect, t.targetKind, t.server, t.tool, t.model)
       .nullsNotDistinct(),
-    index('access_grants_role_idx').on(t.roleId),
+    /** The cascade from a role is served by the unique key above: `role_id` is its first column. */
     index('access_grants_user_idx').on(t.userId),
     check('access_grants_effect_check', isOneOf(t.effect, GrantEffectSchema.options)),
     check('access_grants_target_kind_check', isOneOf(t.targetKind, GrantTargetKindSchema.options)),
@@ -799,6 +932,342 @@ export const accessGrants = app.table(
       'access_grants_quota_check',
       sql`${t.quotaUsd} is null or (${t.effect} = ${literal(GrantEffectSchema.enum.allow)}
         and ${t.targetKind} = ${literal(GrantTargetKindSchema.enum.model)})`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Library (custom-agents/design-library.md, Data Model, KD-1). Read and written only by the
+// `library` module of `apps/api` (ADR-0016). The content of a record is one jsonb in the form of its
+// kind, checked by the kind's schema in `@agent-os/contracts`. A holder is a role or an employee
+// with FK and cascade, as in `access_grants`, or "everyone".
+// ---------------------------------------------------------------------------------------------
+
+/** A record of any kind: an employee's (with an owner) or a system one (no owner). */
+export const libraryRecords = app.table(
+  'library_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: text('kind').notNull(),
+    /** Null — a system record. */
+    ownerId: uuid('owner_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    offerInChat: boolean('offer_in_chat').notNull().default(false),
+    /** Key of a built-in system record (`chat`); null for every other record. */
+    builtinKey: text('builtin_key'),
+    content: jsonb('content').notNull(),
+    /** Grows with every edit of the record. */
+    version: integer('version').notNull().default(1),
+    /** When an admin closed sharing of an employee record; null — not closed. */
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    /** A name is unique per owner regardless of case and kind; system records are one group. */
+    uniqueIndex('library_records_owner_name_idx')
+      .on(t.ownerId, sql`lower(${t.name})`)
+      .where(sql`${t.ownerId} is not null`),
+    uniqueIndex('library_records_system_name_idx')
+      .on(sql`lower(${t.name})`)
+      .where(sql`${t.ownerId} is null`),
+    uniqueIndex('library_records_builtin_key_idx').on(t.builtinKey),
+    check('library_records_kind_check', isOneOf(t.kind, RecordKindSchema.options)),
+    check(
+      'library_records_builtin_key_check',
+      sql`${t.builtinKey} is null or ${t.ownerId} is null`,
+    ),
+    check(
+      'library_records_closed_at_check',
+      sql`${t.closedAt} is null or ${t.ownerId} is not null`,
+    ),
+  ],
+);
+
+/** A holder of a record's audience: exactly one of a role, an employee or everyone. */
+export const libraryShares = app.table(
+  'library_shares',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id').references(() => identityRoles.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => identityUsers.id, { onDelete: 'cascade' }),
+    everyone: boolean('everyone').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('library_shares_record_holder_key')
+      .on(t.recordId, t.roleId, t.userId, t.everyone)
+      .nullsNotDistinct(),
+    index('library_shares_role_idx').on(t.roleId),
+    index('library_shares_user_idx').on(t.userId),
+    check(
+      'library_shares_holder_check',
+      sql`num_nonnulls(${t.roleId}, ${t.userId}, nullif(${t.everyone}, false)) = 1`,
+    ),
+  ],
+);
+
+/** The single row of the library's settings (LibrarySettings); the migration creates it. */
+export const librarySettings = app.table(
+  'library_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** «Максимум шагов» a new agent or workflow starts with; each record may change its own. */
+    defaultMaxTurns: integer('default_max_turns').notNull().default(RECORD_MAX_TURNS_DEFAULT),
+    /** Null while the default stands. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('library_settings_single_row_check', sql`${t.id}`),
+    check(
+      'library_settings_default_max_turns_check',
+      isWithin(t.defaultMaxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX),
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Knowledge of self-learning workflows (self-learning/design-core.md, Data Model). Owned by the
+// `agents` package (KD-1). The graph, its vectors and the workflow's vector row reference
+// `library_records` with cascade — the one exception to package tables not referencing app tables:
+// deleting a workflow by any path takes its knowledge with it, while `agents` never reads `library_*`.
+// ---------------------------------------------------------------------------------------------
+
+/** pgvector column without a fixed length (KD-8); the type lives where the extension is installed. */
+const vector = customType<{ data: number[]; driverData: string }>({
+  dataType: () => 'vector',
+  toDriver: (value) => JSON.stringify(value),
+  fromDriver: (value): number[] => JSON.parse(value) as number[],
+});
+
+/** Fields of every graph record (KD-5); the runs are kept for review and confirmations, no FK. */
+const knowledgeItemFields = () => ({
+  recordId: uuid('record_id')
+    .notNull()
+    .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+  confirmations: integer('confirmations').notNull().default(1),
+  createdAt: createdAt(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull().defaultNow(),
+  /** Coordinator task of the run that added the record. Kept for incident analysis; no code reads it. */
+  sourceRunId: uuid('source_run_id').notNull(),
+  /** Coordinator task of the run that confirmed it last. */
+  confirmedByRunId: uuid('confirmed_by_run_id').notNull(),
+  outdated: boolean('outdated').notNull().default(false),
+});
+
+/** An entity of a workflow's graph: always a fact. */
+export const agentKnowledgeEntities = app.table(
+  'agent_knowledge_entities',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    ...knowledgeItemFields(),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+  },
+  (t) => [
+    index('agent_knowledge_entities_record_idx').on(t.recordId),
+    /** Invariant 4. */
+    check('agent_knowledge_entities_confirmations_check', sql`${t.confirmations} >= 1`),
+  ],
+);
+
+/**
+ * A relation: a fact joins two entities of the same graph and goes with either of them
+ * (Invariant 6); a lesson and «searched — found nothing» name a tool and a kind of question instead.
+ */
+export const agentKnowledgeRelations = app.table(
+  'agent_knowledge_relations',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    ...knowledgeItemFields(),
+    kind: text('kind').notNull(),
+    fromEntityId: integer('from_entity_id'),
+    toEntityId: integer('to_entity_id'),
+    label: text('label'),
+    server: text('server'),
+    tool: text('tool'),
+    question: text('question'),
+    hint: text('hint'),
+    outcome: text('outcome'),
+  },
+  (t) => [
+    index('agent_knowledge_relations_record_idx').on(t.recordId),
+    /** Serve the cascade from an entity. */
+    index('agent_knowledge_relations_from_entity_idx').on(t.fromEntityId),
+    index('agent_knowledge_relations_to_entity_idx').on(t.toEntityId),
+    /** Named: the generated names pass the 63-character limit of Postgres. */
+    foreignKey({
+      name: 'agent_knowledge_relations_from_entity_fk',
+      columns: [t.fromEntityId],
+      foreignColumns: [agentKnowledgeEntities.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'agent_knowledge_relations_to_entity_fk',
+      columns: [t.toEntityId],
+      foreignColumns: [agentKnowledgeEntities.id],
+    }).onDelete('cascade'),
+    /** Invariant 4. */
+    check('agent_knowledge_relations_confirmations_check', sql`${t.confirmations} >= 1`),
+    check('agent_knowledge_relations_kind_check', isOneOf(t.kind, KnowledgeItemKindSchema.options)),
+    check(
+      'agent_knowledge_relations_shape_check',
+      sql`(${t.kind} = ${literal(KnowledgeItemKindSchema.enum.fact)}
+          and ${t.fromEntityId} is not null and ${t.toEntityId} is not null
+          and ${t.label} is not null and ${t.server} is null and ${t.tool} is null
+          and ${t.question} is null and ${t.hint} is null and ${t.outcome} is null)
+        or (${t.kind} = ${literal(KnowledgeItemKindSchema.enum.lesson)}
+          and ${t.fromEntityId} is null and ${t.toEntityId} is null and ${t.label} is null
+          and ${t.server} is not null and ${t.tool} is not null and ${t.question} is not null
+          and ${t.hint} is not null and ${t.outcome} is not null)
+        or (${t.kind} = ${literal(KnowledgeItemKindSchema.enum.searched_nothing)}
+          and ${t.fromEntityId} is null and ${t.toEntityId} is null and ${t.label} is null
+          and ${t.server} is not null and ${t.tool} is not null and ${t.question} is not null
+          and ${t.hint} is null and ${t.outcome} is null)`,
+    ),
+  ],
+);
+
+/**
+ * A run that learns (KD-2, KD-3): written with the coordinator session; deleting the conversation
+ * deletes it. The workflow has no FK here: the row only answers «which workflow».
+ */
+export const agentKnowledgeRuns = app.table(
+  'agent_knowledge_runs',
+  {
+    runId: uuid('run_id')
+      .primaryKey()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    recordId: uuid('record_id').notNull(),
+    /** Servers of the whole team: tells a round whether a lesson's tool is alive. */
+    servers: jsonb('servers').notNull(),
+    /** Calls finished up to this moment are extracted; only moves forward. Null — from the start. */
+    extractedUpTo: timestamp('extracted_up_to', { withTimezone: true }),
+    /** Extraction task in progress (Invariant 1). */
+    extractTaskId: uuid('extract_task_id'),
+    /** Extraction task of the last committed round: the trigger finds a finished extraction by it. */
+    lastExtractTaskId: uuid('last_extract_task_id'),
+    needsRound: boolean('needs_round').notNull().default(false),
+    /** Outcome of the last round; all null until the first one. */
+    lastStatus: text('last_status'),
+    lastReason: text('last_reason'),
+    lastAdded: integer('last_added'),
+    lastConfirmed: integer('last_confirmed'),
+    lastOutdated: integer('last_outdated'),
+    lastModel: text('last_model'),
+    lastAt: timestamp('last_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('agent_knowledge_runs_record_idx').on(t.recordId),
+    /** The trigger finds the run by the task of an event. */
+    index('agent_knowledge_runs_extract_task_idx')
+      .on(t.extractTaskId)
+      .where(sql`${t.extractTaskId} is not null`),
+    index('agent_knowledge_runs_last_extract_task_idx')
+      .on(t.lastExtractTaskId)
+      .where(sql`${t.lastExtractTaskId} is not null`),
+    check(
+      'agent_knowledge_runs_last_status_check',
+      isOneOf(t.lastStatus, LastExtractionStatusSchema.options),
+    ),
+    check(
+      'agent_knowledge_runs_last_reason_check',
+      isOneOf(t.lastReason, LastExtractionReasonSchema.options),
+    ),
+  ],
+);
+
+/**
+ * The question of a session and its vector (KD-6). An array, not `vector`: the row is read by key,
+ * never searched, so the table does not depend on the extension. Null vector — embeddings refused.
+ */
+export const agentKnowledgeQuestions = app.table('agent_knowledge_questions', {
+  taskId: uuid('task_id')
+    .primaryKey()
+    .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+  /** `task` or the id of the employee's message. */
+  source: text('source').notNull(),
+  model: text('model'),
+  vector: real('vector').array(),
+  createdAt: createdAt(),
+});
+
+/** The vector row of a workflow (KD-8): its pass in progress and the last embeddings outcome. */
+export const agentKnowledgeEmbedding = app.table(
+  'agent_knowledge_embedding',
+  {
+    recordId: uuid('record_id')
+      .primaryKey()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    /** Pass task in progress (Invariant 13). */
+    passTaskId: uuid('pass_task_id'),
+    needsPass: boolean('needs_pass').notNull().default(false),
+    /** Employee charged for records without a vector; null — the platform. */
+    payerId: text('payer_id'),
+    /** Reason of the last failed attempt; null — it succeeded. */
+    lastReason: text('last_reason'),
+    lastModel: text('last_model'),
+    lastAt: timestamp('last_at', { withTimezone: true }),
+  },
+  (t) => [
+    /** The trigger finds the row by the task of an event. */
+    index('agent_knowledge_embedding_pass_task_idx')
+      .on(t.passTaskId)
+      .where(sql`${t.passTaskId} is not null`),
+    check(
+      'agent_knowledge_embedding_last_reason_check',
+      isOneOf(t.lastReason, EmbeddingFailureReasonSchema.options),
+    ),
+  ],
+);
+
+/**
+ * The pgvector store of `KnowledgeVectorStore` (KD-8): the collection is the workflow, one vector
+ * per record key, carrying its model (Invariant 11).
+ */
+export const agentKnowledgeVectors = app.table(
+  'agent_knowledge_vectors',
+  {
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    /** Record key: `e12`, `r7`. */
+    key: text('key').notNull(),
+    keyKind: text('key_kind').notNull(),
+    model: text('model').notNull(),
+    vector: vector('vector').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.recordId, t.key] }),
+    check(
+      'agent_knowledge_vectors_key_kind_check',
+      isOneOf(t.keyKind, KnowledgeItemTypeSchema.options),
+    ),
+  ],
+);
+
+/** The single row of the knowledge settings (KnowledgeSettings); the migration creates it. */
+export const agentKnowledgeSettings = app.table(
+  'agent_knowledge_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    limitTokens: integer('limit_tokens').notNull().default(KNOWLEDGE_LIMIT_TOKENS_DEFAULT),
+    lessonsEnabled: boolean('lessons_enabled').notNull().default(true),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('agent_knowledge_settings_single_row_check', sql`${t.id}`),
+    check(
+      'agent_knowledge_settings_limit_tokens_check',
+      isWithin(t.limitTokens, KNOWLEDGE_LIMIT_TOKENS_MIN, KNOWLEDGE_LIMIT_TOKENS_MAX),
     ),
   ],
 );

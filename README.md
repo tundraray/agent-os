@@ -143,7 +143,7 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
 cat > infra/docker-compose.yml <<'EOF'
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16-trixie
     environment:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent
@@ -156,6 +156,37 @@ volumes:
   pgdata:
 EOF
 ```
+
+Образ — `pgvector/pgvector:pg16-trixie`: PostgreSQL 16 с расширением `vector` на Debian 13 (trixie), как у прежнего `postgres:16`. Debian тот же, поэтому версия сопоставлений (glibc 2.41) у баз на старом томе не меняется. Тег без `-trixie` собран на bookworm — он не подходит.
+
+### Переключение существующей базы разработчика на образ с pgvector
+
+Нужно один раз, если контейнер `infra-postgres-1` был поднят на `postgres:16`. Ниже порт 5433; подставьте свой `POSTGRES_PORT`. Команды — из корня репозитория.
+
+1. Копия базы вне репозитория:
+   ```bash
+   docker exec infra-postgres-1 pg_dump -U agent -d agent_os -Fc -f /tmp/agent_os.dump
+   docker cp infra-postgres-1:/tmp/agent_os.dump <папка-вне-репозитория>/agent_os.dump
+   ```
+   Размер файла больше нуля.
+2. Счёт строк каждой таблицы схемы `app` — в файл рядом с копией:
+   ```bash
+   docker exec infra-postgres-1 psql -U agent -d agent_os -Atc "select table_name, (xpath('/row/c/text()', query_to_xml('select count(*) as c from app.' || quote_ident(table_name), false, true, '')))[1]::text from information_schema.tables where table_schema='app' and table_type='BASE TABLE' order by 1" > <папка-вне-репозитория>/rows-before.txt
+   ```
+3. Пересоздать контейнер с новым образом на том же томе:
+   ```bash
+   POSTGRES_PORT=5433 docker compose -f infra/docker-compose.yml up -d postgres
+   ```
+4. Проверки:
+   ```bash
+   docker exec infra-postgres-1 psql -U agent -d agent_os -c "select version()"
+   docker exec infra-postgres-1 psql -U agent -d agent_os -c "select datname, datcollversion, pg_database_collation_actual_version(oid) from pg_database where datname <> 'template0'"
+   docker exec infra-postgres-1 psql -U agent -d agent_os -c "select name from pg_available_extensions where name='vector'"
+   ```
+   `version()` — 16.x; в каждой строке `datcollversion` равна фактической версии (у `template0` версии нет); `vector` — одна строка.
+5. Повторить шаг 2 в `rows-after.txt` и сравнить: файлы совпадают.
+
+Откат при расхождении версий сопоставлений или строк: вернуть в `infra/docker-compose.yml` строку `image: postgres:16` и снова выполнить шаг 3 — контейнер поднимется на прежнем образе с тем же томом. Если данные повреждены, восстановить копию: `docker cp <папка-вне-репозитория>/agent_os.dump infra-postgres-1:/tmp/agent_os.dump`, затем `docker exec infra-postgres-1 pg_restore -U agent -d agent_os --clean --if-exists /tmp/agent_os.dump`.
 
 `infra/nginx.conf`, для потока `/api/events`:
 
@@ -173,7 +204,7 @@ proxy_http_version 1.1;
 ```bash
 pnpm install
 pnpm db:up
-cp apps/api/.env.example apps/api/.env       # и вписать ANTHROPIC_API_KEY
+cp apps/api/.env.example apps/api/.env       # провайдеры и ключ задаются посевом seed:access или в панели
 pnpm turbo build --filter=api...
 pnpm --filter api db:migrate
 pnpm --filter api start:dev

@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16-trixie
         env:
           POSTGRES_USER: agent
           POSTGRES_PASSWORD: agent

@@ -59,6 +59,8 @@ export interface Task {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly finishedAt: Date | null;
+  /** The input the task was created with, as its handler parsed it. */
+  readonly input: unknown;
 }
 
 /** What `tasks.create` takes. */
@@ -68,6 +70,8 @@ export interface CreateTask {
   input: unknown;
   /** Creates a child of this task, outside a step; the parent must be the owner's and not finished. */
   parentId?: string;
+  /** The id of the new task, a UUID; generated when absent. A taken id is `TASK_EXISTS`. */
+  taskId?: string;
 }
 
 export interface TaskControlDeps {
@@ -106,6 +110,7 @@ function toTask(row: TaskRow): Task {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     finishedAt: row.finishedAt,
+    input: row.input,
   };
 }
 
@@ -124,58 +129,31 @@ export class TaskControl {
 
   /**
    * Creates a root task (its own root, depth 0) or, with `parentId`, a child of the owner's task
-   * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`.
+   * outside a step (same owner and root, one level deeper) in `queued`, with `task.created`. The id
+   * is `taskId` when given — `TASK_EXISTS` if a task of any owner has it — or a new one.
    * The parent is locked FOR UPDATE and must not be finished: a stop of the parent and this
    * creation are ordered by that lock (plan Notes 4, Invariant 6). Returns the `taskId`.
+   *
+   * With `tx` everything is written in the caller's transaction and nothing is retried here: the
+   * caller commits or rolls back (and retries) the whole of it, the task with it (KD-3, self-learning).
+   * The `task.created` NOTIFY goes out at that commit; the dispatcher's poll is the guarantee anyway.
    */
-  async create(request: CreateTask): Promise<string> {
-    const { db, tasks, events, logger } = this.deps;
+  async create(request: CreateTask, tx?: RuntimeTx): Promise<string> {
+    const { db, logger } = this.deps;
     const startedAt = Date.now();
     const fields = {
       type: request.type,
       ownerId: request.ownerId,
       parentId: request.parentId ?? null,
+      inCallerTx: tx !== undefined,
     };
     try {
       const input = this.checkInput(request.type, request.input);
-      const task = await retryingTransaction(db, logger, 'tasks.create', async (tx) => {
-        const taskId: string = randomUUID();
-        let lineage: { parentId: string | null; rootId: string; depth: number } = {
-          parentId: null,
-          rootId: taskId,
-          depth: 0,
-        };
-        if (request.parentId !== undefined) {
-          const parent = await tasks.lockOwned(tx, request.parentId, request.ownerId);
-          if (!parent) {
-            throw new RuntimeError('TASK_NOT_FOUND', `Task ${request.parentId} not found`);
-          }
-          if (isFinished(parent.status)) {
-            throw new RuntimeError(
-              'PARENT_FINISHED',
-              `Parent task ${parent.taskId} is ${parent.status}`,
-            );
-          }
-          lineage = {
-            parentId: parent.taskId,
-            rootId: parent.rootId,
-            depth: parent.depth + 1,
-          };
-        }
-        const row = await tasks.insert(tx, {
-          taskId,
-          type: request.type,
-          ownerId: request.ownerId,
-          input,
-          ...lineage,
-        });
-        await events.append(tx, {
-          type: RuntimeEventTypeSchema.enum['task.created'],
-          task: row,
-          payload: { type: row.type, parentId: row.parentId, depth: row.depth },
-        });
-        return row;
-      });
+      const task = tx
+        ? await this.createIn(tx, request, input)
+        : await retryingTransaction(db, logger, 'tasks.create', (own) =>
+            this.createIn(own, request, input),
+          );
       logger.info('task created', {
         ...fields,
         taskId: task.taskId,
@@ -337,6 +315,43 @@ export class TaskControl {
       });
       throw error;
     }
+  }
+
+  /** The creation's writes in `tx`: the parent locked, the task row and `task.created`. */
+  private async createIn(tx: RuntimeTx, request: CreateTask, input: unknown): Promise<TaskRow> {
+    const { tasks, events } = this.deps;
+    const taskId: string = request.taskId ?? randomUUID();
+    let lineage: { parentId: string | null; rootId: string; depth: number } = {
+      parentId: null,
+      rootId: taskId,
+      depth: 0,
+    };
+    if (request.parentId !== undefined) {
+      const parent = await tasks.lockOwned(tx, request.parentId, request.ownerId);
+      if (!parent) {
+        throw new RuntimeError('TASK_NOT_FOUND', `Task ${request.parentId} not found`);
+      }
+      if (isFinished(parent.status)) {
+        throw new RuntimeError(
+          'PARENT_FINISHED',
+          `Parent task ${parent.taskId} is ${parent.status}`,
+        );
+      }
+      lineage = { parentId: parent.taskId, rootId: parent.rootId, depth: parent.depth + 1 };
+    }
+    const row = await tasks.insert(tx, {
+      taskId,
+      type: request.type,
+      ownerId: request.ownerId,
+      input,
+      ...lineage,
+    });
+    await events.append(tx, {
+      type: RuntimeEventTypeSchema.enum['task.created'],
+      task: row,
+      payload: { type: row.type, parentId: row.parentId, depth: row.depth },
+    });
+    return row;
   }
 
   /** The interrupt under the task's lock; `undefined` when the task is not active. */

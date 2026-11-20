@@ -9,6 +9,7 @@ import {
   type AdminUserPage,
   type AdminUserSummary,
   type CreateLocalUserBody,
+  type MyRoleList,
   type PasswordChangeBody,
   type UserStatus,
 } from '@agent-os/contracts';
@@ -302,6 +303,11 @@ export class UsersService {
     });
     const roles = await rolesOfUsers(this.db, [user.id]);
     return toAdminUserSummary({ ...user, status }, roles);
+  }
+
+  /** The employee's own roles by name, for the share window (AC-03.1); no members, no other roles. */
+  async ownRoles(userId: string): Promise<MyRoleList> {
+    return roleRefs(await rolesOfUsers(this.db, [userId]));
   }
 
   /**

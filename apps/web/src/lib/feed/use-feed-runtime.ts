@@ -19,9 +19,12 @@ import {
   useSyncExternalStore,
 } from "@assistant-ui/tap/react-shim";
 
+import { LibraryErrorCode, type ChipRecord } from "@agent-os/contracts";
+
 import { logger } from "@/lib/logger";
+import { NEW_THREAD_TARGET, type ComposerSeed, type SeedTarget } from "@/lib/threads/composer-seed";
 import type { ShellServices } from "@/lib/threads/shell-services";
-import { describeApiError } from "@/lib/api/api-request";
+import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 
 import type { FeedState, FeedStore } from "./feed-store";
 import { toFeed } from "./to-feed";
@@ -36,17 +39,33 @@ function textOf(message: AppendMessage): string {
     .join("");
 }
 
+/** The chip a composer shows, with where it stands: the message carries exactly this record (Invariant 4). */
+type ComposerChip = { record: ChipRecord; composerSeed: ComposerSeed; target: SeedTarget };
+
+function chipOf(composerSeed: ComposerSeed, target: SeedTarget): ComposerChip | undefined {
+  const record = composerSeed.getState().chips.get(target);
+  return record === undefined ? undefined : { record, composerSeed, target };
+}
+
+const isRecordNotFound = (error: unknown): boolean =>
+  isApiRequestError(error) && error.code === LibraryErrorCode.RECORD_NOT_FOUND;
+
 /**
  * Sends through the store. A refused or lost message is already logged by the store and kept in
  * `sendFailure`, which the composer shows with its text (KD-4, MC-27); assistant-ui gets no error,
  * because an error there would not return the text and would mark nothing the UXRD asks for.
+ * The chip leaves the field once the message is accepted, or when the server cannot start its record
+ * (404 `RECORD_NOT_FOUND`, DC-10); any other failure keeps it for the next try (KD-5).
  */
-async function sendToFeed(feed: FeedStore, text: string): Promise<void> {
+async function sendToFeed(feed: FeedStore, text: string, chip?: ComposerChip): Promise<void> {
   try {
-    await feed.send(text);
-  } catch {
+    await feed.send(text, chip?.record);
+  } catch (error) {
     // Handled by the store: logged once in its command wrapper and recorded as `sendFailure`.
+    if (chip !== undefined && isRecordNotFound(error)) chip.composerSeed.clear(chip.target, chip.record);
+    return;
   }
+  chip?.composerSeed.clear(chip.target, chip.record);
 }
 
 function useFeedState(feed: FeedStore | null): FeedState | null {
@@ -91,6 +110,8 @@ export function useFeedRuntime(
  * list item, then the stream watches it (≤ 1 s, so the first parts of the answer are not lost), then
  * the message is sent (KD-1, KD-2). Once the feed shows the first model answer, the item asks for
  * its title once (spike S-1, c): the library asks only right after `initialize()`, before any answer.
+ * Every message carries the chip of its own composer target (custom-agents KD-5): the conversation's
+ * id, or `NEW_THREAD_TARGET` for the first message of a new one.
  */
 export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime {
   const aui = useAui();
@@ -108,20 +129,39 @@ export function useThreadFeedRuntime(services: ShellServices): AssistantRuntime 
 
   const send = useCallback(
     async (text: string): Promise<void> => {
-      if (feed !== null) return sendToFeed(feed, text);
+      const { composerSeed } = services;
+      if (feed !== null && remoteId !== undefined) return sendToFeed(feed, text, chipOf(composerSeed, remoteId));
+      // The seam of the spike «Чип в новой беседе» (custom-agents KD-5): the new conversation's chip is read
+      // before `initialize()`, which gives the item its remoteId and so moves the composer to another target.
+      const chip = chipOf(composerSeed, NEW_THREAD_TARGET);
+      const { setNewThreadSendFailure } = services.status.getState();
+      setNewThreadSendFailure(null);
       let created: string;
       try {
         ({ remoteId: created } = await aui.threadListItem.initialize());
       } catch (error) {
         logger.error("[web-shell] thread create failed", describeApiError(error));
-        // The library returns the text to the composer for this error only.
+        // The library returns the text to the composer for this error only; the chip stays at `new`.
         throw new MessageNotSentError();
       }
       setCreatedId(created);
+      // The chip follows its conversation: the created one's field holds it until the send is accepted.
+      if (chip !== undefined) composerSeed.move(NEW_THREAD_TARGET, created);
       await services.live.watch(`thread:${created}`);
-      await sendToFeed(services.feeds.forThread(created, itemId), text);
+      const createdFeed = services.feeds.forThread(created, itemId);
+      await sendToFeed(createdFeed, text, chip === undefined ? undefined : { ...chip, target: created });
+      const failure = createdFeed.getState().sendFailure;
+      if (failure === null) return;
+      // The first message was not accepted, so the conversation is empty: it is removed, and its failure
+      // (text and notice) and chip go back to the new conversation's composer. A copy of the failure: the
+      // composer returns the text of each failure object once.
+      setNewThreadSendFailure({ ...failure });
+      composerSeed.move(created, NEW_THREAD_TARGET);
+      services.listAdapter.markEmpty(created);
+      // The list adapter logs the outcome; the library opens a new conversation, which moves the URL to `/`.
+      aui.threadListItem.delete();
     },
-    [aui, feed, itemId, services],
+    [aui, feed, itemId, remoteId, services],
   );
 
   const hasModelAnswer = useSyncExternalStore(

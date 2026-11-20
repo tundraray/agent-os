@@ -3,42 +3,69 @@ import {
   AdminUserDetailSchema,
   AdminUserPageSchema,
   AdminUserSummarySchema,
-  CreateCatalogModelBodySchema,
+  BannedRecordSchema,
+  CatalogModelSchema,
   GrantSchema,
+  KnowledgeSettingsSchema,
+  LibrarySettingsSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  ModelDefaultsSchema,
+  ModelProviderCheckSchema,
+  ModelProviderViewSchema,
   ProviderListSchema,
   ProviderViewSchema,
+  RecordDetailSchema,
+  RecordSummarySchema,
   RefreshMcpToolsResponseSchema,
   RoleDetailSchema,
   RoleListSchema,
   RoleSummarySchema,
   SignInSettingsSchema,
+  ToolResultSettingsSchema,
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
+  type BannedRecord,
   type CatalogModel,
   type CreateCatalogModelBody,
+  type CreateRecordBody,
   type CreateGrantBody,
   type CreateLocalUserBody,
+  type CreateModelProviderBody,
   type CreateProviderBody,
   type CreateRoleBody,
   type Grant,
+  type KnowledgeSettings,
+  type LibrarySettings,
   type McpServerSummary,
   type McpServerView,
+  type ModelDefaults,
+  type ModelProviderCheck,
+  type ModelProviderView,
   type ProviderList,
   type ProviderView,
+  type RecordDetail,
+  type RecordSummary,
   type RefreshMcpToolsResponse,
   type RegisterMcpServerBody,
   type RoleDetail,
   type RoleList,
   type RoleSummary,
   type SignInSettings,
+  type SystemRecordAudienceBody,
+  type ToolResultSettings,
   type UpdateCatalogModelBody,
+  type UpdateKnowledgeSettingsBody,
+  type UpdateLibrarySettingsBody,
   type UpdateMcpServerBody,
+  type UpdateModelDefaultsBody,
+  type UpdateModelProviderBody,
   type UpdateProviderBody,
+  type UpdateRecordBody,
   type UpdateRoleBody,
   type UpdateSignInSettingsBody,
+  type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
 import { apiBaseUrl } from '@/lib/config';
@@ -54,8 +81,6 @@ const apiPath = (...segments: string[]): string =>
 
 const GrantListSchema = z.array(GrantSchema);
 const McpServerListSchema = z.array(McpServerSummarySchema);
-/** The catalogue row is declared as the create body's type; the contracts have no schema of their own for it. */
-const CatalogModelListSchema = z.array(CreateCatalogModelBodySchema);
 
 const users = {
   /** A page by name; an empty `query` and the first page's `null` cursor are not sent. */
@@ -142,12 +167,87 @@ const servers = {
 };
 
 const models = {
-  list: (): Promise<CatalogModel[]> => apiRequest({ path: apiPath('models'), schema: CatalogModelListSchema }),
+  list: (): Promise<CatalogModel[]> => apiRequest({ path: apiPath('models'), schema: z.array(CatalogModelSchema) }),
   create: (body: CreateCatalogModelBody): Promise<CatalogModel> =>
-    apiRequest({ path: apiPath('models'), method: 'POST', body, schema: CreateCatalogModelBodySchema }),
+    apiRequest({ path: apiPath('models'), method: 'POST', body, schema: CatalogModelSchema }),
   update: (id: string, body: UpdateCatalogModelBody): Promise<CatalogModel> =>
-    apiRequest({ path: apiPath('models', id), method: 'PATCH', body, schema: CreateCatalogModelBodySchema }),
+    apiRequest({ path: apiPath('models', id), method: 'PATCH', body, schema: CatalogModelSchema }),
   remove: (id: string): Promise<void> => apiRequest({ path: apiPath('models', id), method: 'DELETE' }),
 };
 
-export const adminApi = { users, roles, grants, providers, signInSettings, servers, models };
+const ModelProviderListSchema = z.array(ModelProviderViewSchema);
+
+/** Model providers (model-providers design-web.md, KD-2); the sign-in providers are `providers`. */
+const modelProviders = {
+  list: (): Promise<ModelProviderView[]> =>
+    apiRequest({ path: apiPath('model-providers'), schema: ModelProviderListSchema }),
+  create: (body: CreateModelProviderBody): Promise<ModelProviderView> =>
+    apiRequest({ path: apiPath('model-providers'), method: 'POST', body, schema: ModelProviderViewSchema }),
+  update: (name: string, body: UpdateModelProviderBody): Promise<ModelProviderView> =>
+    apiRequest({ path: apiPath('model-providers', name), method: 'PATCH', body, schema: ModelProviderViewSchema }),
+  remove: (name: string): Promise<void> => apiRequest({ path: apiPath('model-providers', name), method: 'DELETE' }),
+  check: (name: string): Promise<ModelProviderCheck> =>
+    apiRequest({ path: apiPath('model-providers', name, 'check'), method: 'POST', schema: ModelProviderCheckSchema }),
+};
+
+const modelDefaults = {
+  get: (): Promise<ModelDefaults> => apiRequest({ path: apiPath('model-defaults'), schema: ModelDefaultsSchema }),
+  save: (body: UpdateModelDefaultsBody): Promise<ModelDefaults> =>
+    apiRequest({ path: apiPath('model-defaults'), method: 'PUT', body, schema: ModelDefaultsSchema }),
+};
+
+const RecordSummaryListSchema = z.array(RecordSummarySchema);
+const BannedRecordListSchema = z.array(BannedRecordSchema);
+
+/** The panel's «Агенты и workflow» (design-library.md, admin routes). */
+const library = {
+  system: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'system'), schema: RecordSummaryListSchema }),
+  shared: (): Promise<RecordSummary[]> => apiRequest({ path: apiPath('library', 'shared'), schema: RecordSummaryListSchema }),
+  bans: (): Promise<BannedRecord[]> => apiRequest({ path: apiPath('library', 'bans'), schema: BannedRecordListSchema }),
+  get: (id: string): Promise<RecordDetail> => apiRequest({ path: apiPath('library', id), schema: RecordDetailSchema }),
+  create: (body: CreateRecordBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library'), method: 'POST', body, schema: RecordDetailSchema }),
+  save: (id: string, body: UpdateRecordBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library', id), method: 'PUT', body, schema: RecordDetailSchema }),
+  saveAudience: (id: string, body: SystemRecordAudienceBody): Promise<RecordDetail> =>
+    apiRequest({ path: apiPath('library', id, 'audience'), method: 'PUT', body, schema: RecordDetailSchema }),
+  remove: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id), method: 'DELETE' }),
+  /** Removes the record's holders and bans sharing it (Flow 4). */
+  close: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id, 'close'), method: 'POST' }),
+  liftBan: (id: string): Promise<void> => apiRequest({ path: apiPath('library', id, 'ban'), method: 'DELETE' }),
+  /** «Лимит ходов для новой записи». */
+  settings: (): Promise<LibrarySettings> => apiRequest({ path: apiPath('library', 'settings'), schema: LibrarySettingsSchema }),
+  saveSettings: (body: UpdateLibrarySettingsBody): Promise<LibrarySettings> =>
+    apiRequest({ path: apiPath('library', 'settings'), method: 'PUT', body, schema: LibrarySettingsSchema }),
+};
+
+/** «Самообучение workflow» on «Системные»: the knowledge limit and lessons. */
+const knowledge = {
+  settings: (): Promise<KnowledgeSettings> =>
+    apiRequest({ path: apiPath('knowledge', 'settings'), schema: KnowledgeSettingsSchema }),
+  saveSettings: (body: UpdateKnowledgeSettingsBody): Promise<KnowledgeSettings> =>
+    apiRequest({ path: apiPath('knowledge', 'settings'), method: 'PUT', body, schema: KnowledgeSettingsSchema }),
+};
+
+/** «Большие результаты инструментов» under «MCP-серверы» (tool-result-reading R-5). */
+const toolResults = {
+  settings: (): Promise<ToolResultSettings> =>
+    apiRequest({ path: apiPath('tool-results', 'settings'), schema: ToolResultSettingsSchema }),
+  saveSettings: (body: UpdateToolResultSettingsBody): Promise<ToolResultSettings> =>
+    apiRequest({ path: apiPath('tool-results', 'settings'), method: 'PUT', body, schema: ToolResultSettingsSchema }),
+};
+
+export const adminApi = {
+  users,
+  roles,
+  grants,
+  providers,
+  signInSettings,
+  servers,
+  models,
+  modelProviders,
+  modelDefaults,
+  library,
+  knowledge,
+  toolResults,
+};

@@ -3,21 +3,27 @@ import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate.js';
-import { type DefinitionCatalog, definitionOf } from '../definitions/catalog.js';
-import type { ModelClient } from '../model/model-client.js';
-import { buildProviderMessages } from '../model/provider-messages.js';
+import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
+import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
+import { type ModelClient, modelErrorMessage } from '../model/model-client.js';
+import { snapshotDefinition } from '../start/snapshot-definition.js';
+import type { HistoryEntry } from '../history/history.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
-import { type Session, type SessionPatch, sessions } from '../store/sessions.repository.js';
+import {
+  type Session,
+  type SessionPatch,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { entriesOf, rootTurnReset } from './deliver.js';
 import {
   appendWithEvent,
   callUnlessAborted,
-  FAILURE_REASONS,
   failResult,
   logStep,
-  modelErrorMessage,
   previewEntries,
+  providerMessagesOf,
   readSessionHistory,
   refusedResult,
   type StepPrelude,
@@ -44,17 +50,20 @@ export function compactionDue(session: Pick<Session, 'lastInputTokens'>, compact
 export interface CompactionStepDeps {
   /** Reads the history outside the commit: only steps of this agent write it, one at a time. */
   readonly database: Database;
-  readonly catalog: DefinitionCatalog;
   readonly registry: ToolRegistry;
   readonly modelClient: ModelClient;
   /** Gets the `access_denied` record of a refused model call (KD-6). */
   readonly audit: AccessAudit;
+  /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
+  readonly vectorStore: KnowledgeVectorStore;
 }
 
 /** The compaction step (KD-7); `prelude` — what the handler writes first (continuation). */
 export type CompactionStep = (
   ctx: StepContext,
   session: Session,
+  /** The session's entries from its last compaction on, as the handler read them. */
+  own: readonly HistoryEntry[],
   prelude?: StepPrelude,
 ) => Promise<StepResult>;
 
@@ -66,20 +75,27 @@ export type CompactionStep = (
  * the model sees the summary and what follows it, the employee reads the whole history.
  */
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
-  const { database, catalog, registry, modelClient, audit } = deps;
+  const { database, registry, modelClient, audit, vectorStore } = deps;
 
-  return async function compactionStep(ctx, session, prelude) {
+  return async function compactionStep(ctx, session, own, prelude) {
     const startedAt = Date.now();
-    const definition = definitionOf(catalog, session);
+    const { snapshot } = sessionInputOf(ctx.input);
+    const definition = snapshotDefinition(snapshot);
     const delivered = await entriesOf(database, ctx.messages);
-    const view = await readSessionHistory(database, session);
+    const view = await readSessionHistory(database, session, own);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
+    // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache.
+    const knowledge = await knowledgeBlock(
+      { database, store: vectorStore },
+      { snapshot, taskId: ctx.taskId, logger: ctx.logger },
+    );
     // History holds tool calls, and the provider takes them only with the tools defined.
     const sessionTools = await registry.sessionTools({
-      definition,
-      limits: session.limits,
+      snapshot,
       ownerId: session.ownerId,
+      agentId: ctx.taskId,
+      root: ctx.parentId === null,
     });
 
     const result = await callUnlessAborted(ctx, () =>
@@ -89,15 +105,8 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: definition.prompt,
-        messages: [
-          ...buildProviderMessages({
-            ...(view.forkPrefix === undefined ? {} : { forkPrefix: view.forkPrefix }),
-            entries: [...view.entries, ...shown],
-            calls: view.calls,
-          }),
-          { role: 'user', content: COMPACTION_REQUEST },
-        ],
+        instructions: withKnowledge(definition.prompt, knowledge),
+        messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
         tools: sessionTools,
         // The summary is not an answer the employee reads: its parts do not go to the hook.
         streamsText: false,
@@ -134,12 +143,13 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.model_error,
-        statusCode: result.error.statusCode,
+        reason: result.reason,
+        provider: result.provider,
+        statusCode: result.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.model_error,
+        reason: result.reason,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeFailureEntries,
         patch: { ...prelude?.patch },
@@ -166,11 +176,10 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     return {
       outcome: 'continue',
       commit: async (tx, effects) => {
-        const preludeEntries = await writePrelude(tx);
-        // The prelude goes first in its own append, so the summary knows the last `seq` it covers.
-        // `agents.history_appended` goes once, with the last `seq`, from the second append.
-        const before = await history.append(tx, ctx.taskId, preludeEntries);
-        const throughSeq = before.at(-1)?.seq ?? view.lastSeq;
+        // The prelude goes first in its own appends, so the summary knows the last `seq` it covers.
+        // `agents.history_appended` goes once, with the last `seq`, from the last append.
+        await history.append(tx, ctx.taskId, await writePrelude(tx));
+        const throughSeq = await history.lastSeq(tx, ctx.taskId);
         await appendWithEvent(tx, effects, ctx.taskId, [
           { kind: 'compaction', content: { summary, throughSeq } },
           { kind: 'event', content: { event: HistoryEventSchema.enum.compacted, reason: null } },

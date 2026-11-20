@@ -17,22 +17,28 @@ import {
 } from "lucide-react";
 import { useAuiState, type ToolCallMessagePartComponent } from "@assistant-ui/react";
 import {
+  IdSchema,
+  RecordKindSchema,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  type RecordKind,
   type ToolOutcome,
   type ToolRefusalReason,
 } from "@agent-os/contracts";
 import { z } from "zod";
 import { agentStatusGlyph, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
+import { useLiveRecord } from "@/components/agents/run-card";
 import { ValueRows } from "@/components/agents/value-rows";
+import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
 import { formatTime } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
+import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
-import { ACCOUNT_PATH } from "@/lib/shell-route";
+import { ACCOUNT_PATH, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 import {
   CollapsibleRoot as Collapsible,
@@ -115,43 +121,119 @@ function outcomeOf(artifact: unknown): CallOutcome {
   return outcome.data;
 }
 
-/** The `model` argument of a `start_agent` call, which MC-10 names in a model refusal (plan Notes 10). */
-function modelArgument(args: unknown): string | null {
-  if (typeof args !== "object" || args === null) return null;
-  const model: unknown = Reflect.get(args, "model");
-  return typeof model === "string" && model !== "" ? model : null;
+const RefusalDetailSchema = z.object({ model: z.string() });
+
+/** The refused model of a refusal by model: `refusalDetail.model` of the result, never the call's arguments. */
+function refusedModel(artifact: unknown): string | null {
+  const detail = RefusalDetailSchema.safeParse(field(artifact, "refusalDetail"));
+  return detail.success ? detail.data.model : null;
 }
 
+function refusalReasonOf(artifact: unknown): ToolRefusalReason | null {
+  const reason = ToolRefusalReasonSchema.safeParse(field(artifact, "refusalReason"));
+  return reason.success ? reason.data : null;
+}
+
+type ReasonLine = { content: ReactNode; hint: string | undefined };
+
 /** MC-10 or MC-22 text of a refusal; a code outside them (or none) reads as one line with the code as its hint. */
-function refusalOf(artifact: unknown, args: unknown): { text: string; hint: string | undefined } {
-  const code = textField(artifact, "refusalReason");
-  const reason = ToolRefusalReasonSchema.safeParse(code);
-  const text = reason.success
-    ? (refusalText(reason.data, modelArgument(args)) ?? REFUSAL_TEXT[reason.data])
-    : undefined;
-  return text !== undefined ? { text, hint: undefined } : { text: PLATFORM_REFUSAL_TEXT, hint: code ?? undefined };
+function refusalOf(artifact: unknown): ReasonLine {
+  const reason = refusalReasonOf(artifact);
+  const text =
+    reason === null ? undefined : (refusalText(reason, refusedModel(artifact)) ?? REFUSAL_TEXT[reason]);
+  return text !== undefined
+    ? { content: text, hint: undefined }
+    : { content: PLATFORM_REFUSAL_TEXT, hint: textField(artifact, "refusalReason") ?? undefined };
+}
+
+/** Built-in tools whose MC-16 label stands in place of the tool's own title. */
+const TOOL_LABEL = new Map([["draft_record", "Подготовить черновик"]]);
+
+/** The library's create and start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
+const LIBRARY_TOOLS = new Set(["start_agent", "start_workflow", "draft_record"]);
+
+/**
+ * The record a library call names and its kind: `agent` of `start_agent` (only a record id — not a fork
+ * or an executor's name), `workflow` of `start_workflow`, `recordId` and `kind` of `draft_record`.
+ */
+function libraryCallOf(toolName: string, args: unknown): { recordId: string | null; kind: RecordKind | null } {
+  const arg = (key: string): unknown =>
+    typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
+  const id = (value: unknown): string | null => {
+    const parsed = IdSchema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  };
+  if (toolName === "start_agent") return { recordId: id(arg("agent")), kind: "agent" };
+  if (toolName === "start_workflow") return { recordId: id(arg("workflow")), kind: "workflow" };
+  const kind = RecordKindSchema.safeParse(arg("kind"));
+  return { recordId: id(arg("recordId")), kind: kind.success ? kind.data : null };
+}
+
+function ReasonParagraph({ content, hint }: ReasonLine) {
+  return (
+    <p
+      data-slot="tool-fallback-reason"
+      title={hint}
+      className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4"
+    >
+      {content}
+    </p>
+  );
+}
+
+const LINK_CLASS = "text-foreground underline underline-offset-2";
+
+/**
+ * The refusal line of a library call: the MC-16 / MC-17 text with «Открыть» or «Открыть в редакторе» to the
+ * record's page; a refusal without a library text (`model_not_connected`, `read_only` on a colleague's
+ * record, `invalid_arguments`) keeps the general line. Whose the record is comes from the library list.
+ */
+function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; args: unknown; artifact: unknown }) {
+  const call = libraryCallOf(toolName, args);
+  // No list holds an empty id: a call without a record reads as one the list does not hold.
+  const live = useLiveRecord(call.recordId ?? "");
+  const refusal: RefusalText | null = describeRefusal(refusalReasonOf(artifact), {
+    tool: toolName,
+    kind: call.kind ?? live?.kind ?? "agent",
+    model: refusedModel(artifact),
+    recordId: call.recordId,
+    own: live?.mine === true,
+    company: live != null && live.author === null,
+  });
+  if (refusal === null) return <ReasonParagraph {...refusalOf(artifact)} />;
+  const { action } = refusal;
+  return (
+    <ReasonParagraph
+      hint={undefined}
+      content={
+        <>
+          {refusal.text}
+          {action !== null ? (
+            <>
+              {" "}
+              <ShellLink href={recordPath(action.recordId)} className={LINK_CLASS}>
+                {action.label}
+              </ShellLink>
+            </>
+          ) : null}
+        </>
+      }
+    />
+  );
 }
 
 /**
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
- * sign in to the server's account; other outcomes have none.
+ * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
  */
-function reasonLine(
-  outcome: CallOutcome,
-  artifact: unknown,
-  args: unknown,
-  server: string,
-): { content: ReactNode; hint: string | undefined } | null {
-  if (outcome === "refused") {
-    const refusal = refusalOf(artifact, args);
-    return { content: refusal.text, hint: refusal.hint };
-  }
+function reasonLine(outcome: CallOutcome, artifact: unknown, server: string): ReasonLine | null {
+  if (outcome === "refused") return refusalOf(artifact);
   if (outcome === "auth_required") {
     return {
       content: (
         <>
           Подключите аккаунт {server} в разделе «
-          <Link href={ACCOUNT_PATH} className="text-foreground underline underline-offset-2">
+          <Link href={ACCOUNT_PATH} className={LINK_CLASS}>
             Мой доступ
           </Link>
           »
@@ -189,7 +271,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const look = OUTCOME_LOOK[outcome];
   const server = textField(artifact, "server");
   const toolTitle = textField(artifact, "toolTitle");
-  const toolLabel = toolTitle ?? toolName;
+  const toolLabel = TOOL_LABEL.get(toolName) ?? toolTitle ?? toolName;
   const argLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
   const labels = argLabels.success ? argLabels.data : undefined;
   const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
@@ -202,7 +284,9 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const at =
     textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
   const time = formatTime(at);
-  const reason = reasonLine(outcome, artifact, args, server ?? toolName);
+  // The library line reads the library list from the shell, so other blocks never mount it.
+  const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
+  const reason = libraryRefusal ? null : reasonLine(outcome, artifact, server ?? toolName);
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =
@@ -256,14 +340,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           </span>
         ) : null}
       </CollapsibleTrigger>
-      {reason !== null ? (
-        <p
-          data-slot="tool-fallback-reason"
-          title={reason.hint}
-          className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4"
-        >
-          {reason.content}
-        </p>
+      {libraryRefusal ? (
+        <LibraryRefusalLine toolName={toolName} args={args} artifact={artifact} />
+      ) : reason !== null ? (
+        <ReasonParagraph {...reason} />
       ) : null}
       <CollapsibleContent
         data-slot="tool-fallback-content"

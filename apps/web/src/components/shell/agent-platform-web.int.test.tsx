@@ -19,7 +19,6 @@
 //   Contracts: docs/features/agent-platform/design-chat.md (ConversationView, AgentPageView, AgentNode, Confirmation, history `afterSeq`).
 import {
   DecisionRequestSchema,
-  InterruptRequestSchema,
   SendMessageRequestSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
   type AgentListPage,
@@ -28,7 +27,6 @@ import {
   type ConversationView,
   type DecisionRequest,
   type DecisionResponse,
-  type InterruptRequest,
   type InterruptResponse,
   type RestartResponse,
   type SendMessageRequest,
@@ -50,8 +48,13 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
+  recordDetail,
   threadList,
   threadSummary,
+  WORKFLOW_RECORD_ID,
+  workflowContent,
+  workflowOrigin,
+  workflowRunView,
   type Deferred,
 } from '@/test/fixtures';
 import { createTestLiveSource, type TestLiveSource } from '@/test/live-source';
@@ -277,7 +280,8 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   //   (invariant 2), or the draft is left next to the entry that replaced it
   // Verification items:
   // - draft visible before its history entry exists, gone (not duplicated) after the re-read that brings the entry
-  // - run card is placed directly under the brief card (CV-01), with 3 steps in order and their statuses
+  // - run card is placed directly under the brief card (CV-01), with 3 steps in order, each named by its executor
+  //   (`origin.executor`, custom-agents AC-27.1), with its task and status
   // - `GET history` after the `tree` note carries afterSeq equal to the last seq of the first load
   // - the successful start_agent / start_workflow tool call is not drawn (the run card replaces it, MC-23)
   // @category: core-functionality
@@ -286,7 +290,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   it('AC-24.1 / AC-22.2 / DC-1: live draft is replaced by its history entry, the run card sits under its brief with three steps, and the re-read repeats no entry', async () => {
     // Arrange: a chat answer with an MCP call and its result, a confirmed brief, a workflow run with two steps
     const briefArgs = {
-      template: 'research',
+      workflow: WORKFLOW_RECORD_ID,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -299,20 +303,29 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       tool: 'start_workflow',
       server: null,
       args: briefArgs,
-      content: { title: 'Исследование', question: briefArgs.question, boundaries: briefArgs.boundaries, result: briefArgs.result },
+      content: briefArgs,
       status: 'resolved',
       resolution: { approve: true, args: briefArgs },
       createdAt: fixtureTime(4),
       resolvedAt: fixtureTime(4.5),
     });
-    const step = (agentId: string, description: string, status: 'working' | 'completed', at: number) =>
-      agentNode({ agentId, parentId: 'w1', depth: 2, description, status, createdAt: fixtureTime(at) });
+    // Each step carries the team executor it runs as (custom-agents KD-7): the card names steps by it.
+    const step = (agentId: string, executor: string, description: string, status: 'working' | 'completed', at: number) =>
+      agentNode({
+        agentId,
+        parentId: 'w1',
+        depth: 2,
+        origin: { ...workflowOrigin(), executor },
+        description,
+        status,
+        createdAt: fixtureTime(at),
+      });
     const run = (status: 'working' | 'completed', steps: ReturnType<typeof step>[]) =>
       agentNode({
         agentId: 'w1',
-        definition: 'research',
+        name: 'Исследование',
+        origin: workflowOrigin(),
         description: 'Исследование',
-        template: { name: 'research', title: 'Исследование' },
         status,
         createdAt: fixtureTime(5),
         children: steps,
@@ -350,9 +363,19 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
         entries: firstEntries,
         decisions: [brief],
         agents: [
-          run('working', [step('s1', 'Поиск в логах', 'completed', 5.1), step('s2', 'Разбор ошибок', 'working', 5.2)]),
+          run('working', [
+            step('s1', 'Логи', 'Поиск в логах', 'completed', 5.1),
+            step('s2', 'Разбор', 'Разбор ошибок', 'working', 5.2),
+          ]),
         ],
       }),
+    );
+    // The card reads the run's view (custom-agents KD-7); the whole team is called, so no «не вызывался» rows.
+    const team = ['Логи', 'Разбор', 'Сводка'].map((name) => ({ name, role: `Роль ${name}`, maxRuns: 1, final: name === 'Сводка' }));
+    server.use(
+      http.get(`${API}/api/agents/w1/run`, () =>
+        HttpResponse.json(workflowRunView({ coordinator: run('working', []), team })),
+      ),
     );
     const { live } = await openConversation('Смотрю логи.');
 
@@ -368,12 +391,12 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       'Вы: Разберись, почему падает ночная выгрузка',
       'Ответ: Смотрю логи. · 1 вызов инструмента',
       'Ответ: Готовлю бриф.',
-      'Решение: Бриф: Почему падает выгрузка? (approved)',
+      'Решение: Задание: Почему падает выгрузка? (approved)',
     ];
     await waitFor(() =>
       expect(feedItems()).toEqual([
         ...head,
-        'Запуск: Исследование: Работает — Поиск в логах, Завершён; Разбор ошибок, Работает',
+        'Запуск: Исследование: Работает — Логи, Поиск в логах, Завершён; Разбор, Разбор ошибок, Работает',
         'Ответ: Запустил исследование, жду отчёт.',
       ]),
     );
@@ -400,9 +423,9 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
       ],
       agents: [
         run('completed', [
-          step('s1', 'Поиск в логах', 'completed', 5.1),
-          step('s2', 'Разбор ошибок', 'completed', 5.2),
-          step('s3', 'Сводка', 'completed', 5.3),
+          step('s1', 'Логи', 'Поиск в логах', 'completed', 5.1),
+          step('s2', 'Разбор', 'Разбор ошибок', 'completed', 5.2),
+          step('s3', 'Сводка', 'Итог по найденному', 'completed', 5.3),
         ]),
       ],
     };
@@ -412,7 +435,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
     await waitFor(() =>
       expect(feedItems()).toEqual([
         ...head,
-        'Запуск: Исследование: Завершён — Поиск в логах, Завершён; Разбор ошибок, Завершён; Сводка, Завершён',
+        'Запуск: Исследование: Завершён — Логи, Поиск в логах, Завершён; Разбор, Разбор ошибок, Завершён; Сводка, Итог по найденному, Завершён',
         'Ответ: Запустил исследование, жду отчёт.',
         'Отчёт: Исследование',
       ]),
@@ -421,7 +444,7 @@ describe('Agent platform web: the conversation feed, live and after a re-read (U
   });
 });
 
-describe('Agent platform web: the queue tray and "Прервать и отправить" (UC-2)', () => {
+describe('Agent platform web: the queue tray and "Прервать" (UC-2)', () => {
   // AC: AC-23.1 "Given агент открыт, when сотрудник отправляет сообщение, then оно видно как ожидающее до доставки и доставляется по FR-07."
   // AC: AC-16.1 "Given чат отвечает, when сотрудник отправляет новое сообщение, then оно принято, видно в беседе как ожидающее и учитывается чатом на ближайшей границе (FR-07)."
   // AC: AC-16.2 "Given чат отвечает, when сотрудник прерывает ответ, then чат прекращает текущую операцию по FR-08."
@@ -429,12 +452,12 @@ describe('Agent platform web: the queue tray and "Прервать и отпра
   // Behavior: /chat/a with chat status `working`
   //   → send message 1: POST messages answers 202 → the composer clears, the message stands in the tray; the re-read now has it in history
   //     → the tray is empty, the message is in the feed at its delivery place
-  //   → type text 2 and press "Прервать и отправить": POST interrupt → the text is at once at the end of the feed, focus in the field;
-  //     the re-read still has it in `pending` → it stays at the end of the feed and the tray does not show it
+  //   → type text 2 and press "Прервать": POST interrupt carries no body → the text stays in the field, focus in the field;
+  //     the re-read adds the interrupt event → the text is neither in the feed nor in the tray
   //   → send message 3: POST messages answers 500 → the text is back in the field with the MC-27 line, nothing in the tray
   // Catches: an accepted message not visible between the 202 and the re-read (silent pause), a tray entry that outlives its delivery
-  //   or duplicates a `pending` record that the feed already draws (invariant 3), a rejected message that is kept in the tray or
-  //   loses the user's text
+  //   or duplicates a `pending` record that the feed already draws (invariant 3), an interrupt that sends or clears the typed text,
+  //   a rejected message that is kept in the tray or loses the user's text
   // Verification items:
   // - "Отправить" stays enabled while the chat is `working` (no isRunning passed to assistant-ui, KD-1)
   // - tray entry removed only when the same messageId shows up in the feed (invariant 3)
@@ -442,7 +465,7 @@ describe('Agent platform web: the queue tray and "Прервать и отпра
   // @category: core-functionality
   // @dependency: FeedStore (optimistic entries), toFeed, QueueTray, InterruptButton, Composer, threadsApiClient, MSW
   // @complexity: high
-  it('AC-23.1 / AC-16.1 / AC-16.2 / DC-2: an accepted message stands in the tray then in the feed; "Прервать и отправить" goes straight to the feed; a 500 returns the text with MC-27', async () => {
+  it('AC-23.1 / AC-16.1 / AC-16.2 / DC-2: an accepted message stands in the tray then in the feed; "Прервать" sends no text and keeps the field; a 500 returns the text with MC-27', async () => {
     // Arrange: the chat is `working`; the first message is accepted, the next one fails with 500
     const firstEntries = [
       historyEntry({ kind: 'task', seq: 1, content: { text: 'Собери отчёт по продажам' } }),
@@ -457,10 +480,10 @@ describe('Agent platform web: the queue tray and "Прервать и отпра
       }),
     );
     const queued = 'Добавь итоги за квартал';
-    const urgent = 'Хватит, сделай короче';
+    const typed = 'Хватит, сделай короче';
     const refused = 'Ещё вопрос';
     const sendBodies: SendMessageRequest[] = [];
-    const interruptBodies: InterruptRequest[] = [];
+    const interruptBodies: string[] = [];
     server.use(
       http.post(`${API}/api/threads/a/messages`, async ({ request }) => {
         const body = SendMessageRequestSchema.parse(await request.json());
@@ -475,14 +498,13 @@ describe('Agent platform web: the queue tray and "Прервать и отпра
         return HttpResponse.json({ messageId: 'm1' } satisfies SendMessageResponse, { status: 202 });
       }),
       http.post(`${API}/api/threads/a/interrupt`, async ({ request }) => {
-        interruptBodies.push(InterruptRequestSchema.parse(await request.json()));
+        interruptBodies.push(await request.text());
         conversation.view = {
           ...conversation.view,
           entries: [
             ...conversation.view.entries,
             historyEntry({ kind: 'event', seq: 4, content: { event: 'interrupted', reason: null } }),
           ],
-          pending: [pendingMessage({ messageId: 'm2', text: urgent, interrupt: true, createdAt: fixtureTime(5) })],
         };
         return HttpResponse.json({ outcome: 'interrupted' } satisfies InterruptResponse);
       }),
@@ -521,34 +543,26 @@ describe('Agent platform web: the queue tray and "Прервать и отпра
     expect(feedItems()).toEqual(['Вы: Собери отчёт по продажам', 'Ответ: Начинаю.', `Вы: ${queued}`]);
     expect(breaches).toEqual([]);
 
-    // Act 2: «Прервать и отправить»; the re-read after the interrupt is held
-    const afterInterrupt = conversation.holdNextRead();
-    await user.type(composer, urgent);
-    await user.click(screen.getByRole('button', { name: 'Прервать и отправить' }));
+    // Act 2: «Прервать» with text in the field: the button keeps its name and takes no text along
+    await user.type(composer, typed);
+    await user.click(screen.getByRole('button', { name: 'Прервать' }));
 
-    // Assert 2a: at once at the end of the feed, not in the tray; the field is empty and focused
-    await waitFor(() => expect(feedItems().at(-1)).toBe(`Вы: ${urgent}`));
-    expect(tray()).toBeNull();
-    expect(composer).toHaveValue('');
-    expect(composer).toHaveFocus();
-    expect(interruptBodies).toEqual([{ text: urgent }]);
-
-    // Act 2b: the re-read still holds it in `pending` (interrupt) and adds the interrupt event
-    afterInterrupt.resolve();
-
-    // Assert 2b: it stays at the end of the feed and the tray does not show it
+    // Assert 2: the request has no body; the re-read adds the event; the text stays in the focused field only
     await waitFor(() =>
       expect(feedItems()).toEqual([
         'Вы: Собери отчёт по продажам',
         'Ответ: Начинаю.',
         `Вы: ${queued}`,
         'Событие: Прервано вами',
-        `Вы: ${urgent}`,
       ]),
     );
+    expect(interruptBodies).toEqual(['']);
     expect(tray()).toBeNull();
+    expect(composer).toHaveValue(typed);
+    expect(composer).toHaveFocus();
 
     // Act 3: the server refuses the next message
+    await user.clear(composer);
     await user.type(composer, refused);
     await user.click(screen.getByRole('button', { name: 'Отправить' }));
 
@@ -567,25 +581,25 @@ describe('Agent platform web: the decision card (UC-3)', () => {
   // AC: AC-28.2 "Given бриф ждёт, when сотрудник подтверждает его, в том числе исправив текст, then запускается один workflow, и его агенты получают подтверждённый бриф, но не историю беседы."
   // AC: AC-28.3 "Given бриф ждёт, when сотрудник отказывается, then workflow не запускается, а чат получает результат «отклонено пользователем» (как AC-12.4)."
   // Behavior: /chat/a with an open brief and an open mutating-action request of a background agent
-  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `template` from the Confirmation
-  //     unchanged and the three brief fields with the edited question → the card shows «Бриф подтверждён», focus is on the card
+  //   → edit the brief question and press "Запустить с правками": POST decisions carries approve, the `workflow` from the Confirmation
+  //     unchanged and the three brief fields with the edited question → the card shows «Задание подтверждено» (MC-21), focus is on the card
   //   → press "Отклонить" on the action request, the first POST fails with a network error → the card returns to "Ждёт" with the MC-19
   //     error line (role="alert") → repeat the same button: the card shows «Отклонено»
-  // Catches: the brief decision sent without `template` or with the original instead of the edited text (the workflow would start from
+  // Catches: the brief decision sent without `workflow` or with the original instead of the edited text (the workflow would start from
   //   the wrong brief), a failed decision that leaves the card stuck in "Отправка" or loses the retry button
   // Verification items:
-  // - request body of the brief decision: approve true, template as in the Confirmation, question = edited value
+  // - request body of the brief decision: approve true, workflow as in the Confirmation, question = edited value
   // - the focus moves to the card container after the outcome
   // - the error line of the failed decision is announced inside the card; the retry button is the same control
   // @category: core-functionality
   // @dependency: FeedStore.decide, toFeed (decisions placement), DecisionCard, threadsApiClient, MSW
   // @complexity: medium
-  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its template and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
+  it('AC-24.2 / AC-28.2 / AC-28.3: an edited brief is sent with its workflow and the card confirms; a failed decline shows MC-19 and the retry gives "Отклонено"', async () => {
     // Arrange: the clock is on the fixture day, so outcome times read «ЧЧ:ММ» (FIXTURE_TIME 10:00Z = 11:00 Berlin)
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-28T12:00:00+01:00'));
     const briefArgs = {
-      template: 'research',
+      workflow: WORKFLOW_RECORD_ID,
       question: 'Почему падает выгрузка?',
       boundaries: 'Только логи за неделю',
       result: 'Короткий отчёт',
@@ -598,7 +612,7 @@ describe('Agent platform web: the decision card (UC-3)', () => {
       tool: 'start_workflow',
       server: null,
       args: briefArgs,
-      content: { title: 'Исследование', question: briefArgs.question, boundaries: briefArgs.boundaries, result: briefArgs.result },
+      content: briefArgs,
       createdAt: fixtureTime(3),
     });
     const ticket = confirmation({
@@ -638,6 +652,12 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     const decisionBodies: { decisionId: string; body: DecisionRequest }[] = [];
     let ticketFailures = 1;
     server.use(
+      // The open brief card reads its workflow's record for the self-learning line (self-learning KD-6).
+      http.get(`${API}/api/library/${WORKFLOW_RECORD_ID}`, () =>
+        HttpResponse.json(
+          recordDetail({ id: WORKFLOW_RECORD_ID, kind: 'workflow', content: workflowContent({ selfLearning: false }) }),
+        ),
+      ),
       http.post(`${API}/api/decisions/:decisionId`, async ({ request, params }) => {
         const decisionId = String(params['decisionId']);
         const body = DecisionRequestSchema.parse(await request.json());
@@ -672,22 +692,22 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     };
 
     // Act 1: edit the brief question and launch with the edits
-    const briefCard = await screen.findByRole('group', { name: 'Бриф: Почему падает выгрузка?' });
+    const briefCard = await screen.findByRole('group', { name: 'Задание: Почему падает выгрузка?' });
     await user.click(within(briefCard).getByRole('button', { name: 'Исправить' }));
     const question = within(briefCard).getByRole('textbox', { name: 'Вопрос' });
     await user.clear(question);
     await user.type(question, 'Почему падает ночная выгрузка?');
     await user.click(within(briefCard).getByRole('button', { name: 'Запустить с правками' }));
 
-    // Assert 1: approve with the template unchanged and the edited question; the card confirms and takes focus
-    await waitFor(() => expect(within(cardOf('d-brief')).getByText('Бриф подтверждён · 11:01')).toBeInTheDocument());
+    // Assert 1: approve with the workflow unchanged and the edited question; the card confirms and takes focus
+    await waitFor(() => expect(within(cardOf('d-brief')).getByText('Задание подтверждено · 11:01')).toBeInTheDocument());
     expect(decisionBodies).toEqual([
       {
         decisionId: 'd-brief',
         body: {
           approve: true,
           args: {
-            template: 'research',
+            workflow: WORKFLOW_RECORD_ID,
             question: 'Почему падает ночная выгрузка?',
             boundaries: 'Только логи за неделю',
             result: 'Короткий отчёт',
@@ -854,8 +874,8 @@ describe('Agent platform web: tree, agent page and controls (UC-4)', () => {
     live.emit('ready', {});
     await waitFor(() => expect(agents.afterSeqs['c1']).toEqual([0, 3]));
 
-    // Assert (agent page): the task under its caption, the answer with its tool call, the status in the header (AC-22.1)
-    expect(screen.getByText('Задание')).toBeInTheDocument();
+    // Assert (agent page): the task under its caption «Поручение» (MC-21), the answer with its tool call, the status in the header (AC-22.1)
+    expect(screen.getByText('Поручение')).toBeInTheDocument();
     expect(title).toHaveTextContent('Поиск ошибок');
     expect(within(agentHeader()).getByText('Работает')).toBeInTheDocument();
 

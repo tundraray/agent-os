@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { adminNewPath, adminPath, adminRecordPath, agentPath, parseShellRoute, threadPath } from './shell-route';
+import {
+  adminKnowledgePath,
+  adminLibraryTabPath,
+  adminNewPath,
+  adminPath,
+  adminRecordPath,
+  agentPath,
+  knowledgePath,
+  parseShellRoute,
+  recordPath,
+  threadPath,
+} from './shell-route';
 
 describe('lib/shell-route', () => {
   it.each([
@@ -43,6 +54,27 @@ describe('lib/shell-route', () => {
     expect(parseShellRoute(agentPath(id))).toEqual({ kind: 'agent', agentId: id });
   });
 
+  // KD-1: the employee's library pages; `new/agent` and `new/workflow` are parsed before a record id.
+  const libraryList = { kind: 'library', page: { kind: 'list' } };
+  it.each([
+    { pathname: '/library', expected: libraryList },
+    { pathname: '/library/r1', expected: { kind: 'library', page: { kind: 'record', id: 'r1' } } },
+    { pathname: '/library/r%2F1', expected: { kind: 'library', page: { kind: 'record', id: 'r/1' } } },
+    { pathname: '/library/new/agent', expected: { kind: 'library', page: { kind: 'new', recordKind: 'agent' } } },
+    { pathname: '/library/new/workflow', expected: { kind: 'library', page: { kind: 'new', recordKind: 'workflow' } } },
+    { pathname: '/library/new/other', expected: libraryList },
+    // Self-learning KD-2: a workflow's knowledge is parsed before a single record id, otherwise it opens the list.
+    { pathname: '/library/abc/knowledge', expected: { kind: 'library', page: { kind: 'knowledge', id: 'abc' } } },
+    { pathname: '/library/a%2Fb/knowledge', expected: { kind: 'library', page: { kind: 'knowledge', id: 'a/b' } } },
+    { pathname: '/library/knowledge', expected: { kind: 'library', page: { kind: 'record', id: 'knowledge' } } },
+    { pathname: '/library/abc/knowledge/x', expected: libraryList },
+    { pathname: '/library/abc/knowledge/', expected: libraryList },
+    { pathname: '/library/', expected: libraryList },
+    { pathname: '/libraryx', expected: { kind: 'chat' } },
+  ])('library addresses open the list, a record or a new record: $pathname', ({ pathname, expected }) => {
+    expect(parseShellRoute(pathname)).toEqual(expected);
+  });
+
   const usersList = { kind: 'admin', section: 'users', page: { kind: 'list' } };
   it.each([
     { pathname: '/admin', expected: usersList },
@@ -73,4 +105,36 @@ describe('lib/shell-route', () => {
     expect(adminNewPath('sign-in')).toBe('/admin/sign-in/new');
     expect(adminNewPath('servers')).toBe('/admin/register-server');
   });
+
+  // KD-1, DC-6: the panel's «Агенты и workflow» keeps its tab and its new-record kind in the path, so a reload and
+  // «Назад» return the same tab; `shared`, `bans` and `new/…` are parsed before a record id.
+  const libraryTab = (tab: string) => ({ kind: 'admin', section: 'library', page: { kind: 'list', tab } });
+  it.each([
+    { pathname: '/admin/library', expected: libraryTab('system') },
+    { pathname: '/admin/library/shared', expected: libraryTab('shared') },
+    { pathname: '/admin/library/bans', expected: libraryTab('bans') },
+    { pathname: '/admin/library/new/agent', expected: { kind: 'admin', section: 'library', page: { kind: 'new', recordKind: 'agent' } } },
+    { pathname: '/admin/library/new/workflow', expected: { kind: 'admin', section: 'library', page: { kind: 'new', recordKind: 'workflow' } } },
+    { pathname: '/admin/library/r%2F1', expected: { kind: 'admin', section: 'library', page: { kind: 'record', key: 'r/1' } } },
+    { pathname: '/admin/library/new/other', expected: usersList },
+    // Self-learning KD-2: a workflow's knowledge is parsed after the tabs and `new/…`, before a single record key.
+    { pathname: '/admin/library/abc/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'knowledge', key: 'abc' } } },
+    { pathname: '/admin/library/a%2Fb/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'knowledge', key: 'a/b' } } },
+    { pathname: '/admin/library/knowledge', expected: { kind: 'admin', section: 'library', page: { kind: 'record', key: 'knowledge' } } },
+    { pathname: '/admin/library/abc/knowledge/x', expected: usersList },
+    { pathname: '/admin/library/abc/knowledge/', expected: usersList },
+    { pathname: '/admin/users/abc/knowledge', expected: usersList },
+  ])('panel library addresses open a tab, a new record or a record: $pathname', ({ pathname, expected }) => {
+    expect(parseShellRoute(pathname)).toEqual(expected);
+  });
+
+  it('encodes a record id and a tab into an address that parses back to the same page', () => {
+    expect(recordPath('a/b')).toBe('/library/a%2Fb');
+    expect(parseShellRoute(recordPath('a/b'))).toEqual({ kind: 'library', page: { kind: 'record', id: 'a/b' } });
+    expect(adminLibraryTabPath('bans')).toBe('/admin/library/bans');
+    expect(parseShellRoute(adminLibraryTabPath('bans'))).toEqual(libraryTab('bans'));
+    expect(knowledgePath('a/b')).toBe('/library/a%2Fb/knowledge');
+    expect(adminKnowledgePath('a/b')).toBe('/admin/library/a%2Fb/knowledge');
+  });
+
 });

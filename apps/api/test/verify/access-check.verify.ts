@@ -14,12 +14,12 @@ import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 import { AccessService } from '../../src/access/access.service.js';
 import {
-  addModel,
   allowRole,
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
+  useRunModels,
 } from '../support/access.js';
 import { createTestApp } from '../support/createTestApp.js';
 import { runName } from '../support/mcp-servers.js';
@@ -53,18 +53,20 @@ describe('UC-N1: the check before a model call stays in its budget for an employ
     async () => {
       // Given: one app with the run's servers registered and the run's model as the default
       const harness = await createTestApp({
-        defaultModel: MODEL,
         mcpServers: ['logs', 'backoffice', 'tracker'],
       });
       const roles: string[] = [];
       const users: string[] = [];
+      let restoreModels: (() => Promise<void>) | undefined;
       try {
         const admin = await seedSuperAdmin(
           harness.app,
           `verify-admin-${randomUUID()}`,
         );
         users.push(admin.id);
-        await addModel(harness.app, admin, { id: MODEL, ...HAIKU_TEST_PRICES });
+        restoreModels = await useRunModels(harness.app, admin, {
+          chat: { id: MODEL, ...HAIKU_TEST_PRICES },
+        });
         const owner = await createEmployee(harness.app, admin);
         users.push(owner.id);
 
@@ -135,6 +137,7 @@ describe('UC-N1: the check before a model call stays in its budget for an employ
         expect(p95Ms, 'check p95, ms').toBeLessThanOrEqual(CHECK_P95_BUDGET_MS);
       } finally {
         try {
+          await restoreModels?.();
           await removeRunRows(harness.pool, { models: [MODEL], roles, users });
         } finally {
           await harness.close();

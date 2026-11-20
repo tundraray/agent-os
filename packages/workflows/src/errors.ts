@@ -1,6 +1,6 @@
 /** Error codes of workflows operations (design-workflows.md, Error handling). */
 export type WorkflowsErrorCode =
-  /** The run does not exist, belongs to another owner, or the agent is not a template's coordinator. */
+  /** The run does not exist, belongs to another owner, or the agent has no workflow snapshot. */
   'RUN_NOT_FOUND';
 
 /** An expected refusal of a workflows operation; the caller maps `code` to its own answer. */

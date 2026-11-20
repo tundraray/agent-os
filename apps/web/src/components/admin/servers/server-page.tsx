@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { LoaderCircle, WrenchIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { McpErrorCode, type McpServerView, type McpToolView } from '@agent-os/contracts';
+import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -19,7 +20,7 @@ import { takeAdminConnectReturn } from '@/lib/mcp/connect-return';
 import { adminPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { AdminForm, CAPTION, CONTROL_SIZE, describeRefusal, FormError } from '../admin-form';
-import { AdminPageHeader, RecordPlaceholder } from '../admin-header';
+import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
@@ -170,13 +171,13 @@ export function ServerPage({ name }: { name: string }) {
 
   return (
     <>
-      <AdminPageHeader parent="servers" title={data.name} badge={<ServerStatusBadge status={data.status} />}>
+      <PageHeader area={PANEL_TITLE} parent={sectionParent('servers')} title={data.name} badge={<ServerStatusBadge status={data.status} />}>
         <Button variant="outline" size="sm" className={CONTROL_SIZE} disabled={refreshing} onClick={() => void refresh()}>
           {refreshing && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
           {refreshing ? TEXT.refreshing : TEXT.refresh}
         </Button>
         <ActionsMenu name={data.name} actions={[{ label: TEXT.remove, onSelect: () => setDeleting(true) }]} />
-      </AdminPageHeader>
+      </PageHeader>
       <div className="flex max-w-240 flex-col gap-6">
         {/* Under the header, as on a provider's page: a refusal reads under the switch, which the header would clip. */}
         <SavingSwitch

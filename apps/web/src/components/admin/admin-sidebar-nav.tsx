@@ -1,9 +1,9 @@
 'use client';
 
 import type { Ref } from 'react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ArrowLeftIcon } from 'lucide-react';
+import { ShellLink } from '@/components/shell/shell-link';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   SidebarGroup,
@@ -20,7 +20,8 @@ import { ADMIN_SECTIONS } from './admin-sections';
 /** UXRD MC-18. */
 const TEXT = { back: 'К чату', panel: 'Панель' } as const;
 
-const SKELETON_WIDTHS = ['w-3/5', 'w-2/5', 'w-1/2', 'w-3/5', 'w-2/5'] as const;
+/** One skeleton row per section of `ADMIN_SECTIONS`. */
+const SKELETON_WIDTHS = ['w-3/5', 'w-2/5', 'w-1/2', 'w-3/5', 'w-2/5', 'w-1/2'] as const;
 
 const itemClass = (isMobile: boolean): string =>
   cn(
@@ -40,7 +41,7 @@ type AdminSidebarNavProps = {
 };
 
 /**
- * AD-01: «К чату», the «Панель» label and the five sections in place of «Новый чат», «Агенты» and the history.
+ * AD-01: «К чату», the «Панель» label and the panel's sections in place of «Новый чат», «Агенты» and the history.
  * The selected section is marked as the active thread (SB-06).
  */
 export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebarNavProps) {
@@ -55,7 +56,7 @@ export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebar
           <SidebarMenuButton
             tooltip={isMobile ? undefined : TEXT.back}
             className={itemClass(isMobile)}
-            render={<Link ref={backRef} href="/" />}
+            render={<ShellLink ref={backRef} href="/" />}
           >
             <ArrowLeftIcon aria-hidden />
             <span>{TEXT.back}</span>
@@ -84,7 +85,7 @@ export function AdminSidebarNav({ loading, backRef, onMobilePick }: AdminSidebar
                     isActive={isActive}
                     tooltip={isMobile ? undefined : title}
                     className={itemClass(isMobile)}
-                    render={<Link href={path} aria-current={isActive ? 'page' : undefined} onClick={isMobile ? onMobilePick : undefined} />}
+                    render={<ShellLink href={path} aria-current={isActive ? 'page' : undefined} onClick={isMobile ? onMobilePick : undefined} />}
                   >
                     <Icon aria-hidden />
                     <span className="flex-1 truncate">{title}</span>

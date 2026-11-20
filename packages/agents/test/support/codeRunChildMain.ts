@@ -1,5 +1,11 @@
 import { createAgents, parseAgentsConfig } from '@agent-os/agents';
-import { createAccessGateDouble, createScriptedModel, type ScriptedModel } from '@agent-os/agents/testing';
+import {
+  createAccessGateDouble,
+  createLibraryDouble,
+  createScriptedEmbeddings,
+  createScriptedModel,
+  type ScriptedModel,
+} from '@agent-os/agents/testing';
 import { consoleSink, createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
 import { createDatabase } from '@agent-os/db';
@@ -8,7 +14,6 @@ import {
   CHILD_MODEL,
   CHILD_SCENARIO_ENV,
   type ChildScenario,
-  codeRunDefinition,
   readRun,
   type ScenarioServers,
   writeRun,
@@ -22,7 +27,7 @@ import {
  * process, all from the packages' built `dist`. It reads its environment — `DATABASE_URL`, the Runtime
  * settings (workers on, short lease and reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
  * settings and the run's server names) — and logs every record as a JSON line to the console, which the
- * harness parses. It creates no agents and registers no server: the test process does. IPC:
+ * harness parses. It creates no agents and registers no server or model provider: the test process does. IPC:
  * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` stops the workers, the agents and the
  * pool, and exits 0. The test kills it from outside.
  */
@@ -91,10 +96,17 @@ async function main(): Promise<void> {
     config: agentsConfig,
     turnClient: scenarioModel(scenario.servers).turnClient,
     // Every owner of these tests is active; the audit hook is not asserted in the child.
-    access: createAccessGateDouble({ servers: scenario.access, prices: CHILD_MODEL_PRICES }),
+    access: createAccessGateDouble({
+      servers: scenario.access,
+      prices: CHILD_MODEL_PRICES,
+      defaultChatModel: CHILD_MODEL,
+    }),
+    // A child calls no embeddings; the double keeps the real provider client out of the test anyway.
+    embeddingClient: createScriptedEmbeddings().client,
     audit: async () => {},
+    // Steps read the snapshot of their run from the task input; only the test process starts runs.
+    library: createLibraryDouble(),
   });
-  agents.definitions.register(codeRunDefinition(scenario.servers));
   await agents.start();
 
   process.on('message', (message: HarnessMessage) => {

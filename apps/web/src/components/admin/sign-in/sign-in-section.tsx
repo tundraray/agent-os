@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { PageHeader } from '@/components/shell/page-header';
 import { buttonVariants } from '@/components/ui/button';
 import { adminNewPath, type AdminPage } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
-import { AdminPageHeader } from '../admin-header';
+import { PANEL_TITLE } from '../admin-header';
 import { adminSectionTitle } from '../admin-sections';
 import { NewProviderForm } from './new-provider-form';
 import { ProviderPage } from './provider-page';
@@ -28,11 +29,11 @@ export function SignInSection({ page }: SignInSectionProps) {
   if (page.kind === 'record') return <ProviderPage key={page.key} id={page.key} />;
   return (
     <>
-      <AdminPageHeader title={adminSectionTitle('sign-in')}>
+      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('sign-in')}>
         <Link href={adminNewPath('sign-in')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
           {TEXT.addProvider}
         </Link>
-      </AdminPageHeader>
+      </PageHeader>
       <div className="flex max-w-240 flex-col gap-8">
         <ProvidersTable />
         <SignInSettingsForm />

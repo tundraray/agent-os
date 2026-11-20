@@ -443,7 +443,7 @@ sequenceDiagram
     A-->>C: id сообщения
     C-->>W: 202, запись видна в pending
     alt прерывание
-        W->>C: POST interrupt с текстом или без
+        W->>C: POST interrupt
         C->>A: interrupt
         Note over R,DB: попытка шага отсечена, сообщение interrupt в очереди
         A-->>C: interrupted
@@ -459,11 +459,11 @@ sequenceDiagram
     C->>W: SSE tree
 ```
 
-**Outcome:** сообщение стоит в истории после результата инструмента или конца хода (AC-07.1, AC-07.3), пока ждёт — в `pending` вида беседы. Прерывание с текстом сразу продолжает чат этим текстом, без текста оставляет корень в статусе «прерван» (AC-08.1, AC-08.2). Пока бриф или действие чата ждёт решения, новое сообщение не вытесняет запрос и ждёт в `pending` до решения (UXRD, «Чат ждёт решения»).
+**Outcome:** сообщение стоит в истории после результата инструмента или конца хода (AC-07.1, AC-07.3), пока ждёт — в `pending` вида беседы. Прерывание закрывает открытые вызовы. Если сообщения уже ждали в `pending`, шаг берёт их вместе с прерыванием, и чат продолжает с ними, иначе корень остаётся в статусе «прерван» (AC-08.1, AC-08.2). Пока бриф или действие чата ждёт решения, новое сообщение не вытесняет запрос и ждёт в `pending` до решения (UXRD, «Чат ждёт решения»).
 
 **Failure handling:**
 
-- Чат ждёт решения или уже свободен → `interrupt` отвечает `not_active`; текст, если был, уходит обычным `send` и ждёт в `pending` или будит чат, без текста ничего не меняется.
+- Чат ждёт решения или уже свободен → `interrupt` отвечает `not_active`, ничего не меняется.
 - Пустой или длиннее `CHAT_MESSAGE_MAX_LENGTH` текст → 400 `VALIDATION_FAILED`, очередь не тронута.
 - Сеть оборвалась до ответа → веб не знает, принято ли сообщение, и перечитывает вид: принятое видно в `pending` или истории.
 
@@ -701,7 +701,7 @@ sequenceDiagram
 - **`GET /threads/:threadId/history?afterSeq`** — `ConversationView`; `afterSeq` по умолчанию 0.
 - **`GET /threads/:threadId/agents`** — дерево агентов беседы без корня, массив `AgentNode`; для абзаца MC-26 и живого обновления списка агентов.
 - **`POST /threads/:threadId/messages`** с `text` — первое сообщение создаёт корень, остальные идут в очередь (DC-1). Ответ 202 с `messageId`, у первого сообщения он пуст: оно становится заданием. Текст после обрезки — от 1 до `CHAT_MESSAGE_MAX_LENGTH` символов.
-- **`POST /threads/:threadId/interrupt`** с необязательным `text` — 200 с `outcome`: `interrupted` или `not_active` (у беседы без корня — `not_active`). При `not_active` с текстом API отправляет текст как обычное сообщение и возвращает `not_active` с `messageId`, поэтому текст «Прервать и отправить» не теряется (FR-16).
+- **`POST /threads/:threadId/interrupt`** без тела — 200 с `outcome`: `interrupted` или `not_active` (у беседы без корня — `not_active`). Новое сообщение, пока чат работает, идёт через `POST /threads/:threadId/messages` (FR-16).
 
 **Агенты** (`AgentsController`). Корень беседы для этих маршрутов не существует: `AGENT_NOT_FOUND`.
 
@@ -711,7 +711,7 @@ sequenceDiagram
 - **`GET /agents/:agentId/inherited?afterSeq`** — записи истории родителя ответвления до `throughSeq` с тем же постраничным правилом; у агента без ответвления — пусто (AV-05).
 - **`GET /agents/:agentId/run`** — `WorkflowRunView` из `runs.get`; не запуск — 404 `RUN_NOT_FOUND`.
 - **`POST /agents/:agentId/messages`** с `text` — `send`, 202 с `messageId`; агенту в конечном статусе — продолжение с историей.
-- **`POST /agents/:agentId/interrupt`** с необязательным `text` — 200 с `outcome`; `not_active` с текстом — как у беседы.
+- **`POST /agents/:agentId/interrupt`** без тела — 200 с `outcome`: `interrupted` или `not_active`.
 - **`POST /agents/:agentId/stop`** — 200 со `stopped`: id остановленных агентов.
 - **`POST /agents/:agentId/restart`** — 201 с `agentId` нового агента; работающий — 409 `NOT_FINISHED`, родитель закончил — 409 `PARENT_FINISHED`.
 
@@ -734,7 +734,7 @@ sequenceDiagram
 - `thread` — `ThreadSummary`.
 - `chat` — состояние чата: `status` (`new`, `idle`, `working`, `awaiting_confirmation`, `interrupted`, `failed`; см. State Transitions), `failureReason` при `failed`, `rootAgentId` или пусто, `model`.
 - `entries` — записи `HistoryEntry` корня с номером больше `afterSeq`, не больше `HISTORY_PAGE_SIZE`; `nextAfterSeq` — номер, с которого читать дальше, или пусто, если всё прочитано.
-- `pending` — недоставленные сообщения корня по порядку: `messageId`, `source` (`user`, `report`, `parent`), `interrupt` (признак «Прервать и отправить»), текст или для отчёта описание агента и статус, время.
+- `pending` — недоставленные сообщения корня по порядку: `messageId`, `source` (`user`, `report`, `parent`), текст или для отчёта описание агента и статус, время. Сообщения `interrupt` в `pending` не попадают.
 - `decisions` — `Confirmation` всего дерева, все статусы.
 - `agents` — `AgentNode` детей корня.
 
@@ -801,7 +801,7 @@ stateDiagram-v2
     id --> wk: сообщение или отчёт
     wk --> aw: запрос решения
     aw --> wk: решение
-    wk --> ir: прерывание без текста
+    wk --> ir: прерывание, очередь пуста
     ir --> wk: сообщение
     wk --> fl: ошибка или предел ходов
     fl --> wk: сообщение
@@ -840,7 +840,7 @@ stateDiagram-v2
   - Then: агент недоступен (404), его инструмент не получил новых вызовов, `GET /spend` показывает ту же сумму.
 - **UC-5: Сообщение занятому чату и прерывание** — covers AC-16.1, AC-16.2
   - Given: чат в шаге с долгим читающим инструментом.
-  - When: сотрудник отправляет сообщение, затем прерывает с текстом.
+  - When: сотрудник отправляет сообщение, затем прерывает.
   - Then: сообщение видно в `pending`, потом в истории после результата прерванного вызова; вызов — с исходом «прервано»; `interrupt` вернул `interrupted`.
 - **UC-6: Бриф из веба** — covers AC-15.4, AC-28.1–AC-28.3
   - Given: сценарий модели вызывает `start_workflow`.

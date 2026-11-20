@@ -73,15 +73,17 @@ import {
   frontendOrigin,
 } from '../src/identity/session-cookie.js';
 import {
-  addModel,
   allowRole,
+  grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
   type RunRole,
+  useRunModels,
 } from './support/access.js';
 import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { pointBuiltinsAt } from './support/library.js';
 import {
   ageSession,
   apiOrigin,
@@ -115,7 +117,7 @@ const PUBLIC_ROUTES = [
   'POST /api/auth/sign-out',
 ] as const;
 
-/** The app's default model: a model of the run, allowed to the employees whose agents run by {@link agentsRole}. */
+/** The platform's default chat model while the file runs (`useRunModels`), allowed to the employees whose agents run by {@link agentsRole}. */
 const DEFAULT_MODEL = runModel('identity-haiku');
 
 /** The admin route rows 2 and 3 call as the employee. */
@@ -127,6 +129,10 @@ let provider: TestProvider;
 let admin: Session;
 /** The run's role with the default model, for the employees whose agents run (INT-2 row 5). */
 let agentsRole: RunRole | undefined;
+/** Gives the built-in records their models back (`pointBuiltinsAt`). */
+let restoreBuiltins: (() => Promise<void>) | undefined;
+/** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+let restoreModels: (() => Promise<void>) | undefined;
 
 /** The employees and providers this file created; `afterAll` deletes exactly these rows. */
 const createdUserIds = new Set<string>();
@@ -493,39 +499,43 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       workers: true,
       providerEndpoints: { google: provider.issuer },
       captureLog: true,
-      defaultModel: DEFAULT_MODEL,
     });
     admin = tracked(
       await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`),
     );
-    await addModel(harness.app, admin, {
-      id: DEFAULT_MODEL,
-      ...HAIKU_TEST_PRICES,
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
     });
     agentsRole = await allowRole(harness.app, admin, {
       name: 'identity-agents',
       models: [DEFAULT_MODEL],
       servers: [],
     });
+    restoreBuiltins = await pointBuiltinsAt(harness.app, admin, DEFAULT_MODEL);
   }, TEST_TIMEOUT_MS);
 
   afterAll(async () => {
-    if (harness !== undefined)
-      await removeRunRows(harness.pool, {
-        models: [DEFAULT_MODEL],
-        roles: agentsRole === undefined ? [] : [agentsRole.id],
-      });
-    // Only the rows this run made: their sessions, role assignments and sign-in requests go by cascade.
-    await harness?.pool.query(
-      'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
-      [[...createdUserIds]],
-    );
-    await harness?.pool.query(
-      'DELETE FROM app.identity_providers WHERE id = ANY($1::uuid[])',
-      [[...createdProviderIds]],
-    );
-    await harness?.close();
-    await provider?.close();
+    try {
+      await restoreBuiltins?.();
+      await restoreModels?.();
+    } finally {
+      if (harness !== undefined)
+        await removeRunRows(harness.pool, {
+          models: [DEFAULT_MODEL],
+          roles: agentsRole === undefined ? [] : [agentsRole.id],
+        });
+      // Only the rows this run made: their sessions, role assignments and sign-in requests go by cascade.
+      await harness?.pool.query(
+        'DELETE FROM app.identity_users WHERE id = ANY($1::uuid[])',
+        [[...createdUserIds]],
+      );
+      await harness?.pool.query(
+        'DELETE FROM app.identity_providers WHERE id = ANY($1::uuid[])',
+        [[...createdProviderIds]],
+      );
+      await harness?.close();
+      await provider?.close();
+    }
   }, TEST_TIMEOUT_MS);
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -1580,7 +1590,22 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
             name: 'Аня',
             email: anyaEmail,
           });
+          // A conversation exists from its first message, which needs a right on the chat's model: a personal one
+          await grantTo(
+            app,
+            admin,
+            { userId: anyaLocal.id },
+            {
+              effect: 'allow',
+              target: { kind: 'model', model: DEFAULT_MODEL },
+            },
+          );
+          const anyaFirst = 'INT-3 row 4: the first message of Аня';
+          harness.model.script({ task: anyaFirst }, [], {
+            thereafter: { text: 'INT-3 row 4: an answer' },
+          });
           const anyaThread = await chatApi(app, anyaLocal).createThread();
+          await chatApi(app, anyaLocal).send(anyaThread.id, anyaFirst);
           const role = await expectBody(
             apiRequest(app, admin, 'post', '/admin/roles', {
               name: `e2e-analysts-${randomUUID()}`,

@@ -3,8 +3,7 @@ import type { StepMessage, Task } from '@agent-os/runtime';
 
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import type { Session } from '../store/sessions.repository.js';
-import type { ToolCallRow } from '../store/tool-calls.repository.js';
-import { type ResumeMark, resumeMarkOf, toolResultEntry } from './deliver.js';
+import { type ResumeMark, resumeMarkOf } from './deliver.js';
 
 const { stopped } = TaskStatusSchema.enum;
 
@@ -66,16 +65,12 @@ export function continuationOf(input: ContinuationInput): Continuation | undefin
 }
 
 /**
- * The stop records of an agent the runtime stopped (Flow 7): its open calls closed, then the `stopped`
- * event, or `stopped_with_parent` when the same command stopped its parent. `closed` — the calls as the
- * stop closes them: `closeOpen` in the commit, `closedView` for a preview or the derived view of `history`.
+ * The stop event of an agent the runtime stopped (Flow 7), which follows the results of its open calls:
+ * `stopped`, or `stopped_with_parent` when the same command stopped its parent.
  */
-export function stopRecords(
-  closed: readonly ToolCallRow[],
-  withParent: boolean,
-): Extract<NewHistoryEntry, { kind: 'tool_result' | 'event' }>[] {
+export function stopEvent(withParent: boolean): Extract<NewHistoryEntry, { kind: 'event' }> {
   const event = withParent
     ? HistoryEventSchema.enum.stopped_with_parent
     : HistoryEventSchema.enum.stopped;
-  return [...closed.map(toolResultEntry), { kind: 'event', content: { event, reason: null } }];
+  return { kind: 'event', content: { event, reason: null } };
 }

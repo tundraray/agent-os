@@ -2,12 +2,8 @@ import { parseAgentsConfig, type AgentsConfig } from '@agent-os/agents';
 
 /** The variables of Runtime settings (design-agents.md) that `parseAgentsConfig` checks. */
 const AGENTS_VARIABLES = [
-  'AGENT_DEFAULT_MODEL',
-  'ANTHROPIC_API_KEY',
-  'AGENTS_ANTHROPIC_BASE_URL',
   'AGENT_MAX_OUTPUT_TOKENS',
   'AGENT_MAX_DEPTH',
-  'AGENT_TOOL_RESULT_MAX_BYTES',
   'AGENT_COMPACT_AT_TOKENS',
   'MCP_CALL_TIMEOUT_MS',
   'CODE_RUN_TIMEOUT_MS',

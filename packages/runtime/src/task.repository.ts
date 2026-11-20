@@ -1,6 +1,7 @@
 import { TaskStatusSchema } from '@agent-os/contracts';
 import { runtimeTasks } from '@agent-os/db';
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { RuntimeError } from './errors.js';
 import {
   guardedTaskWrite,
   type TaskChange,
@@ -109,12 +110,19 @@ export class TaskRepository {
       .orderBy(asc(runtimeTasks.createdSeq));
   }
 
-  /** Inserts a task in `queued`. */
+  /**
+   * Inserts a task in `queued`. An id already taken is `TASK_EXISTS`: the insert waits for a
+   * concurrent one of the same id to commit and then writes nothing.
+   */
   async insert(tx: RuntimeTx, task: NewTaskRow): Promise<TaskRow> {
     const [row] = await tx
       .insert(runtimeTasks)
       .values({ ...task, status: TaskStatusSchema.enum.queued })
+      .onConflictDoNothing({ target: runtimeTasks.taskId })
       .returning();
+    if (row === undefined) {
+      throw new RuntimeError('TASK_EXISTS', `Task ${task.taskId} exists`);
+    }
     return row;
   }
 

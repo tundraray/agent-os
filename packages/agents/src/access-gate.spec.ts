@@ -8,15 +8,20 @@ import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AccessDeniedEntry, ModelVerdict } from './access-gate.js';
-import { createCatalog } from './definitions/catalog.js';
-import type { AgentDefinition } from './definitions/definition.js';
+import type { CallState } from './history/call-state.js';
+import type { KnowledgeVectorStore } from './knowledge/vector-store.js';
 import { createModelClient } from './model/model-client.js';
+import type { AgentSnapshot } from './start/snapshot.js';
 import { createCompactionStep } from './step/compaction-step.js';
 import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
-import type { Session } from './store/sessions.repository.js';
-import type { ToolCallRow } from './store/tool-calls.repository.js';
-import { createAccessGateDouble, createScriptedModel } from './testing.js';
+import type { Session, SessionInput } from './store/sessions.repository.js';
+import {
+  createAccessGateDouble,
+  createLibraryDouble,
+  createProviderRegistryDouble,
+  createScriptedModel,
+} from './testing.js';
 import type { AgentTool } from './tools/tool.js';
 import { createToolRegistry } from './tools/tool-registry.js';
 import { createToolRunner } from './tools/tool-runner.js';
@@ -53,24 +58,37 @@ function emptyDatabase(): Database {
   return query as Database;
 }
 
-const DEFINITION: AgentDefinition = {
+/** The built-in tool the agent's snapshot names; the test's double stands for it. */
+const LOOKUP = 'list_agents';
+
+const SNAPSHOT: AgentSnapshot = {
+  kind: 'agent',
   name: 'helper',
-  description: 'Looks things up.',
-  prompt: 'Help.',
-  tools: ['lookup'],
-  mcpServers: [],
+  origin: {
+    recordId: '00000000-0000-4000-8000-000000000001',
+    kind: 'agent',
+    version: 1,
+    name: 'helper',
+    author: { id: '00000000-0000-4000-8000-000000000002', name: 'Аня' },
+    builtinKey: null,
+    executor: null,
+  },
+  content: { prompt: 'Help.', servers: [], model: MODEL, maxTurns: 10, agents: [], tools: [LOOKUP] },
   agents: [],
-  maxTurns: 10,
 };
+
+const INPUT: SessionInput = { snapshot: SNAPSHOT, prompt: 'Look it up', description: 'Look up' };
 
 const SESSION: Session = {
   taskId: AGENT,
+  parentId: null,
   ownerId: OWNER,
-  definition: DEFINITION.name,
+  name: SNAPSHOT.name,
+  origin: SNAPSHOT.origin,
+  firstRun: true,
   description: 'Look up',
   model: MODEL,
   prompt: 'Look it up',
-  limits: null,
   forkedFromTaskId: null,
   forkedThroughSeq: null,
   turns: 0,
@@ -80,23 +98,17 @@ const SESSION: Session = {
   createdAt: new Date(0),
 };
 
-const OPEN_CALL: ToolCallRow = {
-  taskId: AGENT,
+const OPEN_CALL: CallState = {
   callId: 'call-1',
   answerSeq: 2,
   position: 0,
-  tool: 'lookup',
+  tool: LOOKUP,
   server: null,
   args: {},
   state: 'requested',
-  outcome: null,
-  refusalReason: null,
-  resultText: null,
-  childTaskId: null,
-  startedAt: null,
-  finishedAt: null,
+  sentAt: null,
   attempts: 0,
-  output: null,
+  result: null,
 };
 
 function stepContext(logger: Logger): StepContext {
@@ -107,7 +119,7 @@ function stepContext(logger: Logger): StepContext {
     ownerId: OWNER,
     depth: 0,
     type: 'agent',
-    input: {},
+    input: INPUT,
     stepNo: 3,
     resumedAfterLoss: false,
     messages: [],
@@ -128,11 +140,11 @@ function refusedAgent(refusal: Refusal) {
   const logger = loggerDouble();
   const database = emptyDatabase();
   const model = createScriptedModel();
-  model.script({ agent: DEFINITION.name }, [], { thereafter: { text: 'answer' } });
+  model.script({ agent: SNAPSHOT.name }, [], { thereafter: { text: 'answer' } });
   const audits: AccessDeniedEntry[] = [];
   let toolRuns = 0;
   const lookup: AgentTool = {
-    name: 'lookup',
+    name: LOOKUP,
     description: 'Looks a thing up',
     argsSchema: z.object({}),
     mode: 'outside',
@@ -150,14 +162,13 @@ function refusedAgent(refusal: Refusal) {
   const audit = async (entry: AccessDeniedEntry) => {
     audits.push(entry);
   };
-  const catalog = createCatalog();
-  catalog.register(DEFINITION);
   const registry = createToolRegistry({
     builtins: [lookup],
     runCode: { ...lookup, name: 'run_code' },
-    catalog,
     database,
     access,
+    library: createLibraryDouble(),
+    logger,
   });
   const runner = createToolRunner({
     client: {
@@ -170,30 +181,47 @@ function refusedAgent(refusal: Refusal) {
     access,
     audit,
     callTimeoutMs: 1000,
-    toolResultMaxBytes: 1024,
+    resultSettings: async () => ({
+      storeFromChars: 50_000,
+      previewChars: 2_000,
+      readMaxTokens: 25_000,
+      updatedAt: null,
+    }),
+    maskSecrets: (text) => text,
     startChildFor: () => async () => ({ agentId: 'child-1' }),
   });
   const modelClient = createModelClient({
     turnClient: model.turnClient,
     ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
-    config: { maxOutputTokens: 100, defaultModel: MODEL },
+    config: { maxOutputTokens: 100 },
     logger,
     access,
+    providers: createProviderRegistryDouble({ anthropic: 'ready' }),
     audit,
   });
+  // The agent's snapshot does not learn: the knowledge block never reaches the store.
+  const notCalled = async (): Promise<never> => {
+    throw new Error('the vector store is not called for a session that does not learn');
+  };
+  const vectorStore: KnowledgeVectorStore = {
+    upsert: notCalled,
+    delete: notCalled,
+    query: notCalled,
+    list: notCalled,
+  };
   return {
     ctx: stepContext(logger),
     modelStep: createModelStep({
       database,
-      catalog,
       registry,
       modelClient,
       audit,
       tasks: { listTree: async () => [] },
       inbox: { listPending: async () => [] },
+      vectorStore,
     }),
-    compactionStep: createCompactionStep({ database, catalog, registry, modelClient, audit }),
-    toolStep: createToolStep({ catalog, registry, runner, access, audit }),
+    compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
+    toolStep: createToolStep({ registry, runner, access, audit }),
     audits,
     /** Model calls and tool runs that started. */
     started: () => model.calls.length + toolRuns,
@@ -208,7 +236,7 @@ function deniedModel(reason: string): AccessDeniedEntry {
   return { kind: 'access_denied', actor: OWNER, objectType: 'model', objectId: MODEL, outcome: 'rejected', reason };
 }
 
-const modelStep = (agent: RefusedAgent) => agent.modelStep(agent.ctx, SESSION);
+const modelStep = (agent: RefusedAgent) => agent.modelStep(agent.ctx, SESSION, []);
 
 describe("an agent whose model or tool call is refused by the gate ends `failed` with the verdict's reason; the audit hook runs once, never for `owner_disabled`", () => {
   it.each<[string, Refusal, (agent: RefusedAgent) => Promise<StepResult>, readonly AccessDeniedEntry[]]>([
@@ -217,7 +245,7 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the compaction step on a spent quota',
       QUOTA,
-      (agent) => agent.compactionStep(agent.ctx, SESSION),
+      (agent) => agent.compactionStep(agent.ctx, SESSION, []),
       [deniedModel('quota_exhausted')],
     ],
     [

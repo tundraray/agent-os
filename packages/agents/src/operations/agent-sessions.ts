@@ -2,13 +2,15 @@ import type { Logger } from '@agent-os/common';
 import {
   AGENT_TASK_TYPE,
   AgentMessageKindSchema,
+  CHAT_BUILTIN_KEY,
+  type ChipRecord,
   type DecisionStatus,
   type ToolCallState,
   ToolCallStateSchema,
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { agentToolCalls, type Database } from '@agent-os/db';
+import type { Database } from '@agent-os/db';
 import {
   isFinished,
   type Runtime,
@@ -16,36 +18,48 @@ import {
   type ResolveOutcome,
   type Task,
 } from '@agent-os/runtime';
-import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { AccessAudit, AccessGate } from '../access-gate.js';
 import { type AgentView, toAgentView } from '../agent-view.js';
-import type { AgentsConfig } from '../config.js';
-import type { DefinitionCatalog } from '../definitions/catalog.js';
 import { AgentsError } from '../errors.js';
-import type { HistoryEntry } from '../history/history.js';
+import { foldCalls } from '../history/call-state.js';
 import { messagePayload } from '../step/continuation.js';
-import { interruptText } from '../step/deliver.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
-import { history } from '../store/history.repository.js';
-import { type Session, type SessionInput, sessions } from '../store/sessions.repository.js';
-import { type SessionInputDeps, sessionInputOf } from '../tools/builtin/start-child.js';
-import type { SessionLimits, ToolDisplay } from '../tools/tool.js';
+import { history, type PageEntry } from '../store/history.repository.js';
+import type { RecordLibrary } from '../start/record-library.js';
+import {
+  auditStartRefusal,
+  resolveStart,
+  type StartDeps,
+  type StartSource,
+} from '../start/resolve-start.js';
+import type { RunSnapshot } from '../start/snapshot.js';
+import {
+  type RootPosition,
+  type RootSession,
+  type Session,
+  type SessionInput,
+  sessionInputOf,
+  sessions,
+} from '../store/sessions.repository.js';
+import { logStart } from '../tools/builtin/start-child.js';
+import type { ToolDisplay } from '../tools/tool.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import { stopEntries } from './stop-entries.js';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
 
+/** The root of a conversation (design-runtime.md, «Операции `agents`»): it runs the `chat` record. */
 export interface StartRequest {
+  /** The id of the new root, a UUID; a new one when absent. A taken id is the runtime's `TASK_EXISTS`. */
+  readonly agentId?: string;
   readonly ownerId: string;
-  /** Without it the agent is a root session, such as a conversation. */
-  readonly parentId?: string;
-  readonly definition: string;
   readonly prompt: string;
   readonly description: string;
-  readonly model?: string;
-  readonly limits?: SessionLimits;
+  /** The chip of the conversation's first message: it stays on the root's `task` entry. */
+  readonly record?: ChipRecord;
 }
 
 export interface AgentRef {
@@ -55,11 +69,15 @@ export interface AgentRef {
 
 export interface SendRequest extends AgentRef {
   readonly text: string;
+  /** The message's chip (KD-4): the model and the history get it with the text. */
+  readonly record?: ChipRecord;
 }
 
-export interface InterruptRequest extends AgentRef {
-  /** Without text the agent is marked «прерван» and waits (KD-3). */
-  readonly text?: string;
+/** A page of the owner's root sessions: strictly after `after`, at most `limit`; all without either. */
+export interface RootsRequest {
+  readonly ownerId: string;
+  readonly after?: RootPosition;
+  readonly limit?: number;
 }
 
 export interface HistoryRequest extends AgentRef {
@@ -87,12 +105,25 @@ export interface AnswerToolCall extends ToolDisplay {
   readonly state: ToolCallState;
 }
 
+type StoredResult = Extract<PageEntry, { kind: 'tool_result' }>;
+
+/** A `tool_result` as `history` shows it: without the started child's id, kept for incident analysis only. */
+type ShownResult = Omit<StoredResult, 'content'> & {
+  readonly content: Omit<StoredResult['content'], 'childTaskId'>;
+};
+
+function shownResult(entry: StoredResult): ShownResult {
+  const { childTaskId: _childTaskId, ...content } = entry.content;
+  return { ...entry, content };
+}
+
 /**
- * An entry of `history` (design-agents.md, HistoryEntry): as stored, except that a `model_answer`
- * carries its tool calls, which the store keeps in `agent_tool_calls`.
+ * An entry of `history` (design-agents.md, HistoryEntry): as stored, except that each tool call of a
+ * `model_answer` carries its state, folded from the call's records, which are not entries of their own.
  */
 export type AgentHistoryEntry =
-  | Exclude<HistoryEntry, { kind: 'model_answer' }>
+  | Exclude<PageEntry, { kind: 'model_answer' | 'tool_result' }>
+  | ShownResult
   | {
       readonly seq: number;
       readonly kind: 'model_answer';
@@ -125,22 +156,44 @@ export interface AgentConfirmation extends ToolDisplay {
 export interface AgentSessions {
   start(request: StartRequest): Promise<{ agentId: string }>;
   send(request: SendRequest): Promise<{ messageId: string }>;
-  interrupt(request: InterruptRequest): Promise<'interrupted' | 'not_active'>;
+  /** Marks the agent «прерван»: it closes its open calls and waits for a message (KD-3). */
+  interrupt(request: AgentRef): Promise<'interrupted' | 'not_active'>;
   stop(request: AgentRef): Promise<string[]>;
   restart(request: AgentRef): Promise<{ agentId: string }>;
+  /** The run's snapshot, for the view of a run; `null` when the task is not an agent. */
+  snapshot(agentId: string, ownerId: string): Promise<RunSnapshot | null>;
   get(agentId: string, ownerId: string): Promise<AgentView>;
   list(rootId: string, ownerId: string): Promise<AgentView[]>;
   history(request: HistoryRequest): Promise<AgentHistoryEntry[]>;
   confirmations(rootId: string, ownerId: string): Promise<AgentConfirmation[]>;
   resolveConfirmation(request: ResolveConfirmationRequest): Promise<ResolveOutcome>;
+  /**
+   * The owner's root session — the conversation the employee sees; `undefined` for a missing one,
+   * another owner's and a session that is not a root.
+   */
+  root(rootId: string, ownerId: string): Promise<RootSession | undefined>;
+  /** The owner of a root session, whoever it is: for a signal of a tree that carries no owner. */
+  rootOwner(rootId: string): Promise<string | undefined>;
+  /** The owner's root sessions, last changed first (`updatedAt` DESC, then `rootId` DESC). */
+  roots(request: RootsRequest): Promise<RootSession[]>;
+  /** Moves the owner's root session to the top of the list. */
+  touchRoot(rootId: string, ownerId: string): Promise<void>;
+  /** Sets the title and moves the root session up; `undefined` as in `root`. */
+  renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined>;
+  /** Writes a generated title only into an empty one; `true` when it was written. */
+  titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean>;
 }
 
 export interface AgentSessionsDeps {
   readonly database: Database;
   readonly runtime: Pick<Runtime, 'tasks' | 'inbox' | 'decisions'>;
-  readonly catalog: DefinitionCatalog;
   readonly registry: Pick<ToolRegistry, 'toolOf' | 'displays'>;
-  readonly config: Pick<AgentsConfig, 'maxDepth' | 'defaultModel'>;
+  /** `resolveStart` asks it for the record of a start or a restart. */
+  readonly library: RecordLibrary;
+  readonly access: AccessGate;
+  /** `resolveStart` asks it whether the model of a start has a ready provider (model-providers KD-2). */
+  readonly providers: StartDeps['providers'];
+  readonly audit: AccessAudit;
   readonly logger: Logger;
 }
 
@@ -178,13 +231,8 @@ function agentNotFound(id: string): AgentsError {
  * operation is logged with its ids and outcome.
  */
 export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
-  const { database, runtime, catalog, registry, config } = deps;
+  const { database, runtime, registry } = deps;
   const logger = deps.logger.child({ service: 'agents.sessions' });
-  const startDeps: SessionInputDeps = {
-    catalog,
-    maxDepth: config.maxDepth,
-    defaultModel: config.defaultModel,
-  };
 
   async function logged<T>(
     operation: string,
@@ -230,66 +278,110 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     return tasks;
   }
 
-  /** Creates the agent task, then its session in its own transaction (plan Notes 11). */
-  async function createAgent(
+  /**
+   * The snapshot of a start by `resolveStart` on behalf of the owner (KD-2), and the log of the start
+   * once its agent exists; a refusal is logged and is `START_REFUSED` with its reason and model, and no
+   * agent is made. Only a refusal of the access gate writes an `access_denied` record.
+   */
+  async function startSnapshot(
     ownerId: string,
+    source: StartSource,
     parentId: string | null,
+  ): Promise<{ snapshot: RunSnapshot; done: (agentId: string, rootId: string) => void }> {
+    const startedAt = Date.now();
+    const resolution = await resolveStart({ ownerId, source }, deps);
+    const entry = { ownerId, parentId, source: source.kind, resolution, startedAt };
+    if (resolution.kind === 'refused') {
+      await auditStartRefusal(deps.audit, resolution);
+      logStart(logger, { ...entry, rootId: null, agentId: null, refusal: resolution.reason });
+      throw new AgentsError('START_REFUSED', `A start from source ${source.kind} is refused: ${resolution.reason}`, {
+        refusal: { reason: resolution.reason, model: resolution.model },
+      });
+    }
+    return {
+      snapshot: resolution.snapshot,
+      done: (agentId, rootId) => logStart(logger, { ...entry, rootId, agentId, refusal: null }),
+    };
+  }
+
+  /**
+   * Where a restart takes its snapshot (KD-2): a record starts anew by its id, as the owner sees it now;
+   * an executor and a fork restart on their own snapshot.
+   */
+  function restartSource(snapshot: RunSnapshot, session: Session): StartSource {
+    if (snapshot.kind === 'executor' || session.forkedFromTaskId !== null) {
+      return { kind: 'restart', snapshot };
+    }
+    return { kind: 'record', recordId: snapshot.origin.recordId, expected: snapshot.origin.kind };
+  }
+
+  /**
+   * Creates a root: its task and its session commit together, so whoever sees the task sees the
+   * session, and of two starts with one `agentId` the second waits for the first and is `TASK_EXISTS`.
+   */
+  async function createRoot(
+    ownerId: string,
+    input: SessionInput,
+    agentId?: string,
+  ): Promise<{ agentId: string }> {
+    return database.transaction(async (tx) => {
+      const taskId = await runtime.tasks.create(
+        { type: AGENT_TASK_TYPE, ownerId, input, ...(agentId === undefined ? {} : { taskId: agentId }) },
+        tx,
+      );
+      await sessions.ensureSession(tx, { taskId, ownerId, parentId: null, rootId: taskId }, input);
+      return { agentId: taskId };
+    });
+  }
+
+  /** Creates the agent task under its parent, then its session in its own transaction (plan Notes 11). */
+  async function createChild(
+    parent: { readonly ownerId: string; readonly parentId: string; readonly rootId: string },
     input: SessionInput,
   ): Promise<{ agentId: string }> {
-    const agentId = await asAgent(
-      runtime.tasks.create({
-        type: AGENT_TASK_TYPE,
-        ownerId,
-        input,
-        ...(parentId === null ? {} : { parentId }),
-      }),
-    );
+    const { ownerId, parentId, rootId } = parent;
+    const agentId = await asAgent(runtime.tasks.create({ type: AGENT_TASK_TYPE, ownerId, input, parentId }));
     // A worker may take the first step before this: it makes the same session (ON CONFLICT DO NOTHING).
-    await database.transaction((tx) => sessions.ensureSession(tx, agentId, input, ownerId));
+    await database.transaction((tx) =>
+      sessions.ensureSession(tx, { taskId: agentId, ownerId, parentId, rootId }, input),
+    );
     return { agentId };
   }
 
-  /** Whether an `interrupt` without text waits in the agent's queue (KD-3); only a queued or running agent can have one. */
-  async function pendingInterruptWithoutText(task: Task): Promise<boolean> {
+  /** Whether an `interrupt` waits in the agent's queue (KD-3); only a queued or running agent can have one. */
+  async function pendingInterrupt(task: Task): Promise<boolean> {
     if (task.status !== queued && task.status !== running) return false;
     const pending = await runtime.inbox.listPending(task.taskId, task.ownerId);
-    return pending.some(
-      (message) => message.kind === interrupt && interruptText(message) === undefined,
-    );
+    return pending.some((message) => message.kind === interrupt);
   }
 
   async function view(task: Task, session: Session): Promise<AgentView> {
-    return toAgentView(task, session, await pendingInterruptWithoutText(task));
+    return toAgentView(task, session, await pendingInterrupt(task));
   }
 
-  /** The tool calls of the given answers, by answer and position. */
+  /** The tool calls of the given answers with their state, by answer and position. */
   async function callsOf(
     agentId: string,
-    answerSeqs: readonly number[],
+    answers: readonly Extract<PageEntry, { kind: 'model_answer' }>[],
     shownClosed: boolean,
   ): Promise<Map<number, AnswerToolCall[]>> {
     const byAnswer = new Map<number, AnswerToolCall[]>();
-    if (answerSeqs.length === 0) return byAnswer;
-    const rows = await database
-      .select()
-      .from(agentToolCalls)
-      .where(
-        and(eq(agentToolCalls.taskId, agentId), inArray(agentToolCalls.answerSeq, [...answerSeqs])),
-      )
-      .orderBy(asc(agentToolCalls.answerSeq), asc(agentToolCalls.position));
-    const displays = await registry.displays(rows);
-    for (const [index, row] of rows.entries()) {
-      const calls = byAnswer.get(row.answerSeq) ?? [];
-      calls.push({
-        callId: row.callId,
-        tool: row.tool,
-        server: row.server,
-        args: row.args,
+    const callIds = answers.flatMap((answer) => answer.content.toolCalls.map((call) => call.callId));
+    // Only the records of the page's calls are read, by `(task_id, call_id)`; the answers go first.
+    const calls = foldCalls([...answers, ...(await history.callRecords(database, agentId, callIds))]);
+    const displays = await registry.displays(calls);
+    for (const [index, call] of calls.entries()) {
+      const ofAnswer = byAnswer.get(call.answerSeq) ?? [];
+      ofAnswer.push({
+        callId: call.callId,
+        tool: call.tool,
+        server: call.server,
+        args: call.args,
         // A stopped agent's open calls are shown closed (Flow 7): the stop records follow them.
-        state: shownClosed ? ToolCallStateSchema.enum.done : ToolCallStateSchema.parse(row.state),
+        state: shownClosed ? ToolCallStateSchema.enum.done : call.state,
         ...displays[index],
       });
-      byAnswer.set(row.answerSeq, calls);
+      byAnswer.set(call.answerSeq, ofAnswer);
     }
     return byAnswer;
   }
@@ -311,24 +403,33 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   }
 
   return {
-    start(request) {
-      const { ownerId, parentId } = request;
+    start({ agentId, ownerId, prompt, description, record }) {
       return logged(
         'start',
-        { ownerId, parentId, definition: request.definition },
+        { agentId: agentId ?? null, ownerId, recordId: record?.id ?? null },
         async () => {
-          const parent = parentId === undefined ? null : await agentTask(parentId, ownerId);
-          const input = sessionInputOf(startDeps, parent?.depth ?? null, request);
-          return createAgent(ownerId, parent?.taskId ?? null, input);
+          const started = await startSnapshot(ownerId, { kind: 'builtin', builtinKey: CHAT_BUILTIN_KEY }, null);
+          const created = await createRoot(
+            ownerId,
+            {
+              snapshot: started.snapshot,
+              prompt,
+              description,
+              ...(record === undefined ? {} : { record }),
+            },
+            agentId,
+          );
+          started.done(created.agentId, created.agentId);
+          return created;
         },
         ({ agentId }) => ({ agentId }),
       );
     },
 
-    send({ agentId, ownerId, text }) {
+    send({ agentId, ownerId, text, record }) {
       return logged(
         'send',
-        { agentId, ownerId },
+        { agentId, ownerId, recordId: record?.id ?? null },
         async () => {
           const target = await agentTask(agentId, ownerId);
           // Notes 5: a message to a stopped agent carries the `resume` mark; the window between this
@@ -340,7 +441,10 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
               ownerId,
               kind: userMessage,
               sender: ownerId,
-              payload: messagePayload(text, target, parent),
+              payload: {
+                ...messagePayload(text, target, parent),
+                ...(record === undefined ? {} : { record }),
+              },
               revive: true,
             }),
           );
@@ -350,20 +454,20 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
       );
     },
 
-    interrupt({ agentId, ownerId, text }) {
+    interrupt({ agentId, ownerId }) {
       return logged(
         'interrupt',
-        { agentId, ownerId, withText: text !== undefined },
+        { agentId, ownerId },
         async () => {
           const task = await agentTask(agentId, ownerId);
           // A free agent (waiting for messages) has no work to cut off: `not_active`, nothing changes (Flow 4).
           if (task.status === waiting && task.waitReason === WaitReasonSchema.enum.messages) return 'not_active';
-          // KD-3: always with an `interrupt` message, with the employee's text or without.
+          // KD-3: the `interrupt` message makes the agent's next step close its calls and wait.
           return asAgent(
             runtime.tasks.interrupt(agentId, ownerId, {
               kind: interrupt,
               sender: ownerId,
-              payload: text === undefined ? {} : { text },
+              payload: {},
               revive: false,
             }),
           );
@@ -396,16 +500,35 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           }
           const session = await sessions.get(database, agentId);
           if (session === undefined) throw new Error(`Finished agent ${agentId} has no session`);
-          // AC-09.2: the same definition, task, model, limits and parent; the history starts anew.
-          return createAgent(ownerId, task.parentId, {
-            definition: session.definition,
+          const { snapshot } = sessionInputOf(task.input);
+          // AC-09.2: the same assignment and parent on the snapshot of KD-2; the history starts anew,
+          // and a restarted fork does not inherit its parent's.
+          const started = await startSnapshot(ownerId, restartSource(snapshot, session), task.parentId);
+          const input = {
+            snapshot: started.snapshot,
             description: session.description,
             prompt: session.prompt,
-            model: session.model,
-            ...(session.limits === null ? {} : { limits: session.limits }),
-          });
+          };
+          const created =
+            task.parentId === null
+              ? await createRoot(ownerId, input)
+              : await createChild({ ownerId, parentId: task.parentId, rootId: task.rootId }, input);
+          started.done(created.agentId, task.rootId);
+          return created;
         },
         (restarted) => ({ restartedAs: restarted.agentId }),
+      );
+    },
+
+    snapshot(agentId, ownerId) {
+      return logged(
+        'snapshot',
+        { agentId, ownerId },
+        async () => {
+          const task = await agentTask(agentId, ownerId);
+          return task.type === AGENT_TASK_TYPE ? sessionInputOf(task.input).snapshot : null;
+        },
+        (snapshot) => ({ kind: snapshot?.kind ?? null }),
       );
     },
 
@@ -415,7 +538,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { agentId, ownerId },
         async () => {
           const task = await agentTask(agentId, ownerId);
-          // An agent whose session is not written yet (between `tasks.create` and `ensureSession`) is not shown.
+          // A child whose session is not written yet (between `tasks.create` and `ensureSession`) is not shown.
           const session = await sessions.get(database, agentId);
           if (session === undefined) throw agentNotFound(agentId);
           return view(task, session);
@@ -455,14 +578,17 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           const derived = isStopped
             ? await stopEntries(database, { task, parent: await parentOf(task, ownerId) })
             : [];
-          const stored = await history.list(database, agentId, afterSeq, limit);
-          const answers = stored.filter((entry) => entry.kind === 'model_answer').map((entry) => entry.seq);
+          // The page is cut by the query after the call records are left out, so a page shorter than
+          // `limit` is the end of the history.
+          const stored = await history.page(database, agentId, afterSeq, limit);
+          const answers = stored.filter((entry) => entry.kind === 'model_answer');
           const calls = await callsOf(agentId, answers, isStopped);
-          const page: AgentHistoryEntry[] = stored.map((entry) =>
-            entry.kind === 'model_answer'
+          const page: AgentHistoryEntry[] = stored.map((entry) => {
+            if (entry.kind === 'tool_result') return shownResult(entry);
+            return entry.kind === 'model_answer'
               ? { ...entry, content: { text: entry.content.text, toolCalls: calls.get(entry.seq) ?? [] } }
-              : entry,
-          );
+              : entry;
+          });
           page.push(...derived.filter((entry) => entry.seq > afterSeq));
           return page.slice(0, limit);
         },
@@ -526,6 +652,59 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
           return runtime.decisions.resolve(decisionId, ownerId, { approve, ...edited });
         },
         (outcome) => ({ outcome }),
+      );
+    },
+
+    root(rootId, ownerId) {
+      return logged(
+        'root',
+        { rootId, ownerId },
+        () => sessions.root(database, rootId, ownerId),
+        (found) => ({ found: found !== undefined }),
+      );
+    },
+
+    rootOwner(rootId) {
+      return logged(
+        'rootOwner',
+        { rootId },
+        () => sessions.rootOwner(database, rootId),
+        (ownerId) => ({ ownerId: ownerId ?? null }),
+      );
+    },
+
+    roots({ ownerId, after, limit }) {
+      return logged(
+        'roots',
+        { ownerId, afterRootId: after?.rootId ?? null, limit: limit ?? null },
+        () =>
+          sessions.roots(database, ownerId, {
+            ...(after === undefined ? {} : { after }),
+            ...(limit === undefined ? {} : { limit }),
+          }),
+        (found) => ({ roots: found.length }),
+      );
+    },
+
+    touchRoot(rootId, ownerId) {
+      return logged('touchRoot', { rootId, ownerId }, () => sessions.touchRoot(database, rootId, ownerId));
+    },
+
+    renameRoot(rootId, ownerId, title) {
+      return logged(
+        'renameRoot',
+        { rootId, ownerId },
+        () => sessions.renameRoot(database, rootId, ownerId, title),
+        (renamed) => ({ found: renamed !== undefined }),
+      );
+    },
+
+    titleRootIfEmpty(rootId, ownerId, title) {
+      return logged(
+        'titleRootIfEmpty',
+        { rootId, ownerId },
+        () => sessions.titleRootIfEmpty(database, rootId, ownerId, title),
+        (written) => ({ written }),
       );
     },
   };

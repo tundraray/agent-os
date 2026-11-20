@@ -15,11 +15,16 @@ const modelAllow = (quotaUsd: number | null): GrantRuleInput => ({
   roleId: ROLE_ID,
   effect: 'allow',
   target: modelTarget,
+  modelPurpose: 'chat',
   quotaUsd,
 });
 const ok: GrantRuleResult = { kind: 'ok' };
 const invalid = (
-  reason: 'deny_for_role' | 'quota_not_on_model_allow' | 'quota_out_of_range',
+  reason:
+    | 'deny_for_role'
+    | 'quota_not_on_model_allow'
+    | 'quota_out_of_range'
+    | 'embedding_model',
 ): GrantRuleResult => ({
   kind: 'invalid',
   reason,
@@ -32,12 +37,22 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
   it.each<Row>([
     {
       name: 'a deny for a role',
-      input: { roleId: ROLE_ID, effect: 'deny', target: serverTarget },
+      input: {
+        roleId: ROLE_ID,
+        effect: 'deny',
+        target: serverTarget,
+        modelPurpose: null,
+      },
       expected: invalid('deny_for_role'),
     },
     {
       name: 'a personal deny',
-      input: { userId: USER_ID, effect: 'deny', target: toolTarget },
+      input: {
+        userId: USER_ID,
+        effect: 'deny',
+        target: toolTarget,
+        modelPurpose: null,
+      },
       expected: ok,
     },
     {
@@ -46,6 +61,7 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
         roleId: ROLE_ID,
         effect: 'allow',
         target: serverTarget,
+        modelPurpose: null,
         quotaUsd: 10,
       },
       expected: invalid('quota_not_on_model_allow'),
@@ -56,6 +72,7 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
         userId: USER_ID,
         effect: 'allow',
         target: toolTarget,
+        modelPurpose: null,
         quotaUsd: 10,
       },
       expected: invalid('quota_not_on_model_allow'),
@@ -66,9 +83,16 @@ describe('a grant is invalid when a role gets a deny or a quota is not on a mode
         userId: USER_ID,
         effect: 'deny',
         target: modelTarget,
+        modelPurpose: 'chat',
         quotaUsd: 10,
       },
       expected: invalid('quota_not_on_model_allow'),
+    },
+    {
+      // model-providers DC-5: an embedding model takes no right and no quota.
+      name: 'an allow on an embedding model',
+      input: { ...modelAllow(null), modelPurpose: 'embedding' },
+      expected: invalid('embedding_model'),
     },
     {
       name: 'a model allow without a quota',
