@@ -73,12 +73,12 @@ import {
   frontendOrigin,
 } from '../src/identity/session-cookie.js';
 import {
-  addModel,
   allowRole,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
   type RunRole,
+  useRunModels,
 } from './support/access.js';
 import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
@@ -116,7 +116,7 @@ const PUBLIC_ROUTES = [
   'POST /api/auth/sign-out',
 ] as const;
 
-/** The app's default model: a model of the run, allowed to the employees whose agents run by {@link agentsRole}. */
+/** The platform's default chat model while the file runs (`useRunModels`), allowed to the employees whose agents run by {@link agentsRole}. */
 const DEFAULT_MODEL = runModel('identity-haiku');
 
 /** The admin route rows 2 and 3 call as the employee. */
@@ -130,6 +130,8 @@ let admin: Session;
 let agentsRole: RunRole | undefined;
 /** Gives the built-in records their models back (`pointBuiltinsAt`). */
 let restoreBuiltins: (() => Promise<void>) | undefined;
+/** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+let restoreModels: (() => Promise<void>) | undefined;
 
 /** The employees and providers this file created; `afterAll` deletes exactly these rows. */
 const createdUserIds = new Set<string>();
@@ -496,14 +498,12 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       workers: true,
       providerEndpoints: { google: provider.issuer },
       captureLog: true,
-      defaultModel: DEFAULT_MODEL,
     });
     admin = tracked(
       await seedSuperAdmin(harness.app, `e2e-admin-${randomUUID()}`),
     );
-    await addModel(harness.app, admin, {
-      id: DEFAULT_MODEL,
-      ...HAIKU_TEST_PRICES,
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
     });
     agentsRole = await allowRole(harness.app, admin, {
       name: 'identity-agents',
@@ -516,6 +516,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   afterAll(async () => {
     try {
       await restoreBuiltins?.();
+      await restoreModels?.();
     } finally {
       if (harness !== undefined)
         await removeRunRows(harness.pool, {

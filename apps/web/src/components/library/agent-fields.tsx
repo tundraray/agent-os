@@ -13,6 +13,7 @@ import {
   RECORD_NAME_MAX_LENGTH,
   RECORD_PROMPT_MAX_LENGTH,
   type AgentContent,
+  type ModelUnavailableReason,
   type RecordSummary,
 } from "@agent-os/contracts";
 import { CAPTION, FormWarning } from "@/components/admin/admin-form";
@@ -28,7 +29,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { formatModel } from "@/lib/agents/format";
+import { MODEL_UNAVAILABLE_SHORT_TEXT, modelOptions, type ModelOption } from "@/lib/admin/model-providers";
+import { capitalize, formatModel, providerReasonText } from "@/lib/agents/format";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
@@ -57,9 +59,13 @@ const TEXT = {
   findAgent: "Найти агента",
   noAgents: "Агентов не нашли",
   agentGone: "агент недоступен",
+  // The banner shows only for a record with its own model: a record without one never lost it.
   modelGone: (model: string) => `Модель ${formatModel(model)} вам больше недоступна — агент не запустится`,
   noModels: (model: string) => `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — агент не запустится`,
-  replaceModel: (model: string) => `Заменить на ${formatModel(model)}`,
+  /** model-providers UXRD MC-12 with the MC-9 words; `model` is the model's label. */
+  providerBroken: (reason: ModelUnavailableReason, model: string) =>
+    `${capitalize(providerReasonText(reason, model))} — агент не запустится`,
+  replaceModel: (label: string) => `Заменить на ${label}`,
   enterName: "Введите имя",
   // Not in MC-8: the contract's name rule refuses control characters, which MC-8 has no text for.
   oneLineName: "Имя — одной строкой, без управляющих символов",
@@ -88,12 +94,19 @@ export type EditorMode = "employee" | "system";
  */
 export type EditorChoices = {
   servers: readonly string[];
-  /** The author's models by name; `undefined` while they are not read (or the read failed). */
-  models: readonly { model: string; name: string }[] | undefined;
-  defaultModel: string;
+  /**
+   * The author's chat models by name, each with its readiness (`null` — its provider works); `undefined`
+   * while they are not read (or the read failed).
+   */
+  models: readonly EditorModel[] | undefined;
+  /** `null` while no default chat model is chosen. */
+  defaultModel: string | null;
   /** Set by an administrator in the panel's «Агенты и workflow». */
   defaultMaxTurns: number;
 };
+
+/** A chat model the author may choose: a `MyModel` row as it is, or a catalogue row in the panel. */
+export type EditorModel = { model: string; name: string; unavailableReason: ModelUnavailableReason | null };
 
 /** What a new record or a new executor starts with (`GET /api/library/choices`). */
 export type RecordDefaults = Pick<EditorChoices, "defaultModel" | "defaultMaxTurns">;
@@ -136,11 +149,28 @@ export function blankAgent({ defaultModel, defaultMaxTurns }: RecordDefaults): A
   };
 }
 
-/** The model a lost one is replaced with: the default when the author has it, otherwise their first. */
+/** The author's models as options of a chat model choice, each with its readiness (model-providers KD-5). */
+function chatOptions(models: readonly EditorModel[]): ModelOption[] {
+  const reasons = new Map(models.map((row) => [row.model, row.unavailableReason]));
+  return modelOptions(
+    models.map((row) => ({ id: row.model, name: row.name, purpose: "chat" as const })),
+    "chat",
+    (modelId) => reasons.get(modelId) ?? null,
+  );
+}
+
+/** Only models whose provider works are offered (AC-14.3). */
+const offeredOptions = (models: readonly EditorModel[]): ModelOption[] =>
+  chatOptions(models).filter((option) => option.unavailableReason === null);
+
+/**
+ * The model a lost or broken one is replaced with: the default chat model when it is offered, otherwise the
+ * first offered option; `null` — nothing works, the banner stands without an action.
+ */
 function replacementModel(choices: EditorChoices): string | null {
-  const models = choices.models ?? [];
-  if (models.some((option) => option.model === choices.defaultModel)) return choices.defaultModel;
-  return models[0]?.model ?? null;
+  const offered = offeredOptions(choices.models ?? []);
+  if (offered.some((option) => option.value === choices.defaultModel)) return choices.defaultModel;
+  return offered[0]?.value ?? null;
 }
 
 export type AgentFieldsProps = {
@@ -416,29 +446,40 @@ export function ServersField({ id, saved, chosen, choices, allowAll = false, err
 }
 
 /**
- * MC-9: the record's model is not among the author's models. With models to choose from, one press puts
- * the replacement; with none, the banner stands without an action. Nothing shows until the models are read.
+ * The record's model does not work for the author, in two ways: no right to it (custom-agents MC-9, a save
+ * is refused) or its provider does not work (model-providers MC-12, a save goes through). With an offered
+ * model one press puts the replacement; with none, the banner stands without an action. Nothing shows until
+ * the models are read.
  */
 function ModelBanner({
   model,
   choices,
   onReplace,
 }: {
-  model: string;
+  model: string | null;
   choices: EditorChoices;
   onReplace: (model: string) => void;
 }) {
-  if (choices.models === undefined || choices.models.some((option) => option.model === model)) return null;
+  // `null` is the default chat model, never one the author lost.
+  if (model === null || choices.models === undefined) return null;
+  const row = choices.models.find((option) => option.model === model);
+  if (row !== undefined && row.unavailableReason === null) return null;
   const replacement = replacementModel(choices);
+  const text =
+    row !== undefined && row.unavailableReason !== null
+      ? TEXT.providerBroken(row.unavailableReason, formatModel(model, { models: choices.models }))
+      : replacement === null
+        ? TEXT.noModels(model)
+        : TEXT.modelGone(model);
   return (
     // The banner is announced but takes no focus (record-editor.md, Accessibility).
     <div role="alert">
       <FormWarning>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p>{replacement === null ? TEXT.noModels(model) : TEXT.modelGone(model)}</p>
+          <p>{text}</p>
           {replacement !== null && (
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={() => onReplace(replacement)}>
-              {TEXT.replaceModel(replacement)}
+              {TEXT.replaceModel(formatModel(replacement, { models: choices.models }))}
             </Button>
           )}
         </div>
@@ -451,19 +492,67 @@ type ModelFieldProps = {
   id: string;
   /** «Модель» by default; a workflow's coordinator names its own. */
   label?: string;
-  model: string;
+  /** `null` — the record runs on the default chat model. */
+  model: string | null;
   choices: EditorChoices;
   error: string | undefined;
   onChange: (model: string) => void;
 };
 
-/** «Модель»: the author's models; a lost one stays chosen with its mark, and a save with it is refused. */
-export function ModelField({ id, label = TEXT.model, model, choices, error, onChange }: ModelFieldProps) {
+/** One row of «Модель»: an offered model, or the record's own one that comes first. */
+type FieldOption = {
+  /** `null` — the record runs on the default chat model. */
+  value: string | null;
+  /** The closed field's text. */
+  label: string;
+  /** The row's title; the label itself for the default model and a model without a right. */
+  name: string;
+  provider: string | null;
+  accessibleName: string | undefined;
+  /** The «Выключено» badge's words; such a row cannot be chosen. */
+  mark: string | null;
+};
+
+const fieldOptionOf = (option: ModelOption): FieldOption => ({
+  value: option.value,
+  label: option.label,
+  name: option.name,
+  provider: option.provider,
+  accessibleName: option.accessibleName,
+  mark: null,
+});
+
+/**
+ * The record's own model when it is not one of the offered (model-providers MP-08): no own model — the
+ * default chat model; no right — custom-agents' mark; its provider does not work — the MC-8 short reason.
+ */
+function ownOption(model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
   const models = choices.models ?? [];
-  const lost = !models.some((option) => option.model === model);
+  if (model === null) {
+    const label = formatModel(null, { models, defaultModel: choices.defaultModel });
+    return { value: null, label, name: label, provider: null, accessibleName: undefined, mark: null };
+  }
+  const own = options.find((option) => option.value === model);
+  if (own === undefined) {
+    const label = formatModel(model);
+    return { value: model, label, name: label, provider: null, accessibleName: undefined, mark: TEXT.lostModel };
+  }
+  if (own.unavailableReason === null) return null;
+  const reason = MODEL_UNAVAILABLE_SHORT_TEXT[own.unavailableReason];
+  return { ...fieldOptionOf(own), accessibleName: `${own.accessibleName}, ${reason}`, mark: reason };
+}
+
+/**
+ * «Модель»: the author's chat models whose provider works, by provider and title. The record's own model,
+ * when it is not offered, comes first: a model without a right or of a broken provider stays chosen with its
+ * mark; a record without its own model shows the default chat model, and choosing another gives it its own.
+ */
+export function ModelField({ id, label = TEXT.model, model, choices, error, onChange }: ModelFieldProps) {
+  const all = chatOptions(choices.models ?? []);
+  const own = ownOption(model, choices, all);
   const options = [
-    ...(lost ? [{ value: model, label: formatModel(model), lost: true }] : []),
-    ...models.map((option) => ({ value: option.model, label: option.name, lost: false })),
+    ...(own === null ? [] : [own]),
+    ...all.filter((option) => option.unavailableReason === null).map(fieldOptionOf),
   ];
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -489,9 +578,19 @@ export function ModelField({ id, label = TEXT.model, model, choices, error, onCh
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (
-            <SelectItem key={option.value} value={option.value} disabled={option.lost} className="pointer-coarse:min-h-11">
-              <span>{option.label}</span>
-              {option.lost && <StateBadge state="off">{TEXT.lostModel}</StateBadge>}
+            <SelectItem
+              key={option.value ?? ""}
+              value={option.value}
+              disabled={option.mark !== null}
+              aria-label={option.accessibleName}
+              className="pointer-coarse:min-h-11"
+            >
+              {/* The provider sits to the right of the title, and under it on a narrow screen (MP-08). */}
+              <span className="flex min-w-0 flex-1 flex-col md:flex-row md:items-baseline md:justify-between md:gap-3">
+                <span>{option.name}</span>
+                {option.provider !== null && <span className={HINT}>{option.provider}</span>}
+              </span>
+              {option.mark !== null && <StateBadge state="off">{option.mark}</StateBadge>}
             </SelectItem>
           ))}
         </SelectContent>

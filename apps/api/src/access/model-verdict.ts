@@ -6,7 +6,7 @@ import type { EffectiveAccess } from './effective-access.js';
 export interface ModelVerdictInput {
   /** The employee is enabled. */
   readonly active: boolean;
-  /** The model's catalogue row; `undefined` for a model outside the catalogue. */
+  /** The model's catalogue row; `undefined` for a model outside the catalogue. An embedding model is not called this way. */
   readonly catalogued: CatalogModel | undefined;
   /** `effectiveAccess` of the employee's grants. */
   readonly access: EffectiveAccess;
@@ -17,7 +17,7 @@ export interface ModelVerdictInput {
 }
 
 /** Catalogue prices as the token ledger takes them: `above` is the long-context tier. */
-function priceOf(model: CatalogModel): ModelPrice {
+function priceOf(model: Extract<CatalogModel, { purpose: 'chat' }>): ModelPrice {
   const { longContext } = model;
   if (longContext === null) return { ...model.prices };
   return {
@@ -31,12 +31,13 @@ function priceOf(model: CatalogModel): ModelPrice {
 
 /**
  * Whether the employee may call the model ("Как AccessGate решает о вызове модели"): enabled,
- * in the catalogue, allowed and not denied, spend below the quota — in this order. An allowed
- * call carries the catalogue price (KD-3).
+ * a chat model in the catalogue, allowed and not denied, spend below the quota — in this order. An
+ * allowed call carries the catalogue price (KD-3). An embedding model is not connected for a call: it
+ * goes through `AccessGate.embedding` (model-providers design-core.md).
  */
 export function modelVerdict(input: ModelVerdictInput): ModelVerdict {
   if (!input.active) return { kind: 'refused', reason: 'owner_disabled' };
-  if (input.catalogued === undefined)
+  if (input.catalogued === undefined || input.catalogued.purpose !== 'chat')
     return { kind: 'refused', reason: 'model_not_connected' };
   const access = input.access.model(input.catalogued.id);
   if (!access.allowed) {

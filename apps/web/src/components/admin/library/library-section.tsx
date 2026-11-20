@@ -14,6 +14,7 @@ import {
   type DataTableRow,
 } from '@/components/admin/data-table';
 import { DeleteRecordDialog } from '@/components/library/delete-record-dialog';
+import { KnowledgePage } from '@/components/library/knowledge-page';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { ShellLink } from '@/components/shell/shell-link';
@@ -32,6 +33,7 @@ import { recordAction } from '@/lib/library/record-action';
 import { adminLibraryTabPath, adminNewRecordPath, adminRecordPath, LIBRARY_TABS, type AdminPage, type LibraryTab } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CloseAccessDialog, EmployeeRecordPage, panelRecordHref, type ClosableRecord } from './employee-record-page';
+import { KnowledgeSettingsForm } from './knowledge-settings-form';
 import { LibrarySettingsForm } from './library-settings-form';
 import { useTakenHandoff } from '@/components/library/record-editor';
 import { NewSystemRecordPage, SystemRecordPage } from './system-record-page';
@@ -101,6 +103,7 @@ type LibrarySectionProps = {
  */
 export function LibrarySection({ page }: LibrarySectionProps) {
   if (page.kind === 'record') return <LibraryRecord key={page.key} id={page.key} />;
+  if (page.kind === 'knowledge') return <KnowledgePage key={page.key} id={page.key} variant="panel" />;
   if (page.kind === 'new' && page.recordKind !== undefined) {
     return <NewSystemRecordPage key={page.recordKind} kind={page.recordKind} />;
   }
@@ -161,6 +164,7 @@ function LibraryTabs({ tab }: { tab: LibraryTab }) {
             <div className="flex flex-col gap-8">
               <SystemTab caption={TEXT.tabs.system} />
               <LibrarySettingsForm />
+              <KnowledgeSettingsForm />
             </div>
           )}
           {tab === 'shared' && <SharedTab caption={TEXT.tabs.shared} query={query.trim()} />}

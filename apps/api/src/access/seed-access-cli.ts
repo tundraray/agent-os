@@ -1,13 +1,19 @@
 import { parseArgs } from 'node:util';
+import { rememberSecret } from '@agent-os/common';
 import {
   AccessErrorCode,
+  MODEL_PROVIDER_API_KEY_MIN_LENGTH,
+  ModelDefaultsSchema,
+  ModelProviderErrorCode,
   RoleListSchema,
   type CreateCatalogModelBody,
   type GrantTargetBody,
+  type ModelProviderKind,
+  type UpdateModelDefaultsBody,
 } from '@agent-os/contracts';
 import {
   DEFAULT_API,
-  readPassword,
+  readLines,
   SEED_MCP_SERVERS,
   signIn,
   stepFailed,
@@ -17,11 +23,25 @@ import { createAppLogger } from '../logging/app-logger.js';
 
 const logger = createAppLogger(process.env);
 
-/** The developer's catalogue: the models and prices of local runs. */
-const MODELS: CreateCatalogModelBody[] = [
+/** A provider of the developer's registry with the key from standard input; `''` — no key. */
+interface SeedProvider {
+  readonly name: string;
+  readonly kind: ModelProviderKind;
+  readonly apiKey: string;
+}
+
+const DEFAULT_CHAT_MODEL = 'anthropic/claude-haiku-5-5';
+const DEFAULT_EMBEDDING_MODEL = 'google/gemini-embedding-001';
+
+/** Google's list price of `gemini-embedding-001`; the owner confirms it against Google's price list. */
+const GEMINI_EMBEDDING_INPUT_USD_PER_MTOK = 0.15;
+
+/** The developer's chat models and prices of local runs; the built-in role is allowed each of them. */
+const CHAT_MODELS: CreateCatalogModelBody[] = [
   {
-    id: 'anthropic/claude-haiku-5-5',
+    id: DEFAULT_CHAT_MODEL,
     name: 'Haiku',
+    purpose: 'chat',
     prices: {
       inputUsdPerMTok: 0.1,
       outputUsdPerMTok: 0.5,
@@ -41,6 +61,7 @@ const MODELS: CreateCatalogModelBody[] = [
   {
     id: 'anthropic/claude-sonnet-5-5',
     name: 'Sonnet',
+    purpose: 'chat',
     prices: {
       inputUsdPerMTok: 2,
       outputUsdPerMTok: 10,
@@ -51,16 +72,52 @@ const MODELS: CreateCatalogModelBody[] = [
   },
 ];
 
-/** What the built-in role is allowed: the `seed:mcp` servers and both models, without a quota. */
+/** The catalogue: the chat models and the embedding model; an embedding model takes no grant. */
+const MODELS: CreateCatalogModelBody[] = [
+  ...CHAT_MODELS,
+  {
+    id: DEFAULT_EMBEDDING_MODEL,
+    name: 'Gemini Embedding',
+    purpose: 'embedding',
+    inputUsdPerMTok: GEMINI_EMBEDDING_INPUT_USD_PER_MTOK,
+    dimensions: 768,
+  },
+];
+
+/** What the built-in role is allowed: the `seed:mcp` servers and the chat models, without a quota. */
 const TARGETS: GrantTargetBody[] = [
   ...[...SEED_MCP_SERVERS.shared, SEED_MCP_SERVERS.oauth].map((server) => ({
     kind: 'server' as const,
     server,
   })),
-  ...MODELS.map((model) => ({ kind: 'model' as const, model: model.id })),
+  ...CHAT_MODELS.map((model) => ({ kind: 'model' as const, model: model.id })),
 ];
 
-/** `--login`, `--api`; the password never comes from the arguments, only from stdin. */
+/**
+ * Standard input, three lines: the administrator's password, the Anthropic key, the Google key; an
+ * empty key line — the provider without a key. Each key goes to the secret memory before any log.
+ */
+async function readInput(): Promise<{
+  password: string;
+  providers: SeedProvider[];
+}> {
+  const [password = '', anthropicKey = '', googleKey = ''] = await readLines(3);
+  const providers: SeedProvider[] = [
+    { name: 'anthropic', kind: 'anthropic', apiKey: anthropicKey },
+    { name: 'google', kind: 'gemini', apiKey: googleKey },
+  ];
+  for (const { apiKey } of providers) rememberSecret(apiKey);
+  for (const { name, apiKey } of providers) {
+    // The message names the provider and the rule only: never the key or a part of it.
+    if (apiKey !== '' && apiKey.length < MODEL_PROVIDER_API_KEY_MIN_LENGTH)
+      throw new Error(
+        `The ${name} key is shorter than ${MODEL_PROVIDER_API_KEY_MIN_LENGTH} characters`,
+      );
+  }
+  return { password, providers };
+}
+
+/** `--login`, `--api`; the password and the keys never come from the arguments, only from stdin. */
 function readArguments(): { login: string; api: string } {
   const { values, positionals } = parseArgs({
     options: {
@@ -72,7 +129,7 @@ function readArguments(): { login: string; api: string } {
   });
   if (positionals.length > 0) {
     throw new Error(
-      'Positional arguments are not accepted; the password is read from standard input',
+      'Positional arguments are not accepted; the password and the keys are read from standard input',
     );
   }
   const { login, api } = values;
@@ -84,6 +141,81 @@ function targetName(target: GrantTargetBody): string {
   if (target.kind === 'model') return target.model;
   if (target.kind === 'tool') return `${target.server}/${target.tool}`;
   return target.server;
+}
+
+/**
+ * Adds the provider with its key; a taken name (409) keeps the provider, and a given key replaces its
+ * key — an empty line never removes one. The log says whether a key was set, never the key.
+ */
+async function seedProvider(
+  session: AdminSession,
+  { name, kind, apiKey }: SeedProvider,
+): Promise<void> {
+  const keySet = apiKey !== '';
+  const created = await session.request('POST', '/api/admin/model-providers', {
+    name,
+    kind,
+    ...(keySet ? { apiKey } : {}),
+  });
+  if (created.status === 201) {
+    logger.info('model provider seeded', {
+      provider: name,
+      kind,
+      keySet,
+      outcome: 'created',
+    });
+    return;
+  }
+  if (
+    created.error?.errorCode !==
+    ModelProviderErrorCode.MODEL_PROVIDER_NAME_TAKEN
+  )
+    throw stepFailed(`Adding provider ${name}`, created);
+  if (keySet) {
+    const updated = await session.request(
+      'PATCH',
+      `/api/admin/model-providers/${name}`,
+      { apiKey },
+    );
+    if (updated.status !== 200)
+      throw stepFailed(`Setting the key of provider ${name}`, updated);
+  }
+  logger.info('model provider seeded', {
+    provider: name,
+    kind,
+    keySet,
+    outcome: keySet ? 'exists: key replaced' : 'skipped: name taken',
+  });
+}
+
+/**
+ * Chooses Haiku and the Gemini embedding model as the defaults where none is chosen yet, so a repeated
+ * run keeps the administrator's choice.
+ */
+async function seedModelDefaults(session: AdminSession): Promise<void> {
+  const read = await session.request('GET', '/api/admin/model-defaults');
+  if (read.status !== 200) throw stepFailed('Reading model defaults', read);
+  const current = ModelDefaultsSchema.parse(read.body);
+  const wanted: UpdateModelDefaultsBody = {
+    chatModel: current.chatModel ?? DEFAULT_CHAT_MODEL,
+    embeddingModel: current.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+  };
+  const unchanged =
+    wanted.chatModel === current.chatModel &&
+    wanted.embeddingModel === current.embeddingModel;
+  if (!unchanged) {
+    const written = await session.request(
+      'PUT',
+      '/api/admin/model-defaults',
+      wanted,
+    );
+    if (written.status !== 200)
+      throw stepFailed('Setting model defaults', written);
+  }
+  logger.info('model defaults seeded', {
+    ...wanted,
+    outcome: unchanged ? 'skipped: chosen' : 'set',
+  });
 }
 
 /** Adds the model; a taken id (409) is skipped, so a repeated run changes nothing. */
@@ -152,15 +284,20 @@ async function seedGrant(
 }
 
 /**
- * Entry of `pnpm --filter api seed:access` (design-access.md, Runtime settings; development only, run
- * from `dist`): a client of the running API that fills the developer's catalogue with Haiku and Sonnet
- * and allows the built-in role the `seed:mcp` servers and both models without a quota.
+ * Entry of `pnpm --filter api seed:access` (model-providers design-core.md, FR-17; development only,
+ * run from `dist`): a client of the running API that registers the providers `anthropic` and `google`
+ * with the keys from standard input, fills the catalogue with Haiku, Sonnet and the Gemini embedding
+ * model, chooses the default models and allows the built-in role the `seed:mcp` servers and the chat
+ * models without a quota.
  */
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const { login, api } = readArguments();
-  const session = await signIn(api, login, await readPassword());
+  const { password, providers } = await readInput();
+  const session = await signIn(api, login, password);
+  for (const provider of providers) await seedProvider(session, provider);
   for (const model of MODELS) await seedModel(session, model);
+  await seedModelDefaults(session);
   const roleId = await builtinRoleId(session);
   let complete = true;
   for (const target of TARGETS) {
@@ -169,6 +306,10 @@ async function main(): Promise<void> {
   if (!complete) process.exitCode = 1;
   logger.info('seed:access finished', {
     login,
+    providers: providers.map(({ name, apiKey }) => ({
+      provider: name,
+      keySet: apiKey !== '',
+    })),
     outcome: complete ? 'ok' : 'servers missing',
     durationMs: Date.now() - startedAt,
   });
@@ -177,7 +318,7 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch (error) {
-  // Error messages carry steps, statuses and error codes only: no password or cookie.
+  // Error messages carry steps, statuses and error codes only: no password, key or cookie.
   logger.error('seed:access failed', { error });
   process.exitCode = 1;
 }

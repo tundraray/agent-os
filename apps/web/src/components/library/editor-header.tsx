@@ -3,13 +3,16 @@
 import { useId, useState } from "react";
 import { LoaderCircle, Lock, MoreHorizontalIcon, Users } from "lucide-react";
 import { CHAT_BUILTIN_KEY, type RecordAudience, type RecordDetail } from "@agent-os/contracts";
-import { CAPTION } from "@/components/admin/admin-form";
-import { Button } from "@/components/ui/button";
+import { CAPTION, CONTROL_SIZE } from "@/components/admin/admin-form";
+import { ShellLink } from "@/components/shell/shell-link";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useResource } from "@/hooks/use-resource";
+import { KNOWLEDGE_TEXT } from "@/lib/library/knowledge-view";
 import { libraryApi } from "@/lib/library/library-api";
 import { shareBlockedReason } from "@/lib/library/library-errors";
 import { canUseInChat } from "@/lib/library/record-rules";
+import { adminKnowledgePath } from "@/lib/shell-route";
 import { cn } from "cn";
 import type { EditorMode } from "./agent-fields";
 import { DeleteRecordDialog } from "./delete-record-dialog";
@@ -85,6 +88,8 @@ export function EditorHeaderActions({
 
   return (
     <>
+      {/* The employee's editor has its entry under the «Самообучение» flag instead. */}
+      {system && <KnowledgeButton record={record} />}
       {system && record.builtinKey === CHAT_BUILTIN_KEY ? (
         <p className={cn(CAPTION, "min-w-0 truncate text-muted-foreground")} title={TEXT.chatAudience}>
           {TEXT.chatAudience}
@@ -133,6 +138,22 @@ export function EditorHeaderActions({
         />
       )}
     </>
+  );
+}
+
+/**
+ * UXRD MC-7: the panel's entry to the knowledge screen of a workflow (AL-02, AL-03), whatever its «Самообучение»
+ * flag; an agent has none. A link styled as a button, so `ShellLink` asks MC-11 over unsaved changes.
+ */
+export function KnowledgeButton({ record }: { record: Pick<RecordDetail, "id" | "kind"> }) {
+  if (record.kind !== "workflow") return null;
+  return (
+    <ShellLink
+      href={adminKnowledgePath(record.id)}
+      className={buttonVariants({ variant: "outline", size: "sm", className: CONTROL_SIZE })}
+    >
+      {KNOWLEDGE_TEXT.entry}
+    </ShellLink>
   );
 }
 

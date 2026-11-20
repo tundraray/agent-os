@@ -1,15 +1,18 @@
 import {
   LibraryErrorCode,
   LibraryRejectReasonSchema,
+  ModelUnavailableReasonSchema,
   RecordNameTakenReasonSchema,
   type RecordKind,
   type RecordSummary,
   type SaveOwnRefusal,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
+import { isNotFound } from '@/lib/admin/admin-errors';
 import { ADMIN_TEXT, saveFailed } from '@/lib/admin/admin-texts';
 import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
-import { formatModel } from '@/lib/agents/format';
+import { capitalize, formatModel, providerReasonText } from '@/lib/agents/format';
+import { chatFailureText } from '@/lib/access/access-texts';
 
 /**
  * Texts of the library's errors and refusals and where each one shows (design-web.md, «Ошибки и их
@@ -41,6 +44,17 @@ export function failureReason(cause: unknown): string {
   if (isApiRequestError(cause) && cause.kind === 'network') return 'нет связи с сервером';
   return cause instanceof Error ? cause.message : String(cause);
 }
+
+/**
+ * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a workflow
+ * the viewer sees but whose knowledge is closed to them (AC-11.3). Any other refusal stays an error.
+ */
+export const isKnowledgeHidden = (error: unknown): boolean =>
+  isNotFound(error) ||
+  (isApiRequestError(error) &&
+    error.kind === 'http' &&
+    error.status === 403 &&
+    error.code === LibraryErrorCode.KNOWLEDGE_FORBIDDEN);
 
 /** MC-4. */
 export const copyFailed = (cause: unknown): string => `Не удалось скопировать: ${failureReason(cause)}`;
@@ -132,15 +146,39 @@ const serversPlace = (context: LibraryErrorContext): LibraryErrorPlace =>
 /** The refused model of a 409 `START_REFUSED` body, as the core reads it. */
 const refusedModel = (error: ApiRequestError): string | null => error.model ?? null;
 
-/** 409 `START_REFUSED`: MC-16 at «Запустить с нуля»; on a new conversation's first message, with «чат». */
+/** model-providers MC-11 at the message field: the first message found no default chat model. */
+const CHAT_MODEL_NOT_CONFIGURED = 'Модель для чата не настроена. Обратитесь к администратору Agent OS.';
+
+/**
+ * The {Причина} of model-providers MC-12, capitalised: a start refused for the model's provider (MC-9 words)
+ * or for no default chat model; `null` — another reason. `model` is null only on `model_not_configured`.
+ */
+function providerRefusal(reason: string | null | undefined, model: string | null): string | null {
+  if (reason === 'model_not_configured') return 'Модель не настроена';
+  const provider = ModelUnavailableReasonSchema.safeParse(reason);
+  if (!provider.success) return null;
+  return capitalize(providerReasonText(provider.data, model === null ? undefined : formatModel(model)));
+}
+
+/** model-providers MC-12 of a refused start: «{Причина} — {вид} не запустился». */
+const providerNotStarted = (cause: string, kind: RecordKind): string => `${cause} — ${kindWord(kind)} не запустился`;
+
+/**
+ * 409 `START_REFUSED`: MC-16 (or MC-12 for a provider reason) at «Запустить с нуля»; on a new conversation's
+ * first message, with «чат», or MC-11 for a provider reason or no default chat model.
+ */
 function startRefused(error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText | null {
   const model = refusedModel(error);
   const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
+  const byProvider = providerRefusal(error.reason, model);
   if (context.where === 'first_message') {
+    if (error.reason === 'model_not_configured') return at({ at: 'composer' }, CHAT_MODEL_NOT_CONFIGURED);
+    if (byProvider !== null) return at({ at: 'composer' }, chatFailureText(error.reason ?? null, model));
     return byModel && model !== null ? at({ at: 'composer' }, notStartedText(model, 'чат')) : null;
   }
   const kind = context.kind ?? 'agent';
   if (error.reason === 'record_unavailable') return at(placeOf(context.where), unavailableText(kind));
+  if (byProvider !== null) return at(placeOf(context.where), providerNotStarted(byProvider, kind), true);
   if (!byModel || model === null) return at(placeOf(context.where), saveFailed(error.message));
   const next =
     context.own === true ? 'Откройте его и выберите другую модель' : 'Скопируйте его себе — копия получит вашу модель';
@@ -283,7 +321,7 @@ export type RefusalText = {
 };
 
 /**
- * The text and action of a refused library call (MC-16, MC-17). `null` — not the library's refusal,
+ * The text and action of a refused library call (MC-16, MC-17; model-providers MC-12). `null` — not the library's refusal,
  * or one without a UXRD text (`read_only` on a colleague's record, `invalid_arguments` of `draft_record`):
  * the block shows the platform's general refusal text.
  */
@@ -306,6 +344,13 @@ export function describeRefusal(reason: ToolRefusalReason | null, context: Refus
       return context.company === true ? { text: 'Агентов от компании правят в панели администратора', action: null } : null;
     case 'run_limit':
       return { text: 'Предел вызовов исчерпан', action: null };
+    case 'model_not_configured':
+    case 'provider_missing':
+    case 'provider_disabled':
+    case 'provider_key_missing': {
+      const cause = providerRefusal(reason, model);
+      return cause === null ? null : { text: providerNotStarted(cause, kind), action: action('Открыть') };
+    }
     default:
       return null;
   }

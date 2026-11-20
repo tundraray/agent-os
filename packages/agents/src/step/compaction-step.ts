@@ -3,7 +3,9 @@ import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
 import type { AccessAudit } from '../access-gate.js';
-import type { ModelClient } from '../model/model-client.js';
+import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
+import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
+import { type ModelClient, modelErrorMessage } from '../model/model-client.js';
 import { snapshotDefinition } from '../start/snapshot-definition.js';
 import { history, type NewHistoryEntry } from '../store/history.repository.js';
 import {
@@ -17,10 +19,8 @@ import { entriesOf, rootTurnReset } from './deliver.js';
 import {
   appendWithEvent,
   callUnlessAborted,
-  FAILURE_REASONS,
   failResult,
   logStep,
-  modelErrorMessage,
   previewEntries,
   providerMessagesOf,
   readSessionHistory,
@@ -53,6 +53,8 @@ export interface CompactionStepDeps {
   readonly modelClient: ModelClient;
   /** Gets the `access_denied` record of a refused model call (KD-6). */
   readonly audit: AccessAudit;
+  /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
+  readonly vectorStore: KnowledgeVectorStore;
 }
 
 /** The compaction step (KD-7); `prelude` — what the handler writes first (continuation). */
@@ -70,7 +72,7 @@ export type CompactionStep = (
  * the model sees the summary and what follows it, the employee reads the whole history.
  */
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
-  const { database, registry, modelClient, audit } = deps;
+  const { database, registry, modelClient, audit, vectorStore } = deps;
 
   return async function compactionStep(ctx, session, prelude) {
     const startedAt = Date.now();
@@ -80,6 +82,11 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     const view = await readSessionHistory(database, session);
     // The summary covers the prelude: it is written before the summary; the delivered messages follow it.
     const shown = previewEntries(view.lastSeq, prelude?.entries ?? []);
+    // The same system text as the model step's (KD-6): otherwise this call would miss its prompt cache.
+    const knowledge = await knowledgeBlock(
+      { database, store: vectorStore },
+      { snapshot, taskId: ctx.taskId, logger: ctx.logger },
+    );
     // History holds tool calls, and the provider takes them only with the tools defined.
     const sessionTools = await registry.sessionTools({
       snapshot,
@@ -95,7 +102,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: definition.prompt,
+        instructions: withKnowledge(definition.prompt, knowledge),
         messages: [...providerMessagesOf(view, shown), { role: 'user', content: COMPACTION_REQUEST }],
         tools: sessionTools,
         // The summary is not an answer the employee reads: its parts do not go to the hook.
@@ -133,12 +140,13 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.model_error,
-        statusCode: result.error.statusCode,
+        reason: result.reason,
+        provider: result.provider,
+        statusCode: result.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.model_error,
+        reason: result.reason,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeFailureEntries,
         patch: { ...prelude?.patch },

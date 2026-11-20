@@ -18,6 +18,8 @@ const ADMIN_PATH_PREFIX = `${ADMIN_PATH}/`;
 /** Outside `/admin/servers/…` because a server may be named `new`. */
 const REGISTER_SERVER_PATH = `${ADMIN_PATH_PREFIX}register-server`;
 const NEW_SIGN_IN_PATH = `${ADMIN_PATH_PREFIX}sign-in/new`;
+/** After a record id: what a workflow has learned (self-learning design-web.md KD-2). */
+const KNOWLEDGE_SUFFIX = "/knowledge";
 
 /** The panel's sections in screen order; titles and icons live in `components/admin/admin-sections.ts`. */
 export const ADMIN_SECTION_IDS = ["users", "roles", "sign-in", "servers", "models", "library"] as const;
@@ -33,13 +35,15 @@ export type LibraryTab = (typeof LIBRARY_TABS)[number];
 export type AdminPage =
   | { kind: "list"; tab?: LibraryTab }
   | { kind: "new"; recordKind?: RecordKind }
-  | { kind: "record"; key: string };
+  | { kind: "record"; key: string }
+  | { kind: "knowledge"; key: string };
 
-/** An employee's library page (design-web.md KD-1): the list, a record by its id, or a new record of a kind. */
+/** An employee's library page (design-web.md KD-1): the list, a record by its id, a new record of a kind, or what a workflow has learned. */
 export type LibraryPage =
   | { kind: "list" }
   | { kind: "record"; id: string }
-  | { kind: "new"; recordKind: RecordKind };
+  | { kind: "new"; recordKind: RecordKind }
+  | { kind: "knowledge"; id: string };
 
 /** The screen a shell path opens; `/` and any unknown path open a new chat. */
 export type ShellRoute =
@@ -64,6 +68,9 @@ export const libraryPath = (): string => LIBRARY_PATH;
 /** The only way an employee's record page path is built. */
 export const recordPath = (id: string): string => `${LIBRARY_PATH_PREFIX}${encodeURIComponent(id)}`;
 
+/** The only way an employee's knowledge page path of a workflow is built. */
+export const knowledgePath = (id: string): string => `${recordPath(id)}${KNOWLEDGE_SUFFIX}`;
+
 /** The only way an employee's "new record" path is built. */
 export const newRecordPath = (kind: RecordKind): string => NEW_RECORD_PATHS[kind];
 
@@ -73,6 +80,10 @@ export const adminPath = (section: AdminSection): string => `${ADMIN_PATH_PREFIX
 /** The only way a panel record path is built; a server is addressed by its name (ADR-0014). */
 export const adminRecordPath = (section: AdminSection, key: string): string =>
   `${adminPath(section)}/${encodeURIComponent(key)}`;
+
+/** The only way the panel's knowledge page path of a company workflow is built. */
+export const adminKnowledgePath = (key: string): string =>
+  `${adminRecordPath("library", key)}${KNOWLEDGE_SUFFIX}`;
 
 /** The only way a panel "new record" path is built. */
 export const adminNewPath = (section: "sign-in" | "servers"): string =>
@@ -85,10 +96,10 @@ export const adminLibraryTabPath = (tab: LibraryTab): string =>
 /** The only way the panel's "new company record" path is built. */
 export const adminNewRecordPath = (kind: RecordKind): string => `${adminPath("library")}/new/${kind}`;
 
-/** One non-empty segment after `prefix`, decoded; undefined when the path has none or more. */
-function singleSegment(pathname: string, prefix: string): string | undefined {
-  if (!pathname.startsWith(prefix)) return undefined;
-  const segment = pathname.slice(prefix.length);
+/** One non-empty segment between `prefix` and `suffix`, decoded; undefined when the path has none or more. */
+function singleSegment(pathname: string, prefix: string, suffix = ""): string | undefined {
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) return undefined;
+  const segment = pathname.slice(prefix.length, pathname.length - suffix.length);
   if (segment === "" || segment.includes("/")) return undefined;
   try {
     return decodeURIComponent(segment);
@@ -98,13 +109,14 @@ function singleSegment(pathname: string, prefix: string): string | undefined {
   }
 }
 
-/** A tab or a new-record address of «Агенты и workflow»; checked before a record id, which is a UUID. */
+/** A tab, a new-record or a knowledge address of «Агенты и workflow»; checked before a record id, which is a UUID. */
 function libraryAdminPage(pathname: string): AdminPage | undefined {
   const tab = LIBRARY_TABS.find((candidate) => pathname === adminLibraryTabPath(candidate));
   if (tab !== undefined) return { kind: "list", tab };
   if (pathname === adminNewRecordPath("agent")) return { kind: "new", recordKind: "agent" };
   if (pathname === adminNewRecordPath("workflow")) return { kind: "new", recordKind: "workflow" };
-  return undefined;
+  const key = singleSegment(pathname, `${adminPath("library")}/`, KNOWLEDGE_SUFFIX);
+  return key === undefined ? undefined : { kind: "knowledge", key };
 }
 
 /** `/admin` and any unknown path under it open «Сотрудники». */
@@ -121,10 +133,12 @@ function parseAdminPage(pathname: string): { section: AdminSection; page: AdminP
   return { section: "users", page: { kind: "list" } };
 }
 
-/** `/library`, an id after it, or a new-record address; any other path under it opens the list. */
+/** `/library`, an id after it, a new-record address or an id's knowledge; any other path under it opens the list. */
 function parseLibraryPage(pathname: string): LibraryPage {
   if (pathname === NEW_RECORD_PATHS.agent) return { kind: "new", recordKind: "agent" };
   if (pathname === NEW_RECORD_PATHS.workflow) return { kind: "new", recordKind: "workflow" };
+  const knowledgeId = singleSegment(pathname, LIBRARY_PATH_PREFIX, KNOWLEDGE_SUFFIX);
+  if (knowledgeId !== undefined) return { kind: "knowledge", id: knowledgeId };
   const id = singleSegment(pathname, LIBRARY_PATH_PREFIX);
   return id === undefined ? { kind: "list" } : { kind: "record", id };
 }

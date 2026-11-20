@@ -1,7 +1,5 @@
 import { Inject, Injectable, type OnApplicationBootstrap } from '@nestjs/common';
-import type { AgentsConfig } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
-import { AGENTS_SETTINGS } from '../agents/agents.tokens.js';
 import { APP_LOGGER } from '../logging/app-logger.js';
 import { builtinRecords } from './builtin-records.js';
 import { LibraryService } from './library.service.js';
@@ -17,14 +15,13 @@ export class BuiltinRecordsSeeder implements OnApplicationBootstrap {
 
   constructor(
     private readonly library: LibraryService,
-    @Inject(AGENTS_SETTINGS) private readonly settings: AgentsConfig,
     @Inject(APP_LOGGER) logger: Logger,
   ) {
     this.logger = logger.child({ service: 'library.seed' });
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    for (const record of builtinRecords(this.settings.defaultModel)) {
+    for (const record of builtinRecords()) {
       const created = await this.library.seedBuiltin(record);
       this.logger.info(
         created ? 'built-in record created' : 'built-in record exists',

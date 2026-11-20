@@ -1,5 +1,5 @@
-import type { ZodType } from "zod";
-import { ApiErrorSchema, IdentityErrorCode, StartRefusedErrorSchema } from "@agent-os/contracts";
+import { z, type ZodType } from "zod";
+import { ApiErrorSchema, IdentityErrorCode } from "@agent-os/contracts";
 import { apiBaseUrl } from "@/lib/config";
 
 export type ApiMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -16,7 +16,7 @@ type ApiRequestErrorInit = {
   reason?: string;
   /** `message` of the API error body; replaces the classification text when present. */
   bodyMessage?: string;
-  /** `model` of a 409 START_REFUSED body: the refused model, `null` when the refusal is not by model. */
+  /** `model` of the error body when it has one: the refused model of START_REFUSED or MODEL_DEFAULT_INVALID. */
   model?: string | null;
 };
 
@@ -146,9 +146,12 @@ export async function apiRequest<T>({
   return result.data;
 }
 
+/** `model` of an error body: START_REFUSED (`null` when not by model) and MODEL_DEFAULT_INVALID carry it. */
+const ErrorModelSchema = z.object({ model: z.string().nullable() });
+
 /**
- * Code, reason and message of an ApiError body, and the refused model of a START_REFUSED body; a body
- * that is not JSON or not an ApiError has none.
+ * Code, reason and message of an ApiError body, and its `model` when the body has one; a body that is
+ * not JSON or not an ApiError has none.
  */
 async function errorDetailsOf(
   response: Response,
@@ -162,11 +165,11 @@ async function errorDetailsOf(
   const result = ApiErrorSchema.safeParse(data);
   if (!result.success) return {};
   const { errorCode, reason, message } = result.data;
-  const startRefused = StartRefusedErrorSchema.safeParse(data);
+  const model = ErrorModelSchema.safeParse(data);
   return {
     code: errorCode,
     reason,
     bodyMessage: Array.isArray(message) ? message.join("; ") : message,
-    ...(startRefused.success ? { model: startRefused.data.model } : {}),
+    ...(model.success ? { model: model.data.model } : {}),
   };
 }

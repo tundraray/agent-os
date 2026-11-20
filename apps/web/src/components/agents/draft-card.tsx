@@ -193,7 +193,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
         : describeDraftRefusal(refusal, {
             kind: draft.kind,
             name: draft.name,
-            model: draft.kind === "agent" ? draft.content.model : undefined,
+            model: draft.kind === "agent" ? (draft.content.model ?? undefined) : undefined,
           });
     // «Сохранить как» needs the owner's names; until the list is read there is no free name to offer.
     const ownNames =

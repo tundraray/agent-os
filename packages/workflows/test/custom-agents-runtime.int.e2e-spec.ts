@@ -115,6 +115,7 @@ function teamV1(sources: TeamSources): TestWorkflowContent {
       }),
     ],
     finalExecutor: null,
+    selfLearning: false,
   };
 }
 

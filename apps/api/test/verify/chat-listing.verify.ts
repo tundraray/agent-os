@@ -17,11 +17,11 @@ import { RECORD_DESCRIPTION_MAX_LENGTH } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
-  addModel,
   allowRole,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
+  useRunModels,
 } from '../support/access.js';
 import { chatApi, waitFor } from '../support/api.js';
 import { createTestApp } from '../support/createTestApp.js';
@@ -96,12 +96,12 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
       const harness = await createTestApp({
         workers: true,
         captureLog: true,
-        defaultModel: MODEL,
       });
       let roleId: string | undefined;
       /** The administrator and the employee; his records go with him. */
       const users: string[] = [];
       let restoreBuiltins: (() => Promise<void>) | undefined;
+      let restoreModels: (() => Promise<void>) | undefined;
       try {
         const task = 'UC-N1: hello';
         harness.model.completeText({ text: 'UC-N1' });
@@ -111,7 +111,9 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
           `verify-admin-${randomUUID()}`,
         );
         users.push(admin.id);
-        await addModel(harness.app, admin, { id: MODEL, ...HAIKU_TEST_PRICES });
+        restoreModels = await useRunModels(harness.app, admin, {
+          chat: { id: MODEL, ...HAIKU_TEST_PRICES },
+        });
         restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL);
         const role = await allowRole(harness.app, admin, {
           name: 'chat-listing',
@@ -191,6 +193,7 @@ describe('UC-N1: the chat listing of an employee who sees a hundred records stay
         try {
           try {
             await restoreBuiltins?.();
+            await restoreModels?.();
           } finally {
             await removeRunRows(harness.pool, {
               models: [MODEL],

@@ -206,7 +206,9 @@ function missingRights(body: RecordBody, context: ViewContext): MissingRight[] {
     const servers = part.servers.filter(
       (server) => server !== ALL_SERVERS && !usable.has(server),
     );
-    const model = allowed.has(part.model) ? null : part.model;
+    // A `null` model lacks nothing here: the start checks the default chat model (KD-5).
+    const model =
+      part.model === null || allowed.has(part.model) ? null : part.model;
     return servers.length > 0 || model !== null
       ? [{ executor: part.executor, servers, model }]
       : [];

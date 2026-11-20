@@ -47,6 +47,7 @@ const workflowSnapshot: WorkflowSnapshot = {
     coordinator: { rules: '', model: MODEL, maxTurns: 20 },
     executors: [executor('gather', 2), executor('check', 1), executor('answer', 1)],
     finalExecutor: 'answer',
+    selfLearning: false,
   },
 };
 
@@ -163,7 +164,13 @@ describe('runs.get maps a coordinator to WorkflowRun and refuses everything else
     [
       'an agent whose snapshot is not a workflow',
       async () => chat,
-      { kind: 'executor', name: 'gather', origin: workflowOrigin, content: executor('gather', 2) },
+      {
+        kind: 'executor',
+        name: 'gather',
+        origin: workflowOrigin,
+        content: executor('gather', 2),
+        learning: null,
+      },
     ],
     ['an agent without an agent snapshot', async () => chat, null],
     [

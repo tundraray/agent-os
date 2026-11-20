@@ -1,9 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
-import type { RecordBody, RecordHeader, ResolvedRecord } from '@agent-os/contracts';
+import {
+  ModelProviderKindSchema,
+  type ModelProviderState,
+  type RecordBody,
+  type RecordHeader,
+  type ResolvedRecord,
+} from '@agent-os/contracts';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
-import type { AccessGate, ModelVerdict } from './access-gate.js';
+import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate.js';
+import type { EmbeddingClient } from './embeddings/embedding-client.js';
+import type { EmbeddingInputType } from './providers/adapters.js';
+import type { ProviderReadiness } from './providers/provider-readiness.js';
+import type { AgentsProviders } from './providers/provider-registry.js';
 import type { RecordLibrary } from './start/record-library.js';
 import type {
   AgentToolCall,
@@ -142,6 +152,8 @@ export type ScriptedReply = ScriptedAnswer | ScriptedModelError | ReplyFromInput
 export interface RecordedModelCall {
   readonly agentName: string;
   readonly model: string;
+  /** The system text exactly as the provider would get it: the definition's prompt, the knowledge block, the standing rules. */
+  readonly instructions: string;
   /** The session's messages exactly as the provider would get them. */
   readonly messages: readonly AgentTurnMessage[];
   /** Names of the tools offered to the model. */
@@ -216,11 +228,11 @@ function isModelError(reply: ScriptedAnswer | ScriptedModelError): reply is Scri
   return 'kind' in reply && reply.kind === 'model_error';
 }
 
-/** The rejection the provider client gives: `ModelClient` reads it by `name` and `statusCode`. */
-function providerError(agentName: string, statusCode: number): Error {
-  const error = new Error(`Scripted provider error ${statusCode} for agent ${agentName}`);
+/** The rejection the provider client gives: `classifyRejection` reads it by `name`, `statusCode` and `responseBody`. */
+function providerError(caller: string, statusCode: number, responseBody?: string): Error {
+  const error = new Error(`Scripted provider error ${statusCode} for ${caller}`);
   error.name = 'AI_APICallError';
-  return Object.assign(error, { statusCode });
+  return Object.assign(error, { statusCode }, responseBody === undefined ? {} : { responseBody });
 }
 
 /** Resolves the waiters whose count the calls reached. */
@@ -299,6 +311,7 @@ export function createScriptedModel(): ScriptedModel {
       const recorded: RecordedModelCall = {
         agentName: call.agentName,
         model: call.model,
+        instructions: call.instructions,
         messages: call.messages,
         toolNames: call.tools.map((tool) => tool.name),
         toolCallIds: [],
@@ -313,7 +326,7 @@ export function createScriptedModel(): ScriptedModel {
         throw new Error(`Script of ${describeKey(state.key)} has no answer for call ${index + 1}`);
       }
       const answer = typeof reply === 'function' ? reply(call.messages) : reply;
-      if (isModelError(answer)) throw providerError(call.agentName, answer.statusCode);
+      if (isModelError(answer)) throw providerError(`agent ${call.agentName}`, answer.statusCode);
 
       const generation = await streamAnswer(answer, options, () =>
         (answer.calls ?? []).map((scripted) => {
@@ -359,6 +372,72 @@ export function createScriptedModel(): ScriptedModel {
   };
 }
 
+/** Input tokens the scripted embeddings report per text. */
+const SCRIPTED_EMBEDDING_TOKENS_PER_TEXT = 10;
+
+/** An embeddings request as the double received it; `apiKey` is the double registry's test key. */
+export interface RecordedEmbeddingCall {
+  /** `<provider>/<name at the provider>`: the catalogue id the service called. */
+  readonly model: string;
+  readonly apiKey: string | null;
+  readonly texts: readonly string[];
+  readonly inputType: EmbeddingInputType;
+  readonly dimensions: number;
+}
+
+/**
+ * The embeddings seam double (ADR-0004), for `createAgents({ embeddingClient })`: it stands below the service,
+ * so the batches, retries, ledger rows and checks are the package's own. The switches are read on every call.
+ */
+export interface ScriptedEmbeddings {
+  readonly client: EmbeddingClient;
+  /** Every request in order of arrival; each retry is a request of its own. */
+  readonly calls: readonly RecordedEmbeddingCall[];
+  /** The provider reports no token count. */
+  withoutTokenCount: boolean;
+  /** The vectors have this length instead of the requested dimensions; `null` — the requested ones. */
+  vectorLength: number | null;
+  /** Every request is rejected as the provider client does, with this status and body; `null` — none. */
+  failure: { readonly statusCode: number; readonly body?: string } | null;
+  /**
+   * The vector of a text on a model (the catalogue id), over the length rule: closeness by meaning is
+   * arranged by the text; `null` — the length rule. Its length is the test's, `vectorLength` does not apply.
+   */
+  vectorOf: ((text: string, model: string) => readonly number[]) | null;
+}
+
+/**
+ * Answers each text with `vectorOf`'s vector, or else with a vector whose component `j` is the text's length
+ * plus `j` — not of unit length, so the service's scaling shows — and `SCRIPTED_EMBEDDING_TOKENS_PER_TEXT`
+ * input tokens per text.
+ */
+export function createScriptedEmbeddings(): ScriptedEmbeddings {
+  const calls: RecordedEmbeddingCall[] = [];
+  const scripted: ScriptedEmbeddings = {
+    calls,
+    withoutTokenCount: false,
+    vectorLength: null,
+    failure: null,
+    vectorOf: null,
+    client: {
+      async embed({ connection, modelName, texts, inputType, dimensions, signal }) {
+        signal.throwIfAborted();
+        const model = `${connection.name}/${modelName}`;
+        calls.push({ model, apiKey: connection.apiKey, texts, inputType, dimensions });
+        const { failure, vectorOf } = scripted;
+        if (failure !== null) throw providerError(`embeddings of ${model}`, failure.statusCode, failure.body);
+        const length = scripted.vectorLength ?? dimensions;
+        const byLength = (text: string) => Array.from({ length }, (_, index) => text.length + index);
+        return {
+          vectors: texts.map((text) => (vectorOf === null ? byLength(text) : [...vectorOf(text, model)])),
+          inputTokens: scripted.withoutTokenCount ? null : texts.length * SCRIPTED_EMBEDDING_TOKENS_PER_TEXT,
+        };
+      },
+    },
+  };
+  return scripted;
+}
+
 /**
  * A model input as short literal lines: `user: <text>`, `assistant: <text> [<tool>, …]`,
  * `tool: <tool>, …` — what the tests compare with expected literals.
@@ -394,6 +473,13 @@ export interface AccessGateDoubleOptions {
    * read on every question, so a test may withdraw a model from an owner mid-run by adding to the object.
    */
   readonly ownerModelRefusals?: Readonly<Record<string, Readonly<Record<string, ModelRefusal>>>>;
+  /** The default chat model; `null` (no model chosen) by default. */
+  readonly defaultChatModel?: string | null;
+  /**
+   * What `embedding` answers an owner that is not refused; `model_not_configured` by default. Asked on every
+   * question, so a test may switch the embedding model, or take it away, mid-run.
+   */
+  readonly embedding?: () => EmbeddingVerdict;
 }
 
 type ModelRefusal = Extract<ModelVerdict, { readonly kind: 'refused' }>;
@@ -423,6 +509,44 @@ export function createAccessGateDouble(options: AccessGateDoubleOptions): Access
       return price === undefined
         ? { kind: 'refused', reason: 'model_not_connected' }
         : { kind: 'allowed', price };
+    },
+    async defaultChatModel() {
+      return options.defaultChatModel ?? null;
+    },
+    async embedding(ownerId) {
+      if (ownerId !== null && disabled(ownerId)) return { kind: 'refused', reason: 'owner_disabled' };
+      return options.embedding?.() ?? { kind: 'refused', reason: 'model_not_configured' };
+    },
+  };
+}
+
+/** The key every provider of the registry double has, unless it is `key_missing`. */
+const DOUBLE_PROVIDER_KEY = 'test-provider-key';
+
+/**
+ * The provider registry as `ModelClient` and the start read it (ADR-0004: a double of the package's own
+ * contract), without a database. `states` names the registered providers and the state of each; any other
+ * name is `missing`. A provider named after a kind (`anthropic`, `gemini`, `openai_compatible`) is of that
+ * kind, any other is `anthropic`. Read on every call, so a test may change a state mid-run.
+ */
+export function createProviderRegistryDouble(
+  states: Readonly<Record<string, ModelProviderState>>,
+): Pick<AgentsProviders, 'connection' | 'readiness'> {
+  return {
+    async connection(name) {
+      const state = states[name];
+      if (state === undefined) return null;
+      const kind = ModelProviderKindSchema.safeParse(name);
+      return {
+        name,
+        kind: kind.success ? kind.data : 'anthropic',
+        baseUrl: `http://${name}.provider.test`,
+        apiKey: state === 'key_missing' ? null : DOUBLE_PROVIDER_KEY,
+        enabled: state !== 'disabled',
+      };
+    },
+    async readiness(names) {
+      return new Map(names.map((name): [string, ProviderReadiness] => [name, states[name] ?? 'missing']));
     },
   };
 }

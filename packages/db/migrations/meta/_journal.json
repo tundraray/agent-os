@@ -176,6 +176,20 @@
       "when": 1795092221551,
       "tag": "0024_ancient_scarlet_witch",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795172959695,
+      "tag": "0025_parallel_captain_cross",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795190117081,
+      "tag": "0026_panoramic_roland_deschain",
+      "breakpoints": true
     }
   ]
 }

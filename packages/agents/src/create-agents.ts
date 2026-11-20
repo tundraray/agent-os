@@ -5,8 +5,15 @@ import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
 import type { AccessAudit, AccessGate } from './access-gate.js';
-import { type AgentsConfig, secretValuesOf } from './config.js';
+import type { AgentsConfig } from './config.js';
+import { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client.js';
+import { type AgentsEmbeddings, createEmbeddings } from './embeddings/embeddings.js';
 import { createStopChildrenOnFailure } from './events/stop-children-on-failure.js';
+import { createKnowledgeEmbedHandler } from './knowledge/embed.handler.js';
+import { createKnowledgeExtractHandler } from './knowledge/extract.handler.js';
+import { type AgentsKnowledge, createAgentsKnowledge } from './knowledge/knowledge.js';
+import { createKnowledgeTrigger } from './knowledge/knowledge-trigger.js';
+import { createPgvectorStore } from './knowledge/pgvector-store.js';
 import { ConnectRequests } from './mcp/connect-requests.js';
 import { type AgentsMcp, createAgentsMcp } from './mcp/mcp.js';
 import { McpAccounts } from './mcp/mcp-accounts.js';
@@ -15,6 +22,7 @@ import { McpRegistry } from './mcp/mcp-registry.js';
 import type { AgentTurnModelClient } from './model/mastra-turn.js';
 import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
 import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
+import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry.js';
 import type { RecordLibrary } from './start/record-library.js';
 import {
   auditStartRefusal,
@@ -64,6 +72,8 @@ export interface AgentsOptions {
    * `createCodeRunner` with `CODE_RUN_MAX_CONCURRENT`.
    */
   readonly codeRunner?: CodeRunner;
+  /** The seam of the embeddings provider: `createScriptedEmbeddings().client` in tests; the real one by default. */
+  readonly embeddingClient?: EmbeddingClient;
 }
 
 /** What `rootMayStart` asks: the conversation root's owner and the record the call names. */
@@ -98,10 +108,23 @@ export interface Agents {
   rootMayStart(request: RootStartQuery): Promise<boolean>;
   /** The MCP registry and the employees' connections: the only MCP entry point of `apps/api` (ADR-0014). */
   readonly mcp: AgentsMcp;
+  /** The model provider registry: the only entry point of `apps/api` to `agent_model_providers` (ADR-0019). */
+  readonly providers: AgentsProviders;
   /**
-   * One call of `AGENT_DEFAULT_MODEL` outside any task, without tools (the conversation title): the
+   * Vectors on the default embedding model for the platform's own features (KD-6): the spend on the named
+   * employee or on the platform, every refusal and failure a value.
+   */
+  readonly embeddings: AgentsEmbeddings;
+  /**
+   * The knowledge graphs of self-learning workflows and their settings (self-learning KD-1, KD-7): the only
+   * entry point of `apps/api` to `agent_knowledge_*`. Who may call is the library's rule, asked first.
+   */
+  readonly knowledge: AgentsKnowledge;
+  /**
+   * One call of the default chat model outside any task, without tools (the conversation title): the
    * retries and cancel of an agent's call, a token ledger row without `taskId`, no text parts to the
-   * hook. A provider that keeps failing rejects.
+   * hook. No default chat model rejects with `ModelNotConfiguredError`; a provider that is not ready or
+   * keeps failing rejects.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
   /**
@@ -115,8 +138,8 @@ export interface Agents {
 
 /**
  * Builds the agents package from the database, the runtime, the logger and the parsed settings. The
- * `agent` task handler and the `task.failed` consumer are registered in the runtime at once (plan
- * Notes 8). In memory it keeps only the tool registry, the open MCP connection requests and the token
+ * `agent`, `knowledge.extract` and `knowledge.embed` task handlers and the `task.failed` and knowledge
+ * trigger consumers are registered in the runtime at once (plan Notes 8). In memory it keeps only the tool registry, the open MCP connection requests and the token
  * refreshes in flight; the MCP registry, the accounts and every run's snapshot are in Postgres (ADR-0001,
  * ADR-0017).
  */
@@ -141,7 +164,11 @@ export function createAgents(options: AgentsOptions): Agents {
     callTimeoutMs: config.mcpCallTimeoutMs,
     allowHttp: config.allowHttpUrls,
   });
-  const startDeps = { library, access, audit };
+  const providers = createProviderRegistry({
+    database,
+    logger: logger.child({ service: 'agents.providers' }),
+  });
+  const startDeps = { library, access, providers, audit };
   const runner = createToolRunner({
     client: mcpClient,
     accounts,
@@ -165,7 +192,8 @@ export function createAgents(options: AgentsOptions): Agents {
     runner,
     codeRun: config.codeRun,
     toolResultMaxBytes: config.toolResultMaxBytes,
-    maskSecrets: createSecretMasker(secretValuesOf(config)),
+    // Keys come only from the process's secret memory: the provider registry remembers each one it reads (KD-7).
+    maskSecrets: createSecretMasker([]),
   });
   const registry: ToolRegistry = createToolRegistry({
     builtins: createBuiltinTools({
@@ -187,9 +215,18 @@ export function createAgents(options: AgentsOptions): Agents {
     config,
     logger: logger.child({ service: 'agents.model' }),
     access,
+    providers,
     audit,
     ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
   });
+  const embeddings = createEmbeddings({
+    client: options.embeddingClient ?? createEmbeddingClient(),
+    access,
+    providers,
+    ledger: runtime.ledger,
+  });
+  // One store of the knowledge vectors for every reader and writer (self-learning KD-8).
+  const vectorStore = createPgvectorStore(database);
 
   runtime.handlers.register(
     createAgentStepHandler({
@@ -202,12 +239,27 @@ export function createAgents(options: AgentsOptions): Agents {
         audit,
         tasks: runtime.tasks,
         inbox: runtime.inbox,
+        vectorStore,
       }),
-      compactionStep: createCompactionStep({ database, registry, modelClient, audit }),
+      compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
       compactAtTokens: config.compactAtTokens,
+      embeddings,
     }),
   );
+  runtime.handlers.register(
+    createKnowledgeExtractHandler({
+      database,
+      tasks: runtime.tasks,
+      modelClient,
+      embeddings,
+      store: vectorStore,
+    }),
+  );
+  runtime.handlers.register(
+    createKnowledgeEmbedHandler({ database, embeddings, store: vectorStore }),
+  );
   runtime.eventConsumers.register(createStopChildrenOnFailure({ tasks: runtime.tasks, logger }));
+  runtime.eventConsumers.register(createKnowledgeTrigger({ tasks: runtime.tasks, logger }));
 
   const sessions = createAgentSessions({ database, runtime, registry, ...startDeps, logger });
 
@@ -219,6 +271,15 @@ export function createAgents(options: AgentsOptions): Agents {
     rootMayStart: async ({ ownerId, recordId, kind }) =>
       rootMayStartRecord(await library.listVisible(ownerId), kind, recordId),
     mcp: createAgentsMcp(mcpRegistry, accounts),
+    providers,
+    embeddings,
+    knowledge: createAgentsKnowledge({
+      database,
+      tasks: runtime.tasks,
+      embeddings,
+      store: vectorStore,
+      logger,
+    }),
     completeText: (request) => modelClient.completeText(request),
     async start() {
       const startedAt = Date.now();

@@ -53,6 +53,7 @@ const snapshot: WorkflowSnapshot = {
       },
     ],
     finalExecutor: 'answer',
+    selfLearning: false,
   },
 };
 

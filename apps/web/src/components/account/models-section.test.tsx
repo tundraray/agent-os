@@ -22,9 +22,9 @@ describe("«Модели и расход» (MA-02)", () => {
     serveModels({
       month: "2026-11",
       models: [
-        { model: "anthropic/haiku", name: "Haiku", spentUsd: 3.1, quotaUsd: null, remainingUsd: null, exhausted: false },
-        { model: "anthropic/opus", name: "Opus", spentUsd: 12.5, quotaUsd: 50, remainingUsd: 37.5, exhausted: false },
-        { model: "anthropic/sonnet", name: "Sonnet", spentUsd: 100.4, quotaUsd: 100, remainingUsd: 0, exhausted: true },
+        { model: "anthropic/haiku", name: "Haiku", unavailableReason: null, spentUsd: 3.1, quotaUsd: null, remainingUsd: null, exhausted: false },
+        { model: "anthropic/opus", name: "Opus", unavailableReason: null, spentUsd: 12.5, quotaUsd: 50, remainingUsd: 37.5, exhausted: false },
+        { model: "anthropic/sonnet", name: "Sonnet", unavailableReason: null, spentUsd: 100.4, quotaUsd: 100, remainingUsd: 0, exhausted: true },
       ],
     });
     render(<ModelsSection />);
@@ -36,9 +36,10 @@ describe("«Модели и расход» (MA-02)", () => {
       .map((cell) => cell.textContent);
     expect(header).toEqual(["Модель", "Расход", "Квота", "Остаток"]);
     const [, haiku, opus, sonnet] = within(table).getAllByRole("row");
-    expect(cellsOf(haiku!)).toEqual(["Haiku", "3,10 $", "без предела", "—"]);
-    expect(cellsOf(opus!)).toEqual(["Opus", "12,50 $", "50 $", "37,50 $"]);
-    expect(cellsOf(sonnet!)).toEqual(["Sonnet", "100,40 $", "100 $", "0,00 $Квота исчерпана"]);
+    // The name cell holds the provider Caption under the name (model-providers MP-08).
+    expect(cellsOf(haiku!)).toEqual(["Haikuanthropic", "3,10 $", "без предела", "—"]);
+    expect(cellsOf(opus!)).toEqual(["Opusanthropic", "12,50 $", "50 $", "37,50 $"]);
+    expect(cellsOf(sonnet!)).toEqual(["Sonnetanthropic", "100,40 $", "100 $", "0,00 $Квота исчерпана"]);
   });
 
   // AC-23.1: an employee with no allowed model reads MC-9 instead of an empty table.

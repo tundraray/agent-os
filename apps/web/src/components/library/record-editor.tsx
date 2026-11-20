@@ -336,7 +336,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
         admin: system,
         kind: definition.kind,
         name: definition.name,
-        model: definition.kind === "agent" ? definition.content.model : undefined,
+        model: definition.kind === "agent" ? (definition.content.model ?? undefined) : undefined,
         ...refusedServer(definition, choices.servers),
       });
       if (text.place.at === "screen") {

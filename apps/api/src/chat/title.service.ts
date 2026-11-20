@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   type Agents,
+  ModelNotConfiguredError,
   ModelRefusedError,
   OwnerDisabledError,
 } from '@agent-os/agents';
@@ -38,8 +39,9 @@ function refusalReason(error: unknown): string | undefined {
  * The automatic title of a conversation (design-chat.md, DC-2, KD-6): one `agents.completeText` call
  * over the first message, the title rules, and a write only into an empty title. It runs in the
  * background of a send whose conversation has no title yet, at most once at a time per conversation
- * in this process; a failure, a refusal of the access gate (one `info` record with the reason) or an
- * empty answer leaves the title empty, and the next send retries.
+ * in this process; a failure, a refusal of the access gate (one `info` record with the reason), no
+ * default chat model (one `warn` record with the reason, DC-3) or an empty answer leaves the title
+ * empty, and the next send retries.
  */
 @Injectable()
 export class TitleService {
@@ -97,6 +99,15 @@ export class TitleService {
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
+      if (error instanceof ModelNotConfiguredError) {
+        this.logger.warn('thread title not generated', {
+          threadId,
+          ownerId,
+          reason: error.reason,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
       const reason = refusalReason(error);
       if (reason !== undefined) {
         this.logger.info('thread title refused by the access gate', {

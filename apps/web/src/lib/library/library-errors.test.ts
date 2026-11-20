@@ -4,6 +4,7 @@ import {
   describeDraftRefusal,
   describeLibraryError,
   describeRefusal,
+  isKnowledgeHidden,
   type LibraryErrorText,
   type RefusalText,
 } from './library-errors';
@@ -37,9 +38,12 @@ const network = new ApiRequestError({ kind: 'network', method: 'POST', path: '/a
 
 const NOT_FOUND = 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.';
 
-// Catches: the same code in another place reads the same line; the model of a refusal taken from the call's arguments.
-describe('describeLibraryError and describeRefusal (design-web.md, «Ошибки и их место»; DC-10, DC-11, Flow 2)', () => {
-  it.each<[string, () => LibraryErrorText | RefusalText | string | null, LibraryErrorText | RefusalText | string | null]>([
+type Outcome = LibraryErrorText | RefusalText | string | boolean | null;
+
+// Catches: the same code in another place reads the same line; the model of a refusal taken from the call's arguments;
+// «Не найдено» on any 403, or an error instead of «Не найдено» on the knowledge 403 (self-learning AC-11.3, DC-2).
+describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-web.md, «Ошибки и их место»; DC-10, DC-11, Flow 2)', () => {
+  it.each<[string, () => Outcome, Outcome]>([
     // 404 RECORD_NOT_FOUND: the record page gives way to RV-02; a message with a chip names the record unavailable
     [
       '404 on the record page → RV-02',
@@ -198,6 +202,36 @@ describe('describeLibraryError and describeRefusal (design-web.md, «Ошибк�
       () => describeLibraryError(startRefused('model_not_allowed', null), { where: 'first_message' }),
       null,
     ],
+    // model-providers DC-5, MP-09: a provider or default-model refusal names its reason (MC-11, MC-12)
+    [
+      'START_REFUSED model_not_configured on the first message → MC-11 under the field',
+      () => describeLibraryError(startRefused('model_not_configured', null), { where: 'first_message' }),
+      {
+        place: { at: 'composer' },
+        text: 'Модель для чата не настроена. Обратитесь к администратору Agent OS.',
+        open: false,
+      },
+    ],
+    [
+      'START_REFUSED provider_disabled on the first message → MC-11 with the model',
+      () =>
+        describeLibraryError(startRefused('provider_disabled', 'anthropic/claude-haiku-5-5'), { where: 'first_message' }),
+      {
+        place: { at: 'composer' },
+        text: 'Провайдер модели Haiku выключен. Обратитесь к администратору Agent OS.',
+        open: false,
+      },
+    ],
+    [
+      'START_REFUSED provider_key_missing at «Запустить с нуля» → MC-12 with «Открыть»',
+      () =>
+        describeLibraryError(startRefused('provider_key_missing', 'anthropic/claude-sonnet-5-5'), {
+          where: 'restart',
+          kind: 'workflow',
+          own: false,
+        }),
+      { place: { at: 'notice' }, text: 'У провайдера модели Sonnet нет ключа — workflow не запустился', open: true },
+    ],
     // unknown code and network
     [
       'unknown code (403 RECORD_READ_ONLY too) → «Не удалось сохранить» with the server message',
@@ -277,6 +311,30 @@ describe('describeLibraryError and describeRefusal (design-web.md, «Ошибк�
       { text: 'Предел вызовов исчерпан', action: null },
     ],
     [
+      'refusal provider_missing → MC-12 with «Открыть»',
+      () =>
+        describeRefusal('provider_missing', {
+          tool: 'start_agent',
+          kind: 'agent',
+          model: 'anthropic/claude-opus-5-5',
+          recordId: 'r1',
+          own: true,
+        }),
+      { text: 'Провайдер модели Opus не настроен — агент не запустился', action: { label: 'Открыть', recordId: 'r1' } },
+    ],
+    [
+      'refusal model_not_configured → MC-12 without a model',
+      () =>
+        describeRefusal('model_not_configured', {
+          tool: 'start_workflow',
+          kind: 'workflow',
+          model: null,
+          recordId: 'w1',
+          own: false,
+        }),
+      { text: 'Модель не настроена — workflow не запустился', action: { label: 'Открыть', recordId: 'w1' } },
+    ],
+    [
       'refusal invalid_arguments of draft_record → the platform text',
       () =>
         describeRefusal('invalid_arguments', { tool: 'draft_record', kind: 'workflow', model: null, recordId: null, own: true }),
@@ -323,6 +381,11 @@ describe('describeLibraryError and describeRefusal (design-web.md, «Ошибк�
       () => describeDraftRefusal('version_conflict', { kind: 'agent', name: 'Разбор' }),
       null,
     ],
+    // Knowledge screen «Не найдено» (self-learning design-web.md, «Клиент API»)
+    ['knowledge hidden: 404', () => isKnowledgeHidden(refusal(404, 'RECORD_NOT_FOUND')), true],
+    ['knowledge hidden: 403 KNOWLEDGE_FORBIDDEN', () => isKnowledgeHidden(refusal(403, 'KNOWLEDGE_FORBIDDEN')), true],
+    ['knowledge not hidden: 403 ADMIN_REQUIRED', () => isKnowledgeHidden(refusal(403, 'ADMIN_REQUIRED')), false],
+    ['knowledge not hidden: 500', () => isKnowledgeHidden(refusal(500, 'INTERNAL')), false],
   ])('%s', (_, run, expected) => {
     expect(run()).toEqual(expected);
   });

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { cn } from "cn";
 import { NO_PASSWORD_MANAGER, RevealInput } from "@/components/password-field";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { CAPTION, CONTROL_SIZE } from "./admin-form";
 
 /** MC-28. */
@@ -14,6 +15,7 @@ const SECRET_TEXT = {
   cancelReplace: "Отменить замену",
   placeholder: "Новое значение",
   show: "Показать введённое значение",
+  endsWith: (tail: string) => `, заканчивается на ${tail}`,
 } as const;
 
 export type SecretFieldProps = {
@@ -25,6 +27,10 @@ export type SecretFieldProps = {
   value: string | undefined;
   onChange: (value: string | undefined) => void;
   error: string | undefined;
+  /** The held secret's last four characters as the server reports them (`apiKeyLast4`), shown after «Задан». */
+  lastFour?: string | null;
+  /** The hint under the field, read as its description. */
+  hint?: string;
 };
 
 type FocusTarget = "input" | "replace";
@@ -33,9 +39,21 @@ type FocusTarget = "input" | "replace";
  * design-system secret-field: a secret can only be set or replaced. A held secret shows «Задан» and
  * «Заменить»; the replacement exists only in the form's state until it is sent (Invariant 3).
  */
-export function SecretField({ id, label, isSet, value, onChange, error }: SecretFieldProps) {
+export function SecretField({ id, label, isSet, value, onChange, error, lastFour, hint }: SecretFieldProps) {
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
+  // Never more than four characters, whatever the caller passes.
+  const tail = lastFour === undefined || lastFour === null || lastFour === "" ? null : lastFour.slice(-4);
+  const describedBy = [hint !== undefined ? hintId : null, error !== undefined ? errorId : null]
+    .filter((part) => part !== null)
+    .join(" ");
+  const hintText =
+    hint === undefined ? null : (
+      <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+        {hint}
+      </FieldDescription>
+    );
   /** Where focus goes once the next commit has rendered it: the field after «Заменить», «Заменить» after the cancel. */
   const pendingFocus = useRef<FocusTarget | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,13 +67,29 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
   });
 
   if (isSet && !replacing) {
+    const badge = <StateBadge state="neutral">{SECRET_TEXT.set}</StateBadge>;
     return (
-      <Field role="group" aria-labelledby={labelId} className="gap-1.5">
+      <Field
+        role="group"
+        aria-labelledby={labelId}
+        aria-describedby={hint !== undefined ? hintId : undefined}
+        className="gap-1.5"
+      >
         <div id={labelId} className="text-data font-medium text-foreground">
           {label}
         </div>
         <div className="flex items-center justify-between gap-2">
-          <StateBadge state="neutral">{SECRET_TEXT.set}</StateBadge>
+          {tail === null ? (
+            badge
+          ) : (
+            <span className="flex items-center gap-2">
+              {badge}
+              <span aria-hidden className="font-mono text-mono-compact text-muted-foreground">
+                …{tail}
+              </span>
+              <span className="sr-only">{SECRET_TEXT.endsWith(tail)}</span>
+            </span>
+          )}
           <Button
             ref={replaceRef}
             type="button"
@@ -71,6 +105,7 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
             {SECRET_TEXT.replace}
           </Button>
         </div>
+        {hintText}
       </Field>
     );
   }
@@ -96,7 +131,7 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
             showLabel={SECRET_TEXT.show}
             value={value ?? ""}
             aria-invalid={error !== undefined}
-            aria-describedby={error !== undefined ? errorId : undefined}
+            aria-describedby={describedBy === "" ? undefined : describedBy}
             onChange={(event) => onChange(event.target.value)}
           />
         </div>
@@ -115,6 +150,7 @@ export function SecretField({ id, label, isSet, value, onChange, error }: Secret
           </Button>
         )}
       </div>
+      {hintText}
       <FieldError id={errorId} className={CAPTION}>
         {error}
       </FieldError>

@@ -83,7 +83,8 @@ function briefJson({ question, boundaries, result }: WorkflowBrief): string {
  * may start it, both before the commit (ADR-0017), and `execute` starts the coordinator as a child of the
  * caller on the snapshot of the whole team. A refusal is the call's result, in the order of `start_agent`
  * (plan Notes 2): the record is unavailable, then it is outside the chat's launch set (`not_allowed`,
- * AC-15.2), then its coordinator's model is not allowed; no coordinator starts.
+ * AC-15.2), then its coordinator's model is not allowed, has no ready provider or is the default and
+ * none is chosen; no coordinator starts. Only a refused model is audited.
  */
 export function createStartWorkflowTool(
   options: StartWorkflowToolOptions,

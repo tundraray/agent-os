@@ -68,11 +68,11 @@ import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub.js';
 import {
-  addModel,
   allowRole,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
+  useRunModels,
 } from './support/access.js';
 import {
   type ChatApi,
@@ -523,13 +523,14 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   let adminId: string | undefined;
   /** Gives the built-in records back their models; run in `afterAll` before the run's rows go. */
   let restoreBuiltins: (() => Promise<void>) | undefined;
+  /** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+  let restoreModels: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
     harness = await createTestApp({
       workers: true,
       agentPageSize: 2,
       mcpServers: ['logs', 'backoffice'],
-      defaultModel: DEFAULT_MODEL,
       faults: (files) => [
         holdCall('get_trace', TRACE_C, files.latch(FIXTURE_LATCHES.c)),
         holdCall('get_trace', TRACE_D2, files.latch(FIXTURE_LATCHES.d2)),
@@ -547,10 +548,9 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       `e2e-admin-${randomUUID()}`,
     );
     adminId = admin.id;
-    // The file's model and rights: the run's model and role, never the developer's catalogue or rights.
-    await addModel(harness.app, admin, {
-      id: DEFAULT_MODEL,
-      ...HAIKU_TEST_PRICES,
+    // The file's model and rights: the run's provider, default model and role, never the developer's rows or rights.
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
     });
     restoreBuiltins = await pointBuiltinsAt(harness.app, admin, DEFAULT_MODEL);
     const role = await allowRole(harness.app, admin, {
@@ -593,6 +593,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
     try {
       try {
         await restoreBuiltins?.();
+        await restoreModels?.();
       } finally {
         await removeRunRows(harness.pool, {
           models: [DEFAULT_MODEL],

@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { focusShellTarget } from '@/lib/focus';
 import type { AdminPage, AdminSection } from '@/lib/shell-route';
 import { LibrarySection } from './library/library-section';
-import { CatalogSection } from './models/catalog-section';
+import { ModelsScreen } from './models/models-screen';
 import { RolesSection } from './roles/roles-section';
 import { ServersSection } from './servers/servers-section';
 import { SignInSection } from './sign-in/sign-in-section';
@@ -18,7 +18,7 @@ type AdminScreenProps = { section: AdminSection; page: AdminPage };
  * Accessibility), here and nowhere else.
  */
 export function AdminScreen({ section, page }: AdminScreenProps) {
-  const pageKey = page.kind === 'record' ? page.key : null;
+  const pageKey = page.kind === 'record' || page.kind === 'knowledge' ? page.key : null;
   useEffect(() => {
     focusShellTarget('page-title');
   }, [section, page.kind, pageKey]);
@@ -29,7 +29,7 @@ export function AdminScreen({ section, page }: AdminScreenProps) {
     case 'roles':
       return <RolesSection page={page} />;
     case 'models':
-      return <CatalogSection />;
+      return <ModelsScreen />;
     case 'sign-in':
       return <SignInSection page={page} />;
     case 'servers':

@@ -4,6 +4,8 @@ export * from './agents.js';
 export * from './chat.js';
 export * from './identity.js';
 export * from './mcp.js';
+export * from './model-providers.js';
 export * from './next-path.js';
 export * from './access.js';
 export * from './library.js';
+export * from './knowledge.js';

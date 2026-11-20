@@ -5,11 +5,14 @@ import {
   type Agents,
   type AgentSessions,
   type AgentTurnMessage,
+  type AgentTurnModelClient,
   createAgents,
+  type EmbeddingVerdict,
+  createMastraTurnClient,
   type InCommitAgentTool,
   parseAgentsConfig,
   type StartResolution,
-  secretValuesOf,
+  type TextDelta,
 } from '@agent-os/agents';
 import type { CodeRunner } from '@agent-os/code-runner';
 import { createLogger, type LogRecord } from '@agent-os/common';
@@ -17,6 +20,7 @@ import { memorySink } from '@agent-os/common/testing';
 import { type AgentContent, CHAT_BUILTIN_KEY } from '@agent-os/contracts';
 import {
   agentCodeCalls,
+  agentModelProviders,
   agentToolCalls,
   createDatabase,
   type Database,
@@ -35,8 +39,10 @@ import {
   type AccessGateDoubleOptions,
   createAccessGateDouble,
   createLibraryDouble,
+  createScriptedEmbeddings,
   type LibraryDouble,
   type LibraryDoubleRecord,
+  type ScriptedEmbeddings,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
 import {
@@ -62,13 +68,21 @@ import { registerFixtureServers, removeServer, runName } from './mcp-servers.js'
  * process over HTTP, registered in the registry under the run's names (`mcp-servers.ts`). A second
  * instance ("the restarted server") is a second harness over the same database, the same fixture files
  * and the same library double: it starts its own fixture process and points the run's registry rows at
- * it; both processes write the same call log.
+ * it; both processes write the same call log. The model provider is the row {@link HARNESS_PROVIDER} in the
+ * database, which the open harnesses of a test file keep and the last one deletes.
  */
 
-/** The deployment's default model (`AGENT_DEFAULT_MODEL`) and the model of a test record: input 1, output 5 USD per million tokens. */
-const TEST_MODEL_DEFAULT = 'anthropic/test-default';
+/**
+ * The model provider of every harness (model-providers design-core.md, Test Strategy): an `openai_compatible`
+ * row without a key, so it is `ready`. Never `anthropic`: the tests run on the developer's database, whose
+ * `anthropic` row may hold a real key.
+ */
+const HARNESS_PROVIDER = 'agents-harness';
+
+/** The default chat model of the access gate double and the model of a test record: input 1, output 5 USD per million tokens. */
+export const TEST_MODEL_DEFAULT = `${HARNESS_PROVIDER}/test-default`;
 /** A second priced model a launch may name: input 3, output 15 USD per million tokens. */
-export const TEST_MODEL_CHOSEN = 'anthropic/test-chosen';
+export const TEST_MODEL_CHOSEN = `${HARNESS_PROVIDER}/test-chosen`;
 
 /** The model catalogue of every harness: both models, rates exact in binary. */
 const TEST_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
@@ -84,6 +98,25 @@ const TEST_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
     cacheWriteUsdPerMTok: 3.75,
     cacheReadUsdPerMTok: 0.375,
   },
+};
+
+/** What the access gate double answers for embeddings until a test chooses a model: none is chosen. */
+const NO_EMBEDDING_MODEL: EmbeddingVerdict = { kind: 'refused', reason: 'model_not_configured' };
+
+/** An embedding model of the harness's provider: 3 dimensions, input 0.25 USD per million tokens. */
+export const TEST_EMBEDDING_MODEL_A: EmbeddingVerdict = {
+  kind: 'allowed',
+  model: `${HARNESS_PROVIDER}/test-embed-a`,
+  inputUsdPerMTok: 0.25,
+  dimensions: 3,
+};
+
+/** A second embedding model: 4 dimensions, so pgvector would fail on a comparison with model A's vectors. */
+export const TEST_EMBEDDING_MODEL_B: EmbeddingVerdict = {
+  kind: 'allowed',
+  model: `${HARNESS_PROVIDER}/test-embed-b`,
+  inputUsdPerMTok: 0.5,
+  dimensions: 4,
 };
 
 /** The fixture sources a harness registers unless told otherwise. */
@@ -165,7 +198,7 @@ export async function setRootRecord(library: LibraryDouble, record: TestRecord):
   library.edit(chat.id, { name: record.name, body });
 }
 
-/** The tool {@link AgentsHarnessOptions.workflowStarter} registers. */
+/** The tool {@link AgentsHarnessSettings.workflowStarter} registers. */
 export const START_TEST_WORKFLOW = 'start_test_workflow';
 
 const StartTestWorkflowArgsSchema = z.object({
@@ -212,8 +245,17 @@ function startTestWorkflowTool(
   };
 }
 
-export interface AgentsHarnessOptions {
-  readonly model: ScriptedModel;
+/**
+ * The client under `ModelClient`: the scripted double's, or with `turnClient: 'real'` the real
+ * `createMastraTurnClient()`, whose requests go to the address of the model's provider row.
+ */
+type HarnessTurnClient =
+  | { readonly model: ScriptedModel; readonly turnClient?: never }
+  | { readonly turnClient: 'real'; readonly model?: never };
+
+export type AgentsHarnessOptions = HarnessTurnClient & AgentsHarnessSettings;
+
+interface AgentsHarnessSettings {
   /** Server rights of the test: employee id (or `*`) → server names of the run (`mcp-servers.ts`); the access gate double. */
   readonly access: Readonly<Record<string, readonly string[]>>;
   /** The library every start asks; shared with a second instance; a fresh double by default. */
@@ -224,7 +266,7 @@ export interface AgentsHarnessOptions {
   readonly workflowStarter?: boolean;
   /** Shared with a second instance; a fresh directory by default. */
   readonly fixture?: FixtureFiles;
-  /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` / `ANTHROPIC_API_KEY` variables over the harness defaults. */
+  /** `AGENT_*` / `MCP_*` / `CODE_RUN_*` variables over the harness defaults. */
   readonly variables?: Readonly<Record<string, string>>;
   /**
    * Sources whose run servers the harness registers at its fixture process's shared-token paths;
@@ -242,6 +284,12 @@ export interface AgentsHarnessOptions {
   readonly runtimeConfig?: Partial<RuntimeConfig>;
   /** A zombie instance: its heartbeat never renews the lease, so `expireLease` hands its step to another instance. */
   readonly zombie?: boolean;
+  /** Catalogue prices of the test's own models, next to the harness's two; the access gate double answers them. */
+  readonly prices?: Readonly<Record<string, ModelPrice>>;
+  /** Gets every text part of an agent's answer (`createAgents`' `onTextDelta`); none by default. */
+  readonly onTextDelta?: (delta: TextDelta) => void;
+  /** The embeddings double under the service; shared with a second instance; a fresh one by default. */
+  readonly embeddings?: ScriptedEmbeddings;
 }
 
 export interface AgentsHarness {
@@ -257,11 +305,53 @@ export interface AgentsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
+  /** The embeddings double `createAgents` got: its calls, `vectorOf`, `failure`. */
+  readonly embeddings: ScriptedEmbeddings;
+  /**
+   * What the access gate double answers for embeddings, read on every question: {@link NO_EMBEDDING_MODEL}
+   * until the test sets {@link TEST_EMBEDDING_MODEL_A} or {@link TEST_EMBEDDING_MODEL_B}.
+   */
+  embeddingVerdict: EmbeddingVerdict;
+  /**
+   * Stops the workers, the agents, deletes the provider row when this is the file's last open harness, closes
+   * the pool, then the fixture process — each also when the one before fails.
+   */
   close(): Promise<void>;
 }
 
-/** Builds runtime + agents with the scripted model against the test database and starts them. */
+function turnClientOf(options: HarnessTurnClient): AgentTurnModelClient {
+  return options.turnClient === 'real' ? createMastraTurnClient() : options.model.turnClient;
+}
+
+/** Open harnesses of this test file (files run one at a time): the provider row lives while one of them does. */
+let openHarnesses = 0;
+
+/**
+ * The first open harness of the file sets the row {@link HARNESS_PROVIDER} to `openai_compatible`, the kind's
+ * address, no key, enabled, replacing a row an earlier run left or changed. A later harness of the file (a second
+ * instance) finds it and leaves it as the test made it.
+ */
+async function openHarnessProvider(db: Database): Promise<void> {
+  openHarnesses += 1;
+  if (openHarnesses > 1) return;
+  const row = { kind: 'openai_compatible', baseUrl: null, apiKey: null, enabled: true } as const;
+  await db
+    .insert(agentModelProviders)
+    .values({ name: HARNESS_PROVIDER, ...row })
+    .onConflictDoUpdate({ target: agentModelProviders.name, set: { ...row, updatedAt: sql`now()` } });
+}
+
+/** The last harness of the file to close deletes the row: the developer's database keeps only its own providers. */
+async function closeHarnessProvider(db: Database): Promise<void> {
+  openHarnesses -= 1;
+  if (openHarnesses > 0) return;
+  await db.delete(agentModelProviders).where(eq(agentModelProviders.name, HARNESS_PROVIDER));
+}
+
+/**
+ * Builds runtime + agents against the test database and starts them: the scripted model (or the real turn
+ * client), the scripted embeddings and the access gate double whose default chat model is {@link TEST_MODEL_DEFAULT}.
+ */
 export async function createAgentsHarness(options: AgentsHarnessOptions): Promise<AgentsHarness> {
   const fixture = options.fixture ?? createFixtureFiles('agents-e2e');
   const runtimeConfig: RuntimeConfig = {
@@ -276,17 +366,16 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     dbPoolMax: 8,
     ...options.runtimeConfig,
   };
-  const agentsConfig = parseAgentsConfig(
-    {
-      AGENT_DEFAULT_MODEL: TEST_MODEL_DEFAULT,
-      MCP_CALL_TIMEOUT_MS: '90000',
-      NODE_ENV: 'test',
-      ...options.variables,
-    },
-  );
+  const agentsConfig = parseAgentsConfig({
+    MCP_CALL_TIMEOUT_MS: '90000',
+    NODE_ENV: 'test',
+    ...options.variables,
+  });
   const sink = memorySink();
-  const logger = createLogger({ sinks: [sink], secrets: secretValuesOf(agentsConfig), minLevel: 'debug' });
+  const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
   const library = options.library ?? createLibraryDouble();
+  const embeddings = options.embeddings ?? createScriptedEmbeddings();
+  let embeddingVerdict = NO_EMBEDDING_MODEL;
   if (options.root !== undefined) await setRootRecord(library, options.root);
   const fixtureProcess = await startFixtureProcess(fixture);
   const database = createDatabase({
@@ -304,16 +393,20 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     runtime,
     logger,
     config: agentsConfig,
-    turnClient: options.model.turnClient,
+    turnClient: turnClientOf(options),
+    embeddingClient: embeddings.client,
     access: createAccessGateDouble({
       servers: options.access,
-      prices: TEST_MODEL_PRICES,
+      prices: { ...TEST_MODEL_PRICES, ...options.prices },
+      defaultChatModel: TEST_MODEL_DEFAULT,
+      embedding: () => embeddingVerdict,
       ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
       ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
     }),
     audit: async () => {},
     library,
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
+    ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
   });
   if (options.workflowStarter === true) agents.tools.register(startTestWorkflowTool(agents));
 
@@ -325,14 +418,20 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
         await agents.stop();
       } finally {
         try {
-          await database.close();
+          await closeHarnessProvider(database.db);
         } finally {
-          await fixtureProcess.stop();
+          try {
+            await database.close();
+          } finally {
+            await fixtureProcess.stop();
+          }
         }
       }
     }
   };
   try {
+    // First in the block: `close` below then always pairs with this open.
+    await openHarnessProvider(database.db);
     await agents.start();
     const sources = options.mcpServers ?? DEFAULT_SOURCES;
     if (sources.length === 0) {
@@ -354,6 +453,13 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     fixture,
     fixtureProcess,
     logs: sink.records,
+    embeddings,
+    get embeddingVerdict() {
+      return embeddingVerdict;
+    },
+    set embeddingVerdict(verdict) {
+      embeddingVerdict = verdict;
+    },
     close,
   };
 }
@@ -497,12 +603,27 @@ export function eventsOf(db: Database, taskId: string) {
     .orderBy(asc(runtimeEvents.seq));
 }
 
-/** The token ledger rows of an owner. */
-export function ledgerRowsOf(db: Database, ownerId: string) {
+/**
+ * The token ledger rows of an owner (`PLATFORM_OWNER_ID` for the platform's own calls), of one task when
+ * `taskId` is given, in order of the call: an embedding row tells itself by its model.
+ */
+export function ledgerRowsOf(db: Database, ownerId: string, taskId?: string) {
   return db
-    .select({ taskId: runtimeModelCalls.taskId, model: runtimeModelCalls.model, callId: runtimeModelCalls.callId })
+    .select({
+      taskId: runtimeModelCalls.taskId,
+      model: runtimeModelCalls.model,
+      callId: runtimeModelCalls.callId,
+      inputTokens: runtimeModelCalls.inputTokens,
+      costUsd: runtimeModelCalls.costUsd,
+    })
     .from(runtimeModelCalls)
-    .where(eq(runtimeModelCalls.ownerId, ownerId));
+    .where(
+      and(
+        eq(runtimeModelCalls.ownerId, ownerId),
+        taskId === undefined ? undefined : eq(runtimeModelCalls.taskId, taskId),
+      ),
+    )
+    .orderBy(asc(runtimeModelCalls.calledAt));
 }
 
 /** The audit rows of an agent's tool calls, by answer and position. */

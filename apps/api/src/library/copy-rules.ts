@@ -18,8 +18,8 @@ export interface CopyInput {
   readonly usableServers: readonly string[];
   /** Models allowed to the copier, in «Мой доступ» order. */
   readonly allowedModels: readonly string[];
-  /** `AGENT_DEFAULT_MODEL`. */
-  readonly defaultModel: string;
+  /** The default chat model; `null` while none is chosen. */
+  readonly defaultModel: string | null;
   /** Agent records the copier sees. */
   readonly visibleAgentIds: readonly string[];
 }
@@ -44,6 +44,8 @@ export function planCopy(input: CopyInput): CopyPlan {
     );
     if (removed.length > 0)
       removedServers.push({ executor: part.executor, servers: removed });
+    // `null` runs on the default chat model at the start, so it is copied as is.
+    if (part.model === null) return { servers, model: null };
     const model = replaceModel(part.model, input);
     if (model !== part.model)
       replacedModels.push({
@@ -114,7 +116,10 @@ function copyServers(
   return servers.filter((server) => usableSet.has(server));
 }
 
-/** Flow 3: kept when allowed, else the platform model when allowed, else the first allowed, else kept. */
+/**
+ * Flow 3: kept when allowed, else the default chat model when chosen and allowed, else the first
+ * allowed, else kept.
+ */
 export function replaceModel(
   model: string,
   {
@@ -123,7 +128,8 @@ export function replaceModel(
   }: Pick<CopyInput, 'allowedModels' | 'defaultModel'>,
 ): string {
   if (allowedModels.includes(model)) return model;
-  if (allowedModels.includes(defaultModel)) return defaultModel;
+  if (defaultModel !== null && allowedModels.includes(defaultModel))
+    return defaultModel;
   return allowedModels[0] ?? model;
 }
 

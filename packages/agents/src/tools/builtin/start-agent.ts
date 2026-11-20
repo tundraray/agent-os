@@ -8,6 +8,7 @@ import {
   auditStartRefusal,
   RECORD_UNAVAILABLE,
   resolveStart,
+  type StartDeps,
   type StartRefusal,
   type StartResolution,
   type StartSource,
@@ -65,6 +66,8 @@ export interface StartAgentDeps {
   readonly library: RecordLibrary;
   /** `resolveStart` asks it about the child's model (design-access.md KD-4). */
   readonly access: AccessGate;
+  /** `resolveStart` asks it whether the child's model has a ready provider (model-providers KD-2). */
+  readonly providers: StartDeps['providers'];
   /** Gets the `access_denied` record of a start refused for its model, in `execute` (KD-6). */
   readonly audit: AccessAudit;
   /** `AGENT_MAX_DEPTH`. */
@@ -137,7 +140,8 @@ function sourceOf(target: NamedTarget, caller: ToolCaller, launchSet: LaunchSet)
  * `prepare` reads the caller's launch set and asks `resolveStart` for the child's snapshot and model on
  * behalf of the caller's owner, so neither the library nor the gate is asked while the commit transaction
  * is open (ADR-0017). In the commit the refusals go in the order of plan Notes 2: `record_unavailable`,
- * then `gateStart` (`not_allowed`, `run_limit`, `depth_limit`), then the model with its id. A refusal is
+ * then `gateStart` (`not_allowed`, `run_limit`, `depth_limit`), then the model or its provider with the
+ * model's id (`model_not_configured` without one). A refusal is
  * the call's result and creates no task; otherwise the child is started on its snapshot and its `agentId`
  * is the result of the same step. A fork gets the caller's snapshot and a link to the caller's history
  * through the last entry before the answer that holds this call. A retried step repeats `prepare`; the

@@ -1,4 +1,9 @@
-import type { RecordKind, ResolvedRecord, StartRefusedError } from '@agent-os/contracts';
+import {
+  modelProvider,
+  type RecordKind,
+  type ResolvedRecord,
+  type StartRefusedError,
+} from '@agent-os/contracts';
 
 import {
   type AccessAudit,
@@ -7,6 +12,8 @@ import {
   OwnerDisabledError,
 } from '../access-gate.js';
 import { modelDeniedEntry } from '../model/model-client.js';
+import { providerReadiness } from '../providers/provider-readiness.js';
+import type { AgentsProviders } from '../providers/provider-registry.js';
 import type { RecordLibrary } from './record-library.js';
 import type { RunSnapshot, WorkflowSnapshot } from './snapshot.js';
 import { executorSnapshot, recordSnapshot, snapshotDefinition } from './snapshot-definition.js';
@@ -37,9 +44,14 @@ export interface StartRequest {
 export interface StartDeps {
   readonly library: RecordLibrary;
   readonly access: AccessGate;
+  /** The readiness of the provider of the snapshot's model (model-providers design-core.md KD-2). */
+  readonly providers: Pick<AgentsProviders, 'connection'>;
 }
 
-/** Why a start is refused (DC-5): `model` is the refused model on a model refusal, otherwise `null`. */
+/**
+ * Why a start is refused (DC-5): `model` is the refused model on a model or provider refusal, otherwise
+ * `null` — also for `model_not_configured`, where a record's model is the default and none is chosen.
+ */
 export interface StartRefusal {
   readonly kind: 'refused';
   readonly reason: StartRefusedError['reason'];
@@ -62,21 +74,33 @@ export const RECORD_UNAVAILABLE: StartRefusal = {
   denied: null,
 };
 
+const MODEL_NOT_CONFIGURED: StartRefusal = {
+  kind: 'refused',
+  reason: 'model_not_configured',
+  model: null,
+  denied: null,
+};
+
 /**
- * The one start procedure (KD-2; ADR-0017): source → visibility for the starter → snapshot → model.
- * It runs before the transaction that starts the run and writes nothing: a refused model comes back
- * with its `access_denied` record, which the caller writes once that refusal is its outcome. A spent
- * quota does not stop the start — the run fails at its first call; a disabled owner rejects with
- * `OwnerDisabledError`.
+ * The one start procedure (KD-2; ADR-0017): source → visibility for the starter → snapshot → model →
+ * its provider. It runs before the transaction that starts the run and writes nothing: a refused model
+ * comes back with its `access_denied` record, which the caller writes once that refusal is its outcome;
+ * a provider refusal and `model_not_configured` have none (model-providers design-core.md KD-2, KD-5).
+ * A record's `null` model becomes the default chat model here, once, in the snapshot: executors, forks
+ * and restarts copy it. A spent quota does not stop the start — the run fails at its first call; a
+ * disabled owner rejects with `OwnerDisabledError`.
  */
 export async function resolveStart(
   { ownerId, source }: StartRequest,
   deps: StartDeps,
 ): Promise<StartResolution> {
-  const snapshot = await buildSnapshot(ownerId, source, deps.library);
-  if (snapshot === null) return RECORD_UNAVAILABLE;
+  const snapshot = await buildSnapshot(ownerId, source, deps);
+  if (snapshot.kind === 'refused') return snapshot;
   const model = snapshotDefinition(snapshot).model;
-  return (await modelRefusal(ownerId, model, deps.access)) ?? { kind: 'snapshot', snapshot };
+  return (
+    (await modelRefusal(ownerId, model, deps.access)) ??
+    (await providerRefusal(model, deps.providers)) ?? { kind: 'snapshot', snapshot }
+  );
 }
 
 /** Writes the `access_denied` record of a start refused for its model; any other refusal writes nothing. */
@@ -87,19 +111,19 @@ export async function auditStartRefusal(audit: AccessAudit, refusal: StartRefusa
 async function buildSnapshot(
   ownerId: string,
   source: StartSource,
-  library: RecordLibrary,
-): Promise<RunSnapshot | null> {
+  deps: StartDeps,
+): Promise<RunSnapshot | StartRefusal> {
   switch (source.kind) {
     case 'builtin': {
-      const record = await library.resolveBuiltin(ownerId, source.builtinKey);
-      return snapshotOfRecord(ownerId, record, library);
+      const record = await deps.library.resolveBuiltin(ownerId, source.builtinKey);
+      return snapshotOfRecord(ownerId, record, deps);
     }
     case 'record': {
-      const record = await library.resolve(ownerId, source.recordId);
-      return snapshotOfRecord(ownerId, record?.kind === source.expected ? record : null, library);
+      const record = await deps.library.resolve(ownerId, source.recordId);
+      return snapshotOfRecord(ownerId, record?.kind === source.expected ? record : null, deps);
     }
     case 'executor':
-      return executorSnapshot(source.coordinator, source.name);
+      return executorSnapshot(source.coordinator, source.name) ?? RECORD_UNAVAILABLE;
     case 'fork':
     case 'restart':
       return source.snapshot;
@@ -108,16 +132,20 @@ async function buildSnapshot(
 
 /**
  * The snapshot of a record the library gave the starter; an agent's `agents` are matched against one
- * `listVisible` of the same starter (plan Notes 9в), a workflow needs none.
+ * `listVisible` of the same starter (plan Notes 9в), a workflow needs none. The default chat model is
+ * read at the start, for the record's `null` models (KD-5).
  */
 async function snapshotOfRecord(
   ownerId: string,
   record: ResolvedRecord | null,
-  library: RecordLibrary,
-): Promise<RunSnapshot | null> {
-  if (record === null) return null;
-  const visible = record.kind === 'agent' ? await library.listVisible(ownerId) : [];
-  return recordSnapshot(record, visible);
+  deps: StartDeps,
+): Promise<RunSnapshot | StartRefusal> {
+  if (record === null) return RECORD_UNAVAILABLE;
+  const [visible, defaultModel] = await Promise.all([
+    record.kind === 'agent' ? deps.library.listVisible(ownerId) : [],
+    deps.access.defaultChatModel(),
+  ]);
+  return recordSnapshot(record, visible, defaultModel) ?? MODEL_NOT_CONFIGURED;
 }
 
 /** The gate's answer about the snapshot's model, as `start_agent` gives it (design-access.md KD-4). */
@@ -135,4 +163,17 @@ async function modelRefusal(
     model,
     denied: modelDeniedEntry(ownerId, model, verdict),
   };
+}
+
+/**
+ * The readiness of the model's provider (KD-2, `providerReadiness`): a provider that is missing,
+ * disabled or without its key refuses the start with the model; not a refusal of rights, so no record.
+ */
+async function providerRefusal(
+  model: string,
+  providers: StartDeps['providers'],
+): Promise<StartRefusal | undefined> {
+  const readiness = providerReadiness(await providers.connection(modelProvider(model)));
+  if (readiness === 'ready') return undefined;
+  return { kind: 'refused', reason: `provider_${readiness}`, model, denied: null };
 }

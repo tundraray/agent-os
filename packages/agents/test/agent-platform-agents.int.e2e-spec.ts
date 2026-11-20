@@ -40,7 +40,7 @@
 //
 // Proven elsewhere (not in this file; the plan reads this to avoid a second test for an AC already proven):
 // - unit, packages/agents/src, one table-driven file per rule (literal rows, no database):
-//     * model resolution - launch model, then definition model, then AGENT_DEFAULT_MODEL - AC-04.1, AC-04.2, AC-04.3, DC-2, UC-E8 (the chosen model reaching the provider call is wired by INT-1 row A)
+//     * model resolution - launch model, then definition model, then the default chat model - AC-04.1, AC-04.2, AC-04.3, DC-2, UC-E8 (the chosen model reaching the provider call is wired by INT-1 row A)
 //     * the tool-call gate rule - `tool_not_in_definition`, `no_access`, `depth_limit`, `not_allowed` (list and count), `unknown_agent`, `invalid_arguments`, and "allowed" - AC-03.1, AC-10.2, AC-10.3, DC-6, UC-E4 rule rows; the boundary half (the refused call never
 //       reaches the server, never creates a task) is INT-3 row A and INT-1 row D
 //     * the turn counter - counts model calls since the task, not the compaction call; resets when the agent finishes a turn (report, failure, stop, interrupt) and, for a root session, on each delivered employee message - DC-1 (the effect on a real run is INT-1 row C)
@@ -98,6 +98,7 @@ import {
   START_TEST_WORKFLOW,
   TEST_AUTHOR_ID,
   TEST_MODEL_CHOSEN,
+  TEST_MODEL_DEFAULT,
   testRecord,
   toolCallRowsOf,
   treeRowVersionsOf,
@@ -285,7 +286,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
   //   grandchild, answers text while the grandchild works, and reports only after the grandchild's report. Then: the root's `start_agent` results are in ONE step and carry two distinct `agentId`s; the children's histories begin with the task text and hold no entry of the
   //   root; the children were working at the same time (a latch both wait on is released only when both are in a model call); child 2 stays `working` after its first text and completes only after the grandchild's report, which child 2 received (the root's history has no
   //   `child_report` of the grandchild); the child reports that arrived during the root's slow call are absent from that step's input, present in the root's next model input, and the free root woke by itself (no employee message sent) and its call sees both reports;
-  //   the ledger holds exactly one row per scripted model call, with the session's task id and the model of the session's snapshot - the child started from a record whose model is `anthropic/test-chosen` is on that model and the others on the default one (literals); `agents.get`
+  //   the ledger holds exactly one row per scripted model call, with the session's task id and the model of the session's snapshot - the child started from a record whose model is `TEST_MODEL_CHOSEN` is on that model and the others on the default one (literals); `agents.get`
   //   shows that model and no token or cost field.
   // - Row B "a message to a busy agent lands after the tool result" (UC-2): the agent's read call is held on the fixture. `agents.send` twice, then a third message after the first two. Then: the history reads, in order, `tool_result`, `user_message` 1, `user_message` 2,
   //   `user_message` 3, `model_answer`; the model call after the release has all three after the result in its input, in the order sent. Second case in the same row: a root that answered text and waits; one `agents.send` wakes it (status leaves waiting with no other command)
@@ -459,18 +460,18 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       const ledger = (await ledgerRowsOf(harness.db, ownerId)).map((row) => `${row.taskId} ${row.model}`);
       expect(ledger.sort()).toEqual(
         [
-          ...Array<string>(4).fill(`${rootId} anthropic/test-default`),
-          ...Array<string>(2).fill(`${childOneId} anthropic/test-chosen`),
-          ...Array<string>(3).fill(`${childTwoId} anthropic/test-default`),
-          `${grandchildId} anthropic/test-default`,
+          ...Array<string>(4).fill(`${rootId} ${TEST_MODEL_DEFAULT}`),
+          ...Array<string>(2).fill(`${childOneId} ${TEST_MODEL_CHOSEN}`),
+          ...Array<string>(3).fill(`${childTwoId} ${TEST_MODEL_DEFAULT}`),
+          `${grandchildId} ${TEST_MODEL_DEFAULT}`,
         ].sort(),
       );
-      expect(childOne.calls.map((call) => call.model)).toEqual(['anthropic/test-chosen', 'anthropic/test-chosen']);
-      expect(grandchild.calls.map((call) => call.model)).toEqual(['anthropic/test-default']);
+      expect(childOne.calls.map((call) => call.model)).toEqual([TEST_MODEL_CHOSEN, TEST_MODEL_CHOSEN]);
+      expect(grandchild.calls.map((call) => call.model)).toEqual([TEST_MODEL_DEFAULT]);
 
       // Then: the view shows the chosen model and no token or cost field
       const view = await harness.sessions.get(childOneId, ownerId);
-      expect(view.model).toBe('anthropic/test-chosen');
+      expect(view.model).toBe(TEST_MODEL_CHOSEN);
       expect(Object.keys(view).sort()).toEqual([
         'agentId',
         'createdAt',
@@ -658,7 +659,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       expect([restarted.name, restarted.description, restarted.model, restarted.parentId]).toEqual([
         'limited',
         'limited',
-        'anthropic/test-default',
+        TEST_MODEL_DEFAULT,
         parentId,
       ]);
       expect(inputLines(limited.calls[4]?.messages ?? [])).toEqual(['user: Limited task']);
@@ -688,7 +689,7 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       role: `The ${name} of the team`,
       prompt: 'You are a test executor.',
       servers: [],
-      model: 'anthropic/test-default',
+      model: TEST_MODEL_DEFAULT,
       maxTurns: 20,
       maxRuns: 1,
       tools: [],
@@ -701,9 +702,10 @@ describe('agent-platform / agents - integration (in-process runtime + agents, re
       everyone: true,
       offerInChat: true,
       content: {
-        coordinator: { rules: '', model: 'anthropic/test-default', maxTurns: 20 },
+        coordinator: { rules: '', model: TEST_MODEL_DEFAULT, maxTurns: 20 },
         executors: [executor('planner'), executor('answer')],
         finalExecutor: 'answer',
+        selfLearning: false,
       },
     });
     const atThirdCall = createLatch();

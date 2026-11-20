@@ -118,6 +118,7 @@ function deepResearchWorkflow(): TestWorkflowRecord {
       testExecutor(ANSWER_AGENT, { role: 'Writes the answer from the reports of the directions.', maxTurns: 2, maxRuns: 2 }),
     ],
     finalExecutor: ANSWER_AGENT,
+    selfLearning: false,
   });
 }
 
@@ -131,6 +132,7 @@ function limitsWorkflow(): TestWorkflowRecord {
     coordinator: { rules: 'Start the executor answer with start_agent and wait for its report.', model: HAIKU_MODEL, maxTurns: 6 },
     executors: [testExecutor(LIMITS_ANSWER_AGENT, { role: 'Writes the answer of the limits check.', maxTurns: 2, maxRuns: 2 })],
     finalExecutor: LIMITS_ANSWER_AGENT,
+    selfLearning: false,
   });
 }
 
@@ -287,7 +289,7 @@ const GATHER_A_TASK = `Gather data on the direction "authorization errors" of th
 const GATHER_B_TASK = `Gather data on the direction "gateway timeouts" of this brief: ${RUN_TASK}`;
 const ANSWER_TASK =
   `Write the answer of this brief: ${RUN_TASK}. Direction "authorization errors": issuer declines rose at 10:40. ` +
-  'Direction "gateway timeouts": no data, the gather agent failed (model_error).';
+  'Direction "gateway timeouts": no data, the gather agent failed (provider_unavailable).';
 
 const PLAN_REPORT = '1. authorization errors - logs\n2. gateway timeouts - logs';
 const GATHER_A_REPORT = 'Issuer declines rose at 10:40 UTC (get_trace).';
@@ -674,7 +676,7 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
             .sort((left, right) => left.description.localeCompare(right.description)),
         ).toEqual([
           { description: 'Сбор · ошибки авторизации', status: 'working', failureReason: null },
-          { description: 'Сбор · таймауты шлюза', status: 'failed', failureReason: 'model_error' },
+          { description: 'Сбор · таймауты шлюза', status: 'failed', failureReason: 'provider_unavailable' },
         ]);
         gatherRead.release();
 
@@ -712,11 +714,11 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
         expect(
           childReportsOfHistory(coordinatorHistory).map(({ description, status, reason }) => ({ description, status, reason })),
         ).toEqual(
-          expect.arrayContaining([{ description: 'Сбор · таймауты шлюза', status: 'failed', reason: 'model_error' }]),
+          expect.arrayContaining([{ description: 'Сбор · таймауты шлюза', status: 'failed', reason: 'provider_unavailable' }]),
         );
         const inputAfterFailure = run.coordinatorScript.calls.find((call) => reported(call.messages, GATHER_B_DESCRIPTION));
         expect(childReportsIn(inputAfterFailure?.messages ?? []).find((report) => report.includes(GATHER_B_DESCRIPTION))).toContain(
-          'Agent &quot;Сбор · таймауты шлюза&quot; ended: failed (model_error).',
+          'Agent &quot;Сбор · таймауты шлюза&quot; ended: failed (provider_unavailable).',
         );
 
         // The coordinator started the answer agent only after both gather agents had ended.
@@ -1003,14 +1005,14 @@ describe('agent-platform / workflows - integration (in-process runtime + agents 
             failureReason,
           })),
         ).toEqual([
-          { name: 'answer', status: 'failed', failureReason: 'model_error' },
-          { name: 'answer', status: 'failed', failureReason: 'model_error' },
+          { name: 'answer', status: 'failed', failureReason: 'provider_unavailable' },
+          { name: 'answer', status: 'failed', failureReason: 'provider_unavailable' },
         ]);
 
         // Every text answer after the second failure is met by a notice, not by the end of the session.
         const history = await historyOf(harness, coordinator.agentId, ownerId);
         const secondFailure = history.filter((entry) => entry.kind === 'child_report')[1];
-        expect(secondFailure).toMatchObject({ content: { status: 'failed', reason: 'model_error' } });
+        expect(secondFailure).toMatchObject({ content: { status: 'failed', reason: 'provider_unavailable' } });
         const textsAfter = history.flatMap((entry, index) =>
           entry.kind === 'model_answer' && entry.seq > secondFailure.seq && entry.content.toolCalls.length === 0 ? [index] : [],
         );

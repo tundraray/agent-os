@@ -8,6 +8,7 @@ import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { PANEL_TITLE, sectionParent } from '@/components/admin/admin-header';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
 import { DefinitionView } from '@/components/library/definition-view';
+import { KnowledgeButton } from '@/components/library/editor-header';
 import { RecordLabel } from '@/components/library/record-label';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
@@ -83,7 +84,8 @@ type EmployeeRecordPageProps = { record: RecordDetail };
 
 /**
  * UXRD AL-03: an employee's record in the panel, read only — the record label with its author, the roles it is
- * open to and its definition «На странице»; «Закрыть доступ» in the header. The administrator never edits it.
+ * open to and its definition «На странице»; «Что узнал workflow» (MC-7, a workflow only) and «Закрыть доступ» in
+ * the header. The administrator never edits it.
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */
 export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
@@ -95,6 +97,7 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
   return (
     <>
       <PageHeader area={PANEL_TITLE} title={record.name} parent={sectionParent('library')}>
+        <KnowledgeButton record={record} />
         {author !== null && (
           <Button variant="outline" size="sm" className={CONTROL_SIZE} onClick={() => setClosing(true)}>
             {TEXT.close}

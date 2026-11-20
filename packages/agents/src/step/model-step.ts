@@ -18,12 +18,14 @@ import { eq } from 'drizzle-orm';
 
 import type { AccessAudit } from '../access-gate.js';
 import type { HistoryContent, HistoryEntry, ToolCallRecord } from '../history/history.js';
+import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
+import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
 import { mcpToolName } from '../mcp/mcp-tool.js';
 import {
   type ModelAnswer,
   type ModelClient,
   modelDeniedEntry,
-  type ModelError,
+  modelErrorMessage,
   type ModelRefusal,
   modelRefusalMessage,
   refusalFields,
@@ -51,7 +53,7 @@ const STEP_KIND = 'model';
 const MAX_SEQ = 2_147_483_647;
 
 /** Failure reasons of the package (design-agents.md, AgentView `failureReason`). */
-export const FAILURE_REASONS = AgentFailureReasonSchema.enum;
+const FAILURE_REASONS = AgentFailureReasonSchema.enum;
 
 /**
  * What the handler (T4.4) writes before the step's own entries — a continuation (Flow 6, Flow 7) or
@@ -195,12 +197,6 @@ function failedEvent(reason: string): NewHistoryEntry {
   return { kind: 'event', content: { event: HistoryEventSchema.enum.failed, reason } };
 }
 
-/** The message of a `model_error` failure: the provider status, never the request. */
-export function modelErrorMessage(model: string, result: ModelError): string {
-  const status = result.error.statusCode === null ? 'no status' : `status ${result.error.statusCode}`;
-  return `Model ${model} kept failing (${status})`;
-}
-
 /**
  * A failure of the agent itself (DC-1): the step's entries, then the `failed` event with the reason;
  * the session is closed and its turn counter reset. The model sees the delivered messages after a
@@ -310,6 +306,8 @@ export interface ModelStepDeps {
   readonly tasks: Pick<Runtime['tasks'], 'listTree'>;
   /** `child_finished` notices still pending in the agent's queue (plan Notes 6). */
   readonly inbox: Pick<Runtime['inbox'], 'listPending'>;
+  /** Closeness of the graph's records to the session's question, for the knowledge block (KD-6). */
+  readonly vectorStore: KnowledgeVectorStore;
 }
 
 /**
@@ -360,7 +358,7 @@ function newToolCalls(
  *   `agents.history_appended`.
  */
 export function createModelStep(deps: ModelStepDeps): ModelStep {
-  const { database, registry, modelClient, audit } = deps;
+  const { database, registry, modelClient, audit, vectorStore } = deps;
 
   /**
    * The last report of the final executor among the coordinator's child reports, the delivered ones
@@ -432,6 +430,11 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
 
     const view = await readSessionHistory(database, session);
     const shown = previewEntries(view.lastSeq, [...(prelude?.entries ?? []), ...delivered]);
+    // The graph is live data read beside the snapshot on every step (KD-6); a failed read fails the step.
+    const knowledge = await knowledgeBlock(
+      { database, store: vectorStore },
+      { snapshot, taskId: ctx.taskId, logger: ctx.logger },
+    );
     const sessionTools = await registry.sessionTools({
       snapshot,
       ownerId: session.ownerId,
@@ -445,7 +448,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
         taskId: ctx.taskId,
         agentName: definition.name,
         model: session.model,
-        instructions: definition.prompt,
+        instructions: withKnowledge(definition.prompt, knowledge),
         messages: providerMessagesOf(view, shown),
         tools: sessionTools,
         streamsText: true,
@@ -469,12 +472,13 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     }
     if (result.kind === 'model_error') {
       logStep(ctx, STEP_KIND, startedAt, 'fail', {
-        reason: FAILURE_REASONS.model_error,
-        statusCode: result.error.statusCode,
+        reason: result.reason,
+        provider: result.provider,
+        statusCode: result.statusCode,
       });
       return failResult({
         ctx,
-        reason: FAILURE_REASONS.model_error,
+        reason: result.reason,
         message: modelErrorMessage(session.model, result),
         writeEntries: writeStepEntries,
         patch: basePatch,

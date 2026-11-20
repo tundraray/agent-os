@@ -24,8 +24,8 @@
 //       succeeds) and INT-3 F (a failing server becomes `transport_failure`): KEPT as the proof for shared-token servers, adapted to the
 //       registry + HTTP fixture harness (`crash_process` is replaced by `drop_connection`, KD-7); INT-1 row 6 adds only the oauth-mode refusal.
 //   - packages/agents/test/code-execution.int.e2e-spec.ts: INT-3 row A (refusals from `run_code`) is adapted to the same harness; INT-1 row D
-//       (a server credential in the script's env masked in the run log) loses its premise - `secretValuesOf` now carries only
-//       `ANTHROPIC_API_KEY` (Security Considerations) - and is dropped by the implementation task.
+//       (a server credential in the script's env masked in the run log) loses its premise - the log mask holds only the keys in the
+//       process secret memory, which the model provider rows fill (Security Considerations) - and is dropped by the implementation task.
 //   - packages/agents/src/config.spec.ts: the `MCP_SERVERS_FILE` rows are deleted with the loader; the file keeps only the rows of the settings the package still reads.
 //   - stdio transport, `createMcpClients` cache, `McpStartupError`, `fixtureServersFile` and their tests are deleted with the code.
 //

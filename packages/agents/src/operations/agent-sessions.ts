@@ -29,7 +29,12 @@ import { messagePayload } from '../step/continuation.js';
 import { ConfirmationResolutionSchema } from '../step/tool-step.js';
 import { history } from '../store/history.repository.js';
 import type { RecordLibrary } from '../start/record-library.js';
-import { auditStartRefusal, resolveStart, type StartSource } from '../start/resolve-start.js';
+import {
+  auditStartRefusal,
+  resolveStart,
+  type StartDeps,
+  type StartSource,
+} from '../start/resolve-start.js';
 import type { RunSnapshot } from '../start/snapshot.js';
 import {
   type Session,
@@ -148,6 +153,8 @@ export interface AgentSessionsDeps {
   /** `resolveStart` asks it for the record of a start or a restart. */
   readonly library: RecordLibrary;
   readonly access: AccessGate;
+  /** `resolveStart` asks it whether the model of a start has a ready provider (model-providers KD-2). */
+  readonly providers: StartDeps['providers'];
   readonly audit: AccessAudit;
   readonly logger: Logger;
 }
@@ -236,7 +243,7 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
   /**
    * The snapshot of a start by `resolveStart` on behalf of the owner (KD-2), and the log of the start
    * once its agent exists; a refusal is logged and is `START_REFUSED` with its reason and model, and no
-   * agent is made.
+   * agent is made. Only a refusal of the access gate writes an `access_denied` record.
    */
   async function startSnapshot(
     ownerId: string,

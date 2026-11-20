@@ -43,7 +43,8 @@
 // - AC-01.1, AC-03.2, AC-03.5, AC-04.1, AC-04.2, AC-05.1, AC-08.1, AC-08.2, AC-09.1, DC-2 (wiring), DC-7: INT-1 row A
 // - AC-07.4, AC-10.4 (the model sees the error text), DC-11, DC-12: INT-1 row B
 // - AC-10.3: INT-1 row C. INT-1 row D (a server credential in the script's env masked in the run log, AC-11.1, AC-02.2 in the log half) is dropped by mcp-connect: MCP credentials are no
-//   longer settings, `secretValuesOf` carries only `ANTHROPIC_API_KEY` (design-mcp-connect.md, Security Considerations)
+//   longer settings, and the log mask holds only the keys in the process secret memory, which the provider rows fill (design-mcp-connect.md,
+//   Security Considerations; model-providers design-core.md KD-7)
 // - AC-05.2, AC-05.3, AC-05.4, AC-05.6, AC-03.7, DC-9, DC-10, DC-16, FR-11: INT-2 rows A-E (AC-05.7 once in row A over the unit table)
 // - AC-03.1, AC-03.3, AC-03.4, AC-03.6, AC-05.5, AC-04.3, AC-06.2, DC-5, DC-6, DC-8: INT-3 rows A-C
 // - AC-10.1: INT-4 rows A, B; AC-07.6, DC-18: INT-4 row C

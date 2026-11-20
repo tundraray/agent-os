@@ -9,8 +9,9 @@ import type { RuntimeTx } from '@agent-os/runtime';
 import { and, count, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository.js';
 import { RunSnapshotSchema } from '../start/snapshot.js';
-import { snapshotDefinition } from '../start/snapshot-definition.js';
+import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition.js';
 
 /** A reader of the store: the step's transaction, or the database for a read outside a step. */
 export type StoreReader = Database | RuntimeTx;
@@ -142,7 +143,8 @@ export const sessions = {
    * Creates the session and its `task` entry with `seq` 1 unless the session exists (plan Notes 11):
    * both the starter and the agent's first step call it, and `ON CONFLICT DO NOTHING` keeps their race
    * safe. The name, the model and the origin come from the snapshot; `first_run` is set when the owner
-   * had no earlier session with the record.
+   * had no earlier session with the record. The session that creates the row of the coordinator of a
+   * self-learning workflow also creates its run row (`agent_knowledge_runs`), once per run.
    */
   async ensureSession(
     tx: RuntimeTx,
@@ -183,6 +185,9 @@ export const sessions = {
       // The chip of a conversation's first message stays on the root's task (plan Notes 9а).
       content: { text: input.prompt, record: input.record ?? null },
     });
+    // A run that learns gets its row with its coordinator session, in this transaction (self-learning KD-2).
+    const learning = learningRunOf(input.snapshot);
+    if (learning !== null) await insertKnowledgeRun(tx, { runId: taskId, ...learning });
   },
 
   /** The session of the agent; `undefined` when it has none yet. */

@@ -1,10 +1,13 @@
 import type { RecordBody } from '@agent-os/contracts';
 
-/** One holder of a model and servers: the agent itself or the coordinator (`executor` `null`), or an executor. */
+/**
+ * One holder of a model and servers: the agent itself or the coordinator (`executor` `null`), or an
+ * executor. A `null` model is the default chat model, resolved at the start (KD-5).
+ */
 export interface ContentPart {
   readonly executor: string | null;
   readonly servers: readonly string[];
-  readonly model: string;
+  readonly model: string | null;
 }
 
 /** Every model of the content with its servers: an agent's one, a workflow's coordinator and executors. */

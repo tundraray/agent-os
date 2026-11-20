@@ -2,6 +2,8 @@ import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@ag
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 
+import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
+import { embedQuestion } from '../knowledge/question-vector.js';
 import type { NewHistoryEntry } from '../store/history.repository.js';
 import {
   AgentTaskInputSchema,
@@ -40,6 +42,8 @@ export interface AgentStepHandlerDeps {
   readonly compactionStep: CompactionStep;
   /** `AGENT_COMPACT_AT_TOKENS`. */
   readonly compactAtTokens: number;
+  /** The question vector of a session that learns (self-learning KD-6); the only caller in a run. */
+  readonly embeddings: Pick<AgentsEmbeddings, 'embed'>;
 }
 
 /** What the step found in its messages and its session before choosing the kind of work. */
@@ -137,12 +141,23 @@ function interruptWait(ctx: StepContext, prelude: StepPrelude, startedAt: number
   };
 }
 
+/** A step whose guarded write was fenced or whose signal was aborted: nothing is written. */
+function abandoned(ctx: StepContext, reason: string): StepResult {
+  ctx.logger.info('agent step abandoned without writes', {
+    agentId: ctx.taskId,
+    stepNo: ctx.stepNo,
+    reason,
+  });
+  return { outcome: 'continue' };
+}
+
 /**
  * Builds the handler of `agent` tasks (design-agents.md: C3 `AgentStepHandler`, «Как шаг выбирает
  * работу», KD-3, Flow 6). Between steps it keeps nothing in memory: each step reads the session.
  *
  * 1. The session is made from the task input — the snapshot written at the start (ADR-0017) — if the
- *    starter did not make it (through `guard`).
+ *    starter did not make it (through `guard`). A session that learns gets its question vector on a
+ *    new question (self-learning KD-6, `embedQuestion`).
  * 2. A finished agent continues (`continuationOf`): its stop entries and `continued` go first.
  * 3. An `interrupt` closes the open calls and writes `interrupted`; with no other message the agent is
  *    marked and waits, with one the step goes on to its work.
@@ -169,13 +184,9 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
   async function step(ctx: StepContext): Promise<StepResult> {
     const startedAt = Date.now();
     const session = await sessionOf(ctx);
-    if (session === undefined) {
-      ctx.logger.info('agent step abandoned without writes', {
-        agentId: ctx.taskId,
-        stepNo: ctx.stepNo,
-        reason: 'session write fenced',
-      });
-      return { outcome: 'continue' };
+    if (session === undefined) return abandoned(ctx, 'session write fenced');
+    if (!(await embedQuestion(deps, ctx, session))) {
+      return abandoned(ctx, 'question write fenced or cancelled');
     }
 
     const plan: StepPlan = {

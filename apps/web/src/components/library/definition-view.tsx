@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
-import { formatModel } from "@/lib/agents/format";
+import { formatModel, type ModelNames } from "@/lib/agents/format";
 import { kindWord } from "@/lib/library/library-errors";
 import { RECORD_FIELD_LABELS, type ChangedField, type RecordField } from "@/lib/library/record-rules";
 import { cn } from "cn";
@@ -38,6 +38,8 @@ export type DefinitionViewProps = {
   changed?: readonly ChangedField[];
   /** The record page of an agent this agent may start; its label has no link without it. */
   recordHref?: (recordId: string) => string;
+  /** The viewer's models and default chat model: models read by title, a record without its own model by the default. */
+  modelNames?: ModelNames;
 };
 
 const TASK_ONLY_TEXT =
@@ -50,7 +52,15 @@ const CAPTION = "text-muted-foreground text-xs leading-4 font-medium";
  * with the author's line breaks, never as markdown or HTML. A server is named as the MCP registry
  * names it, without a description (design-web.md, KD-8).
  */
-export function DefinitionView({ definition, missingRights, variant, recipient, changed = [], recordHref }: DefinitionViewProps) {
+export function DefinitionView({
+  definition,
+  missingRights,
+  variant,
+  recipient,
+  changed = [],
+  recordHref,
+  modelNames,
+}: DefinitionViewProps) {
   const isChanged = (field: RecordField) => changed.some((item) => item.field === field);
   return (
     <div className="@container flex flex-col gap-2">
@@ -64,6 +74,7 @@ export function DefinitionView({ definition, missingRights, variant, recipient, 
             variant={variant}
             isChanged={isChanged}
             recordHref={recordHref}
+            modelNames={modelNames}
           />
         </dl>
       ) : (
@@ -74,6 +85,7 @@ export function DefinitionView({ definition, missingRights, variant, recipient, 
           variant={variant}
           changed={changed}
           isChanged={isChanged}
+          modelNames={modelNames}
         />
       )}
     </div>
@@ -122,16 +134,17 @@ type AgentRowsProps = {
   variant: DefinitionViewVariant;
   isChanged: (field: RecordField) => boolean;
   recordHref?: (recordId: string) => string;
+  modelNames?: ModelNames;
 };
 
-function AgentRows({ content, missing, variant, isChanged, recordHref }: AgentRowsProps) {
+function AgentRows({ content, missing, variant, isChanged, recordHref, modelNames }: AgentRowsProps) {
   return (
     <>
       <Row label={RECORD_FIELD_LABELS.prompt} changed={isChanged("prompt")}>
         <LongText text={content.prompt} collapsible={variant === "card"} />
       </Row>
       <Row label={RECORD_FIELD_LABELS.model} changed={isChanged("model")}>
-        {formatModel(content.model)}
+        {formatModel(content.model, modelNames)}
       </Row>
       <Row label={RECORD_FIELD_LABELS.maxTurns} changed={isChanged("maxTurns")}>
         <span className="tabular-nums">{content.maxTurns}</span>
@@ -196,9 +209,10 @@ type WorkflowRowsProps = {
   variant: DefinitionViewVariant;
   changed: readonly ChangedField[];
   isChanged: (field: RecordField) => boolean;
+  modelNames?: ModelNames;
 };
 
-function WorkflowRows({ description, content, missingRights, variant, changed, isChanged }: WorkflowRowsProps) {
+function WorkflowRows({ description, content, missingRights, variant, changed, isChanged, modelNames }: WorkflowRowsProps) {
   const { coordinator, finalExecutor } = content;
   return (
     <>
@@ -208,7 +222,7 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
       <p className={CAPTION}>{TASK_ONLY_TEXT}</p>
       <dl className="flex flex-col gap-2">
         <Row label={`Команда · ${content.executors.length}`}>
-          <Team content={content} missingRights={missingRights} variant={variant} changed={changed} />
+          <Team content={content} missingRights={missingRights} variant={variant} changed={changed} modelNames={modelNames} />
         </Row>
         {coordinator.rules !== "" && (
           <Row label={RECORD_FIELD_LABELS.rules} changed={isChanged("rules")}>
@@ -218,8 +232,9 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
         <Row label={RECORD_FIELD_LABELS.finalExecutor} changed={isChanged("finalExecutor")}>
           {finalExecutor ?? "Координатор сам"}
         </Row>
+        <Row label={RECORD_FIELD_LABELS.selfLearning}>{content.selfLearning ? "включено" : "выключено"}</Row>
         <Row label="Координатор" changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
-          <span className="tabular-nums">{`${formatModel(coordinator.model)} · до ${coordinator.maxTurns} шагов`}</span>
+          <span className="tabular-nums">{`${formatModel(coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
         </Row>
       </dl>
     </>
@@ -231,10 +246,11 @@ type TeamProps = {
   missingRights: readonly MissingRight[];
   variant: DefinitionViewVariant;
   changed: readonly ChangedField[];
+  modelNames?: ModelNames;
 };
 
 /** The team as a set, not a queue: executors in alphabetical order, without numbers or arrows. */
-function Team({ content, missingRights, variant, changed }: TeamProps) {
+function Team({ content, missingRights, variant, changed, modelNames }: TeamProps) {
   const listId = useId();
   const [details, setDetails] = useState(variant === "page");
   const executors = [...content.executors].sort((a, b) => a.name.localeCompare(b.name, "ru"));
@@ -253,6 +269,7 @@ function Team({ content, missingRights, variant, changed }: TeamProps) {
             changed={changedNames.includes(executor.name)}
             missing={missingServers(missingRights, executor.name)}
             details={details}
+            modelNames={modelNames}
           />
         ))}
       </ul>
@@ -270,9 +287,10 @@ type ExecutorItemProps = {
   changed: boolean;
   missing: readonly string[];
   details: boolean;
+  modelNames?: ModelNames;
 };
 
-function ExecutorItem({ executor, final, changed, missing, details }: ExecutorItemProps) {
+function ExecutorItem({ executor, final, changed, missing, details, modelNames }: ExecutorItemProps) {
   return (
     <li className="flex flex-col gap-1">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -285,7 +303,7 @@ function ExecutorItem({ executor, final, changed, missing, details }: ExecutorIt
       </span>
       {details && (
         <dl className="border-border ml-1 flex flex-col gap-2 border-l pl-3">
-          <Row label={RECORD_FIELD_LABELS.model}>{formatModel(executor.model)}</Row>
+          <Row label={RECORD_FIELD_LABELS.model}>{formatModel(executor.model, modelNames)}</Row>
           <Row label={RECORD_FIELD_LABELS.servers}>
             <Servers servers={executor.servers} missing={missing} />
           </Row>

@@ -70,6 +70,10 @@ export const ToolRefusalReasonSchema = z.enum([
   'depth_limit',
   'model_not_connected',
   'model_not_allowed',
+  'model_not_configured',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
   'unknown_agent',
   'invalid_arguments',
   'not_callable_from_code',
@@ -84,11 +88,18 @@ export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 
 /**
  * Why an agent failed by itself (`failureReason` of its view): its turn limit, the provider, or a refusal
- * of the access gate. The runtime's own reasons are `RuntimeFailureReason`.
+ * of the access gate. `provider_*` name a provider state or rejection; `model_error` is any other
+ * provider error. The runtime's own reasons are `RuntimeFailureReason`.
  */
 export const AgentFailureReasonSchema = z.enum([
   'turn_limit',
   'model_error',
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+  'provider_key_rejected',
+  'provider_unavailable',
+  'provider_tools_rejected',
   'owner_disabled',
   'quota_exhausted',
   'model_not_connected',

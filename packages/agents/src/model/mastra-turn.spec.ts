@@ -1,8 +1,8 @@
 // KD-3 (design-chat.md): the model is called as a stream — text parts reach `onText` in order, the tool
 // call and the usage are collected from the stream, a provider error rejects the call. KD-6
 // (design-agents.md, Risks «MCP-схемы в JSON Schema…»): the argument schema of a tool reaches the provider
-// request as the model must see it. Only the provider network is replaced; Mastra and the AI SDK are real.
-import { createAnthropic } from '@ai-sdk/anthropic';
+// request as the model must see it. Only the provider network (the global `fetch` the AI SDK calls) is
+// replaced; the Anthropic adapter, Mastra and the AI SDK are real.
 import { z } from 'zod';
 import { type AgentToolDefinition, type AgentTurnGeneration, createMastraTurnClient } from './mastra-turn.js';
 
@@ -109,28 +109,39 @@ interface ProbeRun {
   readonly bodies: { stream?: boolean; tools: { name: string; input_schema: unknown }[] }[];
   /** Raw request bodies, for the wire flag. */
   readonly rawBodies: string[];
+  /** Request addresses, for the connection's address. */
+  readonly urls: string[];
   readonly parts: string[];
   readonly result: Promise<AgentTurnGeneration>;
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 /** Runs one streamed turn with the given tools against a provider double answering with `answer`. */
 function runTurn(tools: readonly AgentToolDefinition[], answer: () => Response = () => streamedAnswer()): ProbeRun {
   const rawBodies: string[] = [];
+  const urls: string[] = [];
   const parts: string[] = [];
-  const anthropic = createAnthropic({
-    baseURL: 'http://provider.invalid/v1',
-    apiKey: 'probe',
-    fetch: async (_input, init) => {
-      rawBodies.push(String(init?.body as string));
-      return answer();
-    },
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    rawBodies.push(String(init?.body as string));
+    return answer();
   });
-  const client = createMastraTurnClient((modelId) => anthropic(modelId.replace(/^anthropic\//, '')));
+  const client = createMastraTurnClient();
   const result = client.streamTurn(
     {
       purpose: 'agent_turn',
       agentName: 'probe',
       model: 'anthropic/claude-probe',
+      connection: {
+        name: 'anthropic',
+        kind: 'anthropic',
+        baseUrl: 'http://provider.invalid/v1',
+        apiKey: 'probe',
+        enabled: true,
+      },
       instructions: 'You are a probe.',
       messages: [{ role: 'user', content: 'Find the errors.' }],
       tools,
@@ -143,6 +154,7 @@ function runTurn(tools: readonly AgentToolDefinition[], answer: () => Response =
       return rawBodies.map((body) => JSON.parse(body) as ProbeRun['bodies'][number]);
     },
     rawBodies,
+    urls,
     parts,
     result,
   };
@@ -154,6 +166,7 @@ describe('createMastraTurnClient streams a turn (KD-3)', () => {
     const generation = await run.result;
 
     expect(run.rawBodies).toHaveLength(1);
+    expect(run.urls).toEqual(['http://provider.invalid/v1/messages']);
     expect(run.rawBodies[0]).toContain('"stream":true');
     expect(run.parts).toEqual(['Looking ', 'at the logs.']);
     expect(generation.text).toBe('Looking at the logs.');

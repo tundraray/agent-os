@@ -8,6 +8,7 @@ import { AdminGate } from '@/components/admin/admin-gate';
 import { AgentScreen } from '@/components/agents/agent-screen';
 import { AgentsScreen } from '@/components/agents/agents-screen';
 import { Thread, type ThreadComponents } from '@/components/assistant-ui/elements/thread.aui';
+import { KnowledgePage } from '@/components/library/knowledge-page';
 import { LibraryScreen } from '@/components/library/library-screen';
 import { NewRecordPage, RecordPage } from '@/components/library/record-page';
 import { FeedProvider } from '@/lib/feed/feed-context';
@@ -61,6 +62,10 @@ export function MainView() {
   if (route.kind === 'account') return <AccountScreen currentUser={services.currentUser} />;
   if (route.kind === 'admin') return <AdminGate route={route} />;
   if (route.kind === 'library' && route.page.kind === 'list') return <LibraryScreen />;
+  // Self-learning KD-2: a workflow's knowledge; a new key per workflow, so nothing of one carries over to the next.
+  if (route.kind === 'library' && route.page.kind === 'knowledge') {
+    return <KnowledgePage key={route.page.id} id={route.page.id} variant="library" />;
+  }
   // A new key per record: the copy dialog and focus of one record never carry over to the next.
   if (route.kind === 'library' && route.page.kind === 'record') return <RecordPage key={route.page.id} id={route.page.id} />;
   // A new key per kind: the form of a new agent never carries over to a new workflow.

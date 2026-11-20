@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useId, useState } from "react";
 import { RotateCwIcon, TriangleAlert } from "lucide-react";
-import type { MyModel, MyModels } from "@agent-os/contracts";
+import { modelProvider, type MyModel, type MyModels } from "@agent-os/contracts";
+import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -12,8 +13,9 @@ import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from "@/lib/access/m
 import { describeApiError } from "@/lib/api/api-request";
 import { logger } from "@/lib/logger";
 
-/** UXRD MC-7 and MC-9. */
+/** UXRD MC-7 and MC-9; `unavailable` — model-providers UXRD MC-8. */
 const TEXT = {
+  unavailable: "не работает",
   title: (month: string) => `Модели и расход за ${monthName(month)}`,
   model: "Модель",
   spent: "Расход",
@@ -125,7 +127,23 @@ function ExhaustedLabel() {
   );
 }
 
-const headClass = "border-b border-border px-3 py-2 text-xs leading-4 font-medium text-muted-foreground";
+/**
+ * model-providers UXRD MP-08: the name with «не работает» («Выключено») when its provider does not work — the row
+ * stays, its spend is real — and the provider as a Caption under it.
+ */
+function ModelName({ row }: { row: MyModel }) {
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span className="inline-flex flex-wrap items-center gap-x-2">
+        {row.name}
+        {row.unavailableReason !== null && <StateBadge state="off">{TEXT.unavailable}</StateBadge>}
+      </span>
+      <span className="text-xs leading-4 font-medium text-muted-foreground">{modelProvider(row.model)}</span>
+    </span>
+  );
+}
+
+const headClass ="border-b border-border px-3 py-2 text-xs leading-4 font-medium text-muted-foreground";
 const cellClass = "border-b border-border px-3 py-2.5";
 const numberClass = "text-right tabular-nums";
 
@@ -155,7 +173,9 @@ function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }
             const values = valuesOf(row);
             return (
               <tr key={row.model}>
-                <td className={`${cellClass} break-words`}>{row.name}</td>
+                <td className={`${cellClass} break-words`}>
+                  <ModelName row={row} />
+                </td>
                 <td className={`${cellClass} ${numberClass}`}>{values.spent}</td>
                 <td className={`${cellClass} ${numberClass}`}>{values.quota}</td>
                 <td className={`${cellClass} ${numberClass}`}>
@@ -186,7 +206,9 @@ function ModelsTwoLines({ models }: { models: MyModel[] }) {
         ];
         return (
           <li key={row.model} className="flex flex-col gap-0.5 py-3">
-            <span className="text-sm leading-5 font-medium break-words text-foreground">{row.name}</span>
+            <span className="text-sm leading-5 font-medium break-words text-foreground">
+              <ModelName row={row} />
+            </span>
             <span className="flex flex-wrap items-center gap-x-2 text-xs leading-4 font-medium text-muted-foreground tabular-nums">
               <span>
                 {cells.map((cell, index) => (

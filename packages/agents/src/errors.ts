@@ -13,7 +13,10 @@ export type AgentsErrorCode =
   /** The start procedure refused the record: `refusal` names the reason and the model. */
   | 'START_REFUSED';
 
-/** Why a start was refused (409 `START_REFUSED`): `model` is the refused model on a model refusal, otherwise `null`. */
+/**
+ * Why a start was refused (409 `START_REFUSED`): `model` is the refused model on a model or provider
+ * refusal, otherwise `null` (`model_not_configured`: no default chat model is chosen).
+ */
 export interface StartRefusalDetail {
   readonly reason: StartRefusedError['reason'];
   readonly model: string | null;

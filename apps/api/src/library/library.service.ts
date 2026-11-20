@@ -82,11 +82,6 @@ export interface PanelServerFacts extends ServerFacts {
   readonly registryServers: readonly string[];
 }
 
-/** `AGENT_DEFAULT_MODEL`: the model of a new record and the second step of the replacement (Flow 3). */
-export interface ModelFacts extends ServerFacts {
-  readonly defaultModel: string;
-}
-
 /** Input of `seedBuiltin`: the caller sets the id, so built-in records can name each other. */
 export interface BuiltinRecordInput {
   readonly id: string;
@@ -104,6 +99,15 @@ export interface OwnRecordInput {
   readonly name: string;
   readonly description: string;
   readonly content: unknown;
+}
+
+/** A workflow whose knowledge graph is open to the actor: what the knowledge routes need. */
+export interface KnowledgeTarget {
+  readonly recordId: string;
+  /** The flag of the workflow's last version. */
+  readonly selfLearning: boolean;
+  /** The servers of the executors of the last version, without repeats (`*` as is). */
+  readonly servers: readonly string[];
 }
 
 /** Why a save is refused; `saveOwn` answers it as is (design-library.md, «Для части `runtime`»). */
@@ -376,7 +380,7 @@ export class LibraryService {
   copy(
     actor: LibraryActor,
     id: string,
-    facts: ModelFacts,
+    facts: ServerFacts,
   ): Promise<CopyResult> {
     return this.logged(
       'copy',
@@ -384,9 +388,10 @@ export class LibraryService {
       async () => {
         const viewer = await this.viewerOf(actor.id);
         const source = await this.visibleOr404(this.db, viewer, id);
-        const [allowedModels, visible, ownNames, systemNames] =
+        const [allowedModels, defaultModel, visible, ownNames, systemNames] =
           await Promise.all([
             this.allowedModelIds(viewer.id),
+            this.access.defaultChatModel(),
             this.visibleAgents(this.db, viewer, refersToRecords(source.body)),
             recordNames(this.db, viewer.id),
             recordNames(this.db, null),
@@ -397,7 +402,7 @@ export class LibraryService {
           takenNames: [...ownNames, ...systemNames],
           usableServers: facts.usableServers,
           allowedModels,
-          defaultModel: facts.defaultModel,
+          defaultModel,
           visibleAgentIds: [...visible.keys()],
         });
         const copied = await this.db.transaction(async (tx) => {
@@ -459,24 +464,66 @@ export class LibraryService {
 
   /**
    * GET /api/library/choices: the servers usable to the employee, the model of a new record — the
-   * replacement of Flow 3 applied to the platform model: itself when allowed, else the first allowed,
-   * else itself — and «Максимум шагов» of a new record from the library's settings.
+   * replacement of Flow 3 applied to the default chat model: itself when allowed, else the first
+   * allowed, else itself; `null` while none is chosen (KD-5) — and «Максимум шагов» of a new record
+   * from the library's settings.
    */
-  choices(actor: LibraryActor, facts: ModelFacts): Promise<LibraryChoices> {
+  choices(actor: LibraryActor, facts: ServerFacts): Promise<LibraryChoices> {
     return this.logged('choices', { viewerId: actor.id }, async () => {
-      const [allowedModels, settings] = await Promise.all([
+      const [allowedModels, defaultModel, settings] = await Promise.all([
         this.allowedModelIds(actor.id),
+        this.access.defaultChatModel(),
         readLibrarySettings(this.db),
       ]);
       return {
         servers: [...facts.usableServers].sort(),
-        defaultModel: replaceModel(facts.defaultModel, {
-          allowedModels,
-          defaultModel: facts.defaultModel,
-        }),
+        defaultModel:
+          defaultModel === null
+            ? null
+            : replaceModel(defaultModel, { allowedModels, defaultModel }),
         defaultMaxTurns: settings.defaultMaxTurns,
       };
     });
+  }
+
+  /**
+   * The access rule of /api/library/:id/knowledge (self-learning KD-7, auth-boundary.md): open to the
+   * workflow's author and to an admin when the workflow is in the panel. Built on the two reads that
+   * do not throw, so the panel is asked after a failed visibility: a workflow neither visible nor in
+   * the admin's panel, missing, or an agent — 404 RECORD_NOT_FOUND; visible but not open — 403
+   * KNOWLEDGE_FORBIDDEN. Writes nothing.
+   */
+  knowledgeTarget(
+    actor: LibraryActor,
+    recordId: string,
+  ): Promise<KnowledgeTarget> {
+    return this.logged(
+      'knowledge_target',
+      { viewerId: actor.id, recordId },
+      async () => {
+        if (!isUuid(recordId)) throw notFound();
+        const viewer = await this.viewerOf(actor.id);
+        const [visible, inPanel] = await Promise.all([
+          this.visibleOne(this.db, viewer, recordId),
+          actor.isAdmin ? this.panelOne(this.db, recordId) : undefined,
+        ]);
+        const record = visible ?? inPanel;
+        if (record === undefined || record.body.kind !== 'workflow')
+          throw notFound();
+        if (record.ownerId !== viewer.id && inPanel === undefined)
+          throw libraryError('KNOWLEDGE_FORBIDDEN');
+        const { content } = record.body;
+        return {
+          recordId: record.id,
+          selfLearning: content.selfLearning,
+          servers: [
+            ...new Set(
+              content.executors.flatMap((executor) => executor.servers),
+            ),
+          ],
+        };
+      },
+    );
   }
 
   // ---------- Admin panel ----------
@@ -1089,8 +1136,11 @@ export class LibraryService {
     return (await this.access.allowedModels(ownerId)).map((model) => model.id);
   }
 
+  /** Chat models of the catalogue: a record's model is a chat model, never an embedding one. */
   private async catalogueModelIds(): Promise<string[]> {
-    return (await this.access.listModels()).map((model) => model.id);
+    return (await this.access.listModels())
+      .filter((model) => model.purpose === 'chat')
+      .map((model) => model.id);
   }
 
   // ---------- Writes ----------

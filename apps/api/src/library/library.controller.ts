@@ -10,7 +10,7 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
-import type { Agents, AgentsConfig } from '@agent-os/agents';
+import type { Agents } from '@agent-os/agents';
 import {
   CreateRecordBodySchema,
   RecordAudienceBodySchema,
@@ -23,16 +23,16 @@ import {
   type RecordSummary,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AGENTS, AGENTS_SETTINGS } from '../agents/agents.tokens.js';
+import { AGENTS } from '../agents/agents.tokens.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import type { AuthedRequest } from '../identity/auth-user.js';
-import { LibraryService, type ModelFacts } from './library.service.js';
+import { LibraryService } from './library.service.js';
 import { serverFacts } from './server-facts.js';
 
 /**
  * The employee's library (design-library.md, «Маршруты сотрудника», KD-6). The employee is only
- * `req.user`; the facts only `Agents` has — usable servers and `AGENT_DEFAULT_MODEL` — are read here and
- * handed to `LibraryService`. A number that is not a UUID is answered by the service as 404, so no route
+ * `req.user`; the facts only `Agents` has — usable servers — are read here and handed to
+ * `LibraryService`. A number that is not a UUID is answered by the service as 404, so no route
  * parses it. Static paths come before `:id`.
  */
 @Controller('library')
@@ -40,7 +40,6 @@ export class LibraryController {
   constructor(
     private readonly library: LibraryService,
     @Inject(AGENTS) private readonly agents: Agents,
-    @Inject(AGENTS_SETTINGS) private readonly settings: AgentsConfig,
   ) {}
 
   /** The records the viewer sees, by name. */
@@ -55,7 +54,10 @@ export class LibraryController {
   /** The servers usable to the employee and the model of a new record. */
   @Get('choices')
   async choices(@Req() req: AuthedRequest): Promise<LibraryChoices> {
-    return this.library.choices(req.user, await this.modelFacts(req.user.id));
+    return this.library.choices(
+      req.user,
+      await serverFacts(this.agents, req.user.id),
+    );
   }
 
   /** 404 RECORD_NOT_FOUND. */
@@ -121,7 +123,11 @@ export class LibraryController {
     @Param('id') id: string,
     @Req() req: AuthedRequest,
   ): Promise<CopyResult> {
-    return this.library.copy(req.user, id, await this.modelFacts(req.user.id));
+    return this.library.copy(
+      req.user,
+      id,
+      await serverFacts(this.agents, req.user.id),
+    );
   }
 
   /** 204; 404, 403 RECORD_READ_ONLY. */
@@ -129,12 +135,5 @@ export class LibraryController {
   @HttpCode(204)
   delete(@Param('id') id: string, @Req() req: AuthedRequest): Promise<void> {
     return this.library.delete(req.user, id);
-  }
-
-  private async modelFacts(ownerId: string): Promise<ModelFacts> {
-    return {
-      ...(await serverFacts(this.agents, ownerId)),
-      defaultModel: this.settings.defaultModel,
-    };
   }
 }

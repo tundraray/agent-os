@@ -5,6 +5,8 @@ import {
   DecisionStatusSchema,
   DeliveryStatusSchema,
   DraftStateSchema,
+  EMBEDDING_DIMENSIONS_MAX,
+  EMBEDDING_DIMENSIONS_MIN,
   EVENT_PAYLOAD_MAX_BYTES,
   GrantEffectSchema,
   GrantTargetKindSchema,
@@ -12,8 +14,17 @@ import {
   IDLE_MINUTES_DEFAULT,
   IDLE_MINUTES_MAX,
   IDLE_MINUTES_MIN,
+  KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+  KNOWLEDGE_LIMIT_TOKENS_MAX,
+  KNOWLEDGE_LIMIT_TOKENS_MIN,
+  KnowledgeItemKindSchema,
+  KnowledgeItemTypeSchema,
+  LastExtractionReasonSchema,
+  LastExtractionStatusSchema,
   McpServerModeSchema,
   MessageStatusSchema,
+  ModelProviderKindSchema,
+  ModelPurposeSchema,
   ProviderTypeSchema,
   RECORD_MAX_TURNS_DEFAULT,
   RECORD_MAX_TURNS_MAX,
@@ -33,6 +44,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -40,6 +52,7 @@ import {
   numeric,
   pgSchema,
   primaryKey,
+  real,
   text,
   timestamp,
   unique,
@@ -554,6 +567,34 @@ export const agentMcpAccounts = app.table(
 );
 
 // ---------------------------------------------------------------------------------------------
+// Model providers (model-providers/design-core.md, Data Model, KD-1). Owned by the `agents` package.
+// A catalogue model names its provider by the first part of its id, as text without FK (ADR-0018).
+// The key is stored as is.
+// ---------------------------------------------------------------------------------------------
+
+export const agentModelProviders = app.table(
+  'agent_model_providers',
+  {
+    /** Never changes: model ids carry it as their first part. */
+    name: text('name').primaryKey(),
+    /** Never changes after registration. */
+    kind: text('kind').notNull(),
+    /** Null — the kind's default address. */
+    baseUrl: text('base_url'),
+    /** Null — no key set. */
+    apiKey: text('api_key'),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check('agent_model_providers_kind_check', isOneOf(t.kind, ModelProviderKindSchema.options)),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
 // Chat conversations (agent-platform/design-chat.md, Data Model, KD-1). No FK to the root task:
 // the row is locked during the tree's deletion and removed after the tree.
 // ---------------------------------------------------------------------------------------------
@@ -775,6 +816,7 @@ export const identitySettings = app.table(
 /** Price in USD per million tokens. */
 const usdPerMTok = (name: string) => numeric(name, { precision: 18, scale: 9, mode: 'number' });
 
+
 /** Model catalogue: a model is callable only when it is here. */
 export const accessModels = app.table(
   'access_models',
@@ -792,6 +834,10 @@ export const accessModels = app.table(
     longContextOutputUsdPerMTok: usdPerMTok('long_context_output_usd_per_mtok'),
     longContextCacheWriteUsdPerMTok: usdPerMTok('long_context_cache_write_usd_per_mtok'),
     longContextCacheReadUsdPerMTok: usdPerMTok('long_context_cache_read_usd_per_mtok'),
+    /** Never changes after the model is added. */
+    purpose: text('purpose').notNull().default(ModelPurposeSchema.enum.chat),
+    /** Vector length of an embedding model; null for a chat model. */
+    dimensions: integer('dimensions'),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -820,7 +866,39 @@ export const accessModels = app.table(
           ${t.longContextOutputUsdPerMTok}, ${t.longContextCacheWriteUsdPerMTok},
           ${t.longContextCacheReadUsdPerMTok}) = 5`,
     ),
+    check('access_models_purpose_check', isOneOf(t.purpose, ModelPurposeSchema.options)),
+    /**
+     * An embedding model has dimensions and no long-context prices; a chat model has no dimensions.
+     * `is not null` keeps a null from passing: `null between …` is not false.
+     */
+    check(
+      'access_models_dimensions_check',
+      sql`(${t.purpose} = ${literal(ModelPurposeSchema.enum.embedding)}
+          and ${t.dimensions} is not null
+          and ${isWithin(t.dimensions, EMBEDDING_DIMENSIONS_MIN, EMBEDDING_DIMENSIONS_MAX)}
+          and ${t.longContextAboveInputTokens} is null)
+        or (${t.purpose} = ${literal(ModelPurposeSchema.enum.chat)} and ${t.dimensions} is null)`,
+    ),
   ],
+);
+
+/** The single row of the default models (ModelDefaults); the migration creates it. */
+export const accessModelDefaults = app.table(
+  'access_model_defaults',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    /** Null — not chosen; deleting the model clears the choice (DC-6). */
+    chatModel: text('chat_model').references(() => accessModels.id, { onDelete: 'set null' }),
+    embeddingModel: text('embedding_model').references(() => accessModels.id, {
+      onDelete: 'set null',
+    }),
+    /** Null while nothing was changed. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id; null while nothing was changed. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [check('access_model_defaults_single_row_check', sql`${t.id}`)],
 );
 
 /** A grant of a role or an employee on a server, a tool or a model; one per holder, effect, target. */
@@ -965,6 +1043,224 @@ export const librarySettings = app.table(
     check(
       'library_settings_default_max_turns_check',
       isWithin(t.defaultMaxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX),
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// Knowledge of self-learning workflows (self-learning/design-core.md, Data Model). Owned by the
+// `agents` package (KD-1). The graph, its vectors and the workflow's vector row reference
+// `library_records` with cascade — the one exception to package tables not referencing app tables:
+// deleting a workflow by any path takes its knowledge with it, while `agents` never reads `library_*`.
+// ---------------------------------------------------------------------------------------------
+
+/** pgvector column without a fixed length (KD-8); the type lives where the extension is installed. */
+const vector = customType<{ data: number[]; driverData: string }>({
+  dataType: () => 'vector',
+  toDriver: (value) => JSON.stringify(value),
+  fromDriver: (value): number[] => JSON.parse(value) as number[],
+});
+
+/** Fields of every graph record (KD-5); the runs are kept for review and confirmations, no FK. */
+const knowledgeItemFields = () => ({
+  recordId: uuid('record_id')
+    .notNull()
+    .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+  confirmations: integer('confirmations').notNull().default(1),
+  createdAt: createdAt(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull().defaultNow(),
+  /** Coordinator task of the run that added the record. */
+  sourceRunId: uuid('source_run_id').notNull(),
+  /** Coordinator task of the run that confirmed it last. */
+  confirmedByRunId: uuid('confirmed_by_run_id').notNull(),
+  outdated: boolean('outdated').notNull().default(false),
+});
+
+/** An entity of a workflow's graph: always a fact. */
+export const agentKnowledgeEntities = app.table(
+  'agent_knowledge_entities',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    ...knowledgeItemFields(),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+  },
+  (t) => [
+    index('agent_knowledge_entities_record_idx').on(t.recordId),
+    /** Invariant 4. */
+    check('agent_knowledge_entities_confirmations_check', sql`${t.confirmations} >= 1`),
+  ],
+);
+
+/**
+ * A relation: a fact joins two entities of the same graph and goes with either of them
+ * (Invariant 6); a lesson and «searched — found nothing» name a tool and a kind of question instead.
+ */
+export const agentKnowledgeRelations = app.table(
+  'agent_knowledge_relations',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    ...knowledgeItemFields(),
+    kind: text('kind').notNull(),
+    fromEntityId: integer('from_entity_id'),
+    toEntityId: integer('to_entity_id'),
+    label: text('label'),
+    server: text('server'),
+    tool: text('tool'),
+    question: text('question'),
+    hint: text('hint'),
+    outcome: text('outcome'),
+  },
+  (t) => [
+    index('agent_knowledge_relations_record_idx').on(t.recordId),
+    /** Named: the generated names pass the 63-character limit of Postgres. */
+    foreignKey({
+      name: 'agent_knowledge_relations_from_entity_fk',
+      columns: [t.fromEntityId],
+      foreignColumns: [agentKnowledgeEntities.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'agent_knowledge_relations_to_entity_fk',
+      columns: [t.toEntityId],
+      foreignColumns: [agentKnowledgeEntities.id],
+    }).onDelete('cascade'),
+    /** Invariant 4. */
+    check('agent_knowledge_relations_confirmations_check', sql`${t.confirmations} >= 1`),
+    check('agent_knowledge_relations_kind_check', isOneOf(t.kind, KnowledgeItemKindSchema.options)),
+    check(
+      'agent_knowledge_relations_shape_check',
+      sql`(${t.kind} = ${literal(KnowledgeItemKindSchema.enum.fact)}
+          and ${t.fromEntityId} is not null and ${t.toEntityId} is not null
+          and ${t.label} is not null and ${t.server} is null and ${t.tool} is null
+          and ${t.question} is null and ${t.hint} is null and ${t.outcome} is null)
+        or (${t.kind} = ${literal(KnowledgeItemKindSchema.enum.lesson)}
+          and ${t.fromEntityId} is null and ${t.toEntityId} is null and ${t.label} is null
+          and ${t.server} is not null and ${t.tool} is not null and ${t.question} is not null
+          and ${t.hint} is not null and ${t.outcome} is not null)
+        or (${t.kind} = ${literal(KnowledgeItemKindSchema.enum.searched_nothing)}
+          and ${t.fromEntityId} is null and ${t.toEntityId} is null and ${t.label} is null
+          and ${t.server} is not null and ${t.tool} is not null and ${t.question} is not null
+          and ${t.hint} is null and ${t.outcome} is null)`,
+    ),
+  ],
+);
+
+/**
+ * A run that learns (KD-2, KD-3): written with the coordinator session; deleting the conversation
+ * deletes it. The workflow has no FK here: the row only answers «which workflow».
+ */
+export const agentKnowledgeRuns = app.table(
+  'agent_knowledge_runs',
+  {
+    runId: uuid('run_id')
+      .primaryKey()
+      .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+    recordId: uuid('record_id').notNull(),
+    /** Servers of the whole team: tells a round whether a lesson's tool is alive. */
+    servers: jsonb('servers').notNull(),
+    /** Calls finished up to this moment are extracted; only moves forward. Null — from the start. */
+    extractedUpTo: timestamp('extracted_up_to', { withTimezone: true }),
+    /** Extraction task in progress (Invariant 1). */
+    extractTaskId: uuid('extract_task_id'),
+    /** Extraction task of the last committed round: the trigger finds a finished extraction by it. */
+    lastExtractTaskId: uuid('last_extract_task_id'),
+    needsRound: boolean('needs_round').notNull().default(false),
+    /** Outcome of the last round; all null until the first one. */
+    lastStatus: text('last_status'),
+    lastReason: text('last_reason'),
+    lastAdded: integer('last_added'),
+    lastConfirmed: integer('last_confirmed'),
+    lastOutdated: integer('last_outdated'),
+    lastModel: text('last_model'),
+    lastAt: timestamp('last_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('agent_knowledge_runs_record_idx').on(t.recordId),
+    check(
+      'agent_knowledge_runs_last_status_check',
+      isOneOf(t.lastStatus, LastExtractionStatusSchema.options),
+    ),
+    check(
+      'agent_knowledge_runs_last_reason_check',
+      isOneOf(t.lastReason, LastExtractionReasonSchema.options),
+    ),
+  ],
+);
+
+/**
+ * The question of a session and its vector (KD-6). An array, not `vector`: the row is read by key,
+ * never searched, so the table does not depend on the extension. Null vector — embeddings refused.
+ */
+export const agentKnowledgeQuestions = app.table('agent_knowledge_questions', {
+  taskId: uuid('task_id')
+    .primaryKey()
+    .references(() => agentSessions.taskId, { onDelete: 'cascade' }),
+  /** `task` or the id of the employee's message. */
+  source: text('source').notNull(),
+  model: text('model'),
+  vector: real('vector').array(),
+  createdAt: createdAt(),
+});
+
+/** The vector row of a workflow (KD-8): its pass in progress and the last embeddings outcome. */
+export const agentKnowledgeEmbedding = app.table('agent_knowledge_embedding', {
+  recordId: uuid('record_id')
+    .primaryKey()
+    .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+  /** Pass task in progress (Invariant 13). */
+  passTaskId: uuid('pass_task_id'),
+  needsPass: boolean('needs_pass').notNull().default(false),
+  /** Employee charged for records without a vector; null — the platform. */
+  payerId: text('payer_id'),
+  /** Reason of the last failed attempt; null — it succeeded. */
+  lastReason: text('last_reason'),
+  lastModel: text('last_model'),
+  lastAt: timestamp('last_at', { withTimezone: true }),
+});
+
+/**
+ * The pgvector store of `KnowledgeVectorStore` (KD-8): the collection is the workflow, one vector
+ * per record key, carrying its model (Invariant 11).
+ */
+export const agentKnowledgeVectors = app.table(
+  'agent_knowledge_vectors',
+  {
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => libraryRecords.id, { onDelete: 'cascade' }),
+    /** Record key: `e12`, `r7`. */
+    key: text('key').notNull(),
+    keyKind: text('key_kind').notNull(),
+    model: text('model').notNull(),
+    vector: vector('vector').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.recordId, t.key] }),
+    check(
+      'agent_knowledge_vectors_key_kind_check',
+      isOneOf(t.keyKind, KnowledgeItemTypeSchema.options),
+    ),
+  ],
+);
+
+/** The single row of the knowledge settings (KnowledgeSettings); the migration creates it. */
+export const agentKnowledgeSettings = app.table(
+  'agent_knowledge_settings',
+  {
+    /** Always `true`: keeps the table at one row. */
+    id: boolean('id').primaryKey().default(true),
+    limitTokens: integer('limit_tokens').notNull().default(KNOWLEDGE_LIMIT_TOKENS_DEFAULT),
+    lessonsEnabled: boolean('lessons_enabled').notNull().default(true),
+    /** Null while the defaults stand. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+    /** Employee id; null while the defaults stand. */
+    updatedBy: text('updated_by'),
+  },
+  (t) => [
+    check('agent_knowledge_settings_single_row_check', sql`${t.id}`),
+    check(
+      'agent_knowledge_settings_limit_tokens_check',
+      isWithin(t.limitTokens, KNOWLEDGE_LIMIT_TOKENS_MIN, KNOWLEDGE_LIMIT_TOKENS_MAX),
     ),
   ],
 );

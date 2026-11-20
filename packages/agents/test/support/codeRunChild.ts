@@ -28,8 +28,12 @@ const CHILD_ENTRY = join(PACKAGE_ROOT, 'dist/test-child/test/support/codeRunChil
 /** The variable that hands the child its {@link ChildScenario}. */
 export const CHILD_SCENARIO_ENV = 'CODE_RUN_CHILD_SCENARIO';
 
-/** The default model of the child: the default of `agentsHarness.ts`, so a launch of the test process is priced in the child. */
-export const CHILD_MODEL = 'anthropic/test-default';
+/**
+ * The default model of the child: the default of `agentsHarness.ts` (`TEST_MODEL_DEFAULT`, which this module, compiled
+ * into the child, cannot import), so a launch of the test process is priced in the child. Its provider row
+ * `agents-harness` is written by the test process's own harness before the first child starts; a child writes none.
+ */
+export const CHILD_MODEL = 'agents-harness/test-default';
 
 /**
  * Runtime settings of the child, copied from `KILL_MATRIX_SETTINGS` of the runtime's E2E harness: a
@@ -127,7 +131,6 @@ export function childScenario(
 ): ChildScenario {
   return {
     variables: {
-      AGENT_DEFAULT_MODEL: CHILD_MODEL,
       MCP_CALL_TIMEOUT_MS: '90000',
       NODE_ENV: 'test',
     },

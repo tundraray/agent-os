@@ -87,6 +87,7 @@ export const RECORD_FIELD_LABELS = {
   agents: 'Может запускать',
   rules: 'Как работает команда',
   finalExecutor: 'Кто пишет ответ',
+  selfLearning: 'Самообучение',
   coordinatorModel: 'Модель координатора',
   coordinatorMaxTurns: 'Максимум шагов координатора',
 } as const;
@@ -157,6 +158,7 @@ function workflowChanges(previous: WorkflowContent | null, next: WorkflowContent
   const checks: [RecordField, boolean][] = [
     ['rules', previous?.coordinator.rules === next.coordinator.rules],
     ['finalExecutor', previous !== null && previous.finalExecutor === next.finalExecutor],
+    ['selfLearning', previous?.selfLearning === next.selfLearning],
     ['coordinatorModel', previous?.coordinator.model === next.coordinator.model],
     ['coordinatorMaxTurns', previous?.coordinator.maxTurns === next.coordinator.maxTurns],
   ];

@@ -36,6 +36,8 @@ export const LibraryErrorCode = {
   RECORD_VERSION_CONFLICT: 'RECORD_VERSION_CONFLICT',
   RECORD_NAME_TAKEN: 'RECORD_NAME_TAKEN',
   RECORD_REJECTED: 'RECORD_REJECTED',
+  /** 403: the workflow is visible, but its knowledge graph is not open to the employee. */
+  KNOWLEDGE_FORBIDDEN: 'KNOWLEDGE_FORBIDDEN',
 } as const;
 export type LibraryErrorCode = (typeof LibraryErrorCode)[keyof typeof LibraryErrorCode];
 
@@ -113,11 +115,13 @@ const PromptSchema = z.string().min(1).max(RECORD_PROMPT_MAX_LENGTH);
 const MaxTurnsSchema = z.number().int().min(RECORD_MAX_TURNS_MIN).max(RECORD_MAX_TURNS_MAX);
 const ServersSchema = listWithoutRepeats(z.union([McpServerNameSchema, z.literal(ALL_SERVERS)]));
 const ToolsSchema = listWithoutRepeats(RecordToolSchema);
+/** `null` — the default chat model at the start of a run. */
+const RecordModelSchema = ModelIdSchema.nullable();
 
 export const AgentContentSchema = z.object({
   prompt: PromptSchema,
   servers: ServersSchema,
-  model: ModelIdSchema,
+  model: RecordModelSchema,
   maxTurns: MaxTurnsSchema,
   /** Agent records this agent may start. */
   agents: listWithoutRepeats(IdSchema),
@@ -134,7 +138,7 @@ const ExecutorSchema = z.object({
   role: z.string().trim().min(1).max(EXECUTOR_ROLE_MAX_LENGTH),
   prompt: PromptSchema,
   servers: ServersSchema,
-  model: ModelIdSchema,
+  model: RecordModelSchema,
   maxTurns: MaxTurnsSchema,
   maxRuns: z.number().int().min(EXECUTOR_MAX_RUNS_MIN).max(EXECUTOR_MAX_RUNS_MAX),
   tools: ToolsSchema,
@@ -147,12 +151,14 @@ export const WorkflowContentSchema = z
     coordinator: z.object({
       /** Rules in words; may be empty. */
       rules: z.string().max(COORDINATOR_RULES_MAX_LENGTH),
-      model: ModelIdSchema,
+      model: RecordModelSchema,
       maxTurns: MaxTurnsSchema,
     }),
     executors: z.array(ExecutorSchema).min(WORKFLOW_EXECUTORS_MIN).max(WORKFLOW_EXECUTORS_MAX),
     /** Executor whose report becomes the answer; `null` — the coordinator writes it. */
     finalExecutor: z.string().nullable(),
+    /** Runs learn into the workflow's knowledge graph; content saved before the field reads `false`. */
+    selfLearning: z.boolean().default(false),
   })
   .superRefine((content, ctx) => {
     const names = content.executors.map((executor) => executor.name);
@@ -326,8 +332,8 @@ export type BannedRecord = z.infer<typeof BannedRecordSchema>;
 export const LibraryChoicesSchema = z.object({
   /** Servers the employee may use, by name. */
   servers: z.array(McpServerNameSchema),
-  /** Model of a new record. */
-  defaultModel: ModelIdSchema,
+  /** Model of a new record; `null` while no default chat model is chosen. */
+  defaultModel: ModelIdSchema.nullable(),
   /** «Максимум шагов» of a new record, set by an administrator. */
   defaultMaxTurns: MaxTurnsSchema,
 });

@@ -117,28 +117,76 @@ function originOf(record: ResolvedRecord): RunOrigin {
   };
 }
 
+/** `content` with its `null` model replaced by `defaultModel`; `null` — it has no model to take. */
+function withModel<T extends { readonly model: string | null }>(
+  content: T,
+  defaultModel: string | null,
+): (T & { readonly model: string }) | null {
+  const model = content.model ?? defaultModel;
+  return model === null ? null : { ...content, model };
+}
+
 /**
  * The snapshot of a record resolved for the starter: an agent keeps the records of its `agents` that
- * `visible` (the starter's `listVisible` at the start) holds as agents; a workflow is its coordinator.
+ * `visible` (the starter's `listVisible` at the start) holds as agents; a workflow is its coordinator
+ * with the whole team. A `null` model of the agent, the coordinator or any executor becomes
+ * `defaultModel`, the default chat model at the start (model-providers design-core.md KD-5); `null` —
+ * a model is `null` and no default chat model is chosen.
  */
 export function recordSnapshot(
   record: ResolvedRecord,
   visible: readonly RecordHeader[],
-): AgentSnapshot | WorkflowSnapshot {
+  defaultModel: string | null,
+): AgentSnapshot | WorkflowSnapshot | null {
   const origin = originOf(record);
   if (record.kind === 'workflow') {
-    return { kind: 'workflow', name: record.name, origin, content: record.content };
+    const coordinator = withModel(record.content.coordinator, defaultModel);
+    const executors = record.content.executors.map((executor) => withModel(executor, defaultModel));
+    if (coordinator === null || !executors.every((executor) => executor !== null)) return null;
+    return {
+      kind: 'workflow',
+      name: record.name,
+      origin,
+      content: { ...record.content, coordinator, executors },
+    };
   }
-  const agents = record.content.agents.flatMap((id): StartableAgent[] => {
+  const content = withModel(record.content, defaultModel);
+  if (content === null) return null;
+  const agents = content.agents.flatMap((id): StartableAgent[] => {
     const header = visible.find((candidate) => candidate.id === id && candidate.kind === 'agent');
     return header === undefined
       ? []
       : [{ id: header.id, name: header.name, description: header.description }];
   });
-  return { kind: 'agent', name: record.name, origin, content: record.content, agents };
+  return { kind: 'agent', name: record.name, origin, content, agents };
 }
 
-/** The snapshot of an executor taken from its coordinator's snapshot by name; `null` — not in the team. */
+/** The servers of the whole team without repeats, `*` kept as is (self-learning design-core.md KD-2). */
+function teamServers(content: WorkflowSnapshot['content']): string[] {
+  return [...new Set(content.executors.flatMap((executor) => executor.servers))];
+}
+
+/** A run that learns, as its coordinator's snapshot holds it: the workflow record and the team's servers. */
+export interface LearningRun {
+  readonly recordId: string;
+  readonly servers: readonly string[];
+}
+
+/**
+ * The run that learns whose coordinator `snapshot` is (self-learning design-core.md KD-2, Terms «Сессия
+ * координатора»); `null` — not a coordinator, or its workflow does not learn. The flag is the snapshot's,
+ * never the record's now.
+ */
+export function learningRunOf(snapshot: RunSnapshot): LearningRun | null {
+  if (snapshot.kind !== 'workflow' || snapshot.origin.executor !== null) return null;
+  if (!snapshot.content.selfLearning) return null;
+  return { recordId: snapshot.origin.recordId, servers: teamServers(snapshot.content) };
+}
+
+/**
+ * The snapshot of an executor taken from its coordinator's snapshot by name; `null` — not in the team.
+ * `learning` carries the team's servers when the workflow learns (KD-2): the executor has only itself.
+ */
 export function executorSnapshot(
   coordinator: WorkflowSnapshot,
   name: string,
@@ -150,5 +198,8 @@ export function executorSnapshot(
     name: executor.name,
     origin: { ...coordinator.origin, executor: executor.name },
     content: executor,
+    learning: coordinator.content.selfLearning
+      ? { servers: teamServers(coordinator.content) }
+      : null,
   };
 }

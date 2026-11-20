@@ -4,7 +4,11 @@ import {
   type RecordBody,
   type RecordNameTakenReason,
 } from '@agent-os/contracts';
-import { contentParts, isNameTaken } from './record-content.js';
+import {
+  contentParts,
+  isNameTaken,
+  type ContentPart,
+} from './record-content.js';
 
 /** Agent records the content may start; only an agent holds them. */
 function contentAgents(body: RecordBody): readonly string[] {
@@ -95,7 +99,8 @@ function contentRefusal({
     servers,
     previousParts.flatMap((part) => part.servers),
   );
-  const models = parts.map((part) => part.model);
+  // A `null` model is not checked: the start checks the default chat model (KD-5).
+  const models = chosenModels(parts);
 
   if (choices.scope === 'employee') {
     if (servers.includes(ALL_SERVERS)) return 'all_servers_not_allowed';
@@ -107,10 +112,7 @@ function contentRefusal({
   } else {
     if (!within(addedServers, [...choices.registryServers, ALL_SERVERS]))
       return 'server_not_allowed';
-    const addedModels = added(
-      models,
-      previousParts.map((part) => part.model),
-    );
+    const addedModels = added(models, chosenModels(previousParts));
     if (!within(addedModels, choices.catalogueModels))
       return 'model_not_allowed';
   }
@@ -121,6 +123,10 @@ function contentRefusal({
   );
   if (!within(addedAgents, choices.visibleAgentIds)) return 'agent_not_visible';
   return null;
+}
+
+function chosenModels(parts: readonly ContentPart[]): string[] {
+  return parts.flatMap((part) => (part.model === null ? [] : [part.model]));
 }
 
 function added(values: readonly string[], before: readonly string[]): string[] {

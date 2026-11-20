@@ -46,7 +46,9 @@ export function httpError(code: ThreadsErrorCode): HttpException {
 
 /**
  * 409 START_REFUSED of the first message and of a restart (design-runtime.md, Error handling): the
- * reason and the refused model, `null` unless the model was refused.
+ * reason — a model refusal, `model_not_configured` or a provider refusal (`provider_missing`,
+ * `provider_disabled`, `provider_key_missing`) — and the refused model, `null` on
+ * `record_unavailable` and `model_not_configured`.
  */
 function startRefused(refusal: StartRefusalDetail): HttpException {
   const { status, message } = ANSWERS.START_REFUSED;

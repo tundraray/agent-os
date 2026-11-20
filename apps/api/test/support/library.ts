@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import {
   CHAT_BUILTIN_KEY,
-  CreateCatalogModelBodySchema,
   RecordDetailSchema,
   RecordSummarySchema,
   type AgentContent,
@@ -16,6 +15,7 @@ import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
 import { builtinRecords } from '../../src/library/builtin-records.js';
+import { catalogueModelIds } from './access.js';
 import { expectBody } from './api.js';
 import { apiRequest, type Method, type Session } from './session.js';
 
@@ -74,6 +74,7 @@ export function workflowBody(
       },
     ],
     finalExecutor: null,
+    selfLearning: false,
   };
   return {
     kind: 'workflow',
@@ -195,8 +196,8 @@ export interface BuiltinRecord {
   readonly name: string;
 }
 
-/** Ids, keys and names of the built-in records do not depend on the model of the seed; any model id reads them. */
-const SEEDED = builtinRecords('anthropic/builtin-record-ids');
+/** Ids, keys and names of the built-in records as the app seeds them. */
+const SEEDED = builtinRecords();
 
 function seeded(builtinKey: string): BuiltinRecord {
   const record = SEEDED.find(
@@ -227,8 +228,11 @@ function panelRecord(
   );
 }
 
-/** The models of a record by part: the agent's, or the coordinator's followed by each executor's. */
-function modelsOf(record: RecordDetail): string[] {
+/**
+ * The models of a record by part: the agent's, or the coordinator's followed by each executor's; `null` — the
+ * default chat model.
+ */
+function modelsOf(record: RecordDetail): (string | null)[] {
   return record.kind === 'agent'
     ? [record.content.model]
     : [
@@ -237,10 +241,10 @@ function modelsOf(record: RecordDetail): string[] {
       ];
 }
 
-/** The update body of `record` at its version, each part's model replaced by `modelOf(current, part)`. */
+/** The update body of `record` at its version, each part's model replaced by `modelOf(part)`. */
 function withModels(
   record: RecordDetail,
-  modelOf: (current: string, part: number) => string,
+  modelOf: (part: number) => string | null,
 ): UpdateRecordBody {
   const fields = {
     name: record.name,
@@ -251,7 +255,7 @@ function withModels(
     return {
       ...fields,
       kind: 'agent',
-      content: { ...record.content, model: modelOf(record.content.model, 0) },
+      content: { ...record.content, model: modelOf(0) },
     };
   }
   const { coordinator, executors } = record.content;
@@ -260,10 +264,10 @@ function withModels(
     kind: 'workflow',
     content: {
       ...record.content,
-      coordinator: { ...coordinator, model: modelOf(coordinator.model, 0) },
+      coordinator: { ...coordinator, model: modelOf(0) },
       executors: executors.map((executor, index) => ({
         ...executor,
-        model: modelOf(executor.model, index + 1),
+        model: modelOf(index + 1),
       })),
     },
   };
@@ -283,27 +287,14 @@ function putSystemRecord(
   );
 }
 
-/** `GET /api/admin/models`, 200: the ids of the catalogue. */
-async function catalogueModels(
-  app: TestApp,
-  admin: Session,
-): Promise<Set<string>> {
-  const models = await expectBody(
-    apiRequest(app, admin, 'get', '/admin/models'),
-    200,
-    z.array(CreateCatalogModelBodySchema),
-  );
-  return new Set(models.map((model) => model.id));
-}
-
 /**
  * Puts the run's `model` into every part of the built-in records through the panel routes: `chat`,
- * `general-purpose`, and the coordinator and each executor of `deep-research`. The root's model is the
- * `chat` record's and a suite's employees are allowed only the run's models, so without it every root start
- * is START_REFUSED. Call it after `addModel(model)`; the returned restore gives each part back the model it
- * had and runs before the run's rows are removed. A part whose former model is no longer in the catalogue (a
- * model an earlier run seeded and then removed, as on a clean CI database) cannot get it back through the
- * panel and keeps `model`: the next suite points it at its own model again.
+ * `general-purpose`, and the coordinator and each executor of `deep-research`. A part whose model is `null` runs
+ * on the default chat model, but the developer may have given a part a model of his own (the `deep-research`
+ * coordinator is seeded with one), and a suite's employees are allowed only the run's models, so without it a start
+ * may be START_REFUSED. Call it after `useRunModels`; the returned restore gives each part back the model it had
+ * (`null` included) and runs before the run's rows are removed. A part whose former model is no longer in the
+ * catalogue cannot get it back through the panel and gets `null` (the default chat model).
  */
 export async function pointBuiltinsAt(
   app: TestApp,
@@ -322,7 +313,7 @@ export async function pointBuiltinsAt(
     );
   }
   return async () => {
-    const catalogue = await catalogueModels(app, admin);
+    const catalogue = await catalogueModelIds(app, admin);
     for (const previous of before) {
       const previousModels = modelsOf(previous);
       const current = await panelRecord(app, admin, previous.id);
@@ -330,11 +321,9 @@ export async function pointBuiltinsAt(
         app,
         admin,
         previous.id,
-        withModels(current, (currentModel, part) => {
-          const former = previousModels[part];
-          return former !== undefined && catalogue.has(former)
-            ? former
-            : currentModel;
+        withModels(current, (part) => {
+          const former = previousModels[part] ?? null;
+          return former !== null && catalogue.has(former) ? former : null;
         }),
       );
     }

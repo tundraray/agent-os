@@ -4,11 +4,15 @@ import {
   AdminUserPageSchema,
   AdminUserSummarySchema,
   BannedRecordSchema,
-  CreateCatalogModelBodySchema,
+  CatalogModelSchema,
   GrantSchema,
+  KnowledgeSettingsSchema,
   LibrarySettingsSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  ModelDefaultsSchema,
+  ModelProviderCheckSchema,
+  ModelProviderViewSchema,
   ProviderListSchema,
   ProviderViewSchema,
   RecordDetailSchema,
@@ -27,12 +31,17 @@ import {
   type CreateRecordBody,
   type CreateGrantBody,
   type CreateLocalUserBody,
+  type CreateModelProviderBody,
   type CreateProviderBody,
   type CreateRoleBody,
   type Grant,
+  type KnowledgeSettings,
   type LibrarySettings,
   type McpServerSummary,
   type McpServerView,
+  type ModelDefaults,
+  type ModelProviderCheck,
+  type ModelProviderView,
   type ProviderList,
   type ProviderView,
   type RecordDetail,
@@ -45,8 +54,11 @@ import {
   type SignInSettings,
   type SystemRecordAudienceBody,
   type UpdateCatalogModelBody,
+  type UpdateKnowledgeSettingsBody,
   type UpdateLibrarySettingsBody,
   type UpdateMcpServerBody,
+  type UpdateModelDefaultsBody,
+  type UpdateModelProviderBody,
   type UpdateProviderBody,
   type UpdateRecordBody,
   type UpdateRoleBody,
@@ -66,8 +78,6 @@ const apiPath = (...segments: string[]): string =>
 
 const GrantListSchema = z.array(GrantSchema);
 const McpServerListSchema = z.array(McpServerSummarySchema);
-/** The catalogue row is declared as the create body's type; the contracts have no schema of their own for it. */
-const CatalogModelListSchema = z.array(CreateCatalogModelBodySchema);
 
 const users = {
   /** A page by name; an empty `query` and the first page's `null` cursor are not sent. */
@@ -154,12 +164,33 @@ const servers = {
 };
 
 const models = {
-  list: (): Promise<CatalogModel[]> => apiRequest({ path: apiPath('models'), schema: CatalogModelListSchema }),
+  list: (): Promise<CatalogModel[]> => apiRequest({ path: apiPath('models'), schema: z.array(CatalogModelSchema) }),
   create: (body: CreateCatalogModelBody): Promise<CatalogModel> =>
-    apiRequest({ path: apiPath('models'), method: 'POST', body, schema: CreateCatalogModelBodySchema }),
+    apiRequest({ path: apiPath('models'), method: 'POST', body, schema: CatalogModelSchema }),
   update: (id: string, body: UpdateCatalogModelBody): Promise<CatalogModel> =>
-    apiRequest({ path: apiPath('models', id), method: 'PATCH', body, schema: CreateCatalogModelBodySchema }),
+    apiRequest({ path: apiPath('models', id), method: 'PATCH', body, schema: CatalogModelSchema }),
   remove: (id: string): Promise<void> => apiRequest({ path: apiPath('models', id), method: 'DELETE' }),
+};
+
+const ModelProviderListSchema = z.array(ModelProviderViewSchema);
+
+/** Model providers (model-providers design-web.md, KD-2); the sign-in providers are `providers`. */
+const modelProviders = {
+  list: (): Promise<ModelProviderView[]> =>
+    apiRequest({ path: apiPath('model-providers'), schema: ModelProviderListSchema }),
+  create: (body: CreateModelProviderBody): Promise<ModelProviderView> =>
+    apiRequest({ path: apiPath('model-providers'), method: 'POST', body, schema: ModelProviderViewSchema }),
+  update: (name: string, body: UpdateModelProviderBody): Promise<ModelProviderView> =>
+    apiRequest({ path: apiPath('model-providers', name), method: 'PATCH', body, schema: ModelProviderViewSchema }),
+  remove: (name: string): Promise<void> => apiRequest({ path: apiPath('model-providers', name), method: 'DELETE' }),
+  check: (name: string): Promise<ModelProviderCheck> =>
+    apiRequest({ path: apiPath('model-providers', name, 'check'), method: 'POST', schema: ModelProviderCheckSchema }),
+};
+
+const modelDefaults = {
+  get: (): Promise<ModelDefaults> => apiRequest({ path: apiPath('model-defaults'), schema: ModelDefaultsSchema }),
+  save: (body: UpdateModelDefaultsBody): Promise<ModelDefaults> =>
+    apiRequest({ path: apiPath('model-defaults'), method: 'PUT', body, schema: ModelDefaultsSchema }),
 };
 
 const RecordSummaryListSchema = z.array(RecordSummarySchema);
@@ -187,4 +218,24 @@ const library = {
     apiRequest({ path: apiPath('library', 'settings'), method: 'PUT', body, schema: LibrarySettingsSchema }),
 };
 
-export const adminApi = { users, roles, grants, providers, signInSettings, servers, models, library };
+/** «Самообучение workflow» on «Системные»: the knowledge limit and lessons. */
+const knowledge = {
+  settings: (): Promise<KnowledgeSettings> =>
+    apiRequest({ path: apiPath('knowledge', 'settings'), schema: KnowledgeSettingsSchema }),
+  saveSettings: (body: UpdateKnowledgeSettingsBody): Promise<KnowledgeSettings> =>
+    apiRequest({ path: apiPath('knowledge', 'settings'), method: 'PUT', body, schema: KnowledgeSettingsSchema }),
+};
+
+export const adminApi = {
+  users,
+  roles,
+  grants,
+  providers,
+  signInSettings,
+  servers,
+  models,
+  modelProviders,
+  modelDefaults,
+  library,
+  knowledge,
+};

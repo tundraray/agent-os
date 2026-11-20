@@ -2,8 +2,6 @@ import { type AgentsConfig, parseAgentsConfig } from './config.js';
 
 // Runtime settings (design-agents.md, «Сборка»): a wrong setting stops the start, naming the variable.
 
-const DEFAULT_MODEL = 'anthropic/claude-haiku-5-5';
-
 describe('agents configuration refuses to start naming the variable', () => {
   it.each<[string, () => unknown, RegExp]>([
     ['AGENT_MAX_DEPTH=0', () => parseAgentsConfig({ AGENT_MAX_DEPTH: '0' }), /AGENT_MAX_DEPTH/],
@@ -18,9 +16,6 @@ describe('agents configuration refuses to start naming the variable', () => {
 
   it('starts with the defaults of Runtime settings when everything is right', () => {
     const expected: AgentsConfig = {
-      defaultModel: DEFAULT_MODEL,
-      anthropicApiKey: '',
-      anthropicBaseUrl: 'https://api.anthropic.com',
       maxOutputTokens: 16_000,
       maxDepth: 3,
       toolResultMaxBytes: 16_384,

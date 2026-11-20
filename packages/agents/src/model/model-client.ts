@@ -1,14 +1,19 @@
 import type { Logger } from '@agent-os/common';
+import { type AgentFailureReason, modelProvider } from '@agent-os/contracts';
 import { type CallUsage, type Clock, type Runtime, systemClock } from '@agent-os/runtime';
 import {
   type AccessAudit,
   type AccessDeniedEntry,
   type AccessGate,
+  ModelNotConfiguredError,
   ModelRefusedError,
   type ModelVerdict,
   OwnerDisabledError,
 } from '../access-gate.js';
 import type { AgentsConfig } from '../config.js';
+import { providerAdapter } from '../providers/adapters.js';
+import { providerReadiness } from '../providers/provider-readiness.js';
+import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry.js';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -18,7 +23,15 @@ import type {
   AgentTurnModelClient,
 } from './mastra-turn.js';
 import { DATA_PREAMBLE } from './provider-messages.js';
-import { classifyRejection, PROVIDER_RETRIES, type ProviderError, providerRetryDelayMs } from './retry-policy.js';
+import {
+  classifyRejection,
+  PROVIDER_RETRIES,
+  type ProviderError,
+  type ProviderRejectionReason,
+  pause,
+  providerRetryDelayMs,
+} from './retry-policy.js';
+import { tokensOfBytes, utf8Bytes } from './token-estimate.js';
 
 /**
  * When to reach for `run_code` (code-execution PRD FR-01, AC-01.3): appended after the data preamble
@@ -52,11 +65,16 @@ export interface ModelClientDeps {
   /** The seam of the model: Mastra in production, a scripted double in tests (plan Notes 9). */
   readonly turnClient: AgentTurnModelClient;
   readonly ledger: Pick<Runtime['ledger'], 'record'>;
-  readonly config: Pick<AgentsConfig, 'maxOutputTokens' | 'defaultModel'>;
+  readonly config: Pick<AgentsConfig, 'maxOutputTokens'>;
   /** The package logger: `completeText` runs outside any step. */
   readonly logger: Logger;
-  /** Asked once before the first attempt of every call: a refused call does not start (KD-4). */
-  readonly access: Pick<AccessGate, 'model'>;
+  /**
+   * Asked once before the first attempt of every call: a refused call does not start (KD-4). `completeText`
+   * takes its model from `defaultChatModel`.
+   */
+  readonly access: Pick<AccessGate, 'model' | 'defaultChatModel'>;
+  /** The provider's connection, read after the verdict on every call, never kept (KD-2, ADR-0019). */
+  readonly providers: Pick<AgentsProviders, 'connection'>;
   /** Gets the `access_denied` record of a refused title (KD-6); a step's refusal is audited by the step. */
   readonly audit: AccessAudit;
   /** Gets every text part of an agent turn; none by default. */
@@ -108,10 +126,29 @@ export interface ModelAnswer {
   readonly modelCallId: string;
 }
 
-/** The provider kept failing: a final status, or a retryable one after both retries. */
+/** Why a model call failed on the provider's side: its state before the request, or its rejection (KD-2). */
+export type ModelFailureReason = Extract<
+  AgentFailureReason,
+  | 'model_error'
+  | 'provider_missing'
+  | 'provider_disabled'
+  | 'provider_key_missing'
+  | 'provider_key_rejected'
+  | 'provider_unavailable'
+  | 'provider_tools_rejected'
+>;
+
+/**
+ * The provider is not ready (no request was sent), or it kept failing: a final status, or a retryable one
+ * after both retries. Not a refusal of rights: nothing is audited (DC-10).
+ */
 export interface ModelError {
   readonly kind: 'model_error';
-  readonly error: ProviderError;
+  readonly reason: ModelFailureReason;
+  /** The provider's name, the first part of the model id. */
+  readonly provider: string;
+  /** The provider's last status; `null` — no request, a network failure or a timeout. */
+  readonly statusCode: number | null;
 }
 
 /** A refusal of the access gate for a model call. */
@@ -129,17 +166,19 @@ export type ModelCallResult = ModelAnswer | ModelError | ModelNotStarted;
 export interface ModelClient {
   /**
    * Asks `AccessGate.model` once, before the first attempt: a refusal gives `not_started` with the
-   * verdict and the model is not called; provider retries are not checked again. An answered attempt is
-   * a ledger row, and so is one cut by a cancel or by a failure after its answer began; an attempt the
-   * provider rejected before any output is not.
+   * verdict and the model is not called; provider retries are not checked again. Then reads the provider's
+   * connection: a provider that is not ready gives `model_error` with its reason, without a request. An
+   * answered attempt is a ledger row, and so is one cut by a cancel or by a failure after its answer began;
+   * an attempt the provider rejected before any output is not.
    */
   call(request: ModelCallRequest): Promise<ModelCallResult>;
   /**
-   * One call of `AGENT_DEFAULT_MODEL` without tools and outside any task: the same verdict, retries
-   * and cancel as `call`, a ledger row without `taskId`, no text parts to the hook. A provider that
-   * keeps failing rejects with an error that names the status. A refused call rejects before the call:
-   * a disabled owner with `OwnerDisabledError`, any other refusal with `ModelRefusedError` after its
-   * `access_denied` record.
+   * One call of the default chat model (`AccessGate.defaultChatModel`) without tools and outside any task:
+   * the same verdict, provider readiness, retries and cancel as `call`, a ledger row without `taskId`, no
+   * text parts to the hook. No default chat model rejects with `ModelNotConfiguredError` before anything
+   * else. A provider that is not ready or keeps failing rejects with an error that names the reason. A
+   * refused call rejects before the call: a disabled owner with `OwnerDisabledError`, any other refusal
+   * with `ModelRefusedError` after its `access_denied` record.
    */
   completeText(request: CompleteTextRequest): Promise<string>;
 }
@@ -182,6 +221,26 @@ export function refusalFields(refusal: ModelRefusal): Record<string, unknown> {
     : { reason: refusal.reason };
 }
 
+/**
+ * The message of a `model_error` failure: the model, the provider, the reason and the last status — never the
+ * request or the provider's body, which only the log carries.
+ */
+export function modelErrorMessage(model: string, error: ModelError): string {
+  const status = error.statusCode === null ? '' : `, status ${error.statusCode}`;
+  return `Model ${model} of provider ${error.provider} failed: ${error.reason}${status}`;
+}
+
+/** The chat's reason of a provider rejection: any other status is the chat's `model_error`. */
+function chatReason(reason: ProviderRejectionReason): ModelFailureReason {
+  return reason === 'provider_error' ? 'model_error' : reason;
+}
+
+/** The provider's connection when it is ready to take the request. */
+interface Connected {
+  readonly kind: 'connected';
+  readonly connection: ProviderConnection;
+}
+
 /** What one attempt sends; `onText` gets the parts of this attempt only. */
 interface Attempt {
   readonly call: AgentTurnCall;
@@ -203,14 +262,6 @@ type Generated =
     }
   | ModelError;
 
-/** UTF-8 bytes per token of the usage estimate of an attempt that did not finish. */
-const BYTES_PER_TOKEN = 4;
-
-/** The UTF-8 bytes of a text: characters would undercount any text outside ASCII, such as Cyrillic. */
-function utf8Bytes(text: string): number {
-  return Buffer.byteLength(text, 'utf8');
-}
-
 /**
  * The bytes of a request: the instructions, the messages and the tools with the JSON Schemas of the
  * MCP ones. A built-in tool's zod schema is not serialized, so it counts by its name and description.
@@ -230,11 +281,21 @@ function requestBytes(call: AgentTurnCall): number {
  */
 function estimatedUsage(sentBytes: number, streamedBytes: number): CallUsage {
   return {
-    inputTokens: Math.ceil(sentBytes / BYTES_PER_TOKEN),
-    outputTokens: Math.ceil(streamedBytes / BYTES_PER_TOKEN),
+    inputTokens: tokensOfBytes(sentBytes),
+    outputTokens: tokensOfBytes(streamedBytes),
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   };
+}
+
+/**
+ * An answer whose provider reported no input tokens (some OpenAI-compatible servers): its usage is the
+ * estimate of an unfinished attempt — the request and the answer's text in UTF-8 bytes (DC-11). Any other
+ * answer is returned as it is. The turn client reports a missing count as zero, and a request is never empty.
+ */
+function withReportedInput(generation: AgentTurnGeneration, sentBytes: number): AgentTurnGeneration {
+  if (generation.usage.inputTokens > 0) return generation;
+  return { ...generation, usage: estimatedUsage(sentBytes, utf8Bytes(generation.text)) };
 }
 
 /**
@@ -263,8 +324,27 @@ function isBilled(cut: {
  * the parts again at offset 0.
  */
 export function createModelClient(deps: ModelClientDeps): ModelClient {
-  const { turnClient, ledger, config, access } = deps;
+  const { turnClient, ledger, config, access, providers } = deps;
   const clock = deps.clock ?? systemClock;
+
+  /**
+   * The provider's connection read now, after the verdict (KD-2): a provider that is not ready is a
+   * `model_error` with its reason and no request — not a refusal of rights, so it is not audited (DC-10).
+   */
+  async function connectionOf(model: string, logger: Logger): Promise<Connected | ModelError> {
+    const provider = modelProvider(model);
+    const connection = await providers.connection(provider);
+    const readiness = providerReadiness(connection);
+    if (connection !== null && readiness === 'ready') return { kind: 'connected', connection };
+    const reason: ModelFailureReason =
+      readiness === 'disabled'
+        ? 'provider_disabled'
+        : readiness === 'key_missing'
+          ? 'provider_key_missing'
+          : 'provider_missing';
+    logger.warn('model provider not ready', { model, provider, reason });
+    return { kind: 'model_error', reason, provider, statusCode: null };
+  }
 
   /** The gate's verdict for one call, asked once before the first attempt; a refusal is logged. */
   async function verdictOf(ownerId: string, model: string, logger: Logger): Promise<ModelVerdict> {
@@ -281,6 +361,8 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
    */
   async function generate(attempt: Attempt): Promise<Generated> {
     const sentBytes = requestBytes(attempt.call);
+    const { connection } = attempt.call;
+    const adapter = providerAdapter(connection.kind);
     for (let retries = 0; ; retries += 1) {
       attempt.signal.throwIfAborted();
       const startedAt = clock.now().getTime();
@@ -296,7 +378,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
           },
         });
       } catch (error) {
-        const providerError = classifyRejection(error);
+        const providerError = classifyRejection(error, adapter);
         const { aborted } = attempt.signal;
         if (isBilled({ streamedBytes, aborted, providerError })) {
           const usage = estimatedUsage(sentBytes, streamedBytes);
@@ -313,21 +395,41 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         }
         attempt.signal.throwIfAborted();
         if (providerError === null) throw error;
+        // The logger's mask hides any remembered key the provider might echo in its body (KD-7).
         attempt.logger.warn('model call failed', {
           model: attempt.call.model,
+          provider: connection.name,
+          reason: providerError.reason,
           statusCode: providerError.statusCode,
+          responseBody: providerError.responseBody,
           retryable: providerError.retryable,
           attempt: retries + 1,
           durationMs: clock.now().getTime() - startedAt,
         });
         if (!providerError.retryable || retries === PROVIDER_RETRIES) {
-          return { kind: 'model_error', error: providerError };
+          return {
+            kind: 'model_error',
+            reason: chatReason(providerError.reason),
+            provider: connection.name,
+            statusCode: providerError.statusCode,
+          };
         }
         await pause(clock, providerRetryDelayMs(retries + 1), attempt.signal);
         continue;
       }
-      const { callId } = await attempt.record(generation.usage);
-      return { kind: 'generated', generation, callId, durationMs: clock.now().getTime() - startedAt };
+      const answered = withReportedInput(generation, sentBytes);
+      const { callId } = await attempt.record(answered.usage);
+      if (answered !== generation) {
+        attempt.logger.warn('model answer without input tokens recorded with estimated usage', {
+          model: attempt.call.model,
+          provider: connection.name,
+          callId,
+          ...answered.usage,
+          estimated: true,
+          attempt: retries + 1,
+        });
+      }
+      return { kind: 'generated', generation: answered, callId, durationMs: clock.now().getTime() - startedAt };
     }
   }
 
@@ -359,11 +461,14 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         request.logger.child({ agentId: request.taskId, taskId: request.taskId }),
       );
       if (verdict.kind === 'refused') return { kind: 'not_started', verdict };
+      const connected = await connectionOf(request.model, request.logger);
+      if (connected.kind === 'model_error') return connected;
       const result = await generate({
         call: {
           purpose: 'agent_turn',
           agentName: request.agentName,
           model: request.model,
+          connection: connected.connection,
           instructions: `${request.instructions}\n\n${DATA_PREAMBLE}\n\n${CODE_RULE}`,
           messages: request.messages,
           tools: request.tools,
@@ -386,6 +491,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
       const { usage } = generation;
       request.logger.info('model call answered', {
         model: request.model,
+        provider: connected.connection.name,
         callId,
         ...usage,
         toolCalls: generation.toolCalls.length,
@@ -402,20 +508,27 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
     },
 
     async completeText(request) {
-      const model = config.defaultModel;
       const logger = deps.logger.child({ ownerId: request.ownerId });
-      // A refusal is the caller's error to handle (the conversation title logs it, DC-7).
+      // Every refusal below is the caller's error to handle (the conversation title logs it, DC-7, DC-3).
+      const model = await access.defaultChatModel();
+      if (model === null) {
+        logger.warn('completeText refused: no default chat model', { reason: 'model_not_configured' });
+        throw new ModelNotConfiguredError();
+      }
       const verdict = await verdictOf(request.ownerId, model, logger);
       if (verdict.kind === 'refused') {
         if (verdict.reason === 'owner_disabled') throw new OwnerDisabledError(request.ownerId);
         await deps.audit(modelDeniedEntry(request.ownerId, model, verdict));
         throw new ModelRefusedError(verdict.reason, modelRefusalMessage(request.ownerId, model, verdict));
       }
+      const connected = await connectionOf(model, logger);
+      if (connected.kind === 'model_error') throw new Error(modelErrorMessage(model, connected));
       const result = await generate({
         call: {
           purpose: 'complete_text',
           agentName: 'complete-text',
           model,
+          connection: connected.connection,
           instructions: request.system,
           messages: [{ role: 'user', content: request.prompt }],
           tools: [],
@@ -426,12 +539,10 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         onText: () => () => {},
         record: (usage) => ledger.record({ ownerId: request.ownerId, model, price: verdict.price, usage }),
       });
-      if (result.kind === 'model_error') {
-        const status = result.error.statusCode === null ? 'no status' : `status ${result.error.statusCode}`;
-        throw new Error(`Model ${model} kept failing on completeText (${status})`);
-      }
+      if (result.kind === 'model_error') throw new Error(modelErrorMessage(model, result));
       logger.info('model text completed', {
         model,
+        provider: connected.connection.name,
         callId: result.callId,
         ...result.generation.usage,
         durationMs: result.durationMs,
@@ -451,23 +562,4 @@ function deliver(onTextDelta: OnTextDelta, delta: TextDelta, logger: Logger): vo
       error: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-/** Waits on the clock; a cancel ends the wait with the signal's reason. */
-function pause(clock: Clock, ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const onAbort = () => {
-      cancelTimer();
-      reject(signal.reason);
-    };
-    const cancelTimer = clock.setTimer(ms, () => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    });
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }

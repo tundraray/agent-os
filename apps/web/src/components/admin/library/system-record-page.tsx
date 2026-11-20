@@ -7,6 +7,7 @@ import { RecordEditor, type RecordEditorProps, type RecordEditorSource } from '@
 import { blankWorkflow } from '@/components/library/workflow-fields';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
+import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { libraryApi } from '@/lib/library/library-api';
 
 // Not in MC-18, which names the failed read «Не удалось загрузить» + «Повторить».
@@ -24,9 +25,10 @@ export function NewSystemRecordPage({ kind }: { kind: RecordKind }) {
 
 /**
  * The editor's data in the panel, read on open (design-web.md, «Данные экранов»): the whole registry
- * (`adminApi.servers.list`) and the model catalogue (`adminApi.models.list`); the platform's default model
- * and «Максимум шагов» of a new record — from `choices`. The editor waits for the registry and the default model; the
- * catalogue fills the model field once read.
+ * (`adminApi.servers.list`), the model catalogue (`adminApi.models.list`) and the model providers
+ * (`adminApi.modelProviders.list`); the platform's default model and «Максимум шагов» of a new record — from
+ * `choices`. The editor waits for the registry and the default model; the catalogue and the providers fill the
+ * model field once both are read.
  */
 function SystemEditor({
   start,
@@ -38,6 +40,8 @@ function SystemEditor({
   const choices = useResource(libraryApi.choices, 'choices', 'library');
   const servers = useResource(adminApi.servers.list, 'servers', 'library');
   const models = useResource(adminApi.models.list, 'models', 'library');
+  const providers = useResource(adminApi.modelProviders.list, 'model-providers', 'library');
+  const providerList = providers.data;
 
   if (choices.data === undefined || servers.data === undefined) {
     const waiting = choices.data === undefined ? choices : servers;
@@ -55,7 +59,17 @@ function SystemEditor({
       choices={{
         ...choices.data,
         servers: servers.data.map((server) => server.name),
-        models: models.data?.map((model) => ({ model: model.id, name: model.name })),
+        // Readiness by the providers' list (KD-5); the field waits for both reads, so no model shows as broken meanwhile.
+        models:
+          providerList === undefined
+            ? undefined
+            : models.data
+                ?.filter((model) => model.purpose === 'chat')
+                .map((model) => ({
+                  model: model.id,
+                  name: model.name,
+                  unavailableReason: modelUnavailableReason(model.id, providerList),
+                })),
       }}
     />
   );

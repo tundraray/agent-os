@@ -1,4 +1,4 @@
-import type { RecordHeader, ResolvedRecord, WorkflowContent } from '@agent-os/contracts';
+import type { RecordHeader, ResolvedRecord } from '@agent-os/contracts';
 
 import {
   COORDINATOR_PROMPT,
@@ -58,7 +58,11 @@ const VISIBLE_HEADERS: RecordHeader[] = [
   },
 ];
 
-function executor(name: string, maxRuns: number, role: string): WorkflowContent['executors'][number] {
+function executor(
+  name: string,
+  maxRuns: number,
+  role: string,
+): WorkflowSnapshot['content']['executors'][number] {
   return {
     name,
     role,
@@ -93,6 +97,7 @@ function workflow(rules: string, finalExecutor: string | null): WorkflowSnapshot
         executor('answer', 2, 'Пишет ответ'),
       ],
       finalExecutor,
+      selfLearning: false,
     },
   };
 }
@@ -107,7 +112,10 @@ describe('snapshotDefinition', () => {
   it.each<{ case: string; definition: () => RunDefinition | null; expected: RunDefinition | null }>([
     {
       case: 'an agent: its content, and only the records of its agents the starter sees',
-      definition: () => snapshotDefinition(recordSnapshot(AGENT_RECORD, VISIBLE_HEADERS)),
+      definition: () => {
+        const snapshot = recordSnapshot(AGENT_RECORD, VISIBLE_HEADERS, null);
+        return snapshot === null ? null : snapshotDefinition(snapshot);
+      },
       expected: {
         name: 'Разбор оплат',
         prompt: 'You sort payments.',

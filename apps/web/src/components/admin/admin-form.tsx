@@ -10,6 +10,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegen
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { describeAdminError, type AdminErrorContext, type AdminErrorText } from "@/lib/admin/admin-errors";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
@@ -198,6 +199,105 @@ export function AdminRadioField<Value extends string>({ label, value, options, o
   );
 }
 
+export type AdminSelectOption = {
+  value: string;
+  /** The text of the closed field once this option is chosen. */
+  label: string;
+  /** What the open list shows for the option; the label when absent. */
+  content?: ReactNode;
+  disabled?: boolean;
+};
+
+export type AdminSelectFieldProps = {
+  id: string;
+  label: string;
+  /** `null` — nothing chosen; the closed field then shows `emptyText`. */
+  value: string | null;
+  emptyText: string;
+  options: readonly AdminSelectOption[];
+  onChange: (value: string) => void;
+  error: string | undefined;
+  hint?: string;
+  /** settings-form «Предупреждение» under the field: the consequence of the choice; it does not block saving. */
+  warning?: ReactNode;
+  disabled?: boolean;
+};
+
+/** A drop-down field of a panel form (settings-form, shadcn `select`): label, 28 px trigger, hint, warning, field error. */
+export function AdminSelectField({
+  id,
+  label,
+  value,
+  emptyText,
+  options,
+  onChange,
+  error,
+  hint,
+  warning,
+  disabled = false,
+}: AdminSelectFieldProps) {
+  const hintId = `${id}-hint`;
+  const warningId = `${id}-warning`;
+  const errorId = `${id}-error`;
+  const describedBy = [
+    hint !== undefined ? hintId : null,
+    warning !== undefined ? warningId : null,
+    error !== undefined ? errorId : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" ");
+  return (
+    <Field data-invalid={error !== undefined} className="gap-1.5">
+      <FieldLabel htmlFor={id} className="text-data font-medium text-foreground">
+        {label}
+      </FieldLabel>
+      <Select
+        value={value}
+        disabled={disabled}
+        onValueChange={(next) => {
+          if (typeof next === "string") onChange(next);
+        }}
+        items={options.map((option) => ({ value: option.value, label: option.label }))}
+      >
+        <SelectTrigger
+          id={id}
+          size="sm"
+          className={cn(CONTROL_SIZE, "w-full text-data")}
+          aria-invalid={error !== undefined}
+          aria-describedby={describedBy === "" ? undefined : describedBy}
+        >
+          <SelectValue placeholder={emptyText} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              disabled={option.disabled === true}
+              className="text-data pointer-coarse:min-h-11"
+            >
+              {option.content ?? option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {hint !== undefined && (
+        <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
+          {hint}
+        </FieldDescription>
+      )}
+      {warning !== undefined && (
+        <div id={warningId}>
+          <FormWarning>{warning}</FormWarning>
+        </div>
+      )}
+      <FieldError id={errorId} className={CAPTION}>
+        {error}
+      </FieldError>
+    </Field>
+  );
+}
+
 export type AdminFormApi<Values> = {
   values: Values;
   /** Sets a field's value and clears the error shown at it (settings-form «Ошибка поля»). */
@@ -228,7 +328,8 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
   onCancel?: () => void;
   /** Keys of `SecretField` values: emptied after a successful save, so a secret lives only until it is sent. */
   secretFields?: readonly (keyof Values)[];
-  errorContext?: AdminErrorContext;
+  /** A function reads the context from the submitted values (a field the refusal names). */
+  errorContext?: AdminErrorContext | ((values: Values) => AdminErrorContext);
   /** Names the change in the log, e.g. «admin: role create». */
   logEvent: string;
   children: (form: AdminFormApi<Values>) => ReactNode;
@@ -298,7 +399,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
       if (variant === "page") focusShellTarget("page-title");
       onSaved?.();
     } catch (cause) {
-      const refusal = describeRefusal(cause, { logEvent, context: errorContext });
+      const refusal = describeRefusal(cause, { logEvent, context: typeof errorContext === "function" ? errorContext(values) : errorContext });
       if (refusal === null) return;
       if (refusal.target !== "form" && refusal.target in values) showFieldErrors({ [refusal.target]: refusal.text });
       else setFormError(refusal.text);

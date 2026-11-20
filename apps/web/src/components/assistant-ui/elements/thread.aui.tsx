@@ -827,6 +827,7 @@ const Composer: FC<{
       {sendFailed && (
         <p
           id={failureId}
+          role="alert"
           data-slot="aui_composer-send-failure"
           className="text-destructive mt-1 px-2.5 text-xs leading-4 font-medium"
         >

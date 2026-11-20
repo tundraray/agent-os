@@ -48,6 +48,7 @@ function workflow(
         },
       ],
       finalExecutor: null,
+      selfLearning: false,
     },
   };
 }

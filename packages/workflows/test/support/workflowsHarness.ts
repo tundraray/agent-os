@@ -11,13 +11,14 @@ import {
 import {
   createAccessGateDouble,
   createLibraryDouble,
+  createScriptedEmbeddings,
   type LibraryDouble,
   type LibraryDoubleRecord,
   type ScriptedModel,
 } from '@agent-os/agents/testing';
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { createDatabase, type Database } from '@agent-os/db';
+import { createDatabase, type Database, type DatabaseConnection } from '@agent-os/db';
 import {
   createFixtureFiles,
   FIXTURE_SHARED_TOKEN,
@@ -45,12 +46,21 @@ import { databaseUrl } from './database-url.js';
  * workflows is its `createLibraryDouble` (the root runs its `chat` record, a workflow is a record the test
  * adds) and MCP is the fixture process of `@agent-os/mcp-fixture` over HTTP, its `logs` source registered
  * in the registry under the run's name {@link LOGS_SERVER}. No logic of the doubles or of the fixture lives here.
+ * The model provider is the row {@link HARNESS_PROVIDER} in the database, which the open harnesses of a test
+ * file keep and the last one deletes.
  */
 
-/** The deployment's default model (`AGENT_DEFAULT_MODEL`): the root and the executors of a test workflow. */
-export const HAIKU_MODEL = 'anthropic/claude-haiku-5-5';
+/**
+ * The model provider of every harness (model-providers design-core.md, Test Strategy): an `openai_compatible`
+ * row without a key, so it is `ready`. Never `anthropic`: the tests run on the developer's database, whose
+ * `anthropic` row may hold a real key.
+ */
+const HARNESS_PROVIDER = 'workflows-harness';
+
+/** The default chat model of the access gate double: the root and the executors of a test workflow. */
+export const HAIKU_MODEL = `${HARNESS_PROVIDER}/claude-haiku-5-5`;
 /** A second priced model: the coordinator of the `deep-research` test workflow. */
-export const SONNET_MODEL = 'anthropic/claude-sonnet-5-5';
+export const SONNET_MODEL = `${HARNESS_PROVIDER}/claude-sonnet-5-5`;
 
 /** The model catalogue of the access gate double: both models. */
 const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
@@ -197,11 +207,43 @@ export interface WorkflowsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime, agents and workflows logged, in order. */
   readonly logs: readonly LogRecord[];
-  /** Stops the workers, the agents, the pool, then the fixture process — each also when the one before fails. */
+  /**
+   * Stops the workers, the agents, deletes the provider row when this is the file's last open harness, closes
+   * the pool, then the fixture process — each also when the one before fails.
+   */
   close(): Promise<void>;
 }
 
-/** Builds runtime + agents + workflows with the scripted model against the test database and starts them. */
+/** Open harnesses of this test file (files run one at a time): the provider row lives while one of them does. */
+let openHarnesses = 0;
+
+/**
+ * The first open harness of the file sets the row {@link HARNESS_PROVIDER} to `openai_compatible`, the kind's
+ * address, no key, enabled, replacing a row an earlier run left or changed; a later harness of the file leaves
+ * it as it is. SQL through the pool: `drizzle-orm` is not a dependency of this package.
+ */
+async function openHarnessProvider(database: DatabaseConnection): Promise<void> {
+  openHarnesses += 1;
+  if (openHarnesses > 1) return;
+  await database.pool.query(
+    `INSERT INTO app.agent_model_providers (name, kind) VALUES ($1, 'openai_compatible')
+     ON CONFLICT (name) DO UPDATE
+       SET kind = 'openai_compatible', base_url = NULL, api_key = NULL, enabled = true, updated_at = now()`,
+    [HARNESS_PROVIDER],
+  );
+}
+
+/** The last harness of the file to close deletes the row: the developer's database keeps only its own providers. */
+async function closeHarnessProvider(database: DatabaseConnection): Promise<void> {
+  openHarnesses -= 1;
+  if (openHarnesses > 0) return;
+  await database.pool.query('DELETE FROM app.agent_model_providers WHERE name = $1', [HARNESS_PROVIDER]);
+}
+
+/**
+ * Builds runtime + agents + workflows against the test database and starts them: the scripted model and
+ * embeddings, and the access gate double whose default chat model is {@link HAIKU_MODEL}.
+ */
 export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): Promise<WorkflowsHarness> {
   const fixture = options.fixture ?? createFixtureFiles('workflows-e2e');
   const runtimeConfig: RuntimeConfig = {
@@ -215,10 +257,7 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     shutdownGraceMs: 1_000,
     dbPoolMax: 8,
   };
-  const agentsConfig = parseAgentsConfig({
-    AGENT_DEFAULT_MODEL: HAIKU_MODEL,
-    NODE_ENV: 'test',
-  });
+  const agentsConfig = parseAgentsConfig({ NODE_ENV: 'test' });
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
   const library = createLibraryDouble();
@@ -240,10 +279,12 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
     logger,
     config: agentsConfig,
     turnClient: options.model.turnClient,
+    embeddingClient: createScriptedEmbeddings().client,
     // Every owner of these tests is active; no test here asserts the audit hook.
     access: createAccessGateDouble({
       servers: Object.fromEntries(options.owners.map((ownerId) => [ownerId, [LOGS_SERVER]])),
       prices: MODEL_PRICES,
+      defaultChatModel: HAIKU_MODEL,
     }),
     audit: async () => {},
     library,
@@ -258,14 +299,20 @@ export async function createWorkflowsHarness(options: WorkflowsHarnessOptions): 
         await agents.stop();
       } finally {
         try {
-          await database.close();
+          await closeHarnessProvider(database);
         } finally {
-          await fixtureProcess.stop();
+          try {
+            await database.close();
+          } finally {
+            await fixtureProcess.stop();
+          }
         }
       }
     }
   };
   try {
+    // First in the block: `close` below then always pairs with this open.
+    await openHarnessProvider(database);
     await agents.start();
     await registerLogsServer(agents, fixtureProcess);
   } catch (error) {

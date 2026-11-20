@@ -10,7 +10,7 @@
 //   Postgres - the fixture process runs, and the test registers every server itself through the API under the run's names (`runName`).
 //   Аня, Борис and Глеб are written by `insertEmployee` before the boot and sign in after it; their rights on the run's servers are personal
 //   grants the administrator gives (`grantTo`, test/support/access.ts) once each server is registered, and Аня's chat runs on the run's
-//   default model (`runModel`), added to the catalogue and allowed to her in `beforeAll`; the
+//   default model (`runModel`, made the platform's default chat model by `useRunModels` and restored in `afterAll`), allowed to her in `beforeAll`; the
 //   super administrator comes from `seedSuperAdmin`, the second administrator is an employee given the admin right by a role (taken away in
 //   row 8). The employee connect route reads only the saved public address; the test uses the one the database already holds (the test plays
 //   the browser and calls the callback on the app itself, and the fixture only compares the return address with the registered one), and
@@ -49,11 +49,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { frontendOrigin } from '../src/identity/session-cookie.js';
 import {
-  addModel,
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
+  useRunModels,
 } from './support/access.js';
 import { chatApi, expectBody, waitFor } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
@@ -156,6 +156,8 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
   let settingsWithoutPublicUrl: SignInSettings | undefined;
   /** Gives the built-in records back their models; run in `afterAll` while the app is up. */
   let restoreBuiltins: (() => Promise<void>) | undefined;
+  /** Gives the platform back its default models (`useRunModels`); run in `afterAll` while the app is up. */
+  let restoreModels: (() => Promise<void>) | undefined;
   const userIds: string[] = [];
 
   beforeAll(async () => {
@@ -186,7 +188,6 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
       workers: true,
       captureLog: true,
       mcpServers: [],
-      defaultModel: DEFAULT_MODEL,
     });
     harness.model.completeText({ text: 'MCP conversation' });
     const { app } = harness;
@@ -198,7 +199,9 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     admin2 = await createEmployee(app, admin);
     userIds.push(admin2.id);
     // Аня's chat (row 11a) runs on the run's model; Глеб never gets a right: no MCP server is his.
-    await addModel(app, admin, { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES });
+    restoreModels = await useRunModels(app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
+    });
     restoreBuiltins = await pointBuiltinsAt(app, admin, DEFAULT_MODEL);
     await grantTo(
       app,
@@ -257,6 +260,7 @@ describe('enterprise-access / mcp-connect - API integration (real AppModule + re
     try {
       try {
         await restoreBuiltins?.();
+        await restoreModels?.();
       } finally {
         if (harness !== undefined && settingsWithoutPublicUrl !== undefined) {
           await expectBody(

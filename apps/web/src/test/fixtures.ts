@@ -11,13 +11,19 @@ import {
   ConfirmationSchema,
   ConversationViewSchema,
   CopyResultSchema,
-  CreateCatalogModelBodySchema,
+  CatalogModelSchema,
   CurrentUserSchema,
   DraftViewSchema,
   GrantSchema,
   HistoryEntrySchema,
+  KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+  KnowledgeItemSchema,
+  KnowledgeSettingsSchema,
+  KnowledgeViewSchema,
   McpServerSummarySchema,
   McpServerViewSchema,
+  ModelDefaultsSchema,
+  ModelProviderViewSchema,
   PendingMessageSchema,
   RunOriginSchema,
   ProviderSummarySchema,
@@ -31,6 +37,7 @@ import {
   ThreadSummarySchema,
   WorkflowContentSchema,
   WorkflowRunViewSchema,
+  modelProvider,
   type AdminUserDetail,
   type AdminUserPage,
   type AdminUserSummary,
@@ -49,9 +56,14 @@ import {
   type ExecutorSourceState,
   type Grant,
   type HistoryEntry,
+  type KnowledgeItem,
+  type KnowledgeSettings,
+  type KnowledgeView,
   type McpServerSummary,
   type McpServerView,
   type McpToolView,
+  type ModelDefaults,
+  type ModelProviderView,
   type PendingMessage,
   type ProviderOptionsView,
   type ProviderSummary,
@@ -425,12 +437,127 @@ export function mcpServerView(overrides: Partial<McpServerView> & Pick<McpServer
   });
 }
 
-/** Row of GET /api/admin/models (the create body's fields): one price, no long-context rates. */
+/** Row of GET /api/admin/models: a chat model with one price, no long-context rates. */
 export function catalogModel(overrides: Partial<CatalogModel> & Pick<CatalogModel, 'id'>): CatalogModel {
-  return CreateCatalogModelBodySchema.parse({
+  return CatalogModelSchema.parse({
     name: 'Claude Sonnet 4.5',
+    purpose: 'chat',
+    provider: modelProvider(overrides.id),
     prices: { inputUsdPerMTok: 3, outputUsdPerMTok: 15, cacheWriteUsdPerMTok: 3.75, cacheReadUsdPerMTok: 0.3 },
     longContext: null,
+    ...overrides,
+  });
+}
+
+/** Row of GET /api/admin/model-providers: `anthropic`, enabled, key set, ready, no catalogue models. */
+export function modelProviderView(overrides: Partial<ModelProviderView> = {}): ModelProviderView {
+  return ModelProviderViewSchema.parse({
+    servesEmbeddings: (overrides.kind ?? 'anthropic') !== 'anthropic',
+    name: 'anthropic',
+    kind: 'anthropic',
+    baseUrl: null,
+    effectiveBaseUrl: 'https://api.anthropic.com',
+    enabled: true,
+    apiKeySet: true,
+    apiKeyLast4: 'x7Qa',
+    keyRequired: true,
+    state: 'ready',
+    catalogModels: 0,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/model-defaults: neither model chosen, never set. */
+export function modelDefaults(overrides: Partial<ModelDefaults> = {}): ModelDefaults {
+  return ModelDefaultsSchema.parse({
+    chatModel: null,
+    embeddingModel: null,
+    updatedAt: null,
+    updatedBy: null,
+    ...overrides,
+  });
+}
+
+/** GET /api/admin/knowledge/settings: the defaults, never set. */
+export function knowledgeSettings(overrides: Partial<KnowledgeSettings> = {}): KnowledgeSettings {
+  return KnowledgeSettingsSchema.parse({
+    limitTokens: KNOWLEDGE_LIMIT_TOKENS_DEFAULT,
+    lessonsEnabled: true,
+    updatedAt: null,
+    ...overrides,
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Knowledge graph fixtures (self-learning): each one passes its `@agent-os/contracts` schema.
+
+type KnowledgeEntity = Extract<KnowledgeItem, { type: 'entity' }>;
+type KnowledgeFact = Extract<KnowledgeItem, { type: 'relation'; kind: 'fact' }>;
+type KnowledgeLesson = Extract<KnowledgeItem, { kind: 'lesson' }>;
+type KnowledgeSearchedNothing = Extract<KnowledgeItem, { kind: 'searched_nothing' }>;
+
+/** What every record has by default: added once at FIXTURE_TIME, active, no placement mark. */
+const KNOWLEDGE_ITEM = { confirmations: 1, date: FIXTURE_TIME, state: 'active', placement: null } as const;
+
+/** An entity (always a fact): «billing-api», «Сервис списаний». */
+export function knowledgeEntity(overrides: Partial<KnowledgeEntity> & Pick<KnowledgeEntity, 'id'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    name: 'billing-api',
+    description: 'Сервис списаний',
+    ...overrides,
+    type: 'entity',
+    kind: 'fact',
+  });
+}
+
+/** A relation fact «{from} → владеет → {to}» between two entities. */
+export function knowledgeFact(overrides: Partial<KnowledgeFact> & Pick<KnowledgeFact, 'id' | 'from' | 'to'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({ ...KNOWLEDGE_ITEM, label: 'владеет', ...overrides, type: 'relation', kind: 'fact' });
+}
+
+/** A lesson of `logs.search` on «ошибки оплаты». */
+export function knowledgeLesson(overrides: Partial<KnowledgeLesson> & Pick<KnowledgeLesson, 'id'>): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    server: 'logs',
+    tool: 'search',
+    question: 'ошибки оплаты',
+    hint: 'Искать в логах billing-api',
+    outcome: 'ошибки нашлись',
+    ...overrides,
+    type: 'relation',
+    kind: 'lesson',
+  });
+}
+
+/** «Искал — не нашёл» of `jira.search_issues` on «инциденты оплаты». */
+export function knowledgeSearchedNothing(
+  overrides: Partial<KnowledgeSearchedNothing> & Pick<KnowledgeSearchedNothing, 'id'>,
+): KnowledgeItem {
+  return KnowledgeItemSchema.parse({
+    ...KNOWLEDGE_ITEM,
+    server: 'jira',
+    tool: 'search_issues',
+    question: 'инциденты оплаты',
+    ...overrides,
+    type: 'relation',
+    kind: 'searched_nothing',
+  });
+}
+
+/**
+ * GET /api/library/:id/knowledge: self-learning and lessons on, selection by meaning on, no records, zero counts,
+ * no round yet. `counts` are the server's own numbers and never follow `items` here.
+ */
+export function knowledgeView(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
+  return KnowledgeViewSchema.parse({
+    selfLearning: true,
+    lessonsEnabled: true,
+    selection: { state: 'on' },
+    counts: { active: 0, always: 0, beyond: 0, outdated: 0, percent: 0 },
+    items: [],
+    lastExtraction: null,
     ...overrides,
   });
 }

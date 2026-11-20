@@ -14,7 +14,8 @@
 //   never run), so no scripted model and no `workers` are needed. Servers «Jira» and «Sentry» of the design are the run's
 //   `LOGS_SERVER` and `BACKOFFICE_SERVER` (the fixture process of `createTestApp({ mcpServers })` serves the registry check), made
 //   available to a role through the existing admin operations (`allowRole` of support/access.ts: `POST /api/admin/models`,
-//   `POST /api/admin/grants`), under run names (`runName`, `runModel`) - never the developer's real rows.
+//   `POST /api/admin/grants`), under run names (`runName`, `runModel`) - never the developer's real rows. The run's provider and
+//   default chat model come from `useRunModels`, whose restore `afterAll` runs before `removeRunRows`.
 //   Employees come from `insertEmployee` + `signInWithPassword`, the administrator from `seedSuperAdmin`; roles and their members go
 //   through `POST /api/admin/roles` and `PUT /api/admin/users/:id/roles/:roleId` of `identity`. Responses are parsed with the schemas of
 //   `@agent-os/contracts` (`library.ts`). Every case uses its own employees, roles and records (names carry the run suffix, no check of a
@@ -84,6 +85,7 @@ import {
   removeRunRows,
   runModel,
   type RunRole,
+  useRunModels,
 } from './support/access.js';
 import { expectBody, expectError } from './support/api.js';
 import { createTestApp, type TestApp } from './support/createTestApp.js';
@@ -118,7 +120,7 @@ import {
 /** Bound of one test; the requests settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;
 
-/** `AGENT_DEFAULT_MODEL` of the boot: in the catalogue and allowed to every role of the file. */
+/** The platform's default chat model while the file runs (`useRunModels`): allowed to every role of the file. */
 const DEFAULT_MODEL = runModel('haiku');
 /** The second model: allowed only to «Оплаты», where Аня is and Борис is not (INT-3, step 1). */
 const SECOND_MODEL = runModel('sonnet');
@@ -131,6 +133,8 @@ const PASSWORD = 'e2e-library-password-12';
 /** The one app and administrator of the file (INT-1..INT-5). */
 let harness: TestApp;
 let admin: Session;
+/** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+let restoreModels: (() => Promise<void>) | undefined;
 /** Shared employees: Аня in «SRE» and «Оплаты», Борис in «SRE», Вера in no role. No case changes their roles or status. */
 let anya: Session;
 let boris: Session;
@@ -279,14 +283,18 @@ async function countRows(sql: string, parameter: unknown): Promise<number> {
 describe('custom-agents / library - integration (real AppModule + real Postgres, no model)', () => {
   beforeAll(async () => {
     harness = await createTestApp({
-      defaultModel: DEFAULT_MODEL,
       mcpServers: ['logs', 'backoffice', 'tracker'],
     });
     const adminLogin = `e2e-library-admin-${randomUUID()}`;
     admin = await seedSuperAdmin(harness.app, adminLogin);
     createdUserIds.add(admin.id);
-    for (const id of [DEFAULT_MODEL, SECOND_MODEL])
-      await addModel(harness.app, admin, { id, ...HAIKU_TEST_PRICES });
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
+    });
+    await addModel(harness.app, admin, {
+      id: SECOND_MODEL,
+      ...HAIKU_TEST_PRICES,
+    });
     // `tracker` of the run is allowed to nobody: the server Аня has no right on (INT-3, step 3).
     sre = await newRole('SRE', {
       models: [DEFAULT_MODEL],
@@ -315,6 +323,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
         'DELETE FROM app.library_records WHERE id = ANY($1::uuid[])',
         [[...systemRecordIds]],
       );
+      await restoreModels?.();
       await removeRunRows(harness.pool, {
         models: [DEFAULT_MODEL, SECOND_MODEL],
         roles: [...createdRoleIds],
@@ -838,7 +847,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   the rule's variants are the unit tables (copy-rules, save-rules).
   // Steps (literal expected values):
   //   1. UC-4: Given Аня's agent open to «SRE» with servers Jira and Sentry and a model Борису not allowed; Борис's rights - only
-  //      Sentry (through a role grant) and the platform default model (`AGENT_DEFAULT_MODEL`); When Борис `POST .../copy`; Then 201
+  //      Sentry (through a role grant) and the platform default model (`useRunModels`); When Борис `POST .../copy`; Then 201
   //      `CopyResult`: the copy is personal, version 1, name "{name} — копия", servers exactly [Sentry], model the platform default;
   //      `removedServers` names Jira, `replacedModels` names the old and new model; the original is unchanged.
   //   2. AC-05.2: When Аня then saves a new version of the original (version 2, another prompt); Then Борис's copy still has its own

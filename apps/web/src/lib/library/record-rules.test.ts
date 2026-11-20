@@ -67,6 +67,7 @@ const workflow = (content: Partial<WorkflowContent> = {}, name = 'Разбор �
     coordinator: { rules: '', model: MODEL, maxTurns: 40 },
     executors: [executor('Сбор логов'), executor('Ответ')],
     finalExecutor: 'Ответ',
+    selfLearning: false,
     ...content,
   },
 });
@@ -182,6 +183,12 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
         { field: 'name', label: 'Имя' },
         { field: 'rules', label: 'Как работает команда' },
       ],
+    ],
+    // AC-10.1, DC-1: without the field the form stays clean after the tick, and the flag is never saved.
+    [
+      'changed fields: workflow self-learning only',
+      () => changedFields(workflow(), workflow({ selfLearning: true })),
+      [{ field: 'selfLearning', label: 'Самообучение' }],
     ],
   ])('%s', (_, decide, expected) => {
     expect(decide()).toEqual(expected);

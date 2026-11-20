@@ -11,7 +11,16 @@ import {
   quotaFailureText,
   quotaRowOf,
 } from "@/lib/access/access-texts";
-import { failureReasonText, formatTime } from "@/lib/agents/format";
+import {
+  failureReasonText,
+  formatModel,
+  formatTime,
+  isProviderFailureReason,
+  providerFailureHint,
+  providerReasonText,
+  type ModelNames,
+  type ProviderFailureReason,
+} from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
 import type { EventPartData } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
@@ -73,6 +82,8 @@ export function EventLine({ data }: { data: EventPartData }) {
 
   if (event === "failed" && reason === "quota_exhausted") return <QuotaFailureLine data={data} />;
 
+  if (event === "failed" && isProviderFailureReason(reason)) return <ProviderFailureLine data={data} reason={reason} />;
+
   if (event === "failed") {
     const { text, hint } = failureReasonText(reason);
     return <AgentStatus variant="event" status="failed" text={`Сбой: ${text}`} at={createdAt} hint={hint} />;
@@ -122,6 +133,50 @@ function QuotaFailureLine({ data }: { data: EventPartData }) {
       <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{QUOTA_FAILURE_HINT}</p>
       <span aria-live="polite" className="sr-only">
         {read.status === "ready" ? quotaFailureAnnouncement(row) : ""}
+      </span>
+    </div>
+  );
+}
+
+type NamesRead = { status: "loading" } | { status: "ready"; names: ModelNames | undefined };
+
+/**
+ * A provider failure (model-providers UXRD MP-09, MC-9, MC-10): «Сбой: {причина}» naming the model by its
+ * title from the employee's models (the same read as the quota lines), the hint under it, and the polite
+ * announcement once the text is known. Until the read settles, and when it fails, the model reads by its ID label.
+ */
+function ProviderFailureLine({ data, reason }: { data: EventPartData; reason: ProviderFailureReason }) {
+  const { createdAt, model } = data;
+  const [read, setRead] = useState<NamesRead>(
+    model === null ? { status: "ready", names: undefined } : { status: "loading" },
+  );
+
+  useEffect(() => {
+    if (model === null) return;
+    let current = true;
+    accessApi.modelsForFeed().then(
+      (models) => {
+        if (current) setRead({ status: "ready", names: { models: models.models } });
+      },
+      (error: unknown) => {
+        if (!current) return;
+        logger.error("feed: access models read failed for a provider failure", { model, failure: reason, ...describeApiError(error) });
+        setRead({ status: "ready", names: undefined });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [model, reason]);
+
+  const label = model === null ? undefined : formatModel(model, read.status === "ready" ? read.names : undefined);
+  const text = providerReasonText(reason, label);
+  return (
+    <div data-slot="provider-failure" className="flex min-w-0 flex-col">
+      <AgentStatus variant="event" status="failed" text={`Сбой: ${text}`} at={createdAt} />
+      <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{providerFailureHint(reason)}</p>
+      <span aria-live="polite" className="sr-only">
+        {read.status === "ready" ? `Работа завершена сбоем: ${text}` : ""}
       </span>
     </div>
   );

@@ -19,7 +19,7 @@
 //   there is no browser E2E tool in the repo; its API half is INT-3 over real HTTP. A child-process kill row would repeat runtime E2E-1.
 //
 // Harness (follows apps/api/test/support/* and agent-platform-chat.int.e2e-spec.ts):
-//   `createTestApp({ workers: true, defaultModel: runModel(...), mcpServers? })` - the real AppModule with the REAL `LibraryService` behind the
+//   `createTestApp({ workers: true, mcpServers? })` with the run's provider and default chat model of `useRunModels` - the real AppModule with the REAL `LibraryService` behind the
 //   `RecordLibrary` port, the real `AccessService`, `IdentityDirectory` and `AuditLog`; the scripted `ModelClient` (`AGENT_TURN_CLIENT`) is the
 //   only double. No library double here: this level exists to prove that the real library is what the chat and the starts ask, for the
 //   right person. Employees: `createEmployee` + sessions, the administrator `seedSuperAdmin`; roles, membership, models and servers through the
@@ -112,6 +112,7 @@ import {
   removeRunRows,
   runModel,
   type RunRole,
+  useRunModels,
 } from './support/access.js';
 import {
   type ChatApi,
@@ -144,7 +145,7 @@ import {
 /** Bound of one test: INT-3 A boots the app twice more, the other rows settle far sooner. */
 const TEST_TIMEOUT_MS = 300_000;
 
-/** `AGENT_DEFAULT_MODEL` of every boot and the model of the built-in records (`pointBuiltinsAt`): the chat runs on it. */
+/** The platform's default chat model while the file runs (`useRunModels`) and the model of the built-in records (`pointBuiltinsAt`): the chat runs on it. */
 const DEFAULT_MODEL = runModel('haiku');
 /** The model of Аня's agent R (INT-3 B): allowed through «SRE» only, so a personal deny takes it from Аня alone. */
 const R_MODEL = runModel('sonnet');
@@ -161,7 +162,7 @@ const DRAFT_RECORD = 'draft_record';
 const SEED_TEAM = seededTeam();
 
 function seededTeam(): string[] {
-  const record = builtinRecords(DEFAULT_MODEL).find(
+  const record = builtinRecords().find(
     (candidate) => candidate.builtinKey === BUILTIN.deepResearch.builtinKey,
   );
   if (record?.body.kind !== 'workflow') {
@@ -334,6 +335,8 @@ let harness: TestApp;
 let admin: Session;
 /** Gives the built-in records back their models; run in `afterAll` before the run's rows go. */
 let restoreBuiltins: (() => Promise<void>) | undefined;
+/** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+let restoreModels: (() => Promise<void>) | undefined;
 /** Gives the built-in records back what INT-3 A changed (name, prompt, audience); run in `afterAll`, last first. */
 const restoreEdits: (() => Promise<void>)[] = [];
 /** What this file created; `afterAll` deletes exactly these rows (an employee's records, drafts and grants go with him). */
@@ -355,7 +358,6 @@ const liveApp = new Proxy({} as INestApplication<App>, {
 function boot(): Promise<TestApp> {
   return createTestApp({
     workers: true,
-    defaultModel: DEFAULT_MODEL,
     model: recorder.model,
   });
 }
@@ -763,8 +765,10 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       `e2e-runtime-admin-${randomUUID()}`,
     );
     made.users.push(admin.id);
-    for (const id of [DEFAULT_MODEL, R_MODEL])
-      await addModel(liveApp, admin, { id, ...HAIKU_TEST_PRICES });
+    restoreModels = await useRunModels(liveApp, admin, {
+      chat: { id: DEFAULT_MODEL, ...HAIKU_TEST_PRICES },
+    });
+    await addModel(liveApp, admin, { id: R_MODEL, ...HAIKU_TEST_PRICES });
     restoreBuiltins = await pointBuiltinsAt(liveApp, admin, DEFAULT_MODEL);
   }, TEST_TIMEOUT_MS);
 
@@ -776,6 +780,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
           await runAll(restoreEdits);
         } finally {
           await restoreBuiltins?.();
+          await restoreModels?.();
         }
       } finally {
         // Drafts go with their conversation, records and personal grants with their employee, shares with the role.

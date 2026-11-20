@@ -100,11 +100,11 @@ export function createDraftRecordTool(
     if (!parsed.success)
       return { kind: 'refused', reason: 'invalid_arguments' };
     const { data } = parsed;
-    const body: RecordBody =
-      data.kind === 'agent'
-        ? { kind: 'agent', content: data.content }
-        : { kind: 'workflow', content: data.content };
     let target: { id: string; version: number } | null = null;
+    // The model never sets the self-learning flag (Invariant 9): an edit keeps the flag of the version
+    // it edits — the draft stays tied to that version, so a later change of the flag is a version
+    // conflict on save — and a new record starts with it off, whatever the model sent.
+    let selfLearning = false;
     if (args.recordId !== undefined) {
       const record = await library.resolve(ownerId, args.recordId);
       if (record === null)
@@ -112,10 +112,16 @@ export function createDraftRecordTool(
       if (!record.mine) return { kind: 'refused', reason: 'read_only' };
       if (record.shared) return { kind: 'refused', reason: 'shared' };
       // A record never changes kind.
-      if (record.kind !== body.kind)
+      if (record.kind !== data.kind)
         return { kind: 'refused', reason: 'invalid_arguments' };
       target = { id: record.id, version: record.version };
+      if (record.kind === 'workflow')
+        selfLearning = record.content.selfLearning;
     }
+    const body: RecordBody =
+      data.kind === 'agent'
+        ? { kind: 'agent', content: data.content }
+        : { kind: 'workflow', content: { ...data.content, selfLearning } };
     return {
       kind: 'ready',
       target,

@@ -87,6 +87,7 @@ const COORDINATOR: WorkflowSnapshot = {
       },
     ],
     finalExecutor: null,
+    selfLearning: false,
   },
 };
 

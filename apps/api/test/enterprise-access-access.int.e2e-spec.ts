@@ -8,7 +8,7 @@
 // Test Type: Integration.
 //
 // Harness (follows apps/api/test/support/*, enterprise-access-identity.int.e2e-spec.ts and enterprise-access-mcp-connect.int.e2e-spec.ts): one
-//   `createTestApp({ workers: true, captureLog: true, mcpServers: [], defaultModel })` against the docker-compose Postgres, the real AppModule with
+//   `createTestApp({ workers: true, captureLog: true, mcpServers: [] })` against the docker-compose Postgres, the real AppModule with
 //   the real SessionGuard and the real `AccessService` behind `AccessGate`. Employees are written by `insertEmployee` and sign in with
 //   `signInWithPassword`; the administrator is `seedSuperAdmin`; roles and their members go through `POST /api/admin/roles` and
 //   `PUT /api/admin/users/:id/roles/:roleId` of `identity`. Only `AGENT_TURN_CLIENT` is the scripted model (it records, per request, the tool names
@@ -17,8 +17,8 @@
 //   (`runName`; shared-token servers `logs` and `tracker`, and `backoffice` with the mutating tool `create_incident_note`); its journal is the
 //   proof that a server received nothing. The catalogue, rights and quotas are made ONLY through the admin operations of this design
 //   (`POST /api/admin/models`, `POST /api/admin/grants`, `PATCH /api/admin/grants/:id`), so those routes are part of every setup. Time is never faked.
-//   Models are named by the run (`runModel('a')`, a form `anthropic/<name>`), never the developer's real catalogue rows, and the chat's default
-//   model of the app is one of them. Every case uses its own employees, roles and models, so rows of one case never meet another's; a case deletes
+//   Models are named by the run (`runModel('a')`, a form `run-t<runId>/<name>` under the run's provider), never the developer's real catalogue
+//   rows, and the platform's default chat model is one of them while the file runs (`useRunModels`, restored in `afterAll`). Every case uses its own employees, roles and models, so rows of one case never meet another's; a case deletes
 //   what it made in `afterAll` (users, roles, models - rights go with them by cascade - and the run's servers) and writes no setting that outlives
 //   the file. Responses are parsed with `@agent-os/contracts` schemas.
 //   Support the implementation tasks add (not skeletons):
@@ -26,8 +26,7 @@
 //     `removeRunRows(pool, ...)` over the admin routes and the pool; `spendOf(pool, ownerId, model)` that reads `runtime_model_calls` for the cost
 //     assertions; `auditOf(pool, { kind, objectType, ... })` that reads `access_denied` rows by object type (the kind is shared with the
 //     administrator-route refusals of identity, so rows of tools and models are filtered by `objectType`).
-//   - `createTestApp`: the `mcpAccess` option, `MCP_ACCESS_TABLE` and the price file are deleted; a `defaultModel` option sets `AGENT_DEFAULT_MODEL`
-//     for the boot only (restored by `setEnv`, as `MCP_ACCESS_TABLE` is today), so no case writes the developer's environment or catalogue.
+//   - `createTestApp`: the `mcpAccess` option, `MCP_ACCESS_TABLE` and the price file are deleted.
 //   - A test workflow record of the employee whose executor names the `backoffice` server and runs a model script and a `run_code` script,
 //     started by `start_workflow` of the employee's chat (INT-1 step 4).
 //   - Agent records on a given model (system records the administrator shows to one employee), which the chat starts by id: the model of a
@@ -105,6 +104,7 @@ import {
   spendOf,
   type ModelPrices,
   type RunRole,
+  useRunModels,
 } from './support/access.js';
 import {
   type ChatApi,
@@ -168,8 +168,13 @@ const PRICES_3_15: ModelPrices = {
     cacheReadUsdPerMTok: 0,
   },
 };
-/** Usage of a call that costs nothing: titles and helper calls of the money cases (plan Notes 7). */
-const ZERO_TOKENS = { inputTokens: 0, outputTokens: 0 } as const;
+/**
+ * Usage of a helper call (titles, starting a background agent) that costs next to nothing: one input token. Zero input
+ * tokens would be an answer without a count, which the model client records as an estimate of the whole request (DC-11).
+ */
+const ZERO_TOKENS = { inputTokens: 1, outputTokens: 0 } as const;
+/** The most a helper call costs at 1 / 5 USD per million: a call above it is a paid one. */
+const HELPER_CALL_USD = 0.00001;
 /** 1000 input and 100 output tokens: 0,0015 USD at 1 / 5, 0,003 USD at 2 / 10. */
 const SMALL_CALL = { inputTokens: 1_000, outputTokens: 100 } as const;
 /** The call INT-3 holds in flight: 10 000 input and 1 000 output tokens = 0,015 USD at 1 / 5. */
@@ -223,6 +228,7 @@ function accessCheckWorkflow(): Extract<CreateRecordBody, { kind: 'workflow' }> 
         },
       ],
       finalExecutor: ACCESS_EXECUTOR,
+      selfLearning: false,
     },
   };
 }
@@ -349,6 +355,8 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   const madeRecords: string[] = [];
   /** Gives the built-in records back their models; run in `afterAll` before the run's rows go. */
   let restoreBuiltins: (() => Promise<void>) | undefined;
+  /** Gives the platform back its default models (`useRunModels`); run in `afterAll` before the run's rows go. */
+  let restoreModels: (() => Promise<void>) | undefined;
 
   const adminRequest = (method: Method, path: string, body?: object) =>
     apiRequest(harness.app, admin, method, path, body);
@@ -504,7 +512,6 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       workers: true,
       captureLog: true,
       mcpServers: ['logs', 'backoffice', 'tracker'],
-      defaultModel: MODEL_A,
     });
     titles = harness.model.completeText({ text: TITLE, usage: ZERO_TOKENS });
     admin = await seedSuperAdmin(
@@ -512,7 +519,9 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       `e2e-access-admin-${randomUUID().slice(0, 8)}`,
     );
     made.users.push(admin.id);
-    await addModel(harness.app, admin, { id: MODEL_A, ...PRICES_1_5 });
+    restoreModels = await useRunModels(harness.app, admin, {
+      chat: { id: MODEL_A, ...PRICES_1_5 },
+    });
     restoreBuiltins = await pointBuiltinsAt(harness.app, admin, MODEL_A);
   }, TEST_TIMEOUT_MS);
 
@@ -520,6 +529,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
     try {
       try {
         await restoreBuiltins?.();
+        await restoreModels?.();
       } finally {
         await harness?.close();
       }
@@ -1125,7 +1135,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
   //   app's default model is `A`):
   //   1. AC-19.1 / AC-19.2: Аня is allowed A by a role; her agent calls A with 1000 input and 100 output tokens -> the ledger row costs 0,0015 USD;
   //      the administrator `PATCH`es A to 2 and 10 -> the next call of the same size costs 0,003 USD and the first row still reads 0,0015.
-  //   2. AC-20.1, AC-19.3, AC-17.3, AC-20.4: Аня's model runs `start_agent` on B (not allowed to her), then on `anthropic/<run>-not-in-catalogue`, then
+  //   2. AC-20.1, AC-19.3, AC-17.3, AC-20.4: Аня's model runs `start_agent` on B (not allowed to her), then on `runModel('not-in-catalogue')`, then
   //      (after the administrator gives her a personal deny of A while the role still allows it) on A -> three refusals as call results in the parent's
   //      history, `model_not_allowed` (B), `model_not_connected`, `model_not_allowed` (A); no child task exists; three `access_denied` rows (objectType
   //      `model`, the employee, the model, the reason), one per refusal.
@@ -1534,10 +1544,10 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       );
       const anyaApi = chatApi(harness.app, anya);
       const borisApi = chatApi(harness.app, boris);
-      /** Costs of Аня's agent calls on `A` above zero, by time. */
+      /** Costs of Аня's agent calls on `A` above a helper call's, by time. */
       const paidCalls = async () =>
         (await spendOf(harness.pool, anya.id, MODEL_A)).filter(
-          (cost) => cost !== 0,
+          (cost) => cost > HELPER_CALL_USD,
         );
 
       // 1. AC-21.1, AC-23.1, DC-9, before any call: the quota on `A` is the sum of the two grants, `B` has no limit, a model
@@ -1550,6 +1560,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           quotaUsd: 0.04,
           remainingUsd: 0.04,
           exhausted: false,
+          unavailableReason: null,
         },
         {
           model: modelB,
@@ -1558,6 +1569,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
           quotaUsd: 1,
           remainingUsd: 1,
           exhausted: false,
+          unavailableReason: null,
         },
       ]);
       // 0,01 USD of Аня on `A` that this process did not record: only a spend read from the ledger counts it
@@ -1671,7 +1683,7 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect(agentNamed(other.agents, 'agent on B').status).toBe('completed');
       expect(bScript.calls).toHaveLength(2);
       expect(harness.model.calls.length).toBe(callsInFlight + 1);
-      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([0, 0.0045]);
+      expect(await spendOf(harness.pool, anya.id, modelB)).toEqual([0.000003, 0.0045]);
       expect(await paidCalls()).toEqual([0.015, 0.015]);
       expect(await deniedAudit('model', { anya })).toEqual([
         `anya ${MODEL_A} rejected quota_exhausted`,
@@ -1684,26 +1696,28 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         MyModelsSchema,
       );
       expect(quotaRefusals(anya.id)).toEqual([
-        { spentUsd: 0.04, quotaUsd: 0.04, month },
-        { spentUsd: 0.04, quotaUsd: 0.04, month },
-        { spentUsd: 0.04, quotaUsd: 0.04, month },
+        { spentUsd: 0.040005, quotaUsd: 0.04, month },
+        { spentUsd: 0.040005, quotaUsd: 0.04, month },
+        { spentUsd: 0.040005, quotaUsd: 0.04, month },
       ]);
       expect(await myModels(anya)).toEqual([
         {
           model: MODEL_A,
           name: MODEL_A,
-          spentUsd: 0.04,
+          spentUsd: 0.040005,
           quotaUsd: 0.04,
           remainingUsd: 0,
           exhausted: true,
+          unavailableReason: null,
         },
         {
           model: modelB,
           name: modelB,
-          spentUsd: 0.0045,
+          spentUsd: 0.004503,
           quotaUsd: 1,
-          remainingUsd: 0.9955,
+          remainingUsd: 0.995497,
           exhausted: false,
+          unavailableReason: null,
         },
       ]);
 
@@ -1725,10 +1739,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         {
           model: MODEL_A,
           name: MODEL_A,
-          spentUsd: 0,
+          spentUsd: 0.000002,
           quotaUsd: 0.01,
-          remainingUsd: 0.01,
+          remainingUsd: 0.009998,
           exhausted: false,
+          unavailableReason: null,
         },
       ]);
       expect(await deniedAudit('model', { boris })).toEqual([]);
@@ -1762,10 +1777,11 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
       expect((await myModels(anya))[0]).toEqual({
         model: MODEL_A,
         name: MODEL_A,
-        spentUsd: 0.04,
+        spentUsd: 0.040005,
         quotaUsd: 0.04,
         remainingUsd: 0,
         exhausted: true,
+        unavailableReason: null,
       });
 
       // 6. AC-22.3: the personal quota is raised to 1 USD (the sum is 1,01) -> 200 with the new quota; Аня writes to the main
@@ -1806,18 +1822,20 @@ describe('enterprise-access / access - API integration (real AppModule + real Po
         {
           model: MODEL_A,
           name: MODEL_A,
-          spentUsd: 0.0415,
+          spentUsd: 0.041505,
           quotaUsd: 1.01,
-          remainingUsd: 0.9685,
+          remainingUsd: 0.968495,
           exhausted: false,
+          unavailableReason: null,
         },
         {
           model: modelB,
           name: modelB,
-          spentUsd: 0.0045,
+          spentUsd: 0.004503,
           quotaUsd: 1,
-          remainingUsd: 0.9955,
+          remainingUsd: 0.995497,
           exhausted: false,
+          unavailableReason: null,
         },
       ]);
     },

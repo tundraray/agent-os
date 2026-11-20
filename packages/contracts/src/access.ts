@@ -1,13 +1,23 @@
 import { z } from 'zod';
 
-/** Model catalogue, grants and "My access" (design-access.md, Contract Definitions). */
+import { ModelProviderNameSchema } from './model-providers.js';
+import { ApiErrorSchema } from './threads.js';
+
+/**
+ * Model catalogue, model defaults, grants and "My access" (design-access.md and design-core.md of
+ * model-providers, Contract Definitions).
+ */
 
 const MODEL_NAME_MAX_LENGTH = 80;
+export const EMBEDDING_DIMENSIONS_MIN = 1;
+export const EMBEDDING_DIMENSIONS_MAX = 4096;
 
 /** Error codes of the access part (`errorCode` of ApiErrorSchema). */
 export const AccessErrorCode = {
   MODEL_NOT_FOUND: 'MODEL_NOT_FOUND',
   MODEL_ID_TAKEN: 'MODEL_ID_TAKEN',
+  MODEL_PROVIDER_INVALID: 'MODEL_PROVIDER_INVALID',
+  MODEL_DEFAULT_INVALID: 'MODEL_DEFAULT_INVALID',
   GRANT_NOT_FOUND: 'GRANT_NOT_FOUND',
   GRANT_EXISTS: 'GRANT_EXISTS',
   GRANT_TARGET_UNKNOWN: 'GRANT_TARGET_UNKNOWN',
@@ -20,8 +30,28 @@ export const GrantInvalidReasonSchema = z.enum([
   'deny_for_role',
   'quota_not_on_model_allow',
   'quota_out_of_range',
+  'embedding_model',
 ]);
 export type GrantInvalidReason = z.infer<typeof GrantInvalidReasonSchema>;
+
+/** `reason` of a 422 MODEL_PROVIDER_INVALID on adding a catalogue model. */
+export const ModelProviderInvalidReasonSchema = z.enum([
+  'provider_unknown',
+  'embeddings_not_supported',
+]);
+export type ModelProviderInvalidReason = z.infer<typeof ModelProviderInvalidReasonSchema>;
+
+/** `reason` of a 422 MODEL_DEFAULT_INVALID. */
+export const ModelDefaultInvalidReasonSchema = z.enum(['model_unknown', 'not_chat', 'not_embedding']);
+export type ModelDefaultInvalidReason = z.infer<typeof ModelDefaultInvalidReasonSchema>;
+
+/** 422 MODEL_DEFAULT_INVALID of PUT /api/admin/model-defaults; `model` is the rejected id. */
+export const ModelDefaultInvalidErrorSchema = ApiErrorSchema.extend({
+  errorCode: z.literal(AccessErrorCode.MODEL_DEFAULT_INVALID),
+  reason: ModelDefaultInvalidReasonSchema,
+  model: z.string().min(1),
+});
+export type ModelDefaultInvalidError = z.infer<typeof ModelDefaultInvalidErrorSchema>;
 
 /** `reason` of a 422 GRANT_TARGET_UNKNOWN. */
 export const GrantTargetUnknownReasonSchema = z.enum([
@@ -33,10 +63,26 @@ export type GrantTargetUnknownReason = z.infer<typeof GrantTargetUnknownReasonSc
 
 // ---------- Model catalogue ----------
 
-/** Model ID `anthropic/<name>`, the form of AGENT_DEFAULT_MODEL. */
-export const ModelIdSchema = z
-  .string()
-  .regex(/^anthropic\/[^/\s]+$/, 'expected anthropic/<model id>');
+/**
+ * Model ID `<provider>/<name at the provider>`, split at the first slash (ADR-0018). The name is
+ * non-empty, has no whitespace and may hold slashes, as `local/Qwen/Qwen3-32B`.
+ */
+export const ModelIdSchema = z.string().refine((id) => {
+  const slash = id.indexOf('/');
+  return (
+    slash > 0 &&
+    ModelProviderNameSchema.safeParse(id.slice(0, slash)).success &&
+    /^\S+$/.test(id.slice(slash + 1))
+  );
+}, 'expected <provider>/<model name>');
+
+/** Provider of a valid model id: its part before the first slash. */
+export function modelProvider(modelId: string): string {
+  return modelId.slice(0, modelId.indexOf('/'));
+}
+
+export const ModelPurposeSchema = z.enum(['chat', 'embedding']);
+export type ModelPurpose = z.infer<typeof ModelPurposeSchema>;
 
 const ModelNameSchema = z.string().min(1).max(MODEL_NAME_MAX_LENGTH);
 
@@ -58,32 +104,82 @@ export const LongContextSchema = z.object({
 });
 export type LongContext = z.infer<typeof LongContextSchema>;
 
-const catalogModelFields = {
+/** `null` — one price. */
+const LongContextFieldSchema = LongContextSchema.nullable();
+
+/** Vector length of an embedding model; never changes. */
+const DimensionsSchema = z.number().int().min(EMBEDDING_DIMENSIONS_MIN).max(EMBEDDING_DIMENSIONS_MAX);
+
+const chatModelFields = {
+  id: ModelIdSchema,
   name: ModelNameSchema,
+  purpose: z.literal(ModelPurposeSchema.enum.chat),
   prices: PriceRatesSchema,
-  /** `null` — one price. */
-  longContext: LongContextSchema.nullable(),
+  longContext: LongContextFieldSchema,
 };
 
-/** Body of POST /api/admin/models. */
-export const CreateCatalogModelBodySchema = z.object({ id: ModelIdSchema, ...catalogModelFields });
+const embeddingModelFields = {
+  id: ModelIdSchema,
+  name: ModelNameSchema,
+  purpose: z.literal(ModelPurposeSchema.enum.embedding),
+  inputUsdPerMTok: UsdPerMTokSchema,
+  dimensions: DimensionsSchema,
+};
+
+/** Body of POST /api/admin/models: the whole id, and the fields of the model's purpose. */
+export const CreateCatalogModelBodySchema = z.discriminatedUnion('purpose', [
+  z.object(chatModelFields),
+  z.object(embeddingModelFields),
+]);
 export type CreateCatalogModelBody = z.infer<typeof CreateCatalogModelBodySchema>;
 
-/** Row of GET /api/admin/models (by name): the same fields as the create body. */
-export type CatalogModel = CreateCatalogModelBody;
+/** Row of GET /api/admin/models (by name); `provider` is the first part of the id. */
+export const CatalogModelSchema = z.discriminatedUnion('purpose', [
+  z.object({ ...chatModelFields, provider: ModelProviderNameSchema }),
+  z.object({ ...embeddingModelFields, provider: ModelProviderNameSchema }),
+]);
+export type CatalogModel = z.infer<typeof CatalogModelSchema>;
 
-/** Body of PATCH /api/admin/models/:id. The id never changes. */
+/**
+ * Body of PATCH /api/admin/models/:id. The id and the purpose never change; a field of the other
+ * purpose is rejected by the service, which reads the row's purpose.
+ */
 export const UpdateCatalogModelBodySchema = z
   .strictObject({
-    name: catalogModelFields.name.optional(),
-    prices: catalogModelFields.prices.optional(),
-    longContext: catalogModelFields.longContext.optional(),
+    name: ModelNameSchema.optional(),
+    prices: PriceRatesSchema.optional(),
+    longContext: LongContextFieldSchema.optional(),
+    inputUsdPerMTok: UsdPerMTokSchema.optional(),
   })
   .refine(
-    (body) => body.name !== undefined || body.prices !== undefined || body.longContext !== undefined,
-    { message: 'name, prices or longContext is required' },
+    (body) =>
+      body.name !== undefined ||
+      body.prices !== undefined ||
+      body.longContext !== undefined ||
+      body.inputUsdPerMTok !== undefined,
+    { message: 'name, prices, longContext or inputUsdPerMTok is required' },
   );
 export type UpdateCatalogModelBody = z.infer<typeof UpdateCatalogModelBodySchema>;
+
+// ---------- Model defaults ----------
+
+/** Response of GET/PUT /api/admin/model-defaults; `updatedAt` and `updatedBy` are `null` until first set. */
+export const ModelDefaultsSchema = z.object({
+  /** `null` — not chosen. */
+  chatModel: ModelIdSchema.nullable(),
+  /** `null` — not chosen. */
+  embeddingModel: ModelIdSchema.nullable(),
+  updatedAt: z.iso.datetime().nullable(),
+  updatedBy: z.uuid().nullable(),
+});
+export type ModelDefaults = z.infer<typeof ModelDefaultsSchema>;
+
+/** Body of PUT /api/admin/model-defaults: each a catalogue model id of its purpose, or `null`. */
+export const UpdateModelDefaultsBodySchema = z.object({
+  chatModel: ModelIdSchema.nullable(),
+  embeddingModel: ModelIdSchema.nullable(),
+});
+export type UpdateModelDefaultsBody = z.infer<typeof UpdateModelDefaultsBodySchema>;
 
 // ---------- Grants ----------
 
@@ -161,10 +257,20 @@ export type UpdateGrantBody = z.infer<typeof UpdateGrantBodySchema>;
 
 // ---------- Employee: my access ----------
 
-/** A model allowed to the employee now, with this month's spend. */
+/** Why a chat model's provider is not ready (`unavailableReason` of "My access"). */
+export const ModelUnavailableReasonSchema = z.enum([
+  'provider_missing',
+  'provider_disabled',
+  'provider_key_missing',
+]);
+export type ModelUnavailableReason = z.infer<typeof ModelUnavailableReasonSchema>;
+
+/** A chat model allowed to the employee now, with this month's spend. */
 export const MyModelSchema = z.object({
   model: ModelIdSchema,
   name: z.string(),
+  /** `null` — the provider is ready. */
+  unavailableReason: ModelUnavailableReasonSchema.nullable(),
   spentUsd: z.number(),
   /** `null` — no limit. */
   quotaUsd: z.number().nullable(),
@@ -175,7 +281,7 @@ export const MyModelSchema = z.object({
 });
 export type MyModel = z.infer<typeof MyModelSchema>;
 
-/** Response of GET /api/access/models (models by name). */
+/** Response of GET /api/access/models (chat models by name). */
 export const MyModelsSchema = z.object({
   /** UTC month `YYYY-MM`, as in GET /spend. */
   month: z.string().regex(/^\d{4}-\d{2}$/),

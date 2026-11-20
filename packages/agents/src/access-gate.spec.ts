@@ -8,6 +8,7 @@ import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
 import type { AccessDeniedEntry, ModelVerdict } from './access-gate.js';
+import type { KnowledgeVectorStore } from './knowledge/vector-store.js';
 import { createModelClient } from './model/model-client.js';
 import type { AgentSnapshot } from './start/snapshot.js';
 import { createCompactionStep } from './step/compaction-step.js';
@@ -15,7 +16,12 @@ import { createModelStep } from './step/model-step.js';
 import { createToolStep } from './step/tool-step.js';
 import type { Session, SessionInput } from './store/sessions.repository.js';
 import type { ToolCallRow } from './store/tool-calls.repository.js';
-import { createAccessGateDouble, createLibraryDouble, createScriptedModel } from './testing.js';
+import {
+  createAccessGateDouble,
+  createLibraryDouble,
+  createProviderRegistryDouble,
+  createScriptedModel,
+} from './testing.js';
 import type { AgentTool } from './tools/tool.js';
 import { createToolRegistry } from './tools/tool-registry.js';
 import { createToolRunner } from './tools/tool-runner.js';
@@ -187,11 +193,22 @@ function refusedAgent(refusal: Refusal) {
   const modelClient = createModelClient({
     turnClient: model.turnClient,
     ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
-    config: { maxOutputTokens: 100, defaultModel: MODEL },
+    config: { maxOutputTokens: 100 },
     logger,
     access,
+    providers: createProviderRegistryDouble({ anthropic: 'ready' }),
     audit,
   });
+  // The agent's snapshot does not learn: the knowledge block never reaches the store.
+  const notCalled = async (): Promise<never> => {
+    throw new Error('the vector store is not called for a session that does not learn');
+  };
+  const vectorStore: KnowledgeVectorStore = {
+    upsert: notCalled,
+    delete: notCalled,
+    query: notCalled,
+    list: notCalled,
+  };
   return {
     ctx: stepContext(logger),
     modelStep: createModelStep({
@@ -201,8 +218,9 @@ function refusedAgent(refusal: Refusal) {
       audit,
       tasks: { listTree: async () => [] },
       inbox: { listPending: async () => [] },
+      vectorStore,
     }),
-    compactionStep: createCompactionStep({ database, registry, modelClient, audit }),
+    compactionStep: createCompactionStep({ database, registry, modelClient, audit, vectorStore }),
     toolStep: createToolStep({ registry, runner, access, audit }),
     audits,
     /** Model calls and tool runs that started. */

@@ -73,7 +73,8 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 /**
  * 409 START_REFUSED of the first message and of a restart: the start procedure refused the record.
- * `model` is the refused model on a model refusal, otherwise `null`.
+ * `model` is the refused model on a model or provider refusal, otherwise `null` (also on
+ * `model_not_configured`: no default chat model is chosen).
  */
 export const StartRefusedErrorSchema = ApiErrorSchema.extend({
   errorCode: z.literal('START_REFUSED'),
@@ -81,6 +82,10 @@ export const StartRefusedErrorSchema = ApiErrorSchema.extend({
     'record_unavailable',
     'model_not_connected',
     'model_not_allowed',
+    'model_not_configured',
+    'provider_missing',
+    'provider_disabled',
+    'provider_key_missing',
   ]),
   model: z.string().min(1).nullable(),
 });

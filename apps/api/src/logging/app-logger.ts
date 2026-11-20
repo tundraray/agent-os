@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nestjs';
 import {
   consoleSink,
   createLogger,
+  rememberSecret,
   sentrySink,
   type LogLevel,
   type Logger,
@@ -14,16 +15,17 @@ const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 /**
  * Builds the one application logger: console and Sentry sinks, the settings' secrets redacted
- * (design-runtime.md, KD-6, Security «Sensitive Data Handling»), plus `extraSecrets` (the agents
- * settings' provider key). An invalid `LOG_LEVEL` stops the start.
+ * (design-runtime.md, KD-6, Security «Sensitive Data Handling»). Model provider keys live in the
+ * database; the process's secret memory redacts them (model-providers KD-7). An invalid `LOG_LEVEL`
+ * stops the start.
  */
-export function createAppLogger(
-  env: NodeJS.ProcessEnv,
-  extraSecrets: readonly string[] = [],
-): Logger {
+export function createAppLogger(env: NodeJS.ProcessEnv): Logger {
+  const secrets = collectSecrets(env);
+  // One masker list: the extraction's mask (`createSecretMasker([])`) hides what this logger hides.
+  for (const secret of secrets) rememberSecret(secret);
   return createLogger({
     sinks: [consoleSink(), sentrySink(Sentry)],
-    secrets: collectSecrets(env, extraSecrets),
+    secrets,
     minLevel: readLogLevel(env.LOG_LEVEL),
   });
 }
@@ -39,16 +41,8 @@ function readLogLevel(value: string | undefined): LogLevel {
   return level;
 }
 
-function collectSecrets(
-  env: NodeJS.ProcessEnv,
-  extraSecrets: readonly string[],
-): string[] {
-  const secrets = [
-    env.ANTHROPIC_API_KEY,
-    env.SENTRY_DSN,
-    ...databasePassword(env.DATABASE_URL),
-    ...extraSecrets,
-  ];
+function collectSecrets(env: NodeJS.ProcessEnv): string[] {
+  const secrets = [env.SENTRY_DSN, ...databasePassword(env.DATABASE_URL)];
   return [...new Set(secrets.filter((secret): secret is string => !!secret))];
 }
 

@@ -41,6 +41,7 @@ const workflow: RecordBody = {
       },
     ],
     finalExecutor: null,
+    selfLearning: false,
   },
 };
 

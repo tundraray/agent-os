@@ -48,9 +48,11 @@ import {
   fixtureTime,
   historyEntry,
   pendingMessage,
+  recordDetail,
   threadList,
   threadSummary,
   WORKFLOW_RECORD_ID,
+  workflowContent,
   workflowOrigin,
   workflowRunView,
   type Deferred,
@@ -650,6 +652,12 @@ describe('Agent platform web: the decision card (UC-3)', () => {
     const decisionBodies: { decisionId: string; body: DecisionRequest }[] = [];
     let ticketFailures = 1;
     server.use(
+      // The open brief card reads its workflow's record for the self-learning line (self-learning KD-6).
+      http.get(`${API}/api/library/${WORKFLOW_RECORD_ID}`, () =>
+        HttpResponse.json(
+          recordDetail({ id: WORKFLOW_RECORD_ID, kind: 'workflow', content: workflowContent({ selfLearning: false }) }),
+        ),
+      ),
       http.post(`${API}/api/decisions/:decisionId`, async ({ request, params }) => {
         const decisionId = String(params['decisionId']);
         const body = DecisionRequestSchema.parse(await request.json());

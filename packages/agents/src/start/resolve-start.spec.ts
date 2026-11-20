@@ -1,4 +1,4 @@
-import type { AgentContent, WorkflowContent } from '@agent-os/contracts';
+import type { AgentContent } from '@agent-os/contracts';
 import type { ModelPrice } from '@agent-os/runtime';
 
 import { type AccessDeniedEntry, OwnerDisabledError } from '../access-gate.js';
@@ -6,6 +6,7 @@ import {
   type AccessGateDoubleOptions,
   createAccessGateDouble,
   createLibraryDouble,
+  createProviderRegistryDouble,
   type LibraryDouble,
 } from '../testing.js';
 import {
@@ -36,11 +37,11 @@ const PRICE: ModelPrice = {
   cacheReadUsdPerMTok: 0.1,
 };
 
-function agentContent(model: string, agents: string[] = []): AgentContent {
+function agentContent(model: string, agents: string[] = []): AgentContent & { model: string } {
   return { prompt: 'You help.', servers: [], model, maxTurns: 10, agents, tools: ['start_agent'] };
 }
 
-function executor(name: string, source: string | null): WorkflowContent['executors'][number] {
+function executor(name: string, source: string | null): WorkflowSnapshot['content']['executors'][number] {
   return {
     name,
     role: `Роль ${name}`,
@@ -87,6 +88,7 @@ function seed(library: LibraryDouble) {
       coordinator: { rules: '', model: SONNET, maxTurns: 30 },
       executors: [executor('gather', null)],
       finalExecutor: null,
+      selfLearning: false,
     },
   });
   const unknownModel = visibleAgent('Новая модель', UNKNOWN_MODEL);
@@ -120,6 +122,7 @@ function coordinator(ids: Ids): WorkflowSnapshot {
       coordinator: { rules: '', model: SONNET, maxTurns: 30 },
       executors: [executor('gather', ids.hidden)],
       finalExecutor: null,
+      selfLearning: false,
     },
   };
 }
@@ -261,6 +264,7 @@ describe('resolveStart', () => {
     const deps = {
       library,
       access: createAccessGateDouble({ prices: { [HAIKU]: PRICE, [SONNET]: PRICE }, ...gate }),
+      providers: createProviderRegistryDouble({ anthropic: 'ready' }),
       audit: async (entry: AccessDeniedEntry) => void entries.push(entry),
     };
 
@@ -284,6 +288,7 @@ describe('resolveStart', () => {
     const deps = {
       library,
       access: createAccessGateDouble({ prices: { [HAIKU]: PRICE }, refusedOwners: [STARTER] }),
+      providers: createProviderRegistryDouble({ anthropic: 'ready' }),
     };
 
     const source: StartSource = { kind: 'record', recordId: ids.agent, expected: 'agent' };

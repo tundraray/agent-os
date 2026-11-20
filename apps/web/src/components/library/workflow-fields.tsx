@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { executorFromSource, type AgentRecord } from "@/lib/library/update-workflows";
+import { adminKnowledgePath, knowledgePath } from "@/lib/shell-route";
 import { cn } from "cn";
 import {
   MaxTurnsField,
@@ -38,6 +39,7 @@ import {
 import { ExecutorItem } from "./executor-item";
 import { ExecutorPanel, executorNameError, type ExecutorEditing } from "./executor-panel";
 import { ExecutorPicker } from "./executor-picker";
+import { SelfLearningField } from "./self-learning-field";
 import { useInChat } from "./use-in-chat";
 
 /** UXRD MC-12 (the editor of a workflow), MC-13 (the executor), MC-7 (name and description), MC-8, MC-19. */
@@ -141,6 +143,7 @@ export function blankWorkflow({ defaultModel, defaultMaxTurns }: RecordDefaults)
       coordinator: { rules: "", model: defaultModel, maxTurns: defaultMaxTurns },
       executors: [],
       finalExecutor: null,
+      selfLearning: false,
     },
   };
 }
@@ -179,7 +182,7 @@ type Rename = { from: string; to: string };
 /**
  * The workflow's fields of the record editor (UXRD WF-01; record-editor.md, variant «Workflow»): name and
  * description, the MC-12 phrase about the task, the team in alphabetical order, «Как работает команда» with the
- * team's names marked, «Кто пишет ответ» and the coordinator's settings under «Дополнительно». The team is a set:
+ * team's names marked, «Кто пишет ответ», «Самообучение» and the coordinator's settings under «Дополнительно». The team is a set:
  * no numbers, arrows or dragging. Text written by other employees is rendered as text only.
  */
 export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion, errors, choices }: WorkflowFieldsProps) {
@@ -408,6 +411,12 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
           setRemovedFinal(null);
           setContent({ finalExecutor }, "finalExecutor");
         }}
+      />
+      <SelfLearningField
+        checked={content.selfLearning}
+        savedOn={saved?.kind === "workflow" && saved.content.selfLearning}
+        knowledgeHref={saved === null ? null : mode === "employee" ? knowledgePath(saved.id) : adminKnowledgePath(saved.id)}
+        onChange={(selfLearning) => setContent({ selfLearning }, null)}
       />
       <CollapsibleRoot open={advancedOpen || advancedError} onOpenChange={setAdvancedOpen}>
         <CollapsibleTrigger

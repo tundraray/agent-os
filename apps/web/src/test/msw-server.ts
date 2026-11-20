@@ -9,7 +9,7 @@ import type {
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { apiBaseUrl } from '@/lib/config';
-import { currentUser } from './fixtures';
+import { currentUser, knowledgeSettings, modelDefaults, modelProviderView } from './fixtures';
 
 /**
  * Reads the shell makes on every mount whatever the test is about: the signed-in employee (UM-01, also
@@ -17,8 +17,11 @@ import { currentUser } from './fixtures';
  * employee's MCP connections behind the menu's «нужна аутентификация» dot (UM-01), the agents of a
  * thread in the delete dialog (MC-26) and the employee's models, read by «Мой доступ» (MA-02) and the
  * quota failure line (QS-01), and the library list behind the record labels of the conversation, the
- * agent page and the agent list (custom-agents design-web.md, KD-2). A test that cares overrides them
- * with `server.use(...)`.
+ * agent page and the agent list (custom-agents design-web.md, KD-2). The model providers and the model
+ * defaults are read by the grant dialog, the company record editor and the «Модели» section; a ready
+ * `anthropic` keeps the models of today's tests selectable. The self-learning settings are read by the
+ * «Системные» tab of «Агенты и workflow» (self-learning AS-01). A test that cares overrides them with
+ * `server.use(...)`.
  */
 const shellDefaults = [
   http.get(`${apiBaseUrl}/api/auth/me`, () => HttpResponse.json(currentUser())),
@@ -32,6 +35,9 @@ const shellDefaults = [
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),
   http.get(`${apiBaseUrl}/api/library`, () => HttpResponse.json([] satisfies RecordSummary[])),
+  http.get(`${apiBaseUrl}/api/admin/model-providers`, () => HttpResponse.json([modelProviderView()])),
+  http.get(`${apiBaseUrl}/api/admin/model-defaults`, () => HttpResponse.json(modelDefaults())),
+  http.get(`${apiBaseUrl}/api/admin/knowledge/settings`, () => HttpResponse.json(knowledgeSettings())),
 ];
 
 /**

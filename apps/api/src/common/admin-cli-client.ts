@@ -5,7 +5,7 @@ import { frontendOrigin, SESSION_COOKIE } from '../identity/session-cookie.js';
 /**
  * The client of the running API shared by the operator scripts (`seed:mcp`, `seed:access`): the
  * administrator's session by login and a password from standard input, and JSON requests with it.
- * Errors name the step, the status and the API's error code — never the password or the cookie.
+ * Errors name the step, the status and the API's error code — never the password, a key or the cookie.
  */
 
 export const DEFAULT_API = 'http://localhost:4000';
@@ -22,6 +22,12 @@ export const SEED_MCP_SERVERS = {
 /** All of standard input without its trailing line break: the password never comes from the arguments. */
 export async function readPassword(): Promise<string> {
   return (await text(process.stdin)).replace(/\r?\n$/, '');
+}
+
+/** The first `count` lines of standard input without their line breaks; a missing line is empty. */
+export async function readLines(count: number): Promise<string[]> {
+  const lines = (await text(process.stdin)).split(/\r?\n/);
+  return Array.from({ length: count }, (_, index) => lines[index] ?? '');
 }
 
 /** The status and, for an error answer, its `ApiErrorSchema` body. */

@@ -7,7 +7,7 @@ import type { RecordKind, RecordSummary } from "@agent-os/contracts";
 import { Button } from "@/components/ui/button";
 import { useAdminRight } from "@/components/admin/admin-gate";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { formatModel } from "@/lib/agents/format";
+import { formatDay, formatModel } from "@/lib/agents/format";
 import { kindWord, shareBlockedReason } from "@/lib/library/library-errors";
 import { canUseInChat } from "@/lib/library/record-rules";
 import { adminRecordPath, recordPath } from "@/lib/shell-route";
@@ -19,8 +19,6 @@ import { useInChat } from "./use-in-chat";
 
 /** Systems a note names before «и ещё {N}» (library-row.md, Content Rules). */
 const NAMED_SYSTEMS = 3;
-
-const closedOn = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
 
 /** UXRD MC-2. */
 const TEXT = {
@@ -36,7 +34,7 @@ const TEXT = {
 
 /** «Доступ закрыл администратор · {дата} — делиться нельзя» (MC-2, MC-9). */
 export const banText = (closedAt: string): string =>
-  `Доступ закрыл администратор · ${closedOn.format(new Date(closedAt))} — делиться нельзя`;
+  `Доступ закрыл администратор · ${formatDay(closedAt)} — делиться нельзя`;
 
 function systemsText(servers: readonly string[], kind: RecordKind): string {
   const named = servers.slice(0, NAMED_SYSTEMS).join(", ");

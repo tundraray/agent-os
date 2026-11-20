@@ -1,22 +1,18 @@
 import type { CallUsage } from '@agent-os/runtime';
-import { createAnthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import { noopLogger } from '@mastra/core/logger';
 import { createTool } from '@mastra/core/tools';
 import type { z } from 'zod';
 
+import { type ProviderOptions, providerAdapter } from '../providers/adapters.js';
+import type { ProviderConnection } from '../providers/provider-registry.js';
+
 /**
  * The model instance a request agent runs on: an AI SDK model object, never a string id or a
  * `{ id, url }` config (a config with `url` sends Mastra to the OpenAI-compatible client).
  */
 export type TurnModel = Extract<MastraModelConfig, { doGenerate: unknown }>;
-
-/** By a catalog model id (`anthropic/…`) returns the model instance; touches no network. */
-export type ResolveModel = (modelId: string) => TurnModel;
-
-/** The provider options of the message the cache mark ends at: an `ephemeral` cache breakpoint (KD-6). */
-const CACHE_MARK = { anthropic: { cacheControl: { type: 'ephemeral' } } } as const;
 
 /** The JSON Schema of an object, as an MCP server lists the arguments of its tool. */
 export interface JsonSchemaObject {
@@ -68,8 +64,13 @@ export type TurnPurpose = 'agent_turn' | 'complete_text';
 export interface AgentTurnCall {
   readonly purpose: TurnPurpose;
   readonly agentName: string;
-  /** Catalog model id (`anthropic/…`), resolved by the client's `ResolveModel`. */
+  /** Catalog model id `<provider>/<model name>`; the name goes to the adapter of the connection's kind. */
   readonly model: string;
+  /**
+   * The model provider's connection read from its row for this call (KD-1, KD-2): the address and key the
+   * request goes with. It carries the key, so it is never logged or recorded.
+   */
+  readonly connection: ProviderConnection;
   readonly instructions: string;
   readonly messages: readonly AgentTurnMessage[];
   readonly tools: readonly AgentToolDefinition[];
@@ -153,21 +154,29 @@ function turnMessage(message: AgentTurnMessage) {
  * (KD-6). Mastra copies a result part's options onto the tool call it answers, so the answer just
  * before carries a mark too: three breakpoints with the system block, within the provider's four.
  */
-function withCacheMark(sent: ReturnType<typeof turnMessage>) {
-  if (sent.role !== 'tool') return { ...sent, providerOptions: CACHE_MARK };
+function withCacheMark(sent: ReturnType<typeof turnMessage>, cacheMark: ProviderOptions) {
+  if (sent.role !== 'tool') return { ...sent, providerOptions: cacheMark };
   const last = sent.content.length - 1;
   return {
     ...sent,
-    content: sent.content.map((part, index) => (index === last ? { ...part, providerOptions: CACHE_MARK } : part)),
+    content: sent.content.map((part, index) => (index === last ? { ...part, providerOptions: cacheMark } : part)),
   };
 }
 
-/** The session messages of a turn; the cache mark ends at the last one, so the provider caches the session so far. */
-function turnMessages(messages: readonly AgentTurnMessage[]) {
+/**
+ * The session messages of a turn. With the adapter's cache mark it ends at the last one, so the provider
+ * caches the session so far; without one (the provider caches the request's start itself) none is marked.
+ */
+function turnMessages(messages: readonly AgentTurnMessage[], cacheMark: ProviderOptions | null) {
   return messages.map((message, index) => {
     const sent = turnMessage(message);
-    return index === messages.length - 1 ? withCacheMark(sent) : sent;
+    return cacheMark !== null && index === messages.length - 1 ? withCacheMark(sent, cacheMark) : sent;
   });
+}
+
+/** The model name of a catalog id: the part after the first slash (the provider is the part before). */
+function modelName(modelId: string): string {
+  return modelId.slice(modelId.indexOf('/') + 1);
 }
 
 /** The tools as Mastra tools without `execute`: the model may call them, Mastra cannot run them. */
@@ -194,22 +203,29 @@ async function readTextParts(textStream: AsyncIterable<string>, onText: (text: s
  * from the output's promises. A provider error ends `textStream` without an exception: Mastra keeps it
  * as the output's `error` (what `generate` throws after reading the whole stream), so it is thrown here
  * and `ModelClient` retries it. A cancel ends the stream the same quiet way, with the finish reason
- * `aborted` and no usage, so it is thrown too. The system block carries the cache mark, so the tools and instructions
+ * `aborted` and no usage, so it is thrown too. The model and the cache mark come from the adapter of the
+ * connection's kind, built per call from the connection's address and key (KD-1, KD-3); the client reads
+ * no settings. When the adapter gives a mark, the system block carries it, so the tools and instructions
  * before it are cached.
  */
-export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnModelClient {
+export function createMastraTurnClient(): AgentTurnModelClient {
   return {
     async streamTurn(call, { signal, onText }) {
+      const adapter = providerAdapter(call.connection.kind);
       const agent = new Agent({
         id: `agent-${call.agentName}`,
         name: `Agent ${call.agentName}`,
-        instructions: { role: 'system', content: call.instructions, providerOptions: CACHE_MARK },
-        model: resolveModel(call.model),
+        instructions: {
+          role: 'system',
+          content: call.instructions,
+          ...(adapter.cacheMark === null ? {} : { providerOptions: adapter.cacheMark }),
+        },
+        model: adapter.languageModel(call.connection, modelName(call.model)),
         tools: turnTools(call.tools),
         errorProcessorDefaults: false,
       });
       agent.__setLogger(noopLogger);
-      const output = await agent.stream(turnMessages(call.messages), {
+      const output = await agent.stream(turnMessages(call.messages, adapter.cacheMark), {
         maxSteps: 1,
         modelSettings: { maxOutputTokens: call.maxOutputTokens },
         abortSignal: signal,
@@ -235,32 +251,5 @@ export function createMastraTurnClient(resolveModel: ResolveModel): AgentTurnMod
         usage: callUsage(usage),
       };
     },
-  };
-}
-
-const ANTHROPIC_PREFIX = 'anthropic/';
-
-/** Where the Anthropic Messages API is and the key it takes. */
-export interface AnthropicSettings {
-  readonly anthropicBaseUrl: string;
-  readonly anthropicApiKey: string;
-}
-
-/**
- * The `ResolveModel` of the package: an Anthropic Messages client from `@ai-sdk/anthropic` on the
- * unversioned base plus `/v1`, and the model by its id without the `anthropic/` prefix. Not a Mastra
- * model config with `url` — that sends the call to the OpenAI-compatible `/chat/completions`. Building
- * a model touches no network; an id of another provider throws.
- */
-export function createResolveModel(settings: AnthropicSettings): ResolveModel {
-  const anthropic = createAnthropic({
-    baseURL: `${settings.anthropicBaseUrl.replace(/\/+$/, '')}/v1`,
-    apiKey: settings.anthropicApiKey,
-  });
-  return (modelId) => {
-    if (!modelId.startsWith(ANTHROPIC_PREFIX)) {
-      throw new Error(`model ${modelId} is not an Anthropic model: only ${ANTHROPIC_PREFIX}… ids resolve`);
-    }
-    return anthropic(modelId.slice(ANTHROPIC_PREFIX.length));
   };
 }

@@ -3,7 +3,7 @@
 import { useEffect, useId, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { useStore } from "zustand";
-import type { RecordDetail, RecordKind, RecordSummary } from "@agent-os/contracts";
+import type { LibraryChoices, ModelUnavailableReason, MyModels, RecordDetail, RecordKind, RecordSummary } from "@agent-os/contracts";
 import { useAdminRight } from "@/components/admin/admin-gate";
 import { PageHeader } from "@/components/shell/page-header";
 import { ShellLink } from "@/components/shell/shell-link";
@@ -11,10 +11,10 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { ThreadNotice } from "@/components/shell/thread-notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useResource } from "@/hooks/use-resource";
+import { useResource, type Resource } from "@/hooks/use-resource";
 import { accessApi } from "@/lib/access/access-api";
 import { isNotFound } from "@/lib/admin/admin-errors";
-import { formatModel } from "@/lib/agents/format";
+import { capitalize, formatModel, providerReasonText, type ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { libraryApi } from "@/lib/library/library-api";
 import { kindWord } from "@/lib/library/library-errors";
@@ -45,6 +45,9 @@ const TEXT = {
     `Модель ${formatModel(model)} вам недоступна — у вас ${kindWord(kind)} не запустится. Копия получит вашу модель.`,
   noModels: (model: string, kind: RecordKind) =>
     `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — не запустится ни ${kindWord(kind)}, ни его копия.`,
+  /** model-providers UXRD MC-12 with the MC-9 words; `model` is the model's label. */
+  providerBroken: (reason: ModelUnavailableReason, model: string, kind: RecordKind) =>
+    `${capitalize(providerReasonText(reason, model))} — ${kindWord(kind)} не запустится`,
 } as const;
 
 /** Rows of the definition skeleton (UXRD RV-01, Loading). */
@@ -135,6 +138,13 @@ function RecordView({ record }: { record: RecordDetail }) {
   const note = recipientNote(record);
   const recipient = note !== null && record.author !== null ? { author: record.author.name, roles: note.roles } : null;
   const missingModel = record.missingRights.find((right) => right.executor === null && right.model !== null)?.model;
+  const models = useResource(accessApi.models, "models", "library");
+  const choices = useResource(libraryApi.choices, "choices", "library");
+  const modelNames = modelNamesOf(models.data, choices.data);
+  // `missingRights` names only models without a right; a model of a provider that does not work is the viewer's own.
+  const ownModel = record.kind === "agent" ? record.content.model : record.content.coordinator.model;
+  const brokenReason =
+    ownModel === null ? null : (models.data?.models.find((row) => row.model === ownModel)?.unavailableReason ?? null);
   // A company record changes only in the panel: an administrator gets the way there (RV-01).
   const inPanel = useAdminRight() === "admin" && record.author === null;
 
@@ -186,7 +196,10 @@ function RecordView({ record }: { record: RecordDetail }) {
           ) : (
             !record.mine && record.author !== null && !record.offerInChat && <Hint>{TEXT.readOnly(record.kind)}</Hint>
           )}
-          {missingModel != null && <ModelHint model={missingModel} kind={record.kind} />}
+          {missingModel != null && <ModelHint model={missingModel} kind={record.kind} models={models} />}
+          {brokenReason !== null && ownModel !== null && (
+            <Hint>{TEXT.providerBroken(brokenReason, formatModel(ownModel, modelNames), record.kind)}</Hint>
+          )}
           {copy.error !== null && (
             <p id={errorId} role="alert" className="text-destructive text-xs leading-4">
               {copy.error}
@@ -199,6 +212,7 @@ function RecordView({ record }: { record: RecordDetail }) {
           variant="page"
           recipient={recipient}
           recordHref={recordPath}
+          modelNames={modelNames}
         />
       </div>
     </div>
@@ -232,20 +246,25 @@ function namesakesOf(record: RecordDetail, records: ReadonlyMap<string, RecordSu
   );
 }
 
+/** The models and default model the view has read; the default stays unknown until `choices` is read. */
+function modelNamesOf(models: MyModels | undefined, choices: LibraryChoices | undefined): ModelNames {
+  const rows = models?.models ?? [];
+  return choices === undefined ? { models: rows } : { models: rows, defaultModel: choices.defaultModel };
+}
+
 /**
  * MC-6 model line: the record's model is not the viewer's. Whether the viewer has any model at all decides
- * between the two lines, so the viewer's models are read only here; until they are read nothing is shown,
- * and a failed read (logged by `useResource`) shows the line of a copy that gets the viewer's model.
+ * between the two lines; until the viewer's models are read nothing is shown, and a failed read (logged by
+ * `useResource`) shows the line of a copy that gets the viewer's model.
  */
-function ModelHint({ model, kind }: { model: string; kind: RecordKind }) {
-  const models = useResource(accessApi.models, "models", "library");
+function ModelHint({ model, kind, models }: { model: string; kind: RecordKind; models: Resource<MyModels> }) {
   if (models.status === "loading") return null;
   const none = models.data !== undefined && models.data.models.length === 0;
   return <Hint>{none ? TEXT.noModels(model, kind) : TEXT.modelMissing(model, kind)}</Hint>;
 }
 
 /** RV-01 Loading: the header's actions and the definition rows as skeletons. */
-function RecordSkeleton() {
+export function RecordSkeleton() {
   return (
     <div aria-busy className="mx-auto flex w-full max-w-(--thread-max-width) flex-col gap-4 px-4 py-4 md:py-6">
       <div aria-hidden className="flex flex-col gap-2">

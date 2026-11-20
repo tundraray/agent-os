@@ -8,7 +8,15 @@ import {
   type Confirmation,
   type RunCodeConfirmationContent,
 } from "@agent-os/contracts";
-import { CircleCheckIcon, CircleMinusIcon, CircleStopIcon, CircleXIcon, LoaderCircleIcon, type LucideIcon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  CircleMinusIcon,
+  CircleStopIcon,
+  CircleXIcon,
+  InfoIcon,
+  LoaderCircleIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { z } from "zod";
 import { useStore } from "zustand";
 import { AgentStatus, FadeSlot, StatusGlyph } from "@/components/agents/agent-status";
@@ -17,15 +25,20 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useResource } from "@/hooks/use-resource";
 import { BRIEF_PARTS, formatTime } from "@/lib/agents/format";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
+import { libraryApi } from "@/lib/library/library-api";
 import { taskTitleName } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { agentPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
-/** agent-platform UXRD MC-19 (action) and MC-20 (brief); the brief's title and outcomes — custom-agents MC-21. */
+/**
+ * agent-platform UXRD MC-19 (action) and MC-20 (brief); the brief's title and outcomes — custom-agents MC-21;
+ * the self-learning line — self-learning MC-9.
+ */
 const TEXT = {
   byChat: "Чат хочет выполнить:",
   args: "Аргументы",
@@ -43,6 +56,7 @@ const TEXT = {
   emptyQuestion: "Вопрос не может быть пустым",
   briefApproved: "Задание подтверждено",
   briefRejected: "Задание отклонено",
+  selfLearning: "Workflow учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников.",
 } as const;
 
 /** code-execution UXRD, MC-6–MC-9, verbatim. */
@@ -257,6 +271,23 @@ function TaskHeading({ workflowId }: { workflowId: string }) {
       <h3 className="text-base leading-6 font-semibold break-words">{taskTitleName(workflowId, libraryIndex)}</h3>
       {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
     </div>
+  );
+}
+
+/**
+ * SL-02, MC-9 (self-learning design-web.md, KD-6): the summary in the library list carries no content, so
+ * the workflow's record is read once on mount. While the read is in flight, when it fails (the log is
+ * `useResource`'s) and when the flag is off there is no line, and the card decides as before (DC-4).
+ */
+function SelfLearningNote({ workflowId }: { workflowId: string }) {
+  const record = useResource(() => libraryApi.get(workflowId), workflowId, "library");
+  const learns = record.data?.kind === "workflow" && record.data.content.selfLearning;
+  if (!learns) return null;
+  return (
+    <p className="text-foreground flex items-start gap-1.5 text-xs leading-4 font-medium">
+      <InfoIcon aria-hidden className="text-info mt-px size-3.5 shrink-0" />
+      {TEXT.selfLearning}
+    </p>
   );
 }
 
@@ -569,6 +600,8 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
     >
       {header}
       {body}
+      {/* Mounted here, outside the branches, so «Правка» and back keep the one read; a decided card drops it. */}
+      {brief !== null && outcome === null && <SelfLearningNote workflowId={brief.workflow} />}
       {errorLine}
       {actions !== null && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
