@@ -936,14 +936,6 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
       http.get(`${API}/api/threads`, () => HttpResponse.json(threadList([]))),
       http.post(`${API}/api/threads`, () => HttpResponse.json(threadSummary({ id: 't-1', title: null }), { status: 201 })),
       http.get(`${API}/api/threads/:id`, ({ params }) => HttpResponse.json(threadSummary({ id: String(params.id), title: null }))),
-      http.get(`${API}/api/threads/:id/history`, ({ params }) =>
-        HttpResponse.json(
-          conversationView({
-            thread: threadSummary({ id: String(params.id), title: null }),
-            chat: { status: 'new', failureReason: null, rootAgentId: null, model: null },
-          }),
-        ),
-      ),
       http.post(`${API}/api/threads/:id/messages`, () =>
         apiError(409, 'START_REFUSED', 'Start refused', { reason: 'model_not_configured', model: null }),
       ),

@@ -328,12 +328,6 @@ function agentNamed(
   return found;
 }
 
-function rootOf(view: ConversationView): string {
-  if (view.chat.rootAgentId === null)
-    throw new Error(`Conversation ${view.thread.id} has no root`);
-  return view.chat.rootAgentId;
-}
-
 /** Walks `GET /agents` page by page along `nextCursor`. */
 async function allAgents(
   api: ChatApi,
@@ -1417,7 +1411,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
         expect(agents.map((agent) => agent.agentId)).toEqual(
           [...agents].sort(byOrder).map((agent) => agent.agentId),
         );
-        const roots = [rootOf(firstView), rootOf(secondView)];
+        const roots = [firstView.chat.rootAgentId, secondView.chat.rootAgentId];
         expect(agents.filter((agent) => roots.includes(agent.agentId))).toEqual(
           [],
         );
@@ -1553,7 +1547,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
             ),
           'the reader, the fork and the brief',
         );
-        const rootId = rootOf(started);
+        const rootId = started.chat.rootAgentId;
         const readerId = agentNamed(started.agents, 'B reader').agentId;
         const forkId = agentNamed(started.agents, 'B fork').agentId;
 
@@ -1810,7 +1804,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
             view.agents.length === 1 && view.agents[0]?.children.length === 1,
           'the worker and its sub-agent',
         );
-        const rootId = rootOf(started);
+        const rootId = started.chat.rootAgentId;
         const worker = agentNamed(started.agents, 'C worker');
         const subId = agentNamed(worker.children, 'C sub').agentId;
 
@@ -2619,6 +2613,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
   // - For each row but the send the same request is made with a well-formed id that exists for nobody (the "missing" reference); a send to an id that exists for nobody is a first message, so `POST /threads/:id/messages` with A's id is asserted to be the constant 404 `THREAD_NOT_FOUND` body. Then: status code, `errorCode` (`THREAD_NOT_FOUND`, `AGENT_NOT_FOUND`, `RUN_NOT_FOUND`, `DECISION_NOT_FOUND`) and the whole body are equal, with nothing of A's data (title, task text, argument, count) in the answer; for the ROOT id the agent routes answer `AGENT_NOT_FOUND`, the same as for a missing agent.
   // - The stream: B's stream (open on A's thread and on A's child agent, plus B's own thread) receives `ready` and only B's own notes while A's agent writes history and three text parts and its request is resolved by A; after the run B's received list contains no `tree` with A's thread id and no `delta` of A's agent; A's own stream (a control) did receive them.
   // - B's lists: `GET /threads`, `GET /agents` (all pages), `GET /agents/awaiting` and `GET /spend` contain none of A's conversations or agents, count none of A's open request and sum none of A's ledger rows.
+  // - A retaken id: A deletes the conversation and B sends a first message with its id (a new conversation of B's) -> B's stream gets the `tree` notes of that id, a stream of A's opened after the delete gets none (the hub reads the owner of a root for every note and remembers none).
   // - After all rows: a row-version snapshot of A's root session row (the conversation), the agents tree and its inbox equals the snapshot before; A's request is still open and A can approve it (the fixture journal then holds one call); A's conversation and agent read in full for A.
   it(
     "INT-4: every route and the stream called as another employee answer exactly as for a missing id, including the root id on agent routes, leak nothing of the owner's data, deliver none of the owner's notes or text parts, and change none of the owner's rows",
@@ -2687,6 +2682,10 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
       harness.model.script({ task: bOwnTask }, [
         { text: 'B own done.', latch: bOwnHeld },
       ]);
+      const bRetakenTask = "INT-4 B: a first message with A's deleted id";
+      const aNextTask = 'INT-4 A: the next thread';
+      for (const task of [bRetakenTask, aNextTask])
+        harness.model.script({ task }, [], { thereafter: { text: 'Noted.' } });
       const streams: SseStream[] = [];
       try {
         const aThread = await a.createThread();
@@ -2728,7 +2727,7 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
             ),
           "A's tree to settle",
         );
-        const aRoot = rootOf(aSettled);
+        const aRoot = aSettled.chat.rootAgentId;
         const readerId = agentNamed(aSettled.agents, 'A reader').agentId;
         const writerId = agentNamed(aSettled.agents, 'A writer').agentId;
         const coordinatorId = agentNamed(aSettled.agents, aQuestion).agentId;
@@ -2925,6 +2924,37 @@ describe('agent-platform / chat - integration (real AppModule + real Postgres + 
           readerPage.agent.threadTitle,
           linesOf(readerPage.entries)[0],
         ]).toEqual([aThread.id, aTitle, `task: ${readerTask}`]);
+
+        // When: A deletes the conversation and B's first message takes its id — a new conversation of B's
+        await a.deleteThread(aThread.id);
+        const aAfterDelete = await openStream(harness.app, INT4.a);
+        streams.push(aAfterDelete);
+        await aAfterDelete.next('ready');
+        await b.send(aThread.id, bRetakenTask);
+
+        // Then: the notes of the retaken id go to B's stream, which got none of them while it was A's
+        await bOnAThread.until(
+          (events) => events.some((event) => isTreeOf(event, aThread.id)),
+          "a note of the retaken id on B's stream",
+        );
+        const retaken = await untilIdle(
+          b,
+          aThread.id,
+          (view) => view.entries.at(-1)?.kind === 'model_answer',
+          "B's retaken conversation",
+        );
+        expect(linesOf(retaken.entries)[0]).toBe(`task: ${bRetakenTask}`);
+
+        // Then: A's stream gets none of them (A's own later note comes after them: the hub handles signals in order)
+        const aNext = await a.createThread();
+        await a.send(aNext.id, aNextTask);
+        await aAfterDelete.until(
+          (events) => events.some((event) => isTreeOf(event, aNext.id)),
+          "a note of A's next thread",
+        );
+        expect(
+          aAfterDelete.events.filter((event) => isTreeOf(event, aThread.id)),
+        ).toEqual([]);
       } finally {
         readerHeld.release();
         bOwnHeld.open();

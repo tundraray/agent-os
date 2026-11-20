@@ -59,18 +59,18 @@ const PING = messageEvent({ type: 'ping', data: {} });
  * the open SSE streams. A runtime event becomes a `tree` note to every stream of the conversation's
  * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
  *
- * Only the streams and the found «root → owner» pairs live in memory (ADR-0001): a conversation is
- * its root session, so a note names it by the tree's root id. A root that is no conversation (a tree
- * of another task type) is not cached, and a signal nobody can receive is dropped. A lost connection
- * is reopened every second, and then every stream gets `ready`: the signals of the gap are lost and
- * the web rereads its screen.
+ * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
+ * by the tree's root id, and its owner is read for every note — one row of `agent_sessions` by its
+ * primary key. The owner is never remembered: a deleted conversation's id can be taken by another
+ * employee's first message, on this or another API instance, and a remembered owner would then get
+ * the new conversation's notes. A root that is no conversation (a tree of another task type) has no
+ * owner, and a signal nobody can receive is dropped. A lost connection is reopened every second, and
+ * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
  */
 @Injectable()
 export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger: Logger;
   private readonly streams = new Set<HubStream>();
-  /** Owners of the found conversations by root id; never a miss. */
-  private readonly owners = new Map<string, string>();
   /** Signals are handled one after another, so the parts of one agent keep their order. */
   private signals: Promise<void> = Promise.resolve();
   private client: pg.Client | undefined;
@@ -189,7 +189,7 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
   /** A runtime event of a tree: a `tree` note to every stream of the conversation's owner. */
   private async note(payload: string): Promise<void> {
     const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
-    const ownerId = await this.ownerOf(rootId);
+    const ownerId = await this.agents.sessions.rootOwner(rootId);
     if (ownerId === undefined) return;
     const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
     for (const stream of noteTargets(ownerId, this.streams)) stream.subscriber.next(event);
@@ -203,14 +203,5 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       data: { agentId: delta.agentId, offset: delta.offset, text: delta.text },
     });
     for (const stream of deltaTargets(delta, this.streams)) stream.subscriber.next(event);
-  }
-
-  /** The owner of the conversation with this root, from the cache or `agents`; a miss is not cached. */
-  private async ownerOf(rootId: string): Promise<string | undefined> {
-    const cached = this.owners.get(rootId);
-    if (cached !== undefined) return cached;
-    const ownerId = await this.agents.sessions.rootOwner(rootId);
-    if (ownerId !== undefined) this.owners.set(rootId, ownerId);
-    return ownerId;
   }
 }
