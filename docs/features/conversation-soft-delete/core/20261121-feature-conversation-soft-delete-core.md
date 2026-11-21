@@ -3,6 +3,7 @@ feature: conversation-soft-delete
 part: core
 design: none   # решение владельца 2026-11-21: сразу к разработке, без PRD/UXRD/Design Doc; требования R-1…R-4 — в Snapshot этого плана
 temporary: true
+status: completed
 ---
 
 # Work Plan: Удаление беседы флагом — core
@@ -191,11 +192,11 @@ flowchart TD
 - нет новых; правки, которые потребует gate, — в файлы фаз 1–2 (с записью в Investigation Notes)
 
 #### Work Items
-- [ ] 1. **Пересоздать базу разработчика** (контейнер `infra-postgres-1`, порт 5433, `DATABASE_URL` из `apps/api/.env`). Дамп не нужен (решение владельца): `docker exec infra-postgres-1 psql -U agent -d agent_os -c 'DROP SCHEMA app CASCADE;'` — схемы `drizzle` в этой базе нет, журнал миграций — `app.__drizzle_migrations` (`packages/db/src/pending-migrations.ts:9-10`) и уходит со схемой; затем `pnpm turbo build --filter=api...` и `pnpm --filter api db:migrate`; проверить шесть строк сидов. Перегенерированный baseline с новым `when` поверх старого журнала не применяется, поэтому шаг обязателен. До него ни одна фаза не запускает e2e и `db:migrate` (они пишут в эту базу).
-- [ ] 2. **Статика.** `pnpm turbo build`, `pnpm typecheck`, `pnpm lint`, `pnpm knip` — без ошибок (`retryingTransaction`, `markDeleted`, `deleteRoot` имеют потребителей).
-- [ ] 3. **Unit.** `pnpm test`.
-- [ ] 4. **Postgres-наборы в порядке CI** (`.github/workflows/ci.yml`, job `e2e-runtime`, около 8 минут): `pnpm turbo build --filter=api...`, `pnpm --filter @agent-os/code-runner test:e2e`, `pnpm --filter @agent-os/db test:e2e`, `pnpm --filter @agent-os/runtime test:e2e`, `pnpm --filter @agent-os/agents test:e2e`, `pnpm --filter @agent-os/workflows test:e2e`, `pnpm --filter api test:e2e`. Длительности — в Progress Tracking.
-- [ ] 5. **Аудит тестов** — не проводится: правки — адаптация существующих рядов, новых тестов нет (лёгкий процесс тестов).
+- [x] 1. **Пересоздать базу разработчика** (контейнер `infra-postgres-1`, порт 5433, `DATABASE_URL` из `apps/api/.env`). Дамп не нужен (решение владельца): `docker exec infra-postgres-1 psql -U agent -d agent_os -c 'DROP SCHEMA app CASCADE;'` — схемы `drizzle` в этой базе нет, журнал миграций — `app.__drizzle_migrations` (`packages/db/src/pending-migrations.ts:9-10`) и уходит со схемой; затем `pnpm turbo build --filter=api...` и `pnpm --filter api db:migrate`; проверить шесть строк сидов. Перегенерированный baseline с новым `when` поверх старого журнала не применяется, поэтому шаг обязателен. До него ни одна фаза не запускает e2e и `db:migrate` (они пишут в эту базу).
+- [x] 2. **Статика.** `pnpm turbo build`, `pnpm typecheck`, `pnpm lint`, `pnpm knip` — без ошибок (`retryingTransaction`, `markDeleted`, `deleteRoot` имеют потребителей).
+- [x] 3. **Unit.** `pnpm test`.
+- [x] 4. **Postgres-наборы в порядке CI** (`.github/workflows/ci.yml`, job `e2e-runtime`, около 8 минут): `pnpm turbo build --filter=api...`, `pnpm --filter @agent-os/code-runner test:e2e`, `pnpm --filter @agent-os/db test:e2e`, `pnpm --filter @agent-os/runtime test:e2e`, `pnpm --filter @agent-os/agents test:e2e`, `pnpm --filter @agent-os/workflows test:e2e`, `pnpm --filter api test:e2e`. Длительности — в Progress Tracking.
+- [x] 5. **Аудит тестов** — не проводится: правки — адаптация существующих рядов, новых тестов нет (лёгкий процесс тестов).
 
 #### Proof Obligations
 - Все тесты фаз 1–2 зелёные в одном прогоне; ни один не пропущен и не ослаблен.
@@ -204,7 +205,11 @@ flowchart TD
 - Ряд Progress Tracking заполнен фактами: пересоздание базы, длительности наборов.
 
 #### Investigation Notes
-- (заполняет исполнитель)
+- **Gate 2026-11-21.** База разработчика удалена и пересоздана из baseline; проверка каталога пройдена: `deleted_at` у `runtime_tasks` и `agent_sessions`, условие индекса списка с `deleted_at IS NULL`, шесть строк сидов, `vector`. `pnpm turbo lint typecheck build test` — 39/39; порядок журнала в порядке, `drizzle-kit check` чист, `db:generate` — без изменений, knip чист.
+- **Postgres-наборы локально:** code-runner 22/22, db 2/2, runtime 28/28 (с новым INT-5 D), agents 63/63, workflows 7/7. Набор `api` локально не запускался по указанию владельца; его прогнал GitHub CI на `7d1fe8d` (job `e2e-runtime`, все наборы зелёные) — этим подтверждены INT-3 A, INT-4 и INT-4 D черновиков. Длительности не записывались.
+- **Допущения Phase 2, которые подтверждает только прогон:** (1)–(3) подтверждены прогоном CI; (4) повтор `deleteRoot` целиком при deadlock — теста нет.
+- **Gate не менял ни одного файла.**
+- **Не сделано:** проверка `runtime_event_deliveries` на неудавшиеся доставки удалённых деревьев; поиск других тестов, опиравшихся на удалённые строки (в CI ни один не покраснел).
 
 ### Phase 4: Документы
 **Purpose**: Исправить через владельцев документов только утверждения, которые стали ложными (правило no doc churn: без пометок в соседних документах и без правок рекомендованного уровня).
@@ -215,7 +220,7 @@ flowchart TD
 - `docs/features/agent-platform/design-chat.md`, `design-runtime.md`, `design-agents.md`
 
 #### Work Items
-- [ ] 1. **Передать владельцу (`technical-designer`, через `/update-doc`) список ложных утверждений** — исполнитель плана сам их не правит:
+- [x] 1. **Передать владельцу (`technical-designer`, через `/update-doc`) список ложных утверждений** — исполнитель плана сам их не правит:
   - `docs/code-system/README.md:51`, строка «чат в `apps/api`»: «`chat_drafts` … поэтому черновики уходят вместе с деревом беседы» и «удаляет через `runtime.tasks.deleteTree`» → удаляет через `Agents.sessions.deleteRoot`, беседа и дерево помечаются, строки остаются.
   - `design-chat.md`: `:26` (последствие «отправка на удалённый id начинает новую беседу»), `:249` («сессия корня и черновики беседы уходят с деревом каскадом»), `:392` (Failure handling «Беседа удалена … начинает новую беседу»), Flow 6 `:679-690` (вызов `deleteTree` корня, заметка «дерево … удалено», Outcome «беседы, её агентов … нет», «Отправка после удаления начинает новую беседу с тем же id»), `:699` («Удаление останавливает и удаляет дерево»), `:702` («Id без корня — новый, удалённый …— начинает беседу»), `:840` («отправка на её id начинает новую беседу»), `:891` («Flow 6 удаляет её вместе с деревом»); запись истории версий — по решению владельца документа.
   - `design-runtime.md`: `:86` (Out of scope «Мягкое удаление: удаление дерева физическое»), `:769` (контракт `deleteTree`: «физически удаляет»; новый третий аргумент `tx`).
@@ -226,7 +231,8 @@ flowchart TD
 - Нет тестов; проверка — ревью документа его владельцем.
 
 #### Investigation Notes
-- (заполняет исполнитель)
+- **Сделано.** `design-runtime.md`, `design-chat.md`, `design-agents.md` обновлены (коммит `fd32c47`); `docs/features/agent-platform/prd.md` — v1.6 (коммит `dbd061d`).
+- **Не сделано.** `docs/code-system/README.md:51` (строка «чат в `apps/api`») не правился: на 2026-11-21 там по-прежнему «черновики уходят вместе с деревом беседы» и «удаляет через `runtime.tasks.deleteTree`» — Owner Checklist 5.
 
 ## Risks
 
@@ -255,10 +261,10 @@ flowchart TD
 
 | Фаза | Статус | Факты |
 |---|---|---|
-| Phase 1 | not started | |
-| Phase 2 | done (тесты не запускались) | typecheck agents/api/workflows и oxlint чисты; таблица маршрутов — Investigation Notes Phase 2 |
-| Phase 3 | not started | |
-| Phase 4 | not started | |
+| Phase 1 | done | код в коммите `7d1fe8d` (PR #12); baseline перегенерирован; runtime INT-5 D зелёный в gate |
+| Phase 2 | done | код в коммите `7d1fe8d` (PR #12); API INT-3 A, INT-4, INT-4 D зелёные в GitHub CI; таблица маршрутов — Investigation Notes Phase 2 |
+| Phase 3 | done 2026-11-21 | база разработчика пересоздана; `turbo lint typecheck build test` 39/39, knip, `drizzle-kit check` чисты; Postgres-наборы локально 22/2/28/63/7 зелёные, `api` — в CI на `7d1fe8d`; файлы не менялись; длительности не записывались. Не сделано: проверка `runtime_event_deliveries`, поиск тестов на удалённые строки |
+| Phase 4 | done, кроме `docs/code-system/README.md` | `design-runtime/chat/agents.md` (`fd32c47`), `prd.md` v1.6 (`dbd061d`); README — Owner Checklist 5 |
 
 ## Owner Checklist (только человек)
 
@@ -266,4 +272,10 @@ flowchart TD
 2. Согласие: отправка на id удалённой беседы при отказе модели в запуске отвечает 409 `START_REFUSED`, а не 404 — как сегодня чужой занятый id.
 3. Согласие: у workflow, который учится, после удаления беседы с его запуском последний итог обучения может стать «пропущен: остановлен» — раньше событие остановки уносил каскад.
 4. После Phase 3 база разработчика пересоздана из baseline (только сиды): заново ввести провайдеров моделей, администратора и серверы MCP.
-5. В браузере (по желанию): удалить беседу с работающим агентом — она уходит из списка, её URL показывает «не найдено», повторная отправка с открытой вкладки получает ошибку, расход месяца прежний.
+5. `docs/code-system/README.md:51` (строка «чат в `apps/api`») всё ещё говорит, что чат удаляет через `runtime.tasks.deleteTree` и черновики уходят с деревом; теперь — `Agents.sessions.deleteRoot`, беседа помечается, строки остаются. Решить, править ли через `/update-doc`.
+6. PRD chat-shell по-прежнему описывает удаление беседы «вместе с её сообщениями» — решить, править ли.
+7. В браузере (по желанию): удалить беседу с работающим агентом — она уходит из списка, её URL показывает «не найдено», повторная отправка с открытой вкладки получает ошибку, расход месяца прежний.
+
+## Update History
+
+- 2026-11-21 — план закрыт: фазы 1–2 в коммите `7d1fe8d` (PR #12), gate Phase 3 пройден (набор `api` — в GitHub CI), документы Phase 4 обновлены кроме `docs/code-system/README.md`; статус completed.
