@@ -30,3 +30,4 @@
 - [design-library.md](../../features/custom-agents/design-library.md) — правила сохранения, аудитории и замены в копии
 - [design-runtime.md](../../features/custom-agents/design-runtime.md) — `gateStart` с пределом исполнителя и список чата `chatListing`
 - [design-core.md](../../features/self-learning/design-core.md) — отбор знаний `selectKnowledge` и проверка операций `checkOperations` (KD-4, KD-6)
+- [design-core.md](../../features/agent-harness/design-core.md) — обрезанный ответ в `endOfTurn` и правило повтора одинаковых вызовов (KD-3, KD-5)
