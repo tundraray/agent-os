@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import { EXECUTOR_ROLE_MAX_LENGTH, type ExecutorSourceState, type WorkflowExecutor } from "@agent-os/contracts";
 import { CAPTION } from "@/components/admin/admin-form";
-import { failedText } from "@/components/i18n/server-text";
+import { failedText } from "@/lib/i18n/server-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";

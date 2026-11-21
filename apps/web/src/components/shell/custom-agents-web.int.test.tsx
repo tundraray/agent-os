@@ -1549,7 +1549,7 @@ describe('custom-agents / web - integration (jsdom + MSW)', () => {
     const beforeClose = tracked.requests.length;
     await user.click(screen.getByRole('button', { name: 'Закрыть доступ' }));
     const asked = await screen.findByRole('alertdialog', { name: 'Закрыть доступ к «Разбор инцидентов»?' });
-    expect(asked).toHaveTextContent('Агент станет личным у автора, Аня Смирнова: роли SRE перестанут его видеть.');
+    expect(asked).toHaveTextContent('Агент станет личным у автора, Аня Смирнова: роль SRE перестанет его видеть.');
     await user.click(within(asked).getByRole('button', { name: 'Отмена' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(panelRequestsSince(beforeClose)).toEqual([]);

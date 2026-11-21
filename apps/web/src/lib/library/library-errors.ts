@@ -9,11 +9,12 @@ import {
   type SaveOwnRefusal,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { failedText } from '@/components/i18n/server-text';
+import { failedText } from '@/lib/i18n/server-text';
 import { replyFailureText } from '@/lib/access/access-texts';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { formatModel, type ErrorsTranslator } from '@/lib/agents/format';
+import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
+import type { ErrorsTranslator } from '@/lib/i18n/messages';
 
 /**
  * Texts of the library's errors and refusals and where each one shows (design-web.md, «Ошибки и их

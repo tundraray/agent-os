@@ -1,7 +1,7 @@
 'use client';
 
 import { useId } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import type { CatalogModel, ModelDefaults, ModelProviderView, ModelPurpose } from '@agent-os/contracts';
 import { StateBadge } from '@/components/state-badge';
 import type { Resource } from '@/hooks/use-resource';
@@ -11,10 +11,10 @@ import {
   modelUnavailableReason,
   unavailableShortText,
   type ModelOption,
-  type ModelsTranslator,
 } from '@/lib/admin/model-providers';
 import { AdminForm, AdminSelectField, type AdminSelectOption } from '../admin-form';
 import { DataTable, type DataTableState } from '../data-table';
+import type { ModelsTranslator } from '@/lib/i18n/messages';
 
 /** Constant ids, so «Выбрать по умолчанию» of the model dialog can move focus into the field of its purpose. */
 export const MODEL_DEFAULT_FIELD_ID = {
@@ -106,6 +106,7 @@ type ModelDefaultsFormProps = {
 /** MP-01: the chat and the embedding model by default, the first block of «Модели». */
 export function ModelDefaultsForm({ defaults, providers, catalog, reloadAll }: ModelDefaultsFormProps) {
   const t = useTranslations('admin.models');
+  const locale = useLocale();
   const headingId = useId();
   const saved = defaults.data;
   const providerList = providers.data;
@@ -113,7 +114,9 @@ export function ModelDefaultsForm({ defaults, providers, catalog, reloadAll }: M
   const ready = saved !== undefined && providerList !== undefined && models !== undefined;
 
   const optionsOf = (purpose: ModelPurpose): ModelOption[] =>
-    ready ? modelOptions(models, purpose, (modelId) => modelUnavailableReason(modelId, providerList)) : [];
+    ready
+      ? modelOptions({ models, purpose, readinessOf: (modelId) => modelUnavailableReason(modelId, providerList), locale })
+      : [];
   const options: Record<ModelPurpose, ModelOption[]> = { chat: optionsOf('chat'), embedding: optionsOf('embedding') };
 
   return (

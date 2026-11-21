@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
-import type { Language } from "@agent-os/contracts";
+import { LanguageSchema, type Language } from "@agent-os/contracts";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -14,10 +14,8 @@ import type { CurrentUserStore } from "@/lib/auth/current-user";
 import { logger } from "@/lib/logger";
 
 /** MC-2: each language is named in itself, so the option carries its own `lang` (UXRD Accessibility). */
-const OPTIONS = [
-  { value: "en", label: "optionEn" },
-  { value: "ru", label: "optionRu" },
-] as const satisfies readonly { value: Language; label: string }[];
+const OPTION_LABEL = { en: "optionEn", ru: "optionRu" } as const satisfies Record<Language, string>;
+const OPTIONS = LanguageSchema.options.map((value) => ({ value, label: OPTION_LABEL[value] }));
 
 /**
  * LN-01 of the i18n UXRD: the interface language, saved at once on choice (settings-form «Сохранение на
@@ -51,7 +49,7 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
   // UXRD «Focus order»: after a refusal focus stays on the option checked again, or the first one.
   useEffect(() => {
     if (!failed) return;
-    const back = user?.language ?? OPTIONS[0].value;
+    const back = user?.language ?? LanguageSchema.options[0];
     itemRefs.current.get(back)?.focus();
   }, [failed, user?.language]);
 

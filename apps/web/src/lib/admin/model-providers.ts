@@ -1,4 +1,3 @@
-import type { useTranslations } from 'next-intl';
 import {
   modelProvider,
   type ModelProviderKind,
@@ -7,14 +6,13 @@ import {
   type ModelPurpose,
   type ModelUnavailableReason,
 } from '@agent-os/contracts';
+import type { ModelsTranslator } from '@/lib/i18n/messages';
+import type { Locale } from '@/lib/i18n/pick-locale';
 
 /**
  * Model providers in the panel (model-providers design-web.md, KD-5): readiness of a model by the list of
  * providers, the options of a model choice, and the words of provider types and short reasons.
  */
-
-/** The translate function of the panel's «Модели» section (`admin.models`), for the text functions below. */
-export type ModelsTranslator = ReturnType<typeof useTranslations<'admin.models'>>;
 
 /** A provider's `state` from `core` decides readiness: the web never repeats which kind needs a key. */
 const REASON_OF_STATE: Readonly<Record<ModelProviderState, ModelUnavailableReason | null>> = {
@@ -84,17 +82,24 @@ function optionOf(model: ModelOptionSource, unavailableReason: ModelUnavailableR
 
 /**
  * The options of a model choice (MP-01, the grant dialog, the record editors): only models of `purpose`,
- * each with its readiness, by provider name and then by title. The caller decides what to offer.
+ * each with its readiness, by provider name and then by title in the page's language. The caller decides
+ * what to offer.
  */
-export function modelOptions(
-  models: readonly ModelOptionSource[],
-  purpose: ModelPurpose,
-  readinessOf: (modelId: string) => ModelUnavailableReason | null,
-): ModelOption[] {
+export function modelOptions({
+  models,
+  purpose,
+  readinessOf,
+  locale,
+}: {
+  models: readonly ModelOptionSource[];
+  purpose: ModelPurpose;
+  readinessOf: (modelId: string) => ModelUnavailableReason | null;
+  locale: Locale;
+}): ModelOption[] {
   return models
     .filter((model) => model.purpose === purpose)
     .map((model) => optionOf(model, readinessOf(model.id)))
-    .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+    .sort((a, b) => a.provider.localeCompare(b.provider, locale) || a.name.localeCompare(b.name, locale));
 }
 
 export type ProviderKindText = {

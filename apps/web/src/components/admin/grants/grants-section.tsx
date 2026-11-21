@@ -10,6 +10,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantTargetText, orphanGrantIds, serversToRead } from '@/lib/admin/grants';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import { formatQuota } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CONTROL_SIZE, describeRefusal } from '../admin-form';
@@ -143,7 +144,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         <StateBadge key="effect" state={grant.effect === 'allow' ? 'ok' : 'closed'}>
           {grant.effect === 'allow' ? t('allow') : t('deny')}
         </StateBadge>,
-        isModelAllow(grant) ? (grant.quotaUsd === null ? t('noQuota') : format.number(grant.quotaUsd, 'usdQuota')) : t('notApplicable'),
+        isModelAllow(grant) ? (grant.quotaUsd === null ? t('noQuota') : formatQuota(format, grant.quotaUsd)) : t('notApplicable'),
       ],
       actions:
         !orphan && isModelAllow(grant)

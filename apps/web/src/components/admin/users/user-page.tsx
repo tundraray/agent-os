@@ -13,6 +13,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
+import { builtinRoleName } from '@/lib/i18n/builtin-name';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
@@ -22,7 +23,7 @@ import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
 import { ResetPasswordDialog } from './reset-password-dialog';
-import { isLocalAccount, roleName, UserStatusBadge } from './user-list';
+import { isLocalAccount, UserStatusBadge } from './user-list';
 
 const PERSONAL_ADMIN_LOG_EVENT = 'admin: user personal admin';
 
@@ -34,7 +35,7 @@ function adminRightText(
   { t, locale }: { t: PageTranslator; locale: Locale },
 ): string {
   if (personal) return t('adminPersonal');
-  if (roles.length > 0) return t('adminByRole', { roles: roles.map((role) => roleName(role.name, locale)).join(' · ') });
+  if (roles.length > 0) return t('adminByRole', { count: roles.length, roles: roles.map((role) => builtinRoleName(role.name, locale)).join(' · ') });
   return t('adminNone');
 }
 
@@ -131,7 +132,7 @@ export function UserPage({ id }: UserPageProps) {
 
   const roleRow = (role: AdminUserDetail['roles'][number]): DataTableRow => {
     const place: ActionPlace = `role:${role.id}`;
-    const name = roleName(role.name, locale);
+    const name = builtinRoleName(role.name, locale);
     return {
       key: role.id,
       name,
@@ -221,7 +222,7 @@ export function UserPage({ id }: UserPageProps) {
                       void act('assign', 'admin: user role assign', () => adminApi.users.assignRole(id, role.id))
                     }
                   >
-                    {roleName(role.name, locale)}
+                    {builtinRoleName(role.name, locale)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>

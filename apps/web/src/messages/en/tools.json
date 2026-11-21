@@ -18,6 +18,6 @@
   },
   "draft_record": {
     "title": "Prepare draft",
-    "args": { "recordId": "Agent or workflow", "kind": "Type", "name": "Name", "description": "Description" }
+    "args": { "recordId": "Agent or workflow", "kind": "Type", "name": "Name", "description": "Description", "content": "Definition" }
   }
 }

@@ -17,7 +17,6 @@ import { useLeaveThenGo } from "@/components/library/use-in-chat";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { AgentsTranslator } from "@/lib/agents/format";
 import { isApiRequestError } from "@/lib/api/api-request";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import type { FeedStore } from "@/lib/feed/feed-store";
@@ -25,6 +24,7 @@ import { selectAgent } from "@/lib/feed/to-feed";
 import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
 import { describeLibraryError } from "@/lib/library/library-errors";
 import { agentPath, recordPath } from "@/lib/shell-route";
+import type { AgentsTranslator } from "@/lib/i18n/messages";
 
 /**
  * MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»); its

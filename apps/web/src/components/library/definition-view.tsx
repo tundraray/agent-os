@@ -6,7 +6,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
-  BUILTIN_ROLE_KEY,
   type AgentContent,
   type MissingRight,
   type RecordBody,
@@ -19,7 +18,7 @@ import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
 import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinRoleName } from "@/lib/i18n/builtin-name";
 import type { ChangedField, RecordField } from "@/lib/library/record-rules";
 import { cn } from "cn";
 
@@ -95,7 +94,7 @@ export function DefinitionView({
 function RecipientNote({ kind, recipient }: { kind: RecordKind; recipient: DefinitionRecipient }) {
   const t = useTranslations("library");
   const locale = useLocale();
-  const roles = recipient.roles.map((name) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale));
+  const roles = recipient.roles.map((name) => builtinRoleName(name, locale));
   return (
     <div role="note" className="bg-info-subtle border-info-border flex gap-2 rounded-md border p-3">
       <Info aria-hidden className="text-info mt-px size-4 shrink-0" />

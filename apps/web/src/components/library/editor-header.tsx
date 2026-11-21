@@ -3,13 +3,13 @@
 import { useId, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { LoaderCircle, Lock, MoreHorizontalIcon, Users } from "lucide-react";
-import { BUILTIN_ROLE_KEY, CHAT_BUILTIN_KEY, type RecordAudience, type RecordDetail } from "@agent-os/contracts";
+import { CHAT_BUILTIN_KEY, type RecordAudience, type RecordDetail } from "@agent-os/contracts";
 import { CAPTION, CONTROL_SIZE } from "@/components/admin/admin-form";
 import { ShellLink } from "@/components/shell/shell-link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useResource } from "@/hooks/use-resource";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
 import type { LibraryTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
@@ -34,7 +34,7 @@ function audienceText(t: LibraryTranslator, audience: RecordAudience, mode: Edit
     if (audience.roles.length === 0) return t("editor.header.onlyAdmins");
   }
   if (audience.roles.length === 0) return t("label.onlyYou");
-  return audience.roles.map((role) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale)).join(", ");
+  return audience.roles.map((role) => builtinRoleName(role.name, locale)).join(", ");
 }
 
 export type EditorHeaderActionsProps = {

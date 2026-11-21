@@ -1,6 +1,6 @@
 import {
   ALL_SERVERS,
-  BUILTIN_NAMES,
+  builtinNameIn,
   RECORD_NAME_MAX_LENGTH,
   type CopyResult,
   type Language,
@@ -14,11 +14,6 @@ const COPY_SUFFIX: Readonly<Record<Language, string>> = {
   en: ' — copy',
 };
 const FIRST_NUMBERED_COPY = 2;
-
-const BUILTIN_NAMES_BY_KEY = new Map<
-  string,
-  Readonly<Record<Language, string>>
->(Object.entries(BUILTIN_NAMES));
 
 export interface CopyInput {
   readonly name: string;
@@ -157,9 +152,7 @@ export function replaceModel(
  * copier's language; any other name, an administrator's among them, stays as it is.
  */
 function sourceName({ name, builtinKey, language }: CopyInput): string {
-  const names =
-    builtinKey === null ? undefined : BUILTIN_NAMES_BY_KEY.get(builtinKey);
-  return names !== undefined && name === names.ru ? names[language] : name;
+  return builtinNameIn({ builtinKey, name }, language);
 }
 
 /** «{имя}{mark}», then «{имя}{mark} {N}» with the least free N; the name is cut so the suffix fits. */

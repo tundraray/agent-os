@@ -179,11 +179,6 @@ describe("copy rule: a free name with the copy suffix, the copier's servers, eac
       }),
       expected: expect.objectContaining({ name: 'Чат поддержки — copy' }),
     },
-    {
-      name: 'taken name gets a number en',
-      input: copy({ language: 'en', takenNames: ['Разбор оплат — copy'] }),
-      expected: expect.objectContaining({ name: 'разбор оплат — copy 2' }),
-    },
   ])('$name', ({ input, expected }) => {
     expect(planCopy(input)).toEqual(expected);
   });

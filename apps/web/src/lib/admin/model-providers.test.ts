@@ -27,12 +27,12 @@ describe('model readiness and choice options (KD-5, UC-3)', () => {
     ['a model of a disabled provider', () => readiness('google/gemini-2.5-flash'), 'provider_disabled'],
     ['a model of a provider without a needed key', () => readiness('local/Qwen/Qwen3-32B'), 'provider_key_missing'],
     ['a model of a ready provider', () => readiness('anthropic/claude-haiku-4-5'), null],
-    ['chat options: no embeddings, by provider then title', () => modelOptions(catalog, 'chat', readiness).map((option) => [option.value, option.label, option.unavailableReason]), [
+    ['chat options: no embeddings, by provider then title', () => modelOptions({ models: catalog, purpose: 'chat', readinessOf: readiness, locale: 'en' }).map((option) => [option.value, option.label, option.unavailableReason]), [
       ['anthropic/claude-haiku-4-5', 'Claude Haiku 4.5 · anthropic', null],
       ['anthropic/claude-sonnet-4-5', 'Claude Sonnet 4.5 · anthropic', null],
       ['google/gemini-2.5-flash', 'Gemini 2.5 Flash · google', 'provider_disabled'],
     ]],
-    ['embedding options: only embeddings, labelled with the dimensions', () => modelOptions(catalog, 'embedding', readiness), [{
+    ['embedding options: only embeddings, labelled with the dimensions', () => modelOptions({ models: catalog, purpose: 'embedding', readinessOf: readiness, locale: 'en' }), [{
       value: 'google/gemini-embedding-001',
       name: 'Gemini Embedding',
       provider: 'google',
@@ -41,7 +41,7 @@ describe('model readiness and choice options (KD-5, UC-3)', () => {
       unavailableReason: 'provider_disabled',
     }]],
     ['the option name for a screen reader, with the short reason of a model that does not work', () =>
-      modelOptions(catalog, 'chat', readiness).map((option) => modelOptionName(t, option)), [
+      modelOptions({ models: catalog, purpose: 'chat', readinessOf: readiness, locale: 'en' }).map((option) => modelOptionName(t, option)), [
       'Claude Haiku 4.5, провайдер anthropic',
       'Claude Sonnet 4.5, провайдер anthropic',
       'Gemini 2.5 Flash, провайдер google, провайдер выключен',

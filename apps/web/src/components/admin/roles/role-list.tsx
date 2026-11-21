@@ -2,13 +2,13 @@
 
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { BUILTIN_ROLE_KEY, type RoleList as Roles, type RoleSummary } from '@agent-os/contracts';
+import type { RoleList as Roles, RoleSummary } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { builtinName } from '@/lib/i18n/builtin-name';
+import { builtinRoleName } from '@/lib/i18n/builtin-name';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
@@ -25,7 +25,7 @@ const builtinFirst = (roles: Roles): Roles => [
 ];
 
 function toRow(role: RoleSummary, { t, locale }: { t: RolesTranslator; locale: Locale }): DataTableRow {
-  const name = builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale);
+  const name = builtinRoleName(role.name, locale);
   return {
     key: role.id,
     name,

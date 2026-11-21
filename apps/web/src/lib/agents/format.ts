@@ -1,6 +1,5 @@
 import { AgentFailureReasonSchema, type AgentFailureReason } from "@agent-os/contracts";
-import type { useTranslations } from "next-intl";
-import type { FormatsTranslator } from "@/lib/i18n/formats";
+import type { ErrorsTranslator, FormatsTranslator } from "@/lib/i18n/messages";
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides
@@ -12,12 +11,6 @@ import type { FormatsTranslator } from "@/lib/i18n/formats";
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
-
-/** The `errors` messages: pure functions receive them as a parameter, components take `useTranslations('errors')`. */
-export type ErrorsTranslator = ReturnType<typeof useTranslations<"errors">>;
-
-/** The `agents` messages, for text functions that take them as a parameter. */
-export type AgentsTranslator = ReturnType<typeof useTranslations<"agents">>;
 
 /** The failure reasons of a model provider (model-providers UXRD MC-9). */
 export const PROVIDER_FAILURE_REASONS = [

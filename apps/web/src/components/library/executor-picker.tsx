@@ -7,7 +7,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import { CHAT_BUILTIN_KEY, EXECUTOR_MAX_RUNS_MIN, type RecordSummary, type WorkflowExecutor } from "@agent-os/contracts";
 import { CAPTION, FormError } from "@/components/admin/admin-form";
-import { failedText } from "@/components/i18n/server-text";
+import { failedText } from "@/lib/i18n/server-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";

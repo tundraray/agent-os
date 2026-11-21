@@ -127,7 +127,7 @@
     "noServers": "без систем",
     "allServers": "все системы",
     "maxRuns": "Сколько раз можно звать",
-    "upTo": "до {count} раз",
+    "upTo": "{count, plural, one {до # раза} few {до # раз} many {до # раз} other {до # раза}}",
     "removed": "Убрано: {names}",
     "details": "Подробнее"
   },
@@ -178,11 +178,11 @@
     "noAgents": "Агентов в библиотеке нет"
   },
   "definition": {
-    "recipient": "Автор — {author}.{roleCount, plural, =0 {} other { {kind, select, agent {Агент} other {Workflow}} открыт вашей роли {roles}.}} Работает с вашими правами и подключёнными аккаунтами. Изменения в системах — только после вашего подтверждения. Убрать {kind, select, agent {агент} other {workflow}} может автор или администратор.",
+    "recipient": "Автор — {author}.{roleCount, plural, =0 {} =1 { {kind, select, agent {Агент} other {Workflow}} открыт вашей роли {roles}.} other { {kind, select, agent {Агент} other {Workflow}} открыт вашим ролям {roles}.}} Работает с вашими правами и подключёнными аккаунтами. Изменения в системах — только после вашего подтверждения. Убрать {kind, select, agent {агент} other {workflow}} может автор или администратор.",
     "changed": "изменено",
     "selfLearning": "{state, select, on {включено} other {выключено}}",
     "coordinator": "Координатор",
-    "coordinatorSummary": "{model} · до {maxTurns} шагов",
+    "coordinatorSummary": "{model} · {maxTurns, plural, one {до # шага} few {до # шагов} many {до # шагов} other {до # шага}}",
     "expand": "Показать целиком",
     "collapse": "Свернуть"
   },
@@ -221,7 +221,7 @@
     "title": "Удалить «{name}»?",
     "everyone": "{kind, select, agent {Агент} other {Workflow}} пропадёт у всех, кому открыт. Запуски, которые уже идут, доработают.",
     "onlyYou": "{kind, select, agent {Агент} other {Workflow}} удалится насовсем. Запуски, которые уже идут, доработают.",
-    "roles": "{kind, select, agent {Агент} other {Workflow}} пропадёт у вас и у ролей {roles}. Запуски, которые уже идут, доработают.",
+    "roles": "{kind, select, agent {Агент} other {Workflow}} пропадёт у вас и у {roleCount, plural, =1 {роли {roles}} other {ролей {roles}}}. Запуски, которые уже идут, доработают.",
     "confirm": "Удалить",
     "deleted": "{kind, select, agent {Агент} other {Workflow}} удалён"
   },

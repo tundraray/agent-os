@@ -67,7 +67,21 @@
     "model_not_connected": "Model not connected",
     "tool_not_in_definition": "The tool isn't in the agent's set",
     "depth_limit": "Nesting limit reached",
-    "not_allowed": "The template doesn't allow this call"
+    "not_allowed": "The template doesn't allow this call",
+    "model_not_configured": "No model is set up",
+    "provider_missing": "The model's provider isn't set up",
+    "provider_disabled": "The model's provider is turned off",
+    "provider_key_missing": "The model's provider has no key",
+    "unknown_agent": "Unknown agent",
+    "invalid_arguments": "The call's arguments are invalid",
+    "not_callable_from_code": "This tool can't be called from code",
+    "changing_in_read_run": "The tool changes data, and this run only reads",
+    "not_in_confirmed_script": "The tool isn't in the confirmed code",
+    "record_unavailable": "The agent or workflow isn't available",
+    "run_limit": "Call limit reached",
+    "read_only": "The record can't be changed",
+    "shared": "The record is open to roles — edit it in the editor",
+    "repeated_call": "The same call was repeated"
   },
   "refusalWithModel": {
     "model_not_allowed": "Model not allowed: {model}",

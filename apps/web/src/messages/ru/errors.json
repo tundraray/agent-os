@@ -67,7 +67,21 @@
     "model_not_connected": "Модель не подключена",
     "tool_not_in_definition": "Инструмент не входит в набор агента",
     "depth_limit": "Достигнут предел вложенности",
-    "not_allowed": "Шаблон не разрешает этот вызов"
+    "not_allowed": "Шаблон не разрешает этот вызов",
+    "model_not_configured": "Модель не настроена",
+    "provider_missing": "Провайдер модели не настроен",
+    "provider_disabled": "Провайдер модели выключен",
+    "provider_key_missing": "У провайдера модели нет ключа",
+    "unknown_agent": "Неизвестный агент",
+    "invalid_arguments": "Неверные аргументы вызова",
+    "not_callable_from_code": "Этот инструмент нельзя вызвать из кода",
+    "changing_in_read_run": "Инструмент меняет данные, а этот запуск только читает",
+    "not_in_confirmed_script": "Инструмента нет в подтверждённом коде",
+    "record_unavailable": "Агент или workflow недоступен",
+    "run_limit": "Предел вызовов исчерпан",
+    "read_only": "Запись нельзя изменить",
+    "shared": "Запись открыта ролям — правьте её в редакторе",
+    "repeated_call": "Повтор того же вызова"
   },
   "refusalWithModel": {
     "model_not_allowed": "Модель не разрешена: {model}",

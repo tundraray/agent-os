@@ -40,6 +40,20 @@ export const BUILTIN_NAMES = {
   'deep-research': { ru: 'Глубокий ресерч', en: 'Deep research' },
   [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
 } as const satisfies Record<string, Record<Language, string>>;
+
+const isBuiltinNameKey = (key: string): key is keyof typeof BUILTIN_NAMES => Object.hasOwn(BUILTIN_NAMES, key);
+
+/**
+ * The name of a library record, or of a role, in `language` (KD-6): a built-in one still under its seeded
+ * name (`ru`) is named in `language`; any other name, an administrator's among them, stays as it is. A role
+ * has no `builtinKey` and passes `BUILTIN_ROLE_KEY`: it is known by its name alone.
+ */
+export function builtinNameIn(named: { builtinKey: string | null; name: string }, language: Language): string {
+  const { builtinKey, name } = named;
+  if (builtinKey === null || !isBuiltinNameKey(builtinKey)) return name;
+  const names = BUILTIN_NAMES[builtinKey];
+  return name === names.ru ? names[language] : name;
+}
 /** "All servers" in a record's server list; only a system record may hold it. */
 export const ALL_SERVERS = '*';
 

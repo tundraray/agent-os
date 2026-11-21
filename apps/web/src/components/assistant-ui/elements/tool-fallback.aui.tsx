@@ -33,12 +33,11 @@ import { useLiveRecord } from "@/components/agents/run-card";
 import { ValueRows } from "@/components/agents/value-rows";
 import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
-import type { ErrorsTranslator } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
-import { builtinToolLabels } from "@/lib/i18n/builtin-name";
-import type { ChatTranslator } from "@/lib/i18n/messages";
+import { toolCallLabels } from "@/lib/i18n/builtin-name";
+import type { ChatTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
@@ -127,18 +126,16 @@ function refusalReasonOf(artifact: unknown): ToolRefusalReason | null {
   return reason.success ? reason.data : null;
 }
 
-type ReasonLine = { content: ReactNode; hint: string | undefined };
+type ReasonLine = { content: ReactNode };
 
 /**
- * MC-10 or MC-22 text of a refusal (`refusalText`); a code outside them (or none) reads as the platform's
- * refusal with the code as its hint (KD-6).
+ * MC-10 or MC-22 text of a refusal (`refusalText`); a code the catalogue does not hold (or none) reads as
+ * the platform's refusal, with nothing of the raw code shown.
  */
 function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
   const reason = refusalReasonOf(artifact);
   const text = reason === null ? null : refusalText(t, reason, refusedModel(artifact));
-  return text !== null
-    ? { content: text, hint: undefined }
-    : { content: t("platformRefusal"), hint: textField(artifact, "refusalReason") ?? undefined };
+  return { content: text ?? t("platformRefusal") };
 }
 
 /** The library's create and start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
@@ -161,13 +158,9 @@ function libraryCallOf(toolName: string, args: unknown): { recordId: string | nu
   return { recordId: id(arg("recordId")), kind: kind.success ? kind.data : null };
 }
 
-function ReasonParagraph({ content, hint }: ReasonLine) {
+function ReasonParagraph({ content }: ReasonLine) {
   return (
-    <p
-      data-slot="tool-fallback-reason"
-      title={hint}
-      className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4"
-    >
+    <p data-slot="tool-fallback-reason" className="text-muted-foreground px-2 pb-1.5 ps-14 text-xs leading-4">
       {content}
     </p>
   );
@@ -197,7 +190,6 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
   const { action } = refusal;
   return (
     <ReasonParagraph
-      hint={undefined}
       content={
         <>
           {refusal.text}
@@ -237,7 +229,6 @@ function reasonLine(
           </Link>
         ),
       }),
-      hint: undefined,
     };
   }
   return null;
@@ -273,12 +264,14 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const look = OUTCOME_LOOK[outcome];
   const outcomeText = tChat(`tool.outcome.${outcome}`);
   const server = textField(artifact, "server");
-  // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the answer.
-  const builtin = server === null ? builtinToolLabels(tools, toolName) : null;
   const toolTitle = server === null ? null : textField(artifact, "toolTitle");
-  const toolLabel = builtin?.title ?? toolTitle ?? toolName;
-  const argLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
-  const labels = builtin?.args ?? (argLabels.success ? argLabels.data : undefined);
+  const sentLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
+  const { title: toolLabel, args: labels } = toolCallLabels(tools, {
+    tool: toolName,
+    server,
+    toolTitle,
+    argLabels: sentLabels.success ? sentLabels.data : undefined,
+  });
   const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
   /**
    * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { ErrorsTranslator } from "@/lib/agents/format";
 import { isApiRequestError } from "@/lib/api/api-request";
+import type { ErrorsTranslator } from "./messages";
 
 /**
  * The API's own text inside a phrase of the interface: the API writes it in English, so it is marked as

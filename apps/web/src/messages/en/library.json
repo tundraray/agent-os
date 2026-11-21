@@ -221,7 +221,7 @@
     "title": "Delete “{name}”?",
     "everyone": "The {kind, select, agent {agent} other {workflow}} will disappear for everyone it's open to. Runs already in progress will finish.",
     "onlyYou": "The {kind, select, agent {agent} other {workflow}} will be deleted for good. Runs already in progress will finish.",
-    "roles": "The {kind, select, agent {agent} other {workflow}} will disappear for you and for these roles: {roles}. Runs already in progress will finish.",
+    "roles": "The {kind, select, agent {agent} other {workflow}} will disappear for you and for {roleCount, plural, one {the {roles} role} other {these roles: {roles}}}. Runs already in progress will finish.",
     "confirm": "Delete",
     "deleted": "{kind, select, agent {Agent} other {Workflow}} deleted"
   },

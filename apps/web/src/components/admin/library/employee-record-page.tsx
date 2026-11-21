@@ -13,10 +13,9 @@ import { KnowledgeButton } from '@/components/library/editor-header';
 import { RecordLabel } from '@/components/library/record-label';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
-import { roleName } from '@/components/admin/users/user-list';
 import { Button } from '@/components/ui/button';
 import { adminApi } from '@/lib/admin/admin-api';
-import { builtinName } from '@/lib/i18n/builtin-name';
+import { builtinName, builtinRoleName } from '@/lib/i18n/builtin-name';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
@@ -34,7 +33,7 @@ export type ClosableRecord = Pick<RecordSummary, 'id' | 'kind' | 'name' | 'audie
 
 /** The roles a record is open to, in the page's language (KD-6). */
 const rolesOf = (record: Pick<RecordSummary, 'audience'>, locale: Locale): string =>
-  record.audience.roles.map((role) => roleName(role.name, locale)).join(', ');
+  record.audience.roles.map((role) => builtinRoleName(role.name, locale)).join(', ');
 
 type CloseAccessDialogProps = {
   record: ClosableRecord;
@@ -69,7 +68,12 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
       open={open}
       onOpenChange={onOpenChange}
       title={tLibrary('closeTitle', { name: record.name })}
-      body={tLibrary('closeBody', { kind: record.kind, author: record.author.name, roles: rolesOf(record, locale) })}
+      body={tLibrary('closeBody', {
+        kind: record.kind,
+        author: record.author.name,
+        roleCount: record.audience.roles.length,
+        roles: rolesOf(record, locale),
+      })}
       confirmLabel={tLibrary('close')}
       onConfirm={close}
       // `recordAction` has logged the refusal.

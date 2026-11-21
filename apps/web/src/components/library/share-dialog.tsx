@@ -6,7 +6,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { CheckIcon, Info, LoaderCircle, Lock, User, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import {
-  BUILTIN_ROLE_KEY,
   type MyRoleList,
   type RecordAudience,
   type RecordDetail,
@@ -27,7 +26,7 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from "@/hooks/use-debounc
 import { useResource } from "@/hooks/use-resource";
 import { adminApi } from "@/lib/admin/admin-api";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
 import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
 import { describeLibraryError } from "@/lib/library/library-errors";
@@ -126,9 +125,6 @@ const byName =
   (a: { name: string }, b: { name: string }): number =>
     a.name.localeCompare(b.name, locale);
 
-/** A role's name as the page shows it: the built-in role in the page's language. */
-const roleName = (name: string, locale: Locale): string => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale);
-
 // ---------- Сотрудник ----------
 
 type RoleOption = { id: string; name: string; left: boolean };
@@ -138,8 +134,8 @@ function roleOptions(mine: MyRoleList, audience: RecordAudience, locale: Locale)
   const mineIds = new Set(mine.map((role) => role.id));
   const left = audience.roles.filter((role) => !mineIds.has(role.id));
   return [
-    ...mine.map((role) => ({ id: role.id, name: roleName(role.name, locale), left: false })),
-    ...left.map((role) => ({ id: role.id, name: roleName(role.name, locale), left: true })),
+    ...mine.map((role) => ({ id: role.id, name: builtinRoleName(role.name, locale), left: false })),
+    ...left.map((role) => ({ id: role.id, name: builtinRoleName(role.name, locale), left: true })),
   ].sort(byName(locale));
 }
 
@@ -183,7 +179,7 @@ function EmployeeAudience({ record, name, onDone }: AudienceFormProps) {
     void save({
       send: () => libraryApi.saveAudience(record.id, { roleIds: [...chosen], offerInChat: offer }),
       savedText: (saved) => {
-        const names = saved.audience.roles.map((role) => roleName(role.name, locale));
+        const names = saved.audience.roles.map((role) => builtinRoleName(role.name, locale));
         return names.length === 0 ? t("share.onlyYouNow") : t("share.nowSee", { names: names.join(", ") });
       },
       refusedRole: async (cause) =>
@@ -255,7 +251,7 @@ type Holder = { kind: HolderKind; id: string; name: string; email?: string };
 const holderKey = (holder: Holder): string => `${holder.kind}:${holder.id}`;
 
 const holdersOf = (audience: RecordAudience, locale: Locale): Holder[] => [
-  ...audience.roles.map((role): Holder => ({ kind: "role", id: role.id, name: roleName(role.name, locale) })),
+  ...audience.roles.map((role): Holder => ({ kind: "role", id: role.id, name: builtinRoleName(role.name, locale) })),
   ...(audience.users ?? []).map((user): Holder => ({ kind: "user", id: user.id, name: user.name })),
 ];
 
@@ -353,7 +349,7 @@ function HolderSearch({
   const candidates = useMemo((): Holder[] => {
     const needle = query.trim().toLocaleLowerCase(locale);
     const matchingRoles = roles
-      .map((role): Holder => ({ kind: "role", id: role.id, name: roleName(role.name, locale) }))
+      .map((role): Holder => ({ kind: "role", id: role.id, name: builtinRoleName(role.name, locale) }))
       .filter((role) => role.name.toLocaleLowerCase(locale).includes(needle))
       .sort(byName(locale));
     const found = (users.data?.users ?? []).map(

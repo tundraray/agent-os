@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 import { CHAT_BUILTIN_KEY, type BannedRecord, type RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { RecordPlaceholder, useAdminTitles } from '@/components/admin/admin-header';
-import { roleName } from '@/components/admin/users/user-list';
 import {
   DataTable,
   resourceTableState,
@@ -28,8 +27,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { builtinName } from '@/lib/i18n/builtin-name';
+import { builtinName, builtinRoleName } from '@/lib/i18n/builtin-name';
 import { formatListTime } from '@/lib/i18n/formats';
+import type { LibraryTranslator } from '@/lib/i18n/messages';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
@@ -44,7 +44,6 @@ import { NewSystemRecordPage, SystemRecordPage } from './system-record-page';
 const EMPTY_VALUE = '—';
 
 type SectionTranslator = ReturnType<typeof useTranslations<'admin.library'>>;
-type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
 
 const systemColumns = (t: SectionTranslator): readonly DataTableColumn[] => [
   { header: t('record') },
@@ -191,7 +190,7 @@ function AudienceCell({ record }: { record: RecordSummary }) {
   if (record.builtinKey === CHAT_BUILTIN_KEY) return <>{t('everyoneWithRights')}</>;
   if (record.audience.everyone === true) return <>{t('everyone')}</>;
   const holders = [
-    ...record.audience.roles.map((role) => ({ key: role.id, name: roleName(role.name, locale), Icon: UsersIcon })),
+    ...record.audience.roles.map((role) => ({ key: role.id, name: builtinRoleName(role.name, locale), Icon: UsersIcon })),
     ...(record.audience.users ?? []).map((user) => ({ key: user.id, name: user.name, Icon: UserIcon })),
   ];
   if (holders.length === 0) return <>{EMPTY_VALUE}</>;
@@ -293,7 +292,7 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
 
   const row = (record: RecordSummary): DataTableRow => {
     const target = closable(record);
-    const roles = record.audience.roles.map((role) => roleName(role.name, locale)).join(', ');
+    const roles = record.audience.roles.map((role) => builtinRoleName(role.name, locale)).join(', ');
     return {
       key: record.id,
       name: record.name,

@@ -47,11 +47,27 @@ const en = {
 /** The English catalog sets the type, so `tsc` rejects a Russian catalog missing a key. */
 export type Messages = typeof en;
 
-/** The translate function of the conversation area, for text functions that take it as a parameter. */
+/*
+ * Translate functions of a namespace, for pure text functions that take one as a parameter; components take
+ * `useTranslations(namespace)`.
+ */
+export type AgentsTranslator = ReturnType<typeof useTranslations<'agents'>>;
 export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
-
-/** The translate function of the library area, for its text functions. */
+export type ErrorsTranslator = ReturnType<typeof useTranslations<'errors'>>;
+export type FormatsTranslator = ReturnType<typeof useTranslations<'formats'>>;
 export type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
+export type ModelsTranslator = ReturnType<typeof useTranslations<'admin.models'>>;
+export type ServersTranslator = ReturnType<typeof useTranslations<'admin.servers'>>;
+
+/** The key set every language shares; code reads it only to check that a key the server sent has a message. */
+export const CATALOGUE: Messages = en;
+
+/**
+ * A code, reason or name from the server names a message only when the catalogue table holds it
+ * (design-web.md, «Отказы сервера»; KD-6). `table` is a part of `CATALOGUE` or of the page's messages.
+ */
+export const hasMessage = <T extends object>(table: T, key: string | null | undefined): key is Extract<keyof T, string> =>
+  typeof key === 'string' && Object.hasOwn(table, key);
 
 const ru: Messages = {
   account: ruAccount,

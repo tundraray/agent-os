@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { UsersIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { BUILTIN_ROLE_KEY, IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
+import { IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
@@ -13,7 +13,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
-import { builtinName } from '@/lib/i18n/builtin-name';
+import { builtinRoleName } from '@/lib/i18n/builtin-name';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
@@ -46,7 +46,7 @@ export function RolePage({ id }: { id: string }) {
   const data = role.data;
   if (data === undefined) return <RecordPlaceholder section="roles" resource={role} loadFailed={t('loadFailed')} />;
 
-  const name = builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: data.name }, locale);
+  const name = builtinRoleName(data.name, locale);
 
   /** Every change: the refusal of a gone or built-in role reads the role again and still reaches its control. */
   const change = rereadOnNotFound(role.reload, isBuiltinRefusal);

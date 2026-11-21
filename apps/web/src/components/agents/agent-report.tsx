@@ -10,11 +10,12 @@ import { MarkdownText } from "@/components/markdown-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { failureReasonText, type AgentsTranslator, type ErrorsTranslator } from "@/lib/agents/format";
+import { failureReasonText } from "@/lib/agents/format";
 import { formatDuration, formatListTime } from "@/lib/i18n/formats";
 import type { ReportPartData } from "@/lib/feed/to-feed";
 import { agentPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
+import type { AgentsTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
 
 /** MC-18: «Причина: …» of a failed or stopped child; a completed one has none. */
 function reasonLine(

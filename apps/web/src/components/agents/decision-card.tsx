@@ -27,8 +27,8 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResource } from "@/hooks/use-resource";
-import { BRIEF_PARTS, type AgentsTranslator } from "@/lib/agents/format";
-import { builtinName, builtinToolLabels } from "@/lib/i18n/builtin-name";
+import { BRIEF_PARTS } from "@/lib/agents/format";
+import { builtinName, toolCallLabels } from "@/lib/i18n/builtin-name";
 import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
@@ -37,6 +37,7 @@ import { taskTitleName } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { agentPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
+import type { AgentsTranslator } from "@/lib/i18n/messages";
 
 type CanCall = RunCodeConfirmationContent["canCall"];
 
@@ -361,12 +362,13 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   };
 
   const { tool, server, args } = confirmation;
-  // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the request.
-  const builtin = server === null ? builtinToolLabels(tools, tool) : null;
   const toolTitle = server === null ? undefined : confirmation.toolTitle;
-  const argLabels = builtin?.args ?? confirmation.argLabels;
-  /** The tool's human title when it has one; the technical name otherwise. */
-  const toolName = builtin?.title ?? toolTitle ?? tool;
+  const { title: toolName, args: argLabels } = toolCallLabels(tools, {
+    tool,
+    server,
+    toolTitle,
+    argLabels: confirmation.argLabels,
+  });
   const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, argLabels) : null;
   const canCall = canCallOf(confirmation);
   const groupName =

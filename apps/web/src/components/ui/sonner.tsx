@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslations } from "next-intl"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
@@ -11,12 +12,15 @@ const isToasterTheme = (value: string): value is ToasterTheme =>
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
+  // AC-01.3: the region and each toast's close button are named in the interface language, not sonner's English.
+  const t = useTranslations("common")
 
   return (
     <Sonner
       theme={isToasterTheme(theme) ? theme : "system"}
       position="bottom-right"
       closeButton
+      containerAriaLabel={t("notifications")}
       className="toaster group [--border-radius:var(--radius)]! [--normal-bg:var(--popover)]! [--normal-border:var(--border)]! [--normal-text:var(--popover-foreground)]!"
       icons={{
         success: (
@@ -39,6 +43,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         classNames: {
           toast: "cn-toast",
         },
+        closeButtonAriaLabel: t("close"),
       }}
       {...props}
     />

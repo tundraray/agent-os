@@ -29,9 +29,8 @@ import {
   type PriceRates,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
-import type { ErrorsTranslator } from '@/lib/agents/format';
 import type { Formatter } from '@/lib/i18n/formats';
-import enErrors from '@/messages/en/errors.json';
+import type { ErrorsTranslator, Messages } from '@/lib/i18n/messages';
 
 /**
  * Field rules of the panel's forms (design-admin.md, KD-5): one pure function per form, checked on submit.
@@ -40,7 +39,7 @@ import enErrors from '@/messages/en/errors.json';
  */
 
 /** A field error: the key of its message under `admin.field` of the `errors` catalogue. */
-export type FieldRuleKey = keyof typeof enErrors.admin.field;
+export type FieldRuleKey = keyof Messages['errors']['admin']['field'];
 
 export type FieldErrors<Field extends string> = Partial<Record<Field, FieldRuleKey>>;
 

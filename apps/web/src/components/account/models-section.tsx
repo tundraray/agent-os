@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
 import { describeApiError } from "@/lib/api/api-request";
-import { formatMonth, utcMonthOf } from "@/lib/i18n/formats";
+import { formatMonth, formatQuota, utcMonthOf } from "@/lib/i18n/formats";
 import { logger } from "@/lib/logger";
 
 const EMPTY_VALUE = "—";
@@ -27,7 +27,7 @@ function useModelValues(): (row: MyModel) => ModelValues {
   const usd = (value: number): string => format.number(value, "usd");
   return (row) => ({
     spent: usd(row.spentUsd),
-    quota: row.quotaUsd === null ? t("noLimit") : format.number(row.quotaUsd, "usdQuota"),
+    quota: row.quotaUsd === null ? t("noLimit") : formatQuota(format, row.quotaUsd),
     remaining: row.exhausted ? usd(0) : row.remainingUsd === null ? EMPTY_VALUE : usd(row.remainingUsd),
   });
 }

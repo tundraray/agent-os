@@ -35,10 +35,10 @@ import {
   modelOptions,
   unavailableShortText,
   type ModelOption,
-  type ModelsTranslator,
 } from "@/lib/admin/model-providers";
 import { formatModel, formatRecordModel } from "@/lib/agents/format";
-import type { FormatsTranslator } from "@/lib/i18n/formats";
+import type { FormatsTranslator, ModelsTranslator } from "@/lib/i18n/messages";
+import type { Locale } from "@/lib/i18n/pick-locale";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
@@ -139,25 +139,26 @@ export function blankAgent({ defaultModel, defaultMaxTurns }: RecordDefaults): A
 }
 
 /** The author's models as options of a chat model choice, each with its readiness (model-providers KD-5). */
-function chatOptions(models: readonly EditorModel[]): ModelOption[] {
+function chatOptions(models: readonly EditorModel[], locale: Locale): ModelOption[] {
   const reasons = new Map(models.map((row) => [row.model, row.unavailableReason]));
-  return modelOptions(
-    models.map((row) => ({ id: row.model, name: row.name, purpose: "chat" as const })),
-    "chat",
-    (modelId) => reasons.get(modelId) ?? null,
-  );
+  return modelOptions({
+    models: models.map((row) => ({ id: row.model, name: row.name, purpose: "chat" as const })),
+    purpose: "chat",
+    readinessOf: (modelId) => reasons.get(modelId) ?? null,
+    locale,
+  });
 }
 
 /** Only models whose provider works are offered (AC-14.3). */
-const offeredOptions = (models: readonly EditorModel[]): ModelOption[] =>
-  chatOptions(models).filter((option) => option.unavailableReason === null);
+const offeredOptions = (models: readonly EditorModel[], locale: Locale): ModelOption[] =>
+  chatOptions(models, locale).filter((option) => option.unavailableReason === null);
 
 /**
  * The model a lost or broken one is replaced with: the default chat model when it is offered, otherwise the
  * first offered option; `null` — nothing works, the banner stands without an action.
  */
-function replacementModel(choices: EditorChoices): string | null {
-  const offered = offeredOptions(choices.models ?? []);
+function replacementModel(choices: EditorChoices, locale: Locale): string | null {
+  const offered = offeredOptions(choices.models ?? [], locale);
   if (offered.some((option) => option.value === choices.defaultModel)) return choices.defaultModel;
   return offered[0]?.value ?? null;
 }
@@ -453,11 +454,12 @@ function ModelBanner({
 }) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("library.agentFields");
+  const locale = useLocale();
   // `null` is the default chat model, never one the author lost.
   if (model === null || choices.models === undefined) return null;
   const row = choices.models.find((option) => option.model === model);
   if (row !== undefined && row.unavailableReason === null) return null;
-  const replacement = replacementModel(choices);
+  const replacement = replacementModel(choices, locale);
   const text =
     row !== undefined && row.unavailableReason !== null
       ? tErrors(`providerNotStarting.${row.unavailableReason}`, {
@@ -552,7 +554,8 @@ export function ModelField({ id, label, model, choices, error, onChange }: Model
   const t = useTranslations("formats");
   const tLibrary = useTranslations("library");
   const tModels = useTranslations("admin.models");
-  const all = chatOptions(choices.models ?? []);
+  const locale = useLocale();
+  const all = chatOptions(choices.models ?? [], locale);
   const own = ownOption(t, tModels, tLibrary("agentFields.unavailable"), model, choices, all);
   const options = [
     ...(own === null ? [] : [own]),

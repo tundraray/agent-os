@@ -70,6 +70,9 @@ const CursorSchema = z.string().min(1).max(512);
 export const LanguageSchema = z.enum(['en', 'ru']);
 export type Language = z.infer<typeof LanguageSchema>;
 
+/** The cookie the API writes with the employee's language and the Next server reads (i18n design-web.md, KD-2). */
+export const LOCALE_COOKIE = 'aos_locale';
+
 /**
  * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
  * while the employee has not chosen one.

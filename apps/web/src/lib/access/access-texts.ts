@@ -4,10 +4,9 @@ import {
   formatModel,
   isProviderFailureReason,
   PROVIDER_FAILURE_REASONS,
-  type ErrorsTranslator,
 } from '@/lib/agents/format';
-import { formatMonth, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
-import enErrors from '@/messages/en/errors.json';
+import { formatMonth, formatQuota, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
+import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/lib/i18n/messages';
 
 /**
  * Texts of the access refusals and failures (enterprise-access UXRD, MC-10, MC-11, MC-14, MC-17): one
@@ -15,19 +14,15 @@ import enErrors from '@/messages/en/errors.json';
  * the model by its catalogue name.
  */
 
-/** A reason from the server names a message only when the catalogue holds it (design-web.md, «Отказы сервера»). */
-const hasMessage = <T extends object>(table: T, key: string): key is Extract<keyof T, string> =>
-  Object.hasOwn(table, key);
-
 /**
  * MC-10 and MC-22: the refusal line of a tool-call block; `model` is the refused model, absent when the child
  * runs on its definition's or the default model (plan Notes 10). `null` — a reason without a message here.
  */
 export function refusalText(t: ErrorsTranslator, reason: ToolRefusalReason, model: string | null): string | null {
-  if (model !== null && hasMessage(enErrors.refusalWithModel, reason)) {
+  if (model !== null && hasMessage(CATALOGUE.errors.refusalWithModel, reason)) {
     return t(`refusalWithModel.${reason}`, { model: formatModel(model) });
   }
-  return hasMessage(enErrors.refusal, reason) ? t(`refusal.${reason}`) : null;
+  return hasMessage(CATALOGUE.errors.refusal, reason) ? t(`refusal.${reason}`) : null;
 }
 
 /** Failure reasons of the conversation's root that read as the reply error block TH-08. */
@@ -80,7 +75,7 @@ export function quotaFailureText(t: ErrorsTranslator, format: Formatter, row: My
   return t('quota.failure', {
     model: row.name,
     spent: format.number(row.spentUsd, 'usd'),
-    quota: format.number(row.quotaUsd, 'usdQuota'),
+    quota: formatQuota(format, row.quotaUsd),
     month: formatMonth(format, month),
   });
 }

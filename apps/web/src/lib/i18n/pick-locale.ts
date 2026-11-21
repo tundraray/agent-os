@@ -1,13 +1,12 @@
-export const LOCALES = ['en', 'ru'] as const;
-export type Locale = (typeof LOCALES)[number];
+import { LanguageSchema, type Language } from '@agent-os/contracts';
 
-/** Written and removed only by the API; the Next server reads it (design-web.md, Contract Definitions). */
-export const LOCALE_COOKIE = 'aos_locale';
+/** An interface language: the contract's closed set (design-web.md, KD-4). */
+export type Locale = Language;
 
 export type LocaleSource = 'cookie' | 'browser' | 'default';
 export type LocalePick = { locale: Locale; source: LocaleSource };
 
-const isLocale = (value: string | undefined): value is Locale => LOCALES.some((locale) => locale === value);
+const isLocale = (value: string | undefined): value is Locale => LanguageSchema.options.some((locale) => locale === value);
 
 /** The first `en*` or `ru*` entry of an `Accept-Language` list by quality, earlier entries winning ties. */
 function browserLocale(acceptLanguage: string): Locale | undefined {

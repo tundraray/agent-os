@@ -12,7 +12,8 @@ import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminRadioField, AdminTextField, type AdminRadioOption } from '../admin-form';
 import { useAdminTitles } from '../admin-header';
 import { SecretField } from '../secret-field';
-import { serverModeLabel, type ServersTranslator } from './server-list';
+import { serverModeLabel } from './server-list';
+import type { ServersTranslator } from '@/lib/i18n/messages';
 
 /** MC-29: the credentials modes, each with what it means under its radio. */
 const modes = (t: ServersTranslator): readonly AdminRadioOption<McpServerMode>[] =>

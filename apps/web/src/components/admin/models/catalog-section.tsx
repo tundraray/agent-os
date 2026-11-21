@@ -15,7 +15,7 @@ import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import type { Resource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { modelUnavailableReason, type ModelsTranslator } from '@/lib/admin/model-providers';
+import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import type { Formatter } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
@@ -24,6 +24,7 @@ import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { ModelDialog, PRICES } from './model-dialog';
+import type { ModelsTranslator } from '@/lib/i18n/messages';
 
 const priceCells = (format: Formatter, prices: PriceRates): string[] =>
   PRICES.map((field) => format.number(prices[field], 'usdPrice'));

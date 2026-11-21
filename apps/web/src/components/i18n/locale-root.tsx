@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { cookies, headers } from 'next/headers';
 import { after } from 'next/server';
+import { LOCALE_COOKIE } from '@agent-os/contracts';
 import { IntlProvider } from '@/components/i18n/intl-provider';
 import { messagesOf } from '@/lib/i18n/messages';
-import { LOCALE_COOKIE, pickLocale } from '@/lib/i18n/pick-locale';
+import { pickLocale } from '@/lib/i18n/pick-locale';
 import { logger } from '@/lib/logger';
 
 /**

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import type { CreateGrantBody, Grant, GrantEffect, GrantTargetBody, McpServerSummary } from '@agent-os/contracts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
@@ -98,13 +98,17 @@ export function GrantDialog({ open, onOpenChange, effect, ...form }: GrantDialog
 /** Mounted with the dialog's content, so the catalogue is read on every opening (read-on-open). */
 function GrantForm({ holder, effect, grants, servers, onSaved }: Omit<GrantDialogProps, 'open' | 'onOpenChange'>) {
   const t = useTranslations('admin.grants');
+  const locale = useLocale();
   const models = useResource(adminApi.models.list, 'models');
   const providers = useResource(adminApi.modelProviders.list, 'model-providers');
   const held = heldTargets(grants, effect);
   // UXRD MP-08: only chat models whose provider works; until the providers are read, none.
-  const modelChoices = modelOptions(models.data ?? [], 'chat', (modelId) =>
-    modelUnavailableReason(modelId, providers.data ?? []),
-  ).filter((option) => option.unavailableReason === null);
+  const modelChoices = modelOptions({
+    models: models.data ?? [],
+    purpose: 'chat',
+    readinessOf: (modelId) => modelUnavailableReason(modelId, providers.data ?? []),
+    locale,
+  }).filter((option) => option.unavailableReason === null);
   const kinds: readonly AdminRadioOption<GrantValues['kind']>[] = KINDS.map((kind) => ({
     value: kind,
     label: t(KIND_LABEL[kind]),

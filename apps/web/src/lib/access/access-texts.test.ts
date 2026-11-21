@@ -35,7 +35,7 @@ describe('access texts (MC-10, MC-11, MC-14, QS-01)', () => {
     },
     { where: 'refusal without the model argument', text: refusalText(t, 'model_not_allowed', null), expected: 'Модель не разрешена' },
     { where: 'refusal of MC-22', text: refusalText(t, 'depth_limit', null), expected: 'Достигнут предел вложенности' },
-    { where: 'refusal of the library', text: refusalText(t, 'record_unavailable', null), expected: null },
+    { where: 'refusal of the library outside its line', text: refusalText(t, 'record_unavailable', null), expected: 'Агент или workflow недоступен' },
     {
       where: 'chat reply error',
       text: replyFailureText(t, 'model_not_allowed', 'anthropic/claude-sonnet-5-5'),

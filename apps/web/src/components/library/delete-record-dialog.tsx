@@ -3,11 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { BUILTIN_ROLE_KEY, type RecordSummary } from "@agent-os/contracts";
+import type { RecordSummary } from "@agent-os/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { adminApi } from "@/lib/admin/admin-api";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinRoleName } from "@/lib/i18n/builtin-name";
 import type { LibraryTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
@@ -22,8 +22,8 @@ export type DeleteRecord = Pick<RecordSummary, "id" | "kind" | "name" | "author"
 function bodyText(t: LibraryTranslator, locale: Locale, { kind, author, audience }: DeleteRecord): string {
   if (author === null || audience.everyone === true) return t("delete.everyone", { kind });
   if (audience.roles.length === 0) return t("delete.onlyYou", { kind });
-  const roles = audience.roles.map((role) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale));
-  return t("delete.roles", { kind, roles: roles.join(", ") });
+  const roles = audience.roles.map((role) => builtinRoleName(role.name, locale));
+  return t("delete.roles", { kind, roleCount: roles.length, roles: roles.join(", ") });
 }
 
 export type DeleteRecordDialogProps = {

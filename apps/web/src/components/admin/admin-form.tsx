@@ -14,10 +14,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { describeAdminError, type AdminErrorContext, type AdminErrorText } from "@/lib/admin/admin-errors";
 import { fieldErrorText, type FieldRuleKey } from "@/lib/admin/form-rules";
-import type { ErrorsTranslator } from "@/lib/agents/format";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
 import { logger } from "@/lib/logger";
+import type { ErrorsTranslator } from "@/lib/i18n/messages";
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
 export const CONTROL_SIZE = "h-7 pointer-coarse:h-11";

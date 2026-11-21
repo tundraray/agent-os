@@ -4,7 +4,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
-import { BUILTIN_ROLE_KEY } from "@agent-os/contracts";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -21,7 +20,7 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
@@ -121,7 +120,7 @@ function RecipientLine({ origin, firstRun }: { origin: RunOrigin; firstRun: bool
   const locale = useLocale();
   const note = recipientNote(live, firstRun);
   if (note === null || origin.author === null) return null;
-  const roles = note.roles.map((name) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale));
+  const roles = note.roles.map((name) => builtinRoleName(name, locale));
   return (
     <p className="text-muted-foreground line-clamp-3 text-xs leading-4 font-medium">
       {t("recipient", { author: origin.author.name, count: roles.length, roles: roles.join(", ") })}

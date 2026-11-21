@@ -27,7 +27,7 @@ import type { Resource } from '@/hooks/use-resource';
 import { formatModel } from '@/lib/agents/format';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
-import { providerKindText, type ModelsTranslator } from '@/lib/admin/model-providers';
+import { providerKindText } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import { formatListTime } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
@@ -43,6 +43,7 @@ import {
 } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 import { ModelProviderDialog } from './model-provider-dialog';
+import type { ModelsTranslator } from '@/lib/i18n/messages';
 
 const CHECK_EVENT = 'admin: model provider check';
 

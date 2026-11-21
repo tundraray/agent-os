@@ -10,11 +10,11 @@ import {
   ModelProviderInvalidReasonSchema,
   type GrantEffect,
 } from '@agent-os/contracts';
-import { failedText } from '@/components/i18n/server-text';
-import { formatModel, type ErrorsTranslator } from '@/lib/agents/format';
+import { failedText } from '@/lib/i18n/server-text';
+import { formatModel } from '@/lib/agents/format';
 import { isApiRequestError } from '@/lib/api/api-request';
-import enErrors from '@/messages/en/errors.json';
 import { fieldErrorText } from './form-rules';
+import { CATALOGUE, hasMessage, type ErrorsTranslator } from '@/lib/i18n/messages';
 
 /** A field of a panel form that a refusal can name. */
 export type AdminFieldTarget = 'login' | 'email' | 'password' | 'name' | 'modelName' | 'quota';
@@ -58,10 +58,6 @@ export const rereadOnNotFound =
 /** «Показать ещё» with a cursor the server no longer accepts (plan Notes 6). */
 export const isListChanged = (error: unknown): boolean =>
   isApiRequestError(error) && error.code === VALIDATION_FAILED && error.reason === IdentityValidationReason.INVALID_CURSOR;
-
-/** A code or reason from the server names a message only when the catalogue holds it (design-web.md, «Отказы сервера»). */
-const hasMessage = <T extends object>(table: T, key: string | undefined): key is Extract<keyof T, string> =>
-  key !== undefined && Object.hasOwn(table, key);
 
 /** The field a code's message belongs to; any other code with a message shows in the form's block. */
 const FIELD_OF_CODE: Readonly<Partial<Record<string, AdminFieldTarget>>> = {
@@ -125,16 +121,16 @@ export function describeAdminError(t: ErrorsTranslator, error: unknown, context:
         : form(t('admin.grantInvalid'));
     }
     case IdentityErrorCode.PROVIDER_CHECK_FAILED:
-      if (hasMessage(enErrors.admin.providerCheck, reason)) return form(t(`admin.providerCheck.${reason}`));
+      if (hasMessage(CATALOGUE.errors.admin.providerCheck, reason)) return form(t(`admin.providerCheck.${reason}`));
       break;
     case McpErrorCode.MCP_SERVER_CHECK_FAILED:
-      if (hasMessage(enErrors.admin.mcpCheck, reason)) {
+      if (hasMessage(CATALOGUE.errors.admin.mcpCheck, reason)) {
         const text = t(`admin.mcpCheck.${reason}`);
         return form(context.checkFailed === undefined ? text : t(`admin.mcpCheckFailed.${context.checkFailed}`, { reason: text }));
       }
       break;
     default:
-      if (hasMessage(enErrors.admin.code, code)) {
+      if (hasMessage(CATALOGUE.errors.admin.code, code)) {
         const text = t(`admin.code.${code}`);
         const field = FIELD_OF_CODE[code];
         return field === undefined ? form(text) : { target: field, text };

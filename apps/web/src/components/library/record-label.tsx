@@ -4,10 +4,10 @@ import Link from "next/link";
 import { Bot, Workflow, X } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
-import { BUILTIN_ROLE_KEY, type ChipRecord, type RecordKind, type RecordSummary, type RunOrigin } from "@agent-os/contracts";
+import type { ChipRecord, RecordKind, RecordSummary, RunOrigin } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
-import { builtinName } from "@/lib/i18n/builtin-name";
+import { builtinName, builtinRoleName } from "@/lib/i18n/builtin-name";
 import type { LibraryTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/pick-locale";
 import { cn } from "cn";
@@ -223,6 +223,6 @@ function audienceOf(t: LibraryTranslator, locale: Locale, { live, company, mine 
   // The viewer sees only the roles they are in themselves.
   const roles = live.audience.roles
     .filter((role) => role.member)
-    .map((role) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale));
+    .map((role) => builtinRoleName(role.name, locale));
   return roles.length > 0 ? roles.join(", ") : null;
 }

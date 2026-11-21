@@ -1,4 +1,5 @@
-import type { createFormatter, Formats, useTranslations } from 'next-intl';
+import type { createFormatter, Formats } from 'next-intl';
+import type { FormatsTranslator } from './messages';
 
 /**
  * The shared date and number formats the interface-language provider receives (design-web.md, «Форматы»;
@@ -18,8 +19,8 @@ export const formats = {
   number: {
     /** Spend and remaining: always cents — «64,20 $», “$64.20”. */
     usd: { style: 'currency', currency: 'USD' },
-    /** A quota without trailing zeros — «100 $», «100,5 $». */
-    usdQuota: { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 },
+    /** A whole quota without cents — «100 $»; `formatQuota` picks it. */
+    usdQuota: { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 },
     /** A catalogue price per million tokens: every significant digit up to nine decimals — «0,125 $». */
     usdPrice: { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 9 },
   },
@@ -27,9 +28,6 @@ export const formats = {
 
 /** The formatter `useFormatter()` returns; pure functions receive it as a parameter. */
 export type Formatter = ReturnType<typeof createFormatter>;
-
-/** The `formats` messages: pure functions receive them as a parameter, components take `useTranslations('formats')`. */
-export type FormatsTranslator = ReturnType<typeof useTranslations<'formats'>>;
 
 type Moment = string | Date;
 
@@ -52,6 +50,14 @@ export function formatDay(format: Formatter, at: Moment, now: Date = new Date())
 export function formatListTime(format: Formatter, at: Moment, now: Date = new Date()): string {
   const date = toDate(at);
   return format.dateTime(date, sameDay(format, date, now) ? 'time' : 'dayTime');
+}
+
+/**
+ * A quota: a whole amount without cents — «100 $», “$100”; any other with cents, as spend reads beside it —
+ * «1 250,50 $», “$1,250.50”. Intl has no “0 or 2 decimals”, so the amount in cents decides.
+ */
+export function formatQuota(format: Formatter, usd: number): string {
+  return format.number(usd, Math.round(usd * 100) % 100 === 0 ? 'usdQuota' : 'usd');
 }
 
 /** The UTC month `YYYY-MM` of a moment: the month the API counts spend and quotas in. */

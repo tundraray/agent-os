@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
 import { useFormatter, useLocale, useTranslations } from 'next-intl';
-import { BUILTIN_ROLE_KEY, type AdminUserSummary, type UserStatus } from '@agent-os/contracts';
+import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
@@ -15,7 +15,7 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounc
 import { usePagedResource, type Page } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isListChanged } from '@/lib/admin/admin-errors';
-import { builtinName } from '@/lib/i18n/builtin-name';
+import { builtinRoleName } from '@/lib/i18n/builtin-name';
 import { formatListTime, type Formatter } from '@/lib/i18n/formats';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
@@ -30,9 +30,6 @@ async function loadUsersPage(query: string, cursor: string | null): Promise<Page
   const page = await adminApi.users.list({ query, cursor });
   return { items: page.users, nextCursor: page.nextCursor };
 }
-
-/** A role's name in the page's language: the built-in role is named by the catalogue (KD-6). */
-export const roleName = (name: string, locale: Locale): string => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale);
 
 /** A non-empty `login` is a local account (design-admin.md, DC-4). */
 export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =>
@@ -71,7 +68,7 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
 type RowContext = { t: UsersTranslator; format: Formatter; locale: Locale };
 
 function rowOf(user: AdminUserSummary, { t, format, locale }: RowContext): DataTableRow {
-  const roles = user.roles.map((role) => roleName(role.name, locale)).join(' · ');
+  const roles = user.roles.map((role) => builtinRoleName(role.name, locale)).join(' · ');
   return {
     key: user.id,
     name: user.name,

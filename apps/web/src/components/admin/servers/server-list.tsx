@@ -9,15 +9,13 @@ import { StateBadge, type StateBadgeState } from '@/components/state-badge';
 import { buttonVariants } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
+import type { ServersTranslator } from '@/lib/i18n/messages';
 import { adminNewPath, adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
 import { useAdminTitles } from '../admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { ToolResultSettingsForm } from './tool-result-settings-form';
-
-/** The texts of the MCP servers section (UXRD MC-29), shared by the list, the registration and the server's page. */
-export type ServersTranslator = ReturnType<typeof useTranslations<'admin.servers'>>;
 
 /** MC-29: the credentials mode as the panel names it. */
 export const serverModeLabel = (t: ServersTranslator, mode: McpServerMode): string => t(`mode.${mode}`);
