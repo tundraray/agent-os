@@ -2,13 +2,13 @@
 
 import { useId } from "react";
 import { ArrowRight, Info } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { CAPTION } from "@/components/admin/admin-form";
 import { ShellLink } from "@/components/shell/shell-link";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
 import { KNOWLEDGE_TEXT } from "@/lib/library/knowledge-view";
-import { RECORD_FIELD_LABELS } from "@/lib/library/record-rules";
 import { cn } from "cn";
 
 /** Self-learning UXRD, MC-1. */
@@ -33,6 +33,7 @@ export type SelfLearningFieldProps = {
  */
 export function SelfLearningField({ checked, savedOn, knowledgeHref, onChange }: SelfLearningFieldProps) {
   const id = useId();
+  const t = useTranslations("library");
   const hintId = `${id}-hint`;
   const noteId = `${id}-note`;
   const kept = savedOn && !checked;
@@ -45,7 +46,7 @@ export function SelfLearningField({ checked, savedOn, knowledgeHref, onChange }:
           aria-describedby={kept ? `${hintId} ${noteId}` : hintId}
           onCheckedChange={(next) => onChange(next)}
         />
-        {RECORD_FIELD_LABELS.selfLearning}
+        {t("fields.selfLearning")}
       </Label>
       <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
         {TEXT.hint}

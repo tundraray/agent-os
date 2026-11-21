@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useFormatter, useTranslations } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ALL_SERVERS, CHAT_BUILTIN_KEY, type RecordDetail, type RecordKind } from "@agent-os/contracts";
 import { CAPTION, FormError, FormWarning } from "@/components/admin/admin-form";
@@ -15,9 +15,10 @@ import { describeApiError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
 import { libraryApi } from "@/lib/library/library-api";
 import type { Handoff } from "@/lib/library/draft-handoff";
-import { describeLibraryError, droppedServersText, kindWord, type LibraryErrorText } from "@/lib/library/library-errors";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import { describeLibraryError, type LibraryErrorText } from "@/lib/library/library-errors";
 import { RecordConflictError, recordAction } from "@/lib/library/record-action";
-import { canUseInChat, definitionOf, type RecordDefinition } from "@/lib/library/record-rules";
+import { canUseInChat, changedFieldLabel, definitionOf, type RecordDefinition } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { adminRecordPath, libraryPath, recordPath, threadPath } from "@/lib/shell-route";
 import { threadsApiClient } from "@/lib/threads/threads-api-client";
@@ -39,29 +40,6 @@ import { ConflictBlock, SavePanel } from "./save-panel";
 import { useInChat, useLeaveThenGo } from "./use-in-chat";
 import { useRecordForm } from "./use-record-form";
 import { executorKey, validateWorkflow, WorkflowFields, type WorkflowField, type WorkflowFieldErrors } from "./workflow-fields";
-
-/** UXRD MC-6 (launch hint) and MC-7 (titles, notices); MC-19 «Сохранено». */
-const TEXT = {
-  library: "Библиотека",
-  newTitle: (kind: RecordKind) => (kind === "agent" ? "Новый агент" : "Новый workflow"),
-  created: (kind: RecordKind) => `${kindWord(kind, true)} создан`,
-  discarded: "Изменения отменены",
-  restore: "Вернуть",
-  // MC-13: the saved agent is the source of executors in the author's own workflows.
-  usedIn: (name: string, workflows: readonly string[]) => `«${name}» есть в ваших workflow: ${workflows.join(", ")}`,
-  updateThere: "Обновить там",
-  updated: (workflows: readonly string[]) => `Обновлено: ${workflows.join(", ")}`,
-  // Not in MC-13: some workflows refused the update (a conflict among them), and MC-13 has no text for it.
-  notUpdated: (workflows: readonly string[]) => `Не удалось обновить: ${workflows.join(", ")}`,
-  // MC-18: a company record after its creation, and one every employee sees.
-  onlyAdmins: (kind: RecordKind) => `${kindWord(kind, true)} пока видят только администраторы`,
-  share: "Поделиться",
-  everyoneGets: (kind: RecordKind) => `${kindWord(kind, true)} видят все сотрудники — новые запуски пойдут по новой версии`,
-} as const;
-
-/** MC-6 under the header of one's own saved record. */
-export const ownLaunchHint = (kind: RecordKind): string =>
-  `Чтобы запустить, нажмите «Использовать в чате» или назовите ${kindWord(kind)} в чате.`;
 
 /** The editor's two starts: an own record as saved, or the blank definition of a new one. */
 export type RecordEditorSource = { saved: RecordDetail } | { blank: RecordDefinition };
@@ -217,6 +195,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   const copy = useCopyRecord();
   const copyErrorId = useId();
   const format = useFormatter();
+  const locale = useLocale();
   const t = useTranslations("errors");
   const tLibrary = useTranslations("library");
   const { start, back, tellDraft, handOnCreated } = usePageHandoff(handoff, source, system);
@@ -255,11 +234,15 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
     if (createdShown.current || !start.created || !("saved" in source)) return;
     createdShown.current = true;
     dispatch({ type: "saved", record: source.saved });
-    if (system) toast(TEXT.onlyAdmins(source.saved.kind), { action: { label: TEXT.share, onClick: () => setSharing(true) } });
-  }, [start, source, system, dispatch]);
+    if (system) {
+      toast(tLibrary("editor.onlyAdmins", { kind: source.saved.kind }), {
+        action: { label: tLibrary("editor.share"), onClick: () => setSharing(true) },
+      });
+    }
+  }, [start, source, system, dispatch, tLibrary]);
 
   // DC-2: hold the unsaved changes while they exist, under the saved name («» for a new record).
-  const heldName = saved?.name ?? "";
+  const heldName = saved === null ? "" : builtinName(saved, locale);
   useEffect(() => {
     if (changed && !gone) leaveGuard.hold(heldName);
     else leaveGuard.release();
@@ -305,7 +288,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
         const nextPage = system ? adminRecordPath("library", created.id) : recordPath(created.id);
         // The new page's editor takes what it shows: «Сохранено», the way back, or MC-18's notice of a company record.
         handOnCreated(nextPage);
-        if (!system) toast.success(TEXT.created(created.kind));
+        if (!system) toast.success(tLibrary("editor.created", { kind: created.kind }));
         // The form is saved: nothing is held, so the new address replaces this one without a question.
         leaveGuard.release();
         router.replace(nextPage);
@@ -358,27 +341,32 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   async function offerUpdateThere(agent: AgentRecord): Promise<void> {
     const workflows = await workflowsUsing(agent.id, libraryIndex);
     if (workflows.length === 0) return;
+    // MC-13: the saved agent is the source of executors in the author's own workflows.
     toast(
-      TEXT.usedIn(
-        agent.name,
-        workflows.map((workflow) => workflow.name),
-      ),
-      { action: { label: TEXT.updateThere, onClick: () => void updateThere(agent, workflows) } },
+      tLibrary("editor.usedIn", {
+        name: builtinName(agent, locale),
+        workflows: workflows.map((workflow) => builtinName(workflow, locale)).join(", "),
+      }),
+      { action: { label: tLibrary("editor.updateThere"), onClick: () => void updateThere(agent, workflows) } },
     );
   }
 
   async function updateThere(agent: AgentRecord, workflows: readonly WorkflowRecord[]): Promise<void> {
     const results = await updateWorkflows({ agent, workflows, allowedServers: choices.servers, libraryIndex });
     const namesOf = (outcome: "updated" | "failed"): string[] =>
-      results.filter((result) => result.outcome === outcome).map((result) => result.workflow.name);
+      results.filter((result) => result.outcome === outcome).map((result) => builtinName(result.workflow, locale));
     const updated = namesOf("updated");
     const failed = namesOf("failed");
     // MC-13: the systems the new version did not bring in, named as «Взять новую версию» names them.
     const dropped = [...new Set(results.flatMap((result) => (result.outcome === "updated" ? result.dropped : [])))];
     if (updated.length > 0) {
-      toast.success(TEXT.updated(updated), dropped.length === 0 ? undefined : { description: droppedServersText(dropped) });
+      toast.success(
+        tLibrary("editor.updated", { workflows: updated.join(", ") }),
+        dropped.length === 0 ? undefined : { description: tLibrary("droppedServers", { servers: dropped.join(", ") }) },
+      );
     }
-    if (failed.length > 0) toast.error(TEXT.notUpdated(failed));
+    // Not in MC-13: some workflows refused the update (a conflict among them), and MC-13 has no text for it.
+    if (failed.length > 0) toast.error(tLibrary("editor.notUpdated", { workflows: failed.join(", ") }));
   }
 
   /** The checks before sending: a field error stops the save and takes the focus. */
@@ -411,7 +399,9 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   };
 
   const withRestore = (): void => {
-    toast(TEXT.discarded, { action: { label: TEXT.restore, onClick: () => dispatch({ type: "restore" }) } });
+    toast(tLibrary("editor.discarded"), {
+      action: { label: tLibrary("editor.restore"), onClick: () => dispatch({ type: "restore" }) },
+    });
   };
 
   const discard = (): void => {
@@ -439,7 +429,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
     }
   };
 
-  const title = record?.name ?? TEXT.newTitle(values.kind);
+  const title = record === null ? tLibrary("editor.newTitle", { kind: values.kind }) : builtinName(record, locale);
   // The panel offers no «Использовать в чате» and no owner's launch hint (record-editor.md, «Системная»).
   const usable = !system && record !== null && canUseInChat(record);
   const everyoneGets = system && record !== null && (record.audience.everyone === true || record.builtinKey === CHAT_BUILTIN_KEY);
@@ -449,7 +439,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
       : describeLibraryError(t, conflictError, {
           where: "editor",
           admin: system,
-          changedFields: view.conflict.fields.map((field) => field.label),
+          changedFields: view.conflict.fields.map((field) => changedFieldLabel(tLibrary, field)),
         }).text;
 
   return (
@@ -457,7 +447,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
       <PageHeader
         title={title}
         area={system ? PANEL_TITLE : undefined}
-        parent={system ? sectionParent("library") : { title: TEXT.library, href: libraryPath() }}
+        parent={system ? sectionParent("library") : { title: tLibrary("screen.title"), href: libraryPath() }}
       >
         {record !== null && (
           <EditorHeaderActions
@@ -481,7 +471,10 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
             {record !== null && (
               <div className="flex flex-col gap-1">
                 <RecordLabel variant="under" summary={record} showSource={false} />
-                {usable && <p className="text-muted-foreground text-sm leading-5">{ownLaunchHint(record.kind)}</p>}
+                {usable && (
+                  // MC-6 under the header of one's own saved record.
+                  <p className="text-muted-foreground text-sm leading-5">{tLibrary("editor.launchHint", { kind: record.kind })}</p>
+                )}
                 {copy.error !== null && (
                   <p id={copyErrorId} role="alert" className="text-destructive text-xs leading-4">
                     {copy.error}
@@ -532,7 +525,9 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
         </div>
         {everyoneGets && record !== null && (
           // MC-18, above the save panel: who gets the change.
-          <p className={cn(CAPTION, "mx-auto w-full max-w-180 px-4 pb-2 text-muted-foreground")}>{TEXT.everyoneGets(record.kind)}</p>
+          <p className={cn(CAPTION, "mx-auto w-full max-w-180 px-4 pb-2 text-muted-foreground")}>
+            {tLibrary("editor.everyoneGets", { kind: record.kind })}
+          </p>
         )}
         <SavePanel
           status={view.status}

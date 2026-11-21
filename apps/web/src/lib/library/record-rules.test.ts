@@ -1,8 +1,10 @@
 import type { AgentContent, MissingRight, WorkflowContent, WorkflowExecutor } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
+import { testTranslator } from '@/test/intl';
 import {
   canUseInChat,
   changedAfterRun,
+  changedFieldLabel,
   changedFields,
   freeName,
   isDraftStale,
@@ -10,6 +12,11 @@ import {
   taskTitleName,
   type RecordDefinition,
 } from './record-rules';
+
+const t = testTranslator('library');
+/** Changed fields as the form names them, from the Russian catalogue. */
+const labelsOf = (before: RecordDefinition, after: RecordDefinition): string[] =>
+  changedFields(before, after).map((field) => changedFieldLabel(t, field));
 
 const MODEL = 'anthropic/claude-haiku-4-5';
 const SOURCE_ID = '7f3c1a52-4b8e-4c1d-9a0e-2d6b5f8e1c40';
@@ -133,9 +140,9 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
     ],
 
     // Заголовок задания — MC-21
-    ['task title: record in the list → with its name', () => taskTitleName(SOURCE_ID, index), 'Задание · Разбор инцидента'],
-    ['task title: record not in the list → «Задание»', () => taskTitleName('c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index), 'Задание'],
-    ['task title: list not read → «Задание»', () => taskTitleName(SOURCE_ID, { summaryOf: () => undefined }), 'Задание'],
+    ['task title: record in the list → with its name', () => taskTitleName(t, SOURCE_ID, index), 'Задание · Разбор инцидента'],
+    ['task title: record not in the list → «Задание»', () => taskTitleName(t, 'c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f', index), 'Задание'],
+    ['task title: list not read → «Задание»', () => taskTitleName(t, SOURCE_ID, { summaryOf: () => undefined }), 'Задание'],
 
     // Свободное имя
     ['free name: nothing taken → «{имя} 2»', () => freeName('Сбор логов', ['Сбор логов']), 'Сбор логов 2'],
@@ -153,43 +160,28 @@ describe('web rules (design-web.md, «Правила веба»)', () => {
     ],
     [
       'changed fields: agent name and instruction',
-      () => changedFields(agent(), agent({ prompt: 'Собери ошибки и тикеты' }, 'Сбор логов и тикетов')),
-      [
-        { field: 'name', label: 'Имя' },
-        { field: 'prompt', label: 'Инструкция' },
-      ],
+      () => labelsOf(agent(), agent({ prompt: 'Собери ошибки и тикеты' }, 'Сбор логов и тикетов')),
+      ['Имя', 'Инструкция'],
     ],
     [
       'changed fields: workflow executor changed, added and removed',
       () =>
-        changedFields(
+        labelsOf(
           workflow(),
           workflow({
             executors: [executor('Сбор логов', { role: 'Собирает ошибки gateway' }), executor('Сбор тикетов')],
             finalExecutor: null,
           }),
         ),
-      [
-        { field: 'executor', executor: 'Сбор логов', label: 'Исполнитель «Сбор логов»' },
-        { field: 'executor', executor: 'Сбор тикетов', label: 'Исполнитель «Сбор тикетов»' },
-        { field: 'executor', executor: 'Ответ', label: 'Исполнитель «Ответ»' },
-        { field: 'finalExecutor', label: 'Кто пишет ответ' },
-      ],
+      ['Исполнитель «Сбор логов»', 'Исполнитель «Сбор тикетов»', 'Исполнитель «Ответ»', 'Кто пишет ответ'],
     ],
     [
       'changed fields: workflow name and coordinator rules',
-      () => changedFields(workflow(), workflow({ coordinator: { rules: 'Ответ ждёт сбор', model: MODEL, maxTurns: 40 } }, 'Инцидент')),
-      [
-        { field: 'name', label: 'Имя' },
-        { field: 'rules', label: 'Как работает команда' },
-      ],
+      () => labelsOf(workflow(), workflow({ coordinator: { rules: 'Ответ ждёт сбор', model: MODEL, maxTurns: 40 } }, 'Инцидент')),
+      ['Имя', 'Как работает команда'],
     ],
     // AC-10.1, DC-1: without the field the form stays clean after the tick, and the flag is never saved.
-    [
-      'changed fields: workflow self-learning only',
-      () => changedFields(workflow(), workflow({ selfLearning: true })),
-      [{ field: 'selfLearning', label: 'Самообучение' }],
-    ],
+    ['changed fields: workflow self-learning only', () => labelsOf(workflow(), workflow({ selfLearning: true })), ['Самообучение']],
   ])('%s', (_, decide, expected) => {
     expect(decide()).toEqual(expected);
   });

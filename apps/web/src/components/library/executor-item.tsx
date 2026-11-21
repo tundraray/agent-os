@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatRecordModel } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
 import { libraryApi } from "@/lib/library/library-api";
-import { droppedServersText, failureReason } from "@/lib/library/library-errors";
+import { failureReason } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
 import type { AgentRecord } from "@/lib/library/update-workflows";
 import { cn } from "cn";
@@ -80,6 +80,7 @@ export function ExecutorItem({
   onRoleChange,
 }: ExecutorItemProps) {
   const id = useId();
+  const tLibrary = useTranslations("library");
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
   const [taking, setTaking] = useState(false);
@@ -215,7 +216,7 @@ export function ExecutorItem({
           {takeError}
         </p>
       )}
-      {dropped.length > 0 && <p className={cn(CAPTION, "text-muted-foreground")}>{droppedServersText(dropped)}</p>}
+      {dropped.length > 0 && <p className={cn(CAPTION, "text-muted-foreground")}>{tLibrary("droppedServers", { servers: dropped.join(", ") })}</p>}
     </li>
   );
 }

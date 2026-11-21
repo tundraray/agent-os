@@ -235,6 +235,7 @@ export function DecisionButton({
 function TaskHeading({ workflowId }: { workflowId: string }) {
   const { libraryIndex } = useShellServices();
   const locale = useLocale();
+  const tLibrary = useTranslations("library");
   // Subscribes to the list: the title follows a read that lands after the card.
   useStore(libraryIndex, (state) => state.records);
   const found = libraryIndex.summaryOf(workflowId);
@@ -242,7 +243,7 @@ function TaskHeading({ workflowId }: { workflowId: string }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <h3 className="text-base leading-6 font-semibold break-words">
-        {taskTitleName(workflowId, { summaryOf: () => live })}
+        {taskTitleName(tLibrary, workflowId, { summaryOf: () => live })}
       </h3>
       {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
     </div>

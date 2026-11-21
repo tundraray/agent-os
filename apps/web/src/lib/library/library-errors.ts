@@ -27,11 +27,6 @@ export function kindWord(kind: RecordKind, capital = false): string {
   return capital ? word.charAt(0).toUpperCase() + word.slice(1) : word;
 }
 
-/** MC-13 (and the MC-4 notice): systems that did not come in, because the author has no access to them. */
-export const DROPPED_SERVERS = 'Не вошли системы, к которым у вас нет доступа:';
-
-export const droppedServersText = (servers: readonly string[]): string => `${DROPPED_SERVERS} ${servers.join(', ')}`;
-
 /** MC-14: why «Поделиться» is unavailable on the owner's record; `null` — it is available. */
 export function shareBlockedReason(t: ErrorsTranslator, record: Pick<RecordSummary, 'ban'>, noRoles: boolean): string | null {
   if (record.ban !== null) return t('library.shareBlocked.banned');
