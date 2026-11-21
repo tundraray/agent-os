@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { catalogModel, modelProviderView } from '@/test/fixtures';
-import { modelOptions, modelUnavailableReason } from './model-providers';
+import { testTranslator } from '@/test/intl';
+import { modelOptionName, modelOptions, modelUnavailableReason } from './model-providers';
 
 const providers = [
   modelProviderView({ name: 'anthropic' }),
@@ -16,6 +17,8 @@ const catalog = [
 ];
 
 const readiness = (modelId: string) => modelUnavailableReason(modelId, providers);
+
+const t = testTranslator('admin.models');
 
 // AC-13.3, AC-14.1: a model of a provider that does not work gets its reason; purposes never mix; order is provider, then title.
 describe('model readiness and choice options (KD-5, UC-3)', () => {
@@ -35,9 +38,14 @@ describe('model readiness and choice options (KD-5, UC-3)', () => {
       provider: 'google',
       dimensions: 768,
       label: 'Gemini Embedding · google · 768',
-      accessibleName: 'Gemini Embedding, провайдер google',
       unavailableReason: 'provider_disabled',
     }]],
+    ['the option name for a screen reader, with the short reason of a model that does not work', () =>
+      modelOptions(catalog, 'chat', readiness).map((option) => modelOptionName(t, option)), [
+      'Claude Haiku 4.5, провайдер anthropic',
+      'Claude Sonnet 4.5, провайдер anthropic',
+      'Gemini 2.5 Flash, провайдер google, провайдер выключен',
+    ]],
   ])('%s', (_name, actual, expected) => {
     expect(actual()).toEqual(expected);
   });

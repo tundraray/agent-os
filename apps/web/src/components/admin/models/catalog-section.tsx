@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react';
 import { BoxIcon, PlusIcon } from 'lucide-react';
-import { useFormatter } from 'next-intl';
+import { useFormatter, useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
   AccessErrorCode,
@@ -15,8 +15,7 @@ import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import type { Resource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
-import { MODEL_DIALOG_TEXT, MODELS_TEXT } from '@/lib/admin/admin-texts';
-import { modelUnavailableReason } from '@/lib/admin/model-providers';
+import { modelUnavailableReason, type ModelsTranslator } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
 import type { Formatter } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
@@ -26,53 +25,26 @@ import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { ModelDialog, PRICES } from './model-dialog';
 
-/**
- * UXRD enterprise-access MC-30 and model-providers MC-7; the removal body carries the plan's Notes 6 change:
- * personal denies on the model are removed with it, so the text names them.
- */
-const TEXT = {
-  model: 'Модель',
-  noProvider: 'Нет провайдера',
-  remove: 'Убрать из каталога',
-  above: (threshold: string) => `свыше ${threshold} входных токенов`,
-  newPrices: 'Новые цены действуют для следующих вызовов. Прошлые стоимости не пересчитываются.',
-  removeTitle: (name: string) => `Убрать модель «${name}» из каталога?`,
-  removeBody:
-    'Все права и личные запреты на эту модель будут удалены. Агенты больше не смогут её выбрать, а работающие на ней завершатся сбоем «модель не подключена».',
-  defaultChat: 'Это модель чата по умолчанию: пока вы не выберете другую, чат не отвечает.',
-  defaultEmbedding:
-    'Это модель эмбеддингов по умолчанию: пока вы не выберете другую, отбор по смыслу в самообучении выключен.',
-  empty: 'Каталог пуст',
-  emptyDescription: 'Добавьте модель, чтобы агенты могли работать.',
-  emptyNoProviders: 'Сначала добавьте провайдера, потом его модели.',
-  // Not in the UXRD: the read failure follows the shell's «Не удалось …» texts, as in «Роли».
-  loadFailed: 'Не удалось загрузить каталог моделей',
-  // Not in MC-30: the notice of a removal, after «Роль удалена».
-  removed: 'Модель убрана из каталога',
-} as const;
-
-const COLUMNS: readonly DataTableColumn[] = [
-  { header: TEXT.model },
-  { header: MODEL_DIALOG_TEXT.provider },
-  { header: MODEL_DIALOG_TEXT.purpose },
-  ...PRICES.map(({ label }) => ({ header: label, align: 'end' as const })),
-];
-
 const priceCells = (format: Formatter, prices: PriceRates): string[] =>
-  PRICES.map(({ field }) => format.number(prices[field], 'usdPrice'));
+  PRICES.map((field) => format.number(prices[field], 'usdPrice'));
 
 /** An embedding model has the input price only: output and both cache prices read «—» (MP-03). */
 const embeddingPriceCells = (format: Formatter, inputUsdPerMTok: number): string[] =>
-  PRICES.map(({ field }) => (field === 'inputUsdPerMTok' ? format.number(inputUsdPerMTok, 'usdPrice') : '—'));
+  PRICES.map((field) => (field === 'inputUsdPerMTok' ? format.number(inputUsdPerMTok, 'usdPrice') : '—'));
 
 /** MP-03: the catalogue by id, so the models of one provider stand together. */
-const byId = (models: readonly CatalogModel[]): CatalogModel[] => [...models].sort((a, b) => a.id.localeCompare(b.id));
+const byId = (models: readonly CatalogModel[], locale: string): CatalogModel[] =>
+  [...models].sort((a, b) => a.id.localeCompare(b.id, locale));
 
-/** MC-7: the consequence added to the removal of a default model. */
-function removeBodyOf(model: CatalogModel, defaults: ModelDefaults | undefined): string {
-  if (defaults?.chatModel === model.id) return `${TEXT.removeBody} ${TEXT.defaultChat}`;
-  if (defaults?.embeddingModel === model.id) return `${TEXT.removeBody} ${TEXT.defaultEmbedding}`;
-  return TEXT.removeBody;
+/**
+ * enterprise-access MC-30 with model-providers MC-7: the removal body names the personal denies removed with
+ * the model, and a default model adds its consequence.
+ */
+function removeBodyOf(t: ModelsTranslator, model: CatalogModel, defaults: ModelDefaults | undefined): string {
+  const body = t('catalog.removeBody');
+  if (defaults?.chatModel === model.id) return `${body} ${t('catalog.defaultChat')}`;
+  if (defaults?.embeddingModel === model.id) return `${body} ${t('catalog.defaultEmbedding')}`;
+  return body;
 }
 
 /** One line of text in a column that gives way: cut at the end, whole in the tooltip. */
@@ -103,6 +75,9 @@ type CatalogSectionProps = {
  * «Убрать из каталога». The data come from `ModelsScreen`.
  */
 export function CatalogSection({ catalog, providers, defaults, reloadAll }: CatalogSectionProps) {
+  const t = useTranslations('admin.models');
+  const tPrice = useTranslations('admin.models.dialog.price');
+  const locale = useLocale();
   const headingId = useId();
   const format = useFormatter();
   const needsProviderId = useId();
@@ -120,7 +95,7 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
     } finally {
       reloadAll();
     }
-    toast.success(TEXT.removed);
+    toast.success(t('catalog.removed'));
   };
 
   const providerCell = (model: CatalogModel) => {
@@ -128,10 +103,17 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
     return (
       <span key="provider" className="flex items-center gap-2">
         <Truncated text={model.provider} />
-        {missing && <StateBadge state="action">{TEXT.noProvider}</StateBadge>}
+        {missing && <StateBadge state="action">{t('catalog.noProvider')}</StateBadge>}
       </span>
     );
   };
+
+  const columns: readonly DataTableColumn[] = [
+    { header: t('catalog.model') },
+    { header: t('dialog.provider') },
+    { header: t('dialog.purpose') },
+    ...PRICES.map((field) => ({ header: tPrice(field), align: 'end' as const })),
+  ];
 
   const toRow = (model: CatalogModel): DataTableRow => ({
     key: model.id,
@@ -146,7 +128,7 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
         </span>
       </span>,
       providerCell(model),
-      model.purpose === 'chat' ? MODEL_DIALOG_TEXT.chat : `${MODEL_DIALOG_TEXT.embedding} · ${model.dimensions}`,
+      model.purpose === 'chat' ? t('dialog.chat') : t('catalog.embeddingPurpose', { dimensions: model.dimensions }),
       ...(model.purpose === 'chat' ? priceCells(format, model.prices) : embeddingPriceCells(format, model.inputUsdPerMTok)),
     ],
     nested:
@@ -156,7 +138,10 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
             {
               key: `${model.id}:long`,
               cells: [
-                <Truncated key="above" text={TEXT.above(format.number(model.longContext.aboveInputTokens))} />,
+                <Truncated
+                  key="above"
+                  text={t('catalog.above', { threshold: format.number(model.longContext.aboveInputTokens) })}
+                />,
                 '',
                 '',
                 ...priceCells(format, model.longContext.prices),
@@ -164,14 +149,18 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
             },
           ],
     actions: [
-      { label: MODEL_DIALOG_TEXT.edit, onSelect: () => setEditing({ open: true, model }) },
-      { label: TEXT.remove, onSelect: () => setRemoving({ open: true, model }) },
+      { label: t('dialog.edit'), onSelect: () => setEditing({ open: true, model }) },
+      { label: t('catalog.remove'), onSelect: () => setRemoving({ open: true, model }) },
     ],
   });
 
-  const state = resourceTableState(catalog, TEXT.loadFailed, (data) => ({
-    rows: byId(data).map(toRow),
-    empty: { Icon: BoxIcon, title: TEXT.empty, description: noProviders ? TEXT.emptyNoProviders : TEXT.emptyDescription },
+  const state = resourceTableState(catalog, t('catalog.loadFailed'), (data) => ({
+    rows: byId(data, locale).map(toRow),
+    empty: {
+      Icon: BoxIcon,
+      title: t('catalog.empty'),
+      description: noProviders ? t('catalog.emptyNoProviders') : t('catalog.emptyDescription'),
+    },
   }));
 
   const removed = removing.model;
@@ -181,7 +170,7 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
       {/* Below 768 px the button goes on its own line under the heading. */}
       <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:justify-between">
         <h2 id={headingId} className="text-base leading-6 font-semibold">
-          {MODELS_TEXT.catalogTitle}
+          {t('catalogTitle')}
         </h2>
         <Button
           type="button"
@@ -190,27 +179,27 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
           className={cn(CONTROL_SIZE, 'aria-disabled:opacity-50')}
           aria-disabled={noProviders || undefined}
           aria-describedby={noProviders ? needsProviderId : undefined}
-          title={noProviders ? MODELS_TEXT.addModelNeedsProvider : undefined}
+          title={noProviders ? t('addModelNeedsProvider') : undefined}
           onClick={() => {
             if (!noProviders) setEditing({ open: true, model: null });
           }}
         >
           <PlusIcon aria-hidden />
-          {MODELS_TEXT.addModel}
+          {t('addModel')}
           {noProviders && (
             <span id={needsProviderId} className="sr-only">
-              {MODELS_TEXT.addModelNeedsProvider}
+              {t('addModelNeedsProvider')}
             </span>
           )}
         </Button>
       </div>
       {(catalog.data?.length ?? 0) > 0 && (
         <div className={cn(CAPTION, 'flex flex-col text-muted-foreground')}>
-          <p>{MODEL_DIALOG_TEXT.priceUnit}</p>
-          <p>{TEXT.newPrices}</p>
+          <p>{t('dialog.priceUnit')}</p>
+          <p>{t('catalog.newPrices')}</p>
         </div>
       )}
-      <DataTable caption={MODELS_TEXT.catalogTitle} columns={COLUMNS} state={state} actionsAs="menu" />
+      <DataTable caption={t('catalogTitle')} columns={columns} state={state} actionsAs="menu" />
       <ModelDialog
         open={editing.open}
         onOpenChange={(open) => setEditing((current) => ({ ...current, open }))}
@@ -223,9 +212,9 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
         <ConfirmDialog
           open={removing.open}
           onOpenChange={(open) => setRemoving((current) => ({ ...current, open }))}
-          title={TEXT.removeTitle(removed.name)}
-          body={removeBodyOf(removed, defaults)}
-          confirmLabel={TEXT.remove}
+          title={t('catalog.removeTitle', { name: removed.name })}
+          body={removeBodyOf(t, removed, defaults)}
+          confirmLabel={t('catalog.remove')}
           onConfirm={() => removeModel(removed)}
           logEvent="admin: model remove"
           // The row and its «⋯», which opened the dialog, leave with the model.

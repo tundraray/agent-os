@@ -30,7 +30,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { MODEL_UNAVAILABLE_SHORT_TEXT, modelOptions, type ModelOption } from "@/lib/admin/model-providers";
+import {
+  modelOptionName,
+  modelOptions,
+  unavailableShortText,
+  type ModelOption,
+  type ModelsTranslator,
+} from "@/lib/admin/model-providers";
 import { formatModel, formatRecordModel } from "@/lib/agents/format";
 import type { FormatsTranslator } from "@/lib/i18n/formats";
 import type { RecordDefinition } from "@/lib/library/record-rules";
@@ -502,12 +508,12 @@ type FieldOption = {
   mark: string | null;
 };
 
-const fieldOptionOf = (option: ModelOption): FieldOption => ({
+const fieldOptionOf = (tModels: ModelsTranslator, option: ModelOption): FieldOption => ({
   value: option.value,
   label: option.label,
   name: option.name,
   provider: option.provider,
-  accessibleName: option.accessibleName,
+  accessibleName: modelOptionName(tModels, option),
   mark: null,
 });
 
@@ -517,6 +523,7 @@ const fieldOptionOf = (option: ModelOption): FieldOption => ({
  */
 function ownOption(
   t: FormatsTranslator,
+  tModels: ModelsTranslator,
   unavailable: string,
   model: string | null,
   choices: EditorChoices,
@@ -533,8 +540,7 @@ function ownOption(
     return { value: model, label, name: label, provider: null, accessibleName: undefined, mark: unavailable };
   }
   if (own.unavailableReason === null) return null;
-  const reason = MODEL_UNAVAILABLE_SHORT_TEXT[own.unavailableReason];
-  return { ...fieldOptionOf(own), accessibleName: `${own.accessibleName}, ${reason}`, mark: reason };
+  return { ...fieldOptionOf(tModels, own), mark: unavailableShortText(tModels, own.unavailableReason) };
 }
 
 /**
@@ -545,11 +551,12 @@ function ownOption(
 export function ModelField({ id, label, model, choices, error, onChange }: ModelFieldProps) {
   const t = useTranslations("formats");
   const tLibrary = useTranslations("library");
+  const tModels = useTranslations("admin.models");
   const all = chatOptions(choices.models ?? []);
-  const own = ownOption(t, tLibrary("agentFields.unavailable"), model, choices, all);
+  const own = ownOption(t, tModels, tLibrary("agentFields.unavailable"), model, choices, all);
   const options = [
     ...(own === null ? [] : [own]),
-    ...all.filter((option) => option.unavailableReason === null).map(fieldOptionOf),
+    ...all.filter((option) => option.unavailableReason === null).map((option) => fieldOptionOf(tModels, option)),
   ];
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;

@@ -17,29 +17,6 @@ import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow 
 import { GrantDialog, type GrantHolderRef } from './grant-dialog';
 import { QuotaDialog } from './quota-dialog';
 
-/** UXRD MC-24, MC-25, MC-26 and MC-20 («Убрать»). */
-const TEXT = {
-  roleTitle: 'Права',
-  userTitle: 'Личные права и запреты',
-  addRoleGrant: 'Добавить право',
-  addAllow: 'Право',
-  addDeny: 'Запрет',
-  allow: 'Право',
-  deny: 'Запрет',
-  noQuota: 'без квоты',
-  notApplicable: '—',
-  orphan: 'Нет в реестре',
-  changeQuota: 'Изменить квоту',
-  remove: 'Убрать',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
-  loadFailed: 'Не удалось загрузить права',
-  // Not in the UXRD, which draws no empty state for the rights.
-  emptyRole: 'Прав нет',
-  emptyUser: 'Прав и запретов нет',
-} as const;
-
-const COLUMNS: readonly DataTableColumn[] = [{ header: 'Цель' }, { header: 'Вид' }, { header: 'Квота', align: 'end' }];
-
 const isModelAllow = (grant: Grant): boolean => grant.effect === 'allow' && grant.target.kind === 'model';
 
 const holderQuery = (holder: GrantHolderRef): { roleId: string } | { userId: string } =>
@@ -63,6 +40,7 @@ async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
  * A grant whose server or tool left the registry is an orphan row (GR-02) with «Убрать» only.
  */
 export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
+  const t = useTranslations('admin.grants');
   const tErrors = useTranslations('errors');
   const headingId = useId();
   const format = useFormatter();
@@ -146,29 +124,36 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         )
       : new Set<string>();
 
+  // UXRD MC-24, MC-26.
+  const columns: readonly DataTableColumn[] = [
+    { header: t('target') },
+    { header: t('kind') },
+    { header: t('quotaColumn'), align: 'end' },
+  ];
+
   const toRow = (grant: Grant): DataTableRow => {
     const orphan = orphans.has(grant.id);
     const target = grantTargetText(grant.target);
-    const removeAction = { label: TEXT.remove, onSelect: () => void remove(grant), pending: rowState.pending.has(grant.id) };
+    const removeAction = { label: t('remove'), onSelect: () => void remove(grant), pending: rowState.pending.has(grant.id) };
     return {
       key: grant.id,
       name: target,
       cells: [
         <TargetCell key="target" grant={grant} text={target} orphan={orphan} />,
         <StateBadge key="effect" state={grant.effect === 'allow' ? 'ok' : 'closed'}>
-          {grant.effect === 'allow' ? TEXT.allow : TEXT.deny}
+          {grant.effect === 'allow' ? t('allow') : t('deny')}
         </StateBadge>,
-        isModelAllow(grant) ? (grant.quotaUsd === null ? TEXT.noQuota : format.number(grant.quotaUsd, 'usdQuota')) : TEXT.notApplicable,
+        isModelAllow(grant) ? (grant.quotaUsd === null ? t('noQuota') : format.number(grant.quotaUsd, 'usdQuota')) : t('notApplicable'),
       ],
       actions:
         !orphan && isModelAllow(grant)
-          ? [{ label: TEXT.changeQuota, onSelect: () => openQuota(grant) }, removeAction]
+          ? [{ label: t('changeQuota'), onSelect: () => openQuota(grant) }, removeAction]
           : [removeAction],
       error: rowState.errors.get(grant.id),
     };
   };
 
-  const title = holder.kind === 'role' ? TEXT.roleTitle : TEXT.userTitle;
+  const title = holder.kind === 'role' ? t('roleTitle') : t('userTitle');
   // The table waits for both reads: the registry tells which rows are orphans.
   const state = resourceTableState(
     {
@@ -179,10 +164,10 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         servers.reload();
       },
     },
-    TEXT.loadFailed,
+    t('loadFailed'),
     (data) => ({
       rows: data.map(toRow),
-      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? TEXT.emptyRole : TEXT.emptyUser },
+      empty: { Icon: KeyRoundIcon, title: holder.kind === 'role' ? t('emptyRole') : t('emptyUser') },
     }),
   );
 
@@ -195,21 +180,21 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         <div className="flex gap-2">
           {holder.kind === 'role' ? (
             <AddButton disabled={!ready} onClick={() => openAdd('allow')}>
-              {TEXT.addRoleGrant}
+              {t('addAllow')}
             </AddButton>
           ) : (
             <>
               <AddButton disabled={!ready} onClick={() => openAdd('allow')}>
-                {TEXT.addAllow}
+                {t('allow')}
               </AddButton>
               <AddButton disabled={!ready} onClick={() => openAdd('deny')}>
-                {TEXT.addDeny}
+                {t('deny')}
               </AddButton>
             </>
           )}
         </div>
       </div>
-      <DataTable caption={title} columns={COLUMNS} state={state} actionsAs="menu" />
+      <DataTable caption={title} columns={columns} state={state} actionsAs="menu" />
       <GrantDialog
         open={adding}
         onOpenChange={changeAdding}
@@ -234,6 +219,7 @@ function AddButton({ disabled, onClick, children }: { disabled: boolean; onClick
 
 /** Servers and tools are technical names (Mono); an orphan's target is muted with «Нет в реестре» (GR-02). */
 function TargetCell({ grant, text, orphan }: { grant: Grant; text: string; orphan: boolean }) {
+  const t = useTranslations('admin.grants');
   const mono = grant.target.kind !== 'model';
   return (
     <span className="flex min-w-0 items-center gap-2">
@@ -243,7 +229,7 @@ function TargetCell({ grant, text, orphan }: { grant: Grant; text: string; orpha
       >
         {text}
       </span>
-      {orphan && <StateBadge state="off">{TEXT.orphan}</StateBadge>}
+      {orphan && <StateBadge state="off">{t('orphan')}</StateBadge>}
     </span>
   );
 }
