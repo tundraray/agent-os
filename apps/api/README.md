@@ -8,7 +8,7 @@ Run from the repository root, in this order:
 
 ```bash
 pnpm install
-pnpm db:up                                   # Postgres 16 from infra/docker-compose.yml (POSTGRES_PORT=5433 pnpm db:up when 5432 is taken)
+pnpm db:up                                   # only the postgres service of infra/docker-compose.yml, published on the host by infra/docker-compose.dev.yml (POSTGRES_PORT=5433 pnpm db:up when 5432 is taken)
 cp apps/api/.env.example apps/api/.env
 pnpm --filter api build                      # one bundle in apps/api/dist: the app, the packages' source, the CLI entries, the migrations
 pnpm --filter api db:migrate                 # applies the migrations; the app only checks them
@@ -75,7 +75,7 @@ Tests: `pnpm --filter api test` (unit) and `pnpm --filter api test:e2e` (needs P
 
 ## Docker image
 
-The image holds the API only, built from `apps/api/Dockerfile` with the repository root as the build context. `.dockerignore` keeps every `.env` out of it.
+The image holds the API only, built from `apps/api/Dockerfile` with the repository root as the build context. `.dockerignore` keeps every `.env` out of it. The whole platform from its images (Postgres, migrations, the API, the web) runs with `infra/docker-compose.yml`, as the root `README.md`, step 5, shows; the commands below run the API image alone.
 
 ```bash
 docker build -f apps/api/Dockerfile -t agent-os-api:local .
@@ -91,6 +91,7 @@ docker run -p 4000:4000 \
   agent-os-api:local
 ```
 
+- `FRONTEND_ORIGIN` is the address at which the browser opens the web (`http://localhost:3000` by default). The browser reaches the API through the web's `/api` forwarding, so this is also the address the API checks `Origin` against and, with no saved public address, saves as the public address.
 - `DATABASE_URL` is required. Model providers and their keys live in the database (set by `seed:access` or in the admin panel), never in the image; without a provider the server starts, but every model call is refused. The other variables of `.env.example` (`FRONTEND_ORIGIN`, `PORT`, `SENTRY_DSN`, `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `CODE_RUN_*`) are optional and passed the same way. Model prices live in the model catalogue in the database, not in the image. It does not carry the MCP fixture: the administrator registers real MCP servers in the registry, and under `NODE_ENV=production` (set in the image) a server or authorization address must be `https`.
 - Every request needs a session, as in local runs. Make the super-administrator once against the same database: `docker run --rm -i -e DATABASE_URL=... agent-os-api:local node dist/super-admin-cli.js --login admin --name Admin --email admin@example.com`, with the password on standard input.
 - The server runs as the user `node` under `tini` (the image's entrypoint), which passes signals to Node and reaps the child processes of code runs. No `--init` is needed.

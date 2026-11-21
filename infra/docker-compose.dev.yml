@@ -1,0 +1,6 @@
+# Overlay for running the apps from source: publishes Postgres on the host.
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d postgres   (pnpm db:up)
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"

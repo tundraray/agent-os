@@ -1,3 +1,7 @@
+# Agent OS from its images: Postgres, a one-off migration run, the API and the web.
+# Only the web is published; the browser reaches the API through the web's /api forwarding.
+# FRONTEND_ORIGIN and SENTRY_DSN come from the environment or from an uncommitted infra/.env.
+# `pnpm db:up` starts only Postgres, with its port published by docker-compose.dev.yml.
 services:
   postgres:
     image: pgvector/pgvector:pg16-trixie
@@ -5,9 +9,44 @@ services:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent_os
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agent", "-d", "agent_os"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The API only checks migrations at start and refuses pending ones, so they run first, once.
+  migrate:
+    image: ghcr.io/tundraray/agent-os-api:latest
+    command: ["node", "dist/migrate-cli.js"]
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent_os
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: ghcr.io/tundraray/agent-os-api:latest
+    environment:
+      DATABASE_URL: postgres://agent:agent@postgres:5432/agent_os
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/tundraray/agent-os-web:latest
+    environment:
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   pgdata:
