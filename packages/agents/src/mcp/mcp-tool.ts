@@ -20,6 +20,11 @@ export interface McpTool {
   readonly readOnly: boolean;
   /** The server's title of the tool and of its arguments, for the employee. */
   readonly display: ToolDisplay;
+  /**
+   * The result shape the server declared (`outputSchema` of `tools/list`), stored as declared; absent when the
+   * server declared none and in every list stored before shapes (tool-output-shapes KD-1).
+   */
+  readonly outputSchema?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -37,6 +42,7 @@ const StoredMcpToolSchema = z.object({
     toolTitle: z.string().optional(),
     argLabels: z.record(z.string(), z.string()).optional(),
   }),
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
 });
 
 const StoredMcpToolsSchema = z.array(StoredMcpToolSchema).nullable();
@@ -67,6 +73,7 @@ export function toMcpTool(serverId: string, listed: Tool): McpTool {
       ...(title === undefined ? {} : { toolTitle: title }),
       ...argLabelsOf(inputSchema),
     },
+    ...(listed.outputSchema === undefined ? {} : { outputSchema: listed.outputSchema }),
   };
 }
 

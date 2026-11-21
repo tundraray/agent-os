@@ -8,6 +8,7 @@ import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-list
 import { accountsOf } from '../mcp/mcp-accounts.repository';
 import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository';
 import { type McpTool, storedMcpTools } from '../mcp/mcp-tool';
+import { mcpToolDescription } from '../mcp/tool-shape';
 import type { JsonSchemaObject } from '../model/mastra-turn';
 import type { RecordLibrary } from '../start/record-library';
 import type { RunSnapshot } from '../start/snapshot';
@@ -240,7 +241,7 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
         (mcp): SessionTool => ({
           kind: 'mcp',
           name: mcp.name,
-          description: mcp.description,
+          description: mcpToolDescription(mcp),
           inputSchema: mcp.inputSchema,
           mcp,
         }),
