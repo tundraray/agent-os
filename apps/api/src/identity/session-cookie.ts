@@ -5,7 +5,10 @@ export const SESSION_COOKIE = 'aos_session';
 
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
 
-/** The web's origin: the CORS origin and the only `Origin` a changing request may carry (DC-3). */
+/**
+ * The web's origin: the address the browser opens Agent OS at, the only `Origin` a changing request
+ * may carry (DC-3), and the public address when none is saved (KD-3 of web-image).
+ */
 export function frontendOrigin(env: NodeJS.ProcessEnv = process.env): string {
   return env.FRONTEND_ORIGIN ?? DEFAULT_FRONTEND_ORIGIN;
 }

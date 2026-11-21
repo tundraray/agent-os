@@ -1,15 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import type {
-  SignInSettings,
-  UpdateSignInSettingsBody,
+import {
+  PublicUrlSchema,
+  type SignInSettings,
+  type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log';
 import { APP_LOGGER } from '../logging/app-logger';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { identityError } from './identity.errors';
-import { publicUrlOf, type AddressedRequest } from './public-url';
+import { frontendOrigin } from './session-cookie';
 import {
   readSettings,
   savePublicUrlIfUnset,
@@ -62,31 +63,32 @@ export class IdentitySettings {
   }
 
   /**
-   * The public address for an administrator's provider view or change (AC-03.4): the saved one,
-   * otherwise the address this administrator reached the API at, which is saved then (a concurrent
-   * first save keeps whichever came first). 409 PUBLIC_URL_REQUIRED when that address is no valid
-   * public address (e.g. `http` behind a TLS proxy): the administrator sets it in the sign-in settings.
+   * The public address for an administrator's provider view or change and for the MCP server
+   * registration and connect from the panel (KD-3): the saved one, otherwise `FRONTEND_ORIGIN`, which
+   * is saved then (a concurrent first save keeps whichever came first). The request's address is never
+   * used: behind the web's `/api` forwarding its Host is the API's internal address. 409
+   * PUBLIC_URL_REQUIRED when `FRONTEND_ORIGIN` is no valid public address (e.g. `http` on a host other
+   * than `localhost`): the administrator sets it in the sign-in settings.
    */
-  async publicUrlFor(request: AddressedRequest): Promise<string> {
+  async publicUrlFor(): Promise<string> {
     const saved = await this.savedPublicUrl();
     if (saved !== null) return saved;
-    const derived = publicUrlOf(request);
-    if (derived === undefined) {
-      this.logger.info('public url not derivable from request', {
-        protocol: request.protocol,
-        host: request.headers.host ?? null,
+    const candidate = frontendOrigin();
+    if (!PublicUrlSchema.safeParse(candidate).success) {
+      this.logger.info('frontend origin is no valid public url', {
+        frontendOrigin: candidate,
         outcome: 'rejected',
         reason: 'public_url_required',
       });
       throw identityError('PUBLIC_URL_REQUIRED');
     }
-    if (!(await savePublicUrlIfUnset(this.db, derived)))
-      return (await this.savedPublicUrl()) ?? derived;
-    this.logger.info('public url saved from request', {
-      publicUrl: derived,
+    if (!(await savePublicUrlIfUnset(this.db, candidate)))
+      return (await this.savedPublicUrl()) ?? candidate;
+    this.logger.info('public url saved from frontend origin', {
+      publicUrl: candidate,
       outcome: 'ok',
     });
-    return derived;
+    return candidate;
   }
 
   /** GET /api/admin/settings/sign-in (FR-26). */

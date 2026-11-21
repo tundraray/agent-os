@@ -68,10 +68,7 @@ import request, { type Response, type Test } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AccessService } from '../src/access/access.service';
 import { IdentityDirectory } from '../src/identity/identity-directory';
-import {
-  SESSION_COOKIE,
-  frontendOrigin,
-} from '../src/identity/session-cookie';
+import { SESSION_COOKIE, frontendOrigin } from '../src/identity/session-cookie';
 import {
   allowRole,
   grantTo,
@@ -1384,7 +1381,6 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
     'INT-3: a valid ID token from `google` or `oidc` opens one session on the one account of that email and leaves its roles alone, every replayed, foreign, expired, email-less or disabled attempt opens none and is audited, and no provider secret leaks',
     async () => {
       const { app, pool } = harness;
-      const apiAddress = apiOrigin(app);
       // Every provider secret of this file starts with the mark (`withGoogleProvider` too), so one needle finds any.
       const SECRET_MARK = 'e2e-secret-';
       const firstSecret = `${SECRET_MARK}okta-1-${randomUUID()}`;
@@ -1430,7 +1426,8 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
       let oktaId: string | undefined;
       try {
         // Row 1 (AC-03.4, DC-6, AC-03.1) - Given: no saved public URL; When: the administrator creates «Okta»;
-        // Then: the address the test reached the API at is saved and builds the return URL; the provider is
+        // Then: FRONTEND_ORIGIN, not the address the test reached the API at, is saved and builds the return URL
+        // (KD-3 of web-image: behind the web's forwarding the request's Host is the API's internal address); the provider is
         // disabled, cannot be enabled incomplete, an issuer that does not answer stores nothing, and the
         // saved secret is only «set»
         await expectBody(
@@ -1445,7 +1442,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         );
         oktaId = okta.id;
         createdProviderIds.add(okta.id);
-        expect((await getSettings()).publicUrl).toBe(apiAddress);
+        expect((await getSettings()).publicUrl).toBe(frontendOrigin());
         expect(okta).toEqual({
           id: okta.id,
           type: 'oidc',
@@ -1454,7 +1451,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
           complete: false,
           options: { clientId: null, issuer: null, clientSecretSet: false },
           providerData: {
-            redirectUri: `${apiAddress}/api/auth/oauth/${okta.id}/callback`,
+            redirectUri: `${frontendOrigin()}/api/auth/oauth/${okta.id}/callback`,
             scopes: 'openid email profile',
           },
         });

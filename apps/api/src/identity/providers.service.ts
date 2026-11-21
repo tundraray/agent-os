@@ -31,7 +31,6 @@ import {
   updateProvider,
   type Provider,
 } from './providers.repository';
-import type { AddressedRequest } from './public-url';
 
 /**
  * The provider fields an audit entry keeps. The secret appears only when the admin sent a new one,
@@ -91,19 +90,15 @@ export class ProvidersService {
   }
 
   /** One provider with the data for its registration at the provider. 404 PROVIDER_NOT_FOUND. */
-  async detail(
-    providerId: string,
-    request: AddressedRequest,
-  ): Promise<ProviderView> {
+  async detail(providerId: string): Promise<ProviderView> {
     const provider = await this.findOr404(providerId);
-    return this.toView(provider, await this.settings.publicUrlFor(request));
+    return this.toView(provider, await this.settings.publicUrlFor());
   }
 
   /** A disabled provider. 400 `unknown_type`, 409 PUBLIC_URL_REQUIRED, 422 PROVIDER_CHECK_FAILED. */
   async create(
     actorId: string,
     body: CreateProviderBody,
-    request: AddressedRequest,
   ): Promise<ProviderView> {
     const startedAt = Date.now();
     const type = parseProviderType(body.type);
@@ -113,7 +108,7 @@ export class ProvidersService {
       input: body.options,
       fetch: globalThis.fetch,
     });
-    const publicUrl = await this.settings.publicUrlFor(request);
+    const publicUrl = await this.settings.publicUrlFor();
     const provider = await this.db.transaction(async (tx) => {
       const created = await insertProvider(tx, {
         type,
@@ -150,7 +145,6 @@ export class ProvidersService {
     actorId: string,
     providerId: string,
     body: UpdateProviderBody,
-    request: AddressedRequest,
   ): Promise<ProviderView> {
     const startedAt = Date.now();
     const before = await this.findOr404(providerId);
@@ -175,7 +169,7 @@ export class ProvidersService {
       });
       throw identityError('PROVIDER_INCOMPLETE');
     }
-    const publicUrl = await this.settings.publicUrlFor(request);
+    const publicUrl = await this.settings.publicUrlFor();
     await this.db.transaction(async (tx) => {
       await updateProvider(tx, providerId, after);
       await this.recordChange(

@@ -26,11 +26,8 @@ export class AdminProvidersController {
 
   /** `ProviderView`; 404 PROVIDER_NOT_FOUND. */
   @Get(':id')
-  detail(
-    @Param('id') id: string,
-    @Req() req: AuthedRequest,
-  ): Promise<ProviderView> {
-    return this.providers.detail(id, req);
+  detail(@Param('id') id: string): Promise<ProviderView> {
+    return this.providers.detail(id);
   }
 
   /** 201 `ProviderView` of a disabled provider; 400 `unknown_type`, 422 PROVIDER_CHECK_FAILED. */
@@ -40,7 +37,7 @@ export class AdminProvidersController {
     body: CreateProviderBody,
     @Req() req: AuthedRequest,
   ): Promise<ProviderView> {
-    return this.providers.create(req.user.id, body, req);
+    return this.providers.create(req.user.id, body);
   }
 
   /** `ProviderView`; 404 PROVIDER_NOT_FOUND, 409 PROVIDER_INCOMPLETE, 422 PROVIDER_CHECK_FAILED. */
@@ -51,6 +48,6 @@ export class AdminProvidersController {
     body: UpdateProviderBody,
     @Req() req: AuthedRequest,
   ): Promise<ProviderView> {
-    return this.providers.update(req.user.id, id, body, req);
+    return this.providers.update(req.user.id, id, body);
   }
 }
