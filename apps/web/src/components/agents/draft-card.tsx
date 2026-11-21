@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useFormatter, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import type { DraftActionRequest, DraftView } from "@agent-os/contracts";
 import {
@@ -20,7 +21,7 @@ import { useInChat, useLeaveThenGo } from "@/components/library/use-in-chat";
 import { ShellLink } from "@/components/shell/shell-link";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
-import { formatTime } from "@/lib/agents/format";
+import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { describeDraftRefusal, describeLibraryError, kindWord } from "@/lib/library/library-errors";
 import { changedFields, definitionOf, freeName, isDraftStale } from "@/lib/library/record-rules";
 import { useLiveRecord } from "@/components/agents/run-card";
@@ -55,8 +56,8 @@ type Pressed = "save" | "saveAs" | "reject";
 type Outcome = { key: string; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a resolved draft; null while it waits. */
-function outcomeOf(draft: DraftView): Outcome | null {
-  const at = formatTime(draft.resolvedAt ?? draft.createdAt);
+function outcomeOf(draft: DraftView, format: Formatter): Outcome | null {
+  const at = formatListTime(format, draft.resolvedAt ?? draft.createdAt);
   switch (draft.state) {
     case "pending":
     case "superseded":
@@ -96,12 +97,14 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
   const edited = useLiveRecord(draft.recordId);
   const savedRecord = useLiveRecord(draft.savedRecordId);
   const [pressed, setPressed] = useState<Pressed | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ReactNode>(null);
   const [sharing, setSharing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const actedHere = useRef(false);
 
-  const outcome = outcomeOf(draft);
+  const format = useFormatter();
+  const t = useTranslations("errors");
+  const outcome = outcomeOf(draft, format);
 
   // After an action taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
   useEffect(() => {
@@ -136,13 +139,13 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     try {
       const answer = await onAction(action);
       if (answer?.state === "saved") {
-        announcer.getState().announce(TEXT.saved);
+        announcer.getState().announce("announce.saved");
         void libraryIndex.refresh();
       }
     } catch (cause) {
       // The store has logged the failure; the card keeps its buttons for a retry.
       actedHere.current = false;
-      setFailure(describeLibraryError(cause, { where: "editor", kind: draft.kind, name: draft.name }).text);
+      setFailure(describeLibraryError(t, cause, { where: "editor", kind: draft.kind, name: draft.name }).text);
     } finally {
       setPressed(null);
     }
@@ -165,7 +168,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
           {TEXT.status}
         </p>
         <time dateTime={draft.createdAt} className={cn(CAPTION, "shrink-0 tabular-nums")}>
-          {formatTime(draft.createdAt)}
+          {formatListTime(format, draft.createdAt)}
         </time>
       </div>
     ) : (
@@ -190,7 +193,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     const refusalText =
       refusal === null
         ? null
-        : describeDraftRefusal(refusal, {
+        : describeDraftRefusal(t, refusal, {
             kind: draft.kind,
             name: draft.name,
             model: draft.kind === "agent" ? (draft.content.model ?? undefined) : undefined,
@@ -314,7 +317,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
   );
 }
 
-function ErrorLine({ text, alert = false }: { text: string; alert?: boolean }) {
+function ErrorLine({ text, alert = false }: { text: ReactNode; alert?: boolean }) {
   return (
     <p role={alert ? "alert" : undefined} className="text-foreground flex items-start gap-1.5 text-sm leading-5">
       <CircleXIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />

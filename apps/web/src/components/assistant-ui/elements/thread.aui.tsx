@@ -45,7 +45,10 @@ import {
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
-import { chatFailureText } from "@/lib/access/access-texts";
+import { useTranslations } from "next-intl";
+import { replyFailureText } from "@/lib/access/access-texts";
+import { describeLibraryError } from "@/lib/library/library-errors";
+import type { ErrorsTranslator } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { recordPath } from "@/lib/shell-route";
 import type { SeedTarget } from "@/lib/threads/composer-seed";
@@ -620,7 +623,7 @@ const ThreadLoadEarlier: FC = () => {
   }, [visible]);
 
   useEffect(() => {
-    if (loading) announcer.getState().announce("Загружаем предыдущие сообщения…");
+    if (loading) announcer.getState().announce("announce.loadingEarlier");
   }, [loading, announcer]);
 
   return (
@@ -710,8 +713,9 @@ const returnedFailures = new WeakSet<object>();
  * `newThreadFailure` — the failure of a new conversation's first message: that conversation was removed,
  * so the composer without a feed shows it.
  */
-const useSendFailure = (newThreadFailure: SendFailure | null): string | null => {
+const useSendFailure = (newThreadFailure: SendFailure | null): ReactNode => {
   const aui = useAui();
+  const t = useTranslations("errors");
   const failure = useFeedSelector((state) => state.sendFailure, newThreadFailure);
 
   useEffect(() => {
@@ -721,7 +725,8 @@ const useSendFailure = (newThreadFailure: SendFailure | null): string | null => 
     aui.composer.setText(typed === "" ? failure.text : `${failure.text}\n${typed}`);
   }, [aui, failure]);
 
-  return failure === null ? null : (failure.notice ?? SEND_FAILED);
+  if (failure === null) return null;
+  return describeLibraryError(t, failure.cause, failure.context)?.text ?? SEND_FAILED;
 };
 
 /** Chips already announced (MC-19): a remounted composer, or the chip following a new conversation, stays quiet. */
@@ -758,7 +763,7 @@ const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: Se
   useEffect(() => {
     if (chip === null || announcedChips.has(chip)) return;
     announcedChips.add(chip);
-    announcer.getState().announce(`«${chip.name}» в поле сообщения — опишите задачу и отправьте`);
+    announcer.getState().announce("announce.chipInComposer", { name: chip.name });
   }, [announcer, chip]);
 
   const removeChip = (): void => {
@@ -890,14 +895,15 @@ const MessageError: FC = () => (
 );
 
 /** The text of a reply error: by the `ReplyErrorData` toFeed puts on the message, or the generic one. */
-function replyErrorText(error: unknown): string {
-  if (typeof error !== "object" || error === null) return chatFailureText(null, null);
+function replyErrorText(t: ErrorsTranslator, error: unknown): string {
+  if (typeof error !== "object" || error === null) return replyFailureText(t, null, null);
   const reason: unknown = Reflect.get(error, "reason");
   const model: unknown = Reflect.get(error, "model");
-  return chatFailureText(typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
+  return replyFailureText(t, typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
 }
 
 const ReplyErrorBlock: FC = () => {
+  const t = useTranslations("errors");
   const error = useAuiState((s) => (s.message.status?.type === "incomplete" ? s.message.status.error : undefined));
   return (
     <div
@@ -906,7 +912,7 @@ const ReplyErrorBlock: FC = () => {
     >
       <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
       <p role="alert" className="text-foreground line-clamp-2 min-w-0">
-        {replyErrorText(error)}
+        {replyErrorText(t, error)}
       </p>
     </div>
   );
@@ -1077,7 +1083,7 @@ const CopiedStatus: FC = () => {
   const { announcer } = useShellServices();
   const isCopied = useAuiState((s) => s.message.isCopied);
   useEffect(() => {
-    if (isCopied) announcer.getState().announce("Скопировано");
+    if (isCopied) announcer.getState().announce("announce.copied");
   }, [isCopied, announcer]);
   return null;
 };

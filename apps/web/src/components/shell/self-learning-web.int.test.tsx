@@ -509,7 +509,8 @@ describe('self-learning / web - integration (jsdom + MSW)', () => {
 
     // Assert (short row, Flow 3): the dialog stays open with MC-6; one DELETE and no re-read; the row is in place; the refusal is logged
     //   with numbers only
-    expect(await within(refused).findByText('Не удалось удалить: Knowledge store unavailable')).toBeInTheDocument();
+    // The server's text sits in its own lang="en" span, so the phrase is read as one block.
+    expect(await within(refused).findByRole('alert')).toHaveTextContent('Не удалось удалить: Knowledge store unavailable');
     expect(screen.getByRole('alertdialog', { name: 'Удалить запись?' })).toBe(refused);
     expect(knowledgeRequestsSince(api, mark)).toEqual([`DELETE ${KNOWLEDGE}/relations/3`]);
     expect(rowKeys(reread)).toEqual(['entity:2', 'entity:4', 'relation:3']);

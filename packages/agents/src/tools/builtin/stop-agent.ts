@@ -17,8 +17,6 @@ export function createStopAgentTool(deps: {
 }): OutsideAgentTool<StopAgentArgs> {
   return {
     name: 'stop_agent',
-    title: 'Остановить агента',
-    argLabels: { agentId: 'Агент' },
     description: 'Stop an agent you started (or one it started) together with the agents it started.',
     argsSchema: StopAgentArgsSchema,
     mode: 'outside',

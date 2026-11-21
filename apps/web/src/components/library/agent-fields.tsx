@@ -3,6 +3,7 @@
 import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { CheckIcon, ChevronRightIcon, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
@@ -30,7 +31,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MODEL_UNAVAILABLE_SHORT_TEXT, modelOptions, type ModelOption } from "@/lib/admin/model-providers";
-import { capitalize, formatModel, providerReasonText } from "@/lib/agents/format";
+import { formatModel, formatRecordModel } from "@/lib/agents/format";
+import type { FormatsTranslator } from "@/lib/i18n/formats";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
@@ -62,9 +64,6 @@ const TEXT = {
   // The banner shows only for a record with its own model: a record without one never lost it.
   modelGone: (model: string) => `Модель ${formatModel(model)} вам больше недоступна — агент не запустится`,
   noModels: (model: string) => `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — агент не запустится`,
-  /** model-providers UXRD MC-12 with the MC-9 words; `model` is the model's label. */
-  providerBroken: (reason: ModelUnavailableReason, model: string) =>
-    `${capitalize(providerReasonText(reason, model))} — агент не запустится`,
   replaceModel: (label: string) => `Заменить на ${label}`,
   enterName: "Введите имя",
   // Not in MC-8: the contract's name rule refuses control characters, which MC-8 has no text for.
@@ -80,7 +79,7 @@ export type AgentDefinition = Extract<RecordDefinition, { kind: "agent" }>;
 
 export type AgentField = "name" | "description" | "prompt" | "servers" | "model" | "maxTurns" | "agents";
 
-export type AgentFieldErrors = Partial<Record<AgentField, string>>;
+export type AgentFieldErrors = Partial<Record<AgentField, ReactNode>>;
 
 /**
  * `employee` — the owner in the library; `system` — the administrator on a company record in the panel:
@@ -306,7 +305,7 @@ type TextFieldProps = {
   multiline?: boolean;
   /** The instruction: Body 16 / 26, from eight lines high, scrolling inside from 768 px. */
   long?: boolean;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (value: string) => void;
 };
 
@@ -369,7 +368,7 @@ type ServersFieldProps = {
   choices: readonly string[];
   /** The administrator on a company record: «Все системы» above the list (MC-9). */
   allowAll?: boolean;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (servers: string[]) => void;
 };
 
@@ -460,6 +459,7 @@ function ModelBanner({
   choices: EditorChoices;
   onReplace: (model: string) => void;
 }) {
+  const tErrors = useTranslations("errors");
   // `null` is the default chat model, never one the author lost.
   if (model === null || choices.models === undefined) return null;
   const row = choices.models.find((option) => option.model === model);
@@ -467,7 +467,10 @@ function ModelBanner({
   const replacement = replacementModel(choices);
   const text =
     row !== undefined && row.unavailableReason !== null
-      ? TEXT.providerBroken(row.unavailableReason, formatModel(model, { models: choices.models }))
+      ? tErrors(`providerNotStarting.${row.unavailableReason}`, {
+          model: formatModel(model, { models: choices.models }),
+          kind: "agent",
+        })
       : replacement === null
         ? TEXT.noModels(model)
         : TEXT.modelGone(model);
@@ -495,7 +498,7 @@ type ModelFieldProps = {
   /** `null` — the record runs on the default chat model. */
   model: string | null;
   choices: EditorChoices;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (model: string) => void;
 };
 
@@ -526,10 +529,10 @@ const fieldOptionOf = (option: ModelOption): FieldOption => ({
  * The record's own model when it is not one of the offered (model-providers MP-08): no own model — the
  * default chat model; no right — custom-agents' mark; its provider does not work — the MC-8 short reason.
  */
-function ownOption(model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
+function ownOption(t: FormatsTranslator, model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
   const models = choices.models ?? [];
   if (model === null) {
-    const label = formatModel(null, { models, defaultModel: choices.defaultModel });
+    const label = formatRecordModel(t, null, { models, defaultModel: choices.defaultModel });
     return { value: null, label, name: label, provider: null, accessibleName: undefined, mark: null };
   }
   const own = options.find((option) => option.value === model);
@@ -548,8 +551,9 @@ function ownOption(model: string | null, choices: EditorChoices, options: readon
  * mark; a record without its own model shows the default chat model, and choosing another gives it its own.
  */
 export function ModelField({ id, label = TEXT.model, model, choices, error, onChange }: ModelFieldProps) {
+  const t = useTranslations("formats");
   const all = chatOptions(choices.models ?? []);
-  const own = ownOption(model, choices, all);
+  const own = ownOption(t, model, choices, all);
   const options = [
     ...(own === null ? [] : [own]),
     ...all.filter((option) => option.unavailableReason === null).map(fieldOptionOf),
@@ -623,7 +627,7 @@ export function MaxTurnsField({
   /** `null` — no hint. */
   hint?: string | null;
   value: number;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (value: number) => void;
 }) {
   const hintId = hint === null ? null : `${id}-hint`;
@@ -665,7 +669,7 @@ type AgentsFieldProps = {
   id: string;
   recordId: string | null;
   chosen: readonly string[];
-  error: string | undefined;
+  error: ReactNode;
   onChange: (agents: string[]) => void;
 };
 

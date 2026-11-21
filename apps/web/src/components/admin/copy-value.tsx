@@ -21,7 +21,7 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
   const [hinted, setHinted] = useState(false);
 
   useEffect(() => {
-    if (isCopied) announcer.getState().announce(COPY_TEXT.copied);
+    if (isCopied) announcer.getState().announce("announce.copied");
   }, [isCopied, announcer]);
 
   return (

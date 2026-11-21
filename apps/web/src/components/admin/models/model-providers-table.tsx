@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState } from 'react';
 import { PlugIcon, PlusIcon } from 'lucide-react';
+import { useFormatter } from 'next-intl';
 import { toast } from 'sonner';
 import {
   modelProvider,
@@ -23,12 +24,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import type { Resource } from '@/hooks/use-resource';
-import { formatModel, formatTime } from '@/lib/agents/format';
+import { formatModel } from '@/lib/agents/format';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { MODEL_PROVIDERS_TEXT as TEXT, MODELS_TEXT } from '@/lib/admin/admin-texts';
 import { PROVIDER_KIND_TEXT } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import { formatListTime } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
@@ -64,14 +66,14 @@ type DialogState = { open: boolean; provider: ModelProviderView | null };
 
 const CLOSED: DialogState = { open: false, provider: null };
 
-/** MC-6: the line under the row once the server answered the check. */
-function checkResultOf(name: string, { result, message }: ModelProviderCheck, checkedAt: Date): DataTableResult {
+/** MC-6: the line under the row once the server answered the check; `checkedAt` is the formatted time. */
+function checkResultOf(name: string, { result, message }: ModelProviderCheck, checkedAt: string): DataTableResult {
   switch (result) {
     case 'works':
       return {
         state: 'ok',
         badge: TEXT.works,
-        text: TEXT.checkedAt(formatTime(checkedAt)),
+        text: TEXT.checkedAt(checkedAt),
         announcement: TEXT.worksName(name),
       };
     case 'key_rejected':
@@ -150,6 +152,7 @@ type ModelProvidersTableProps = {
  */
 export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }: ModelProvidersTableProps) {
   const headingId = useId();
+  const format = useFormatter();
   const sectionRef = useRef<HTMLElement>(null);
   // The provider dialog (MP-04) opens from «Добавить провайдера» and «Изменить» with this state.
   const [editing, setEditing] = useState<DialogState>(CLOSED);
@@ -178,7 +181,7 @@ export function ModelProvidersTable({ providers, defaults, catalog, reloadAll }:
       const check = await adminApi.modelProviders.check(name);
       // The provider's `message` is a foreign system's text: it is shown, never logged.
       logger.info(CHECK_EVENT, { provider: name, result: check.result, durationMs: durationMs() });
-      setResult(name, checkResultOf(name, check, new Date()));
+      setResult(name, checkResultOf(name, check, formatListTime(format, new Date())));
     } catch (error) {
       const where = { provider: name, durationMs: durationMs() };
       if (isApiRequestError(error)) logger.warn(`${CHECK_EVENT}: refused`, { ...where, ...describeApiError(error) });

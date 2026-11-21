@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useFormatter } from "next-intl";
 import type { AgentPageView, RunOrigin } from "@agent-os/contracts";
 import { AgentStatus } from "@/components/agents/agent-status";
 import { ChangedAfterRun, runRecord, useLiveRecord } from "@/components/agents/run-card";
 import { RecordLabel } from "@/components/library/record-label";
 import { UNTITLED_THREAD_TITLE } from "@/components/shell/thread-history-item";
-import { formatModel, formatTime } from "@/lib/agents/format";
+import { formatModel } from "@/lib/agents/format";
+import { formatListTime } from "@/lib/i18n/formats";
 import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
 
@@ -53,12 +55,13 @@ function AgentRecordLine({ origin }: { origin: RunOrigin }) {
 }
 
 function AgentMetaLine({ agent }: { agent: AgentPageView["agent"] }) {
+  const format = useFormatter();
   const model = formatModel(agent.model);
   const started = (
     <span>
       запущен{" "}
       <time dateTime={agent.createdAt} className="tabular-nums">
-        {formatTime(agent.createdAt)}
+        {formatListTime(format, agent.createdAt)}
       </time>
     </span>
   );

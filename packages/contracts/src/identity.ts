@@ -66,15 +66,27 @@ const CursorSchema = z.string().min(1).max(512);
 
 // ---------- Sign-in and session (web) ----------
 
-/** Response of GET /api/auth/me. `name` is an empty string when there is no name. */
+/** The interface languages an employee can choose (i18n design-web.md, KD-4). */
+export const LanguageSchema = z.enum(['en', 'ru']);
+export type Language = z.infer<typeof LanguageSchema>;
+
+/**
+ * Response of GET /api/auth/me. `name` is an empty string when there is no name; `language` is null
+ * while the employee has not chosen one.
+ */
 export const CurrentUserSchema = z.object({
   id: IdSchema,
   email: z.string(),
   name: z.string(),
   isAdmin: z.boolean(),
   hasPassword: z.boolean(),
+  language: LanguageSchema.nullable(),
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
+
+/** Body of PUT /api/auth/me/language. */
+export const LanguageBodySchema = z.object({ language: LanguageSchema });
+export type LanguageBody = z.infer<typeof LanguageBodySchema>;
 
 /** Body of POST /api/auth/password. */
 export const PasswordSignInBodySchema = z.object({

@@ -37,7 +37,6 @@ export interface ListAgentsDeps {
 export function createListAgentsTool(deps: ListAgentsDeps): OutsideAgentTool<ListAgentsArgs> {
   return {
     name: 'list_agents',
-    title: 'Показать агентов',
     description:
       'A snapshot of the agents you started and the agents they started: id, description, name, model and status. ' +
       'Use it to answer a question about the agents, never to wait for them: their reports arrive on their own as messages.',

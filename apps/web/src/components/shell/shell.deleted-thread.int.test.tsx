@@ -10,7 +10,7 @@
 //   mounts ChatRuntimeProvider + ChatShell with mocked next/navigation (controlled pathname, router spy) and a test
 //   event source for LiveStore.
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'.
-//   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
+//   Page address in tests: jsdom url 'http://api.test' (vitest.config.ts); relative `/api/...` requests resolve against it. TZ = 'Europe/Berlin'.
 // Mock boundary: network only (MSW) + the live event source + next/navigation (framework boundary). Runtime, stores,
 //   adapters, ShellStatus, components — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/* or @assistant-ui/*.
 import { screen, within } from '@testing-library/react';

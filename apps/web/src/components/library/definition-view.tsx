@@ -2,6 +2,7 @@
 
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Info } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
@@ -16,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
-import { formatModel, type ModelNames } from "@/lib/agents/format";
+import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
 import { kindWord } from "@/lib/library/library-errors";
 import { RECORD_FIELD_LABELS, type ChangedField, type RecordField } from "@/lib/library/record-rules";
 import { cn } from "cn";
@@ -138,13 +139,14 @@ type AgentRowsProps = {
 };
 
 function AgentRows({ content, missing, variant, isChanged, recordHref, modelNames }: AgentRowsProps) {
+  const t = useTranslations("formats");
   return (
     <>
       <Row label={RECORD_FIELD_LABELS.prompt} changed={isChanged("prompt")}>
         <LongText text={content.prompt} collapsible={variant === "card"} />
       </Row>
       <Row label={RECORD_FIELD_LABELS.model} changed={isChanged("model")}>
-        {formatModel(content.model, modelNames)}
+        {formatRecordModel(t, content.model, modelNames)}
       </Row>
       <Row label={RECORD_FIELD_LABELS.maxTurns} changed={isChanged("maxTurns")}>
         <span className="tabular-nums">{content.maxTurns}</span>
@@ -214,6 +216,7 @@ type WorkflowRowsProps = {
 
 function WorkflowRows({ description, content, missingRights, variant, changed, isChanged, modelNames }: WorkflowRowsProps) {
   const { coordinator, finalExecutor } = content;
+  const t = useTranslations("formats");
   return (
     <>
       <dl className="flex flex-col gap-2">
@@ -234,7 +237,7 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
         </Row>
         <Row label={RECORD_FIELD_LABELS.selfLearning}>{content.selfLearning ? "включено" : "выключено"}</Row>
         <Row label="Координатор" changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
-          <span className="tabular-nums">{`${formatModel(coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
+          <span className="tabular-nums">{`${formatRecordModel(t, coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
         </Row>
       </dl>
     </>
@@ -291,6 +294,7 @@ type ExecutorItemProps = {
 };
 
 function ExecutorItem({ executor, final, changed, missing, details, modelNames }: ExecutorItemProps) {
+  const t = useTranslations("formats");
   return (
     <li className="flex flex-col gap-1">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -303,7 +307,7 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
       </span>
       {details && (
         <dl className="border-border ml-1 flex flex-col gap-2 border-l pl-3">
-          <Row label={RECORD_FIELD_LABELS.model}>{formatModel(executor.model, modelNames)}</Row>
+          <Row label={RECORD_FIELD_LABELS.model}>{formatRecordModel(t, executor.model, modelNames)}</Row>
           <Row label={RECORD_FIELD_LABELS.servers}>
             <Servers servers={executor.servers} missing={missing} />
           </Row>

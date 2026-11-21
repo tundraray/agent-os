@@ -9,6 +9,7 @@ import {
   type FocusEvent,
 } from "react";
 import Link from "next/link";
+import { useFormatter } from "next-intl";
 import type { AgentListNode, AgentNode } from "@agent-os/contracts";
 import { ChevronDownIcon, ChevronRightIcon, RotateCwIcon } from "lucide-react";
 import { AgentStatus } from "@/components/agents/agent-status";
@@ -17,7 +18,8 @@ import { RecordLabel } from "@/components/library/record-label";
 import { UNTITLED_THREAD_TITLE } from "@/components/shell/thread-history-item";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatModel, formatTime } from "@/lib/agents/format";
+import { formatModel } from "@/lib/agents/format";
+import { formatListTime } from "@/lib/i18n/formats";
 import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
 import { focusShellTarget } from "@/lib/focus";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
@@ -83,6 +85,7 @@ type AgentRowProps = RowContext & {
 
 function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, initialIds }: AgentRowProps) {
   const childListId = useId();
+  const format = useFormatter();
   const description = rowDescription(node);
   const hasChildren = node.children.length > 0;
   const open = hasChildren && expanded.has(node.agentId);
@@ -164,7 +167,7 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
             </span>
             <span className="shrink-0 tabular-nums @min-[720px]:order-2">
               <span className="sr-only">запущен </span>
-              <time dateTime={node.createdAt}>{formatTime(node.createdAt)}</time>
+              <time dateTime={node.createdAt}>{formatListTime(format, node.createdAt)}</time>
             </span>
             {thread !== undefined && conversationTitle !== null ? (
               <>

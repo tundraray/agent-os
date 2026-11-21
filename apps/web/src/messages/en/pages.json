@@ -1,0 +1,11 @@
+{
+  "error": {
+    "title": "Something went wrong",
+    "reload": "Reload page"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This address doesn't exist in Agent OS: check the link.",
+    "home": "Go to home page"
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import type { RecordDetail, RecordKind, RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
@@ -55,6 +56,7 @@ type CloseAccessDialogProps = {
  * text; «Отмена» and Esc send nothing.
  */
 export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: CloseAccessDialogProps) {
+  const t = useTranslations('errors');
   const { libraryIndex } = useShellServices();
 
   async function close(): Promise<void> {
@@ -75,7 +77,7 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
       confirmLabel={TEXT.close}
       onConfirm={close}
       // `recordAction` has logged the refusal.
-      refusalText={(cause) => describeLibraryError(cause, { where: 'panel', kind: record.kind }).text}
+      refusalText={(cause) => describeLibraryError(t, cause, { where: 'panel', kind: record.kind }).text}
     />
   );
 }

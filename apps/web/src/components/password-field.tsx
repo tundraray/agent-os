@@ -2,6 +2,7 @@
 
 import { useState, type ComponentProps } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
@@ -68,6 +69,7 @@ export type PasswordFieldProps = {
 
 /** A hidden-input password field with its show button and field error (settings-form «Ошибка поля»). */
 export function PasswordField({ id, label, autoComplete, inputRef, value, error, disabled, onChange, panel = false }: PasswordFieldProps) {
+  const t = useTranslations("common");
   const errorId = `${id}-error`;
   return (
     <Field data-invalid={error !== undefined} className={cn(panel && "gap-1.5")}>
@@ -82,8 +84,8 @@ export function PasswordField({ id, label, autoComplete, inputRef, value, error,
         autoComplete={autoComplete}
         compact={panel}
         className={cn(panel && "text-data md:text-data")}
-        showLabel="Показать пароль"
-        hideLabel="Скрыть пароль"
+        showLabel={t("showPassword")}
+        hideLabel={t("hidePassword")}
         value={value}
         disabled={disabled}
         aria-invalid={error !== undefined}

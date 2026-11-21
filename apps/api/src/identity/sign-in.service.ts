@@ -1,6 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import { UserStatusSchema, type SignInError } from '@agent-os/contracts';
+import {
+  LanguageSchema,
+  UserStatusSchema,
+  type Language,
+  type SignInError,
+} from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
 import { APP_LOGGER } from '../logging/app-logger';
@@ -41,8 +46,13 @@ export type ProviderStart =
   | { ok: true; authorizationUrl: URL; state: string }
   | { ok: false; reason: 'provider_unavailable' };
 
+/** An opened session with the employee's interface language, for the `aos_locale` cookie (i18n KD-2). */
+export interface SignedIn extends OpenedSession {
+  language: Language | null;
+}
+
 export type ProviderSignIn =
-  | { ok: true; token: string; next: string }
+  | { ok: true; token: string; next: string; language: Language | null }
   | { ok: false; reason: SignInError };
 
 /**
@@ -69,10 +79,7 @@ export class SignInService {
    * Flow 2: 401 INVALID_CREDENTIALS for an unknown login and a wrong password alike (AC-01.3);
    * 401 ACCOUNT_DISABLED only after the right password of a disabled employee (Invariant 2).
    */
-  async signInWithPassword(
-    login: string,
-    password: string,
-  ): Promise<OpenedSession> {
+  async signInWithPassword(login: string, password: string): Promise<SignedIn> {
     const attempt: Attempt = { method: 'password', startedAt: Date.now() };
     const check = await this.passwordSignIn.check(login, password);
     if (!check.ok) {
@@ -152,14 +159,22 @@ export class SignInService {
     });
     const opened = await this.openFor(user, attempt);
     if (opened === undefined) return { ok: false, reason: 'account_disabled' };
-    return { ok: true, token: opened.token, next: finished.next };
+    return {
+      ok: true,
+      token: opened.token,
+      next: finished.next,
+      language: opened.language,
+    };
   }
 
-  /** The session of an active employee; undefined, with the refusal written, for a disabled one. */
+  /**
+   * The session of an active employee with his language; undefined, with the refusal written, for a
+   * disabled one.
+   */
   private async openFor(
     user: UserRow,
     attempt: Attempt,
-  ): Promise<OpenedSession | undefined> {
+  ): Promise<SignedIn | undefined> {
     if (user.status === UserStatusSchema.enum.disabled) {
       await this.reject({ attempt, reason: 'account_disabled', user });
       return undefined;
@@ -183,7 +198,10 @@ export class SignInService {
       sessionId: opened.sessionId,
       outcome: 'ok',
     });
-    return opened;
+    return {
+      ...opened,
+      language: LanguageSchema.nullable().parse(user.language),
+    };
   }
 
   private async reject({

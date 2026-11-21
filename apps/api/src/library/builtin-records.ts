@@ -1,5 +1,6 @@
 import {
   ALL_SERVERS,
+  BUILTIN_NAMES,
   CHAT_BUILTIN_KEY,
   CreateRecordBodySchema,
   type RecordTool,
@@ -36,7 +37,7 @@ const AGENT_TOOLS: RecordTool[] = [
 function chatRecord(): unknown {
   return {
     kind: 'agent',
-    name: 'Главный чат',
+    name: BUILTIN_NAMES[CHAT_BUILTIN_KEY].ru,
     description:
       "The employee's main chat: answers the employee and starts agents and workflows for them.",
     content: {
@@ -99,7 +100,7 @@ function generalPurposeRecord(): unknown {
 function deepResearchRecord(): unknown {
   return {
     kind: 'workflow',
-    name: 'Глубокий ресерч',
+    name: BUILTIN_NAMES['deep-research'].ru,
     description:
       'Use for a big question about how systems behave that needs data from several sources or many queries, gathered and brought together into one answer.',
     content: {

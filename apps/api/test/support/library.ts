@@ -432,7 +432,11 @@ export function libraryRoutes(recordId: string): {
         path: `/library/${recordId}/audience`,
         body: { roleIds: [], offerInChat: false },
       },
-      { method: 'post', path: `/library/${recordId}/copy` },
+      {
+        method: 'post',
+        path: `/library/${recordId}/copy`,
+        body: { language: 'ru' },
+      },
       { method: 'delete', path: `/library/${recordId}` },
     ],
     panel: [

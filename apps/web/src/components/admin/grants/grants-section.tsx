@@ -2,11 +2,11 @@
 
 import { useId, useState } from 'react';
 import { KeyRoundIcon } from 'lucide-react';
+import { useFormatter } from 'next-intl';
 import { AccessErrorCode, type Grant, type GrantEffect, type McpServerView } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
-import { formatQuotaUsd } from '@/lib/access/money';
 import { adminApi } from '@/lib/admin/admin-api';
 import { grantTargetText, orphanGrantIds, serversToRead } from '@/lib/admin/grants';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
@@ -64,6 +64,7 @@ async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
  */
 export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   const headingId = useId();
+  const format = useFormatter();
   const grants = useResource(() => adminApi.grants.list(holderQuery(holder)), `grants:${holder.kind}:${holder.id}`);
   const servers = useResource(adminApi.servers.list, 'servers');
 
@@ -156,7 +157,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
         <StateBadge key="effect" state={grant.effect === 'allow' ? 'ok' : 'closed'}>
           {grant.effect === 'allow' ? TEXT.allow : TEXT.deny}
         </StateBadge>,
-        isModelAllow(grant) ? (grant.quotaUsd === null ? TEXT.noQuota : formatQuotaUsd(grant.quotaUsd)) : TEXT.notApplicable,
+        isModelAllow(grant) ? (grant.quotaUsd === null ? TEXT.noQuota : format.number(grant.quotaUsd, 'usdQuota')) : TEXT.notApplicable,
       ],
       actions:
         !orphan && isModelAllow(grant)

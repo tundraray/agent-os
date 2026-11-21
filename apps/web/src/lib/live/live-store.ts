@@ -2,7 +2,6 @@ import { LiveEventSchema, type LiveEvent } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
 import { apiRequest, describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { apiBaseUrl } from "@/lib/config";
 import type { logger as appLogger } from "@/lib/logger";
 
 import type { AnnouncerStore } from "./announcer-store";
@@ -55,15 +54,11 @@ const READY_WAIT_MS = 1000;
 
 const LIVE_EVENT_TYPES: readonly LiveEvent["type"][] = ["ready", "tree", "delta", "ping"];
 
-/** MC-25. */
-const ANNOUNCE_LOST = "Связь с сервером потеряна";
-const ANNOUNCE_RESTORED = "Связь с сервером восстановлена";
-
 const defaultOpenEventSource: OpenEventSource = (url) =>
   new EventSource(url, { withCredentials: true });
 
 function eventsUrl(target: LiveTarget | null): string {
-  const base = `${apiBaseUrl}/api/events`;
+  const base = "/api/events";
   return target === null ? base : `${base}?watch=${encodeURIComponent(target)}`;
 }
 
@@ -155,7 +150,7 @@ export function createLiveStore({
   function handleReady(): void {
     const wasLost = state.getState().connection === "lost";
     state.setState({ connection: "open" });
-    if (wasLost) announcer.getState().announce(ANNOUNCE_RESTORED);
+    if (wasLost) announcer.getState().announce("announce.connectionRestored");
     settleWaiters();
     for (const listener of readyListeners) listener();
   }
@@ -193,7 +188,7 @@ export function createLiveStore({
   function handleError(failed: LiveEventSource): void {
     if (state.getState().connection !== "lost") {
       state.setState({ connection: "lost" });
-      announcer.getState().announce(ANNOUNCE_LOST);
+      announcer.getState().announce("announce.connectionLost");
     }
     // A CONNECTING source retries by itself; a CLOSED one never comes back, so the store reopens it
     // once the session is known to be alive.

@@ -5,19 +5,9 @@ import type { SpendResponse } from '@agent-os/contracts';
 import { logger } from '@/lib/logger';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { describeApiError } from '@/lib/api/api-request';
-import { formatUsd, monthName } from '@/lib/access/money';
 
-/** SP-01 as the user block shows it. */
-export type SpendState = { kind: 'loading' } | { kind: 'ready'; text: string } | { kind: 'error' };
-
-/** MC-2. */
-export const SPEND_LOADING_TEXT = 'Загружаем расход…';
-export const SPEND_ERROR_TEXT = 'Расход недоступен';
-
-/** MC-2: «Расход за {месяц}: {сумма}» — «Расход за ноябрь: 3,42 $». */
-function formatSpend({ month, costUsd }: SpendResponse): string {
-  return `Расход за ${monthName(month)}: ${formatUsd(costUsd)}`;
-}
+/** SP-01 as the user block reads it; the block words it (design-web.md, KD-5). */
+export type SpendState = { kind: 'loading' } | { kind: 'ready'; spend: SpendResponse } | { kind: 'error' };
 
 // The figure is read once per page load (design-web.md, FR-29): the drawer and the icon strip remount
 // the user block, so the read lives at module level, not in the component. A failure stays until reload.
@@ -27,7 +17,7 @@ let spendSettled: SpendState | null = null;
 function readSpendOnce(): Promise<SpendState> {
   if (spendRead !== null) return spendRead;
   spendRead = threadsApiClient.getSpend().then(
-    (spend): SpendState => ({ kind: 'ready', text: formatSpend(spend) }),
+    (spend): SpendState => ({ kind: 'ready', spend }),
     (error: unknown): SpendState => {
       logger.warn('spend read failed', describeApiError(error));
       return { kind: 'error' };

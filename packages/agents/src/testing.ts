@@ -167,6 +167,8 @@ export interface RecordedModelCall {
   readonly messages: readonly AgentTurnMessage[];
   /** Names of the tools offered to the model. */
   readonly toolNames: readonly string[];
+  /** The description of each offered tool, by name, exactly as the provider would get it. */
+  readonly toolDescriptions: Readonly<Record<string, string>>;
   /** Ids the double gave the tool calls of its answer, in order; empty until it answered. */
   readonly toolCallIds: string[];
 }
@@ -323,6 +325,7 @@ export function createScriptedModel(): ScriptedModel {
         instructions: call.instructions,
         messages: call.messages,
         toolNames: call.tools.map((tool) => tool.name),
+        toolDescriptions: Object.fromEntries(call.tools.map((tool) => [tool.name, tool.description])),
         toolCallIds: [],
       };
       calls.push(recorded);

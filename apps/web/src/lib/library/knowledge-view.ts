@@ -5,7 +5,8 @@ import type {
   LastExtraction,
   LastExtractionReason,
 } from "@agent-os/contracts";
-import { formatDay, formatDayTime, formatModel } from "@/lib/agents/format";
+import { formatModel } from "@/lib/agents/format";
+import { formatDay, type Formatter } from "@/lib/i18n/formats";
 import { pluralRu } from "@/lib/i18n/plural-ru";
 
 /**
@@ -122,8 +123,8 @@ const LAST_RUN_REASON: Record<LastExtractionReason, (model: string) => string> =
 };
 
 /** Line 5: what the last round added, confirmed and outdated, or why it taught nothing. */
-function lastRunLine(last: LastExtraction): KnowledgeStateLine {
-  const head = `Последний запуск, ${formatDayTime(last.at)}`;
+function lastRunLine(last: LastExtraction, format: Formatter): KnowledgeStateLine {
+  const head = `Последний запуск, ${format.dateTime(new Date(last.at), "dayTime")}`;
   if (last.status === "done") {
     const parts = [
       last.added > 0 ? `добавлено ${last.added}` : null,
@@ -146,7 +147,7 @@ const ofRecords = (count: number): string => pluralRu(count, ["записи", "�
  * is empty: the table's empty state stands alone. With self-learning off its line replaces lines 1–2 and the
  * lines about lessons and selection are absent; line 3 and line 5 stay.
  */
-export function knowledgeStateLines(view: KnowledgeView, audience: KnowledgeAudience): KnowledgeStateLine[] {
+export function knowledgeStateLines(view: KnowledgeView, audience: KnowledgeAudience, format: Formatter): KnowledgeStateLine[] {
   if (view.items.length === 0) return [];
   const { active, always, beyond, outdated, percent } = view.counts;
   const lines: KnowledgeStateLine[] = [];
@@ -196,7 +197,7 @@ export function knowledgeStateLines(view: KnowledgeView, audience: KnowledgeAudi
     const selection = selectionLine(view.selection);
     if (selection !== null) lines.push(selection);
   }
-  if (view.lastExtraction !== null) lines.push(lastRunLine(view.lastExtraction));
+  if (view.lastExtraction !== null) lines.push(lastRunLine(view.lastExtraction, format));
   return lines;
 }
 
@@ -303,7 +304,7 @@ function itemText(item: KnowledgeItem): string {
   return text.length > ITEM_TEXT_MAX ? `${text.slice(0, ITEM_TEXT_MAX)}…` : text;
 }
 
-export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean): KnowledgeRow {
+export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean, format: Formatter): KnowledgeRow {
   return {
     key: `${item.type}:${item.id}`,
     name: itemText(item),
@@ -311,7 +312,7 @@ export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean): Knowle
     mark: knowledgeMark(item, selfLearning),
     cell: knowledgeCell(item),
     confirmations: item.confirmations,
-    date: formatDay(item.date),
+    date: formatDay(format, item.date),
   };
 }
 

@@ -9,15 +9,17 @@ import {
   type Database,
   type DatabaseConnection,
 } from '@agent-os/db';
-import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
+import {
+  LanguageSchema,
+  UserStatusSchema,
+  type Language,
+  type UserStatus,
+} from '@agent-os/contracts';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { Executor } from '../common/executor';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import { isSessionExpired, needsTouch } from './session-lifetime';
-import {
-  readSessionLimits,
-  sessionLimitColumns,
-} from './settings.repository';
+import { readSessionLimits, sessionLimitColumns } from './settings.repository';
 
 /** `ended_reason` of a session ended by a block (KD-4, DC-9). */
 export const ENDED_BY_BLOCK = 'account_disabled';
@@ -49,6 +51,8 @@ export interface FoundSession {
     isAdmin: boolean;
     /** A local account: it has a password. */
     hasPassword: boolean;
+    /** The chosen interface language, or null while there is no choice. */
+    language: Language | null;
   };
 }
 
@@ -153,6 +157,7 @@ export class SessionStore {
         status: identityUsers.status,
         isAdmin: IS_ADMIN,
         hasPassword: sql<boolean>`${identityUsers.passwordHash} is not null`,
+        language: identityUsers.language,
         ...sessionLimitColumns,
       })
       .from(identitySessions)
@@ -167,6 +172,7 @@ export class SessionStore {
       status,
       isAdmin,
       hasPassword,
+      language,
       idleMinutes,
       absoluteMinutes,
     } = row;
@@ -183,6 +189,7 @@ export class SessionStore {
         status: UserStatusSchema.parse(status),
         isAdmin,
         hasPassword,
+        language: LanguageSchema.nullable().parse(language),
       },
     };
   }

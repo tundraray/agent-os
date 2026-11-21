@@ -593,14 +593,15 @@ describe('INT-2: a write run - nothing moves before the decision, and only the c
       ]);
 
       // Then: the request names the agent, the run and its class, carries the full script, and its "Может вызвать"
-      // list is the one tool the script names, marked "меняет" (AC-05.2, AC-05.7 over the unit table)
+      // list is the one tool the script names, marked "меняет" (AC-05.2, AC-05.7 over the unit table); a built-in tool
+      // carries no title: the web takes its labels from its catalogue (i18n KD-6)
       expect([request.agentId, request.description, request.kind, request.server, request.tool, request.toolTitle]).toEqual([
         agentId,
         'writer',
         'agents.tool_confirmation',
         null,
         'run_code',
-        'Выполнить код',
+        undefined,
       ]);
       expect(request.args).toEqual({ description: NOTES_DESCRIPTION, class: 'write', script });
       expect(request.content).toEqual({ canCall: [{ name: CREATE_NOTE, changes: true }] });

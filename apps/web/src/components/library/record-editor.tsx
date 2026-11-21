@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ALL_SERVERS, CHAT_BUILTIN_KEY, type RecordDetail, type RecordKind } from "@agent-os/contracts";
 import { CAPTION, FormError, FormWarning } from "@/components/admin/admin-form";
@@ -44,7 +45,6 @@ const TEXT = {
   library: "Библиотека",
   newTitle: (kind: RecordKind) => (kind === "agent" ? "Новый агент" : "Новый workflow"),
   created: (kind: RecordKind) => `${kindWord(kind, true)} создан`,
-  saved: "Сохранено",
   discarded: "Изменения отменены",
   restore: "Вернуть",
   // MC-13: the saved agent is the source of executors in the author's own workflows.
@@ -114,7 +114,7 @@ function refusedServer(definition: RecordDefinition, allowed: readonly string[])
   return {};
 }
 
-function formErrorOf(error: LibraryErrorText | null, kind: RecordKind): string | null {
+function formErrorOf(error: LibraryErrorText | null, kind: RecordKind): ReactNode {
   if (error === null || error.place.at === "screen") return null;
   if (Object.keys(fieldErrorOf(error, kind)).length > 0) return null;
   return error.text;
@@ -216,6 +216,8 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   const leaveThenGo = useLeaveThenGo();
   const copy = useCopyRecord();
   const copyErrorId = useId();
+  const format = useFormatter();
+  const t = useTranslations("errors");
   const { start, back, tellDraft, handOnCreated } = usePageHandoff(handoff, source, system);
   const { state, view, dispatch } = useRecordForm(start.values === undefined ? source : { ...source, values: start.values });
   const { saved, values, base } = state;
@@ -321,7 +323,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
       dispatch({ type: "saved", record: result });
       void tellDraft(result.id);
       void libraryIndex.refresh();
-      announcer.getState().announce(TEXT.saved);
+      announcer.getState().announce("announce.saved");
       // «Обновить там» is about the owner's own workflows; a company record has none.
       if (result.kind === "agent" && !system) void offerUpdateThere(result);
     } catch (cause) {
@@ -331,7 +333,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
         dispatch({ type: "conflict", saved: cause.saved });
         return;
       }
-      const text = describeLibraryError(cause, {
+      const text = describeLibraryError(t, cause, {
         where: "editor",
         admin: system,
         kind: definition.kind,
@@ -443,7 +445,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   const conflictText =
     view.conflict === null || conflictError === null
       ? null
-      : describeLibraryError(conflictError, {
+      : describeLibraryError(t, conflictError, {
           where: "editor",
           admin: system,
           changedFields: view.conflict.fields.map((field) => field.label),
@@ -488,7 +490,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
             )}
             {record?.ban != null && (
               <div role="alert">
-                <FormWarning>{banText(record.ban.closedAt)}</FormWarning>
+                <FormWarning>{banText(format, record.ban.closedAt)}</FormWarning>
               </div>
             )}
             {/* A disabled fieldset disables every native field inside while the save runs. */}

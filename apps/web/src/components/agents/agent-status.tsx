@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import type { AgentStatus as AgentStatusValue } from "@agent-os/contracts";
+import { useFormatter } from "next-intl";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -13,7 +14,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AGENT_STATUS_LABEL, formatTime } from "@/lib/agents/format";
+import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
+import { formatListTime } from "@/lib/i18n/formats";
 import { cn } from "@/lib/utils";
 
 /** One turn of a working icon (foundations, Motion: «вращение 1 с на оборот»). */
@@ -108,6 +110,7 @@ export type AgentStatusProps =
  */
 export function AgentStatus(props: AgentStatusProps) {
   const { status, className } = props;
+  const format = useFormatter();
   const { Icon, tone } = STATUS_LOOK[status];
   const label = AGENT_STATUS_LABEL[status];
   const glyph = (
@@ -166,7 +169,7 @@ export function AgentStatus(props: AgentStatusProps) {
         ·
       </span>
       <time dateTime={props.at} className="shrink-0 tabular-nums">
-        {formatTime(props.at)}
+        {formatListTime(format, props.at)}
       </time>
     </p>
   );

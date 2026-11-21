@@ -1,0 +1,11 @@
+{
+  "language": {
+    "heading": "Language",
+    "optionEn": "English",
+    "optionRu": "Русский",
+    "notChosen": "Not chosen yet: the interface follows your browser language.",
+    "appliesEverywhere": "Applies on all your devices.",
+    "saveFailed": "Couldn't save the language: try again.",
+    "announced": "Interface language: English"
+  }
+}

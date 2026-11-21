@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent, type Ref } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { CAPTION, FORM_TEXT } from "@/components/admin/admin-form";
 import { Button } from "@/components/ui/button";
@@ -136,7 +136,7 @@ function useSavedShown(status: RecordFormStatus): boolean {
 
 export type ConflictBlockProps = {
   /** MC-10 with the fields the saved version changed, or without them when it could not be read. */
-  text: string;
+  text: ReactNode;
   /** `false` — the saved version was not read, so there is nothing to take. */
   canTakeSaved: boolean;
   onSaveMine: () => void;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { RecordSummary } from "@agent-os/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
@@ -56,6 +57,7 @@ export function DeleteRecordDialog({
   onDeleted,
 }: DeleteRecordDialogProps) {
   const { libraryIndex, leaveGuard } = useShellServices();
+  const t = useTranslations("errors");
   const router = useRouter();
 
   async function remove(): Promise<void> {
@@ -80,7 +82,7 @@ export function DeleteRecordDialog({
       confirmLabel={TEXT.confirm}
       onConfirm={remove}
       // `recordAction` has logged the refusal.
-      refusalText={deleteFailed}
+      refusalText={(cause) => deleteFailed(t, cause)}
       focusTitleAfterConfirm
     />
   );

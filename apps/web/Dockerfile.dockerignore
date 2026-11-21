@@ -1,0 +1,26 @@
+.git
+.github
+.claude
+.husky
+.playwright-mcp
+docs
+agent-memory
+infra
+
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.turbo
+**/*.log
+**/*.tsbuildinfo
+**/self-check-reports
+
+# Secrets never enter the build context; the example file holds none.
+**/.env
+**/.env.*
+!**/.env.example
+
+# The image holds the web only; pnpm still needs the API manifest to match the lockfile.
+apps/api/*
+!apps/api/package.json

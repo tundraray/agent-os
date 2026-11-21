@@ -12,7 +12,7 @@
 | Агенты | `packages/agents` поверх `packages/runtime` | Каждый агент — задача durable runtime; Nest только собирает пакеты |
 | Транспорт | HTTP-команды и SSE (`GET /api/events`) | Команда отвечает сразу, ответ агента идёт живым потоком |
 | Хранилище | Postgres (схема `app`, `packages/db`) | Задачи, сессии агентов, беседы, расход и аудит в одной БД |
-| Инфра | Свой сервер, Docker Compose, nginx | Без serverless-лимитов на стримы |
+| Инфра | Свой сервер, Docker Compose; веб пересылает `/api` в API | Без serverless-лимитов на стримы; наружу открыт один порт |
 
 ## Структура
 
@@ -30,8 +30,8 @@ agent-os/
     workflows/        шаблоны процессов (deep-research), инструмент start_workflow, чтение запуска: createWorkflows
     mcp-fixture/      HTTP-процесс с фикстурными MCP-серверами `logs`, `backoffice`, `tracker` для разработки и тестов
   infra/
-    docker-compose.yml
-    nginx.conf
+    docker-compose.yml       стек из образов: postgres, migrate, api, web
+    docker-compose.dev.yml   порт Postgres для запуска из исходников (pnpm db:up)
   pnpm-workspace.yaml
   turbo.json
   package.json
@@ -59,7 +59,7 @@ mkdir -p apps packages infra
 
 pnpm add -Dw turbo typescript
 pnpm pkg set scripts.dev="turbo dev" scripts.build="turbo build" scripts.lint="turbo lint" scripts.test="turbo test"
-pnpm pkg set scripts.db:up="docker compose -f infra/docker-compose.yml up -d"
+pnpm pkg set scripts.db:up="docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d postgres"
 
 cat > turbo.json <<'EOF'
 {
@@ -129,32 +129,39 @@ cd ../..
 Переменные (`apps/web/.env.local`, образец — `apps/web/.env.example`), запуск и маршруты — `apps/web/README.md`:
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:4000
+# необязательно: куда веб пересылает /api (по умолчанию http://localhost:4000)
+# API_INTERNAL_URL=http://localhost:4000
 ```
 
 Артефакты рендерятся через Tool UI assistant-ui в правую панель `ResizablePanel`.
 
 ## Шаг 5. Инфра
 
-Инструкции: [образ postgres](https://hub.docker.com/_/postgres), [nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
+Инструкции: [образ postgres](https://hub.docker.com/_/postgres), [Docker Compose](https://docs.docker.com/compose/).
+
+`infra/docker-compose.yml` поднимает платформу из образов `ghcr.io/tundraray/agent-os-api:latest` и `ghcr.io/tundraray/agent-os-web:latest`. Сервисы: `postgres`, `migrate` (разовый запуск миграций образом API), `api` (стартует после успешного `migrate`) и `web`. Наружу открыт только порт `3000` веба; браузер достаёт API через пересылку `/api` веба, nginx не нужен.
 
 ```bash
-cat > infra/docker-compose.yml <<'EOF'
-services:
-  postgres:
-    image: pgvector/pgvector:pg16-trixie
-    environment:
-      POSTGRES_USER: agent
-      POSTGRES_PASSWORD: agent
-      POSTGRES_DB: agent_os
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-volumes:
-  pgdata:
+cat > infra/.env <<'EOF'        # не коммитится
+FRONTEND_ORIGIN=http://localhost:3000   # адрес, на котором браузер открывает веб; по умолчанию этот
+SENTRY_DSN=                              # необязательно: проект Sentry для API и веба
 EOF
+docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.yml ps -a   # migrate — Exited (0), api и web — Up
 ```
+
+Первая учётная запись — один раз, пароль (12 символов и больше) идёт на стандартный ввод:
+
+```bash
+read -rs PW   # пароль вводится без эха и не попадает в историю оболочки
+printf '%s' "$PW" | docker compose -f infra/docker-compose.yml run --rm -T api \
+  node dist/super-admin-cli.js --login admin --name Admin --email admin@example.com
+unset PW
+```
+
+Веб — `http://localhost:3000`. Провайдеры моделей и их ключи задаются в панели администратора. Стек на сборке одного коммита: скачать оба образа с тегом `sha-<short sha>` и поставить им локально тег `latest` (`docker tag`); compose скачивает образ, только когда его нет на машине.
+
+Для запуска из исходников (шаг 6) `pnpm db:up` поднимает только `postgres` и публикует его порт `${POSTGRES_PORT:-5432}` наложением `infra/docker-compose.dev.yml`.
 
 Образ — `pgvector/pgvector:pg16-trixie`: PostgreSQL 16 с расширением `vector` на Debian 13 (trixie), как у прежнего `postgres:16`. Debian тот же, поэтому версия сопоставлений (glibc 2.41) у баз на старом томе не меняется. Тег без `-trixie` собран на bookworm — он не подходит.
 
@@ -174,7 +181,7 @@ EOF
    ```
 3. Пересоздать контейнер с новым образом на том же томе:
    ```bash
-   POSTGRES_PORT=5433 docker compose -f infra/docker-compose.yml up -d postgres
+   POSTGRES_PORT=5433 pnpm db:up
    ```
 4. Проверки:
    ```bash
@@ -186,15 +193,6 @@ EOF
 5. Повторить шаг 2 в `rows-after.txt` и сравнить: файлы совпадают.
 
 Откат при расхождении версий сопоставлений или строк: вернуть в `infra/docker-compose.yml` строку `image: postgres:16` и снова выполнить шаг 3 — контейнер поднимется на прежнем образе с тем же томом. Если данные повреждены, восстановить копию: `docker cp <папка-вне-репозитория>/agent_os.dump infra-postgres-1:/tmp/agent_os.dump`, затем `docker exec infra-postgres-1 pg_restore -U agent -d agent_os --clean --if-exists /tmp/agent_os.dump`.
-
-`infra/nginx.conf`, для потока `/api/events`:
-
-```
-proxy_buffering off;
-proxy_read_timeout 3600s;
-proxy_set_header Connection '';
-proxy_http_version 1.1;
-```
 
 ## Шаг 6. Запуск
 

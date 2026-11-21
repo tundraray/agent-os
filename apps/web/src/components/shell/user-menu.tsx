@@ -11,6 +11,7 @@ import {
   SunIcon,
   type LucideIcon,
 } from 'lucide-react';
+import { useFormatter, useTranslations } from 'next-intl';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
@@ -32,7 +33,8 @@ import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
 import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
-import { SPEND_ERROR_TEXT, SPEND_LOADING_TEXT, useSpend, type SpendState } from '@/lib/spend';
+import { formatMonth, type Formatter, type FormatsTranslator } from '@/lib/i18n/formats';
+import { useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
@@ -49,10 +51,16 @@ type ThemeValue = (typeof THEMES)[number]['value'];
 
 const isThemeValue = (value: unknown): value is ThemeValue => THEMES.some((theme) => theme.value === value);
 
-/** MC-2 text of SP-01 for the visible line once read, and for the strip's avatar tooltip in every state. */
-function spendText(spend: SpendState): string {
-  if (spend.kind === 'ready') return spend.text;
-  return spend.kind === 'error' ? SPEND_ERROR_TEXT : SPEND_LOADING_TEXT;
+/**
+ * MC-2 text of SP-01 for the visible line once read, and for the strip's avatar tooltip in every state:
+ * «Расход за {месяц}: {сумма}» — «Расход за ноябрь: 3,42 $».
+ */
+function spendText(spend: SpendState, t: FormatsTranslator, format: Formatter): string {
+  if (spend.kind === 'ready') {
+    const { month, costUsd } = spend.spend;
+    return t('spend.ready', { month: formatMonth(format, month), amount: format.number(costUsd, 'usd') });
+  }
+  return spend.kind === 'error' ? t('spend.unavailable') : t('spend.loading');
 }
 
 /**
@@ -99,6 +107,9 @@ export function UserMenu() {
   const { isMobile, state } = useSidebar();
   const isStrip = !isMobile && state === 'collapsed';
   const spend = useSpend();
+  const t = useTranslations('formats');
+  const format = useFormatter();
+  const spendLine = spendText(spend, t, format);
   const spendId = useId();
   const needsAuth = useNeedsAuthCount();
   const { currentUser, leaveGuard } = useShellServices();
@@ -140,7 +151,7 @@ export function UserMenu() {
                         children: (
                           <span className="flex flex-col">
                             {name !== null && <span>{name}</span>}
-                            <span className="tabular-nums">{spendText(spend)}</span>
+                            <span className="tabular-nums">{spendLine}</span>
                           </span>
                         ),
                       }
@@ -169,10 +180,10 @@ export function UserMenu() {
                 {spend.kind === 'loading' ? (
                   <>
                     <Skeleton aria-hidden className="h-3 w-30 motion-reduce:animate-none" />
-                    <span className="sr-only">{SPEND_LOADING_TEXT}</span>
+                    <span className="sr-only">{spendLine}</span>
                   </>
                 ) : (
-                  <span className="truncate">{spendText(spend)}</span>
+                  <span className="truncate">{spendLine}</span>
                 )}
               </span>
             </span>

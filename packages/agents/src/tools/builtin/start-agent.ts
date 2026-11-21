@@ -178,8 +178,6 @@ export function createStartAgentTool(
 
   return {
     name: START_AGENT_TOOL,
-    title: 'Запустить агента',
-    argLabels: { description: 'Название', agent: 'Агент', prompt: 'Задание' },
     description: describeStartAgent([], true),
     argsSchema: StartAgentArgsSchema,
     mode: 'in_commit',

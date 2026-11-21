@@ -4,6 +4,7 @@ import { RouterContext } from 'next/dist/shared/lib/router-context.shared-runtim
 import { vi, type Mock } from 'vitest';
 import { ChatShell } from '@/components/shell/chat-shell';
 import { Toaster } from '@/components/ui/sonner';
+import { TestIntlProvider } from './intl';
 import { createTestLiveSource, type TestLiveSource } from './live-source';
 import { setTestMedia, type TestMedia } from './setup';
 
@@ -89,7 +90,7 @@ export type RenderWithRuntimeResult = RenderResult & {
 
 /**
  * Mounts the shell as the `(chat)` layout does — ChatShell with its ChatRuntimeProvider — plus the app-wide
- * `<Toaster />`, against the MSW server. Only the network (MSW), the live event source, `next/navigation`
+ * `<Toaster />`, inside the Russian interface-language provider, against the MSW server. Only the network (MSW), the live event source, `next/navigation`
  * and the same-tab navigation (`location.assign`) are emulated.
  */
 export function renderWithRuntime({
@@ -116,10 +117,12 @@ export function renderWithRuntime({
   >;
   const result = render(
     <RouterContext.Provider value={pagesRouter}>
-      <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open} location={{ assign }}>
-        {null}
-      </ChatShell>
-      <Toaster />
+      <TestIntlProvider>
+        <ChatShell defaultSidebarOpen={defaultSidebarOpen} openEventSource={liveSource.open} location={{ assign }}>
+          {null}
+        </ChatShell>
+        <Toaster />
+      </TestIntlProvider>
     </RouterContext.Provider>,
   );
 

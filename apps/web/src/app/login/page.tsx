@@ -1,8 +1,6 @@
 import { Suspense } from "react";
-import type { Metadata } from "next";
 import { LoginForm } from "@/components/auth/login-form";
-
-export const metadata: Metadata = { title: "Вход — Agent OS" };
+import { LoginHeading } from "@/components/auth/login-heading";
 
 type LoginQuery = PageProps<"/login">["searchParams"];
 
@@ -16,7 +14,7 @@ export default function LoginPage({ searchParams }: PageProps<"/login">) {
       <div className="flex w-full max-w-[400px] flex-col gap-6">
         <div className="flex flex-col items-center gap-2 text-center">
           <p className="text-sm font-medium text-muted-foreground">◆ Agent OS</p>
-          <h1 className="text-xl font-semibold">Вход в Agent OS</h1>
+          <LoginHeading />
         </div>
         {/* The query is request data: with cacheComponents it is read inside a Suspense boundary. */}
         <Suspense fallback={null}>

@@ -77,8 +77,6 @@ export function createToolResultTools(
 
   const read: OutsideAgentTool<ReadToolResultArgs> = {
     name: 'read_tool_result',
-    title: 'Прочитать сохранённый результат',
-    argLabels: { callId: 'Вызов', offset: 'С строки', limit: 'Строк' },
     description: READ_DESCRIPTION,
     argsSchema: ReadToolResultArgsSchema,
     mode: 'outside',
@@ -122,8 +120,6 @@ export function createToolResultTools(
 
   const search: OutsideAgentTool<SearchToolResultArgs> = {
     name: 'search_tool_result',
-    title: 'Найти в сохранённом результате',
-    argLabels: { callId: 'Вызов', pattern: 'Что найти' },
     description: SEARCH_DESCRIPTION,
     argsSchema: SearchToolResultArgsSchema,
     mode: 'outside',

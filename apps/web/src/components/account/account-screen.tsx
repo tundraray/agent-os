@@ -5,13 +5,15 @@ import { useStore } from "zustand";
 import type { CurrentUserStore } from "@/lib/auth/current-user";
 import { focusShellTarget } from "@/lib/focus";
 import { ConnectionsSection } from "./connections-section";
+import { LanguageSection } from "./language-section";
 import { ModelsSection } from "./models-section";
 import { PasswordSection } from "./password-section";
 
 /**
  * Screen 3 «Мой доступ» (UXRD): sections one under another in the feed column (chat-shell UXRD, D-01);
  * the title is the shell header's `h1`. The parts `mcp-connect` and `access` add MA-01 and MA-02 above
- * MA-03. The store comes from the shell: one read of the employee per page load.
+ * MA-03; the i18n section LN-01 comes last. The store comes from the shell: one read of the employee per
+ * page load.
  */
 export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }) {
   const user = useStore(currentUser, (state) => state.user);
@@ -31,6 +33,7 @@ export function AccountScreen({ currentUser }: { currentUser: CurrentUserStore }
         <ConnectionsSection />
         <ModelsSection />
         <PasswordSection hasPassword={user?.hasPassword === true} />
+        <LanguageSection currentUser={currentUser} />
       </div>
     </div>
   );

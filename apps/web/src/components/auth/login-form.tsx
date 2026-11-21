@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CircleX, Info, LoaderCircle } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import { IdentityErrorCode, nextPath, type ProviderButtonList } from "@agent-os/contracts";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -10,13 +11,7 @@ import { Input } from "@/components/ui/input";
 import { PasswordField } from "@/components/password-field";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { authApi } from "@/lib/auth/auth-api";
-import {
-  LOGIN_TEXT,
-  loginReasonOf,
-  signInErrorNamesProvider,
-  signInFailedText,
-  type LoginReasonView,
-} from "@/lib/auth/login-reason";
+import { loginReasonOf, signInErrorNamesProvider, signInFailedReason, type LoginReasonView } from "@/lib/auth/login-reason";
 import { logger } from "@/lib/logger";
 
 export type LoginFormProps = {
@@ -33,6 +28,7 @@ type FieldErrors = { login?: string; password?: string };
 
 /** LG-01..LG-03 of uxrd Screen 1: the reason, the login and password form and the provider buttons. */
 export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
+  const t = useTranslations("login");
   const returnPath = nextPath(next);
   const [providers, setProviders] = useState<ProviderButtonList | null>(null);
   const [login, setLogin] = useState("");
@@ -75,8 +71,8 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const errors: FieldErrors = {
-      login: login.trim() === "" ? LOGIN_TEXT.loginRequired : undefined,
-      password: password === "" ? LOGIN_TEXT.passwordRequired : undefined,
+      login: login.trim() === "" ? t("loginRequired") : undefined,
+      password: password === "" ? t("passwordRequired") : undefined,
     };
     setFieldErrors(errors);
     if (errors.login !== undefined || errors.password !== undefined) {
@@ -106,7 +102,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
       <form noValidate onSubmit={handleSubmit}>
         <FieldGroup className="gap-4">
           <Field data-invalid={fieldErrors.login !== undefined}>
-            <FieldLabel htmlFor="login">Логин</FieldLabel>
+            <FieldLabel htmlFor="login">{t("loginLabel")}</FieldLabel>
             <Input
               ref={loginRef}
               id="login"
@@ -126,7 +122,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
           </Field>
           <PasswordField
             id="password"
-            label="Пароль"
+            label={t("passwordLabel")}
             autoComplete="current-password"
             inputRef={passwordRef}
             value={password}
@@ -139,14 +135,14 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
           />
           <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {submitting && <LoaderCircle className="animate-spin" aria-hidden />}
-            {submitting ? "Входим…" : "Войти"}
+            {submitting ? t("submitting") : t("submit")}
           </Button>
-          <FieldDescription>Забыли пароль — обратитесь к администратору Agent OS.</FieldDescription>
+          <FieldDescription>{t("forgotPassword")}</FieldDescription>
         </FieldGroup>
       </form>
       {providers !== null && providers.length > 0 && (
         <div className="flex flex-col gap-4">
-          <FieldSeparator>или</FieldSeparator>
+          <FieldSeparator>{t("or")}</FieldSeparator>
           {providers.map((item) => {
             const leaving = leavingTo === item.id;
             return (
@@ -164,7 +160,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
                 onClick={() => setLeavingTo(item.id)}
               >
                 {leaving && <LoaderCircle className="animate-spin" aria-hidden />}
-                {leaving ? `Переходим в ${item.name}…` : `Войти через ${item.name}`}
+                {t(leaving ? "providerLeaving" : "providerSignIn", { provider: item.name })}
               </a>
             );
           })}
@@ -176,6 +172,7 @@ export function LoginForm({ reason, error, provider, next }: LoginFormProps) {
 
 /** LG-02: the danger block for a failure, the muted one for «Вы вышли» and «Сеанс закончился». */
 function ReasonBlock({ reason }: { reason: LoginReasonView }) {
+  const t = useTranslations("login.reason");
   const neutral = reason.tone === "neutral";
   const Icon = neutral ? Info : CircleX;
   return (
@@ -187,7 +184,7 @@ function ReasonBlock({ reason }: { reason: LoginReasonView }) {
       )}
     >
       <Icon className={cn("mt-0.5 size-4 shrink-0", neutral ? "text-muted-foreground" : "text-destructive")} aria-hidden />
-      <p>{reason.text}</p>
+      <p>{t(reason.key, { provider: reason.provider ?? "" })}</p>
     </div>
   );
 }
@@ -195,10 +192,10 @@ function ReasonBlock({ reason }: { reason: LoginReasonView }) {
 /** One text for a wrong login and a wrong password (AC-01.3); the disabled account only after a right password. */
 function passwordFailureReason(cause: unknown): LoginReasonView {
   if (isApiRequestError(cause) && cause.code === IdentityErrorCode.INVALID_CREDENTIALS) {
-    return { text: LOGIN_TEXT.invalidCredentials, tone: "error" };
+    return { key: "invalidCredentials", tone: "error" };
   }
   if (isApiRequestError(cause) && cause.code === IdentityErrorCode.ACCOUNT_DISABLED) {
-    return { text: LOGIN_TEXT.accountDisabled, tone: "error" };
+    return { key: "accountDisabled", tone: "error" };
   }
-  return { text: signInFailedText(undefined), tone: "error" };
+  return signInFailedReason(undefined);
 }

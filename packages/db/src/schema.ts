@@ -22,6 +22,7 @@ import {
   KnowledgeItemKindSchema,
   KnowledgeItemTypeSchema,
   LastExtractionReasonSchema,
+  LanguageSchema,
   LastExtractionStatusSchema,
   McpServerModeSchema,
   MessageStatusSchema,
@@ -679,12 +680,15 @@ export const identityUsers = app.table(
     /** Personal admin right, besides admin roles. */
     isAdmin: boolean('is_admin').notNull().default(false),
     lastSignInAt: timestamp('last_sign_in_at', { withTimezone: true }),
+    /** The chosen interface language; null while the employee has not chosen one (i18n KD-4). */
+    language: text('language'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('identity_users_email_idx').on(t.email),
     uniqueIndex('identity_users_login_idx').on(t.login),
     check('identity_users_status_check', isOneOf(t.status, UserStatusSchema.options)),
+    check('identity_users_language_check', isOneOf(t.language, LanguageSchema.options)),
   ],
 );
 

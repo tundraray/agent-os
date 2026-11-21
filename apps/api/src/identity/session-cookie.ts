@@ -1,3 +1,4 @@
+import type { Language } from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 
 /** The cookie that carries the session token (KD-2). */
@@ -5,7 +6,10 @@ export const SESSION_COOKIE = 'aos_session';
 
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
 
-/** The web's origin: the CORS origin and the only `Origin` a changing request may carry (DC-3). */
+/**
+ * The web's origin: the address the browser opens Agent OS at, the only `Origin` a changing request
+ * may carry (DC-3), and the public address when none is saved (KD-3 of web-image).
+ */
 export function frontendOrigin(env: NodeJS.ProcessEnv = process.env): string {
   return env.FRONTEND_ORIGIN ?? DEFAULT_FRONTEND_ORIGIN;
 }
@@ -48,4 +52,16 @@ export function setSessionCookie(res: Response, token: string): void {
 
 export function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE, cookieOptions());
+}
+
+/** The copy of the employee's interface language that the Next server reads (i18n design-web.md, KD-2). */
+export const LOCALE_COOKIE = 'aos_locale';
+
+/** Gives the browser the chosen language, or removes the cookie when there is no choice (`null`). */
+export function setLocaleCookie(
+  res: Response,
+  language: Language | null,
+): void {
+  if (language === null) res.clearCookie(LOCALE_COOKIE, cookieOptions());
+  else res.cookie(LOCALE_COOKIE, language, cookieOptions());
 }

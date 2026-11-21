@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { failureReasonText, formatModel, providerFailureHint, type ModelNames, type ProviderFailureReason } from "./format";
+import { testTranslator } from "@/test/intl";
+import { failureReasonText, formatRecordModel, providerFailureHint, type ModelNames, type ProviderFailureReason } from "./format";
 
 const models: ModelNames["models"] = [
   { model: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
@@ -8,7 +9,7 @@ const models: ModelNames["models"] = [
 
 // AC-06.1, UXRD MP-08 / MC-8: a model reads by its title from the list; a record without its own model
 // names the default chat model, or says none is chosen; without a list the label stays as before.
-describe("formatModel", () => {
+describe("formatRecordModel", () => {
   it.each<[string, string | null, ModelNames | undefined, string]>([
     ["a Claude id without a list", "anthropic/claude-haiku-5-5", undefined, "Haiku"],
     ["an id in the list", "google/gemini-2.5-flash", { models }, "Gemini 2.5 Flash"],
@@ -17,7 +18,7 @@ describe("formatModel", () => {
     ["null with the default model in the list", null, { models, defaultModel: "google/gemini-2.5-flash" }, "Модель по умолчанию · Gemini 2.5 Flash"],
     ["null with no default model chosen", null, { models, defaultModel: null }, "Модель по умолчанию — не выбрана"],
   ])("labels %s", (_case, model, names, expected) => {
-    expect(formatModel(model, names)).toBe(expected);
+    expect(formatRecordModel(testTranslator("formats"), model, names)).toBe(expected);
   });
 });
 
@@ -32,8 +33,8 @@ describe("failureReasonText of a provider reason", () => {
     ["provider_unavailable", "провайдер модели Haiku не отвечает", "провайдер модели не отвечает"],
     ["provider_tools_rejected", "провайдер модели Haiku не принял описание инструментов", "провайдер модели не принял описание инструментов"],
   ])("%s", (reason, withModel, withoutModel) => {
-    expect(failureReasonText(reason, "Haiku")).toEqual({ text: withModel, hint: null });
-    expect(failureReasonText(reason)).toEqual({ text: withoutModel, hint: null });
+    expect(failureReasonText(testTranslator("errors"), reason, "Haiku")).toEqual({ text: withModel, hint: null });
+    expect(failureReasonText(testTranslator("errors"), reason)).toEqual({ text: withoutModel, hint: null });
   });
 
   // MC-10: a provider that does not answer asks for a retry; every other reason waits for the administrator.
@@ -41,6 +42,6 @@ describe("failureReasonText of a provider reason", () => {
     ["provider_unavailable", "Напишите, чтобы попробовать снова. Если сбой повторится, сообщите администратору Agent OS."],
     ["provider_key_rejected", "Исправить это может администратор Agent OS. Потом напишите, чтобы продолжить."],
   ])("the hint under %s", (reason, expected) => {
-    expect(providerFailureHint(reason)).toBe(expected);
+    expect(providerFailureHint(testTranslator("errors"), reason)).toBe(expected);
   });
 });

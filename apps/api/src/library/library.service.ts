@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import {
   CreateRecordBodySchema,
   type BannedRecord,
+  type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
   type LibraryChoices,
@@ -380,11 +381,12 @@ export class LibraryService {
   copy(
     actor: LibraryActor,
     id: string,
+    { language }: CopyRecordBody,
     facts: ServerFacts,
   ): Promise<CopyResult> {
     return this.logged(
       'copy',
-      { actorId: actor.id, recordId: id },
+      { actorId: actor.id, recordId: id, language },
       async () => {
         const viewer = await this.viewerOf(actor.id);
         const source = await this.visibleOr404(this.db, viewer, id);
@@ -404,6 +406,8 @@ export class LibraryService {
           allowedModels,
           defaultModel,
           visibleAgentIds: [...visible.keys()],
+          language,
+          builtinKey: source.builtinKey,
         });
         const copied = await this.db.transaction(async (tx) => {
           const inserted = await insertRecord(tx, {

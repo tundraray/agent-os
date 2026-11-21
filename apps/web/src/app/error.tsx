@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { logger } from '@/lib/logger';
 
@@ -18,14 +19,15 @@ const digestOf = (error: unknown): string | undefined =>
  * logged; the error text and stack are neither shown nor logged.
  */
 export default function ShellError({ error }: ShellErrorProps) {
+  const t = useTranslations('pages.error');
   useEffect(() => {
     logger.error('chat shell: render failed', { digest: digestOf(error) });
   }, [error]);
 
   return (
     <div className="bg-background flex min-h-dvh w-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <h1 className="text-lg font-medium">Что-то пошло не так</h1>
-      <Button onClick={() => window.location.reload()}>Обновить страницу</Button>
+      <h1 className="text-lg font-medium">{t('title')}</h1>
+      <Button onClick={() => window.location.reload()}>{t('reload')}</Button>
     </div>
   );
 }

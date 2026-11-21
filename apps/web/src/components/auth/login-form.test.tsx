@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
@@ -45,7 +45,7 @@ describe("login page: form only without providers, divider and buttons with them
     expect(screen.getByText("или")).toBeInTheDocument();
     expect(links.map((link) => link.textContent)).toEqual(["Войти через Google", "Войти через Okta"]);
     const query = new URLSearchParams({ next: expectedNext }).toString();
-    expect(links[0]).toHaveAttribute("href", `${API}/api/auth/sign-in/${GOOGLE_ID}?${query}`);
+    expect(links[0]).toHaveAttribute("href", `/api/auth/sign-in/${GOOGLE_ID}?${query}`);
   });
 
   it("gives one reason for a bad credential, keeps the login, clears the password and focuses it (AC-01.3)", async () => {

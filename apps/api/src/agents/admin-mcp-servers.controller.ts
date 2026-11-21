@@ -68,7 +68,7 @@ export class AdminMcpServersController {
   ): Promise<McpServerView> {
     const actor = req.user.id;
     const redirectUrl = mcpCallbackUrl(
-      await this.settings.publicUrlFor(req),
+      await this.settings.publicUrlFor(),
       body.name,
     );
     const write = await mcpAnswer(
@@ -98,7 +98,7 @@ export class AdminMcpServersController {
     refuseCrossSite(req);
     const ownerId = req.user.id;
     const redirectUrl = mcpCallbackUrl(
-      await this.settings.publicUrlFor(req),
+      await this.settings.publicUrlFor(),
       name,
     );
     const started = await mcpAnswer(

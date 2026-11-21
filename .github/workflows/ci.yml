@@ -12,9 +12,6 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    env:
-      # Baked into the web bundle at build time; production builds accept http only on loopback.
-      NEXT_PUBLIC_API_URL: http://localhost:4000
     steps:
       - uses: actions/checkout@v7
         with:

@@ -19,7 +19,7 @@
 //
 // Proven by the unit tests next to the code, not here: `parseShellRoute` (lib/shell-route.test.ts), `useResource` (hooks/use-resource.test.tsx),
 //   `apiRequest` (lib/api/api-request.test.ts), `describeAdminError` (lib/admin/admin-errors.test.ts), the form rules (lib/admin/form-rules.test.ts),
-//   orphan grants (lib/admin/grants.test.ts), `formatPriceUsd` (lib/access/money.test.ts), `DataTable` focus after a removed row
+//   orphan grants (lib/admin/grants.test.ts), catalogue prices (lib/i18n/formats.test.ts), `DataTable` focus after a removed row
 //   (components/admin/data-table.test.tsx) and `AdminForm` focus on the first field with an error (components/admin/admin-form.test.tsx).
 //
 // `not automated`: density, tokens, contrast and the keyboard order across the panel (NFR-05, UC-N1) - the L1 browser table; the loss of a deleted
@@ -83,6 +83,8 @@ import { renderWithRuntime } from '@/test/render-with-runtime';
 vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
 
 const API = 'http://api.test';
+// Intl separates a Russian amount and its currency sign with U+00A0.
+const NBSP = String.fromCharCode(0xa0);
 
 /** `/api/admin/*` requests as «METHOD path», in the order they started. */
 const adminRequests = ({ requests }: TrackedRequests): string[] =>
@@ -362,7 +364,7 @@ function rowCells(table: HTMLElement, text: string): string[] {
 const OKTA = fixtureId(400);
 const GOOGLE = fixtureId(401);
 /** Where the tab goes to connect the administrator's own account (Flow 2): a page address, never a `fetch`. */
-const connectAddress = (server: string): string => `${API}/api/admin/mcp-servers/${server}/connect`;
+const connectAddress = (server: string): string => `/api/admin/mcp-servers/${server}/connect`;
 /** The tools of `sentry` after the refresh: `update_issue` is gone, `create_issue` is new. */
 const REFRESHED_TOOLS: McpToolView[] = [
   { name: 'create_issue', title: 'Create issue', description: 'Заводит задачу', readOnly: false },
@@ -828,7 +830,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
       `/api/admin/grants?userId=${ANYA}`,
     );
     expect(await within(personal).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
-    expect(rowCells(personal, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '30 $', '']);
+    expect(rowCells(personal, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', `30${NBSP}$`, '']);
 
     // Row 9 - blocking: «Отмена» and Escape send nothing; the confirmation sends one POST while its button is unavailable
     mark = api.requests.length;
@@ -1041,17 +1043,17 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     );
     expect(changesSince(api, mark)).toHaveLength(5);
     expect(await within(sreGrants).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
-    expect(rowCells(sreGrants, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '50 $', '']);
+    expect(rowCells(sreGrants, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', `50${NBSP}$`, '']);
 
     // Row 5 (AC-29.2): reopening Аня and the role shows 30 and 50 as they were set
     await open(`/admin/users/${ANYA}`, 'Аня Смирнова');
     const anyaRights = await screen.findByRole('table', { name: 'Личные права и запреты' });
     expect(await within(anyaRights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
-    expect(rowCells(anyaRights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '30 $', '']);
+    expect(rowCells(anyaRights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', `30${NBSP}$`, '']);
     await open(`/admin/roles/${SRE}`, 'SRE');
     const rights = await screen.findByRole('table', { name: 'Права' });
     expect(await within(rights).findByText('Claude Sonnet 4.5')).toBeInTheDocument();
-    expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '50 $', '']);
+    expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', `50${NBSP}$`, '']);
 
     // Row 5 (DC-14): «Изменить квоту» 80, then an emptied field; the list shows what the new read returns
     const modelGrant = store.grants.find((entry) => entry.holder.id === SRE && entry.target.kind === 'model');
@@ -1067,7 +1069,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     };
     await changeQuota('80');
     await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/grants/${modelGrant?.id}`, body: { quotaUsd: 80 } }], `/api/admin/grants?roleId=${SRE}`);
-    await waitFor(() => expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', '80 $', '']));
+    await waitFor(() => expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', `80${NBSP}$`, '']));
     await changeQuota('');
     await expectSent(api, mark, [{ method: 'PATCH', path: `/api/admin/grants/${modelGrant?.id}`, body: { quotaUsd: null } }], `/api/admin/grants?roleId=${SRE}`);
     await waitFor(() => expect(rowCells(rights, 'Claude Sonnet 4.5')).toEqual(['Claude Sonnet 4.5', 'Право', 'без квоты', '']));
@@ -1201,10 +1203,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //   4. sign-in settings (AC-26.3, DC-7): with `idleMinutes` 480 and `absoluteMinutes` 1440 the fields show «8» and «24»; entering «0,25» and «24» and
   //      «Сохранить» sends ONE `PUT /api/admin/settings/sign-in` with the shown address, `idleMinutes: 15`, `absoluteMinutes: 1440` (minutes, not the
   //      hours typed), then the fields show the new read and the toast «Настройки входа сохранены»; with `publicUrl: null` the address
-  //      field shows the API address the web talks to; an out-of-range value («0,3» hours) sends no request and puts the focus on the field
+  //      field shows the page address the administrator opened the web at; an out-of-range value («0,3» hours) sends no request and puts the focus on the field
   //   5. register a server, personal OAuth (AC-27.1, DC-9): «Зарегистрировать сервер» -> «Имя» sentry, «Адрес», «Личный OAuth» -> ONE
   //      `POST /api/admin/mcp-servers` with `{ name, url, mode: 'oauth' }` (no token key); `201 awaiting_admin_account` sends the TAB to
-  //      `{apiBaseUrl}/api/admin/mcp-servers/sentry/connect` by navigation ([support] `location.assign` spy) and no `fetch` goes there; the tab returns at
+  //      `/api/admin/mcp-servers/sentry/connect` by navigation ([support] `location.assign` spy) and no `fetch` goes there; the tab returns at
   //      `/admin/servers/sentry?connected=1`: «Включён» and the tools table with «читает» and «меняет», and `connected` is removed from the address (a
   //      reload does not repeat it); `?error=connect_failed` shows «Ждёт аккаунта администратора», «Подключить мой аккаунт» (the same connect address)
   //      and the MC-29 text once; `?error=tools_failed` shows its text above the table
@@ -1259,7 +1261,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(within(methods).queryAllByRole('link')).toEqual([]);
     expect(readsAfterChange(api, 0)).toContain('/api/admin/providers');
 
-    // Row 4 - sign-in settings (AC-26.3, DC-7): hours from the stored minutes, the API address while none is saved
+    // Row 4 - sign-in settings (AC-26.3, DC-7): hours from the stored minutes, the page address while none is saved
     const address = await screen.findByLabelText('Публичный адрес Agent OS');
     expect(address).toHaveValue('http://api.test');
     const idle = screen.getByLabelText('Без активности');

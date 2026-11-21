@@ -12,9 +12,11 @@ import {
 } from '@nestjs/common';
 import type { Agents } from '@agent-os/agents';
 import {
+  CopyRecordBodySchema,
   CreateRecordBodySchema,
   RecordAudienceBodySchema,
   UpdateRecordBodySchema,
+  type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
   type LibraryChoices,
@@ -117,15 +119,17 @@ export class LibraryController {
     );
   }
 
-  /** A personal copy of a visible record (Flow 3); 404 RECORD_NOT_FOUND. */
+  /** A personal copy of a visible record (Flow 3), named in `body.language`; 400, 404 RECORD_NOT_FOUND. */
   @Post(':id/copy')
   async copy(
     @Param('id') id: string,
+    @Body(new ZodValidationPipe(CopyRecordBodySchema)) body: CopyRecordBody,
     @Req() req: AuthedRequest,
   ): Promise<CopyResult> {
     return this.library.copy(
       req.user,
       id,
+      body,
       await serverFacts(this.agents, req.user.id),
     );
   }

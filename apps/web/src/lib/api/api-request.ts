@@ -1,6 +1,5 @@
 import { z, type ZodType } from "zod";
 import { ApiErrorSchema, IdentityErrorCode } from "@agent-os/contracts";
-import { apiBaseUrl } from "@/lib/config";
 
 export type ApiMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type ApiRequestErrorKind = "not_found" | "invalid_response" | "http" | "network";
@@ -113,7 +112,7 @@ export async function apiRequest<T>({
   const where = { method, path: path.split("?")[0] };
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}${path}`, {
+    response = await fetch(path, {
       method,
       credentials: "include",
       headers: body === undefined ? undefined : { "content-type": "application/json" },

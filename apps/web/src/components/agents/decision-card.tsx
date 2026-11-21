@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { useFormatter, useLocale, useMessages } from "next-intl";
 import {
   RunCodeConfirmationContentSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
@@ -26,7 +27,9 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResource } from "@/hooks/use-resource";
-import { BRIEF_PARTS, formatTime } from "@/lib/agents/format";
+import { BRIEF_PARTS } from "@/lib/agents/format";
+import { builtinName, builtinToolLabels } from "@/lib/i18n/builtin-name";
+import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
 import { libraryApi } from "@/lib/library/library-api";
@@ -168,12 +171,12 @@ function briefOf(confirmation: Confirmation): Brief | null {
 type Outcome = { kind: "approved" | "rejected" | "cancelled"; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a decided request (MC-19, MC-20); null while it is open. */
-function outcomeOf(confirmation: Confirmation, isBrief: boolean): Outcome | null {
+function outcomeOf(confirmation: Confirmation, isBrief: boolean, format: Formatter): Outcome | null {
   if (confirmation.status === "open") return null;
   if (confirmation.status === "cancelled") {
     return { kind: "cancelled", text: TEXT.cancelled, Icon: CircleStopIcon, tone: "text-muted-foreground" };
   }
-  const time = formatTime(confirmation.resolvedAt ?? confirmation.createdAt);
+  const time = formatListTime(format, confirmation.resolvedAt ?? confirmation.createdAt);
   if (confirmation.resolution?.approve === true) {
     const word = isBrief ? TEXT.briefApproved : TEXT.approved;
     return { kind: "approved", text: `${word} · ${time}`, Icon: CircleCheckIcon, tone: "text-success" };
@@ -263,12 +266,16 @@ export function DecisionButton({
  */
 function TaskHeading({ workflowId }: { workflowId: string }) {
   const { libraryIndex } = useShellServices();
+  const locale = useLocale();
   // Subscribes to the list: the title follows a read that lands after the card.
   useStore(libraryIndex, (state) => state.records);
-  const live = libraryIndex.summaryOf(workflowId);
+  const found = libraryIndex.summaryOf(workflowId);
+  const live = found == null ? found : { ...found, name: builtinName(found, locale) };
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <h3 className="text-base leading-6 font-semibold break-words">{taskTitleName(workflowId, libraryIndex)}</h3>
+      <h3 className="text-base leading-6 font-semibold break-words">
+        {taskTitleName(workflowId, { summaryOf: () => live })}
+      </h3>
       {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
     </div>
   );
@@ -307,7 +314,10 @@ export type DecisionCardProps = {
  */
 export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardProps) {
   const brief = briefOf(confirmation);
-  const outcome = outcomeOf(confirmation, brief !== null);
+  const format = useFormatter();
+  const locale = useLocale();
+  const { tools } = useMessages();
+  const outcome = outcomeOf(confirmation, brief !== null, format);
   const edit = useBriefEdit();
   const editing = edit.draft !== null && outcome === null;
   const [pressed, setPressed] = useState<Pressed | null>(null);
@@ -378,10 +388,14 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
     cancelEdit();
   };
 
-  const { tool, server, args, toolTitle } = confirmation;
-  /** The tool's human title when its server gives one; the technical name otherwise. */
-  const toolName = toolTitle ?? tool;
-  const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, confirmation.argLabels) : null;
+  const { tool, server, args } = confirmation;
+  // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the request.
+  const builtin = server === null ? builtinToolLabels(tools, tool) : null;
+  const toolTitle = server === null ? undefined : confirmation.toolTitle;
+  const argLabels = builtin?.args ?? confirmation.argLabels;
+  /** The tool's human title when it has one; the technical name otherwise. */
+  const toolName = builtin?.title ?? toolTitle ?? tool;
+  const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, argLabels) : null;
   const canCall = canCallOf(confirmation);
   const groupName = brief !== null ? `${TEXT.briefTitle}: ${brief.text.question}` : `Нужно решение: ${toolName}`;
 
@@ -393,7 +407,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
           dateTime={confirmation.createdAt}
           className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
         >
-          {formatTime(confirmation.createdAt)}
+          {formatListTime(format, confirmation.createdAt)}
         </time>
       </div>
     ) : (
@@ -440,7 +454,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
           {/* RN-04: the asking agent's record; the chat's own request has none. */}
           {!byChat && confirmation.origin !== null && (
             <RecordLabel
-              origin={confirmation.origin}
+              origin={{ ...confirmation.origin, name: builtinName(confirmation.origin, locale) }}
               variant="under"
               href={recordPath(confirmation.origin.recordId)}
             />
@@ -460,7 +474,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
         </div>
         <ValueRows
           label={TEXT.args}
-          rows={runCode?.rows ?? valueRows(args, confirmation.argLabels)}
+          rows={runCode?.rows ?? valueRows(args, argLabels)}
           script={runCode?.script}
           raw={typeof args === "string" ? args : JSON.stringify(args, null, 2)}
           disclosure

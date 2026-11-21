@@ -38,6 +38,7 @@ import {
 } from './mcp-servers.repository';
 import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool';
 import { checkServerUrl } from './mcp-url';
+import { shapeBlockOf } from './tool-shape';
 
 /** Stands in for the shared token in «было/стало»: `AuditLog` writes `secret_changed` for its field name. */
 const SECRET_MARK = 'changed';
@@ -325,7 +326,9 @@ export class McpRegistry {
     const { client, callTimeoutMs } = this.options;
     try {
       const listed = await client.listTools({ url, auth, timeoutMs: callTimeoutMs });
-      return listed.map((tool) => toMcpTool(name, tool)).sort((a, b) => a.tool.localeCompare(b.tool));
+      const tools = listed.map((tool) => toMcpTool(name, tool)).sort((a, b) => a.tool.localeCompare(b.tool));
+      this.logShapes(name, tools);
+      return tools;
     } catch (error) {
       const reason = listingFailureReason(error, auth.mode);
       this.options.logger.warn('mcp server did not list its tools', {
@@ -336,6 +339,23 @@ export class McpRegistry {
       });
       throw checkFailed(reason);
     }
+  }
+
+  /**
+   * One record per listing about the declared result shapes (tool-output-shapes design-core.md, «Логирование»),
+   * measured by the same function the agent's step uses; the shape text and the schema stay out of the log.
+   */
+  private logShapes(server: string, tools: readonly McpTool[]): void {
+    const shapes = tools.flatMap(({ tool, outputSchema }) =>
+      outputSchema === undefined ? [] : [{ tool, ...shapeBlockOf(outputSchema) }],
+    );
+    this.options.logger.info('mcp server tools listed', {
+      server,
+      tools: tools.length,
+      withShape: shapes.length,
+      longestShapeBlock: Math.max(0, ...shapes.map(({ block }) => block.length)),
+      truncatedShapes: shapes.filter(({ truncated }) => truncated).map(({ tool }) => tool),
+    });
   }
 
   /**

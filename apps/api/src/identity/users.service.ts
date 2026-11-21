@@ -9,6 +9,7 @@ import {
   type AdminUserPage,
   type AdminUserSummary,
   type CreateLocalUserBody,
+  type Language,
   type MyRoleList,
   type PasswordChangeBody,
   type UserStatus,
@@ -28,6 +29,7 @@ import {
   insertLocalUser,
   pageUsers,
   rolesOfUsers,
+  setLanguage,
   setPasswordHash,
   setPersonalAdmin,
   setUserStatus,
@@ -349,6 +351,11 @@ export class UsersService {
       outcome: 'ok',
       durationMs: Date.now() - startedAt,
     });
+  }
+
+  /** The employee saves his own interface language (i18n KD-4); no audit: the language grants nothing. */
+  async setOwnLanguage(userId: string, language: Language): Promise<void> {
+    await setLanguage(this.db, userId, language);
   }
 
   /** Logs a refused own change and gives its 400 answer; the password stays as it was (AC-33.4). */

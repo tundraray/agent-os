@@ -11,7 +11,7 @@
 //   event source for LiveStore (`live`: what the shell opened, frames pushed by the test).
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'
 //   (built from @agent-os/contracts types, pass their schemas).
-//   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
+//   Page address in tests: jsdom url 'http://api.test' (vitest.config.ts); relative `/api/...` requests resolve against it. TZ = 'Europe/Berlin'.
 // Mock boundary: network only (MSW) + the live event source + next/navigation (framework boundary). Runtime, stores,
 //   adapters, ShellStatus, components — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/* or @assistant-ui/*.
 import { screen, waitFor, within } from '@testing-library/react';

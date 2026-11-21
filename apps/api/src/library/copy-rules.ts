@@ -1,13 +1,24 @@
 import {
   ALL_SERVERS,
+  BUILTIN_NAMES,
   RECORD_NAME_MAX_LENGTH,
   type CopyResult,
+  type Language,
   type RecordBody,
 } from '@agent-os/contracts';
 import { isNameTaken, type ContentPart } from './record-content';
 
-const COPY_SUFFIX = ' — копия';
+/** The copy mark of UXRD MC-8 in each interface language. */
+const COPY_SUFFIX: Readonly<Record<Language, string>> = {
+  ru: ' — копия',
+  en: ' — copy',
+};
 const FIRST_NUMBERED_COPY = 2;
+
+const BUILTIN_NAMES_BY_KEY = new Map<
+  string,
+  Readonly<Record<Language, string>>
+>(Object.entries(BUILTIN_NAMES));
 
 export interface CopyInput {
   readonly name: string;
@@ -22,6 +33,10 @@ export interface CopyInput {
   readonly defaultModel: string | null;
   /** Agent records the copier sees. */
   readonly visibleAgentIds: readonly string[];
+  /** The language of the copier's page: the copy mark and an unrenamed built-in name are in it. */
+  readonly language: Language;
+  /** The source's built-in key; `null` — not a built-in record. */
+  readonly builtinKey: string | null;
 }
 
 export type CopyPlan = Omit<CopyResult, 'record'> & {
@@ -99,7 +114,11 @@ export function planCopy(input: CopyInput): CopyPlan {
   }
 
   return {
-    name: copyName(input.name, input.takenNames),
+    name: copyName(
+      sourceName(input),
+      COPY_SUFFIX[input.language],
+      input.takenNames,
+    ),
     body: copy,
     removedServers,
     replacedModels,
@@ -133,14 +152,28 @@ export function replaceModel(
   return allowedModels[0] ?? model;
 }
 
-/** «{имя} — копия», then «{имя} — копия {N}» with the least free N; the name is cut so the suffix fits. */
-function copyName(name: string, takenNames: readonly string[]): string {
+/**
+ * The name the copy starts from (KD-6): a built-in record still under its seeded name is named in the
+ * copier's language; any other name, an administrator's among them, stays as it is.
+ */
+function sourceName({ name, builtinKey, language }: CopyInput): string {
+  const names =
+    builtinKey === null ? undefined : BUILTIN_NAMES_BY_KEY.get(builtinKey);
+  return names !== undefined && name === names.ru ? names[language] : name;
+}
+
+/** «{имя}{mark}», then «{имя}{mark} {N}» with the least free N; the name is cut so the suffix fits. */
+function copyName(
+  name: string,
+  copySuffix: string,
+  takenNames: readonly string[],
+): string {
   const withSuffix = (suffix: string) =>
     `${name.slice(0, RECORD_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
-  const first = withSuffix(COPY_SUFFIX);
+  const first = withSuffix(copySuffix);
   if (!isNameTaken(first, takenNames)) return first;
   for (let n = FIRST_NUMBERED_COPY; ; n += 1) {
-    const candidate = withSuffix(`${COPY_SUFFIX} ${n}`);
+    const candidate = withSuffix(`${copySuffix} ${n}`);
     if (!isNameTaken(candidate, takenNames)) return candidate;
   }
 }

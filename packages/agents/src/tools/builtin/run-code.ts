@@ -148,6 +148,8 @@ const DESCRIPTION = [
   '- `callTool(name, args)` calls an MCP tool under the same name and with the same arguments as in your tool',
   '  list (`mcp__<server>__<tool>`) and resolves with its full answer; a refusal or a tool error rejects with',
   "  an error that has `outcome`, `reason` and `text`; the text of a tool error is empty, not the server's.",
+  '  When the server sent `structuredContent`, `callTool` resolves with it, and the description of the tool',
+  '  shows its structure.',
   '- `readResult(callId)` resolves with the full result of an earlier direct tool call of yours that came to you',
   '  as a stored result, by the `callId` the stored result names.',
   '- `console.log`, `console.info`, `console.warn`, `console.error` write to the script output, which the',
@@ -366,8 +368,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
   return {
     name: RUN_CODE_TOOL,
     mode: 'outside',
-    title: 'Выполнить код',
-    argLabels: { description: 'Описание', class: 'Класс запуска', script: 'Скрипт' },
     description: DESCRIPTION,
     argsSchema: RunCodeArgsSchema,
     confirmation: {

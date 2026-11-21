@@ -68,7 +68,6 @@ import {
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import { apiRequest } from '@/lib/api/api-request';
-import { apiBaseUrl } from '@/lib/config';
 
 /**
  * The admin panel's API client (design-admin.md, KD-3, Contract «`adminApi`»): one function per operation,
@@ -163,7 +162,7 @@ const servers = {
     }),
   remove: (name: string): Promise<void> => apiRequest({ path: apiPath('mcp-servers', name), method: 'DELETE' }),
   /** The connect route answers 302 to the authorization server, so the tab goes to this address instead of a request. */
-  connectUrl: (name: string): string => `${apiBaseUrl}${apiPath('mcp-servers', name, 'connect')}`,
+  connectUrl: (name: string): string => apiPath('mcp-servers', name, 'connect'),
 };
 
 const models = {

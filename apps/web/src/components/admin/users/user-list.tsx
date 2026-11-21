@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
+import { useFormatter } from 'next-intl';
 import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { PANEL_TITLE } from '@/components/admin/admin-header';
@@ -16,7 +17,7 @@ import { usePagedResource, type Page } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isListChanged } from '@/lib/admin/admin-errors';
 import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
-import { formatTime } from '@/lib/agents/format';
+import { formatListTime, type Formatter } from '@/lib/i18n/formats';
 import { adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { AccountDialog } from './account-dialog';
@@ -90,7 +91,7 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
   );
 }
 
-function rowOf(user: AdminUserSummary): DataTableRow {
+function rowOf(user: AdminUserSummary, format: Formatter): DataTableRow {
   const roles = user.roles.map((role) => role.name).join(' · ');
   return {
     key: user.id,
@@ -102,7 +103,7 @@ function rowOf(user: AdminUserSummary): DataTableRow {
       <span key="roles" className="block truncate" title={roles}>
         {roles === '' ? EMPTY_VALUE : roles}
       </span>,
-      user.lastSignInAt === null ? TEXT.never : formatTime(user.lastSignInAt),
+      user.lastSignInAt === null ? TEXT.never : formatListTime(format, user.lastSignInAt),
     ],
   };
 }
@@ -114,13 +115,14 @@ function rowOf(user: AdminUserSummary): DataTableRow {
  */
 export function UserList() {
   const title = adminSectionTitle('users');
+  const format = useFormatter();
   const [query, setQuery] = useState('');
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
   const list = usePagedResource((cursor) => loadUsersPage(searched, cursor), searched);
   const [creating, setCreating] = useState(false);
 
   const state = resourceTableState({ ...list, data: list.items }, TEXT.loadFailed, (items) => ({
-    rows: items.map(rowOf),
+    rows: items.map((user) => rowOf(user, format)),
     // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
     // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
     empty: { Icon: SearchXIcon, title: TEXT.noMatches },

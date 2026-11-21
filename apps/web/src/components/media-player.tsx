@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { PauseIcon, PlayIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { field, inkButton, mono, paper } from "./surfaces";
 
@@ -82,6 +83,7 @@ export function AudioPlayer({
   className,
   ...props
 }: AudioPlayerProps) {
+  const t = useTranslations("formats");
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playback, setPlayback] = useState({
     src,
@@ -180,7 +182,7 @@ export function AudioPlayer({
           step={0.1}
           value={Math.min(currentTime, duration ?? 0)}
           aria-label="Перемотка"
-          aria-valuetext={`${formatDuration(currentTime)} из ${durationLabel}`}
+          aria-valuetext={t("playbackPosition", { position: formatDuration(currentTime), duration: durationLabel })}
           disabled={hasError}
           onChange={(event) => {
             const nextTime = Number(event.currentTarget.value);

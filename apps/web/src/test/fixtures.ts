@@ -110,6 +110,7 @@ export function currentUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
     name: 'Аня Смирнова',
     isAdmin: false,
     hasPassword: true,
+    language: null,
     ...overrides,
   });
 }

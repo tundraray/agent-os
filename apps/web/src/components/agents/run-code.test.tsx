@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { render, within } from '@testing-library/react';
+import { render, within } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,11 +22,6 @@ type LikePart = Exclude<ThreadMessageLike['content'], string>[number];
 type ToolCallLikePart = Extract<LikePart, { type: 'tool-call' }>;
 type DataLikePart = Extract<LikePart, { type: `data-${string}` }>;
 
-/** What the server gives a `run_code` call and its request: the MC-1 title and the MC-2 labels. */
-const DISPLAY = {
-  toolTitle: 'Выполнить код',
-  argLabels: { description: 'Описание', class: 'Класс запуска', script: 'Скрипт' },
-};
 const SCRIPT = [
   'const top = await readResult("r9");',
   'for (const [service] of top.slice(0, 3)) {',
@@ -53,8 +48,8 @@ function feed(): ThreadMessageLike[] {
         content: {
           text: '',
           toolCalls: [
-            { callId: 'ok', tool: 'run_code', server: null, args: READ_ARGS, state: 'done', ...DISPLAY },
-            { callId: 'bad', tool: 'run_code', server: null, args: READ_ARGS, state: 'done', ...DISPLAY },
+            { callId: 'ok', tool: 'run_code', server: null, args: READ_ARGS, state: 'done' },
+            { callId: 'bad', tool: 'run_code', server: null, args: READ_ARGS, state: 'done' },
           ],
         },
       }),
@@ -99,7 +94,6 @@ function writeRequest(overrides: Partial<DecisionCardProps['confirmation']>): De
     server: null,
     args: WRITE_ARGS,
     createdAt: fixtureTime(4),
-    ...DISPLAY,
     ...overrides,
   });
 }

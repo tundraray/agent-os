@@ -3,7 +3,11 @@ import {
   identityRoles,
   identityUsers,
 } from '@agent-os/db';
-import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
+import {
+  UserStatusSchema,
+  type Language,
+  type UserStatus,
+} from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { Executor } from '../common/executor';
 
@@ -218,6 +222,18 @@ export async function setPasswordAndEnable(
   await executor
     .update(identityUsers)
     .set({ passwordHash, status: UserStatusSchema.enum.active })
+    .where(eq(identityUsers.id, userId));
+}
+
+/** Records the employee's interface language. */
+export async function setLanguage(
+  executor: Executor,
+  userId: string,
+  language: Language,
+): Promise<void> {
+  await executor
+    .update(identityUsers)
+    .set({ language })
     .where(eq(identityUsers.id, userId));
 }
 

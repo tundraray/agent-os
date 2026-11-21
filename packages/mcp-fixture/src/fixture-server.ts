@@ -48,7 +48,8 @@ const TOOLS: Readonly<Record<FixtureSource, readonly FixtureTool[]>> = {
 
 /**
  * MCP server over one synthetic dataset, serving its logs, its back office or the tracker, built on the low-level `Server` so the
- * fixture controls every result byte: tools have no `outputSchema`, results are canonical JSON. Reading tools are
+ * fixture controls every result byte: results are canonical JSON. `search_tickets`, `search_orders`, `get_order` and
+ * `get_trace` list an `outputSchema` built from their result schema; the other tools declare none. Reading tools are
  * listed with `readOnlyHint: true`; the changing `create_incident_note` has no annotations (KD-4). Every source
  * reports the dataset's snapshot.
  */
@@ -97,6 +98,7 @@ export class FixtureServer {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
         ...(tool.readOnly ? { annotations: { readOnlyHint: true } } : {}),
       })),
     }));

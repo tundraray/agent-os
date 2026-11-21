@@ -3,8 +3,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { HistoryEntry } from "@agent-os/contracts";
 import { ChevronRightIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useShellServices } from "@/components/shell/shell-actions";
-import { inheritedHistoryCaption } from "@/lib/agents/format";
 import { logger } from "@/lib/logger";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
 import { describeApiError } from "@/lib/api/api-request";
@@ -59,6 +59,7 @@ async function readInherited(api: ThreadsApiClient, agentId: string): Promise<In
  */
 export function InheritedHistory({ agentId }: { agentId: string }) {
   const { apiClient } = useShellServices();
+  const t = useTranslations("formats");
   const [read, setRead] = useState<Read>({ status: "loading" });
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -81,7 +82,7 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
     return (
       <p data-slot="inherited-history" className="text-muted-foreground flex h-8 items-center gap-1 text-xs leading-4 font-medium">
         <ChevronRightIcon aria-hidden className="size-3.5" />
-        {inheritedHistoryCaption(null)}
+        {t("inheritedHistory")}
       </p>
     );
   }
@@ -96,7 +97,7 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
         className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-8 items-center gap-1 self-start rounded-md text-xs leading-4 font-medium outline-none focus-visible:ring-2 pointer-coarse:h-11"
       >
         <ChevronRightIcon aria-hidden className={cn("size-3.5", open && "rotate-90")} />
-        {inheritedHistoryCaption(read.messages.length)}
+        {t("inheritedHistoryCount", { count: read.messages.length })}
       </button>
       {open && (
         <ol

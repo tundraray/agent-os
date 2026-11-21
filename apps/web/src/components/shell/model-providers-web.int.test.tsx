@@ -31,7 +31,7 @@
 //   - `describeAdminError` rows for `MODEL_PROVIDER_*`, `MODEL_DEFAULT_INVALID` (lib/admin/admin-errors.test.ts, existing table).
 //   - `providerReasonText` / `failureReasonText` / `chatFailureText` / `startRefused` / `describeRefusal` / `refusalText`: one row per reason
 //     in the existing reason-text tables (MC-9, MC-10, MC-11, MC-12 wording, design Test Strategy closing paragraph).
-//   - `formatModel` rows incl. `null` -> «Модель по умолчанию» (lib/agents/format.test.ts, existing table).
+//   - `formatRecordModel` rows incl. `null` -> «Модель по умолчанию» (lib/agents/format.test.ts, existing table).
 //
 // `not automated` (design UC-5, UC-6 and the L1 table): the connection check with its result row and announcements (AC-16.1, AC-15.1),
 //   the MC-3 confirmation on disabling a provider and the «Нет провайдера» mark (AC-05.4, AC-06.2), focus after dialogs and delete, the MP-01
@@ -94,6 +94,8 @@ import { renderWithRuntime } from '@/test/render-with-runtime';
 vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
 
 const API = 'http://api.test';
+// Intl separates a Russian amount and its currency sign with U+00A0.
+const NBSP = String.fromCharCode(0xa0);
 
 // Support shared by the cases of this file -------------------------------------------------------------------------------------------------
 
@@ -562,7 +564,7 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
         'Gemini Embedding 001google/gemini-embedding-001',
         'google',
         'Эмбеддинги · 768',
-        '0,15 $',
+        `0,15${NBSP}$`,
         '—',
         '—',
         '—',
@@ -572,10 +574,10 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
       'Gemini 2.5 Flashgoogle/gemini-2.5-flash',
       'google',
       'Чат',
-      '0,3 $',
-      '2,5 $',
-      '1 $',
-      '0,03 $',
+      `0,3${NBSP}$`,
+      `2,5${NBSP}$`,
+      `1${NBSP}$`,
+      `0,03${NBSP}$`,
     ]);
 
     // Act: a third `google` model, refused 422 MODEL_PROVIDER_INVALID with each reason in turn
@@ -867,7 +869,7 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
   //   reasons), and the first-message refusal wiped from the field or put where the thread has no row for it. The words per reason are a unit
   //   table; only this test sees the failure travel through the real feed -> thread -> block, and the 409 through the real message field.
   // @category: edge-case
-  // @dependency: ChatRuntimeProvider, ChatShell, thread feed (event source mock), reply error block, message field, chatFailureText, startRefused, MSW, next/navigation mock
+  // @dependency: ChatRuntimeProvider, ChatShell, thread feed (event source mock), reply error block, message field, replyFailureText, startRefused, MSW, next/navigation mock
   // @complexity: high
   it('INT-5: a provider failure shows its words in the reply block inside a conversation and at the message field for a refused first message', async () => {
     const user = userEvent.setup({ delay: null });

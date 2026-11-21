@@ -847,8 +847,8 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   the rule's variants are the unit tables (copy-rules, save-rules).
   // Steps (literal expected values):
   //   1. UC-4: Given Аня's agent open to «SRE» with servers Jira and Sentry and a model Борису not allowed; Борис's rights - only
-  //      Sentry (through a role grant) and the platform default model (`useRunModels`); When Борис `POST .../copy`; Then 201
-  //      `CopyResult`: the copy is personal, version 1, name "{name} — копия", servers exactly [Sentry], model the platform default;
+  //      Sentry (through a role grant) and the platform default model (`useRunModels`); When Борис `POST .../copy` with
+  //      `language: 'en'`; Then 201 `CopyResult`: the copy is personal, version 1, name "{name} — copy", servers exactly [Sentry], model the platform default;
   //      `removedServers` names Jira, `replacedModels` names the old and new model; the original is unchanged.
   //   2. AC-05.2: When Аня then saves a new version of the original (version 2, another prompt); Then Борис's copy still has its own
   //      prompt, servers and version 1.
@@ -900,13 +900,16 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       const original = await createRecord(app, alisa, sent);
       await shareWith(app, alisa, original.id, [sharedRole.id]);
       const copied = await expectBody(
-        apiRequest(app, kirill, 'post', `/library/${original.id}/copy`),
+        apiRequest(app, kirill, 'post', `/library/${original.id}/copy`, {
+          language: 'en',
+        }),
         201,
         CopyResultSchema,
       );
       expect(copied.record).toMatchObject({
         kind: 'agent',
-        name: `${sent.name} — копия`,
+        // i18n UC-3 (wiring): the route hands the copier's language to the copy rule
+        name: `${sent.name} — copy`,
         version: 1,
         mine: true,
         author: { id: kirill.id },
@@ -1336,7 +1339,9 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
       });
       await shareWith(app, anya, life.id, [sre.id]);
       const copy = await expectBody(
-        apiRequest(app, boris, 'post', `/library/${life.id}/copy`),
+        apiRequest(app, boris, 'post', `/library/${life.id}/copy`, {
+          language: 'ru',
+        }),
         201,
         CopyResultSchema,
       );

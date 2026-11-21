@@ -10,12 +10,13 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     environment: 'jsdom',
+    // The page address: relative `/api/...` requests resolve against it, as in the browser.
+    environmentOptions: { jsdom: { url: 'http://api.test' } },
     // Node 26 defines a global localStorage that throws without a file and hides jsdom's own.
     execArgv: ['--no-experimental-webstorage'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
-    env: { NEXT_PUBLIC_API_URL: 'http://api.test' },
   },
 });

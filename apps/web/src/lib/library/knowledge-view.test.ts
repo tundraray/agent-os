@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KnowledgeItem, KnowledgeView, LastExtraction } from "@agent-os/contracts";
+import { testFormatter } from "@/test/intl";
 import { knowledgeRow, knowledgeStateLines, knowledgeTabs } from "./knowledge-view";
 
 // Times are UTC; vitest runs in Europe/Berlin (UTC+1 in November), so 23:30Z is the next day there.
@@ -41,10 +42,11 @@ const base: KnowledgeView = {
 const view = (over: Partial<KnowledgeView>): KnowledgeView => ({ ...base, ...over });
 const offNoModel = { state: "off", reason: "model_not_selected", model: null } as const;
 const AUTHOR = { employeeInPanel: false };
+const format = testFormatter();
 
 const texts = (v: KnowledgeView, employeeInPanel = false) =>
-  knowledgeStateLines(v, { employeeInPanel }).map((line) => line.text);
-const lineOf = (v: KnowledgeView, key: string) => knowledgeStateLines(v, AUTHOR).find((line) => line.key === key);
+  knowledgeStateLines(v, { employeeInPanel }, format).map((line) => line.text);
+const lineOf = (v: KnowledgeView, key: string) => knowledgeStateLines(v, AUTHOR, format).find((line) => line.key === key);
 const lastRun = (over: Partial<LastExtraction>) =>
   lineOf(view({ lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "failed", added: 0, confirmed: 0, outdated: 0, reason: null, ...over } }), "last_run");
 const reasonOf = (reason: LastExtraction["reason"]) => lastRun({ status: "skipped", reason })?.reason;
@@ -55,6 +57,14 @@ const tabLabels = (v: KnowledgeView) => knowledgeTabs(v).map((tab) => tab.label)
 // the state lines are `counts` as given, marks follow `state` then `placement`, the fifth tab follows selection.
 // Catches: numbers counted from items, the wrong mark or tab with selection or self-learning off, wrong reason words.
 describe("knowledge view", () => {
+  // A row's day carries the year only outside the current one: the clock stays in the items' year.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-21T12:00:00Z") });
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   it.each<[string, () => unknown, unknown]>([
     ["line 1, not all fit: N of M from counts", () => texts(base)[0],
       "При любом вопросе запуски получают 64 из 126 записей · знания занимают 180% места"],
@@ -77,7 +87,7 @@ describe("knowledge view", () => {
     ["lessons off", () => lineOf(view({ lessonsEnabled: false }), "lessons_off")?.text,
       "Уроки сейчас не идут в запуски — их выключил администратор. Факты и «искал — не нашёл» идут как обычно."],
     ["self-learning off: its line replaces 1–2, no lessons or selection line",
-      () => knowledgeStateLines(view({ selfLearning: false, lessonsEnabled: false, selection: offNoModel, lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } }), AUTHOR).map((line) => line.key),
+      () => knowledgeStateLines(view({ selfLearning: false, lessonsEnabled: false, selection: offNoModel, lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } }), AUTHOR, format).map((line) => line.key),
       ["self_learning_off", "outdated", "last_run"]],
     ["self-learning off, employee's workflow in the panel", () => texts(view({ selfLearning: false }), true)[0],
       "Самообучение выключено: запуски не получают эти знания и не пополняют их. Включить его может автор."],
@@ -89,19 +99,19 @@ describe("knowledge view", () => {
     ["tabs keep the server's order", () => knowledgeTabs(base)[1]?.items, [team, owns, billing, writes]],
     ["tabs, self-learning off: no fifth tab", () => knowledgeTabs(view({ selfLearning: false })).map((tab) => tab.id),
       ["all", "facts", "lessons", "searched_nothing"]],
-    ["marks by state, then placement", () => base.items.map((item) => knowledgeRow(item, true).mark),
+    ["marks by state, then placement", () => base.items.map((item) => knowledgeRow(item, true, format).mark),
       [null, { text: "только по теме", state: "neutral" }, null, { text: "уроки выключены", state: "off" },
         { text: "не помещается", state: "off" }, { text: "устарела", state: "off" }]],
-    ["self-learning off: no placement marks", () => base.items.map((item) => knowledgeRow(item, false).mark?.text ?? null),
+    ["self-learning off: no placement marks", () => base.items.map((item) => knowledgeRow(item, false, format).mark?.text ?? null),
       [null, null, null, "уроки выключены", null, "устарела"]],
-    ["row of an entity: key, kind, cell, day in the viewer's zone", () => knowledgeRow(billing, true),
+    ["row of an entity: key, kind, cell, day in the viewer's zone", () => knowledgeRow(billing, true, format),
       { key: "entity:1", name: "billing-api", kind: "факт", mark: null, confirmations: 1, date: "19 нояб.",
         cell: { tool: null, title: "billing-api", detail: "Сервис списаний" } }],
-    ["cell of a relation fact", () => [knowledgeRow(owns, true).key, knowledgeRow(owns, true).cell],
+    ["cell of a relation fact", () => [knowledgeRow(owns, true, format).key, knowledgeRow(owns, true, format).cell],
       ["relation:1", { tool: null, title: "команда Платежи → владеет → billing-api", detail: null }]],
-    ["cell of a lesson", () => [knowledgeRow(lesson, true).kind, knowledgeRow(lesson, true).cell],
+    ["cell of a lesson", () => [knowledgeRow(lesson, true, format).kind, knowledgeRow(lesson, true, format).cell],
       ["рабочий урок", { tool: "logs.search", title: "ошибки оплаты", detail: "Искать в логах billing-api — ошибки нашлись" }]],
-    ["cell of «искал — не нашёл»", () => [knowledgeRow(nothing, true).kind, knowledgeRow(nothing, true).cell],
+    ["cell of «искал — не нашёл»", () => [knowledgeRow(nothing, true, format).kind, knowledgeRow(nothing, true, format).cell],
       ["искал — не нашёл", { tool: "logs.search", title: "ошибки payment-gateway", detail: "пусто" }]],
     ["line 5, done", () => lastRun({ status: "done", added: 5, confirmed: 3 })?.text,
       "Последний запуск, 19 нояб., 14:32: добавлено 5, подтверждено 3"],

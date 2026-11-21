@@ -2,6 +2,7 @@
 
 import { memo, type FC } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
+import { useTranslations } from "next-intl";
 import {
   FileIcon,
   FileTextIcon,
@@ -12,6 +13,7 @@ import {
   DownloadIcon,
 } from "lucide-react";
 import type { FileMessagePartComponent } from "@assistant-ui/react";
+import type { FormatsTranslator } from "@/lib/i18n/formats";
 import { cn } from "@/lib/utils";
 import { AudioPlayer, VideoPlayer } from "./media-player";
 
@@ -146,14 +148,10 @@ function getFileLabel(mimeType: string): string {
   return `Файл ${subtype.toUpperCase()}`;
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} Б`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} КБ`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+function formatFileSize(t: FormatsTranslator, bytes: number): string {
+  if (bytes < 1024) return t("fileSize.bytes", { size: bytes });
+  if (bytes < 1024 * 1024) return t("fileSize.kilobytes", { size: bytes / 1024 });
+  return t("fileSize.megabytes", { size: bytes / (1024 * 1024) });
 }
 
 export type FileRootProps = React.ComponentProps<"div"> &
@@ -224,13 +222,14 @@ type FileSizeProps = React.ComponentProps<"span"> & {
 };
 
 function FileSize({ bytes, className, ...props }: FileSizeProps) {
+  const t = useTranslations("formats");
   return (
     <span
       data-slot="file-size"
       className={cn("text-muted-foreground shrink-0", className)}
       {...props}
     >
-      {formatFileSize(bytes)}
+      {formatFileSize(t, bytes)}
     </span>
   );
 }
@@ -411,5 +410,4 @@ export {
   getFileDataKind,
   getFileHref,
   getBase64Size,
-  formatFileSize,
 };

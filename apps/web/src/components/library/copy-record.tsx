@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import { LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -98,8 +99,8 @@ export type CopyRecord = {
   copy: (record: CopySource) => void;
   /** A copy or its preparation is running: the trigger shows `LoaderCircle` and is unavailable. */
   pending: boolean;
-  /** MC-4 «Не удалось скопировать: {причина}» of the last direct copy; the dialog shows its own. */
-  error: string | null;
+  /** MC-4 «Не удалось скопировать: {причина}» of the last direct copy, `null` — none; the dialog shows its own. */
+  error: ReactNode;
   /** The dialog of LB-03; the caller renders it. */
   dialog: ReactNode;
 };
@@ -112,15 +113,17 @@ export type CopyRecord = {
 export function useCopyRecord(): CopyRecord {
   const { libraryIndex, announcer } = useShellServices();
   const router = useRouter();
+  const locale = useLocale();
+  const t = useTranslations("errors");
   const leaveThenGo = useLeaveThenGo();
   const [plan, setPlan] = useState<CopyPlan | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
 
   async function run(record: CopySource): Promise<void> {
     const result = await recordAction(
       { recordId: record.id, kind: record.kind, action: "copy", version: null },
-      () => libraryApi.copy(record.id),
+      () => libraryApi.copy(record.id, locale),
     );
     void libraryIndex.refresh();
     const notice = copiedNotice(result);
@@ -128,7 +131,7 @@ export function useCopyRecord(): CopyRecord {
       description: notice.description,
       action: { label: TEXT.open, onClick: () => leaveThenGo(() => router.push(recordPath(result.record.id))) },
     });
-    announcer.getState().announce(TEXT.saved(result.record.name));
+    announcer.getState().announce("announce.copySaved", { name: result.record.name });
   }
 
   async function copy(record: CopySource): Promise<void> {
@@ -140,7 +143,7 @@ export function useCopyRecord(): CopyRecord {
       next = await planCopy(record);
     } catch (cause) {
       logger.warn("library: copy preparation read failed", { recordId: record.id, ...describeApiError(cause) });
-      setError(copyFailed(cause));
+      setError(copyFailed(t, cause));
       setPending(false);
       return;
     }
@@ -153,7 +156,7 @@ export function useCopyRecord(): CopyRecord {
       await run(record);
     } catch (cause) {
       // `recordAction` has logged the refusal.
-      setError(copyFailed(cause));
+      setError(copyFailed(t, cause));
     } finally {
       setPending(false);
     }
@@ -167,7 +170,7 @@ export function useCopyRecord(): CopyRecord {
       await run(plan.record);
       setPlan(null);
     } catch (cause) {
-      setError(copyFailed(cause));
+      setError(copyFailed(t, cause));
     } finally {
       setPending(false);
     }

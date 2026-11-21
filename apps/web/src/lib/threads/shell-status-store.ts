@@ -1,9 +1,13 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
+import type { LibraryErrorContext } from "@/lib/library/library-errors";
 
 export type HistoryStatus = "loading" | "ready" | "not_found" | "load_failed" | "deleted";
 
-/** A message the server did not accept: its text and the notice under the field (null — the common one). */
-export type SendFailure = { text: string; notice: string | null };
+/**
+ * A message the server did not accept: its text, and the refusal with what the sender knew of it — the
+ * composer words the notice under the field in the interface language (`describeLibraryError`).
+ */
+export type SendFailure = { text: string; cause: unknown; context: LibraryErrorContext };
 
 /**
  * Shell facts the assistant-ui runtime does not keep (or swallows). The store never mirrors

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useFormatter, useLocale } from "next-intl";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -19,7 +20,9 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_STATUS_LABEL, formatTime } from "@/lib/agents/format";
+import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
 import { isWorkflowCoordinator, type RunCardPartData } from "@/lib/feed/to-feed";
@@ -239,11 +242,14 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
  * from the library. Status changes recolour icons and labels only.
  */
 export function RunCard({ data }: RunCardProps) {
+  const format = useFormatter();
+  const locale = useLocale();
   const statusLabel = AGENT_STATUS_LABEL[data.status];
-  const record = runRecord(data);
+  const origin = runRecord(data);
+  const record = origin === null ? null : { ...origin, name: builtinName(origin, locale) };
   const time = (
     <time dateTime={data.createdAt} className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums">
-      {formatTime(data.createdAt)}
+      {formatListTime(format, data.createdAt)}
     </time>
   );
   if (!isWorkflowCoordinator(data) || record === null) {
@@ -298,7 +304,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
   return (
     <div
       role="group"
-      aria-label={`${data.name}: ${AGENT_STATUS_LABEL[data.status]}`}
+      aria-label={`${origin.name}: ${AGENT_STATUS_LABEL[data.status]}`}
       data-slot="run-card"
       data-variant="workflow"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"

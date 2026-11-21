@@ -10,7 +10,7 @@
     "test": "turbo test",
     "knip": "knip",
     "check": "turbo lint typecheck build test && knip",
-    "db:up": "docker compose -f infra/docker-compose.yml up -d",
+    "db:up": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d postgres",
     "prepare": "husky",
     "db:generate": "pnpm --filter @agent-os/db db:generate",
     "db:migrate": "pnpm --filter api db:migrate"

@@ -28,8 +28,8 @@ export type RunCodeView = {
 };
 
 /**
- * The arguments of a code run as rows; the labels (MC-2) come from the server like any built-in
- * tool's. Null when the arguments do not pass `RunCodeArgsSchema`: they are then ordinary rows.
+ * The arguments of a code run as rows; the labels (MC-2) are the catalogue's, like any built-in tool's
+ * (`builtinToolLabels`). Null when the arguments do not pass `RunCodeArgsSchema`: they are then ordinary rows.
  */
 export function runCodeView(args: unknown, labels: Readonly<Record<string, string>> = {}): RunCodeView | null {
   const parsed = RunCodeArgsSchema.safeParse(args);

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { useState } from 'react';
@@ -7,7 +7,6 @@ import type { McpConnection } from '@agent-os/contracts';
 import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { apiBaseUrl } from '@/lib/config';
 import { mcpApi } from '@/lib/mcp/mcp-api';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { currentUser } from '@/test/fixtures';
@@ -87,7 +86,7 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
   it("menu shows the employee's name and email, «Мой доступ» and «Выйти», no dev-mode caption; «Выйти» signs out and opens the login page", async () => {
     const steps: string[] = [];
     server.use(
-      http.post(`${apiBaseUrl}/api/auth/sign-out`, () => {
+      http.post('/api/auth/sign-out', () => {
         steps.push('sign-out');
         return new HttpResponse(null, { status: 204 });
       }),
@@ -116,7 +115,7 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
   ] as const)('$name', async ({ list, label, count }) => {
     let served = false;
     server.use(
-      http.get(`${apiBaseUrl}/api/mcp/connections`, () => {
+      http.get('/api/mcp/connections', () => {
         served = true;
         return HttpResponse.json([...list]);
       }),
@@ -137,8 +136,8 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
   it('a disconnect brings the count back without a reload', async () => {
     let list: McpConnection[] = [JIRA];
     server.use(
-      http.get(`${apiBaseUrl}/api/mcp/connections`, () => HttpResponse.json(list)),
-      http.delete(`${apiBaseUrl}/api/mcp/connections/jira`, () => {
+      http.get('/api/mcp/connections', () => HttpResponse.json(list)),
+      http.delete('/api/mcp/connections/jira', () => {
         list = [{ ...JIRA, status: 'needs_auth' }];
         return new HttpResponse(null, { status: 204 });
       }),
@@ -152,7 +151,7 @@ describe('UserMenu — the signed-in employee (UM-01, AC-01.2, MC-6)', () => {
   });
 
   it('without a name the block shows the email up to «@»', async () => {
-    server.use(http.get(`${apiBaseUrl}/api/auth/me`, () => HttpResponse.json(currentUser({ name: '' }))));
+    server.use(http.get('/api/auth/me', () => HttpResponse.json(currentUser({ name: '' }))));
     renderUserMenu();
 
     expect(await screen.findByRole('button', { name: 'Меню пользователя anya' })).toBeInTheDocument();

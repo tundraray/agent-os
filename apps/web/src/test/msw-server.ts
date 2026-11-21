@@ -8,7 +8,6 @@ import type {
 } from '@agent-os/contracts';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { apiBaseUrl } from '@/lib/config';
 import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolResultSettings } from './fixtures';
 
 /**
@@ -25,21 +24,21 @@ import { currentUser, knowledgeSettings, modelDefaults, modelProviderView, toolR
  * `server.use(...)`.
  */
 const shellDefaults = [
-  http.get(`${apiBaseUrl}/api/auth/me`, () => HttpResponse.json(currentUser())),
-  http.get(`${apiBaseUrl}/api/agents/awaiting`, () => HttpResponse.json({ count: 0 } satisfies AwaitingCount)),
-  http.get(`${apiBaseUrl}/api/spend`, () =>
+  http.get('/api/auth/me', () => HttpResponse.json(currentUser())),
+  http.get('/api/agents/awaiting', () => HttpResponse.json({ count: 0 } satisfies AwaitingCount)),
+  http.get('/api/spend', () =>
     HttpResponse.json({ month: '2026-11', costUsd: 0 } satisfies SpendResponse),
   ),
-  http.get(`${apiBaseUrl}/api/mcp/connections`, () => HttpResponse.json([] satisfies McpConnection[])),
-  http.get(`${apiBaseUrl}/api/threads/:threadId/agents`, () => HttpResponse.json([] satisfies AgentNode[])),
-  http.get(`${apiBaseUrl}/api/access/models`, () =>
+  http.get('/api/mcp/connections', () => HttpResponse.json([] satisfies McpConnection[])),
+  http.get('/api/threads/:threadId/agents', () => HttpResponse.json([] satisfies AgentNode[])),
+  http.get('/api/access/models', () =>
     HttpResponse.json({ month: '2026-11', models: [] } satisfies MyModels),
   ),
-  http.get(`${apiBaseUrl}/api/library`, () => HttpResponse.json([] satisfies RecordSummary[])),
-  http.get(`${apiBaseUrl}/api/admin/model-providers`, () => HttpResponse.json([modelProviderView()])),
-  http.get(`${apiBaseUrl}/api/admin/model-defaults`, () => HttpResponse.json(modelDefaults())),
-  http.get(`${apiBaseUrl}/api/admin/knowledge/settings`, () => HttpResponse.json(knowledgeSettings())),
-  http.get(`${apiBaseUrl}/api/admin/tool-results/settings`, () => HttpResponse.json(toolResultSettings())),
+  http.get('/api/library', () => HttpResponse.json([] satisfies RecordSummary[])),
+  http.get('/api/admin/model-providers', () => HttpResponse.json([modelProviderView()])),
+  http.get('/api/admin/model-defaults', () => HttpResponse.json(modelDefaults())),
+  http.get('/api/admin/knowledge/settings', () => HttpResponse.json(knowledgeSettings())),
+  http.get('/api/admin/tool-results/settings', () => HttpResponse.json(toolResultSettings())),
 ];
 
 /**

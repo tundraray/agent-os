@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 're
 import { usePathname } from 'next/navigation';
 import type { Layout, LayoutChangedMeta } from 'react-resizable-panels';
 import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
+import { LocaleSync } from '@/components/i18n/locale-sync';
 import { ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SidebarInset, SidebarProvider, useSidebar } from '@/components/ui/sidebar';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
@@ -56,6 +57,7 @@ export function ChatShell({ defaultSidebarOpen, openEventSource, location, child
     <SidebarProvider defaultOpen={defaultSidebarOpen} className="h-dvh overflow-hidden">
       <ChatRuntimeProvider openEventSource={openEventSource} location={location}>
         <AdminRightWatch />
+        <ShellLocaleSync />
         <ShellAnnouncer />
         <GlobalShortcuts />
         <LeaveGuard />
@@ -206,6 +208,12 @@ function AdminRightWatch() {
     return () => setAdminRequiredHandler(null);
   }, [currentUser]);
   return null;
+}
+
+/** A choice made on another device takes over the page language after the employee is read (i18n DC-3). */
+function ShellLocaleSync() {
+  const { currentUser } = useShellServices();
+  return <LocaleSync currentUser={currentUser} />;
 }
 
 /** The shell's only polite live region (design-web.md, «Доступность»). */
