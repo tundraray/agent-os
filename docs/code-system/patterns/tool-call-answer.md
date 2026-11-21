@@ -27,3 +27,4 @@
 ## Used In
 
 - [design-core.md](../../features/self-learning/design-core.md) — раунд извлечения `record_knowledge` и выбор похожих сущностей (KD-4)
+- [design-flows.md](../../features/deep-agents/design-flows.md) — шаг выписок: утверждения и цитаты; второй пользователь выносит раунд в общий модуль (KD-7)
