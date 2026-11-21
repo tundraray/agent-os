@@ -12,7 +12,6 @@ import { useResource } from "@/hooks/use-resource";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import type { LibraryTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/pick-locale";
-import { KNOWLEDGE_TEXT } from "@/lib/library/knowledge-view";
 import { libraryApi } from "@/lib/library/library-api";
 import { shareBlockedReason } from "@/lib/library/library-errors";
 import { canUseInChat } from "@/lib/library/record-rules";
@@ -137,13 +136,14 @@ export function EditorHeaderActions({
  * flag; an agent has none. A link styled as a button, so `ShellLink` asks MC-11 over unsaved changes.
  */
 export function KnowledgeButton({ record }: { record: Pick<RecordDetail, "id" | "kind"> }) {
+  const t = useTranslations("library");
   if (record.kind !== "workflow") return null;
   return (
     <ShellLink
       href={adminKnowledgePath(record.id)}
       className={buttonVariants({ variant: "outline", size: "sm", className: CONTROL_SIZE })}
     >
-      {KNOWLEDGE_TEXT.entry}
+      {t("knowledge.entry")}
     </ShellLink>
   );
 }

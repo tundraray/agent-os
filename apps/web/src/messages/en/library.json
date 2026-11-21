@@ -248,5 +248,94 @@
     "rolesFailed": "Couldn't load roles",
     "noMatches": "No one found",
     "usersFailed": "Couldn't find employees"
+  },
+  "selfLearning": {
+    "hint": "Runs remember where they found what, and every later run gets it — whoever starts it, even without access to those systems.",
+    "kept": "The knowledge is kept: turn it back on and runs continue from it."
+  },
+  "knowledge": {
+    "entry": "What the workflow learned",
+    "title": "What “{name}” learned",
+    "openWorkflow": "Open workflow",
+    "columns": {
+      "record": "Record",
+      "kind": "Type",
+      "confirmations": "Confirmations",
+      "date": "Date"
+    },
+    "delete": "Delete",
+    "loading": "Loading knowledge…",
+    "loadFailed": "Couldn't load the knowledge",
+    "empty": {
+      "nothingTitle": "The workflow hasn't learned anything yet",
+      "nothingText": "Knowledge appears after the first finished run. Stopped runs don't teach.",
+      "offTitle": "Self-learning is off",
+      "offText": "{audience, select, panel {The author can turn it on.} other {Turn it on in the workflow editor — runs will start remembering where they found what.}}"
+    },
+    "lines": {
+      "scopeAll": "Runs get {active, plural, one {# record} other {all # records}} · knowledge takes {percent}% of the space",
+      "scopeSome": "For any question, runs get {always} of {active, plural, one {# record} other {# records}} · knowledge takes {percent}% of the space",
+      "doesNotFit": "{beyond, plural, one {# doesn't fit} other {# don't fit}}: records confirmed less often drop out first, and among equals the oldest.",
+      "byTopic": "{beyond} more only on the question's topic: a run gives up to half the space to the records closest in meaning to the question, the rest to the most confirmed, and among equals the newest.",
+      "selfLearningOff": "Self-learning is off: runs don't get this knowledge and don't add to it.{audience, select, panel { The author can turn it on.} other {}}",
+      "outdated": "{outdated, plural, one {# more is outdated — runs don't get it.} other {# more are outdated — runs don't get them.}}",
+      "lessonsOff": "Lessons don't go into runs now — an administrator turned them off. Facts and “searched — found nothing” go as usual.",
+      "selectionNoModel": "Selection by meaning is off: no model is chosen for it — an administrator chooses it in the panel, under “Models”. While it is off, the most confirmed records fill the space.",
+      "selectionFailed": "Selection by meaning is off: the {model} model didn't answer or refused — an administrator can check it in the panel, under “Models”. While it is off, the most confirmed records fill the space.",
+      "selectionPreparing": "Selection by meaning doesn't cover all records yet: {pending, plural, one {# is} other {# are}} still being prepared for it; until then they go into runs by confirmations."
+    },
+    "lastRun": {
+      "done": "Last run, {at}: {results}",
+      "added": "{count} added",
+      "confirmed": "{count} confirmed",
+      "outdated": "{count} outdated",
+      "nothingNew": "nothing new found",
+      "taughtNothing": "Last run, {at}, taught nothing",
+      "taughtNothingBecause": "Last run, {at}, taught nothing:",
+      "reason": {
+        "stopped": "the run was stopped",
+        "owner_disabled": "the person who started it is disabled",
+        "quota_exhausted": "the person who started it ran out of quota for the {model} model",
+        "model_not_connected": "the {model} model is disconnected",
+        "model_not_allowed": "the person who started it no longer has access to the {model} model",
+        "no_models_allowed": "the person who started it has no access to any model — an administrator grants it",
+        "model_error": "the {model} model didn't answer",
+        "invalid_answer": "the {model} model twice gave an answer that couldn't be read",
+        "interrupted": "the work was interrupted by a server failure"
+      }
+    },
+    "tabs": {
+      "all": "All · {count}",
+      "facts": "Facts · {count}",
+      "lessons": "Lessons · {count}",
+      "searchedNothing": "Searched — found nothing · {count}",
+      "doesNotFit": "Don't fit · {count}",
+      "byTopic": "Only on topic · {count}"
+    },
+    "noMatches": {
+      "facts": "No facts",
+      "lessons": "No lessons",
+      "searchedNothing": "No “searched — found nothing” records"
+    },
+    "kinds": {
+      "fact": "fact",
+      "lesson": "work lesson",
+      "searchedNothing": "searched — found nothing"
+    },
+    "marks": {
+      "outdated": "outdated",
+      "lessonsOff": "lessons off",
+      "byTopic": "only on topic",
+      "doesNotFit": "doesn't fit"
+    },
+    "nothingFound": "nothing",
+    "deleteDialog": {
+      "recordTitle": "Delete the record?",
+      "entityTitle": "Delete “{text}”?",
+      "record": "“{text}”. Later steps of runs won't get it. This can't be undone — the workflow may learn it again.",
+      "entity": "Later steps of runs won't get it. This can't be undone — the workflow may learn it again.",
+      "entityWithRelations": "Its relations are deleted with it: {relations}. Later steps of runs won't get them. This can't be undone — the workflow may learn it again."
+    },
+    "deleted": "{relations, plural, =0 {Deleted} other {Deleted with relations: {relations}}}"
   }
 }

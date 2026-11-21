@@ -3,41 +3,25 @@ import type {
   KnowledgeSelection,
   KnowledgeView,
   LastExtraction,
-  LastExtractionReason,
 } from "@agent-os/contracts";
 import { formatModel } from "@/lib/agents/format";
 import { formatDay, type Formatter } from "@/lib/i18n/formats";
-import { pluralRu } from "@/lib/i18n/plural-ru";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
 
 /**
  * The one place where the knowledge screen's server answer becomes its words (self-learning design-web.md,
  * «Как экран выбирает, что показать»; UXRD KN-01, MC-2 – MC-6): state lines, tabs, row marks, the «Запись»
  * cell and the delete texts. Every number of a state line is a `counts` field as the server gives it and every
  * mark follows the record's `state` and `placement`; the only counting here is the rows of a tab and the
- * relations that leave with an entity (KD-5). Nothing here sorts: rows keep the server's order.
+ * relations that leave with an entity (KD-5). Nothing here sorts: rows keep the server's order. The words come
+ * from the `library.knowledge` catalogue through the translator the caller passes.
  */
 
 /** Characters of a record's text in the row menu and the delete dialog before «…» (KD-4). */
 const ITEM_TEXT_MAX = 60;
 
-/** MC-6: the end of every delete dialog's text. */
-const FOREVER = "Вернуть нельзя — workflow может узнать это снова.";
-const LEAVES_ONE = `Следующие шаги запусков её уже не получат. ${FOREVER}`;
-
-/** Texts of the screen outside the per-record functions (MC-2, MC-4 – MC-7). */
-export const KNOWLEDGE_TEXT = {
-  /** MC-1, MC-7: the link under the flag and the panel button. */
-  entry: "Что узнал workflow",
-  /** MC-2: the `h1`. */
-  title: (name: string) => `Что узнал «${name}»`,
-  openWorkflow: "Открыть workflow",
-  columns: { record: "Запись", kind: "Вид", confirmations: "Подтверждений", date: "Дата" },
-  delete: "Удалить",
-  cancel: "Отмена",
-  deleteFailed: (reason: string) => `Не удалось удалить: ${reason}`,
-  loading: "Загружаем знания…",
-  loadFailed: "Не удалось загрузить знания",
-} as const;
+/** The page's translator and formatter: what every text function of the screen needs. */
+export type KnowledgeIntl = { t: LibraryTranslator; format: Formatter };
 
 /**
  * `employeeInPanel` — the panel screen of an employee's workflow (the record has an `author`): only the author
@@ -45,20 +29,18 @@ export const KNOWLEDGE_TEXT = {
  */
 export type KnowledgeAudience = { employeeInPanel: boolean };
 
+const audienceOf = ({ employeeInPanel }: KnowledgeAudience): string => (employeeInPanel ? "panel" : "editor");
+
 /** MC-5: the empty table — the graph has no records yet, or self-learning is off. */
-export function knowledgeEmpty(selfLearning: boolean, { employeeInPanel }: KnowledgeAudience): { title: string; description: string } {
+export function knowledgeEmpty(
+  t: LibraryTranslator,
+  selfLearning: boolean,
+  audience: KnowledgeAudience,
+): { title: string; description: string } {
   if (selfLearning) {
-    return {
-      title: "Workflow пока ничего не узнал",
-      description: "Знания появятся после первого законченного запуска. Остановленные запуски не учат.",
-    };
+    return { title: t("knowledge.empty.nothingTitle"), description: t("knowledge.empty.nothingText") };
   }
-  return {
-    title: "Самообучение выключено",
-    description: employeeInPanel
-      ? "Включить его может автор."
-      : "Включите его в редакторе workflow — запуски начнут запоминать, где что нашли.",
-  };
+  return { title: t("knowledge.empty.offTitle"), description: t("knowledge.empty.offText", { audience: audienceOf(audience) }) };
 }
 
 export type KnowledgeStateLineKey =
@@ -83,121 +65,78 @@ const line = (key: KnowledgeStateLineKey, text: string, icon: "info" | null = nu
   reason: null,
 });
 
-/** MC-3: why selection by meaning is off. */
-function selectionOffReason(selection: Extract<KnowledgeSelection, { state: "off" }>): string {
-  return selection.reason === "model_not_selected"
-    ? "для него не выбрана модель — её выбирает администратор в панели, в разделе «Модели»"
-    : `модель ${formatModel(selection.model)} не ответила или отказала — проверить её может администратор в панели, в разделе «Модели»`;
-}
-
-function selectionLine(selection: KnowledgeSelection): KnowledgeStateLine | null {
+/** MC-3: the selection line, when selection by meaning is not fully on. */
+function selectionLine(t: LibraryTranslator, selection: KnowledgeSelection): KnowledgeStateLine | null {
   switch (selection.state) {
     case "on":
       return null;
     case "off":
       return line(
         "selection",
-        `Отбор по смыслу выключен: ${selectionOffReason(selection)}. Пока он выключен, место заполняют самые подтверждённые записи.`,
+        selection.reason === "model_not_selected"
+          ? t("knowledge.lines.selectionNoModel")
+          : t("knowledge.lines.selectionFailed", { model: formatModel(selection.model) }),
         "info",
       );
     case "preparing":
-      return line(
-        "selection",
-        `Отбор по смыслу пока работает не для всех записей: ${selection.pending} ещё готовят к нему, до тех пор они идут в запуски по подтверждениям.`,
-        "info",
-      );
+      return line("selection", t("knowledge.lines.selectionPreparing", { pending: selection.pending }), "info");
   }
 }
 
-/** MC-3: why the last run taught nothing; `model` is the round's model label. */
-const LAST_RUN_REASON: Record<LastExtractionReason, (model: string) => string> = {
-  stopped: () => "запуск остановили",
-  owner_disabled: () => "запустивший отключён",
-  quota_exhausted: (model) => `у запустившего закончилась квота на модель ${model}`,
-  model_not_connected: (model) => `модель ${model} отключена`,
-  model_not_allowed: (model) => `у запустившего больше нет доступа к модели ${model}`,
-  no_models_allowed: () => "у запустившего нет доступа ни к одной модели — его выдаёт администратор",
-  model_error: (model) => `модель ${model} не ответила`,
-  invalid_answer: (model) => `модель ${model} дважды дала ответ, который не удалось разобрать`,
-  interrupted: () => "работа прервалась из-за сбоя на сервере",
-};
-
-/** Line 5: what the last round added, confirmed and outdated, or why it taught nothing. */
-function lastRunLine(last: LastExtraction, format: Formatter): KnowledgeStateLine {
-  const head = `Последний запуск, ${format.dateTime(new Date(last.at), "dayTime")}`;
+/** Line 5: what the last round added, confirmed and outdated, or why it taught nothing (MC-3). */
+function lastRunLine({ t, format }: KnowledgeIntl, last: LastExtraction): KnowledgeStateLine {
+  const at = format.dateTime(new Date(last.at), "dayTime");
   if (last.status === "done") {
-    const parts = [
-      last.added > 0 ? `добавлено ${last.added}` : null,
-      last.confirmed > 0 ? `подтверждено ${last.confirmed}` : null,
-      last.outdated > 0 ? `устарело ${last.outdated}` : null,
+    const results = [
+      last.added > 0 ? t("knowledge.lastRun.added", { count: last.added }) : null,
+      last.confirmed > 0 ? t("knowledge.lastRun.confirmed", { count: last.confirmed }) : null,
+      last.outdated > 0 ? t("knowledge.lastRun.outdated", { count: last.outdated }) : null,
     ].filter((part) => part !== null);
-    return line("last_run", `${head}: ${parts.length > 0 ? parts.join(", ") : "нового не нашлось"}`);
+    // Each part is a whole phrase of its language; only the comma between them is shared by both.
+    const text = results.length > 0 ? results.join(", ") : t("knowledge.lastRun.nothingNew");
+    return line("last_run", t("knowledge.lastRun.done", { at, results: text }));
   }
   // The contract gives a reason on every skipped or failed round; without one the line names none.
-  if (last.reason === null) return line("last_run", `${head}, ничему не научил`);
-  return { ...line("last_run", `${head}, ничему не научил:`), reason: LAST_RUN_REASON[last.reason](formatModel(last.model)) };
+  if (last.reason === null) return line("last_run", t("knowledge.lastRun.taughtNothing", { at }));
+  return {
+    ...line("last_run", t("knowledge.lastRun.taughtNothingBecause", { at })),
+    reason: t(`knowledge.lastRun.reason.${last.reason}`, { model: formatModel(last.model) }),
+  };
 }
-
-const records = (count: number): string => pluralRu(count, ["запись", "записи", "записей"]);
-/** «из {M} …»: the genitive after «из». */
-const ofRecords = (count: number): string => pluralRu(count, ["записи", "записей", "записей"]);
 
 /**
  * The state lines MC-3, top to bottom (design-web.md, «Как экран выбирает, что показать»). None while the graph
  * is empty: the table's empty state stands alone. With self-learning off its line replaces lines 1–2 and the
  * lines about lessons and selection are absent; line 3 and line 5 stay.
  */
-export function knowledgeStateLines(view: KnowledgeView, audience: KnowledgeAudience, format: Formatter): KnowledgeStateLine[] {
+export function knowledgeStateLines(view: KnowledgeView, audience: KnowledgeAudience, intl: KnowledgeIntl): KnowledgeStateLine[] {
+  const { t } = intl;
   if (view.items.length === 0) return [];
   const { active, always, beyond, outdated, percent } = view.counts;
   const lines: KnowledgeStateLine[] = [];
   if (view.selfLearning) {
-    const place = `знания занимают ${percent}% места`;
     lines.push(
       beyond === 0
-        ? line("scope", `Запуски получают все ${active} ${records(active)} · ${place}`)
-        : line("scope", `При любом вопросе запуски получают ${always} из ${active} ${ofRecords(active)} · ${place}`),
+        ? line("scope", t("knowledge.lines.scopeAll", { active, percent }))
+        : line("scope", t("knowledge.lines.scopeSome", { always, active, percent })),
     );
     if (beyond > 0) {
-      lines.push(
+      const text =
         view.selection.state === "off"
-          ? line(
-              "beyond",
-              `${beyond} ${pluralRu(beyond, ["не помещается", "не помещаются", "не помещаются"])}: первыми выпадают записи, которые подтверждались реже, а среди равных — самые старые.`,
-              "info",
-            )
-          : line(
-              "beyond",
-              `Ещё ${beyond} — только по теме вопроса: до половины места запуск отдаёт записям, ближайшим по смыслу к вопросу, остальное — самым подтверждённым, а среди равных — самым новым.`,
-              "info",
-            ),
-      );
+          ? t("knowledge.lines.doesNotFit", { beyond })
+          : t("knowledge.lines.byTopic", { beyond });
+      lines.push(line("beyond", text, "info"));
     }
   } else {
-    const author = audience.employeeInPanel ? " Включить его может автор." : "";
-    lines.push(
-      line("self_learning_off", `Самообучение выключено: запуски не получают эти знания и не пополняют их.${author}`, "info"),
-    );
+    lines.push(line("self_learning_off", t("knowledge.lines.selfLearningOff", { audience: audienceOf(audience) }), "info"));
   }
-  if (outdated > 0) {
-    lines.push(
-      line("outdated", `Ещё ${outdated} ${pluralRu(outdated, ["устарела", "устарели", "устарели"])} — запуски их не получают.`),
-    );
-  }
+  if (outdated > 0) lines.push(line("outdated", t("knowledge.lines.outdated", { outdated })));
   if (view.selfLearning) {
-    if (!view.lessonsEnabled) {
-      lines.push(
-        line(
-          "lessons_off",
-          "Уроки сейчас не идут в запуски — их выключил администратор. Факты и «искал — не нашёл» идут как обычно.",
-          "info",
-        ),
-      );
-    }
-    const selection = selectionLine(view.selection);
+    if (!view.lessonsEnabled) lines.push(line("lessons_off", t("knowledge.lines.lessonsOff"), "info"));
+    const selection = selectionLine(t, view.selection);
     if (selection !== null) lines.push(selection);
   }
-  if (view.lastExtraction !== null) lines.push(lastRunLine(view.lastExtraction, format));
+  if (view.lastExtraction !== null) lines.push(lastRunLine(intl, view.lastExtraction));
   return lines;
 }
 
@@ -209,34 +148,45 @@ export type KnowledgeTabId = "all" | "facts" | "lessons" | "searched_nothing" | 
  */
 export type KnowledgeTab = { id: KnowledgeTabId; label: string; items: KnowledgeItem[]; noMatches: string | null };
 
-const tab = (id: KnowledgeTabId, name: string, items: KnowledgeItem[], noMatches: string | null): KnowledgeTab => ({
-  id,
-  label: `${name} · ${items.length}`,
-  items,
-  noMatches,
-});
-
 /**
  * The tabs of the list. The fifth holds the records beyond the always-part and exists only with self-learning on
  * and such records present; it reads «Не помещаются» while selection by meaning is off, otherwise «Только по
  * теме» (UXRD KD-7).
  */
-export function knowledgeTabs(view: KnowledgeView): KnowledgeTab[] {
+export function knowledgeTabs(t: LibraryTranslator, view: KnowledgeView): KnowledgeTab[] {
   const { items } = view;
-  const tabs = [
-    tab("all", "Все", items, null),
-    tab("facts", "Факты", items.filter((item) => item.kind === "fact"), "Фактов нет"),
-    tab("lessons", "Уроки", items.filter((item) => item.kind === "lesson"), "Уроков нет"),
-    tab(
-      "searched_nothing",
-      "Искал — не нашёл",
-      items.filter((item) => item.kind === "searched_nothing"),
-      "Записей «искал — не нашёл» нет",
-    ),
+  const ofKind = (kind: KnowledgeItem["kind"]) => items.filter((item) => item.kind === kind);
+  const facts = ofKind("fact");
+  const lessons = ofKind("lesson");
+  const nothing = ofKind("searched_nothing");
+  const tabs: KnowledgeTab[] = [
+    { id: "all", label: t("knowledge.tabs.all", { count: items.length }), items, noMatches: null },
+    {
+      id: "facts",
+      label: t("knowledge.tabs.facts", { count: facts.length }),
+      items: facts,
+      noMatches: t("knowledge.noMatches.facts"),
+    },
+    {
+      id: "lessons",
+      label: t("knowledge.tabs.lessons", { count: lessons.length }),
+      items: lessons,
+      noMatches: t("knowledge.noMatches.lessons"),
+    },
+    {
+      id: "searched_nothing",
+      label: t("knowledge.tabs.searchedNothing", { count: nothing.length }),
+      items: nothing,
+      noMatches: t("knowledge.noMatches.searchedNothing"),
+    },
   ];
   const beyond = items.filter((item) => item.placement === "by_topic" || item.placement === "does_not_fit");
   if (view.selfLearning && beyond.length > 0) {
-    tabs.push(tab("beyond", view.selection.state === "off" ? "Не помещаются" : "Только по теме", beyond, null));
+    const label =
+      view.selection.state === "off"
+        ? t("knowledge.tabs.doesNotFit", { count: beyond.length })
+        : t("knowledge.tabs.byTopic", { count: beyond.length });
+    tabs.push({ id: "beyond", label, items: beyond, noMatches: null });
   }
   return tabs;
 }
@@ -264,28 +214,28 @@ export type KnowledgeRow = {
   date: string;
 };
 
-const KIND_LABEL: Record<KnowledgeItem["kind"], string> = {
-  fact: "факт",
-  lesson: "рабочий урок",
-  searched_nothing: "искал — не нашёл",
-};
+const KIND_KEY = {
+  fact: "fact",
+  lesson: "lesson",
+  searched_nothing: "searchedNothing",
+} as const satisfies Record<KnowledgeItem["kind"], string>;
 
 /**
  * One mark per record: by `state` first, then, for an `active` record, by `placement`. With self-learning off
  * no placement mark stands (core sends `placement` `null` then).
  */
-function knowledgeMark(item: KnowledgeItem, selfLearning: boolean): KnowledgeMark | null {
-  if (item.state === "outdated") return { text: "устарела", state: "off" };
-  if (item.state === "lessons_off") return { text: "уроки выключены", state: "off" };
+function knowledgeMark(t: LibraryTranslator, item: KnowledgeItem, selfLearning: boolean): KnowledgeMark | null {
+  if (item.state === "outdated") return { text: t("knowledge.marks.outdated"), state: "off" };
+  if (item.state === "lessons_off") return { text: t("knowledge.marks.lessonsOff"), state: "off" };
   if (!selfLearning) return null;
-  if (item.placement === "by_topic") return { text: "только по теме", state: "neutral" };
-  if (item.placement === "does_not_fit") return { text: "не помещается", state: "off" };
+  if (item.placement === "by_topic") return { text: t("knowledge.marks.byTopic"), state: "neutral" };
+  if (item.placement === "does_not_fit") return { text: t("knowledge.marks.doesNotFit"), state: "off" };
   return null;
 }
 
 const toolOf = (item: { server: string; tool: string }): string => `${item.server}.${item.tool}`;
 
-function knowledgeCell(item: KnowledgeItem): KnowledgeCell {
+function knowledgeCell(t: LibraryTranslator, item: KnowledgeItem): KnowledgeCell {
   if (item.type === "entity") return { tool: null, title: item.name, detail: item.description };
   switch (item.kind) {
     case "fact":
@@ -293,24 +243,24 @@ function knowledgeCell(item: KnowledgeItem): KnowledgeCell {
     case "lesson":
       return { tool: toolOf(item), title: item.question, detail: `${item.hint} — ${item.outcome}` };
     case "searched_nothing":
-      return { tool: toolOf(item), title: item.question, detail: "пусто" };
+      return { tool: toolOf(item), title: item.question, detail: t("knowledge.nothingFound") };
   }
 }
 
 /** The record's text for the row menu and the delete dialog, cut after 60 characters with «…». */
-function itemText(item: KnowledgeItem): string {
-  const { tool, title } = knowledgeCell(item);
+function itemText(t: LibraryTranslator, item: KnowledgeItem): string {
+  const { tool, title } = knowledgeCell(t, item);
   const text = tool === null ? title : `${tool} · ${title}`;
   return text.length > ITEM_TEXT_MAX ? `${text.slice(0, ITEM_TEXT_MAX)}…` : text;
 }
 
-export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean, format: Formatter): KnowledgeRow {
+export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean, { t, format }: KnowledgeIntl): KnowledgeRow {
   return {
     key: `${item.type}:${item.id}`,
-    name: itemText(item),
-    kind: KIND_LABEL[item.kind],
-    mark: knowledgeMark(item, selfLearning),
-    cell: knowledgeCell(item),
+    name: itemText(t, item),
+    kind: t(`knowledge.kinds.${KIND_KEY[item.kind]}`),
+    mark: knowledgeMark(t, item, selfLearning),
+    cell: knowledgeCell(t, item),
     confirmations: item.confirmations,
     date: formatDay(format, item.date),
   };
@@ -321,27 +271,28 @@ export function knowledgeRow(item: KnowledgeItem, selfLearning: boolean, format:
  * (`DELETE` answers 204 without a body); `relations` is what the notice after the delete reports.
  */
 export function knowledgeDeleteDialog(
+  t: LibraryTranslator,
   item: KnowledgeItem,
   items: readonly KnowledgeItem[],
 ): { title: string; body: string; relations: number } {
-  const text = itemText(item);
+  const text = itemText(t, item);
   if (item.type !== "entity") {
-    return { title: "Удалить запись?", body: `«${text}». ${LEAVES_ONE}`, relations: 0 };
+    return { title: t("knowledge.deleteDialog.recordTitle"), body: t("knowledge.deleteDialog.record", { text }), relations: 0 };
   }
   const relations = items.filter(
     (other) => other.type === "relation" && other.kind === "fact" && (other.from.id === item.id || other.to.id === item.id),
   ).length;
   return {
-    title: `Удалить «${text}»?`,
+    title: t("knowledge.deleteDialog.entityTitle", { text }),
     body:
       relations > 0
-        ? `Вместе с ней удалятся связи: ${relations}. Следующие шаги запусков их уже не получат. ${FOREVER}`
-        : LEAVES_ONE,
+        ? t("knowledge.deleteDialog.entityWithRelations", { relations })
+        : t("knowledge.deleteDialog.entity"),
     relations,
   };
 }
 
 /** MC-6: the notice after a delete; `relations` from `knowledgeDeleteDialog`. */
-export function knowledgeDeletedNotice(relations: number): string {
-  return relations > 0 ? `Удалено вместе со связями: ${relations}` : "Удалено";
+export function knowledgeDeletedNotice(t: LibraryTranslator, relations: number): string {
+  return t("knowledge.deleted", { relations });
 }

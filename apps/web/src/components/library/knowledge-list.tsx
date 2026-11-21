@@ -9,11 +9,11 @@ import { DataTable, type DataTableColumn, type DataTableRow } from "@/components
 import { StateBadge } from "@/components/state-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
 import { deleteFailed } from "@/lib/library/library-errors";
 import { libraryApi } from "@/lib/library/library-api";
 import { logger } from "@/lib/logger";
 import {
-  KNOWLEDGE_TEXT,
   knowledgeDeleteDialog,
   knowledgeDeletedNotice,
   knowledgeRow,
@@ -24,15 +24,13 @@ import {
   type KnowledgeTabId,
 } from "@/lib/library/knowledge-view";
 
-const { columns } = KNOWLEDGE_TEXT;
-
 /** UXRD KN-01, MC-4: «Вид» stands only on «Все». */
-export function knowledgeColumns(withKind: boolean): readonly DataTableColumn[] {
+export function knowledgeColumns(t: LibraryTranslator, withKind: boolean): readonly DataTableColumn[] {
   return [
-    { header: columns.record },
-    ...(withKind ? [{ header: columns.kind }] : []),
-    { header: columns.confirmations, align: "end" as const },
-    { header: columns.date },
+    { header: t("knowledge.columns.record") },
+    ...(withKind ? [{ header: t("knowledge.columns.kind") }] : []),
+    { header: t("knowledge.columns.confirmations"), align: "end" as const },
+    { header: t("knowledge.columns.date") },
   ];
 }
 
@@ -68,7 +66,7 @@ function RecordCell({ cell, mark }: { cell: KnowledgeCell; mark: KnowledgeMark |
  * One table row of a record. Texts are React text nodes only: a record holds what runs saw, never markup
  * (Security Considerations). No run and no employee are shown — the contract has neither.
  */
-function toRow(row: KnowledgeRow, withKind: boolean, onDelete: () => void): DataTableRow {
+function toRow(row: KnowledgeRow, withKind: boolean, action: { label: string; onSelect: () => void }): DataTableRow {
   return {
     key: row.key,
     name: row.name,
@@ -78,7 +76,7 @@ function toRow(row: KnowledgeRow, withKind: boolean, onDelete: () => void): Data
       row.confirmations,
       row.date,
     ],
-    actions: [{ label: KNOWLEDGE_TEXT.delete, onSelect: onDelete }],
+    actions: [action],
   };
 }
 
@@ -125,8 +123,9 @@ export type KnowledgeListProps = {
  */
 export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
   const format = useFormatter();
-  const t = useTranslations("errors");
-  const tabs = knowledgeTabs(view);
+  const t = useTranslations("library");
+  const tErrors = useTranslations("errors");
+  const tabs = knowledgeTabs(t, view);
   const [chosen, setChosen] = useState<KnowledgeTabId>("all");
   // Kept while the dialog closes, so its content does not change during the exit animation.
   const [deleting, setDeleting] = useState<Deleting | null>(null);
@@ -136,13 +135,13 @@ export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
   const withKind = active.id === "all";
 
   const openDelete = (item: KnowledgeItem): void => {
-    setDeleting({ item, ...knowledgeDeleteDialog(item, view.items) });
+    setDeleting({ item, ...knowledgeDeleteDialog(t, item, view.items) });
     setDialogOpen(true);
   };
 
   async function confirmDelete(target: Deleting): Promise<void> {
     await deleteItem(recordId, target.item);
-    toast.success(knowledgeDeletedNotice(target.relations));
+    toast.success(knowledgeDeletedNotice(t, target.relations));
     reload();
   }
 
@@ -169,11 +168,14 @@ export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
         <DataTable
           key={active.id}
           caption={active.label}
-          columns={knowledgeColumns(withKind)}
+          columns={knowledgeColumns(t, withKind)}
           state={{
             status: "ready",
             rows: active.items.map((item) =>
-              toRow(knowledgeRow(item, view.selfLearning, format), withKind, () => openDelete(item)),
+              toRow(knowledgeRow(item, view.selfLearning, { t, format }), withKind, {
+                label: t("knowledge.delete"),
+                onSelect: () => openDelete(item),
+              }),
             ),
             noMatches: active.noMatches ?? undefined,
           }}
@@ -186,11 +188,11 @@ export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
           onOpenChange={setDialogOpen}
           title={deleting.title}
           body={deleting.body}
-          confirmLabel={KNOWLEDGE_TEXT.delete}
+          confirmLabel={t("knowledge.delete")}
           onConfirm={() => confirmDelete(deleting)}
           // `deleteItem` has logged the refusal. Without `focusTitleAfterConfirm`: focus returns to the row's menu,
           // and `DataTable` moves it on when the re-read takes the row away (next row, previous, else the `h1`).
-          refusalText={(cause) => deleteFailed(t, cause)}
+          refusalText={(cause) => deleteFailed(tErrors, cause)}
         />
       )}
     </Tabs>

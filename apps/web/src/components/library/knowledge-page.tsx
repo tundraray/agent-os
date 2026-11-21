@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { CircleMinus, Info, LightbulbIcon } from "lucide-react";
-import { useFormatter } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import type { KnowledgeView, RecordDetail } from "@agent-os/contracts";
 import { PANEL_TITLE, RecordPlaceholder, sectionParent } from "@/components/admin/admin-header";
 import { DataTable, resourceTableState } from "@/components/admin/data-table";
@@ -13,10 +13,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { useResource, type Resource } from "@/hooks/use-resource";
 import { adminApi } from "@/lib/admin/admin-api";
 import { focusShellTarget } from "@/lib/focus";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
 import { isKnowledgeHidden } from "@/lib/library/library-errors";
 import {
-  KNOWLEDGE_TEXT,
   knowledgeEmpty,
   knowledgeStateLines,
   type KnowledgeAudience,
@@ -26,9 +26,6 @@ import { adminRecordPath, libraryPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 import { knowledgeColumns, KnowledgeList } from "./knowledge-list";
 import { RecordSkeleton } from "./record-page";
-
-/** The library's name as the parent of its pages (custom-agents MC-6). */
-const LIBRARY_TITLE = "Библиотека";
 
 export type KnowledgePageProps = { id: string; variant: "library" | "panel" };
 
@@ -40,6 +37,7 @@ export type KnowledgePageProps = { id: string; variant: "library" | "panel" };
  * never shows its workflow's name first.
  */
 export function KnowledgePage({ id, variant }: KnowledgePageProps) {
+  const t = useTranslations("library");
   const record = useResource(
     () => (variant === "library" ? libraryApi.get(id) : adminApi.library.get(id)),
     `${variant}:record:${id}`,
@@ -62,14 +60,14 @@ export function KnowledgePage({ id, variant }: KnowledgePageProps) {
     return variant === "library" ? (
       <ThreadNotice variant="library-load-error" onRetry={record.reload} />
     ) : (
-      <RecordPlaceholder section="library" resource={record} loadFailed={KNOWLEDGE_TEXT.loadFailed} />
+      <RecordPlaceholder section="library" resource={record} loadFailed={t("knowledge.loadFailed")} />
     );
   }
   if (record.data === undefined || !graphAnswered) {
     return variant === "library" ? (
       <RecordSkeleton />
     ) : (
-      <RecordPlaceholder section="library" resource={{ status: "loading", reload: record.reload }} loadFailed={KNOWLEDGE_TEXT.loadFailed} />
+      <RecordPlaceholder section="library" resource={{ status: "loading", reload: record.reload }} loadFailed={t("knowledge.loadFailed")} />
     );
   }
 
@@ -95,6 +93,8 @@ export function KnowledgePage({ id, variant }: KnowledgePageProps) {
 
 /** MC-2: the `h1`, the parent of the place and «Открыть workflow»; focus lands on the `h1` once it is drawn. */
 function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: KnowledgePageProps["variant"] }) {
+  const t = useTranslations("library");
+  const locale = useLocale();
   useEffect(() => {
     focusShellTarget("page-title");
   }, [record.id]);
@@ -102,15 +102,15 @@ function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: K
   const library = variant === "library";
   return (
     <PageHeader
-      title={KNOWLEDGE_TEXT.title(record.name)}
-      parent={library ? { title: LIBRARY_TITLE, href: libraryPath() } : sectionParent("library")}
+      title={t("knowledge.title", { name: builtinName(record, locale) })}
+      parent={library ? { title: t("screen.title"), href: libraryPath() } : sectionParent("library")}
       area={library ? undefined : PANEL_TITLE}
     >
       <ShellLink
         href={library ? recordPath(record.id) : adminRecordPath("library", record.id)}
         className={buttonVariants({ variant: "outline", size: "sm", className: "pointer-coarse:h-11" })}
       >
-        {KNOWLEDGE_TEXT.openWorkflow}
+        {t("knowledge.openWorkflow")}
       </ShellLink>
     </PageHeader>
   );
@@ -132,21 +132,22 @@ function KnowledgeBody({
 }) {
   const view = graph.data;
   const format = useFormatter();
+  const t = useTranslations("library");
   // A re-read after a delete can replace the table the focus was in (the active tab disappears, the graph becomes
   // empty) — `DataTable` then sees no row leave. Focus that fell to the page body goes to the `h1`.
   useEffect(() => {
     if (document.activeElement === null || document.activeElement === document.body) focusShellTarget("page-title");
   }, [view]);
   if (view === undefined || view.items.length === 0) {
-    const state = resourceTableState(graph, KNOWLEDGE_TEXT.loadFailed, (data) => ({
+    const state = resourceTableState(graph, t("knowledge.loadFailed"), (data) => ({
       rows: [],
-      empty: { Icon: LightbulbIcon, ...knowledgeEmpty(data.selfLearning, audience) },
+      empty: { Icon: LightbulbIcon, ...knowledgeEmpty(t, data.selfLearning, audience) },
     }));
-    return <DataTable caption={KNOWLEDGE_TEXT.loading} columns={knowledgeColumns(true)} state={state} />;
+    return <DataTable caption={t("knowledge.loading")} columns={knowledgeColumns(t, true)} state={state} />;
   }
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <StateLines lines={knowledgeStateLines(view, audience, format)} />
+      <StateLines lines={knowledgeStateLines(view, audience, { t, format })} />
       <KnowledgeList view={view} recordId={recordId} reload={graph.reload} />
     </div>
   );

@@ -8,14 +8,7 @@ import { ShellLink } from "@/components/shell/shell-link";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription } from "@/components/ui/field";
 import { Label } from "@/components/ui/label";
-import { KNOWLEDGE_TEXT } from "@/lib/library/knowledge-view";
 import { cn } from "cn";
-
-/** Self-learning UXRD, MC-1. */
-const TEXT = {
-  hint: "Запуски запоминают, где что нашли, и это получат все следующие запуски — кто бы их ни начал, даже без доступа к этим системам.",
-  kept: "Знания сохранятся: включите снова — запуски продолжат с них.",
-} as const;
 
 export type SelfLearningFieldProps = {
   checked: boolean;
@@ -49,12 +42,12 @@ export function SelfLearningField({ checked, savedOn, knowledgeHref, onChange }:
         {t("fields.selfLearning")}
       </Label>
       <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
-        {TEXT.hint}
+        {t("selfLearning.hint")}
       </FieldDescription>
       {kept && (
         <p id={noteId} className={cn(CAPTION, "flex items-start gap-1.5 text-foreground")}>
           <Info aria-hidden className="mt-px size-3.5 shrink-0 text-info" />
-          {TEXT.kept}
+          {t("selfLearning.kept")}
         </p>
       )}
       {knowledgeHref !== null && (
@@ -62,7 +55,7 @@ export function SelfLearningField({ checked, savedOn, knowledgeHref, onChange }:
           href={knowledgeHref}
           className="inline-flex w-fit items-center gap-1 rounded-sm text-sm leading-5 font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 pointer-coarse:min-h-11"
         >
-          {KNOWLEDGE_TEXT.entry}
+          {t("knowledge.entry")}
           <ArrowRight aria-hidden className="size-3.5" />
         </ShellLink>
       )}

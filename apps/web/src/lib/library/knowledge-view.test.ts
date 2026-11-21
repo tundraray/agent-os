@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KnowledgeItem, KnowledgeView, LastExtraction } from "@agent-os/contracts";
-import { testFormatter } from "@/test/intl";
+import { testFormatter, testTranslator } from "@/test/intl";
 import { knowledgeRow, knowledgeStateLines, knowledgeTabs } from "./knowledge-view";
 
 // Times are UTC; vitest runs in Europe/Berlin (UTC+1 in November), so 23:30Z is the next day there.
@@ -42,15 +42,15 @@ const base: KnowledgeView = {
 const view = (over: Partial<KnowledgeView>): KnowledgeView => ({ ...base, ...over });
 const offNoModel = { state: "off", reason: "model_not_selected", model: null } as const;
 const AUTHOR = { employeeInPanel: false };
-const format = testFormatter();
+const intl = { t: testTranslator("library"), format: testFormatter() };
 
 const texts = (v: KnowledgeView, employeeInPanel = false) =>
-  knowledgeStateLines(v, { employeeInPanel }, format).map((line) => line.text);
-const lineOf = (v: KnowledgeView, key: string) => knowledgeStateLines(v, AUTHOR, format).find((line) => line.key === key);
+  knowledgeStateLines(v, { employeeInPanel }, intl).map((line) => line.text);
+const lineOf = (v: KnowledgeView, key: string) => knowledgeStateLines(v, AUTHOR, intl).find((line) => line.key === key);
 const lastRun = (over: Partial<LastExtraction>) =>
   lineOf(view({ lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "failed", added: 0, confirmed: 0, outdated: 0, reason: null, ...over } }), "last_run");
 const reasonOf = (reason: LastExtraction["reason"]) => lastRun({ status: "skipped", reason })?.reason;
-const tabLabels = (v: KnowledgeView) => knowledgeTabs(v).map((tab) => tab.label);
+const tabLabels = (v: KnowledgeView) => knowledgeTabs(intl.t, v).map((tab) => tab.label);
 
 // AC-02.2, AC-03.2, AC-03.4, AC-04.3, AC-06.1, AC-06.2, AC-08.2, AC-11.1, AC-11.5, AC-11.6, AC-15.3, AC-17.1,
 // AC-18.3, AC-18.4 (design-web.md UC-5): the screen's words come only from the server's fields — numbers of
@@ -87,7 +87,7 @@ describe("knowledge view", () => {
     ["lessons off", () => lineOf(view({ lessonsEnabled: false }), "lessons_off")?.text,
       "Уроки сейчас не идут в запуски — их выключил администратор. Факты и «искал — не нашёл» идут как обычно."],
     ["self-learning off: its line replaces 1–2, no lessons or selection line",
-      () => knowledgeStateLines(view({ selfLearning: false, lessonsEnabled: false, selection: offNoModel, lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } }), AUTHOR, format).map((line) => line.key),
+      () => knowledgeStateLines(view({ selfLearning: false, lessonsEnabled: false, selection: offNoModel, lastExtraction: { at: "2026-11-19T13:32:00Z", model: "anthropic/claude-haiku-5-5", status: "done", added: 1, confirmed: 0, outdated: 0, reason: null } }), AUTHOR, intl).map((line) => line.key),
       ["self_learning_off", "outdated", "last_run"]],
     ["self-learning off, employee's workflow in the panel", () => texts(view({ selfLearning: false }), true)[0],
       "Самообучение выключено: запуски не получают эти знания и не пополняют их. Включить его может автор."],
@@ -96,22 +96,22 @@ describe("knowledge view", () => {
       ["Все · 6", "Факты · 4", "Уроки · 1", "Искал — не нашёл · 1", "Только по теме · 2"]],
     ["tabs, selection preparing", () => tabLabels(view({ selection: { state: "preparing", pending: 3 } })).at(-1), "Только по теме · 2"],
     ["tabs, selection off", () => tabLabels(view({ selection: offNoModel })).at(-1), "Не помещаются · 2"],
-    ["tabs keep the server's order", () => knowledgeTabs(base)[1]?.items, [team, owns, billing, writes]],
-    ["tabs, self-learning off: no fifth tab", () => knowledgeTabs(view({ selfLearning: false })).map((tab) => tab.id),
+    ["tabs keep the server's order", () => knowledgeTabs(intl.t, base)[1]?.items, [team, owns, billing, writes]],
+    ["tabs, self-learning off: no fifth tab", () => knowledgeTabs(intl.t, view({ selfLearning: false })).map((tab) => tab.id),
       ["all", "facts", "lessons", "searched_nothing"]],
-    ["marks by state, then placement", () => base.items.map((item) => knowledgeRow(item, true, format).mark),
+    ["marks by state, then placement", () => base.items.map((item) => knowledgeRow(item, true, intl).mark),
       [null, { text: "только по теме", state: "neutral" }, null, { text: "уроки выключены", state: "off" },
         { text: "не помещается", state: "off" }, { text: "устарела", state: "off" }]],
-    ["self-learning off: no placement marks", () => base.items.map((item) => knowledgeRow(item, false, format).mark?.text ?? null),
+    ["self-learning off: no placement marks", () => base.items.map((item) => knowledgeRow(item, false, intl).mark?.text ?? null),
       [null, null, null, "уроки выключены", null, "устарела"]],
-    ["row of an entity: key, kind, cell, day in the viewer's zone", () => knowledgeRow(billing, true, format),
+    ["row of an entity: key, kind, cell, day in the viewer's zone", () => knowledgeRow(billing, true, intl),
       { key: "entity:1", name: "billing-api", kind: "факт", mark: null, confirmations: 1, date: "19 нояб.",
         cell: { tool: null, title: "billing-api", detail: "Сервис списаний" } }],
-    ["cell of a relation fact", () => [knowledgeRow(owns, true, format).key, knowledgeRow(owns, true, format).cell],
+    ["cell of a relation fact", () => [knowledgeRow(owns, true, intl).key, knowledgeRow(owns, true, intl).cell],
       ["relation:1", { tool: null, title: "команда Платежи → владеет → billing-api", detail: null }]],
-    ["cell of a lesson", () => [knowledgeRow(lesson, true, format).kind, knowledgeRow(lesson, true, format).cell],
+    ["cell of a lesson", () => [knowledgeRow(lesson, true, intl).kind, knowledgeRow(lesson, true, intl).cell],
       ["рабочий урок", { tool: "logs.search", title: "ошибки оплаты", detail: "Искать в логах billing-api — ошибки нашлись" }]],
-    ["cell of «искал — не нашёл»", () => [knowledgeRow(nothing, true, format).kind, knowledgeRow(nothing, true, format).cell],
+    ["cell of «искал — не нашёл»", () => [knowledgeRow(nothing, true, intl).kind, knowledgeRow(nothing, true, intl).cell],
       ["искал — не нашёл", { tool: "logs.search", title: "ошибки payment-gateway", detail: "пусто" }]],
     ["line 5, done", () => lastRun({ status: "done", added: 5, confirmed: 3 })?.text,
       "Последний запуск, 19 нояб., 14:32: добавлено 5, подтверждено 3"],
