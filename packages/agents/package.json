@@ -20,22 +20,22 @@
     "@agent-os/contracts": "workspace:*",
     "@agent-os/db": "workspace:*",
     "@agent-os/runtime": "workspace:*",
-    "@ai-sdk/anthropic": "4.0.82",
-    "@ai-sdk/google": "4.0.99",
-    "@ai-sdk/openai-compatible": "3.0.71",
-    "@mastra/core": "^1.80.0",
+    "@ai-sdk/anthropic": "4.0.107",
+    "@ai-sdk/google": "4.0.124",
+    "@ai-sdk/openai-compatible": "3.0.94",
+    "@mastra/core": "^1.85.0",
     "@modelcontextprotocol/client": "2.4.0",
     "drizzle-orm": "0.45.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@agent-os/mcp-fixture": "workspace:*",
-    "@types/node": "^26.0.0",
-    "fast-check": "^4.10.2",
-    "oxlint": "^1.58.0",
-    "oxlint-tsgolint": "^7.0.2001",
+    "@types/node": "^26.6.6",
+    "fast-check": "^4.10.3",
+    "oxlint": "^1.94.0",
+    "oxlint-tsgolint": "^7.0.2007",
     "tsx": "^4.23.15",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
   }
 }

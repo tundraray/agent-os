@@ -15,9 +15,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.0.0",
-    "oxlint": "^1.58.0",
-    "typescript": "^6.0.2"
+    "@types/node": "^26.6.6",
+    "oxlint": "^1.94.0",
+    "typescript": "^6.0.3"
   },
   "exports": {
     ".": "./src/index.ts"

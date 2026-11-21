@@ -20,12 +20,12 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "0.31.11",
-    "oxlint": "^1.58.0",
-    "oxlint-tsgolint": "^7.0.2001",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "oxlint": "^1.94.0",
+    "oxlint-tsgolint": "^7.0.2007",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
   }
 }
