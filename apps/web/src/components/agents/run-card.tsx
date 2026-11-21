@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useFormatter, useLocale } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -20,7 +20,6 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
@@ -200,8 +199,9 @@ const ROW_TEXT_CLASS = "text-muted-foreground min-w-0 truncate text-sm leading-5
 
 /** One agent the coordinator started: a 28 px link row; a row added after mount opens over 150 ms. */
 function StepRow({ step, appeared }: { step: AgentNode; appeared: boolean }) {
+  const t = useTranslations("agents");
   const executor = step.origin?.executor ?? null;
-  const spoken = [executor, step.description, AGENT_STATUS_LABEL[step.status]].filter((part) => part !== null && part !== "");
+  const spoken = [executor, step.description, t(`status.${step.status}`)].filter((part) => part !== null && part !== "");
   return (
     <li className={cn(ROW_CLASS, appeared && OPENS_CLASS)}>
       <Link
@@ -244,7 +244,8 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
 export function RunCard({ data }: RunCardProps) {
   const format = useFormatter();
   const locale = useLocale();
-  const statusLabel = AGENT_STATUS_LABEL[data.status];
+  const t = useTranslations("agents");
+  const statusLabel = t(`status.${data.status}`);
   const origin = runRecord(data);
   const record = origin === null ? null : { ...origin, name: builtinName(origin, locale) };
   const time = (
@@ -301,10 +302,11 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
   const [initialStepIds] = useState(() => new Set(data.children.map((child) => child.agentId)));
   const run = useWorkflowRun(data.agentId, data.status, data.children.length);
   const rows = runRows([...data.children].sort(byCreation), run, RUN_ENDED.has(data.status));
+  const t = useTranslations("agents");
   return (
     <div
       role="group"
-      aria-label={`${origin.name}: ${AGENT_STATUS_LABEL[data.status]}`}
+      aria-label={`${origin.name}: ${t(`status.${data.status}`)}`}
       data-slot="run-card"
       data-variant="workflow"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"

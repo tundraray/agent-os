@@ -2,13 +2,14 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { useTranslations } from "next-intl";
 import type { WorkflowRunView } from "@agent-os/contracts";
 import { AgentMeta } from "@/components/agents/agent-meta";
 import { InheritedHistory } from "@/components/agents/inherited-history";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { ThreadNotice } from "@/components/shell/thread-notice";
-import { agentComposerPlaceholder, BRIEF_PARTS } from "@/lib/agents/format";
+import { BRIEF_PARTS } from "@/lib/agents/format";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import { isWorkflowCoordinator, selectAgent } from "@/lib/feed/to-feed";
 import { useFeedRuntime } from "@/lib/feed/use-feed-runtime";
@@ -37,12 +38,13 @@ const BriefContext = createContext<Brief | null>(null);
 /** AV-03: the coordinator's task as the three parts of its brief; an empty part is left out. */
 function TaskBrief() {
   const brief = useContext(BriefContext);
+  const t = useTranslations("agents.brief");
   if (brief === null) return null;
   return (
     <dl className="flex flex-col gap-2">
-      {BRIEF_PARTS.filter(({ key }) => brief[key].trim() !== "").map(({ key, label }) => (
+      {BRIEF_PARTS.filter((key) => brief[key].trim() !== "").map((key) => (
         <div key={key} className="flex flex-col gap-0.5">
-          <dt className="text-muted-foreground text-xs leading-4 font-medium">{label}</dt>
+          <dt className="text-muted-foreground text-xs leading-4 font-medium">{t(key)}</dt>
           <dd className="whitespace-pre-wrap">{brief[key]}</dd>
         </div>
       ))}
@@ -87,6 +89,7 @@ export function AgentScreen() {
   if (feed === null) throw new Error("AgentScreen must be used inside AgentFeedProvider");
 
   const runtime = useFeedRuntime(feed);
+  const t = useTranslations("agents");
   const { libraryIndex } = useShellServices();
   // The record labels and «изменён после запуска» read the library list on every visit (KD-2).
   useEffect(() => {
@@ -114,7 +117,7 @@ export function AgentScreen() {
         <Thread
           components={brief === null ? COMPONENTS : BRIEF_COMPONENTS}
           historyPending={retrying || !loaded}
-          composerPlaceholder={agentComposerPlaceholder(agent?.status ?? "working")}
+          composerPlaceholder={t("composerPlaceholder", { status: agent?.status ?? "working" })}
         />
       </BriefContext.Provider>
     </AssistantRuntimeProvider>

@@ -1,0 +1,62 @@
+{
+  "status": {
+    "working": "Работает",
+    "awaiting_confirmation": "Ждёт подтверждения",
+    "interrupted": "Прерван",
+    "completed": "Завершён",
+    "failed": "Сбой",
+    "stopped": "Остановлен"
+  },
+  "composerPlaceholder": "{status, select, working {Сообщение агенту — получит после текущего шага} awaiting_confirmation {Сообщение агенту — получит после текущего шага} interrupted {Напишите, что делать дальше} other {Напишите, чтобы продолжить с прежней историей}}",
+  "brief": {
+    "question": "Вопрос",
+    "boundaries": "Границы",
+    "result": "Результат"
+  },
+  "list": {
+    "loading": "Загружаем агентов…",
+    "loadFailed": "Не удалось загрузить агентов",
+    "retry": "Повторить",
+    "showMore": "Показать ещё",
+    "empty": "Агентов пока нет",
+    "emptyHint": "Попросите в беседе сделать задачу в фоне — агент появится здесь."
+  },
+  "tree": {
+    "columns": {
+      "agent": "Агент",
+      "record": "Из библиотеки",
+      "status": "Статус",
+      "model": "Модель",
+      "started": "Запущен",
+      "chat": "Беседа"
+    },
+    "toggle": "{open, select, yes {Скрыть вложенных: {description}} other {Показать вложенных: {description}}}",
+    "model": "<hidden>модель </hidden>{model}",
+    "started": "<hidden>запущен </hidden><time>{at}</time>",
+    "chat": "<hidden>беседа </hidden>{title}"
+  },
+  "meta": {
+    "started": "запущен <time>{at}</time>",
+    "workflow": "Workflow «{name}»",
+    "coordinator": "координатор",
+    "fromAgent": "запущен агентом «<link>{name}</link>»",
+    "fromChat": "из беседы «<link>{title}</link>»"
+  },
+  "header": {
+    "stop": "Остановить",
+    "stopFailed": "Не удалось остановить агента. Попробуйте ещё раз.",
+    "restart": "Запустить с нуля",
+    "restartFailed": "Не удалось запустить агента с нуля.",
+    "restartUnavailable": "{kind, select, agent {Агент} other {Workflow}} недоступен — запустить с нуля нельзя",
+    "restartVersion": "Пойдёт на версии {version}",
+    "menu": "Действия с агентом",
+    "open": "Открыть"
+  },
+  "report": {
+    "title": "<prefix>Отчёт · </prefix><link>{description}</link>",
+    "label": "Отчёт: {description}",
+    "stopped": "{withParent, select, yes {остановлен вместе с родителем} other {остановлен вами}}",
+    "empty": "Отчёта нет."
+  },
+  "interrupt": "Прервать"
+}

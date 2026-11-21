@@ -1,4 +1,5 @@
 import enAccount from '@/messages/en/account.json';
+import enAgents from '@/messages/en/agents.json';
 import enAnnounce from '@/messages/en/announce.json';
 import enChat from '@/messages/en/chat.json';
 import enCommon from '@/messages/en/common.json';
@@ -9,6 +10,7 @@ import enPages from '@/messages/en/pages.json';
 import enShell from '@/messages/en/shell.json';
 import enTools from '@/messages/en/tools.json';
 import ruAccount from '@/messages/ru/account.json';
+import ruAgents from '@/messages/ru/agents.json';
 import ruAnnounce from '@/messages/ru/announce.json';
 import ruChat from '@/messages/ru/chat.json';
 import ruCommon from '@/messages/ru/common.json';
@@ -24,6 +26,7 @@ import type { Locale } from './pick-locale';
 /** One entry per screen area; an area is a next-intl namespace. A new area file is registered here. */
 const en = {
   account: enAccount,
+  agents: enAgents,
   announce: enAnnounce,
   chat: enChat,
   common: enCommon,
@@ -43,6 +46,7 @@ export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
 
 const ru: Messages = {
   account: ruAccount,
+  agents: ruAgents,
   announce: ruAnnounce,
   chat: ruChat,
   common: ruCommon,

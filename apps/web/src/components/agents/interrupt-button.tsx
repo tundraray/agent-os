@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SquareIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { focusShellTarget } from "@/lib/focus";
 
@@ -17,6 +18,7 @@ export type InterruptButtonProps = {
  */
 export function InterruptButton({ onInterrupt }: InterruptButtonProps) {
   const [pending, setPending] = useState(false);
+  const t = useTranslations("agents");
 
   async function interrupt(): Promise<void> {
     if (pending) return;
@@ -42,7 +44,7 @@ export function InterruptButton({ onInterrupt }: InterruptButtonProps) {
       className="rounded-full pointer-coarse:h-11"
     >
       <SquareIcon aria-hidden className="size-3 fill-current" />
-      Прервать
+      {t("interrupt")}
     </Button>
   );
 }

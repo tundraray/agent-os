@@ -17,32 +17,27 @@ import { useLeaveThenGo } from "@/components/library/use-in-chat";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { AgentsTranslator } from "@/lib/agents/format";
 import { isApiRequestError } from "@/lib/api/api-request";
 import { useFeed, useFeedSelector } from "@/lib/feed/feed-context";
 import type { FeedStore } from "@/lib/feed/feed-store";
 import { selectAgent } from "@/lib/feed/to-feed";
 import { focusAfterNewChat, focusShellTarget } from "@/lib/focus";
-import { describeLibraryError, kindWord } from "@/lib/library/library-errors";
+import { describeLibraryError } from "@/lib/library/library-errors";
 import { agentPath, recordPath } from "@/lib/shell-route";
 
-/** MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»). */
+/**
+ * MC-11 and KD-6: the one control of the header, by status (UXRD Screen 3, «Управление по статусу»); its
+ * label is `agents.header.{name}` and its failure `agents.header.{name}Failed`.
+ */
 type Control = {
-  label: string;
+  name: "stop" | "restart";
   Icon: LucideIcon;
-  failure: string;
 };
 
-const STOP: Control = {
-  label: "Остановить",
-  Icon: CircleStopIcon,
-  failure: "Не удалось остановить агента. Попробуйте ещё раз.",
-};
+const STOP: Control = { name: "stop", Icon: CircleStopIcon };
 
-const RESTART: Control = {
-  label: "Запустить с нуля",
-  Icon: RotateCcwIcon,
-  failure: "Не удалось запустить агента с нуля.",
-};
+const RESTART: Control = { name: "restart", Icon: RotateCcwIcon };
 
 const CONTROL_BY_STATUS: Record<AgentStatusValue, Control> = {
   working: STOP,
@@ -52,9 +47,6 @@ const CONTROL_BY_STATUS: Record<AgentStatusValue, Control> = {
   failed: RESTART,
   stopped: RESTART,
 };
-
-/** MC-11: the mobile menu's accessible name. */
-const MENU_LABEL = "Действия с агентом";
 
 /**
  * The agent a «Запустить с нуля» opened: its header focuses its `h1` once its page has read it. Module
@@ -81,12 +73,13 @@ async function runControl(feed: FeedStore, notify: (error: unknown) => void, run
  * the live version; a record gone from the read list cannot start. An unread list says nothing yet.
  */
 function restartHint(
+  t: AgentsTranslator,
   record: RunOrigin | null,
   live: RecordSummary | null | undefined,
 ): { text: string; blocked: boolean } | null {
   if (record === null || live === undefined) return null;
-  if (live === null) return { text: `${kindWord(record.kind, true)} недоступен — запустить с нуля нельзя`, blocked: true };
-  return { text: `Пойдёт на версии ${live.version}`, blocked: false };
+  if (live === null) return { text: t("header.restartUnavailable", { kind: record.kind }), blocked: true };
+  return { text: t("header.restartVersion", { version: live.version }), blocked: false };
 }
 
 /**
@@ -101,6 +94,7 @@ export function AgentHeader() {
 
   const router = useRouter();
   const t = useTranslations("errors");
+  const tAgents = useTranslations("agents");
   const agent = useFeedSelector((state) => selectAgent(state.view), null);
   const loadError = useFeedSelector((state) => state.loadError, null);
   // One command at a time: a second press while the first is in flight does nothing.
@@ -122,7 +116,7 @@ export function AgentHeader() {
   const control = agent === null ? null : CONTROL_BY_STATUS[agent.status];
   const record = agent === null ? null : runRecord(agent);
   const live = useLiveRecord(record?.recordId ?? "");
-  const hint = control === RESTART ? restartHint(record, live) : null;
+  const hint = control === RESTART ? restartHint(tAgents, record, live) : null;
   const hintId = useId();
   const leaveThenGo = useLeaveThenGo();
 
@@ -136,10 +130,10 @@ export function AgentHeader() {
     ) {
       const refused = describeLibraryError(t, error, { where: "restart", kind: record.kind, own: live?.mine === true });
       const open = () => leaveThenGo(() => router.push(recordPath(record.recordId)));
-      toast.error(refused.text, refused.open ? { action: { label: "Открыть", onClick: open } } : undefined);
+      toast.error(refused.text, refused.open ? { action: { label: tAgents("header.open"), onClick: open } } : undefined);
       return;
     }
-    if (control !== null) toast.error(control.failure);
+    if (control !== null) toast.error(tAgents(`header.${control.name}Failed`));
   };
 
   const onControl = (): void => {
@@ -187,7 +181,7 @@ export function AgentHeader() {
             aria-describedby={hint === null ? undefined : hintId}
           >
             <control.Icon aria-hidden />
-            {control.label}
+            {tAgents(`header.${control.name}`)}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -196,7 +190,7 @@ export function AgentHeader() {
                   variant="ghost"
                   size="icon"
                   className="ml-auto size-11 shrink-0 md:hidden [&_svg]:size-4.5"
-                  aria-label={MENU_LABEL}
+                  aria-label={tAgents("header.menu")}
                   aria-haspopup="menu"
                 />
               }
@@ -211,7 +205,7 @@ export function AgentHeader() {
               >
                 <control.Icon aria-hidden />
                 <span className="flex min-w-0 flex-col">
-                  {control.label}
+                  {tAgents(`header.${control.name}`)}
                   {/* A touch screen has no tooltip: the menu shows the hint under the label. */}
                   {hint !== null && <span className="text-muted-foreground text-xs leading-4">{hint.text}</span>}
                 </span>

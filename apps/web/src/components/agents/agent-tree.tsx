@@ -7,22 +7,24 @@ import {
   useRef,
   useState,
   type FocusEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
-import { useFormatter } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import type { AgentListNode, AgentNode } from "@agent-os/contracts";
 import { ChevronDownIcon, ChevronRightIcon, RotateCwIcon } from "lucide-react";
 import { AgentStatus } from "@/components/agents/agent-status";
 import { runRecord } from "@/components/agents/run-card";
 import { RecordLabel } from "@/components/library/record-label";
-import { UNTITLED_THREAD_TITLE } from "@/components/shell/thread-history-item";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatModel } from "@/lib/agents/format";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
 import { focusShellTarget } from "@/lib/focus";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
+import type { Locale } from "@/lib/i18n/pick-locale";
 import { cn } from "@/lib/utils";
 
 /** The level indent stops growing after the fourth level (agent-tree.md, Anatomy). */
@@ -46,14 +48,18 @@ const ROW_HEIGHT = "h-10 @min-[720px]:h-8 pointer-coarse:min-h-11";
 const ROW_MOTION =
   "grid transition-[grid-template-rows] duration-(--duration-fast) motion-reduce:transition-none";
 
+/** The rich-text tag of words only a screen reader hears. */
+const srOnly = (chunks: ReactNode) => <span className="sr-only">{chunks}</span>;
+
 const SKELETON_WIDTHS = ["62%", "48%", "71%", "55%", "40%", "66%", "52%", "45%"] as const;
 
 type AnyAgentNode = AgentNode | AgentListNode;
 
-/** The row text: the task; for a workflow run — the workflow name and the coordinator's task. */
-function rowDescription(node: AnyAgentNode): string {
+/** The row text: the task; for a workflow run — the workflow name in `locale` and the coordinator's task. */
+function rowDescription(node: AnyAgentNode, locale: Locale): string {
   if (!isWorkflowCoordinator(node)) return node.description;
-  return node.description === "" ? node.name : `${node.name} · ${node.description}`;
+  const name = builtinName({ builtinKey: node.origin?.builtinKey ?? null, name: node.name }, locale);
+  return node.description === "" ? name : `${name} · ${node.description}`;
 }
 
 function collectIds(nodes: readonly AnyAgentNode[], into: Set<string> = new Set()): Set<string> {
@@ -86,12 +92,16 @@ type AgentRowProps = RowContext & {
 function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, initialIds }: AgentRowProps) {
   const childListId = useId();
   const format = useFormatter();
-  const description = rowDescription(node);
+  const locale = useLocale();
+  const t = useTranslations("agents");
+  const tShell = useTranslations("shell");
+  const description = rowDescription(node, locale);
   const hasChildren = node.children.length > 0;
   const open = hasChildren && expanded.has(node.agentId);
   const appeared = !initialIds.has(node.agentId);
-  const conversationTitle = thread === undefined ? null : (thread.title ?? UNTITLED_THREAD_TITLE);
-  const record = runRecord(node);
+  const conversationTitle = thread === undefined ? null : (thread.title ?? tShell("thread.untitled"));
+  const origin = runRecord(node);
+  const record = origin === null ? null : { ...origin, name: builtinName(origin, locale) };
 
   return (
     <li
@@ -115,7 +125,7 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
               type="button"
               aria-expanded={open}
               aria-controls={childListId}
-              aria-label={`${open ? "Скрыть" : "Показать"} вложенных: ${description}`}
+              aria-label={t("tree.toggle", { open: open ? "yes" : "no", description })}
               onClick={() => onToggle(node.agentId)}
               className="text-muted-foreground hover:text-foreground focus-visible:ring-ring relative z-10 inline-flex size-6 items-center justify-center self-center rounded-md outline-none focus-visible:ring-2 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5"
             >
@@ -159,15 +169,17 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
               <span aria-hidden className="hidden @min-[720px]:order-1 @min-[720px]:block" />
             )}
             <span className="shrink-0 truncate @min-[720px]:order-2">
-              <span className="sr-only">модель </span>
-              {formatModel(node.model)}
+              {t.rich("tree.model", { model: formatModel(node.model), hidden: srOnly })}
             </span>
             <span aria-hidden className="shrink-0 @min-[720px]:hidden">
               ·
             </span>
             <span className="shrink-0 tabular-nums @min-[720px]:order-2">
-              <span className="sr-only">запущен </span>
-              <time dateTime={node.createdAt}>{formatListTime(format, node.createdAt)}</time>
+              {t.rich("tree.started", {
+                at: formatListTime(format, node.createdAt),
+                time: (chunks) => <time dateTime={node.createdAt}>{chunks}</time>,
+                hidden: srOnly,
+              })}
             </span>
             {thread !== undefined && conversationTitle !== null ? (
               <>
@@ -179,8 +191,7 @@ function AgentRow({ node, level, thread, leaving = false, expanded, onToggle, in
                   title={conversationTitle}
                   className="hover:text-foreground focus-visible:ring-ring relative z-10 min-w-0 truncate rounded-sm outline-none hover:underline focus-visible:ring-2 @min-[720px]:order-2"
                 >
-                  <span className="sr-only">беседа </span>
-                  {conversationTitle}
+                  {t.rich("tree.chat", { title: conversationTitle, hidden: srOnly })}
                 </Link>
               </>
             ) : (
@@ -344,6 +355,7 @@ export function AgentTree({ agents, expanded, onToggle, hasMore, loadingMore, lo
 
 /** Column header MC-4: wide layout only, hidden from assistive technology (agent-tree.md). */
 function ColumnHeader() {
+  const t = useTranslations("agents.tree.columns");
   return (
     <div
       aria-hidden
@@ -352,12 +364,12 @@ function ColumnHeader() {
         "text-muted-foreground hidden h-8 border-b px-2 text-xs leading-4 font-medium @min-[720px]:grid",
       )}
     >
-      <span className="col-span-2">Агент</span>
-      <span>Из библиотеки</span>
-      <span>Статус</span>
-      <span>Модель</span>
-      <span>Запущен</span>
-      <span>Беседа</span>
+      <span className="col-span-2">{t("agent")}</span>
+      <span>{t("record")}</span>
+      <span>{t("status")}</span>
+      <span>{t("model")}</span>
+      <span>{t("started")}</span>
+      <span>{t("chat")}</span>
     </div>
   );
 }
@@ -368,14 +380,15 @@ function NextPage({
   loadMoreFailed,
   onLoadMore,
 }: Pick<AgentTreeProps, "loadingMore" | "loadMoreFailed" | "onLoadMore">) {
+  const t = useTranslations("agents.list");
   if (loadingMore) return <AgentTreeSkeleton rows={3} header={false} />;
   if (loadMoreFailed) {
     return (
       <div className="flex flex-col items-start gap-2 px-2 py-3 text-sm leading-5">
-        <p role="alert">Не удалось загрузить агентов</p>
+        <p role="alert">{t("loadFailed")}</p>
         <Button variant="outline" size="sm" onClick={onLoadMore}>
           <RotateCwIcon aria-hidden />
-          Повторить
+          {t("retry")}
         </Button>
       </div>
     );
@@ -383,7 +396,7 @@ function NextPage({
   return (
     <div className="flex justify-center py-3">
       <Button variant="ghost" size="sm" onClick={onLoadMore} className="pointer-coarse:h-11">
-        Показать ещё
+        {t("showMore")}
       </Button>
     </div>
   );
@@ -391,9 +404,10 @@ function NextPage({
 
 /** Loading: the column header and skeleton rows of 32 px with different widths (agent-tree.md). */
 export function AgentTreeSkeleton({ rows = SKELETON_WIDTHS.length, header = true }: { rows?: number; header?: boolean }) {
+  const t = useTranslations("agents.list");
   return (
-    <div role="status" aria-label="Загружаем агентов…" className="w-full max-w-[75rem]">
-      <span className="sr-only">Загружаем агентов…</span>
+    <div role="status" aria-label={t("loading")} className="w-full max-w-[75rem]">
+      <span className="sr-only">{t("loading")}</span>
       {header && <ColumnHeader />}
       {SKELETON_WIDTHS.slice(0, rows).map((width) => (
         <div key={width} aria-hidden className="flex h-8 items-center border-b px-2">

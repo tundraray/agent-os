@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { useFormatter, useLocale, useMessages } from "next-intl";
+import { useFormatter, useLocale, useMessages, useTranslations } from "next-intl";
 import {
   RunCodeConfirmationContentSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
@@ -120,7 +120,7 @@ function CanCallList({ items }: { items: CanCall }) {
   );
 }
 
-type BriefField = (typeof BRIEF_PARTS)[number]["key"];
+type BriefField = (typeof BRIEF_PARTS)[number];
 type BriefText = Record<BriefField, string>;
 
 /**
@@ -316,6 +316,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   const brief = briefOf(confirmation);
   const format = useFormatter();
   const locale = useLocale();
+  const tAgents = useTranslations("agents");
   const { tools } = useMessages();
   const outcome = outcomeOf(confirmation, brief !== null, format);
   const edit = useBriefEdit();
@@ -510,13 +511,13 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <TaskHeading workflowId={brief.workflow} />
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
-          {BRIEF_PARTS.map(({ key: field, label }) => {
+          {BRIEF_PARTS.map((field) => {
             const id = `${fieldId}-${field}`;
             const invalid = field === "question" && edit.emptyQuestion;
             return (
               <div key={field} className="flex flex-col gap-1">
                 <label htmlFor={id} className="text-muted-foreground text-xs leading-4 font-medium">
-                  {label}
+                  {tAgents(`brief.${field}`)}
                 </label>
                 <Textarea
                   id={id}
@@ -556,9 +557,9 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <TaskHeading workflowId={brief.workflow} />
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-          {BRIEF_PARTS.map(({ key: field, label }) => (
+          {BRIEF_PARTS.map((field) => (
             <div key={field} className="contents">
-              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{label}</dt>
+              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{tAgents(`brief.${field}`)}</dt>
               <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">{brief.text[field]}</dd>
             </div>
           ))}

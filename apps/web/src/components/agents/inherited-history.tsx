@@ -10,8 +10,8 @@ import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
 import { describeApiError } from "@/lib/api/api-request";
 import { cn } from "@/lib/utils";
 
-/** A message of the parent's history as the block shows it. */
-type InheritedMessage = { seq: number; side: "sent" | "answer"; caption: string | null; text: string };
+/** A message of the parent's history as the block shows it; `caption` is a `chat.caption` key. */
+type InheritedMessage = { seq: number; side: "sent" | "answer"; caption: "assignment" | "report" | null; text: string };
 
 type Read = { status: "loading" } | { status: "ready"; messages: InheritedMessage[] } | { status: "failed" };
 
@@ -22,7 +22,7 @@ type Read = { status: "loading" } | { status: "ready"; messages: InheritedMessag
 function toMessage(entry: HistoryEntry): InheritedMessage | null {
   switch (entry.kind) {
     case "task":
-      return { seq: entry.seq, side: "sent", caption: "Поручение", text: entry.content.text };
+      return { seq: entry.seq, side: "sent", caption: "assignment", text: entry.content.text };
     case "user_message":
     case "agent_message":
       return { seq: entry.seq, side: "sent", caption: null, text: entry.content.text };
@@ -31,7 +31,7 @@ function toMessage(entry: HistoryEntry): InheritedMessage | null {
         ? null
         : { seq: entry.seq, side: "answer", caption: null, text: entry.content.text };
     case "child_report":
-      return { seq: entry.seq, side: "answer", caption: "Отчёт", text: entry.content.text ?? entry.content.description };
+      return { seq: entry.seq, side: "answer", caption: "report", text: entry.content.text ?? entry.content.description };
     default:
       return null;
   }
@@ -60,6 +60,7 @@ async function readInherited(api: ThreadsApiClient, agentId: string): Promise<In
 export function InheritedHistory({ agentId }: { agentId: string }) {
   const { apiClient } = useShellServices();
   const t = useTranslations("formats");
+  const tChat = useTranslations("chat.caption");
   const [read, setRead] = useState<Read>({ status: "loading" });
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -110,7 +111,7 @@ export function InheritedHistory({ agentId }: { agentId: string }) {
               className={cn("flex min-w-0 flex-col gap-1", message.side === "sent" && "items-end")}
             >
               {message.caption !== null && (
-                <span className="text-muted-foreground text-xs leading-4 font-medium">{message.caption}</span>
+                <span className="text-muted-foreground text-xs leading-4 font-medium">{tChat(message.caption)}</span>
               )}
               <p
                 className={cn(

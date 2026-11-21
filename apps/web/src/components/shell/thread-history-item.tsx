@@ -28,12 +28,6 @@ export const THREAD_ROW_ATTRIBUTE = 'data-thread-row';
 /** Marks the SB-07 «⋯» button of a row. */
 export const THREAD_ACTIONS_ATTRIBUTE = 'data-thread-actions';
 
-/**
- * Placeholder for a thread without a title (D-06), for the callers outside the sidebar until their phases of the
- * i18n plan take `shell.thread.untitled`; the last of them deletes it.
- */
-export const UNTITLED_THREAD_TITLE = 'Новая беседа';
-
 /** Hover time before the full-title tooltip opens (UXRD 6.5 Truncated). */
 const TOOLTIP_DELAY_MS = 500;
 

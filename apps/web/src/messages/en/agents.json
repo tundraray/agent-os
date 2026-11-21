@@ -1,0 +1,62 @@
+{
+  "status": {
+    "working": "Working",
+    "awaiting_confirmation": "Awaiting confirmation",
+    "interrupted": "Interrupted",
+    "completed": "Completed",
+    "failed": "Failed",
+    "stopped": "Stopped"
+  },
+  "composerPlaceholder": "{status, select, working {Message the agent — it gets it after the current step} awaiting_confirmation {Message the agent — it gets it after the current step} interrupted {Write what to do next} other {Write to continue with the same history}}",
+  "brief": {
+    "question": "Question",
+    "boundaries": "Scope",
+    "result": "Result"
+  },
+  "list": {
+    "loading": "Loading agents…",
+    "loadFailed": "Couldn't load agents",
+    "retry": "Retry",
+    "showMore": "Show more",
+    "empty": "No agents yet",
+    "emptyHint": "Ask in a chat to do a task in the background — the agent will appear here."
+  },
+  "tree": {
+    "columns": {
+      "agent": "Agent",
+      "record": "From library",
+      "status": "Status",
+      "model": "Model",
+      "started": "Started",
+      "chat": "Chat"
+    },
+    "toggle": "{open, select, yes {Hide nested: {description}} other {Show nested: {description}}}",
+    "model": "<hidden>model </hidden>{model}",
+    "started": "<hidden>started </hidden><time>{at}</time>",
+    "chat": "<hidden>chat </hidden>{title}"
+  },
+  "meta": {
+    "started": "started <time>{at}</time>",
+    "workflow": "Workflow “{name}”",
+    "coordinator": "coordinator",
+    "fromAgent": "started by agent “<link>{name}</link>”",
+    "fromChat": "from chat “<link>{title}</link>”"
+  },
+  "header": {
+    "stop": "Stop",
+    "stopFailed": "Couldn't stop the agent. Try again.",
+    "restart": "Start over",
+    "restartFailed": "Couldn't start the agent over.",
+    "restartUnavailable": "The {kind, select, agent {agent} other {workflow}} isn't available — can't start over",
+    "restartVersion": "Will run on version {version}",
+    "menu": "Agent actions",
+    "open": "Open"
+  },
+  "report": {
+    "title": "<prefix>Report · </prefix><link>{description}</link>",
+    "label": "Report: {description}",
+    "stopped": "{withParent, select, yes {stopped with its parent} other {stopped by you}}",
+    "empty": "No report."
+  },
+  "interrupt": "Interrupt"
+}
