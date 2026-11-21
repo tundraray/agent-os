@@ -17,6 +17,24 @@ const SearchOrdersArgsSchema = z
   })
   .refine(windowIsOrdered, { message: WINDOW_ORDER_MESSAGE, path: ['to'] });
 
+/** An order as `search_orders` lists it; `get_order` extends it with the payments. */
+export const OrderSchema = z.strictObject({
+  orderId: z.string(),
+  createdAt: z.string(),
+  amount: z.number(),
+  currency: z.literal('EUR'),
+  status: z.enum(ORDER_STATUSES),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+});
+
+const SearchOrdersResultSchema = z.strictObject({
+  snapshot: z.string(),
+  orders: z.array(OrderSchema),
+  totalMatched: z.int(),
+  totalRelation: z.literal('eq'),
+  nextCursor: z.string().nullable(),
+});
+
 /** Back-office orders created in a time window, in time order, a page at a time; `nextCursor` is null on the last page. */
 export const searchOrdersTool = defineTool({
   name: 'search_orders',
@@ -26,6 +44,7 @@ export const searchOrdersTool = defineTool({
     'Returns up to pageSize orders in time order; pass nextCursor back as cursor for the next page.',
   readOnly: true,
   argsSchema: SearchOrdersArgsSchema,
+  resultSchema: SearchOrdersResultSchema,
   run(args, dataset) {
     const matched = backOfficeOf(dataset)
       .ordersIn(args.from, args.to)

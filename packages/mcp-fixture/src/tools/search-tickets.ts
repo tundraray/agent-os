@@ -14,6 +14,24 @@ const SearchTicketsArgsSchema = z.strictObject({
   cursor: z.string().min(1).max(1024).optional().meta({ title: 'Курсор' }),
 });
 
+const TicketSchema = z.strictObject({
+  id: z.string(),
+  title: z.string(),
+  team: z.enum(TICKET_TEAMS),
+  assignee: z.enum(TICKET_ASSIGNEES),
+  status: z.enum(TICKET_STATUSES),
+  createdAt: z.string(),
+  closedAt: z.string().nullable(),
+});
+
+const SearchTicketsResultSchema = z.strictObject({
+  snapshot: z.string(),
+  tickets: z.array(TicketSchema),
+  totalMatched: z.int(),
+  totalRelation: z.literal('eq'),
+  nextCursor: z.string().nullable(),
+});
+
 /** Tracker tickets in creation order, a page at a time; every page reports the exact match count. */
 export const searchTicketsTool = defineTool({
   name: 'search_tickets',
@@ -24,6 +42,7 @@ export const searchTicketsTool = defineTool({
     'Returns up to pageSize tickets in creation order; pass nextCursor back as cursor for the next page.',
   readOnly: true,
   argsSchema: SearchTicketsArgsSchema,
+  resultSchema: SearchTicketsResultSchema,
   run(args, dataset) {
     const matched = trackerTickets().filter(
       (ticket) =>
