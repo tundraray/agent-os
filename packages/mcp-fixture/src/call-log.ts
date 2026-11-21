@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
-import type { FaultMode } from './fault-schedule.js';
+import type { FaultMode } from './fault-schedule';
 
 const CallLogEntrySchema = z.strictObject({
   seq: z.int().min(1),

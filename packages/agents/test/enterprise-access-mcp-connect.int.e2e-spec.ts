@@ -62,7 +62,7 @@ import {
   toolCallRowsOf,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
+} from './support/agentsHarness';
 import {
   BACKOFFICE_SERVER,
   LOGS_SERVER,
@@ -71,8 +71,8 @@ import {
   registerServer,
   removeServer,
   runName,
-} from './support/mcp-servers.js';
-import { newUser } from './support/new-user.js';
+} from './support/mcp-servers';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the story settles far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

@@ -1,5 +1,5 @@
-import { blockSeed, mulberry32, randomHex, randomInt, type Random } from './prng.js';
-import { DATASET_PARAMS, snapshotOf, type DatasetParams, type DatasetVersion } from './versions.js';
+import { blockSeed, mulberry32, randomHex, randomInt, type Random } from './prng';
+import { DATASET_PARAMS, snapshotOf, type DatasetParams, type DatasetVersion } from './versions';
 
 export const LOG_SERVICES = ['checkout-web', 'payment-api', 'provider-adapter', 'fraud-check', 'ledger'] as const;
 type LogService = (typeof LOG_SERVICES)[number];

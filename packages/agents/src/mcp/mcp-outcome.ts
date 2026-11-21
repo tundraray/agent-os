@@ -1,7 +1,7 @@
 import type { ToolOutcome } from '@agent-os/contracts';
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import type { McpCallResponse } from './mcp-client.js';
-import type { McpFailureReason } from './mcp-failure.js';
+import type { McpCallResponse } from './mcp-client';
+import type { McpFailureReason } from './mcp-failure';
 
 /** The outcomes an MCP response can have; refusals, rejections and interruptions are decided elsewhere. */
 export type McpOutcome = Extract<
@@ -30,7 +30,7 @@ function isEmpty(result: CallToolResult): boolean {
 
 /** What the model reads when the owner has no usable account on the server (KD-5). */
 function authRequiredText(server: string): string {
-  return `Нужно подключить аккаунт ${server} на странице «Мой доступ»`;
+  return `An account of ${server} must be connected on the page «Мой доступ»`;
 }
 
 /**

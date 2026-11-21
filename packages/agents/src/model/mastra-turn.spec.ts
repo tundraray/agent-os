@@ -4,7 +4,7 @@
 // request as the model must see it. Only the provider network (the global `fetch` the AI SDK calls) is
 // replaced; the Anthropic adapter, Mastra and the AI SDK are real.
 import { z } from 'zod';
-import { type AgentToolDefinition, type AgentTurnGeneration, createMastraTurnClient } from './mastra-turn.js';
+import { type AgentToolDefinition, type AgentTurnGeneration, createMastraTurnClient } from './mastra-turn';
 
 /** An MCP tool schema in the shape the fixture servers list: description, enum, array, nested object. */
 const MCP_INPUT_SCHEMA = {

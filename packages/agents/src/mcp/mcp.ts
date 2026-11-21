@@ -6,9 +6,9 @@ import {
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
 
-import type { ConnectTarget } from './connect-requests.js';
-import type { McpAccounts, McpConnectBegin, McpConnectReturn, McpConnectStart } from './mcp-accounts.js';
-import { McpError } from './mcp-errors.js';
+import type { ConnectTarget } from './connect-requests';
+import type { McpAccounts, McpConnectBegin, McpConnectReturn, McpConnectStart } from './mcp-accounts';
+import { McpError } from './mcp-errors';
 import {
   type McpRegistry,
   type McpServerRegistration,
@@ -17,7 +17,7 @@ import {
   type McpToolsRefresh,
   credentialsCheckFailed,
   notFound,
-} from './mcp-registry.js';
+} from './mcp-registry';
 
 /** How a return from the authorization server ended for the controller and the audit. */
 export interface McpConnectResult {

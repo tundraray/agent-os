@@ -21,11 +21,11 @@ import {
   removeRunRows,
   runModel,
   useRunModels,
-} from '../support/access.js';
-import { chatApi, type ChatApi, waitFor } from '../support/api.js';
-import { createTestApp } from '../support/createTestApp.js';
-import { pointBuiltinsAt } from '../support/library.js';
-import { createEmployee, seedSuperAdmin } from '../support/session.js';
+} from '../support/access';
+import { chatApi, type ChatApi, waitFor } from '../support/api';
+import { createTestApp } from '../support/createTestApp';
+import { pointBuiltinsAt } from '../support/library';
+import { createEmployee, seedSuperAdmin } from '../support/session';
 
 /** The model of the built-in records (`pointBuiltinsAt`): a model of the run, allowed to both employees through the run's role. */
 const DEFAULT_MODEL = runModel('code-run-load-haiku');

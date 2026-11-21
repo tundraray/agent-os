@@ -2,7 +2,7 @@ import { agentMcpServers } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository.js';
+import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_mcp_servers`; `tools` is read back by the registry, which owns its shape. */
 export type McpServerRow = typeof agentMcpServers.$inferSelect;

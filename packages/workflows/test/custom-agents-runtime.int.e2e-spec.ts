@@ -31,7 +31,7 @@ import {
   type ScriptedToolCall,
 } from '@agent-os/agents/testing';
 import { describe, expect, it } from 'vitest';
-import { newUser } from './support/new-user.js';
+import { newUser } from './support/new-user';
 import {
   childReportsOf,
   coordinatorsUnder,
@@ -47,7 +47,7 @@ import {
   waitFor,
   waitForStatus,
   type WorkflowsHarness,
-} from './support/workflowsHarness.js';
+} from './support/workflowsHarness';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;
@@ -74,14 +74,14 @@ const COORDINATOR_WRITES_ANSWER = 'When the work is done, write the answer yours
 
 /** The team as the coordinator's `start_agent` lists it: «имя (до N вызовов): роль». */
 const TEAM_V1_LINES = [
-  'a (до 1 вызовов): Reads the incident timeline (version 1).',
-  'b (до 2 вызовов): Checks the payment logs.',
-  'c (до 1 вызовов): Writes the customer note.',
+  'a (up to 1 calls): Reads the incident timeline (version 1).',
+  'b (up to 2 calls): Checks the payment logs.',
+  'c (up to 1 calls): Writes the customer note.',
 ];
 const TEAM_V2_LINES = [
-  'a (до 1 вызовов): Reads the incident timeline and the deploy log (version 2).',
-  'b (до 2 вызовов): Checks the payment logs.',
-  'c (до 1 вызовов): Writes the customer note.',
+  'a (up to 1 calls): Reads the incident timeline and the deploy log (version 2).',
+  'b (up to 2 calls): Checks the payment logs.',
+  'c (up to 1 calls): Writes the customer note.',
 ];
 
 /** The agent records of Аня the executors `a` and `c` were taken from. */

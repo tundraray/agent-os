@@ -15,21 +15,21 @@ import {
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
-import { builtinRecords } from '../../src/library/builtin-records.js';
+import { builtinRecords } from '../../src/library/builtin-records';
 import {
   allowRole,
   catalogueModelIds,
   HAIKU_TEST_PRICES,
   runModel,
   useRunModels,
-} from './access.js';
-import { type ChatApi, chatApi, expectBody } from './api.js';
+} from './access';
+import { type ChatApi, chatApi, expectBody } from './api';
 import {
   apiRequest,
   createEmployee,
   type Method,
   type Session,
-} from './session.js';
+} from './session';
 
 /**
  * The library of the tests (custom-agents/design-library.md, Contract Definitions): record bodies, the

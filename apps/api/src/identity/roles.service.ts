@@ -10,12 +10,12 @@ import type {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log.js';
-import type { Executor } from '../common/executor.js';
-import { isUuid } from '../common/is-uuid.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { identityError } from './identity.errors.js';
+import { AuditLog } from '../audit/audit-log';
+import type { Executor } from '../common/executor';
+import { isUuid } from '../common/is-uuid';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { identityError } from './identity.errors';
 import {
   addRoleMember,
   deleteRole,
@@ -26,9 +26,9 @@ import {
   updateRole,
   type RoleRow,
   type RoleWithCount,
-} from './roles.repository.js';
-import { rolesOfUsers, takenField } from './users.repository.js';
-import { roleRefs, UsersService } from './users.service.js';
+} from './roles.repository';
+import { rolesOfUsers, takenField } from './users.repository';
+import { roleRefs, UsersService } from './users.service';
 
 /** The role fields an audit entry keeps in `before`/`after`. */
 const roleState = (role: Pick<RoleRow, 'name' | 'isAdmin'>) => ({

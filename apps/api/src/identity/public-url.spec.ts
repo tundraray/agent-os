@@ -1,4 +1,4 @@
-import { publicUrlOf } from './public-url.js';
+import { publicUrlOf } from './public-url';
 
 // AC-03.4: redirectUri is built from the public address; a path or `/api` in it would break the callback,
 // and an address that is not `https` (or `http://localhost`) must never be saved from a request.

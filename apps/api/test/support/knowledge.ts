@@ -3,8 +3,8 @@ import type { INestApplication } from '@nestjs/common';
 import { ModelDefaultsSchema } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
-import { expectBody } from './api.js';
-import { apiRequest, type Session } from './session.js';
+import { expectBody } from './api';
+import { apiRequest, type Session } from './session';
 
 /**
  * The knowledge graph of the tests (self-learning design-core.md, Test Strategy UC-8): graph rows written straight

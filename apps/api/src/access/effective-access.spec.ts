@@ -5,7 +5,7 @@ import {
   type EffectiveAccess,
   type GrantRow,
   type ModelAccess,
-} from './effective-access.js';
+} from './effective-access';
 
 const A = 'anthropic/a';
 const B = 'anthropic/b';

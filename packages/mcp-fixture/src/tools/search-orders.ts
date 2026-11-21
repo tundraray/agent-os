@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { backOfficeOf, ORDER_STATUSES, PAYMENT_METHODS } from '../backoffice.js';
-import { pageOf } from '../cursor.js';
-import { defineTool } from './fixture-tool.js';
-import { LogQueryShape, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query.js';
+import { backOfficeOf, ORDER_STATUSES, PAYMENT_METHODS } from '../backoffice';
+import { pageOf } from '../cursor';
+import { defineTool } from './fixture-tool';
+import { LogQueryShape, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query';
 
 const SEARCH_PAGE_SIZE_MAX = 500;
 

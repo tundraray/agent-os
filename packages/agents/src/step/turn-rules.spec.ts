@@ -1,4 +1,4 @@
-import { type EndOfTurn, type EndOfTurnInput, endOfTurn } from './turn-rules.js';
+import { type EndOfTurn, type EndOfTurnInput, endOfTurn } from './turn-rules';
 
 // KD-2, «Конец хода», DC-3, DC-4 (final executor, design-runtime.md KD-5), Invariant 4, Notes 6: an
 // answer without tool calls waits, is refused with a notice, or completes with a report.

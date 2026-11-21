@@ -7,18 +7,18 @@ import {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import * as client from 'openid-client';
-import { isUuid } from '../common/is-uuid.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { IdentitySettings } from './identity-settings.js';
-import { GOOGLE_ISSUER_URL } from './identity.tokens.js';
-import { isComplete } from './provider-options.js';
+import { isUuid } from '../common/is-uuid';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { IdentitySettings } from './identity-settings';
+import { GOOGLE_ISSUER_URL } from './identity.tokens';
+import { isComplete } from './provider-options';
 import {
   consumeLoginRequest,
   deleteExpiredLoginRequests,
   findProvider,
   insertLoginRequest,
-} from './providers.repository.js';
+} from './providers.repository';
 
 /** How long a sign-in request and its `aos_login` cookie live (Runtime settings). */
 export const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;

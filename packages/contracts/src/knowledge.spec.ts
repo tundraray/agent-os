@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UpdateKnowledgeSettingsBodySchema } from './knowledge.js';
+import { UpdateKnowledgeSettingsBodySchema } from './knowledge';
 
 const settings = { limitTokens: 8000, lessonsEnabled: true };
 

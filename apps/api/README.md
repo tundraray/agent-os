@@ -10,11 +10,13 @@ Run from the repository root, in this order:
 pnpm install
 pnpm db:up                                   # Postgres 16 from infra/docker-compose.yml (POSTGRES_PORT=5433 pnpm db:up when 5432 is taken)
 cp apps/api/.env.example apps/api/.env
-pnpm turbo build --filter=api...             # api and every package it uses, the MCP fixture included
+pnpm --filter api build                      # one bundle in apps/api/dist: the app, the packages' source, the CLI entries, the migrations
 pnpm --filter api db:migrate                 # applies the migrations; the app only checks them
 printf '%s' '<password>' | pnpm --filter api identity:super-admin --login admin --name Admin --email admin@example.com
 pnpm --filter api start:dev                  # http://localhost:4000/api
 ```
+
+The workspace packages (`packages/*`) have no build of their own: the Nest CLI's rspack builder (`rspack.config.js`) compiles their TypeScript source into `apps/api/dist` together with the app, the CLI entries (`migrate-cli`, `super-admin-cli`, `seed-mcp-cli`, `seed-access-cli`), the code executor (`dist/executor`) and the migrations (`dist/migrations`). `start:dev` rebuilds and restarts on a change in `apps/api/src` or in a package's source. The build does not check types; `pnpm typecheck` does.
 
 MCP servers for local runs, in two more terminals once the API is up:
 
@@ -80,7 +82,7 @@ docker build -f apps/api/Dockerfile -t agent-os-api:local .
 
 # Migrations: the same command as `pnpm db:migrate`; the server only checks them and refuses to start on pending ones
 docker run --rm -e DATABASE_URL=postgres://<user>:<password>@<host>:5432/<db> \
-  agent-os-api:local node dist/runtime/migrate-cli.js
+  agent-os-api:local node dist/migrate-cli.js
 
 # The server, on port 4000
 docker run -p 4000:4000 \
@@ -90,7 +92,7 @@ docker run -p 4000:4000 \
 ```
 
 - `DATABASE_URL` is required. Model providers and their keys live in the database (set by `seed:access` or in the admin panel), never in the image; without a provider the server starts, but every model call is refused. The other variables of `.env.example` (`FRONTEND_ORIGIN`, `PORT`, `SENTRY_DSN`, `LOG_LEVEL`, `RUNTIME_*`, `AGENT_*`, `CODE_RUN_*`) are optional and passed the same way. Model prices live in the model catalogue in the database, not in the image. It does not carry the MCP fixture: the administrator registers real MCP servers in the registry, and under `NODE_ENV=production` (set in the image) a server or authorization address must be `https`.
-- Every request needs a session, as in local runs. Make the super-administrator once against the same database: `docker run --rm -i -e DATABASE_URL=... agent-os-api:local node dist/identity/super-admin-cli.js --login admin --name Admin --email admin@example.com`, with the password on standard input.
+- Every request needs a session, as in local runs. Make the super-administrator once against the same database: `docker run --rm -i -e DATABASE_URL=... agent-os-api:local node dist/super-admin-cli.js --login admin --name Admin --email admin@example.com`, with the password on standard input.
 - The server runs as the user `node` under `tini` (the image's entrypoint), which passes signals to Node and reaps the child processes of code runs. No `--init` is needed.
 - CI (`.github/workflows/docker.yml`) builds the image on every push to `main` and pushes it to `ghcr.io/<owner>/<repo>-api` with the tags `latest` and `sha-<short sha>`.
 

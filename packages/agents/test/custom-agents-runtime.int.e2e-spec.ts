@@ -60,8 +60,8 @@ import {
   toolCallRowsOf,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
-import { newUser } from './support/new-user.js';
+} from './support/agentsHarness';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

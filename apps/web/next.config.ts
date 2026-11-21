@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // The workspace packages have no build: Next compiles their TypeScript source.
+  transpilePackages: ["@agent-os/common", "@agent-os/contracts"],
   cacheComponents: true,
   partialPrefetching: true,
   // Baseline hardening for every route. A script CSP is not set here: the inline theme

@@ -20,17 +20,17 @@ import {
 } from '@agent-os/mcp-fixture';
 import type { Runtime } from '@agent-os/runtime';
 import type { App } from 'supertest/types.js';
-import { AppModule } from '../../src/app.module.js';
-import { configureApp } from '../../src/app.setup.js';
+import { AppModule } from '../../src/app.module';
+import { configureApp } from '../../src/app.setup';
 import {
   AGENTS,
   AGENT_TURN_CLIENT,
   EMBEDDING_CLIENT,
-} from '../../src/agents/agents.tokens.js';
-import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens.js';
-import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens.js';
-import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
-import { registerFixtureServers } from './mcp-servers.js';
+} from '../../src/agents/agents.tokens';
+import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens';
+import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens';
+import { RUNTIME, RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens';
+import { registerFixtureServers } from './mcp-servers';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */

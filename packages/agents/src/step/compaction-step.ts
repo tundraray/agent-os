@@ -2,21 +2,21 @@ import { HistoryEventSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult } from '@agent-os/runtime';
 
-import type { AccessAudit } from '../access-gate.js';
-import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
-import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
-import { type ModelClient, modelErrorMessage } from '../model/model-client.js';
-import { snapshotDefinition } from '../start/snapshot-definition.js';
-import type { HistoryEntry } from '../history/history.js';
-import { history, type NewHistoryEntry } from '../store/history.repository.js';
+import type { AccessAudit } from '../access-gate';
+import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block';
+import type { KnowledgeVectorStore } from '../knowledge/vector-store';
+import { type ModelClient, modelErrorMessage } from '../model/model-client';
+import { snapshotDefinition } from '../start/snapshot-definition';
+import type { HistoryEntry } from '../history/history';
+import { history, type NewHistoryEntry } from '../store/history.repository';
 import {
   type Session,
   type SessionPatch,
   sessionInputOf,
   sessions,
-} from '../store/sessions.repository.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
-import { entriesOf, rootTurnReset } from './deliver.js';
+} from '../store/sessions.repository';
+import type { ToolRegistry } from '../tools/tool-registry';
+import { entriesOf, rootTurnReset } from './deliver';
 import {
   appendWithEvent,
   callUnlessAborted,
@@ -27,7 +27,7 @@ import {
   readSessionHistory,
   refusedResult,
   type StepPrelude,
-} from './model-step.js';
+} from './model-step';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'compaction';

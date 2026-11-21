@@ -6,13 +6,15 @@ RUN npm install --global pnpm@10.9.0
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile --filter . --filter "api..."
-RUN pnpm turbo build --filter=api...
-# Production dependencies only, in the same workspace layout as in development: the code runner
-# lets its executor read `packages/code-runner/dist` and the QuickJS entries of the pnpm store by
-# real path. The MCP fixture is a developer tool (a devDependency of api): the image does not carry it.
+RUN pnpm --filter api build
+# `apps/api/dist` is the whole application: the workspace packages are compiled into it, with the code
+# executor (`dist/executor`) and the migrations (`dist/migrations`) next to the bundle. What stays outside
+# is third-party: the production dependencies of api, in the pnpm layout of development, because the code
+# runner lets its executor read the QuickJS entries of the pnpm store by real path. The package sources
+# are not needed at run time.
 RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/web \
-  && pnpm install --prod --frozen-lockfile --offline --ignore-scripts --filter "api..." \
-  && rm -rf packages/mcp-fixture
+  && pnpm install --prod --frozen-lockfile --offline --ignore-scripts --filter api \
+  && rm -rf packages apps/api/src apps/api/test
 
 FROM node:26-bookworm-slim
 # tini is PID 1: it passes signals to Node and reaps the short-lived child processes (code

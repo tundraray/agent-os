@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { AgentsModule } from '../agents/agents.module.js';
-import { AuditModule } from '../audit/audit.module.js';
-import { LibraryModule } from '../library/library.module.js';
-import { AdminKnowledgeSettingsController } from './admin-knowledge-settings.controller.js';
-import { KnowledgeController } from './knowledge.controller.js';
+import { AgentsModule } from '../agents/agents.module';
+import { AuditModule } from '../audit/audit.module';
+import { LibraryModule } from '../library/library.module';
+import { AdminKnowledgeSettingsController } from './admin-knowledge-settings.controller';
+import { KnowledgeController } from './knowledge.controller';
 
 /**
  * The knowledge routes (port-module-split.md, self-learning design-core.md KD-7): the access rule comes

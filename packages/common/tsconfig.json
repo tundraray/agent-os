@@ -1,9 +1,13 @@
 {
-  "extends": "./tsconfig.build.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
     "noEmit": true,
-    "rootDir": "."
+    "strict": true,
+    "skipLibCheck": true,
+    "types": []
   },
-  "include": ["src", "vitest.config.ts"],
-  "exclude": []
+  "include": ["src", "vitest.config.ts"]
 }

@@ -5,7 +5,7 @@ import {
   type DeltaAddress,
   type LiveStream,
   type Watch,
-} from './live-filter.js';
+} from './live-filter';
 
 const ROOT = '22222222-2222-4222-8222-222222222222';
 /** A conversation's id is its root's. */

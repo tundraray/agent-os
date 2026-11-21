@@ -20,13 +20,13 @@ import {
   type Grant,
   type UpdateGrantBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { apiError } from '../common/api-error.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { AccessService, type McpGrantTarget } from './access.service.js';
-import type { GrantHolderQuery } from './grants.repository.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { apiError } from '../common/api-error';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { AccessService, type McpGrantTarget } from './access.service';
+import type { GrantHolderQuery } from './grants.repository';
 
 /** Exactly one of `roleId` and `userId`; anything else is 400 VALIDATION_FAILED. */
 function holderQuery(

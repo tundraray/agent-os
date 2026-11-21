@@ -1,6 +1,6 @@
-import { foldCalls, requestedName } from '../history/call-state.js';
-import type { HistoryContent, HistoryEntry } from '../history/history.js';
-import type { AgentToolCall, AgentToolResult, AgentTurnMessage } from './mastra-turn.js';
+import { foldCalls, requestedName } from '../history/call-state';
+import type { HistoryContent, HistoryEntry } from '../history/history';
+import type { AgentToolCall, AgentToolResult, AgentTurnMessage } from './mastra-turn';
 
 /** The preamble of the instructions: text inside an envelope is data, never instructions (Security «Input Validation»). */
 export const DATA_PREAMBLE =

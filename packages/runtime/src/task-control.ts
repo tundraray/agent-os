@@ -9,21 +9,21 @@ import {
   type WaitReason,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import { type Database, runtimeDecisions, runtimeTasks } from '@agent-os/db';
+import { type Database, runtimeDecisions } from '@agent-os/db';
 import { and, eq, inArray } from 'drizzle-orm';
-import { RuntimeError } from './errors.js';
-import type { EventLog } from './event-log.js';
-import { isFinished, type TaskChange, type TaskRow } from './guarded-transition.js';
+import { RuntimeError } from './errors';
+import type { EventLog } from './event-log';
+import { isFinished, type TaskChange, type TaskRow } from './guarded-transition';
 import type {
   EnqueueMessage,
   HandlerRegistry,
   StepSignalReason,
-} from './handler.registry.js';
-import { type Inbox, payloadTooLarge } from './inbox.js';
-import type { RunningTaskRegistry } from './running-task.registry.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import { endTask, type TaskFailure, writeLocked } from './step-commit.js';
-import type { TaskRepository } from './task.repository.js';
+} from './handler.registry';
+import { type Inbox, payloadTooLarge } from './inbox';
+import type { RunningTaskRegistry } from './running-task.registry';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import { endTask, type TaskFailure, writeLocked } from './step-commit';
+import type { TaskRepository } from './task.repository';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;
@@ -116,9 +116,10 @@ function toTask(row: TaskRow): Task {
 
 /**
  * Creation, reading and the commands of tasks (design-runtime.md, Задачи; KD-4, Flow 4). Another
- * owner's task answers as a missing one: `TASK_NOT_FOUND` for a single task, `[]` for a list (plan
- * Notes 1). A command changes the status in its own transaction and raises the attempt, so the step
- * in flight is fenced; the step is then cut off — here at once, elsewhere by NOTIFY or heartbeat.
+ * owner's task and a task of a deleted tree answer as a missing one: `TASK_NOT_FOUND` for a single
+ * task, `[]` for a list (plan Notes 1). A command changes the status in its own transaction and
+ * raises the attempt, so the step in flight is fenced; the step is then cut off — here at once,
+ * elsewhere by NOTIFY or heartbeat.
  *
  * Lock order (plan Notes 4, Invariant 6): an ancestor before its descendants, one level by
  * `task_id`. A write that may end a task locks its parent first (the end notice goes there);
@@ -248,7 +249,7 @@ export class TaskControl {
    * Stops the task and every unfinished descendant: `stopped`, `attempt + 1`, `task.stopped`, open
    * requests `cancelled`, one `child_finished` (`stopped`) to the parent of each. Returns the
    * stopped `taskId`s, the task first; `[]` for a finished task, nothing changed. `TASK_NOT_FOUND`
-   * for a missing or another owner's task.
+   * for a missing, another owner's or a deleted task.
    */
   async stop(taskId: string, ownerId: string): Promise<string[]> {
     const { db, tasks, logger } = this.deps;
@@ -256,9 +257,10 @@ export class TaskControl {
     const fields = { taskId, ownerId };
     try {
       const stoppedTasks = await retryingTransaction(db, logger, 'tasks.stop', async (tx) => {
-        // The target's end notice goes to its parent: the parent is locked first.
+        // The target's end notice goes to its parent: the parent is locked first. That lock does
+        // not read the deletion mark, so it is checked here, as in `lockOwned`.
         const target = await tasks.lockWithParent(tx, taskId);
-        if (target?.ownerId !== ownerId) {
+        if (target?.ownerId !== ownerId || target.deletedAt !== null) {
           throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
         }
         if (isFinished(target.status)) return [];
@@ -281,25 +283,31 @@ export class TaskControl {
   }
 
   /**
-   * Stops the tree as {@link stop} does, then deletes its root; the cascade removes the tree's
-   * tasks, messages, requests and events, while the token ledger keeps its rows (KD-5). Only a root
-   * can be deleted: another task, a missing or another owner's one gives `TASK_NOT_FOUND`.
+   * Stops the tree as {@link stop} does and marks every task of it deleted: from then on each
+   * answers as a missing one. The rows, their messages, requests and events and the token ledger
+   * stay (KD-5); a conversation is deleted by `agents.sessions.deleteRoot`, which also marks its
+   * root session. Only a root can be deleted: another task, a missing, another owner's or an
+   * already deleted one gives `TASK_NOT_FOUND`.
+   *
+   * With `tx` everything is written in the caller's transaction and nothing is retried here, as in
+   * {@link create}. The steps of the stopped tasks are then not cut off here, since the commit is
+   * the caller's: the `task.stopped` NOTIFY at that commit cuts them off on every instance, this
+   * one included, and the heartbeat if the NOTIFY is lost.
    */
-  async deleteTree(rootId: string, ownerId: string): Promise<'deleted'> {
-    const { db, tasks, logger } = this.deps;
+  async deleteTree(rootId: string, ownerId: string, tx?: RuntimeTx): Promise<'deleted'> {
+    const { db, logger } = this.deps;
     const startedAt = Date.now();
-    const fields = { rootId, ownerId };
+    const fields = { rootId, ownerId, inCallerTx: tx !== undefined };
     try {
-      const stoppedTasks = await retryingTransaction(db, logger, 'tasks.deleteTree', async (tx) => {
-        const root = await tasks.lockOwned(tx, rootId, ownerId);
-        if (!root || root.parentId !== null) {
-          throw new RuntimeError('TASK_NOT_FOUND', `Task ${rootId} not found`);
-        }
-        const stoppedInTree = await this.stopTree(tx, root);
-        await tx.delete(runtimeTasks).where(eq(runtimeTasks.taskId, root.taskId));
-        return stoppedInTree;
-      });
-      this.cutOff(stoppedTasks, 'stopped');
+      let stoppedTasks: TaskRow[];
+      if (tx) {
+        stoppedTasks = await this.deleteTreeIn(tx, rootId, ownerId);
+      } else {
+        stoppedTasks = await retryingTransaction(db, logger, 'tasks.deleteTree', (own) =>
+          this.deleteTreeIn(own, rootId, ownerId),
+        );
+        this.cutOff(stoppedTasks, 'stopped');
+      }
       logger.info('task tree deleted', {
         ...fields,
         stoppedIds: stoppedTasks.map((task) => task.taskId),
@@ -315,6 +323,19 @@ export class TaskControl {
       });
       throw error;
     }
+  }
+
+  /** The deletion's writes in `tx`: the root locked, the tree stopped and marked deleted. */
+  private async deleteTreeIn(tx: RuntimeTx, rootId: string, ownerId: string): Promise<TaskRow[]> {
+    const { tasks } = this.deps;
+    const root = await tasks.lockOwned(tx, rootId, ownerId);
+    if (!root || root.parentId !== null) {
+      throw new RuntimeError('TASK_NOT_FOUND', `Task ${rootId} not found`);
+    }
+    // `stopTree` locks every task of the tree before the mark is written.
+    const stoppedInTree = await this.stopTree(tx, root);
+    await tasks.markDeleted(tx, root.taskId);
+    return stoppedInTree;
   }
 
   /** The creation's writes in `tx`: the parent locked, the task row and `task.created`. */

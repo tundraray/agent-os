@@ -1,6 +1,6 @@
 import { argon2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { IdentityValidationReason } from '@agent-os/contracts';
-import { validationFailed } from './identity.errors.js';
+import { validationFailed } from './identity.errors';
 
 /** Password length bounds in characters (KD-5); there is no other strength rule. */
 const PASSWORD_MIN_LENGTH = 12;

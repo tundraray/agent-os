@@ -6,7 +6,7 @@ import {
   MIGRATIONS_FOLDER,
   MIGRATIONS_SCHEMA,
   MIGRATIONS_TABLE,
-} from './pending-migrations.js';
+} from './pending-migrations';
 
 /** Constant key of the advisory lock that serialises concurrent migrators across processes. */
 const MIGRATION_LOCK_KEY = 4_200_310_031;

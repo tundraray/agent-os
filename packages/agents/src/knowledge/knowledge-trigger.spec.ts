@@ -3,7 +3,7 @@ import {
   triggerDecision,
   type TriggerEmbedding,
   type TriggerRun,
-} from './knowledge-trigger.js';
+} from './knowledge-trigger';
 
 // KD-3, KD-8, Invariants 1, 2, 13; AC-01.1, AC-03.2, AC-03.3, DC-3, DC-4 (design-core.md): one
 // extraction per run end, never after a stop; a failed extraction or pass never keeps its id.

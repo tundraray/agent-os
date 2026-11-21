@@ -1,5 +1,5 @@
-import { foldCalls } from './call-state.js';
-import type { HistoryContent, HistoryEntry } from './history.js';
+import { foldCalls } from './call-state';
+import type { HistoryContent, HistoryEntry } from './history';
 
 // Invariants 1, 2 (design-agents.md): the state of a call is which of its records exist — the rule the
 // tool step, an interrupt, a stop and `history` all read a call by.

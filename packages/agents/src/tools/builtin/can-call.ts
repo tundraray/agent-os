@@ -1,5 +1,5 @@
 import type { RunCodeConfirmationContent } from '@agent-os/contracts';
-import type { SessionTool } from '../tool-registry.js';
+import type { SessionTool } from '../tool-registry';
 
 /** One entry of the "Может вызвать" list. */
 export type CanCallEntry = RunCodeConfirmationContent['canCall'][number];

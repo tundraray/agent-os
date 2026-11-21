@@ -71,7 +71,7 @@ import {
 import { createFixtureFiles, fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { WorkflowsError } from '@agent-os/workflows';
 import { describe, expect, it } from 'vitest';
-import { newUser } from './support/new-user.js';
+import { newUser } from './support/new-user';
 import {
   childReportsOf,
   coordinatorsUnder,
@@ -88,7 +88,7 @@ import {
   waitFor,
   waitForStatus,
   type WorkflowsHarness,
-} from './support/workflowsHarness.js';
+} from './support/workflowsHarness';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

@@ -8,9 +8,9 @@
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord } from '@agent-os/runtime';
 
-import type { EmbeddingVerdict } from '../access-gate.js';
-import { createProviderRegistryDouble, createScriptedEmbeddings, type ScriptedEmbeddings } from '../testing.js';
-import { createEmbeddings } from './embeddings.js';
+import type { EmbeddingVerdict } from '../access-gate';
+import { createProviderRegistryDouble, createScriptedEmbeddings, type ScriptedEmbeddings } from '../testing';
+import { createEmbeddings } from './embeddings';
 
 const SMALL: EmbeddingVerdict = {
   kind: 'allowed',

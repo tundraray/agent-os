@@ -1,10 +1,12 @@
 {
-  "extends": "./tsconfig.build.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
     "noEmit": true,
-    "rootDir": ".",
+    "strict": true,
+    "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts", "vitest.config.e2e.ts"],
-  "exclude": []
+  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts", "vitest.config.e2e.ts"]
 }

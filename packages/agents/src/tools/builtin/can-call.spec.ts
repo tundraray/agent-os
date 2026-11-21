@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { SessionTool } from '../tool-registry.js';
-import { canCallOf } from './can-call.js';
+import type { SessionTool } from '../tool-registry';
+import { canCallOf } from './can-call';
 
 // UC-6 (AC-05.7, DC-17): the "Может вызвать" list holds the session's MCP tools named in the script
 // as a whole word, changing first, then reading, each group by first mention.

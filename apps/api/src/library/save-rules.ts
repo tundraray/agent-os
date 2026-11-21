@@ -8,7 +8,7 @@ import {
   contentParts,
   isNameTaken,
   type ContentPart,
-} from './record-content.js';
+} from './record-content';
 
 /** Agent records the content may start; only an agent holds them. */
 function contentAgents(body: RecordBody): readonly string[] {

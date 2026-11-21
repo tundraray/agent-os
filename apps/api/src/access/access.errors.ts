@@ -7,7 +7,7 @@ import type {
   ModelProviderInvalidReason,
   ModelPurpose,
 } from '@agent-os/contracts';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /** HTTP status and constant message of each access error code (design-access.md, Error handling). */
 const ANSWERS: Record<AccessErrorCode, { status: number; message: string }> = {

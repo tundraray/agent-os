@@ -7,7 +7,7 @@ import {
   type RequestOptions,
   type Tool,
 } from '@modelcontextprotocol/client';
-import { type McpFailure, mcpFailureReason } from './mcp-failure.js';
+import { type McpFailure, mcpFailureReason } from './mcp-failure';
 
 export const CLIENT_INFO = { name: 'agent-os-agents', version: '1.0.0' } as const;
 

@@ -77,7 +77,7 @@ import {
   testRecord,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
+} from './support/agentsHarness';
 import {
   FAKE_USAGE,
   type FakeProvider,
@@ -85,9 +85,9 @@ import {
   headersOf,
   readBody,
   startFakeProvider,
-} from './support/fake-provider.js';
-import { registerServer, removeServer, runName } from './support/mcp-servers.js';
-import { newUser } from './support/new-user.js';
+} from './support/fake-provider';
+import { registerServer, removeServer, runName } from './support/mcp-servers';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

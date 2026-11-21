@@ -3,17 +3,17 @@ import type { Database } from '@agent-os/db';
 import type { StepContext, StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AgentsEmbeddings, EmbedResult } from '../embeddings/embeddings.js';
-import type { RunSnapshot } from '../start/snapshot.js';
-import { type Session, sessionInputOf } from '../store/sessions.repository.js';
-import { sessionLearningOf } from './knowledge-block.js';
+import type { AgentsEmbeddings, EmbedResult } from '../embeddings/embeddings';
+import type { RunSnapshot } from '../start/snapshot';
+import { type Session, sessionInputOf } from '../store/sessions.repository';
+import { sessionLearningOf } from './knowledge-block';
 import {
   type EmbeddingOutcome,
   type KnowledgeQuestionRow,
   readQuestion,
   writeQuestion,
   writeQuestionOutcome,
-} from './knowledge-runs.repository.js';
+} from './knowledge-runs.repository';
 
 /** The `source` of a question taken from the session's `task`; otherwise it is the employee message's id. */
 const TASK_QUESTION_SOURCE = 'task';

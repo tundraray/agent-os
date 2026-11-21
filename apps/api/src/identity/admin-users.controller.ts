@@ -22,10 +22,10 @@ import {
   type ResetPasswordBody,
   type SetPersonalAdminBody,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from './admin-only.decorator.js';
-import type { AuthedRequest } from './auth-user.js';
-import { UsersService } from './users.service.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from './admin-only.decorator';
+import type { AuthedRequest } from './auth-user';
+import { UsersService } from './users.service';
 
 /** Employees for an administrator (design-identity.md, Contract «Операции администратора»). */
 @Controller('admin/users')

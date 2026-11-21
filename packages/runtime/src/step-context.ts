@@ -3,18 +3,18 @@ import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import { sql } from 'drizzle-orm';
-import type { CrashPoints } from './crash-points.js';
-import type { TaskRow } from './guarded-transition.js';
+import type { CrashPoints } from './crash-points';
+import type { TaskRow } from './guarded-transition';
 import type {
   GuardResult,
   StepContext,
   StepDecision,
   StepMessage,
-} from './handler.registry.js';
-import type { DecisionRow } from './decisions.js';
-import { type MessageRow, toStepMessage } from './inbox.js';
-import type { RuntimeTx } from './runtime-tx.js';
-import type { TaskRepository } from './task.repository.js';
+} from './handler.registry';
+import type { DecisionRow } from './decisions';
+import { type MessageRow, toStepMessage } from './inbox';
+import type { RuntimeTx } from './runtime-tx';
+import type { TaskRepository } from './task.repository';
 
 const { running } = TaskStatusSchema.enum;
 

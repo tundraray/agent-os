@@ -1,11 +1,11 @@
 import type { Logger } from '@agent-os/common';
 import { AGENT_TASK_TYPE } from '@agent-os/contracts';
 
-import { AgentsError } from '../../errors.js';
-import type { StartResolution, StartSource } from '../../start/resolve-start.js';
-import { type SessionInput, sessions } from '../../store/sessions.repository.js';
-import type { StartChild } from '../tool.js';
-import type { StartChildScope } from '../tool-runner.js';
+import { AgentsError } from '../../errors';
+import type { StartResolution, StartSource } from '../../start/resolve-start';
+import { type SessionInput, sessions } from '../../store/sessions.repository';
+import type { StartChild } from '../tool';
+import type { StartChildScope } from '../tool-runner';
 
 export interface StartChildDeps {
   /** `AGENT_MAX_DEPTH`. */

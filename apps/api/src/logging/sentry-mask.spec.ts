@@ -1,5 +1,5 @@
 import { rememberSecret } from '@agent-os/common';
-import { maskSentryEvent } from './sentry-mask.js';
+import { maskSentryEvent } from './sentry-mask';
 
 // Obviously fake keys; remembered after the mask was created at import, as a key set while the server runs.
 const OLD_KEY = 'fake-provider-key-old-0001';

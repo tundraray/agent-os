@@ -6,13 +6,13 @@ import {
   OwnerDisabledError,
 } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { APP_LOGGER } from '../logging/app-logger';
 import {
   buildTitlePrompt,
   normalizeGeneratedTitle,
   TITLE_SYSTEM_PROMPT,
-} from './title-rules.js';
+} from './title-rules';
 
 /** Output budget of the title call: a title is at most 80 characters. */
 const TITLE_MAX_OUTPUT_TOKENS = 64;

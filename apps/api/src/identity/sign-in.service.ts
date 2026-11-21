@@ -2,19 +2,19 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import { UserStatusSchema, type SignInError } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { normalizeIdentifier } from './identity-input.js';
-import { identityError } from './identity.errors.js';
-import { OidcSignIn, type ReturnFromProvider } from './oidc-sign-in.js';
-import { PasswordSignIn } from './password-sign-in.js';
-import { openSession, type OpenedSession } from './session.store.js';
+import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { normalizeIdentifier } from './identity-input';
+import { identityError } from './identity.errors';
+import { OidcSignIn, type ReturnFromProvider } from './oidc-sign-in';
+import { PasswordSignIn } from './password-sign-in';
+import { openSession, type OpenedSession } from './session.store';
 import {
   markSignedIn,
   upsertProviderUser,
   type UserRow,
-} from './users.repository.js';
+} from './users.repository';
 
 /** How the employee signed in; written to the audit and the log. */
 type SignInMethod = 'password' | 'provider';

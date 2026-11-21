@@ -3,16 +3,16 @@ import { type RecordHeader, RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/c
 import type { Database } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
-import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate.js';
-import type { AgentSnapshot } from '../start/snapshot.js';
-import type { CallState } from '../history/call-state.js';
-import { createToolStep } from '../step/tool-step.js';
-import type { Session, SessionInput } from '../store/sessions.repository.js';
-import { createLibraryDouble } from '../testing.js';
-import type { AgentTool, ToolCaller } from './tool.js';
-import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate.js';
-import { createToolRegistry, type SessionTool } from './tool-registry.js';
-import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner.js';
+import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate';
+import type { AgentSnapshot } from '../start/snapshot';
+import type { CallState } from '../history/call-state';
+import { createToolStep } from '../step/tool-step';
+import type { Session, SessionInput } from '../store/sessions.repository';
+import { createLibraryDouble } from '../testing';
+import type { AgentTool, ToolCaller } from './tool';
+import { gateStart, type LaunchSet, type StartGateInput } from './tool-gate';
+import { createToolRegistry, type SessionTool } from './tool-registry';
+import { createToolRunner, type ToolRunner, type ToolRunnerOptions } from './tool-runner';
 
 // AC-03.1, AC-11.3, DC-6 (a refused call never reaches the server and carries its reason), AC-10.3
 // (depth); custom-agents UC-E4, AC-16.6, AC-15.2 (the launch set: the root's, an agent's `agents`, the

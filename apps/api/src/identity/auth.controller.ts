@@ -23,13 +23,13 @@ import {
   type SignInError,
 } from '@agent-os/contracts';
 import type { CookieOptions, Request, Response } from 'express';
-import { AuditLog } from '../audit/audit-log.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import type { AuthedRequest } from './auth-user.js';
-import { LOGIN_REQUEST_TTL_MS } from './oidc-sign-in.js';
-import { ProvidersService } from './providers.service.js';
-import { Public } from './public.decorator.js';
+import { AuditLog } from '../audit/audit-log';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { APP_LOGGER } from '../logging/app-logger';
+import type { AuthedRequest } from './auth-user';
+import { LOGIN_REQUEST_TTL_MS } from './oidc-sign-in';
+import { ProvidersService } from './providers.service';
+import { Public } from './public.decorator';
 import {
   clearSessionCookie,
   cookieOptions,
@@ -37,10 +37,10 @@ import {
   readCookie,
   readSessionToken,
   setSessionCookie,
-} from './session-cookie.js';
-import { SessionStore } from './session.store.js';
-import { SignInService } from './sign-in.service.js';
-import { UsersService } from './users.service.js';
+} from './session-cookie';
+import { SessionStore } from './session.store';
+import { SignInService } from './sign-in.service';
+import { UsersService } from './users.service';
 
 /** Binds a provider sign-in to the browser that started it: its value is the request's `state` (DC-4). */
 const LOGIN_COOKIE = 'aos_login';

@@ -13,7 +13,7 @@ import type { RuntimeTx } from '@agent-os/runtime';
 import { and, desc, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
-import type { StoreReader } from '../store/sessions.repository.js';
+import type { StoreReader } from '../store/sessions.repository';
 
 const runs = agentKnowledgeRuns;
 const questions = agentKnowledgeQuestions;

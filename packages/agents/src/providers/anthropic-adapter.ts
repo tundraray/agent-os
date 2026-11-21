@@ -1,6 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 
-import { type ProviderAdapter, keyHeader, rejectionText } from './adapters.js';
+import { type ProviderAdapter, keyHeader, rejectionText } from './adapters';
 
 /** The Messages API version the check request asks for. */
 const ANTHROPIC_VERSION = '2023-06-01';

@@ -74,11 +74,12 @@ import {
 /**
  * Model of Postgres schema `app` (ADR-0003): every table, constraint and index of `app` is
  * declared here; runtime tables carry the prefix `runtime_`. drizzle-kit generates the
- * migrations in `packages/db/migrations/` from this module.
+ * migrations in `packages/db/src/migrations/` from this module.
  *
  * CHECK domains are built from the contract enums in `@agent-os/contracts`, never duplicated here.
  * The cascade starts at the root task: deleting it deletes its tree with its messages, decisions
- * and events. The token ledger has no FK and outlives the tree.
+ * and events. The application marks a tree deleted (`deleted_at`) rather than deleting it; the
+ * cascades stay for a future retention purge. The token ledger has no FK and outlives the tree.
  */
 export const app = pgSchema('app');
 
@@ -145,6 +146,8 @@ export const runtimeTasks = app.table(
       .notNull()
       .defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /** Set on every task of a deleted tree, which answers as a missing one; null otherwise. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
     check(
@@ -323,7 +326,8 @@ export const runtimeModelCalls = app.table(
 
 // ---------------------------------------------------------------------------------------------
 // Agent tables (agent-platform/design-agents.md, Data Model). The session key is the runtime task
-// id, so deleting a task tree deletes its sessions, histories and tool calls.
+// id; the cascade from it stays for a future retention purge, the application marks a conversation
+// deleted (`deleted_at`) rather than deleting it.
 // ---------------------------------------------------------------------------------------------
 
 export const agentSessions = app.table(
@@ -380,15 +384,17 @@ export const agentSessions = app.table(
     /** Input tokens of the last model call; drives compaction. */
     lastInputTokens: integer('last_input_tokens'),
     createdAt: createdAt(),
+    /** Set only on the root session of a deleted conversation, which answers as a missing one. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
     /** Counts the owner's runs of a record for the chat listing. */
     index('agent_sessions_owner_record_idx').on(t.ownerId, t.recordId),
     index('agent_sessions_root_idx').on(t.rootId),
-    /** The owner's list of root sessions: last changed first. */
+    /** The owner's conversations, last changed first; the condition is the agents' `isRoot`. */
     index('agent_sessions_owner_page_idx')
       .on(t.ownerId, t.updatedAt.desc(), t.taskId.desc())
-      .where(sql`${t.updatedAt} IS NOT NULL`),
+      .where(sql`${t.updatedAt} IS NOT NULL AND ${t.deletedAt} IS NULL`),
   ],
 );
 

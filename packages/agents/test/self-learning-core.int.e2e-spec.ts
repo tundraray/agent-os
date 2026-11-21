@@ -108,9 +108,9 @@ import { PLATFORM_OWNER_ID } from '@agent-os/runtime';
 import { eq, max } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { KnowledgeGraph } from '../src/knowledge/knowledge.repository.js';
-import type { KnowledgeRun } from '../src/knowledge/knowledge-runs.repository.js';
-import { KNOWLEDGE_RULE, knowledgeKey } from '../src/knowledge/knowledge-text.js';
+import type { KnowledgeGraph } from '../src/knowledge/knowledge.repository';
+import type { KnowledgeRun } from '../src/knowledge/knowledge-runs.repository';
+import { KNOWLEDGE_RULE, knowledgeKey } from '../src/knowledge/knowledge-text';
 import {
   type AgentsHarness,
   type AgentsHarnessOptions,
@@ -130,8 +130,8 @@ import {
   toolCallRowsOf,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
-import { databaseUrl } from './support/database-url.js';
+} from './support/agentsHarness';
+import { databaseUrl } from './support/database-url';
 import {
   createPgvectorStore,
   findEmbeddingRow,
@@ -152,9 +152,9 @@ import {
   waitForRound,
   withKnowledgeLimit,
   withLibraryRow,
-} from './support/knowledge.js';
-import { LOGS_SERVER } from './support/mcp-servers.js';
-import { newUser } from './support/new-user.js';
+} from './support/knowledge';
+import { LOGS_SERVER } from './support/mcp-servers';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

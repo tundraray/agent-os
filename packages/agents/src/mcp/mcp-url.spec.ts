@@ -1,4 +1,4 @@
-import { checkServerUrl } from './mcp-url.js';
+import { checkServerUrl } from './mcp-url';
 
 // Security Considerations (`https` outside development): a server or authorization-server address must be https;
 // http passes only where development allows it, any other scheme never.

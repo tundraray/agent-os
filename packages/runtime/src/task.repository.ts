@@ -1,14 +1,14 @@
 import { TaskStatusSchema } from '@agent-os/contracts';
 import { runtimeTasks } from '@agent-os/db';
-import { and, asc, eq, inArray } from 'drizzle-orm';
-import { RuntimeError } from './errors.js';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { RuntimeError } from './errors';
 import {
   guardedTaskWrite,
   type TaskChange,
   type TaskGuard,
   type TaskRow,
-} from './guarded-transition.js';
-import type { RuntimeTx } from './runtime-tx.js';
+} from './guarded-transition';
+import type { RuntimeTx } from './runtime-tx';
 
 export type NewTaskRow = Pick<
   typeof runtimeTasks.$inferInsert,
@@ -18,7 +18,9 @@ export type NewTaskRow = Pick<
 /**
  * Drizzle queries of `runtime_tasks` inside the caller's transaction (repository over a
  * transaction). Lock order: a parent before its children, tasks of one level by `task_id`. Task
- * rows change only through {@link guardedTaskWrite}.
+ * rows change only through {@link guardedTaskWrite}, except the deletion mark of
+ * {@link markDeleted}. A task with `deleted_at` answers as a missing one in `lockOwned`,
+ * `findOwned` and `listTree`.
  */
 export class TaskRepository {
   /** Locks the task FOR UPDATE. */
@@ -44,14 +46,20 @@ export class TaskRepository {
     return rows.length > 0;
   }
 
-  /** Locks the owner's task FOR UPDATE; another owner's task is as absent as a missing one. */
+  /**
+   * Locks the owner's task FOR UPDATE; another owner's task and a task of a deleted tree are as
+   * absent as a missing one. The flag is read under the row lock, and this is the lock every
+   * external message takes (`inbox.insertMessage`, the only revival from outside): a send that
+   * waited for the lock of a root being deleted reads the committed flag and is refused, so it
+   * cannot wake the deleted tree. The check must stay here, not move up into a caller.
+   */
   async lockOwned(
     tx: RuntimeTx,
     taskId: string,
     ownerId: string,
   ): Promise<TaskRow | undefined> {
     const row = await this.lock(tx, taskId);
-    return row?.ownerId === ownerId ? row : undefined;
+    return row?.ownerId === ownerId && row.deletedAt === null ? row : undefined;
   }
 
   /**
@@ -84,7 +92,7 @@ export class TaskRepository {
       .for('update');
   }
 
-  /** The owner's task without a lock; another owner's task is as absent as a missing one. */
+  /** The owner's task without a lock; another owner's or a deleted one answers as a missing one. */
   async findOwned(
     tx: RuntimeTx,
     taskId: string,
@@ -94,20 +102,39 @@ export class TaskRepository {
       .select()
       .from(runtimeTasks)
       .where(
-        and(eq(runtimeTasks.taskId, taskId), eq(runtimeTasks.ownerId, ownerId)),
+        and(
+          eq(runtimeTasks.taskId, taskId),
+          eq(runtimeTasks.ownerId, ownerId),
+          isNull(runtimeTasks.deletedAt),
+        ),
       );
     return row;
   }
 
-  /** Every task of the owner's tree in creation order; `[]` for another owner's or no tree. */
+  /** Every task of the owner's tree in creation order; `[]` for another's, deleted or no tree. */
   listTree(tx: RuntimeTx, rootId: string, ownerId: string): Promise<TaskRow[]> {
     return tx
       .select()
       .from(runtimeTasks)
       .where(
-        and(eq(runtimeTasks.rootId, rootId), eq(runtimeTasks.ownerId, ownerId)),
+        and(
+          eq(runtimeTasks.rootId, rootId),
+          eq(runtimeTasks.ownerId, ownerId),
+          isNull(runtimeTasks.deletedAt),
+        ),
       )
       .orderBy(asc(runtimeTasks.createdSeq));
+  }
+
+  /**
+   * Marks every task of the tree deleted. The caller holds the lock of each of them (`stopTree`),
+   * so the mark is not a guarded write: no step of the stopped tree can commit any more.
+   */
+  async markDeleted(tx: RuntimeTx, rootId: string): Promise<void> {
+    await tx
+      .update(runtimeTasks)
+      .set({ deletedAt: sql`now()` })
+      .where(eq(runtimeTasks.rootId, rootId));
   }
 
   /**

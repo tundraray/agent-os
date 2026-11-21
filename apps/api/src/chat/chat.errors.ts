@@ -5,7 +5,7 @@ import type { Logger } from '@agent-os/common';
 import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
 import { WorkflowsError } from '@agent-os/workflows';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /**
  * The not-found codes a route answers with; a runtime `TASK_NOT_FOUND` and an agents `AGENT_NOT_FOUND`

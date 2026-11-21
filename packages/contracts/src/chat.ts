@@ -7,7 +7,7 @@ import {
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
-} from './agents.js';
+} from './agents';
 import {
   IdSchema,
   RECORD_NAME_MAX_LENGTH,
@@ -15,9 +15,9 @@ import {
   SaveOwnRefusalSchema,
   VersionSchema,
   withContentByKind,
-} from './library.js';
-import { DecisionStatusSchema } from './runtime.js';
-import { ThreadListQuerySchema, ThreadSummarySchema } from './threads.js';
+} from './library';
+import { DecisionStatusSchema } from './runtime';
+import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
 
 /**
  * The chat API of the agent platform (design-chat.md, Contract Definitions): conversations, agents,
@@ -337,7 +337,6 @@ export type Confirmation = z.infer<typeof ConfirmationSchema>;
 
 /** Chat status for the composer (design-chat.md, State Transitions). */
 export const ChatStatusSchema = z.enum([
-  'new',
   'idle',
   'working',
   'awaiting_confirmation',
@@ -386,9 +385,10 @@ export const ConversationViewSchema = z.object({
     status: ChatStatusSchema,
     /** Set when `failed`. */
     failureReason: z.string().nullable(),
-    rootAgentId: z.string().min(1).nullable(),
-    /** The root's model; null while the conversation has no root. */
-    model: z.string().min(1).nullable(),
+    /** The conversation's root: its id is the conversation's. */
+    rootAgentId: z.string().min(1),
+    /** The root's model. */
+    model: z.string().min(1),
   }),
   entries: z.array(HistoryEntrySchema).max(HISTORY_PAGE_SIZE),
   nextAfterSeq: NextAfterSeqSchema,

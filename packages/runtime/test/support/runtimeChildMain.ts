@@ -1,15 +1,14 @@
 import { consoleSink, createLogger } from '@agent-os/common';
 import { createDatabase } from '@agent-os/db';
 import { createRuntime, parseRuntimeConfig, systemClock } from '@agent-os/runtime';
-import { type ChildTypes, CHILD_TYPES_ENV, handlersFor } from './runtimeChildHandlers.js';
-import { ensureHandlerRowsTable } from './testHandlers.js';
+import { type ChildTypes, CHILD_TYPES_ENV, handlersFor } from './runtimeChildHandlers';
+import { ensureHandlerRowsTable } from './testHandlers';
 
 /**
- * Entry of the E2E-1 child process, run only compiled (`pnpm --filter @agent-os/runtime
- * build:child` → `dist/test-child/`). It is the composition root of its runtime: it reads its
+ * Entry of the E2E-1 child process, run from source through `tsx`. It is the composition root of its runtime: it reads its
  * environment — `DATABASE_URL`, the Runtime settings (`RUNTIME_WORKERS=on`, short lease, reaper and
  * poll, `RUNTIME_MAX_RECOVERIES`, `RUNTIME_CRASH_AT` for a dying start) and the task types it
- * registers — then builds `createDatabase` + `createRuntime` from the packages' built `dist` and
+ * registers — then builds `createDatabase` + `createRuntime` from the packages and
  * starts the workers. It creates no tasks: the test process does. IPC: the child sends
  * `{ kind: 'ready' }` once its workers run; `{ kind: 'stop' }` stops them, closes the pool and
  * exits 0. A crash point exits 137 on its own.

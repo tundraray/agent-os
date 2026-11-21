@@ -1,7 +1,7 @@
 import { identitySettings } from '@agent-os/db';
 import { isNull } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
-import type { SessionLimits } from './session-lifetime.js';
+import type { Executor } from '../common/executor';
+import type { SessionLimits } from './session-lifetime';
 
 /** The session limit columns of the single `identity_settings` row, for a select or a join. */
 export const sessionLimitColumns = {

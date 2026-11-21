@@ -13,6 +13,7 @@ import {
 import type { Database } from '@agent-os/db';
 import {
   isFinished,
+  retryingTransaction,
   type Runtime,
   RuntimeError,
   type ResolveOutcome,
@@ -20,21 +21,21 @@ import {
 } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessAudit, AccessGate } from '../access-gate.js';
-import { type AgentView, toAgentView } from '../agent-view.js';
-import { AgentsError } from '../errors.js';
-import { foldCalls } from '../history/call-state.js';
-import { messagePayload } from '../step/continuation.js';
-import { ConfirmationResolutionSchema } from '../step/tool-step.js';
-import { history, type PageEntry } from '../store/history.repository.js';
-import type { RecordLibrary } from '../start/record-library.js';
+import type { AccessAudit, AccessGate } from '../access-gate';
+import { type AgentView, toAgentView } from '../agent-view';
+import { AgentsError } from '../errors';
+import { foldCalls } from '../history/call-state';
+import { messagePayload } from '../step/continuation';
+import { ConfirmationResolutionSchema } from '../step/tool-step';
+import { history, type PageEntry } from '../store/history.repository';
+import type { RecordLibrary } from '../start/record-library';
 import {
   auditStartRefusal,
   resolveStart,
   type StartDeps,
   type StartSource,
-} from '../start/resolve-start.js';
-import type { RunSnapshot } from '../start/snapshot.js';
+} from '../start/resolve-start';
+import type { RunSnapshot } from '../start/snapshot';
 import {
   type RootPosition,
   type RootSession,
@@ -42,11 +43,11 @@ import {
   type SessionInput,
   sessionInputOf,
   sessions,
-} from '../store/sessions.repository.js';
-import { logStart } from '../tools/builtin/start-child.js';
-import type { ToolDisplay } from '../tools/tool.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
-import { stopEntries } from './stop-entries.js';
+} from '../store/sessions.repository';
+import { logStart } from '../tools/builtin/start-child';
+import type { ToolDisplay } from '../tools/tool';
+import type { ToolRegistry } from '../tools/tool-registry';
+import { stopEntries } from './stop-entries';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;
@@ -182,6 +183,12 @@ export interface AgentSessions {
   renameRoot(rootId: string, ownerId: string, title: string): Promise<RootSession | undefined>;
   /** Writes a generated title only into an empty one; `true` when it was written. */
   titleRootIfEmpty(rootId: string, ownerId: string, title: string): Promise<boolean>;
+  /**
+   * Stops the conversation's tree and marks it and its root session deleted, in one transaction: from
+   * then on the conversation answers as a missing one everywhere. The rows stay. `AGENT_NOT_FOUND` for
+   * a missing, another owner's or an already deleted root.
+   */
+  deleteRoot(rootId: string, ownerId: string): Promise<void>;
 }
 
 export interface AgentSessionsDeps {
@@ -239,11 +246,13 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
     fields: Record<string, unknown>,
     work: () => Promise<T>,
     outcomeOf: (result: T) => Record<string, unknown> = () => ({}),
+    /** The level of the success record: `debug` for an operation called on every runtime event. */
+    level: 'info' | 'debug' = 'info',
   ): Promise<T> {
     const startedAt = Date.now();
     try {
       const result = await work();
-      logger.info(`agents.${operation} answered`, {
+      logger[level](`agents.${operation} answered`, {
         ...fields,
         outcome: 'ok',
         ...outcomeOf(result),
@@ -670,6 +679,8 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { rootId },
         () => sessions.rootOwner(database, rootId),
         (ownerId) => ({ ownerId: ownerId ?? null }),
+        // The live hub asks on every runtime event of every running agent.
+        'debug',
       );
     },
 
@@ -705,6 +716,19 @@ export function createAgentSessions(deps: AgentSessionsDeps): AgentSessions {
         { rootId, ownerId },
         () => sessions.titleRootIfEmpty(database, rootId, ownerId, title),
         (written) => ({ written }),
+      );
+    },
+
+    deleteRoot(rootId, ownerId) {
+      return logged('deleteRoot', { rootId, ownerId }, () =>
+        asAgent(
+          // Retried as a whole on a deadlock: `deleteTree` does not retry in the caller's transaction.
+          // The task rows are locked first (inside `deleteTree`), the session row after, as a step's commit does.
+          retryingTransaction(database, logger, 'sessions.deleteRoot', async (tx) => {
+            await runtime.tasks.deleteTree(rootId, ownerId, tx);
+            await sessions.markDeleted(tx, rootId);
+          }),
+        ),
       );
     },
   };

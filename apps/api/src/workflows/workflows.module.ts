@@ -2,10 +2,10 @@ import { Module } from '@nestjs/common';
 import type { Agents } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import { createWorkflows, type Workflows } from '@agent-os/workflows';
-import { AgentsModule } from '../agents/agents.module.js';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { WORKFLOWS } from './workflows.tokens.js';
+import { AgentsModule } from '../agents/agents.module';
+import { AGENTS } from '../agents/agents.tokens';
+import { APP_LOGGER } from '../logging/app-logger';
+import { WORKFLOWS } from './workflows.tokens';
 
 /**
  * Composition root of the workflows package in `apps/api` (composition-root.md, design-workflows.md

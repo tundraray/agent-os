@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { LogRecord } from '../dataset.js';
-import { defineTool } from './fixture-tool.js';
-import { LogQueryShape, matchingRecords, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query.js';
+import type { LogRecord } from '../dataset';
+import { defineTool } from './fixture-tool';
+import { LogQueryShape, matchingRecords, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query';
 
 const BUCKET_MS = { '15m': 15 * 60_000, '1h': 60 * 60_000 } as const;
 const GROUP_BY_FIELDS = ['service', 'level', 'event', 'status'] as const;

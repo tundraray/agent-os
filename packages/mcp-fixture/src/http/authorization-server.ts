@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
-import { waitForFile } from '../fixture-server.js';
+import { waitForFile } from '../fixture-server';
 
 /** Access token lifetime until a test changes it (`/_control/token-lifetime`). */
 const DEFAULT_TOKEN_LIFETIME_SECONDS = 3600;

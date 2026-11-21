@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ToolRefusalReasonSchema } from './agents.js';
+import { ToolRefusalReasonSchema } from './agents';
 
 /** Page size of GET /api/threads (user decision 2026-10-28). */
 export const THREAD_PAGE_SIZE = 20;

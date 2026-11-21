@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineTool } from './fixture-tool.js';
+import { defineTool } from './fixture-tool';
 
 const GetTraceArgsSchema = z.strictObject({
   traceId: z

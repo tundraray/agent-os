@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextPath } from './next-path.js';
+import { nextPath } from './next-path';
 
 // AC-04.5 (next): the redirect after sign-in goes to `{FRONTEND_ORIGIN}{next}`, so anything but a web
 // path would be an open redirect to a foreign host.

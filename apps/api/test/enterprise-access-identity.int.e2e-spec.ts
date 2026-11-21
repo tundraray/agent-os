@@ -66,12 +66,12 @@ import {
 } from '@agent-os/contracts';
 import request, { type Response, type Test } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AccessService } from '../src/access/access.service.js';
-import { IdentityDirectory } from '../src/identity/identity-directory.js';
+import { AccessService } from '../src/access/access.service';
+import { IdentityDirectory } from '../src/identity/identity-directory';
 import {
   SESSION_COOKIE,
   frontendOrigin,
-} from '../src/identity/session-cookie.js';
+} from '../src/identity/session-cookie';
 import {
   allowRole,
   grantTo,
@@ -80,10 +80,10 @@ import {
   runModel,
   type RunRole,
   useRunModels,
-} from './support/access.js';
-import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { pointBuiltinsAt } from './support/library.js';
+} from './support/access';
+import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { pointBuiltinsAt } from './support/library';
 import {
   ageSession,
   apiOrigin,
@@ -94,12 +94,12 @@ import {
   signInWithPassword,
   type Method,
   type Session,
-} from './support/session.js';
+} from './support/session';
 import {
   startTestProvider,
   type ProviderAnswer,
   type TestProvider,
-} from './support/test-provider.js';
+} from './support/test-provider';
 
 /** Bound of one test; the requests settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

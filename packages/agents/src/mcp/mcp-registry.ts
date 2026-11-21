@@ -23,9 +23,9 @@ import {
   type OAuthServerInfo,
 } from '@modelcontextprotocol/client';
 
-import { CLIENT_INFO, type McpAuth, type McpClient, deadlineFetch } from './mcp-client.js';
-import { McpError } from './mcp-errors.js';
-import { type McpFailureReason, failureName, mcpFailureReason, transportFailureReason } from './mcp-failure.js';
+import { CLIENT_INFO, type McpAuth, type McpClient, deadlineFetch } from './mcp-client';
+import { McpError } from './mcp-errors';
+import { type McpFailureReason, failureName, mcpFailureReason, transportFailureReason } from './mcp-failure';
 import {
   type McpServerPatch,
   type McpServerRow,
@@ -35,9 +35,9 @@ import {
   insertServer,
   listServers,
   updateServer,
-} from './mcp-servers.repository.js';
-import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool.js';
-import { checkServerUrl } from './mcp-url.js';
+} from './mcp-servers.repository';
+import { type McpTool, storedMcpTools, toMcpTool } from './mcp-tool';
+import { checkServerUrl } from './mcp-url';
 
 /** Stands in for the shared token in «было/стало»: `AuditLog` writes `secret_changed` for its field name. */
 const SECRET_MARK = 'changed';

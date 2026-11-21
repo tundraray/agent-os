@@ -4,10 +4,10 @@ import {
   type SignInSettings,
   type UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from './admin-only.decorator.js';
-import type { AuthedRequest } from './auth-user.js';
-import { IdentitySettings } from './identity-settings.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from './admin-only.decorator';
+import type { AuthedRequest } from './auth-user';
+import { IdentitySettings } from './identity-settings';
 
 /** Sign-in settings for an administrator (FR-26; design-identity.md, `SignInSettings`). */
 @Controller('admin/settings/sign-in')

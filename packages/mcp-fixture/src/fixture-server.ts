@@ -9,20 +9,20 @@ import {
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
-import { backOfficeOf } from './backoffice.js';
-import { canonicalJson } from './canonical-json.js';
-import { createLogDataset, type LogDataset } from './dataset.js';
-import type { ResultFaultRule } from './fault-schedule.js';
-import { aggregateLogsTool } from './tools/aggregate-logs.js';
-import { createIncidentNoteTool } from './tools/create-incident-note.js';
-import type { FixtureTool } from './tools/fixture-tool.js';
-import { getOrderTool } from './tools/get-order.js';
-import { getTraceTool } from './tools/get-trace.js';
-import { searchLogsTool } from './tools/search-logs.js';
-import { searchOrdersTool } from './tools/search-orders.js';
-import { searchTicketsTool } from './tools/search-tickets.js';
-import { trackerTickets } from './tracker.js';
-import type { DatasetVersion } from './versions.js';
+import { backOfficeOf } from './backoffice';
+import { canonicalJson } from './canonical-json';
+import { createLogDataset, type LogDataset } from './dataset';
+import type { ResultFaultRule } from './fault-schedule';
+import { aggregateLogsTool } from './tools/aggregate-logs';
+import { createIncidentNoteTool } from './tools/create-incident-note';
+import type { FixtureTool } from './tools/fixture-tool';
+import { getOrderTool } from './tools/get-order';
+import { getTraceTool } from './tools/get-trace';
+import { searchLogsTool } from './tools/search-logs';
+import { searchOrdersTool } from './tools/search-orders';
+import { searchTicketsTool } from './tools/search-tickets';
+import { trackerTickets } from './tracker';
+import type { DatasetVersion } from './versions';
 
 const SOURCE_INFO_URI = 'fixture://source-info';
 /** Above this many bytes of `structuredContent` JSON the result carries no `text` copy, so a page is not sent twice. */

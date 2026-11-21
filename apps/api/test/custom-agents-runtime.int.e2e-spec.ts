@@ -103,7 +103,7 @@ import {
 } from '@agent-os/contracts';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { builtinRecords } from '../src/library/builtin-records.js';
+import { builtinRecords } from '../src/library/builtin-records';
 import {
   addModel,
   allowRole,
@@ -113,16 +113,16 @@ import {
   runModel,
   type RunRole,
   useRunModels,
-} from './support/access.js';
+} from './support/access';
 import {
   type ChatApi,
   chatApi,
   expectBody,
   expectError,
   waitFor,
-} from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { type DraftActionAnswer, postDraftAction } from './support/drafts.js';
+} from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { type DraftActionAnswer, postDraftAction } from './support/drafts';
 import {
   agentBody,
   auditOfRecord,
@@ -134,13 +134,13 @@ import {
   recordName,
   setSystemAudience,
   shareWith,
-} from './support/library.js';
+} from './support/library';
 import {
   apiRequest,
   createEmployee,
   seedSuperAdmin,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one test: INT-3 A boots the app twice more, the other rows settle far sooner. */
 const TEST_TIMEOUT_MS = 300_000;
@@ -1092,8 +1092,8 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
       const borisThread = await firstMessage(boris, listed);
       await untilAnswered(boris, borisThread, 'INT-3 B: ответ Борису');
       expect(namesakes(firstCallFor(listed))).toEqual([
-        `${borisOwn.id}: ${name} (ваша)`,
-        `${r.id}: ${name} (автор Аня)`,
+        `${borisOwn.id}: ${name} (yours)`,
+        `${r.id}: ${name} (by Аня)`,
       ]);
 
       // Аня turns the switch off; Борис writes again: R is gone from his list and his start of R is refused
@@ -1114,7 +1114,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         'INT-3 B: R не запущен',
       );
       expect(namesakes(firstCallFor(switchedOff))).toEqual([
-        `${borisOwn.id}: ${name} (ваша)`,
+        `${borisOwn.id}: ${name} (yours)`,
       ]);
       expect(outcomesOf(refusedOff, START_AGENT)).toEqual([
         'refused not_allowed',
@@ -1461,7 +1461,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         await api(anya).send(thread, next);
         await untilAnswered(anya, thread, 'INT-4 A: список прочитан');
         expect(listingHeads(firstCallFor(next), START_AGENT)).toContain(
-          `${record.id}: ${second} (ваша)`,
+          `${record.id}: ${second} (yours)`,
         );
 
         // A second save of the same draft: 409, and still one record and one event
@@ -1637,7 +1637,7 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
     );
 
     it(
-      "INT-4 D: another employee's draft and a draft of another conversation answer one 404, and the draft stays as it was",
+      "INT-4 D: another employee's draft and a draft of another conversation answer one 404, and the draft stays as it was, and a draft of a deleted conversation",
       async () => {
         // Given: Аня's waiting draft D1 and Борис's waiting draft D2 in his own conversation
         const anya = await newEmployee('Аня', [drafts]);
@@ -1719,6 +1719,19 @@ describe('custom-agents / runtime - API integration (real AppModule + real Postg
         ).toEqual([[borisDraft.draftId, 'pending']]);
         expect(await ownNames(anya)).not.toContain(anyaName);
         expect(await ownNames(boris)).not.toContain(anyaName);
+        expect(await ownNames(boris)).not.toContain(borisName);
+
+        // When: Борис deletes his conversation while D2 still waits, then saves D2 through it
+        await api(boris).deleteThread(borisThread);
+        const ofDeleted = refused(
+          await draftAction(boris, borisThread, borisDraft.draftId, {
+            action: 'save',
+          }),
+          404,
+          'DRAFT_NOT_FOUND',
+        );
+        // Then: the same 404 as another employee's draft, and D2 did not become a record
+        expect(ofDeleted).toEqual(answers[0]);
         expect(await ownNames(boris)).not.toContain(borisName);
       },
       TEST_TIMEOUT_MS,

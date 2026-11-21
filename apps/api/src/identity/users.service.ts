@@ -15,14 +15,14 @@ import {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import { z } from 'zod';
-import { AuditLog, PASSWORD_SET } from '../audit/audit-log.js';
-import { isUuid } from '../common/is-uuid.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { identityError, validationFailed } from './identity.errors.js';
-import { normalizeIdentifier } from './identity-input.js';
-import { checkNewPassword, hashPassword, verifyPassword } from './password.js';
-import { deleteSessionsOf, endSessionsByBlock } from './session.store.js';
+import { AuditLog, PASSWORD_SET } from '../audit/audit-log';
+import { isUuid } from '../common/is-uuid';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { identityError, validationFailed } from './identity.errors';
+import { normalizeIdentifier } from './identity-input';
+import { checkNewPassword, hashPassword, verifyPassword } from './password';
+import { deleteSessionsOf, endSessionsByBlock } from './session.store';
 import {
   findUserById,
   insertLocalUser,
@@ -35,7 +35,7 @@ import {
   type MemberRole,
   type UserListPosition,
   type UserRow,
-} from './users.repository.js';
+} from './users.repository';
 
 /** The `{ id, name }` of each role, as the admin views and the audit carry it. */
 export function roleRefs(roles: MemberRole[]): { id: string; name: string }[] {

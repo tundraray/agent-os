@@ -2,8 +2,8 @@ import { AgentMessageKindSchema, CHILD_FINISHED_KIND, ChipRecordSchema } from '@
 import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import { history, type NewHistoryEntry } from '../store/history.repository.js';
-import { sessions, type StoreReader } from '../store/sessions.repository.js';
+import { history, type NewHistoryEntry } from '../store/history.repository';
+import { sessions, type StoreReader } from '../store/sessions.repository';
 
 /**
  * Marks a message to an agent that the runtime stopped (plan Notes 5): the first step that delivers

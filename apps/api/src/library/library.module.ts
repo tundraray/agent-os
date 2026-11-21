@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { AccessModule } from '../access/access.module.js';
-import { IdentityModule } from '../identity/identity.module.js';
-import { RuntimeModule } from '../runtime/runtime.module.js';
-import { LibrarySettingsService } from './library-settings.js';
-import { LibraryService } from './library.service.js';
+import { AccessModule } from '../access/access.module';
+import { IdentityModule } from '../identity/identity.module';
+import { RuntimeModule } from '../runtime/runtime.module';
+import { LibrarySettingsService } from './library-settings';
+import { LibraryService } from './library.service';
 
 /**
  * The library's port module (port-module-split.md, design-library.md KD-6): the service and the

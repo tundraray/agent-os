@@ -6,8 +6,8 @@ import {
   type LogLevel,
   type Logger,
   type SentrySdk,
-} from './index.js';
-import { memorySink, type MemorySink } from './testing.js';
+} from './index';
+import { memorySink, type MemorySink } from './testing';
 
 // DC-11 / UC-9: the logger redacts, expands and truncates before both sinks.
 

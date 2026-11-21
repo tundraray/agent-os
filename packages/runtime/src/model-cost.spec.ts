@@ -1,4 +1,4 @@
-import { callCostUsd, type CallUsage, type ModelPrice } from './model-cost.js';
+import { callCostUsd, type CallUsage, type ModelPrice } from './model-cost';
 
 const FLAT: ModelPrice = {
   inputUsdPerMTok: 3,

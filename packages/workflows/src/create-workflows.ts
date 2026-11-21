@@ -1,8 +1,8 @@
 import { type Agents, type AgentSessions, START_WORKFLOW_TOOL } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 
-import { createWorkflowRuns, type WorkflowRuns } from './runs.js';
-import { createStartWorkflowTool } from './start-workflow.tool.js';
+import { createWorkflowRuns, type WorkflowRuns } from './runs';
+import { createStartWorkflowTool } from './start-workflow.tool';
 
 /** The part of `agents` the workflows package uses. */
 export interface WorkflowsAgents {

@@ -1,9 +1,9 @@
 import { text } from 'node:stream/consumers';
 import { parseArgs } from 'node:util';
 import { createDatabase } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.js';
-import { createAppLogger } from '../logging/app-logger.js';
-import { seedSuperAdmin } from './super-admin.js';
+import { AuditLog } from '../audit/audit-log';
+import { createAppLogger } from '../logging/app-logger';
+import { seedSuperAdmin } from './super-admin';
 
 const logger = createAppLogger(process.env);
 

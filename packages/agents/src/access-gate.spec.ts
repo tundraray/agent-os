@@ -7,24 +7,24 @@ import type { Database } from '@agent-os/db';
 import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessDeniedEntry, ModelVerdict } from './access-gate.js';
-import type { CallState } from './history/call-state.js';
-import type { KnowledgeVectorStore } from './knowledge/vector-store.js';
-import { createModelClient } from './model/model-client.js';
-import type { AgentSnapshot } from './start/snapshot.js';
-import { createCompactionStep } from './step/compaction-step.js';
-import { createModelStep } from './step/model-step.js';
-import { createToolStep } from './step/tool-step.js';
-import type { Session, SessionInput } from './store/sessions.repository.js';
+import type { AccessDeniedEntry, ModelVerdict } from './access-gate';
+import type { CallState } from './history/call-state';
+import type { KnowledgeVectorStore } from './knowledge/vector-store';
+import { createModelClient } from './model/model-client';
+import type { AgentSnapshot } from './start/snapshot';
+import { createCompactionStep } from './step/compaction-step';
+import { createModelStep } from './step/model-step';
+import { createToolStep } from './step/tool-step';
+import type { Session, SessionInput } from './store/sessions.repository';
 import {
   createAccessGateDouble,
   createLibraryDouble,
   createProviderRegistryDouble,
   createScriptedModel,
-} from './testing.js';
-import type { AgentTool } from './tools/tool.js';
-import { createToolRegistry } from './tools/tool-registry.js';
-import { createToolRunner } from './tools/tool-runner.js';
+} from './testing';
+import type { AgentTool } from './tools/tool';
+import { createToolRegistry } from './tools/tool-registry';
+import { createToolRunner } from './tools/tool-runner';
 
 const OWNER = 'employee-1';
 const AGENT = 'agent-1';

@@ -1,23 +1,21 @@
 import { type ChildProcess, fork } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { databaseUrl } from './database-url.js';
-import { type ChildTypes, CHILD_TYPES_ENV } from './runtimeChildHandlers.js';
-import type { ChildMessage, HarnessMessage } from './runtimeChildMain.js';
+import { databaseUrl } from './database-url';
+import { type ChildTypes, CHILD_TYPES_ENV } from './runtimeChildHandlers';
+import type { ChildMessage, HarnessMessage } from './runtimeChildMain';
 
 /**
- * Child-process harness of E2E-1 and of the on-demand measurements. A child runs only compiled
- * code (`dist/test-child/`, built by `pnpm --filter @agent-os/runtime build:child`) over the
- * packages' built `dist`; a build older than its sources is refused before anything is spawned. The
+ * Child-process harness of E2E-1 and of the on-demand measurements. A child is plain Node running
+ * `runtimeChildMain.ts` and the packages from source through the `tsx` loader. The
  * harness never talks to the runtime inside a child: it starts it, waits for it to die at its crash
  * point or stops it, and reads the rows it left. A restart is a fresh child without
  * `RUNTIME_CRASH_AT`.
  */
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const CHILD_ENTRY = join(PACKAGE_ROOT, 'dist/test-child/test/support/runtimeChildMain.js');
+const CHILD_ENTRY = join(PACKAGE_ROOT, 'test/support/runtimeChildMain.ts');
 
 /** Exit code of a crash point (the code of a process killed by SIGKILL). */
 const CRASH_EXIT_CODE = 137;
@@ -57,60 +55,6 @@ const STOP_MS = 30_000;
 const POLL_MS = 50;
 const OUTPUT_TAIL_LINES = 60;
 
-/** A build the child executes and the sources it is built from. */
-interface ChildBuild {
-  /** A file every build rewrites. */
-  output: string;
-  sources: string;
-  command: string;
-}
-
-const CHILD_BUILDS: readonly ChildBuild[] = [
-  {
-    output: join(PACKAGE_ROOT, 'dist/index.js'),
-    sources: join(PACKAGE_ROOT, 'src'),
-    command: 'pnpm --filter @agent-os/runtime build',
-  },
-  {
-    output: join(PACKAGE_ROOT, '../db/dist/index.js'),
-    sources: join(PACKAGE_ROOT, '../db/src'),
-    command: 'pnpm --filter @agent-os/db build',
-  },
-  {
-    output: CHILD_ENTRY,
-    sources: join(PACKAGE_ROOT, 'test/support'),
-    command: 'pnpm --filter @agent-os/runtime build:child',
-  },
-];
-
-function newestMtime(dir: string): { file: string; mtimeMs: number } {
-  let newest = { file: dir, mtimeMs: 0 };
-  for (const entry of readdirSync(dir, { recursive: true })) {
-    const file = join(dir, String(entry));
-    const { mtimeMs } = statSync(file);
-    if (mtimeMs > newest.mtimeMs) newest = { file, mtimeMs };
-  }
-  return newest;
-}
-
-/** Throws, naming the build command, when a build the child runs is missing or older than its sources. */
-function assertChildBuildFresh(): void {
-  for (const build of CHILD_BUILDS) {
-    let builtMs: number;
-    try {
-      builtMs = statSync(build.output).mtimeMs;
-    } catch {
-      throw new Error(`Child build ${build.output} is missing; run \`${build.command}\``);
-    }
-    const newest = newestMtime(build.sources);
-    if (newest.mtimeMs > builtMs) {
-      throw new Error(
-        `Child build ${build.output} is older than ${newest.file}; run \`${build.command}\``,
-      );
-    }
-  }
-}
-
 export interface ChildOptions {
   /** Task types the child registers; it claims only these. */
   types: ChildTypes;
@@ -120,7 +64,7 @@ export interface ChildOptions {
   settings?: Readonly<Record<string, string>>;
 }
 
-/** One compiled child process running a runtime with workers on. */
+/** One child process running a runtime with workers on. */
 export class RuntimeChild {
   private readonly output: string[] = [];
   private readonly process: ChildProcess;
@@ -131,7 +75,7 @@ export class RuntimeChild {
   constructor(options: ChildOptions) {
     this.process = fork(CHILD_ENTRY, [], {
       cwd: PACKAGE_ROOT,
-      execArgv: ['--enable-source-maps'],
+      execArgv: ['--import', import.meta.resolve('tsx')],
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
@@ -255,10 +199,6 @@ async function within<T>(promise: Promise<T>, ms: number, onTimeout: () => Error
 /** Children of one test; {@link killAll} ends whatever is left of them. */
 export class Children {
   private readonly started: RuntimeChild[] = [];
-
-  constructor() {
-    assertChildBuildFresh();
-  }
 
   /** Starts a child; a child without `crashAt` is awaited until its workers run. */
   async start(options: ChildOptions): Promise<RuntimeChild> {

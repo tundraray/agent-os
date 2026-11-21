@@ -10,8 +10,8 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
-import { prepareProcess } from '../../src/prepare-process.js';
-import { createFrameDecoder, encodeFrame } from '../../src/protocol.js';
+import { prepareProcess } from '#executor/prepare-process';
+import { createFrameDecoder, encodeFrame } from '#executor/protocol';
 
 prepareProcess();
 

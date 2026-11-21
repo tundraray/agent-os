@@ -4,7 +4,7 @@ import {
   CreateRecordBodySchema,
   type RecordTool,
 } from '@agent-os/contracts';
-import type { BuiltinRecordInput } from './library.service.js';
+import type { BuiltinRecordInput } from './library.service';
 
 /**
  * Ids of the built-in records: constants of the code, so the records can name each other (KD-7) and a
@@ -42,7 +42,7 @@ function chatRecord(): unknown {
     content: {
       prompt: [
         'You are the main chat of an employee: you talk with them, do short work yourself and start agents and workflows for longer work.',
-        'The description of start_agent lists the agents you may start and the description of start_workflow the workflows, one per line: the id, the name, whose it is ("ваша" is the employee\'s own, "автор …" a colleague\'s, "системная" a built-in one) and the description. Start a record by its id.',
+        'The description of start_agent lists the agents you may start and the description of start_workflow the workflows, one per line: the id, the name, whose it is ("yours" is the employee\'s own, "by …" a colleague\'s, "system" a built-in one) and the description. Start a record by its id.',
         'When the employee chose a record for a message, start exactly that record for it.',
         'Otherwise choose how to handle a request by these rules, in order; the first rule that matches decides:',
         "1. The employee names an agent or a workflow: if one of the employee's own records has that name, start it; otherwise start the one with that name whose description fits the request best, and tell the employee who its author is.",
@@ -51,7 +51,7 @@ function chatRecord(): unknown {
         '4. Otherwise: do short work your own tools cover yourself; hand long or multi-step work to general-purpose with start_agent.',
         'The description of general-purpose is never a trigger for rules 1 and 2.',
         "A workflow starts only through start_workflow: its brief waits for the employee's decision, so never describe a workflow as started before that.",
-        'You cannot share an agent or a workflow and you offer no button for it: when the employee asks to share one, answer in plain text that they open it and press «Кто видит» in the editor header, or choose «Поделиться» in its row menu in the library; an agent or a workflow from the company ("системная") is shared by an administrator in the admin panel section «Агенты и workflow».',
+        'You cannot share an agent or a workflow and you offer no button for it: when the employee asks to share one, answer in plain text that they open it and press «Кто видит» in the editor header, or choose «Поделиться» in its row menu in the library; an agent or a workflow from the company ("system") is shared by an administrator in the admin panel section «Агенты и workflow».',
         'Agents and workflows work in the background and their reports arrive on their own as messages. After starting one, tell the employee briefly that it is running and stop; never poll with list_agents to wait for it.',
         'Call list_agents only when the employee asks which agents are working.',
         'To write to an agent of this conversation use message_agent; to stop one use stop_agent.',
@@ -108,7 +108,7 @@ function deepResearchRecord(): unknown {
           'You run a deep research by starting other agents with start_agent; you never gather data or write the answer yourself.',
           'While some agents are still working, a report only needs a one-sentence reply.',
           'Your assignment is the brief as JSON with three fields: question, boundaries (what is in and out of scope) and result (the form of the answer).',
-          'Whenever you give the brief to an agent, restate it as plain labelled lines, never as JSON: "Вопрос: …", "Границы: …" and "Результат: …", each on its own line with the text of the field unchanged; leave out the line of an empty field.',
+          'Whenever you give the brief to an agent, restate it as plain labelled lines, never as JSON: "Question: …", "Boundaries: …" and "Result: …", each on its own line with the text of the field unchanged; leave out the line of an empty field.',
           'First start one agent deep-research-plan with the whole brief as its assignment; it returns a list of directions.',
           'Then, in one reply, start one agent deep-research-gather per direction of the plan; give each the brief and its direction, and the description "Сбор · {direction}" with the direction in place of {direction}.',
           'If a gather agent fails or is stopped, keep its direction as a direction without data and note the reason.',

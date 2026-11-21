@@ -7,8 +7,8 @@ import {
   type WorkflowSnapshot,
 } from '@agent-os/agents';
 
-import { WorkflowsError } from './errors.js';
-import { createWorkflowRuns, type WorkflowRunsOptions } from './runs.js';
+import { WorkflowsError } from './errors';
+import { createWorkflowRuns, type WorkflowRunsOptions } from './runs';
 
 const OWNER = 'owner-a';
 const RUN = 'coordinator-1';

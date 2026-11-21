@@ -4,9 +4,9 @@ import type { RuntimeTx } from '@agent-os/runtime';
 import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository.js';
-import { RunSnapshotSchema } from '../start/snapshot.js';
-import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition.js';
+import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository';
+import { RunSnapshotSchema } from '../start/snapshot';
+import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition';
 
 /** A reader of the store: the step's transaction, or the database for a read outside a step. */
 export type StoreReader = Database | RuntimeTx;
@@ -140,8 +140,12 @@ function toSession(row: SessionRow): Session {
  */
 const NOW_MS = sql<Date>`date_trunc('milliseconds', now())`;
 
-/** A root session's row: `title` and `updated_at` are set on every root and only there. */
-const isRoot = isNotNull(agentSessions.updatedAt);
+/**
+ * A live root session's row: `title` and `updated_at` are set on every root and only there; a deleted
+ * conversation's root (`deleted_at`) answers as a missing one. The condition of
+ * `agent_sessions_owner_page_idx`, word for word, so the owner's list keeps its index.
+ */
+const isRoot = and(isNotNull(agentSessions.updatedAt), isNull(agentSessions.deletedAt));
 
 const ownedRoot = (rootId: string, ownerId: string) =>
   and(eq(agentSessions.taskId, rootId), eq(agentSessions.ownerId, ownerId), isRoot);
@@ -280,6 +284,23 @@ export const sessions = {
       )
       .groupBy(agentSessions.recordId);
     return new Map(rows.map((row) => [row.recordId, row.sessions] as const));
+  },
+
+  /** The root of the agent's tree, from its session; `undefined` when it has none. */
+  async rootIdOf(reader: StoreReader, taskId: string): Promise<string | undefined> {
+    const [row] = await reader
+      .select({ rootId: agentSessions.rootId })
+      .from(agentSessions)
+      .where(eq(agentSessions.taskId, taskId));
+    return row?.rootId;
+  },
+
+  /**
+   * Marks the root session deleted: from then on the conversation answers as a missing one. The row
+   * stays; the caller has deleted the runtime tree in the same transaction.
+   */
+  async markDeleted(tx: RuntimeTx, rootId: string): Promise<void> {
+    await tx.update(agentSessions).set({ deletedAt: sql`now()` }).where(eq(agentSessions.taskId, rootId));
   },
 
   /** Writes the given fields of the session; an empty patch writes nothing. */

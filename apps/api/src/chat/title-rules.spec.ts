@@ -1,4 +1,4 @@
-import { buildTitlePrompt, normalizeGeneratedTitle } from './title-rules.js';
+import { buildTitlePrompt, normalizeGeneratedTitle } from './title-rules';
 
 // AC-14.3 (title rules, as chat-shell FR-17): any model answer becomes a 1…80-char title or '' (no title).
 describe("generated title rules trim, unquote and cap the model's text", () => {

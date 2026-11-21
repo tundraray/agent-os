@@ -16,13 +16,13 @@ import type {
 } from '@agent-os/agents';
 import type { McpConnection } from '@agent-os/contracts';
 import type { Response } from 'express';
-import { AuditLog } from '../audit/audit-log.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { identityError } from '../identity/identity.errors.js';
-import { IdentitySettings } from '../identity/identity-settings.js';
-import { frontendOrigin } from '../identity/session-cookie.js';
-import { AGENTS } from './agents.tokens.js';
-import { mcpAnswer } from './mcp.errors.js';
+import { AuditLog } from '../audit/audit-log';
+import type { AuthedRequest } from '../identity/auth-user';
+import { identityError } from '../identity/identity.errors';
+import { IdentitySettings } from '../identity/identity-settings';
+import { frontendOrigin } from '../identity/session-cookie';
+import { AGENTS } from './agents.tokens';
+import { mcpAnswer } from './mcp.errors';
 
 /** The audit object of a registry server (design-mcp-connect.md, «Реестр — для `admin`»). */
 const MCP_SERVER_OBJECT_TYPE = 'mcp_server';

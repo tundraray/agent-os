@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { IdentityModule } from '../identity/identity.module.js';
-import { RuntimeModule } from '../runtime/runtime.module.js';
-import { AccessService } from './access.service.js';
+import { IdentityModule } from '../identity/identity.module';
+import { RuntimeModule } from '../runtime/runtime.module';
+import { AccessService } from './access.service';
 
 /**
  * Rights, quotas and the model catalogue (design-access.md, KD-1): the only module that reads and

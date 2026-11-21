@@ -7,7 +7,7 @@ import {
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository.js';
+import type { StoreReader } from '../store/sessions.repository';
 
 const entities = agentKnowledgeEntities;
 const relations = agentKnowledgeRelations;

@@ -9,20 +9,20 @@ import type {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log.js';
-import { isUuid } from '../common/is-uuid.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { identityError } from './identity.errors.js';
-import { IdentitySettings } from './identity-settings.js';
-import { redirectUriOf, SIGN_IN_SCOPES } from './oidc-sign-in.js';
+import { AuditLog } from '../audit/audit-log';
+import { isUuid } from '../common/is-uuid';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { identityError } from './identity.errors';
+import { IdentitySettings } from './identity-settings';
+import { redirectUriOf, SIGN_IN_SCOPES } from './oidc-sign-in';
 import {
   isComplete,
   parseProviderType,
   resolveProviderOptions,
   toOptionsView,
   type ProviderOptionsInput,
-} from './provider-options.js';
+} from './provider-options';
 import {
   findProvider,
   insertProvider,
@@ -30,8 +30,8 @@ import {
   listProviders,
   updateProvider,
   type Provider,
-} from './providers.repository.js';
-import type { AddressedRequest } from './public-url.js';
+} from './providers.repository';
+import type { AddressedRequest } from './public-url';
 
 /**
  * The provider fields an audit entry keeps. The secret appears only when the admin sent a new one,

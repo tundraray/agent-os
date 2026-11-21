@@ -5,7 +5,7 @@ import {
 } from '@agent-os/contracts';
 import { accessModelDefaults, accessModels } from '@agent-os/db';
 import { asc, count, eq, like, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
+import type { Executor } from '../common/executor';
 
 /**
  * Drizzle queries of `access_models` and the single `access_model_defaults` row

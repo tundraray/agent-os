@@ -2,23 +2,23 @@ import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@ag
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 
-import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
-import { embedQuestion } from '../knowledge/question-vector.js';
-import { type CallState, openCalls } from '../history/call-state.js';
-import type { HistoryEntry } from '../history/history.js';
-import { callRecords, interruptedResults } from '../store/call-records.repository.js';
-import { history, type NewHistoryEntry } from '../store/history.repository.js';
+import type { AgentsEmbeddings } from '../embeddings/embeddings';
+import { embedQuestion } from '../knowledge/question-vector';
+import { type CallState, openCalls } from '../history/call-state';
+import type { HistoryEntry } from '../history/history';
+import { callRecords, interruptedResults } from '../store/call-records.repository';
+import { history, type NewHistoryEntry } from '../store/history.repository';
 import {
   AgentTaskInputSchema,
   type Session,
   type SessionPatch,
   sessionInputOf,
   sessions,
-} from '../store/sessions.repository.js';
-import { compactionDue, type CompactionStep } from './compaction-step.js';
-import { type Continuation, continuationOf, stopEvent } from './continuation.js';
-import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step.js';
-import type { ToolStep } from './tool-step.js';
+} from '../store/sessions.repository';
+import { compactionDue, type CompactionStep } from './compaction-step';
+import { type Continuation, continuationOf, stopEvent } from './continuation';
+import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './model-step';
+import type { ToolStep } from './tool-step';
 
 const { interrupt } = AgentMessageKindSchema.enum;
 

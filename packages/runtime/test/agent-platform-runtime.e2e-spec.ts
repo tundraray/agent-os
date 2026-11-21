@@ -4,7 +4,7 @@
 // Implementation timing: the first row (reference run + one crash point) right after the step commit and the sweeper land, to prove the kill matrix early; the full matrix at part acceptance (final phase only).
 // Counterpart in-process file: agent-platform-runtime.int.e2e-spec.ts (INT-1..INT-5). This file owns what an in-process test cannot do: a process that really dies between two writes.
 //
-// File name follows the project convention (`*.e2e-spec.ts` under packages/runtime/test, run with `pnpm --filter @agent-os/runtime test:e2e`: `pnpm build && pnpm build:child`, then vitest.config.e2e.ts).
+// File name follows the project convention (`*.e2e-spec.ts` under packages/runtime/test, run with `pnpm --filter @agent-os/runtime test:e2e`: vitest.config.e2e.ts).
 // The old `research-runtime-runtime.e2e-spec.ts` is deleted with the old code (KD-7); the harness it used (test/support/runtimeChild.ts, runtimeChildMain.ts, the crash-point mechanism) is rewritten for tasks and steps, not copied.
 //
 // Started as todo skeletons (filled by plan task T7.1); the Given/When/Then comments are the rows' specification. Tests are written with their tasks and run once, at the end of the part.
@@ -14,7 +14,7 @@
 //   the two child notices arrive in one step or two, so it is compared as "step_committed events = stepNo" and not as a number.
 //
 // Environment (Design Doc "Test Strategy"):
-// - Postgres 16 from infra/docker-compose.yml. Child-process harness (test/support/runtimeChild.ts): spawns the compiled child (`dist/test-child/`), which runs the packages' built `dist` with test handlers under unique task types, with
+// - Postgres 16 from infra/docker-compose.yml. Child-process harness (test/support/runtimeChild.ts): spawns the child (`test/support/runtimeChildMain.ts`, from source through `tsx`), which runs the packages with test handlers under unique task types, with
 //   `RUNTIME_CRASH_AT=<point>[:n]` (never read under `NODE_ENV=production`), `RUNTIME_WORKERS=on`, short `RUNTIME_LEASE_MS`, `RUNTIME_REAPER_MS`, `RUNTIME_POLL_MS`, `RUNTIME_MAX_RECOVERIES` 3. The crash is `process.exit(137)` from the point;
 //   the harness reads the rows the dead child left, then starts a fresh child without `RUNTIME_CRASH_AT`.
 // - The crash points are the old ones renamed for steps (Design Doc "Что сохраняется, меняется и уходит": `CrashPoints` kept, points renamed). Each is a named, test-only hook in the runtime: after the claim; after a `guard` write; before the step's
@@ -32,8 +32,8 @@
 import type { Task } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { newUser } from './support/new-user.js';
-import { Children } from './support/runtimeChild.js';
+import { newUser } from './support/new-user';
+import { Children } from './support/runtimeChild';
 import {
   type ChildTypes,
   DECISION_KIND,
@@ -45,7 +45,7 @@ import {
   STEP_ASKED,
   STEP_DONE,
   STEP_UNKNOWN,
-} from './support/runtimeChildHandlers.js';
+} from './support/runtimeChildHandlers';
 import {
   closeRuntimeDb,
   eventsOf,
@@ -53,9 +53,9 @@ import {
   handlerRowsOf,
   inboxOf,
   statusesOf,
-} from './support/runtimeDb.js';
-import { createRuntimeHarness, type RuntimeHarness } from './support/runtimeHarness.js';
-import { uniqueType } from './support/testHandlers.js';
+} from './support/runtimeDb';
+import { createRuntimeHarness, type RuntimeHarness } from './support/runtimeHarness';
+import { uniqueType } from './support/testHandlers';
 
 /** NFR-05: the work interrupted by a restart resumes within 60 s — the harness timeout of the finish. */
 const RESUME_TARGET_MS = 60_000;

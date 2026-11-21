@@ -1,4 +1,4 @@
-import { cutText, linesOf, pageOf, previewOf, searchOf, wrapperText } from './large-result.js';
+import { cutText, linesOf, pageOf, previewOf, searchOf, wrapperText } from './large-result';
 
 // R-1…R-3 of the tool-result-reading plan; risk «a page splits a character or a very long line».
 // Expected values are literals counted by hand.
@@ -186,9 +186,9 @@ describe('a stored result is replaced by the wrapper and read in exact parts', (
       'a text over the limit is cut with the number of cut characters',
       'abcdefghij',
       4,
-      'abcd\nрезультат обрезан на 6 символов',
+      'abcd\nresult cut by 6 characters',
     ],
-    ['the cut never splits a surrogate pair', 'abc😀de', 4, 'abc\nрезультат обрезан на 4 символов'],
+    ['the cut never splits a surrogate pair', 'abc😀de', 4, 'abc\nresult cut by 4 characters'],
     ['a text within the limit stays whole', 'abcd', 4, 'abcd'],
   ])('error cut: %s', (_case, text, maxChars, expected) => {
     expect(cutText(text, maxChars)).toBe(expected);

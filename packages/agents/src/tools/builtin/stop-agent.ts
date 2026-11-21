@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { OutsideAgentTool } from '../tool.js';
-import { type BuiltinTasks, descendantsOf } from './list-agents.js';
+import type { OutsideAgentTool } from '../tool';
+import { type BuiltinTasks, descendantsOf } from './list-agents';
 
 const StopAgentArgsSchema = z.object({
   agentId: z.string().min(1).describe('Id of an agent you started, or of one it started'),

@@ -6,7 +6,7 @@ import {
 import { runtimeTasks } from '@agent-os/db';
 import { and, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
-import type { RuntimeTx } from './runtime-tx.js';
+import type { RuntimeTx } from './runtime-tx';
 
 export type TaskRow = typeof runtimeTasks.$inferSelect;
 

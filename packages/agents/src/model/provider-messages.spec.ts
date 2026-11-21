@@ -1,7 +1,7 @@
 import fc from 'fast-check';
-import type { AnswerCall, HistoryEntry } from '../history/history.js';
-import type { AgentTurnMessage } from './mastra-turn.js';
-import { buildProviderMessages, envelope, type ProviderMessagesInput } from './provider-messages.js';
+import type { AnswerCall, HistoryEntry } from '../history/history';
+import type { AgentTurnMessage } from './mastra-turn';
+import { buildProviderMessages, envelope, type ProviderMessagesInput } from './provider-messages';
 
 // Invariant 3, KD-1, KD-7, Security «Input Validation»; AC-07.1, AC-07.2, AC-25.1, AC-27.1 (the assembly half).
 

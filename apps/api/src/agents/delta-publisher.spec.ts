@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import type { Logger } from '@agent-os/common';
 import { systemClock } from '@agent-os/runtime';
-import { DeltaPublisher } from './delta-publisher.js';
+import { DeltaPublisher } from './delta-publisher';
 
 const OWNER_ID = '6f1c1a52-3a43-4a8e-9d0f-2f8f3c1b7a01';
 const ROOT_ID = '0b7e4d2c-91a5-4f63-8c1e-5d2a9b3f6e02';

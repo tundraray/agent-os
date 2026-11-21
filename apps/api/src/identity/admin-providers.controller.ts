@@ -7,10 +7,10 @@ import {
   type ProviderView,
   type UpdateProviderBody,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from './admin-only.decorator.js';
-import type { AuthedRequest } from './auth-user.js';
-import { ProvidersService } from './providers.service.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from './admin-only.decorator';
+import type { AuthedRequest } from './auth-user';
+import { ProvidersService } from './providers.service';
 
 /** Sign-in providers for an administrator (design-identity.md, Contract «Операции администратора»). */
 @Controller('admin/providers')

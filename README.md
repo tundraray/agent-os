@@ -65,16 +65,16 @@ cat > turbo.json <<'EOF'
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
+    "build": { "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
     "dev": { "cache": false, "persistent": true },
     "lint": {},
-    "test": { "dependsOn": ["^build"] }
+    "test": {}
   }
 }
 EOF
 ```
 
-`^build` означает «сначала собрать зависимости», так `packages/contracts` всегда собирается до `apps/*`. Удалённый кэш не нужен, локального достаточно.
+Собираются только приложения (`apps/api`, `apps/web`). Пакеты в `packages/` сборки не имеют: приложения и тесты берут их исходный TypeScript (ADR-0004). Удалённый кэш не нужен, локального достаточно.
 
 ## Шаг 2. Общие типы `packages/contracts`
 
@@ -83,8 +83,7 @@ EOF
 ```bash
 mkdir -p packages/contracts/src && cd packages/contracts
 pnpm init
-pnpm pkg set name="@agent-os/contracts" type="module" main="./dist/index.js" types="./dist/index.d.ts"
-pnpm pkg set scripts.build="tsc -p tsconfig.json"
+pnpm pkg set name="@agent-os/contracts" type="module" exports="./src/index.ts"
 pnpm add zod
 pnpm add -D typescript
 cd ../..
@@ -205,7 +204,7 @@ proxy_http_version 1.1;
 pnpm install
 pnpm db:up
 cp apps/api/.env.example apps/api/.env       # провайдеры и ключ задаются посевом seed:access или в панели
-pnpm turbo build --filter=api...
+pnpm --filter api build
 pnpm --filter api db:migrate
 pnpm --filter api start:dev
 ```
@@ -225,7 +224,7 @@ POSTGRES_PORT=5433 pnpm db:up
 
 | Команда | Что делает |
 |---|---|
-| `pnpm db:migrate` | применяет миграции из `packages/db/migrations/` к базе `DATABASE_URL` из `apps/api/.env`; нужна собранная `apps/api` (`pnpm turbo build --filter=api...`) |
+| `pnpm db:migrate` | применяет миграции из `packages/db/src/migrations/` к базе `DATABASE_URL` из `apps/api/.env`; нужна собранная `apps/api` (`pnpm --filter api build`: сборка кладёт миграции в `apps/api/dist/migrations`) |
 | `pnpm db:generate` | генерирует миграцию из модели `packages/db/src/schema.ts` (drizzle-kit); после правки модели — затем `pnpm db:migrate` |
 
 Тесты с Postgres поднимают базу `DATABASE_URL` (из окружения, иначе из `apps/api/.env`) и сами применяют миграции один раз до набора. Запускайте их **по одному**, не параллельно против одной базы: воркеры runtime (relay, reaper) трогают чужие строки.
@@ -233,7 +232,7 @@ POSTGRES_PORT=5433 pnpm db:up
 | Команда | Что проверяет |
 |---|---|
 | `pnpm --filter @agent-os/db test:e2e` | миграции и домены CHECK схемы `app` |
-| `pnpm --filter @agent-os/runtime test:e2e` | интеграционные тесты runtime и матрицу убийств процесса (собирает пакет и дочерний процесс) |
+| `pnpm --filter @agent-os/runtime test:e2e` | интеграционные тесты runtime и матрицу убийств процесса (дочерний процесс запускается из исходников через `tsx`) |
 | `pnpm --filter @agent-os/agents test:e2e` / `pnpm --filter @agent-os/workflows test:e2e` | интеграционные тесты агентов и шаблонов процессов |
 | `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (беседы, агенты, решения, живой поток) |
 | `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
@@ -261,7 +260,7 @@ POSTGRES_PORT=5433 pnpm db:up
 |---|---|
 | `pnpm lint` | oxlint (`api` и пакеты в `packages/`) и ESLint (`web`); любое предупреждение — ошибка |
 | `pnpm typecheck` | `tsc --noEmit` по всем пакетам, включая тесты (`web` сначала генерирует типы роутов `next typegen`) |
-| `pnpm build` | сборка всех пакетов |
+| `pnpm build` | сборка приложений: `apps/api` (бандл Nest CLI на rspack, исходники пакетов внутри) и `apps/web` (Next); у пакетов в `packages/` сборки нет |
 | `pnpm knip` | неиспользуемые файлы, экспорты и зависимости ([knip](https://knip.dev)); настройки в `knip.json` |
 | `pnpm check` | всё вышеперечисленное плюс `pnpm test` — то же, что гоняет CI (`.github/workflows/ci.yml`) |
 

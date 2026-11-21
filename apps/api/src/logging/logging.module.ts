@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
-import { APP_LOGGER, createAppLogger } from './app-logger.js';
-import { NestLoggerAdapter } from './nest-logger.adapter.js';
+import { APP_LOGGER, createAppLogger } from './app-logger';
+import { NestLoggerAdapter } from './nest-logger.adapter';
 
 /** The application logger, built once at start and available to every module (logging.md). */
 @Global()

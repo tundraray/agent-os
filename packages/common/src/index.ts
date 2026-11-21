@@ -11,5 +11,5 @@ export {
   type LogSink,
   type Logger,
   type LoggerOptions,
-} from './logger.js';
-export { consoleSink, sentrySink, type SentrySdk } from './sinks.js';
+} from './logger';
+export { consoleSink, sentrySink, type SentrySdk } from './sinks';

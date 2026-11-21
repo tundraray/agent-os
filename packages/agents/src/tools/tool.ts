@@ -3,8 +3,8 @@ import type { ToolOutcome, ToolRefusalReason } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
 import type { z } from 'zod';
 
-import type { RunSnapshot } from '../start/snapshot.js';
-import type { SessionTool } from './tool-registry.js';
+import type { RunSnapshot } from '../start/snapshot';
+import type { SessionTool } from './tool-registry';
 
 /** `agent` of `start_agent` that starts a fork of the caller (KD-7). */
 export const FORK_AGENT = 'fork';

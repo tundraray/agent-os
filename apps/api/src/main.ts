@@ -1,8 +1,8 @@
-import './instrument.js';
+import './instrument';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module.js';
-import { configureApp } from './app.setup.js';
-import { NestLoggerAdapter } from './logging/nest-logger.adapter.js';
+import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
+import { NestLoggerAdapter } from './logging/nest-logger.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });

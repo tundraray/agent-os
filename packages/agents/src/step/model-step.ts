@@ -15,10 +15,10 @@ import {
   type StepResult,
 } from '@agent-os/runtime';
 
-import type { AccessAudit } from '../access-gate.js';
-import type { HistoryEntry } from '../history/history.js';
-import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block.js';
-import type { KnowledgeVectorStore } from '../knowledge/vector-store.js';
+import type { AccessAudit } from '../access-gate';
+import type { HistoryEntry } from '../history/history';
+import { knowledgeBlock, withKnowledge } from '../knowledge/knowledge-block';
+import type { KnowledgeVectorStore } from '../knowledge/vector-store';
 import {
   type ModelClient,
   modelDeniedEntry,
@@ -26,21 +26,21 @@ import {
   type ModelRefusal,
   modelRefusalMessage,
   refusalFields,
-} from '../model/model-client.js';
-import type { AgentTurnMessage } from '../model/mastra-turn.js';
-import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages.js';
-import { snapshotDefinition } from '../start/snapshot-definition.js';
-import { history, type NewHistoryEntry } from '../store/history.repository.js';
+} from '../model/model-client';
+import type { AgentTurnMessage } from '../model/mastra-turn';
+import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages';
+import { snapshotDefinition } from '../start/snapshot-definition';
+import { history, type NewHistoryEntry } from '../store/history.repository';
 import {
   type Session,
   type SessionPatch,
   sessionInputOf,
   sessions,
   type StoreReader,
-} from '../store/sessions.repository.js';
-import { callTargetOf, type ToolRegistry } from '../tools/tool-registry.js';
-import { entriesOf, rootTurnReset } from './deliver.js';
-import { endOfTurn, type FinalExecutorReport } from './turn-rules.js';
+} from '../store/sessions.repository';
+import { callTargetOf, type ToolRegistry } from '../tools/tool-registry';
+import { entriesOf, rootTurnReset } from './deliver';
+import { endOfTurn, type FinalExecutorReport } from './turn-rules';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'model';

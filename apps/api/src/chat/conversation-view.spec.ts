@@ -12,7 +12,7 @@ import {
   toConfirmation,
   toHistoryEntry,
   toPending,
-} from './conversation-view.js';
+} from './conversation-view';
 
 const CREATED = new Date('2026-11-14T10:00:00.000Z');
 const RESOLVED = new Date('2026-11-14T10:05:00.000Z');

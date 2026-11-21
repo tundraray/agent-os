@@ -13,11 +13,11 @@ import pg from 'pg';
 import { Observable, type Subscriber } from 'rxjs';
 import { z } from 'zod';
 import type { Agents } from '@agent-os/agents';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_CLOCK } from '../runtime/runtime.tokens.js';
-import { deltaTargets, noteTargets, type LiveStream, type Watch } from './live-filter.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { AGENT_TEXT_DELTA_CHANNEL } from '../agents/delta-publisher';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_CLOCK } from '../runtime/runtime.tokens';
+import { deltaTargets, noteTargets, type LiveStream, type Watch } from './live-filter';
 
 /** `application_name` of the hub's connection: tells it apart from the pool in `pg_stat_activity`. */
 export const LIVE_HUB_APPLICATION_NAME = 'agent-os-live-hub';
@@ -59,18 +59,18 @@ const PING = messageEvent({ type: 'ping', data: {} });
  * the open SSE streams. A runtime event becomes a `tree` note to every stream of the conversation's
  * owner; a text part goes only to the owner's streams that watch its agent (live-filter.ts).
  *
- * Only the streams and the found «root → owner» pairs live in memory (ADR-0001): a conversation is
- * its root session, so a note names it by the tree's root id. A root that is no conversation (a tree
- * of another task type) is not cached, and a signal nobody can receive is dropped. A lost connection
- * is reopened every second, and then every stream gets `ready`: the signals of the gap are lost and
- * the web rereads its screen.
+ * Only the streams live in memory (ADR-0001): a conversation is its root session, so a note names it
+ * by the tree's root id, and its owner is read for every note — one row of `agent_sessions` by its
+ * primary key, and never remembered. A deleted conversation's root is marked and so has no owner
+ * (`rootOwner` answers `undefined`): the notes of its tree go to nobody, on this or another API
+ * instance, from the moment the deletion commits. A root that is no conversation (a tree of another
+ * task type) has no owner either, and a signal nobody can receive is dropped. A lost connection is reopened every second, and
+ * then every stream gets `ready`: the signals of the gap are lost and the web rereads its screen.
  */
 @Injectable()
 export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger: Logger;
   private readonly streams = new Set<HubStream>();
-  /** Owners of the found conversations by root id; never a miss. */
-  private readonly owners = new Map<string, string>();
   /** Signals are handled one after another, so the parts of one agent keep their order. */
   private signals: Promise<void> = Promise.resolve();
   private client: pg.Client | undefined;
@@ -189,7 +189,7 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
   /** A runtime event of a tree: a `tree` note to every stream of the conversation's owner. */
   private async note(payload: string): Promise<void> {
     const { rootId } = TreeNoticeSchema.parse(JSON.parse(payload));
-    const ownerId = await this.ownerOf(rootId);
+    const ownerId = await this.agents.sessions.rootOwner(rootId);
     if (ownerId === undefined) return;
     const event = messageEvent({ type: 'tree', data: { threadId: rootId } });
     for (const stream of noteTargets(ownerId, this.streams)) stream.subscriber.next(event);
@@ -203,14 +203,5 @@ export class LiveHub implements OnApplicationBootstrap, BeforeApplicationShutdow
       data: { agentId: delta.agentId, offset: delta.offset, text: delta.text },
     });
     for (const stream of deltaTargets(delta, this.streams)) stream.subscriber.next(event);
-  }
-
-  /** The owner of the conversation with this root, from the cache or `agents`; a miss is not cached. */
-  private async ownerOf(rootId: string): Promise<string | undefined> {
-    const cached = this.owners.get(rootId);
-    if (cached !== undefined) return cached;
-    const ownerId = await this.agents.sessions.rootOwner(rootId);
-    if (ownerId !== undefined) this.owners.set(rootId, ownerId);
-    return ownerId;
   }
 }

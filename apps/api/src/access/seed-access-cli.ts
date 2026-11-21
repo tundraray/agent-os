@@ -18,8 +18,8 @@ import {
   signIn,
   stepFailed,
   type AdminSession,
-} from '../common/admin-cli-client.js';
-import { createAppLogger } from '../logging/app-logger.js';
+} from '../common/admin-cli-client';
+import { createAppLogger } from '../logging/app-logger';
 
 const logger = createAppLogger(process.env);
 

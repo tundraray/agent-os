@@ -1,5 +1,5 @@
 import type { Database } from '@agent-os/db';
-import { AuditLog, type AuditEntry } from './audit-log.js';
+import { AuditLog, type AuditEntry } from './audit-log';
 
 /** A database client double: `insert(table).values(row)` captures the row. */
 const fakeDatabase = () => {

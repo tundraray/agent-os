@@ -9,8 +9,8 @@ import {
   type WorkflowSnapshot,
 } from '@agent-os/agents';
 
-import { WorkflowsError } from './errors.js';
-import { type WorkflowBrief, WorkflowBriefSchema } from './start-workflow.tool.js';
+import { WorkflowsError } from './errors';
+import { type WorkflowBrief, WorkflowBriefSchema } from './start-workflow.tool';
 
 /** One executor of the run's team, as its snapshot holds it. */
 export interface WorkflowTeamMember {

@@ -1,5 +1,5 @@
-import { envelope } from '../model/provider-messages.js';
-import type { GraphItem } from './select-knowledge.js';
+import { envelope } from '../model/provider-messages';
+import type { GraphItem } from './select-knowledge';
 
 /**
  * The rule of the knowledge block, outside the envelope (self-learning design-core.md, KD-6; FR-07,

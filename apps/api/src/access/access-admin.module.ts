@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { AgentsModule } from '../agents/agents.module.js';
-import { AccessModule } from './access.module.js';
-import { AdminAccessController } from './admin-access.controller.js';
-import { AdminModelDefaultsController } from './admin-model-defaults.controller.js';
-import { AdminModelsController } from './admin-models.controller.js';
-import { MyAccessController } from './my-access.controller.js';
+import { AgentsModule } from '../agents/agents.module';
+import { AccessModule } from './access.module';
+import { AdminAccessController } from './admin-access.controller';
+import { AdminModelDefaultsController } from './admin-model-defaults.controller';
+import { AdminModelsController } from './admin-models.controller';
+import { MyAccessController } from './my-access.controller';
 
 /**
  * The routes of `access` that need facts of `AgentsModule`: the admin's catalogue (a new model's provider

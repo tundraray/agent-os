@@ -10,9 +10,9 @@ import {
   runtimeTasks,
 } from '@agent-os/db';
 import { and, asc, eq, gt, sql } from 'drizzle-orm';
-import type { EventConsumerRegistry } from './event-consumer.registry.js';
-import type { TaskRow } from './guarded-transition.js';
-import type { RuntimeTx } from './runtime-tx.js';
+import type { EventConsumerRegistry } from './event-consumer.registry';
+import type { TaskRow } from './guarded-transition';
+import type { RuntimeTx } from './runtime-tx';
 
 /**
  * `LISTEN` channel of the runtime. The payload is JSON `{"rootId","taskId","type"}`: the dispatcher

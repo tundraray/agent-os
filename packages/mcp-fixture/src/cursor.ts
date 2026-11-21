@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { argsHash, canonicalJson } from './canonical-json.js';
-import { DatasetVersionSchema } from './versions.js';
+import { argsHash, canonicalJson } from './canonical-json';
+import { DatasetVersionSchema } from './versions';
 
 /**
  * Opaque fixture cursor: base64url of canonical JSON with the dataset version and snapshot the page came from,

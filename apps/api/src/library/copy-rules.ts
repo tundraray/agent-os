@@ -4,7 +4,7 @@ import {
   type CopyResult,
   type RecordBody,
 } from '@agent-os/contracts';
-import { isNameTaken, type ContentPart } from './record-content.js';
+import { isNameTaken, type ContentPart } from './record-content';
 
 const COPY_SUFFIX = ' — копия';
 const FIRST_NUMBERED_COPY = 2;

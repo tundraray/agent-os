@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { Logger } from '@agent-os/common';
 import { type Database, runtimeModelCalls } from '@agent-os/db';
 import { and, eq, gte, lt, sql } from 'drizzle-orm';
-import type { Clock } from './clock.js';
-import { type CallUsage, callCostUsd, type ModelPrice } from './model-cost.js';
-import { monthWindowUtc } from './month.js';
+import type { Clock } from './clock';
+import { type CallUsage, callCostUsd, type ModelPrice } from './model-cost';
+import { monthWindowUtc } from './month';
 
 /**
  * The owner of a ledger row without an employee: the platform's own embeddings call (design-core.md KD-6).

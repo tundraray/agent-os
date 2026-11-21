@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { ModelIdSchema } from './access.js';
-import { McpServerNameSchema } from './mcp.js';
+import { ModelIdSchema } from './access';
+import { McpServerNameSchema } from './mcp';
 
 /**
  * Knowledge graph of a self-learning workflow (self-learning design-core.md, Contract Definitions,

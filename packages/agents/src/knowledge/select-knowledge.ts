@@ -7,9 +7,9 @@ import type {
   KnowledgeSelection,
   KnowledgeSettings,
 } from '@agent-os/contracts';
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
-import { knowledgeKey, knowledgeLine } from './knowledge-text.js';
-import type { KnowledgeCloseness, KnowledgeVectorKey } from './vector-store.js';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
+import { knowledgeKey, knowledgeLine } from './knowledge-text';
+import type { KnowledgeCloseness, KnowledgeVectorKey } from './vector-store';
 
 /** The share of the limit the first pass gives to the records closest to the question (KD-6, FR-06). */
 const KNOWLEDGE_BY_MEANING_SHARE = 1 / 2;

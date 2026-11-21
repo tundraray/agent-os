@@ -1,21 +1,21 @@
 import type { AgentContent } from '@agent-os/contracts';
 import type { ModelPrice } from '@agent-os/runtime';
 
-import { type AccessDeniedEntry, OwnerDisabledError } from '../access-gate.js';
+import { type AccessDeniedEntry, OwnerDisabledError } from '../access-gate';
 import {
   type AccessGateDoubleOptions,
   createAccessGateDouble,
   createLibraryDouble,
   createProviderRegistryDouble,
   type LibraryDouble,
-} from '../testing.js';
+} from '../testing';
 import {
   auditStartRefusal,
   resolveStart,
   type StartResolution,
   type StartSource,
-} from './resolve-start.js';
-import type { RunSnapshot, WorkflowSnapshot } from './snapshot.js';
+} from './resolve-start';
+import type { RunSnapshot, WorkflowSnapshot } from './snapshot';
 
 // DC-3, DC-4, DC-5, AC-14.1, AC-14.3, AC-14.4 (rule): every kind of start takes its own source — only the
 // built-in and by-id starts ask the library, on behalf of the starter and not the author; a record that is

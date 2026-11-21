@@ -46,8 +46,8 @@ import {
 } from '@agent-os/contracts';
 import type pg from 'pg';
 import { z } from 'zod';
-import { applyMigrations, MIGRATIONS_FOLDER } from '../src/index.js';
-import { ScratchDatabases, withDatabase } from './support/scratch-db.js';
+import { applyMigrations, MIGRATIONS_FOLDER } from '../src/index';
+import { ScratchDatabases, withDatabase } from './support/scratch-db';
 
 /** Two migrator runs with their scratch database. */
 const ROW_TIMEOUT_MS = 120_000;

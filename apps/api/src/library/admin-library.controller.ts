@@ -25,13 +25,13 @@ import {
   type UpdateLibrarySettingsBody,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { LibrarySettingsService } from './library-settings.js';
-import { LibraryService, type PanelServerFacts } from './library.service.js';
-import { serverFacts } from './server-facts.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { LibrarySettingsService } from './library-settings';
+import { LibraryService, type PanelServerFacts } from './library.service';
+import { serverFacts } from './server-facts';
 
 /**
  * The library of the admin panel (design-library.md, «Маршруты панели», FR-09): system records, records

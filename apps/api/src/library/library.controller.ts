@@ -23,11 +23,11 @@ import {
   type RecordSummary,
   type UpdateRecordBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { LibraryService } from './library.service.js';
-import { serverFacts } from './server-facts.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthedRequest } from '../identity/auth-user';
+import { LibraryService } from './library.service';
+import { serverFacts } from './server-facts';
 
 /**
  * The employee's library (design-library.md, «Маршруты сотрудника», KD-6). The employee is only

@@ -26,9 +26,15 @@
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
     "husky": "^9.1.7",
-    "knip": "^6.44.0",
-    "turbo": "^2.11.10",
-    "typescript": "^7.0.2"
+    "knip": "^6.47.0",
+    "turbo": "^2.11.13",
+    "typescript": "^6.0.3"
   },
-  "packageManager": "pnpm@10.9.0"
+  "packageManager": "pnpm@10.9.0",
+  "pnpm": {
+    "overrides": {
+      "@nestjs/mau>undici": "6.29.1",
+      "@nestjs/mau>inquirer": "8.2.7"
+    }
+  }
 }

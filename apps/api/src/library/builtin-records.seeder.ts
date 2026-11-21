@@ -1,8 +1,8 @@
 import { Inject, Injectable, type OnApplicationBootstrap } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { builtinRecords } from './builtin-records.js';
-import { LibraryService } from './library.service.js';
+import { APP_LOGGER } from '../logging/app-logger';
+import { builtinRecords } from './builtin-records';
+import { LibraryService } from './library.service';
 
 /**
  * Seeds the built-in records (design-runtime.md, KD-7, DC-1): at application bootstrap — after every

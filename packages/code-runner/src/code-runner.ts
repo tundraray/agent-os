@@ -19,7 +19,7 @@ import {
   encodeFrame,
   frameMaxBytes,
   parseExecutorMessage,
-} from './protocol.js';
+} from './executor/protocol';
 
 /** The API process kills the executor this long after the run's time limit (Runtime settings). */
 const KILL_AFTER_LIMIT_MS = 1000;
@@ -76,6 +76,16 @@ interface QuickJsPaths {
   storeEntries: string[];
 }
 
+/**
+ * The executor entry: `executor/executor-main` next to this module, with this module's own extension. The API
+ * build emits it as plain `.js` next to the bundle; from source (tests) Node runs the `.ts` itself, because
+ * the permission model leaves no room for a loader. `executor/` holds everything the executor imports, so it
+ * is its only readable directory besides QuickJS.
+ */
+const EXECUTOR_ENTRY = fileURLToPath(
+  new URL(`./executor/executor-main${path.extname(import.meta.url)}`, import.meta.url),
+);
+
 /** The first Node major whose permission model also denies network (ADR-0011); below it TCP and DNS stay open. */
 const NETWORK_BARRIER_NODE_MAJOR = 26;
 
@@ -90,7 +100,7 @@ function assertNetworkBarrier(nodeVersion: string): void {
 
 export function createCodeRunner(options: CodeRunnerOptions): CodeRunner {
   assertNetworkBarrier(process.versions.node);
-  const entryPath = options.entryPath ?? fileURLToPath(new URL('./executor-main.js', import.meta.url));
+  const entryPath = options.entryPath ?? EXECUTOR_ENTRY;
   const quickJs = resolveQuickJs();
   const readPaths = options.readPaths ?? [path.dirname(entryPath), ...quickJs.storeEntries];
   const args = [

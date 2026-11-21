@@ -1,4 +1,4 @@
-import type { LogFields, LogSink } from './logger.js';
+import type { LogFields, LogSink } from './logger';
 
 /** Writes one JSON line per record; the only place that calls `console`. */
 export function consoleSink(): LogSink {

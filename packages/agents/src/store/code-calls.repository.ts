@@ -4,9 +4,12 @@ import {
   ToolOutcomeSchema,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
-import { agentCodeCalls, type Database } from '@agent-os/db';
+import { agentCodeCalls, agentMessages, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+
+import { type FinishedMcpCall, type FinishedWindow, finishedIn } from './history.repository';
+import type { StoreReader } from './sessions.repository';
 
 /** One call of an agent: its session and the call id its provider gave. */
 export interface CallKey {
@@ -93,6 +96,57 @@ export const codeCalls = {
       .where(and(byKey(call), isNull(agentCodeCalls.outcome)))
       .returning({ seq: agentCodeCalls.seq });
     return closed.length > 0;
+  },
+
+  /**
+   * The MCP calls scripts of the tasks made, with one of the outcomes, finished in the window, by end
+   * time — of each run's latest attempt only: a re-run script repeats its calls, and an earlier attempt
+   * would give the same call twice. The latest attempt is the number of the run's `run_attempt` records
+   * (a `write` run has none and runs once, as attempt 1).
+   */
+  async mcpCallsOfLatestAttempts<O extends ToolOutcome>(
+    reader: StoreReader,
+    taskIds: readonly string[],
+    outcomes: readonly O[],
+    window: FinishedWindow,
+  ): Promise<FinishedMcpCall<O>[]> {
+    const attempts = sql`(
+      select count(*) from ${agentMessages}
+       where ${agentMessages.taskId} = ${agentCodeCalls.taskId}
+         and ${agentMessages.callId} = ${agentCodeCalls.runCallId}
+         and ${agentMessages.kind} = 'run_attempt')`;
+    const rows = await reader
+      .select({
+        server: agentCodeCalls.server,
+        tool: agentCodeCalls.tool,
+        outcome: agentCodeCalls.outcome,
+        args: agentCodeCalls.args,
+        finishedAt: agentCodeCalls.finishedAt,
+      })
+      .from(agentCodeCalls)
+      .where(
+        and(
+          inArray(agentCodeCalls.taskId, [...taskIds]),
+          eq(agentCodeCalls.attempt, sql`greatest(${attempts}, 1)`),
+          isNotNull(agentCodeCalls.server),
+          inArray(agentCodeCalls.outcome, [...outcomes]),
+          finishedIn(agentCodeCalls.finishedAt, window),
+        ),
+      )
+      .orderBy(
+        asc(agentCodeCalls.finishedAt),
+        asc(agentCodeCalls.taskId),
+        asc(agentCodeCalls.runCallId),
+        asc(agentCodeCalls.seq),
+      );
+    // The query keeps only rows with a server, one of the outcomes and an end time.
+    return rows.map((row) => ({
+      server: row.server as string,
+      tool: row.tool,
+      outcome: row.outcome as O,
+      args: row.args,
+      finishedAt: row.finishedAt as Date,
+    }));
   },
 
   /** Closes every open row of the run, of any attempt, with the given outcome. */

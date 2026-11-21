@@ -29,11 +29,10 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
       - run: pnpm turbo lint typecheck build test
-      # The model of schema `app` imports @agent-os/contracts from dist, built by the step above.
       - name: Migrations match the schema model
         run: |
           pnpm db:generate
-          changes="$(git status --porcelain -- packages/db/migrations)"
+          changes="$(git status --porcelain -- packages/db/src/migrations)"
           if [ -n "$changes" ]; then
             echo "::error::drizzle-kit generate produced migration changes; run pnpm db:generate and commit them"
             echo "$changes"
@@ -44,7 +43,7 @@ jobs:
       - name: Migration journal timestamps strictly increase
         run: |
           node -e '
-            const { entries } = JSON.parse(require("fs").readFileSync("packages/db/migrations/meta/_journal.json", "utf8"));
+            const { entries } = JSON.parse(require("fs").readFileSync("packages/db/src/migrations/meta/_journal.json", "utf8"));
             for (let i = 1; i < entries.length; i++) {
               if (entries[i].when <= entries[i - 1].when) {
                 console.error(`::error::journal "when" of ${entries[i].tag} (${entries[i].when}) is not after ${entries[i - 1].tag} (${entries[i - 1].when}); regenerate the migration after rebase`);
@@ -55,9 +54,8 @@ jobs:
           '
       - run: pnpm knip
 
-  # The Postgres suites against a real Postgres 16 (design-runtime.md, Part constraints): the
-  # packages are built along the turbo graph (the MCP fixture with api), the migrations are applied,
-  # then each suite runs in turn — db (migrations), runtime (in-process INT file and the
+  # The Postgres suites against a real Postgres 16 (design-runtime.md, Part constraints): the API is
+  # built (the packages are not: the suites run their source), the migrations are applied, then each suite runs in turn — db (migrations), runtime (in-process INT file and the
   # child-process kill matrix), agents, workflows, api (chat). One suite at a time: the workers of
   # one suite would touch another's rows. The on-demand measurements (test:verify) are left out.
   e2e-runtime:
@@ -88,8 +86,8 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Contracts, then db, then runtime, then apps/api, whose dist holds the migration CLI.
-      - run: pnpm turbo build --filter=api...
+      # The bundle of apps/api holds the migration CLI and the command entry the api suite starts.
+      - run: pnpm --filter api build
       # E2E-2: the executor process under the permission model on Linux (Windows runs it locally); no database needed.
       - run: pnpm --filter @agent-os/code-runner test:e2e
       - run: pnpm --filter api db:migrate

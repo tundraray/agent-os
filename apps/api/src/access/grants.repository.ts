@@ -7,8 +7,8 @@ import type {
 } from '@agent-os/contracts';
 import { accessGrants, accessModels, identityRoles } from '@agent-os/db';
 import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
-import type { GrantRow } from './effective-access.js';
+import type { Executor } from '../common/executor';
+import type { GrantRow } from './effective-access';
 
 /**
  * Drizzle queries of `access_grants` (repository-over-transaction.md): each takes the caller's

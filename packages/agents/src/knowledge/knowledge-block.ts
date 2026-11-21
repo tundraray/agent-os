@@ -2,16 +2,16 @@ import type { Logger } from '@agent-os/common';
 import { ALL_SERVERS, KnowledgeItemKindSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
-import { findServers, listServers } from '../mcp/mcp-servers.repository.js';
-import { storedMcpTools } from '../mcp/mcp-tool.js';
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
-import { type LearningRun, learningRunOf } from '../start/snapshot-definition.js';
-import type { RunSnapshot } from '../start/snapshot.js';
-import { readQuestion } from './knowledge-runs.repository.js';
-import { type KnowledgeGraph, readGraph, readKnowledgeSettings } from './knowledge.repository.js';
-import { knowledgeText } from './knowledge-text.js';
-import { type GraphItem, selectKnowledge, type ToolAlive } from './select-knowledge.js';
-import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store.js';
+import { findServers, listServers } from '../mcp/mcp-servers.repository';
+import { storedMcpTools } from '../mcp/mcp-tool';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
+import { type LearningRun, learningRunOf } from '../start/snapshot-definition';
+import type { RunSnapshot } from '../start/snapshot';
+import { readQuestion } from './knowledge-runs.repository';
+import { type KnowledgeGraph, readGraph, readKnowledgeSettings } from './knowledge.repository';
+import { knowledgeText } from './knowledge-text';
+import { type GraphItem, selectKnowledge, type ToolAlive } from './select-knowledge';
+import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 
 export interface KnowledgeBlockDeps {
   /** Reads the graph, the settings, the registry and the question row on every step (KD-6). */

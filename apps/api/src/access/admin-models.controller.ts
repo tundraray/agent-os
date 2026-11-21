@@ -19,11 +19,11 @@ import {
   type CreateCatalogModelBody,
   type UpdateCatalogModelBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { AccessService } from './access.service.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { AccessService } from './access.service';
 
 /**
  * The model catalogue for an administrator (design-access.md, Contract «Операции администратора»).

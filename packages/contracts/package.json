@@ -2,9 +2,7 @@
   "name": "@agent-os/contracts",
   "version": "1.0.0",
   "description": "",
-  "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
     "lint": "oxlint --deny-warnings src/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
@@ -13,19 +11,15 @@
   "author": "",
   "license": "ISC",
   "type": "module",
-  "types": "./dist/index.d.ts",
   "dependencies": {
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "oxlint": "^1.90.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.2"
+    "oxlint": "^1.94.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.12"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   }
 }

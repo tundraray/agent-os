@@ -1,6 +1,6 @@
 import type { RecordHeader, RecordKind, ToolRefusalReason } from '@agent-os/contracts';
 
-import { inRootLaunchSet } from '../chat-listing.js';
+import { inRootLaunchSet } from '../chat-listing';
 
 type Refused<Reason extends ToolRefusalReason> = { readonly kind: 'refused'; readonly reason: Reason };
 

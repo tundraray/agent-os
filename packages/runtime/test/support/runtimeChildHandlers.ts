@@ -2,10 +2,10 @@ import type { Database } from '@agent-os/db';
 import type { StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHandlers.js';
+import { HANDLER_ROWS_TABLE, scriptedHandler, writeHandlerRow } from './testHandlers';
 
 /**
- * Handlers of the E2E-1 tree and of the on-demand measurements, shared by the compiled child (which
+ * Handlers of the E2E-1 tree and of the on-demand measurements, shared by the child process (which
  * runs them) and the test process (which registers them, workers off, only to create tasks of their
  * types). Every row they write goes to {@link HANDLER_ROWS_TABLE}, told apart by `note`:
  *

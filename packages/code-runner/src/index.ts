@@ -6,5 +6,5 @@ export {
   type RequestAnswer,
   type RunOutcome,
   type RunRequest,
-} from './code-runner.js';
-export type { FailReason, RunLimits, ScriptError } from './protocol.js';
+} from './code-runner';
+export type { FailReason, RunLimits, ScriptError } from './executor/protocol';

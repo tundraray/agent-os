@@ -1,4 +1,4 @@
-import { isSessionExpired } from './session-lifetime.js';
+import { isSessionExpired } from './session-lifetime';
 
 const NOW = new Date('2026-11-15T12:00:00.000Z');
 const MINUTE_MS = 60_000;

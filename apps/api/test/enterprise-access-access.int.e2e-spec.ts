@@ -105,15 +105,15 @@ import {
   type ModelPrices,
   type RunRole,
   useRunModels,
-} from './support/access.js';
+} from './support/access';
 import {
   type ChatApi,
   chatApi,
   expectBody,
   expectError,
   waitFor,
-} from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+} from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   BUILTIN,
@@ -122,13 +122,13 @@ import {
   pointBuiltinsAt,
   recordName,
   setSystemAudience,
-} from './support/library.js';
+} from './support/library';
 import {
   BACKOFFICE_SERVER,
   LOGS_SERVER,
   runName,
-} from './support/mcp-servers.js';
-import { databaseUrl } from './support/migrate.global-setup.js';
+} from './support/mcp-servers';
+import { databaseUrl } from './support/migrate.global-setup';
 import {
   apiRequest,
   insertEmployee,
@@ -136,7 +136,7 @@ import {
   seedSuperAdmin,
   signInWithPassword,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

@@ -11,8 +11,8 @@ import {
   type RecordSummary,
   type ResolvedRecord,
 } from '@agent-os/contracts';
-import type { BannedRecordRow, LibraryRecord } from './library.repository.js';
-import { contentParts } from './record-content.js';
+import type { BannedRecordRow, LibraryRecord } from './library.repository';
+import { contentParts } from './record-content';
 
 /**
  * How a stored record is shown (design-library.md, `RecordSummary`, `RecordDetail`, «Для части

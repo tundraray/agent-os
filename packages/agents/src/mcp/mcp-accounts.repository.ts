@@ -1,7 +1,7 @@
 import { agentMcpAccounts } from '@agent-os/db';
 import { and, asc, eq } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository.js';
+import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_mcp_accounts`: an employee's own credentials on a server. */
 export type McpAccountRow = typeof agentMcpAccounts.$inferSelect;

@@ -1,13 +1,13 @@
 import type { Database } from '@agent-os/db';
 
-import type { AgentTool } from '../tool.js';
-import { type BuiltinTasks, createListAgentsTool } from './list-agents.js';
-import { createMessageAgentTool } from './message-agent.js';
-import { createStartAgentTool, type StartAgentDeps } from './start-agent.js';
-import { createStopAgentTool } from './stop-agent.js';
-import { createToolResultTools } from './tool-result-tools.js';
+import type { AgentTool } from '../tool';
+import { type BuiltinTasks, createListAgentsTool } from './list-agents';
+import { createMessageAgentTool } from './message-agent';
+import { createStartAgentTool, type StartAgentDeps } from './start-agent';
+import { createStopAgentTool } from './stop-agent';
+import { createToolResultTools } from './tool-result-tools';
 
-export { createStartChild } from './start-child.js';
+export { createStartChild } from './start-child';
 
 export interface BuiltinToolsDeps extends StartAgentDeps {
   readonly tasks: BuiltinTasks;

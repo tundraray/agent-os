@@ -7,7 +7,7 @@ import {
   RUNTIME_EVENT_SCHEMA_VERSION,
 } from '@agent-os/runtime';
 
-import { sessions } from '../store/sessions.repository.js';
+import { sessions } from '../store/sessions.repository';
 
 export interface StopChildrenOnFailureDeps {
   readonly tasks: Pick<Runtime['tasks'], 'listTree' | 'stop'>;

@@ -6,8 +6,8 @@ import {
   recordSnapshot,
   type RunDefinition,
   snapshotDefinition,
-} from './snapshot-definition.js';
-import type { WorkflowSnapshot } from './snapshot.js';
+} from './snapshot-definition';
+import type { WorkflowSnapshot } from './snapshot';
 
 // AC-16.4, DC-7, AC-15.3 (rule): the definition a step hands the model comes from the snapshot alone —
 // an agent's prompt, tools, servers and limit with the visible records of its `agents`; a coordinator's
@@ -103,9 +103,9 @@ function workflow(rules: string, finalExecutor: string | null): WorkflowSnapshot
 }
 
 const TEAM_LINES = [
-  'plan (до 1 вызовов): Делит вопрос на направления',
-  'gather (до 5 вызовов): Собирает данные по направлению',
-  'answer (до 2 вызовов): Пишет ответ',
+  'plan (up to 1 calls): Делит вопрос на направления',
+  'gather (up to 5 calls): Собирает данные по направлению',
+  'answer (up to 2 calls): Пишет ответ',
 ];
 
 describe('snapshotDefinition', () => {

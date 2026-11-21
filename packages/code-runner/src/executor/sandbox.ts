@@ -18,7 +18,7 @@ import {
   type RunLimits,
   type ScriptError,
   createOutputLimit,
-} from './protocol.js';
+} from '#executor/protocol';
 
 /** QuickJS stack limit; well below the WASM stack, so deep recursion ends in a "stack overflow" exception. */
 const MAX_STACK_BYTES = 256 * 1024;

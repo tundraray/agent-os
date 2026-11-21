@@ -1,13 +1,13 @@
-import { agentCodeCalls, agentMessages } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
-import { and, asc, eq, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
 
-import { envelope } from '../model/provider-messages.js';
-import { utf8Bytes } from '../model/token-estimate.js';
-import type { StoreReader } from '../store/sessions.repository.js';
-import { descendantsOf } from '../tools/builtin/list-agents.js';
-import type { RoundCall, RoundCallOutcome } from './check-operations.js';
-import type { KnowledgeRun } from './knowledge-runs.repository.js';
+import { envelope } from '../model/provider-messages';
+import { utf8Bytes } from '../model/token-estimate';
+import { codeCalls } from '../store/code-calls.repository';
+import { history } from '../store/history.repository';
+import type { StoreReader } from '../store/sessions.repository';
+import { descendantsOf } from '../tools/builtin/list-agents';
+import type { RoundCall, RoundCallOutcome } from './check-operations';
+import type { KnowledgeRun } from './knowledge-runs.repository';
 
 /*
  * The input of an extraction round (design-core.md, Contract «Вход извлечения», KD-3): the MCP calls
@@ -103,119 +103,6 @@ async function subtreeTaskIds(deps: ExtractionInputDeps, run: ExtractionRun): Pr
   return [run.runId, ...descendantsOf(tree, run.runId).map((task) => task.taskId)];
 }
 
-/** `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round. */
-function inWindow(
-  finishedAt: typeof agentMessages.finishedAt | typeof agentCodeCalls.finishedAt,
-  run: ExtractionRun,
-  readAt: Date,
-): SQL | undefined {
-  return and(
-    isNotNull(finishedAt),
-    lte(finishedAt, readAt),
-    run.extractedUpTo === null ? undefined : gt(finishedAt, run.extractedUpTo),
-  );
-}
-
-/** A text field of a `tool_result`'s content. */
-function resultField(name: string): SQL<string | null> {
-  return sql<string | null>`${agentMessages.content} ->> ${name}`;
-}
-
-/**
- * The direct MCP calls: their `tool_result` entries, read through the promoted `finished_at`
- * (`agent_messages_result_idx`). Results of one task that ended at the same moment keep the order
- * they were written in, which is the order of their calls.
- */
-async function readDirectCalls(
-  reader: StoreReader,
-  taskIds: readonly string[],
-  run: ExtractionRun,
-  readAt: Date,
-): Promise<InputCall[]> {
-  const server = resultField('server');
-  const outcome = resultField('outcome');
-  const rows = await reader
-    .select({
-      server,
-      tool: resultField('tool'),
-      outcome,
-      args: sql<unknown>`${agentMessages.content} -> 'args'`,
-      resultText: resultField('text'),
-      finishedAt: agentMessages.finishedAt,
-    })
-    .from(agentMessages)
-    .where(
-      and(
-        inArray(agentMessages.taskId, [...taskIds]),
-        eq(agentMessages.kind, 'tool_result'),
-        isNotNull(server),
-        inArray(outcome, [...ROUND_OUTCOMES]),
-        inWindow(agentMessages.finishedAt, run, readAt),
-      ),
-    )
-    .orderBy(asc(agentMessages.finishedAt), asc(agentMessages.taskId), asc(agentMessages.seq));
-  return rows.map((row) => ({
-    server: row.server as string,
-    tool: row.tool as string,
-    outcome: row.outcome as RoundCallOutcome,
-    args: row.args,
-    resultText: row.resultText ?? '',
-    inCode: false,
-    finishedAt: row.finishedAt as Date,
-  }));
-}
-
-/**
- * Calls a `run_code` script made, of its latest attempt only: a re-run script repeats its calls, and
- * an earlier attempt would give the same call twice (Invariant 3). The latest attempt is the number of
- * the run's `run_attempt` records (a `write` run has none and runs once, as attempt 1).
- */
-async function readCodeCalls(
-  reader: StoreReader,
-  taskIds: readonly string[],
-  run: ExtractionRun,
-  readAt: Date,
-): Promise<InputCall[]> {
-  const attempts = sql`(
-    select count(*) from ${agentMessages}
-     where ${agentMessages.taskId} = ${agentCodeCalls.taskId}
-       and ${agentMessages.callId} = ${agentCodeCalls.runCallId}
-       and ${agentMessages.kind} = 'run_attempt')`;
-  const rows = await reader
-    .select({
-      server: agentCodeCalls.server,
-      tool: agentCodeCalls.tool,
-      outcome: agentCodeCalls.outcome,
-      args: agentCodeCalls.args,
-      finishedAt: agentCodeCalls.finishedAt,
-    })
-    .from(agentCodeCalls)
-    .where(
-      and(
-        inArray(agentCodeCalls.taskId, [...taskIds]),
-        eq(agentCodeCalls.attempt, sql`greatest(${attempts}, 1)`),
-        isNotNull(agentCodeCalls.server),
-        inArray(agentCodeCalls.outcome, [...ROUND_OUTCOMES]),
-        inWindow(agentCodeCalls.finishedAt, run, readAt),
-      ),
-    )
-    .orderBy(
-      asc(agentCodeCalls.finishedAt),
-      asc(agentCodeCalls.taskId),
-      asc(agentCodeCalls.runCallId),
-      asc(agentCodeCalls.seq),
-    );
-  return rows.map((row) => ({
-    server: row.server as string,
-    tool: row.tool,
-    outcome: row.outcome as RoundCallOutcome,
-    args: row.args,
-    resultText: null,
-    inCode: true,
-    finishedAt: row.finishedAt as Date,
-  }));
-}
-
 /** The head of a call: number, server, tool, outcome and the cut arguments. */
 function callHead(key: string, call: InputCall, args: string): string {
   const where = call.inCode ? ' (inside run_code; its result is not stored)' : '';
@@ -280,8 +167,13 @@ export async function readExtractionInput(
 ): Promise<ExtractionInput> {
   const readAt = new Date();
   const taskIds = await subtreeTaskIds(deps, run);
-  const direct = await readDirectCalls(deps.database, taskIds, run, readAt);
-  const inCode = await readCodeCalls(deps.database, taskIds, run, readAt);
+  // `finished_at` in (`extractedUpTo`, `readAt`]: no lower bound before the first round.
+  const window = { after: run.extractedUpTo, through: readAt };
+  const results = await history.mcpResults(deps.database, taskIds, ROUND_OUTCOMES, window);
+  const direct: InputCall[] = results.map(({ text, ...call }) => ({ ...call, resultText: text, inCode: false }));
+  // Calls a `run_code` script made, of its latest attempt only (Invariant 3).
+  const scripted = await codeCalls.mcpCallsOfLatestAttempts(deps.database, taskIds, ROUND_OUTCOMES, window);
+  const inCode: InputCall[] = scripted.map((call) => ({ ...call, resultText: null, inCode: true }));
   // A stable sort: calls ending at the same moment keep their order within each table.
   const ordered = [...direct, ...inCode].sort(
     (a, b) => a.finishedAt.getTime() - b.finishedAt.getTime(),

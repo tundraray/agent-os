@@ -11,13 +11,13 @@ import {
 } from '@agent-os/db';
 import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { isSessionExpired, needsTouch } from './session-lifetime.js';
+import type { Executor } from '../common/executor';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { isSessionExpired, needsTouch } from './session-lifetime';
 import {
   readSessionLimits,
   sessionLimitColumns,
-} from './settings.repository.js';
+} from './settings.repository';
 
 /** `ended_reason` of a session ended by a block (KD-4, DC-9). */
 export const ENDED_BY_BLOCK = 'account_disabled';

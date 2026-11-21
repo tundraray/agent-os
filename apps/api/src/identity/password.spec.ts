@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { checkNewPassword, hashPassword, verifyPassword } from './password.js';
+import { checkNewPassword, hashPassword, verifyPassword } from './password';
 
 /** The `reason` of the 400 a password check threw, or `accepted` when it did not throw. */
 function policyAnswer(password: string): string {

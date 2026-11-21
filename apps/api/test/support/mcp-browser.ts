@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
-import { apiRequest, type Session } from './session.js';
+import { apiRequest, type Session } from './session';
 
 /**
  * The browser's half of an MCP connection over HTTP (design-mcp-connect.md, Contract «Подключения

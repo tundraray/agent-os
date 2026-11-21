@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import type { McpCallResponse } from './mcp-client.js';
-import { scriptValueOf, toOutcome } from './mcp-outcome.js';
+import type { McpCallResponse } from './mcp-client';
+import { scriptValueOf, toOutcome } from './mcp-outcome';
 
 // AC-13.1 (outcomes of a call): an MCP response becomes exactly one outcome with the server's whole text;
 // what the model gets of a long text is decided by the runner (large-result.spec.ts).
@@ -48,7 +48,7 @@ describe('an MCP response becomes one outcome and read-only comes only from read
       // design-mcp-connect.md KD-5: no usable account is its own outcome, with the page to fix it on
       'no usable account of the owner is auth_required naming the server',
       { kind: 'auth_required' } satisfies McpCallResponse,
-      { outcome: 'auth_required', text: 'Нужно подключить аккаунт backoffice на странице «Мой доступ»' },
+      { outcome: 'auth_required', text: 'An account of backoffice must be connected on the page «Мой доступ»' },
     ],
   ] as const)('%s', (_case, response, expected) => {
     expect(toOutcome(response, SERVER)).toEqual(expected);

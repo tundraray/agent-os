@@ -31,12 +31,12 @@ import {
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { type Command, runCommand } from './chat.errors.js';
-import { ConversationsService } from './conversations.service.js';
-import { DraftsService } from './drafts.service.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthedRequest } from '../identity/auth-user';
+import { APP_LOGGER } from '../logging/app-logger';
+import { type Command, runCommand } from './chat.errors';
+import { ConversationsService } from './conversations.service';
+import { DraftsService } from './drafts.service';
 
 /**
  * The conversation routes (design-chat.md, Contract «Беседы»): the former list, create, read, rename

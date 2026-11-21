@@ -9,11 +9,11 @@ import {
   ModelRefusedError,
   type ModelVerdict,
   OwnerDisabledError,
-} from '../access-gate.js';
-import type { AgentsConfig } from '../config.js';
-import { providerAdapter } from '../providers/adapters.js';
-import { providerReadiness } from '../providers/provider-readiness.js';
-import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry.js';
+} from '../access-gate';
+import type { AgentsConfig } from '../config';
+import { providerAdapter } from '../providers/adapters';
+import { providerReadiness } from '../providers/provider-readiness';
+import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -21,8 +21,8 @@ import type {
   AgentTurnGeneration,
   AgentTurnMessage,
   AgentTurnModelClient,
-} from './mastra-turn.js';
-import { DATA_PREAMBLE } from './provider-messages.js';
+} from './mastra-turn';
+import { DATA_PREAMBLE } from './provider-messages';
 import {
   classifyRejection,
   PROVIDER_RETRIES,
@@ -30,16 +30,18 @@ import {
   type ProviderRejectionReason,
   pause,
   providerRetryDelayMs,
-} from './retry-policy.js';
-import { tokensOfBytes, utf8Bytes } from './token-estimate.js';
+} from './retry-policy';
+import { tokensOfBytes, utf8Bytes } from './token-estimate';
 
 /**
- * When to reach for `run_code` (code-execution PRD FR-01, AC-01.3): appended after the data preamble
- * to the instructions of every model call of an agent.
+ * How to read a stored result and when to reach for `run_code` (code-execution PRD FR-01, AC-01.3):
+ * appended after the data preamble to the instructions of every model call of an agent.
  */
-const CODE_RULE = [
-  'Use run_code when a direct tool result came back cut, when you need to count, aggregate or match data,',
-  'or when the work is a chain of more than three or four tool calls. Otherwise call tools directly.',
+export const CODE_RULE = [
+  'When a tool result comes to you as a stored result, read it in parts with read_tool_result or find lines with',
+  'search_tool_result; before a summary or an analysis of it, read all of it or say which part you read.',
+  'Use run_code to count, aggregate or match data, also over a stored result (readResult), or when the work is',
+  'a chain of more than three or four tool calls. Otherwise call tools directly.',
   'In a script, call tools with callTool under the same names as in your tool list (mcp__<server>__<tool>)',
   'and with the same arguments their schemas describe.',
   "When a tool called from a script fails with a tool error, the script gets only the outcome, without the server's",

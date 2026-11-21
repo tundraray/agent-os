@@ -4,30 +4,22 @@
   "description": "Fixture MCP server with synthetic payment logs and back office, a call log and fault rules for tests",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/main.js --port 4100",
+    "start": "node --import tsx src/main.ts --port 4100",
     "lint": "oxlint --deny-warnings src/",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
+    "tsx": "^4.23.15",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.0.0",
-    "oxlint": "^1.58.0",
-    "typescript": "^6.0.2"
+    "@types/node": "^26.6.6",
+    "oxlint": "^1.94.0",
+    "typescript": "^6.0.3"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    ".": "./src/index.ts"
   }
 }

@@ -2,8 +2,8 @@ import type { Logger } from '@agent-os/common';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessAudit, AccessGate } from '../../access-gate.js';
-import type { RecordLibrary } from '../../start/record-library.js';
+import type { AccessAudit, AccessGate } from '../../access-gate';
+import type { RecordLibrary } from '../../start/record-library';
 import {
   auditStartRefusal,
   RECORD_UNAVAILABLE,
@@ -12,12 +12,12 @@ import {
   type StartRefusal,
   type StartResolution,
   type StartSource,
-} from '../../start/resolve-start.js';
-import type { RunSnapshot } from '../../start/snapshot.js';
-import { history } from '../../store/history.repository.js';
-import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool.js';
-import { gateStart, type LaunchSet, type StartGate, type StartTarget } from '../tool-gate.js';
-import { logStart } from './start-child.js';
+} from '../../start/resolve-start';
+import type { RunSnapshot } from '../../start/snapshot';
+import { history } from '../../store/history.repository';
+import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool';
+import { gateStart, type LaunchSet, type StartGate, type StartTarget } from '../tool-gate';
+import { logStart } from './start-child';
 
 /** The built-in tool that starts an agent; its description lists whom the session may start. */
 export const START_AGENT_TOOL = 'start_agent';

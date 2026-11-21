@@ -5,14 +5,14 @@ import type {
   UpdateLibrarySettingsBody,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
+import { AuditLog } from '../audit/audit-log';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import {
   readLibrarySettings,
   writeLibrarySettings,
   type LibrarySettingsRow,
-} from './library-settings.repository.js';
+} from './library-settings.repository';
 
 const SETTINGS_OBJECT_TYPE = 'library_settings';
 

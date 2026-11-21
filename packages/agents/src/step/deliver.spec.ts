@@ -1,6 +1,6 @@
 import type { StepMessage } from '@agent-os/runtime';
 
-import { rootTurnReset } from './deliver.js';
+import { rootTurnReset } from './deliver';
 
 // DC-1: in a root session every `user_message` of the employee starts a new turn; nothing else
 // resets the counter here.

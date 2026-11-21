@@ -1,4 +1,4 @@
-import type { StepSignalReason } from './handler.registry.js';
+import type { StepSignalReason } from './handler.registry';
 
 /** One step executing in this process. */
 export interface RunningStepHandle {

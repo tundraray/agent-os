@@ -1,4 +1,4 @@
-import { monthOf } from './month.js';
+import { monthOf } from './month';
 
 // AC-21.4, DC-9: one month rule for the access check, «Мой доступ» and `GET /spend` - the UTC
 // calendar month. Catches a month boundary taken in the local time zone.

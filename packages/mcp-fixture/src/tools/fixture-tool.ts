@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { LogDataset } from '../dataset.js';
+import type { LogDataset } from '../dataset';
 
 /** Outcome of one tool call: a JSON result, or a rejection the server turns into an `isError` result. */
 export type ToolCallOutcome = { ok: true; result: Record<string, unknown> } | { ok: false; error: string };

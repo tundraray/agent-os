@@ -44,7 +44,7 @@
 // - NFR-01 (status within the command): INT-3 rows A, B (the 5 s figure: verify script); NFR-04: INT-2 row E, INT-1 row C; NFR-05: E2E-1 harness timeout + verify script; NFR-06 (owner check in every operation): INT-4
 
 import { randomUUID } from 'node:crypto';
-import { runtimeDecisions, runtimeModelCalls } from '@agent-os/db';
+import { runtimeDecisions, runtimeModelCalls, runtimeTasks } from '@agent-os/db';
 import {
   type GuardResult,
   type NewMessage,
@@ -53,10 +53,10 @@ import {
   type StepResult,
   type TaskHandler,
 } from '@agent-os/runtime';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { newUser } from './support/new-user.js';
+import { newUser } from './support/new-user';
 import {
   closeRuntimeDb,
   eventsOf,
@@ -65,7 +65,7 @@ import {
   rowVersionsOf,
   statusesOf,
   waitFor,
-} from './support/runtimeDb.js';
+} from './support/runtimeDb';
 import {
   createRuntimeHarness,
   expireLease,
@@ -75,7 +75,7 @@ import {
   TEST_MODEL_ONE_PRICE,
   TEST_MODEL_TWO,
   TEST_MODEL_TWO_PRICE,
-} from './support/runtimeHarness.js';
+} from './support/runtimeHarness';
 import {
   createGate,
   createGateBook,
@@ -86,7 +86,7 @@ import {
   scriptedHandler,
   uniqueType,
   writeHandlerRow,
-} from './support/testHandlers.js';
+} from './support/testHandlers';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 60_000;
@@ -1508,8 +1508,9 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // Invariant 8: "Каждый вызов модели, о котором верхний слой сообщил `record`, — одна строка журнала со стоимостью; строки не меняются и не удаляются вместе с задачами."
   // Use cases: UC-8, UC-E6, UC-E7. EARS: When / If-then. Design flow: Flow 5, KD-5.
   //
-  // Catches: (1) a cost taken from the wrong model's price, or a row without owner, task or tokens; (2) a month sum that includes the previous month's last second, drops the 1st 00:00:00 UTC instant, adds another owner's rows or double-counts; (3) `deleteTree` taking the
-  //   ledger rows with the tree (a foreign key with cascade), so deleting a conversation lowers the month's spend; (4) a row written for a model with no price.
+  // Catches: (1) a cost taken from the wrong model's price, or a row without owner, task or tokens; (2) a month sum that includes the previous month's last second, drops the 1st 00:00:00 UTC instant, adds another owner's rows or double-counts; (3) `deleteTree` removing
+  //   the tree's rows or the ledger rows, so deleting a conversation loses its record or lowers the month's spend; (4) a row written for a model with no price; (5) one runtime operation that reads or wakes a deleted tree for its own owner - a task read by its id, the
+  //   tree listed, a command, a revive message that wakes the root, a child created under it, a cancelled request answered `already_resolved` - instead of answering as for a missing id.
   // Not re-checked here: the cost rule's variants (tier, cache read and write) - the unit table proves the rule; one literal price per model proves it is wired.
   // Behavior: calls recorded on two priced models for two owners across a month boundary -> rows and costs per model price -> `monthSpend` is the owner's sum for the UTC month -> the sum survives `deleteTree`; an unpriced model leaves no row
   // @category: core-functionality
@@ -1522,7 +1523,8 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
   // - Row B "the month window": A also has calls at 2026-10-31T23:59:59Z, 2026-11-01T00:00:00Z, 2026-11-30T23:59:59Z and 2026-12-01T00:00:00Z; owner B has November calls. Then: `monthSpend(A, '2026-11')` equals the literal sum of A's calls from 2026-11-01T00:00:00Z
   //   through 2026-11-30T23:59:59Z, and its call count equals their number; October, December and B's rows are not in it; `monthSpend(A, '2026-09')` is `{ costUsd: 0, calls: 0 }`.
   //   `monthSpendByModel(A, '2026-11')` holds each model's literal sum (AC-21.4, DC-9 of design-access.md), `'2026-09'` is empty, B's rows are not in A's map.
-  // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: the tree's tasks, messages, decisions and events are gone; the ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
+  // - Row D "tree deletion": A's calls were recorded with the ids of tasks of one tree. `deleteTree(root)` returns `deleted`. Then: both task rows stay, `stopped`, each with `deleted_at` set; the messages and events stay and the request is `cancelled`. Table by operation, as
+  //   in INT-4: each of A's own operations on the deleted tree answers exactly as for a random missing id (`TASK_NOT_FOUND`, `DECISION_NOT_FOUND`, `[]`), and no row of the tree changed. The ledger rows still exist with their task ids; `monthSpend(A, '2026-11')` is unchanged.
   it('INT-5 A: a recorded call stores owner, task, model, tokens and a cost taken from its own model\'s price', async () => {
     // Given: a task of owner A and a clock in November 2026
     const ownerId = newUser();
@@ -1659,7 +1661,7 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
     }
   }, TEST_TIMEOUT_MS);
 
-  it('INT-5 D: deleting the task tree removes the tree but leaves the ledger rows and the month spend unchanged', async () => {
+  it('INT-5 D: deleting the task tree keeps its rows marked deleted, answers as missing to its own owner, and leaves the ledger and the month spend unchanged', async () => {
     // Given: owner A's tree - a root waiting for a decision with a pending message, a child - and a
     // call recorded for each task in November 2026
     const ownerId = newUser();
@@ -1721,15 +1723,79 @@ describe('agent-platform / runtime - integration (in-process runtime + real Post
       // When: the tree is deleted
       const answer = await harness.tasks.deleteTree(rootId, ownerId);
 
-      // Then: the tree's tasks, messages, decision and events are gone
+      // Then: both tasks stay, stopped and marked deleted; the messages, events and the cancelled
+      // request stay with them
       expect(answer).toBe('deleted');
-      expect([...(await statusesOf([rootId, childId]))]).toEqual([]);
-      expect([...(await inboxOf(rootId)), ...(await inboxOf(childId))]).toEqual([]);
-      expect([...(await eventsOf(rootId)), ...(await eventsOf(childId))]).toEqual([]);
-      expect(await decisionOf(harness, request.decisionId)).toBeUndefined();
-      await expect(harness.tasks.get(rootId, ownerId)).rejects.toMatchObject({
-        code: 'TASK_NOT_FOUND',
-      });
+      expect(
+        await harness.db
+          .select({
+            taskId: runtimeTasks.taskId,
+            status: runtimeTasks.status,
+            deletedAt: runtimeTasks.deletedAt,
+          })
+          .from(runtimeTasks)
+          .where(eq(runtimeTasks.rootId, rootId))
+          .orderBy(asc(runtimeTasks.createdSeq)),
+      ).toEqual([
+        { taskId: rootId, status: 'stopped', deletedAt: expect.any(Date) },
+        { taskId: childId, status: 'stopped', deletedAt: expect.any(Date) },
+      ]);
+      expect((await inboxOf(rootId)).map((message) => [message.kind, message.status])).toEqual([
+        ['note', 'pending'],
+        ['child_finished', 'pending'],
+      ]);
+      expect((await eventsOf(rootId)).map((event) => event.type)).toEqual(
+        expect.arrayContaining(['task.created', 'task.stopped']),
+      );
+      expect((await eventsOf(childId)).map((event) => event.type)).toEqual(
+        expect.arrayContaining(['task.created', 'task.stopped']),
+      );
+      expect(await decisionOf(harness, request.decisionId)).toMatchObject({ status: 'cancelled' });
+
+      // When: the owner calls every operation on the deleted tree, and on an id that exists for nobody
+      const before = await rowVersionsOf(rootId);
+      const missingId = randomUUID();
+      const notFound = { code: 'TASK_NOT_FOUND' };
+      const operations: [string, string, (id: string) => Promise<unknown>, Answer][] = [
+        ['tasks.get of the root', rootId, (id) => harness.tasks.get(id, ownerId), notFound],
+        ['tasks.get of the child', childId, (id) => harness.tasks.get(id, ownerId), notFound],
+        ['tasks.listTree', rootId, (id) => harness.tasks.listTree(id, ownerId), { value: [] }],
+        ['tasks.interrupt', childId, (id) => harness.tasks.interrupt(id, ownerId), notFound],
+        ['tasks.stop', rootId, (id) => harness.tasks.stop(id, ownerId), notFound],
+        ['tasks.deleteTree', rootId, (id) => harness.tasks.deleteTree(id, ownerId), notFound],
+        [
+          'inbox.enqueue with revive',
+          rootId,
+          (id) => harness.inbox.enqueue({ ...note(id, ownerId, { n: 2 }), revive: true }),
+          notFound,
+        ],
+        [
+          'tasks.create under the root',
+          rootId,
+          (id) => harness.tasks.create({ type: childType, ownerId, input: {}, parentId: id }),
+          notFound,
+        ],
+        [
+          'decisions.resolve',
+          request.decisionId,
+          (id) => harness.decisions.resolve(id, ownerId, { approved: true }),
+          { code: 'DECISION_NOT_FOUND' },
+        ],
+      ];
+
+      // Then: each answer for the deleted tree equals the answer for the missing id, and no row of
+      // the tree changed: the root is still stopped and its queue got no new message
+      for (const [operation, deletedId, call, expected] of operations) {
+        const deleted = await answerOf(() => call(deletedId));
+        const missing = await answerOf(() => call(missingId));
+        expect({ operation, deleted, missing }).toEqual({
+          operation,
+          deleted: expected,
+          missing: expected,
+        });
+      }
+      expect(await rowVersionsOf(rootId)).toEqual(before);
+      expect(await statusesOf([rootId])).toEqual(new Map([[rootId, 'stopped']]));
 
       // And: the ledger rows stay with their task ids, and the month spend is unchanged
       const rows = await ledgerRowsOf(harness, ownerId);

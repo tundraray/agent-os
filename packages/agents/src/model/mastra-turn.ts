@@ -5,8 +5,8 @@ import { noopLogger } from '@mastra/core/logger';
 import { createTool } from '@mastra/core/tools';
 import type { z } from 'zod';
 
-import { type ProviderOptions, providerAdapter } from '../providers/adapters.js';
-import type { ProviderConnection } from '../providers/provider-registry.js';
+import { type ProviderOptions, providerAdapter } from '../providers/adapters';
+import type { ProviderConnection } from '../providers/provider-registry';
 
 /**
  * The model instance a request agent runs on: an AI SDK model object, never a string id or a

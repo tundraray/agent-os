@@ -1,5 +1,5 @@
 {
-  "id": "c275ed6d-c29a-4f0b-96ea-e5319d395746",
+  "id": "6575aaef-9b3e-4ffb-a0c1-bd37cbcaba4a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1849,6 +1849,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1911,7 +1917,7 @@
             }
           ],
           "isUnique": false,
-          "where": "\"app\".\"agent_sessions\".\"updated_at\" IS NOT NULL",
+          "where": "\"app\".\"agent_sessions\".\"updated_at\" IS NOT NULL AND \"app\".\"agent_sessions\".\"deleted_at\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3952,6 +3958,12 @@
         },
         "finished_at": {
           "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

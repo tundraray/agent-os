@@ -1,12 +1,14 @@
 // The executor process entry. Started by the API process under `--permission` with read access to its own
 // directory and the QuickJS store entries only, so it imports nothing but `node:` built-ins, its siblings and
 // QuickJS by absolute path: `process.argv[2]` is the `quickjs-emscripten-core` root, `process.argv[3]` the
-// `@jitl/quickjs-wasmfile-release-sync` root.
+// `@jitl/quickjs-wasmfile-release-sync` root. In tests plain Node runs this directory from source, with no
+// loader: its modules import each other through `#executor/*` of package.json (Node does not resolve a
+// relative import without an extension) and hold only syntax Node can strip.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { prepareProcess } from './prepare-process.js';
-import { type ExecutorMessage, type HostMessage, type ReplyMessage, createFrameDecoder, encodeFrame } from './protocol.js';
-import { runScript } from './sandbox.js';
+import { prepareProcess } from '#executor/prepare-process';
+import { type ExecutorMessage, type HostMessage, type ReplyMessage, createFrameDecoder, encodeFrame } from '#executor/protocol';
+import { runScript } from '#executor/sandbox';
 
 prepareProcess();
 
@@ -15,8 +17,8 @@ if (coreRoot === undefined || variantRoot === undefined) {
   throw new Error('The executor needs the QuickJS core and variant roots as arguments');
 }
 const entryOf = (root: string): string => pathToFileURL(path.join(root, 'dist', 'index.mjs')).href;
-const core = (await import(entryOf(coreRoot))) as typeof import('quickjs-emscripten-core');
-const quickJs = await core.newQuickJSWASMModuleFromVariant(import(entryOf(variantRoot)));
+const core = (await import(/* webpackIgnore: true */ entryOf(coreRoot))) as typeof import('quickjs-emscripten-core');
+const quickJs = await core.newQuickJSWASMModuleFromVariant(import(/* webpackIgnore: true */ entryOf(variantRoot)));
 
 const send = (message: ExecutorMessage): void => {
   process.stdout.write(encodeFrame(message));

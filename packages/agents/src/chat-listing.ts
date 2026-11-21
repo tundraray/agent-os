@@ -7,9 +7,9 @@ import { CHAT_BUILTIN_KEY, type RecordHeader } from '@agent-os/contracts';
 export const CHAT_LISTING_BUDGET = 12_000;
 
 /** The mark of the employee's own record in the listing (KD-4). */
-const OWN_MARK = 'ваша';
+const OWN_MARK = 'yours';
 /** The mark of a system record, which has no author. */
-const SYSTEM_MARK = 'системная';
+const SYSTEM_MARK = 'system';
 
 /**
  * Whether the main chat may offer and start the record (KD-4): the employee's own always, another's only
@@ -40,7 +40,7 @@ export interface ChatListing {
 /**
  * A line of a tool description built from what employees typed (names, descriptions, roles): every run
  * of whitespace, line breaks included, becomes one space, so typed text never adds a line of its own —
- * a forged line with another record or the «ваша» mark (design-runtime.md, Security Considerations).
+ * a forged line with another record or the `yours` mark (design-runtime.md, Security Considerations).
  */
 export function descriptionLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -48,7 +48,7 @@ export function descriptionLine(text: string): string {
 
 function whose(header: RecordHeader): string {
   if (header.mine) return OWN_MARK;
-  return header.author === null ? SYSTEM_MARK : `автор ${header.author.name}`;
+  return header.author === null ? SYSTEM_MARK : `by ${header.author.name}`;
 }
 
 /** A line of the listing (KD-4): id, name, whose record and, while the budget allows, the description. */

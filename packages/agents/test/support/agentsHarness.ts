@@ -57,8 +57,8 @@ import {
 } from '@agent-os/runtime';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { databaseUrl } from './database-url.js';
-import { registerFixtureServers, removeServer, runName } from './mcp-servers.js';
+import { databaseUrl } from './database-url';
+import { registerFixtureServers, removeServer, runName } from './mcp-servers';
 
 /**
  * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `createRuntime` and

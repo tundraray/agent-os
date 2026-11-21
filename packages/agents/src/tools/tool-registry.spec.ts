@@ -3,11 +3,11 @@ import { CHAT_BUILTIN_KEY, type RunOrigin } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import { z } from 'zod';
 
-import type { AgentSnapshot, RunSnapshot, WorkflowSnapshot } from '../start/snapshot.js';
-import { executorSnapshot } from '../start/snapshot-definition.js';
-import { createLibraryDouble } from '../testing.js';
-import type { AgentTool } from './tool.js';
-import { createToolRegistry } from './tool-registry.js';
+import type { AgentSnapshot, RunSnapshot, WorkflowSnapshot } from '../start/snapshot';
+import { executorSnapshot } from '../start/snapshot-definition';
+import { createLibraryDouble } from '../testing';
+import type { AgentTool } from './tool';
+import { createToolRegistry } from './tool-registry';
 
 // design-runtime.md KD-6, Invariant 4, UC-E6, AC-18.4 (rule): the root's tools — `start_workflow` and
 // `draft_record` — go to a session without a parent only; a child agent, an executor and a coordinator get

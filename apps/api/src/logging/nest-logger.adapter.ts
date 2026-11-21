@@ -4,7 +4,7 @@ import {
   type LogFields,
   type Logger,
 } from '@agent-os/common';
-import { APP_LOGGER } from './app-logger.js';
+import { APP_LOGGER } from './app-logger';
 
 /**
  * Nest's `LoggerService` over the application logger (logging.md): framework records and every

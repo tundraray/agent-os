@@ -1,4 +1,4 @@
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 
 /**
  * Large tool results (tool-result-reading plan, R-1…R-3): the wrapper the model gets instead of a long
@@ -13,7 +13,7 @@ const LINE_MAX_CHARS = 2_000;
 const SEARCH_MAX_MATCHES = 100;
 
 /** The answer to a stored result that is not there or belongs to another session or owner. */
-export const RESULT_NOT_FOUND = 'результат не найден';
+export const RESULT_NOT_FOUND = 'result not found';
 
 /** A page of a stored text, or the line count when `offset` is past its last line. */
 export type StoredPage =
@@ -77,7 +77,7 @@ export function wrapperText(input: {
 export function cutText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   const end = safeEnd(text, maxChars);
-  return `${text.slice(0, end)}\nрезультат обрезан на ${text.length - end} символов`;
+  return `${text.slice(0, end)}\nresult cut by ${text.length - end} characters`;
 }
 
 /** The lines of a text: up to and including a line break, or `LINE_MAX_CHARS`; joined they are the text. */

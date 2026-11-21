@@ -1,7 +1,7 @@
 import { RUN_CODE_TOOL, type ToolCallState, ToolCallStateSchema } from '@agent-os/contracts';
 
-import { mcpToolName } from '../mcp/mcp-tool.js';
-import type { HistoryContent, HistoryEntry } from './history.js';
+import { mcpToolName } from '../mcp/mcp-tool';
+import type { HistoryContent, HistoryEntry } from './history';
 
 /** One tool call of a model answer with what its records say about it. */
 export interface CallState {

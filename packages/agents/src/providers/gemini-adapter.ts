@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
-import { type EmbeddingInputType, type ProviderAdapter, keyHeader, rejectionText } from './adapters.js';
-import type { ProviderConnection } from './provider-registry.js';
+import { type EmbeddingInputType, type ProviderAdapter, keyHeader, rejectionText } from './adapters';
+import type { ProviderConnection } from './provider-registry';
 
 /** The Gemini task type of each kind of embedded text. */
 const TASK_TYPES: Readonly<Record<EmbeddingInputType, string>> = {

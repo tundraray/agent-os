@@ -10,16 +10,16 @@ import {
 import type { Database } from '@agent-os/db';
 import type { Runtime, RuntimeTx } from '@agent-os/runtime';
 
-import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
-import { sessions } from '../store/sessions.repository.js';
-import { graphItemsOf, registryToolAlive } from './knowledge-block.js';
+import type { AgentsEmbeddings } from '../embeddings/embeddings';
+import { sessions } from '../store/sessions.repository';
+import { graphItemsOf, registryToolAlive } from './knowledge-block';
 import {
   ensureEmbeddingRow,
   findEmbeddingRow,
   type KnowledgeEmbeddingRow,
   lastExtraction,
   updateEmbeddingRow,
-} from './knowledge-runs.repository.js';
+} from './knowledge-runs.repository';
 import {
   deleteEntity,
   deleteRelation,
@@ -28,10 +28,10 @@ import {
   readGraph,
   readKnowledgeSettings,
   writeKnowledgeSettings,
-} from './knowledge.repository.js';
-import { embedPassRequest } from './knowledge-tasks.js';
-import { type EmbeddingState, knowledgeViewParts } from './select-knowledge.js';
-import type { KnowledgeVectorStore } from './vector-store.js';
+} from './knowledge.repository';
+import { embedPassRequest } from './knowledge-tasks';
+import { type EmbeddingState, knowledgeViewParts } from './select-knowledge';
+import type { KnowledgeVectorStore } from './vector-store';
 
 /** What `view` is asked about: the record, and its flag and executors' servers as the library read them. */
 export interface KnowledgeViewRequest {

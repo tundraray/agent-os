@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RegisterMcpServerBodySchema, UpdateMcpServerBodySchema } from './mcp.js';
+import { RegisterMcpServerBodySchema, UpdateMcpServerBodySchema } from './mcp';
 
 // One row type for both bodies: the table mixes the two schemas.
 type Row = {

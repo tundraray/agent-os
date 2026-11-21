@@ -7,18 +7,18 @@ import {
   type AgentsEmbeddings,
   EMBEDDING_BATCH_SIZE,
   type EmbedUnavailable,
-} from '../embeddings/embeddings.js';
+} from '../embeddings/embeddings';
 import {
   type EmbeddingOutcome,
   findEmbeddingByPassTask,
   findEmbeddingRow,
   updateEmbeddingRow,
   writeEmbeddingOutcome,
-} from './knowledge-runs.repository.js';
-import { type KnowledgeGraph, readGraph } from './knowledge.repository.js';
-import { KNOWLEDGE_EMBED_TASK_TYPE, KnowledgeEmbedInputSchema } from './knowledge-tasks.js';
-import { knowledgeKey } from './knowledge-text.js';
-import type { KnowledgeVectorKey, KnowledgeVectorStore } from './vector-store.js';
+} from './knowledge-runs.repository';
+import { type KnowledgeGraph, readGraph } from './knowledge.repository';
+import { KNOWLEDGE_EMBED_TASK_TYPE, KnowledgeEmbedInputSchema } from './knowledge-tasks';
+import { knowledgeKey } from './knowledge-text';
+import type { KnowledgeVectorKey, KnowledgeVectorStore } from './vector-store';
 
 export interface KnowledgeEmbedHandlerDeps {
   readonly database: Database;
