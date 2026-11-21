@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@/test/render";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { MyModels } from "@agent-os/contracts";

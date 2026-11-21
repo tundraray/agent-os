@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { render, within } from '@testing-library/react';
+import { render, within } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';

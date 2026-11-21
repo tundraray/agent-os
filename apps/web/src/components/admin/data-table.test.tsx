@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@/test/render';
 import { UsersIcon } from 'lucide-react';
 import { describe, expect, it, vi } from 'vitest';
 import { setTestMedia } from '@/test/setup';

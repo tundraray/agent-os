@@ -2,7 +2,7 @@
 // neither in visible text nor in what a screen reader announces (aria-label, title, placeholder, alt, aria-valuetext).
 // First: registers the next/navigation mock before any other module loads the real one.
 import { renderWithRuntime } from '@/test/render-with-runtime';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import {
   AssistantRuntimeProvider,

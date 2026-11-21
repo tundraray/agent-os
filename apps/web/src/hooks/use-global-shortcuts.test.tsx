@@ -1,4 +1,4 @@
-import { fireEvent, renderHook } from '@testing-library/react';
+import { fireEvent, renderHook } from '@/test/render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useGlobalShortcuts } from './use-global-shortcuts';
 
