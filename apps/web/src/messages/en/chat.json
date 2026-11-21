@@ -1,0 +1,126 @@
+{
+  "placeholder": "Ask anything…",
+  "historyLoading": "Loading chat…",
+  "caption": {
+    "assignment": "Assignment",
+    "fromChat": "From chat",
+    "fromAgent": "From agent “{sender}”",
+    "fromAgentUnnamed": "From agent",
+    "report": "Report",
+    "brief": "Task"
+  },
+  "voice": {
+    "header": "Voice conversation",
+    "userSaid": "You said",
+    "assistantSaid": "Assistant said",
+    "speaking": "Assistant is speaking"
+  },
+  "copy": "Copy",
+  "loadEarlier": "Show earlier messages",
+  "loadingEarlier": "Loading earlier messages…",
+  "scrollToBottom": "Go to latest message",
+  "suggestions": "Suggestions",
+  "starter": {
+    "meetingPlan": {
+      "title": "Draft a meeting plan",
+      "label": "for kicking off a new project",
+      "prompt": "Draft a meeting plan for kicking off a new project"
+    },
+    "clientLetter": {
+      "title": "Write an email",
+      "label": "to a client about a deadline change",
+      "prompt": "Write an email to a client about a deadline change"
+    },
+    "explainOkr": {
+      "title": "Explain in simple words",
+      "label": "what OKRs are and how to set them",
+      "prompt": "Explain in simple words what OKRs are and how to set them"
+    },
+    "teamBuilding": {
+      "title": "Suggest ideas",
+      "label": "for a team-building event for 15 people",
+      "prompt": "Suggest ideas for a team-building event for 15 people"
+    }
+  },
+  "sendFailed": "Couldn't send the message. Try again.",
+  "chipPlaceholder": "{kind, select, agent {Describe the task for “{name}”…} other {Describe what to look into — the chat will prepare a task for “{name}”…}}",
+  "composer": {
+    "message": "Message",
+    "dictate": "Voice input",
+    "startDictation": "Start voice input",
+    "stopDictation": "Stop dictation",
+    "send": "Send",
+    "resume": "Continue generating"
+  },
+  "replying": "Assistant is replying…",
+  "feedback": {
+    "positive": "Helpful answer",
+    "negative": "Unhelpful answer"
+  },
+  "reasoning": "Reasoning",
+  "reasoningWithDuration": "Reasoning ({seconds} s)",
+  "tool": {
+    "outcome": {
+      "running": "running",
+      "success": "done",
+      "empty": "empty result",
+      "tool_error": "tool error",
+      "transport_failure": "no connection to the server",
+      "refused": "refused",
+      "auth_required": "sign-in needed",
+      "awaiting_confirmation": "awaiting confirmation",
+      "rejected": "rejected",
+      "interrupted": "interrupted",
+      "unknown": "outcome unknown"
+    },
+    "trigger": "{tool}: {outcome}, {time}",
+    "authRequired": "Connect your {server} account in “<link>My access</link>”",
+    "arguments": "Arguments",
+    "result": "Result"
+  },
+  "attachment": {
+    "preview": "Preview: {name}",
+    "tile": "{preview, select, yes {Preview: {name}} other {Attachment: {name}}}{state, select, error {, couldn't upload} uploading {, uploading} other {}}",
+    "remove": "Remove: {name}",
+    "add": "Add attachment",
+    "uploadFailed": "Couldn't upload the file"
+  },
+  "newTab": "(opens in a new tab)",
+  "markdownImage": {
+    "link": "Image: {alt}",
+    "linkNoAlt": "Image: no description",
+    "unavailable": "[Image unavailable: {alt}]",
+    "unavailableNoAlt": "[Image unavailable]"
+  },
+  "file": {
+    "generic": "File",
+    "text": "Text file",
+    "typed": "{type} file",
+    "untitled": "Untitled file",
+    "download": "Download {name}",
+    "downloadUnnamed": "Download file"
+  },
+  "image": {
+    "alt": "Image",
+    "zoomAlt": "Image preview",
+    "zoom": "Enlarge image",
+    "zoomed": "Enlarged image",
+    "closeZoom": "Close enlarged image",
+    "generating": "Generating image…",
+    "generateFailed": "Couldn't generate the image",
+    "blocked": "The provider blocked this image.",
+    "regenerate": "Regenerate image",
+    "download": "Download image",
+    "copy": "Copy image"
+  },
+  "media": {
+    "audio": "Audio",
+    "play": "Play audio",
+    "playTitled": "Play {title}",
+    "pause": "Pause audio",
+    "pauseTitled": "Pause {title}",
+    "seek": "Seek",
+    "playFailed": "Couldn't play the audio",
+    "video": "Video"
+  }
+}

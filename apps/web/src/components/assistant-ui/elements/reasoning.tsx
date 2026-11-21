@@ -12,6 +12,7 @@ import {
 import { useIsomorphicLayoutEffect } from "@/utils/useIsomorphicLayoutEffect";
 import { cva, type VariantProps } from "class-variance-authority";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import {
   CollapsibleRoot as Collapsible,
@@ -178,7 +179,7 @@ function ReasoningTrigger({
   active?: boolean;
   duration?: number | undefined;
 }) {
-  const durationText = duration ? ` (${duration} с)` : "";
+  const t = useTranslations("chat");
 
   return (
     <CollapsibleTrigger
@@ -200,7 +201,7 @@ function ReasoningTrigger({
           active && "shimmer motion-reduce:animate-none",
         )}
       >
-        Рассуждения{durationText}
+        {duration ? t("reasoningWithDuration", { seconds: duration }) : t("reasoning")}
       </span>
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"

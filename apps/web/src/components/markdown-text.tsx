@@ -13,6 +13,7 @@ import remarkGfm from "remark-gfm";
 import { type FC, memo, useMemo, useState } from "react";
 import type { TextMessagePartProps } from "@assistant-ui/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
@@ -75,6 +76,7 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
 export const MarkdownText = memo(MarkdownTextImpl);
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+  const t = useTranslations("chat");
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {
     if (!code || isCopied) return;
@@ -86,7 +88,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
       <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
         {language}
       </span>
-      <TooltipIconButton tooltip="Копировать" onClick={onCopy}>
+      <TooltipIconButton tooltip={t("copy")} onClick={onCopy}>
         {!isCopied && (
           <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
         )}
@@ -98,9 +100,10 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   );
 };
 
-const NewTabHint: FC = () => (
-  <span className="sr-only"> (откроется в новой вкладке)</span>
-);
+const NewTabHint: FC = () => {
+  const t = useTranslations("chat");
+  return <span className="sr-only"> {t("newTab")}</span>;
+};
 
 type MarkdownImageFallbackProps = {
   src: unknown;
@@ -109,6 +112,7 @@ type MarkdownImageFallbackProps = {
 
 /** Stands in for an image the browser must not fetch: a new-tab link when the source is a safe link, a placeholder otherwise. */
 const MarkdownImageFallback: FC<MarkdownImageFallbackProps> = ({ src, alt }) => {
+  const t = useTranslations("chat.markdownImage");
   const policy = linkPolicy(typeof src === "string" ? src : undefined);
   if (policy.kind === "new-tab") {
     return (
@@ -118,14 +122,14 @@ const MarkdownImageFallback: FC<MarkdownImageFallbackProps> = ({ src, alt }) => 
         rel="noopener noreferrer"
         className="aui-md-a text-primary hover:text-primary/80 underline underline-offset-2"
       >
-        {`Изображение: ${alt || "без описания"}`}
+        {alt ? t("link", { alt }) : t("linkNoAlt")}
         <NewTabHint />
       </a>
     );
   }
   return (
     <span className="aui-md-img-unavailable text-muted-foreground">
-      {`[Изображение недоступно${alt ? `: ${alt}` : ""}]`}
+      {alt ? t("unavailable", { alt }) : t("unavailableNoAlt")}
     </span>
   );
 };

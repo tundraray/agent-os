@@ -1,0 +1,126 @@
+{
+  "placeholder": "Спросите что-нибудь…",
+  "historyLoading": "Загружаем беседу…",
+  "caption": {
+    "assignment": "Поручение",
+    "fromChat": "От беседы",
+    "fromAgent": "От агента «{sender}»",
+    "fromAgentUnnamed": "От агента",
+    "report": "Отчёт",
+    "brief": "Задание"
+  },
+  "voice": {
+    "header": "Голосовой разговор",
+    "userSaid": "Вы сказали",
+    "assistantSaid": "Ассистент сказал",
+    "speaking": "Ассистент говорит"
+  },
+  "copy": "Копировать",
+  "loadEarlier": "Показать предыдущие сообщения",
+  "loadingEarlier": "Загружаем предыдущие сообщения…",
+  "scrollToBottom": "К последнему сообщению",
+  "suggestions": "Подсказки",
+  "starter": {
+    "meetingPlan": {
+      "title": "Составь план встречи",
+      "label": "по запуску нового проекта",
+      "prompt": "Составь план встречи по запуску нового проекта"
+    },
+    "clientLetter": {
+      "title": "Напиши письмо",
+      "label": "клиенту о переносе сроков",
+      "prompt": "Напиши письмо клиенту о переносе сроков"
+    },
+    "explainOkr": {
+      "title": "Объясни простыми словами",
+      "label": "что такое OKR и как их ставить",
+      "prompt": "Объясни простыми словами, что такое OKR и как их ставить"
+    },
+    "teamBuilding": {
+      "title": "Предложи идеи",
+      "label": "для тимбилдинга команды из 15 человек",
+      "prompt": "Предложи идеи для тимбилдинга команды из 15 человек"
+    }
+  },
+  "sendFailed": "Не удалось отправить сообщение. Попробуйте ещё раз.",
+  "chipPlaceholder": "{kind, select, agent {Опишите задачу для «{name}»…} other {Опишите, что разобрать, — чат подготовит задание для «{name}»…}}",
+  "composer": {
+    "message": "Сообщение",
+    "dictate": "Голосовой ввод",
+    "startDictation": "Начать голосовой ввод",
+    "stopDictation": "Остановить диктовку",
+    "send": "Отправить",
+    "resume": "Продолжить генерацию"
+  },
+  "replying": "Ассистент отвечает…",
+  "feedback": {
+    "positive": "Полезный ответ",
+    "negative": "Неполезный ответ"
+  },
+  "reasoning": "Рассуждения",
+  "reasoningWithDuration": "Рассуждения ({seconds} с)",
+  "tool": {
+    "outcome": {
+      "running": "выполняется",
+      "success": "готово",
+      "empty": "пустой результат",
+      "tool_error": "ошибка инструмента",
+      "transport_failure": "нет связи с сервером",
+      "refused": "отказано",
+      "auth_required": "нужен вход в аккаунт",
+      "awaiting_confirmation": "ждёт подтверждения",
+      "rejected": "отклонено",
+      "interrupted": "прервано",
+      "unknown": "исход неизвестен"
+    },
+    "trigger": "{tool}: {outcome}, {time}",
+    "authRequired": "Подключите аккаунт {server} в разделе «<link>Мой доступ</link>»",
+    "arguments": "Аргументы",
+    "result": "Результат"
+  },
+  "attachment": {
+    "preview": "Просмотр: {name}",
+    "tile": "{preview, select, yes {Просмотр: {name}} other {Вложение: {name}}}{state, select, error {, не удалось загрузить} uploading {, загружается} other {}}",
+    "remove": "Удалить: {name}",
+    "add": "Добавить вложение",
+    "uploadFailed": "Не удалось загрузить файл"
+  },
+  "newTab": "(откроется в новой вкладке)",
+  "markdownImage": {
+    "link": "Изображение: {alt}",
+    "linkNoAlt": "Изображение: без описания",
+    "unavailable": "[Изображение недоступно: {alt}]",
+    "unavailableNoAlt": "[Изображение недоступно]"
+  },
+  "file": {
+    "generic": "Файл",
+    "text": "Текстовый файл",
+    "typed": "Файл {type}",
+    "untitled": "Файл без названия",
+    "download": "Скачать {name}",
+    "downloadUnnamed": "Скачать файл"
+  },
+  "image": {
+    "alt": "Изображение",
+    "zoomAlt": "Просмотр изображения",
+    "zoom": "Увеличить изображение",
+    "zoomed": "Увеличенное изображение",
+    "closeZoom": "Закрыть увеличенное изображение",
+    "generating": "Создаём изображение…",
+    "generateFailed": "Не удалось создать изображение",
+    "blocked": "Провайдер заблокировал это изображение.",
+    "regenerate": "Создать изображение заново",
+    "download": "Скачать изображение",
+    "copy": "Копировать изображение"
+  },
+  "media": {
+    "audio": "Аудио",
+    "play": "Воспроизвести аудио",
+    "playTitled": "Воспроизвести {title}",
+    "pause": "Пауза аудио",
+    "pauseTitled": "Пауза {title}",
+    "seek": "Перемотка",
+    "playFailed": "Не удалось воспроизвести аудио",
+    "video": "Видео"
+  }
+}

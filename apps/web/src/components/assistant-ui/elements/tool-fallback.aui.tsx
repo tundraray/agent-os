@@ -38,6 +38,7 @@ import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
 import { builtinToolLabels } from "@/lib/i18n/builtin-name";
+import type { ChatTranslator } from "@/lib/i18n/messages";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
@@ -52,21 +53,21 @@ import {
 /** The eleven outcomes of tool-call.md: the nine finished ones and two of an open call. */
 type CallOutcome = ToolOutcome | "running" | "awaiting_confirmation";
 
-type OutcomeLook = { label: string; Icon: LucideIcon; tone: string; showsResult: boolean };
+type OutcomeLook = { Icon: LucideIcon; tone: string; showsResult: boolean };
 
-/** MC-22 texts, icons and colour roles (tool-call.md, States). */
+/** Icons and colour roles of the outcomes (tool-call.md, States); the MC-22 texts are `chat.tool.outcome`. */
 const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
-  running: { label: "выполняется", ...agentStatusGlyph("working"), showsResult: false },
-  success: { label: "готово", Icon: CircleCheckIcon, tone: "text-success", showsResult: true },
-  empty: { label: "пустой результат", Icon: CircleIcon, tone: "text-muted-foreground", showsResult: true },
-  tool_error: { label: "ошибка инструмента", Icon: CircleXIcon, tone: "text-destructive", showsResult: false },
-  transport_failure: { label: "нет связи с сервером", Icon: UnplugIcon, tone: "text-destructive", showsResult: false },
-  refused: { label: "отказано", Icon: BanIcon, tone: "text-destructive", showsResult: false },
-  auth_required: { label: "нужен вход в аккаунт", Icon: KeyRoundIcon, tone: "text-warning", showsResult: false },
-  awaiting_confirmation: { label: "ждёт подтверждения", ...agentStatusGlyph("awaiting_confirmation"), showsResult: false },
-  rejected: { label: "отклонено", Icon: CircleMinusIcon, tone: "text-muted-foreground", showsResult: false },
-  interrupted: { label: "прервано", Icon: CircleStopIcon, tone: "text-muted-foreground", showsResult: false },
-  unknown: { label: "исход неизвестен", Icon: CircleQuestionMarkIcon, tone: "text-warning", showsResult: false },
+  running: { ...agentStatusGlyph("working"), showsResult: false },
+  success: { Icon: CircleCheckIcon, tone: "text-success", showsResult: true },
+  empty: { Icon: CircleIcon, tone: "text-muted-foreground", showsResult: true },
+  tool_error: { Icon: CircleXIcon, tone: "text-destructive", showsResult: false },
+  transport_failure: { Icon: UnplugIcon, tone: "text-destructive", showsResult: false },
+  refused: { Icon: BanIcon, tone: "text-destructive", showsResult: false },
+  auth_required: { Icon: KeyRoundIcon, tone: "text-warning", showsResult: false },
+  awaiting_confirmation: { ...agentStatusGlyph("awaiting_confirmation"), showsResult: false },
+  rejected: { Icon: CircleMinusIcon, tone: "text-muted-foreground", showsResult: false },
+  interrupted: { Icon: CircleStopIcon, tone: "text-muted-foreground", showsResult: false },
+  unknown: { Icon: CircleQuestionMarkIcon, tone: "text-warning", showsResult: false },
 };
 
 const ArgLabelsSchema = z.record(z.string(), z.string());
@@ -95,7 +96,7 @@ function textField(artifact: unknown, key: keyof ToolCallArtifact): string | nul
 
 /**
  * The outcome of a call from the `artifact` toFeed puts on its part. A value the contract does not hold
- * reads as «исход неизвестен» and is warned about once.
+ * reads as `unknown` and is warned about once.
  */
 function outcomeOf(artifact: unknown): CallOutcome {
   const state = ToolCallStateSchema.safeParse(field(artifact, "state"));
@@ -218,19 +219,24 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
  * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
  */
-function reasonLine(t: ErrorsTranslator, outcome: CallOutcome, artifact: unknown, server: string): ReasonLine | null {
+function reasonLine(
+  t: ErrorsTranslator,
+  tChat: ChatTranslator,
+  outcome: CallOutcome,
+  artifact: unknown,
+  server: string,
+): ReasonLine | null {
   if (outcome === "refused") return refusalOf(t, artifact);
   if (outcome === "auth_required") {
     return {
-      content: (
-        <>
-          Подключите аккаунт {server} в разделе «
+      content: tChat.rich("tool.authRequired", {
+        server,
+        link: (chunks) => (
           <Link href={ACCOUNT_PATH} className={LINK_CLASS}>
-            Мой доступ
+            {chunks}
           </Link>
-          »
-        </>
-      ),
+        ),
+      }),
       hint: undefined,
     };
   }
@@ -260,10 +266,12 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
   const t = useTranslations("errors");
+  const tChat = useTranslations("chat");
   const { tools } = useMessages();
 
   const outcome = outcomeOf(artifact);
   const look = OUTCOME_LOOK[outcome];
+  const outcomeText = tChat(`tool.outcome.${outcome}`);
   const server = textField(artifact, "server");
   // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the answer.
   const builtin = server === null ? builtinToolLabels(tools, toolName) : null;
@@ -283,7 +291,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const time = formatListTime(format, at);
   // The library line reads the library list from the shell, so other blocks never mount it.
   const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
-  const reason = libraryRefusal ? null : reasonLine(t, outcome, artifact, server ?? toolName);
+  const reason = libraryRefusal ? null : reasonLine(t, tChat, outcome, artifact, server ?? toolName);
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =
@@ -305,7 +313,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
     >
       <CollapsibleTrigger
         data-slot="tool-fallback-trigger"
-        aria-label={`${toolLabel}: ${look.label}, ${time}`}
+        aria-label={tChat("tool.trigger", { tool: toolLabel, outcome: outcomeText, time })}
         className="group/trigger hover:bg-accent focus-visible:ring-ring flex w-full min-w-0 flex-col rounded-lg px-2 text-start text-sm outline-none focus-visible:ring-2"
       >
         <span className="flex h-8 w-full min-w-0 items-center gap-2 pointer-coarse:h-11">
@@ -322,7 +330,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           {server !== null && secondLine === null ? (
             <span className="text-muted-foreground min-w-0 truncate text-xs">{server}</span>
           ) : null}
-          <span className={cn("ms-auto shrink-0 text-xs whitespace-nowrap", look.tone)}>{look.label}</span>
+          <span className={cn("ms-auto shrink-0 text-xs whitespace-nowrap", look.tone)}>{outcomeText}</span>
           <time dateTime={at} className="text-muted-foreground shrink-0 text-xs tabular-nums">
             {time}
           </time>
@@ -351,7 +359,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
       >
         <div className="flex flex-col gap-2 px-2 pt-1 pb-2">
           <ValueRows
-            label="Аргументы"
+            label={tChat("tool.arguments")}
             rows={runCode?.rows ?? valueRows(args, labels)}
             script={runCode?.script}
             raw={argsText}
@@ -360,7 +368,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
           />
           {resultText !== null ? (
             <ValueRows
-              label="Результат"
+              label={tChat("tool.result")}
               rows={flatRows(parsedResult(shownResult))}
               raw={resultText}
               disclosure={false}

@@ -1,5 +1,6 @@
 import enAccount from '@/messages/en/account.json';
 import enAnnounce from '@/messages/en/announce.json';
+import enChat from '@/messages/en/chat.json';
 import enCommon from '@/messages/en/common.json';
 import enErrors from '@/messages/en/errors.json';
 import enFormats from '@/messages/en/formats.json';
@@ -9,6 +10,7 @@ import enShell from '@/messages/en/shell.json';
 import enTools from '@/messages/en/tools.json';
 import ruAccount from '@/messages/ru/account.json';
 import ruAnnounce from '@/messages/ru/announce.json';
+import ruChat from '@/messages/ru/chat.json';
 import ruCommon from '@/messages/ru/common.json';
 import ruErrors from '@/messages/ru/errors.json';
 import ruFormats from '@/messages/ru/formats.json';
@@ -16,12 +18,14 @@ import ruLogin from '@/messages/ru/login.json';
 import ruPages from '@/messages/ru/pages.json';
 import ruShell from '@/messages/ru/shell.json';
 import ruTools from '@/messages/ru/tools.json';
+import type { useTranslations } from 'next-intl';
 import type { Locale } from './pick-locale';
 
 /** One entry per screen area; an area is a next-intl namespace. A new area file is registered here. */
 const en = {
   account: enAccount,
   announce: enAnnounce,
+  chat: enChat,
   common: enCommon,
   errors: enErrors,
   formats: enFormats,
@@ -34,9 +38,13 @@ const en = {
 /** The English catalog sets the type, so `tsc` rejects a Russian catalog missing a key. */
 export type Messages = typeof en;
 
+/** The translate function of the conversation area, for text functions that take it as a parameter. */
+export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
+
 const ru: Messages = {
   account: ruAccount,
   announce: ruAnnounce,
+  chat: ruChat,
   common: ruCommon,
   errors: ruErrors,
   formats: ruFormats,
