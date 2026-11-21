@@ -133,13 +133,6 @@ export function createDraftRecordTool(
 
   return {
     name: DRAFT_RECORD_TOOL,
-    title: 'Черновик записи',
-    argLabels: {
-      recordId: 'Запись',
-      kind: 'Вид',
-      name: 'Имя',
-      description: 'Описание',
-    },
     description: DESCRIPTION,
     argsSchema: DraftRecordArgsSchema,
     mode: 'in_commit',

@@ -1,0 +1,23 @@
+{
+  "start_agent": { "title": "Запустить агента", "args": { "description": "Название", "agent": "Агент", "prompt": "Задание" } },
+  "message_agent": { "title": "Написать агенту", "args": { "agentId": "Агент", "message": "Сообщение" } },
+  "list_agents": { "title": "Показать агентов", "args": {} },
+  "stop_agent": { "title": "Остановить агента", "args": { "agentId": "Агент" } },
+  "run_code": {
+    "title": "Выполнить код",
+    "args": { "description": "Описание", "class": "Класс запуска", "script": "Скрипт" }
+  },
+  "read_tool_result": {
+    "title": "Прочитать сохранённый результат",
+    "args": { "callId": "Вызов", "offset": "С строки", "limit": "Строк" }
+  },
+  "search_tool_result": { "title": "Найти в сохранённом результате", "args": { "callId": "Вызов", "pattern": "Что найти" } },
+  "start_workflow": {
+    "title": "Запустить workflow",
+    "args": { "workflow": "Workflow", "question": "Вопрос", "boundaries": "Границы", "result": "Результат" }
+  },
+  "draft_record": {
+    "title": "Подготовить черновик",
+    "args": { "recordId": "Запись", "kind": "Вид", "name": "Имя", "description": "Описание" }
+  }
+}

@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useFormatter } from "next-intl";
+import { useFormatter, useLocale } from "next-intl";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -21,6 +21,7 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
@@ -242,8 +243,10 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
  */
 export function RunCard({ data }: RunCardProps) {
   const format = useFormatter();
+  const locale = useLocale();
   const statusLabel = AGENT_STATUS_LABEL[data.status];
-  const record = runRecord(data);
+  const origin = runRecord(data);
+  const record = origin === null ? null : { ...origin, name: builtinName(origin, locale) };
   const time = (
     <time dateTime={data.createdAt} className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums">
       {formatListTime(format, data.createdAt)}
@@ -301,7 +304,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
   return (
     <div
       role="group"
-      aria-label={`${data.name}: ${AGENT_STATUS_LABEL[data.status]}`}
+      aria-label={`${origin.name}: ${AGENT_STATUS_LABEL[data.status]}`}
       data-slot="run-card"
       data-variant="workflow"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"

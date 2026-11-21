@@ -368,8 +368,6 @@ export function createRunCodeTool(deps: RunCodeDeps): OutsideAgentTool<RunCodeAr
   return {
     name: RUN_CODE_TOOL,
     mode: 'outside',
-    title: 'Выполнить код',
-    argLabels: { description: 'Описание', class: 'Класс запуска', script: 'Скрипт' },
     description: DESCRIPTION,
     argsSchema: RunCodeArgsSchema,
     confirmation: {

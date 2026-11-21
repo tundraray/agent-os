@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { memo, useState, type ReactNode } from "react";
-import { useFormatter, useTranslations } from "next-intl";
+import { useFormatter, useMessages, useTranslations } from "next-intl";
 import {
   BanIcon,
   ChevronRightIcon,
@@ -37,6 +37,7 @@ import type { ErrorsTranslator } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
+import { builtinToolLabels } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
@@ -138,9 +139,6 @@ function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
     ? { content: text, hint: undefined }
     : { content: t("platformRefusal"), hint: textField(artifact, "refusalReason") ?? undefined };
 }
-
-/** Built-in tools whose MC-16 label stands in place of the tool's own title. */
-const TOOL_LABEL = new Map([["draft_record", "Подготовить черновик"]]);
 
 /** The library's create and start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
 const LIBRARY_TOOLS = new Set(["start_agent", "start_workflow", "draft_record"]);
@@ -262,14 +260,17 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
   const t = useTranslations("errors");
+  const { tools } = useMessages();
 
   const outcome = outcomeOf(artifact);
   const look = OUTCOME_LOOK[outcome];
   const server = textField(artifact, "server");
-  const toolTitle = textField(artifact, "toolTitle");
-  const toolLabel = TOOL_LABEL.get(toolName) ?? toolTitle ?? toolName;
+  // A built-in tool's labels come from the catalogue (MC-9); an MCP tool's from its server, in the answer.
+  const builtin = server === null ? builtinToolLabels(tools, toolName) : null;
+  const toolTitle = server === null ? null : textField(artifact, "toolTitle");
+  const toolLabel = builtin?.title ?? toolTitle ?? toolName;
   const argLabels = ArgLabelsSchema.safeParse(field(artifact, "argLabels"));
-  const labels = argLabels.success ? argLabels.data : undefined;
+  const labels = builtin?.args ?? (argLabels.success ? argLabels.data : undefined);
   const runCode = isRunCode(toolName, server) ? runCodeView(args, labels) : null;
   /**
    * The second header line: a code run's description (code-execution UXRD, KD-4), or «name · server» of a

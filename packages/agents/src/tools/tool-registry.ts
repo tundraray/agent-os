@@ -103,8 +103,8 @@ export interface ToolRegistry {
   /** A built-in or registered tool, or `run_code`, by its name. */
   toolOf(name: string): AgentTool | undefined;
   /**
-   * How the given calls read for the employee, in their order; empty for a tool that is not known now.
-   * The servers the calls name are read in one query.
+   * How the given calls read for the employee, in their order: the server's titles of an MCP tool;
+   * empty for a built-in tool and for an MCP tool that is not listed now. The servers are read in one query.
    */
   displays(calls: readonly ToolTarget[]): Promise<ToolDisplay[]>;
   /**
@@ -283,14 +283,10 @@ export function createToolRegistry(options: ToolRegistryOptions): ToolRegistry {
       const names = new Set(calls.flatMap(({ server }) => (server === null ? [] : [server])));
       const rows = await findServers(database, [...names]);
       const listed = new Map(rows.map((row) => [row.name, storedMcpTools(row.tools)]));
-      return calls.map(({ tool, server }): ToolDisplay => {
-        if (server !== null) return listed.get(server)?.find((mcp) => mcp.tool === tool)?.display ?? {};
-        const { title, argLabels } = toolOf(tool) ?? {};
-        return {
-          ...(title === undefined ? {} : { toolTitle: title }),
-          ...(argLabels === undefined ? {} : { argLabels }),
-        };
-      });
+      return calls.map(
+        ({ tool, server }): ToolDisplay =>
+          (server === null ? undefined : listed.get(server)?.find((mcp) => mcp.tool === tool)?.display) ?? {},
+      );
     },
     async sessionTools(input) {
       const listing = input.root ? await rootListing(input) : null;

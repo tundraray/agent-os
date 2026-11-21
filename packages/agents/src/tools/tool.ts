@@ -96,8 +96,9 @@ export interface ToolConfirmation<Args> {
 }
 
 /**
- * How a tool call reads for the employee: the tool's human title and the labels of its arguments by
- * key. Built when a view is read, never stored; a tool or an argument without a title has none.
+ * How an MCP tool call reads for the employee: the server's title of the tool and the labels of its
+ * arguments by key. Built when a view is read, never stored; a tool or an argument without a title has
+ * none. A built-in tool has none: the web takes its labels from its catalogue by the tool's name.
  */
 export interface ToolDisplay {
   readonly toolTitle?: string;
@@ -107,10 +108,6 @@ export interface ToolDisplay {
 interface AgentToolBase<Args> {
   /** The name the model sees. */
   readonly name: string;
-  /** The name the employee sees. */
-  readonly title?: string;
-  /** Labels of the arguments the employee sees, by key. */
-  readonly argLabels?: Readonly<Record<string, string>>;
   readonly description: string;
   readonly argsSchema: z.ZodType<Args>;
   readonly confirmation?: ToolConfirmation<Args>;

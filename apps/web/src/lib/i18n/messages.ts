@@ -4,12 +4,14 @@ import enCommon from '@/messages/en/common.json';
 import enErrors from '@/messages/en/errors.json';
 import enFormats from '@/messages/en/formats.json';
 import enLogin from '@/messages/en/login.json';
+import enTools from '@/messages/en/tools.json';
 import ruAccount from '@/messages/ru/account.json';
 import ruAnnounce from '@/messages/ru/announce.json';
 import ruCommon from '@/messages/ru/common.json';
 import ruErrors from '@/messages/ru/errors.json';
 import ruFormats from '@/messages/ru/formats.json';
 import ruLogin from '@/messages/ru/login.json';
+import ruTools from '@/messages/ru/tools.json';
 import type { Locale } from './pick-locale';
 
 /** One entry per screen area; an area is a next-intl namespace. A new area file is registered here. */
@@ -20,6 +22,7 @@ const en = {
   errors: enErrors,
   formats: enFormats,
   login: enLogin,
+  tools: enTools,
 };
 
 /** The English catalog sets the type, so `tsc` rejects a Russian catalog missing a key. */
@@ -32,6 +35,7 @@ const ru: Messages = {
   errors: ruErrors,
   formats: ruFormats,
   login: ruLogin,
+  tools: ruTools,
 };
 
 type MessageTree = { [key: string]: string | MessageTree };

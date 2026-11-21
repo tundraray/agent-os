@@ -21,8 +21,6 @@ export function createMessageAgentTool(deps: {
 }): InCommitAgentTool<MessageAgentArgs> {
   return {
     name: 'message_agent',
-    title: 'Написать агенту',
-    argLabels: { agentId: 'Агент', message: 'Сообщение' },
     description:
       'Send a message to an agent you started (or one it started). A finished agent continues its work with the message.',
     argsSchema: MessageAgentArgsSchema,

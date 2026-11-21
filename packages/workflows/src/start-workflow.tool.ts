@@ -94,8 +94,6 @@ export function createStartWorkflowTool(
 
   return {
     name: START_WORKFLOW_TOOL,
-    title: 'Запустить workflow',
-    argLabels: { workflow: 'Workflow', question: 'Вопрос', boundaries: 'Границы', result: 'Результат' },
     description: DESCRIPTION,
     argsSchema: StartWorkflowArgsSchema,
     mode: 'in_commit',
