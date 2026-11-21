@@ -15,6 +15,13 @@
       "when": 1795257457411,
       "tag": "0001_identity_users_language",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795286554401,
+      "tag": "0002_tool_refusal_repeated_call",
+      "breakpoints": true
     }
   ]
 }

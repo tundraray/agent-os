@@ -107,6 +107,7 @@ export const ToolRefusalReasonSchema = z.enum([
   'run_limit',
   'read_only',
   'shared',
+  'repeated_call',
 ]);
 export type ToolRefusalReason = z.infer<typeof ToolRefusalReasonSchema>;
 

@@ -2093,7 +2093,7 @@ describe('self-learning / core - integration (real Postgres, scripted model)', (
     const endHeld = createLatch();
     const model = createScriptedModel();
     model.script({ agent: KNOWLEDGE_EXTRACT_AGENT }, [{ calls: [recordKnowledge([lessonOf('billing-api')])] }]);
-    const scout = scoutScript(model, 'Scout the billing logs', ['billing-api']);
+    const scout = scoutScript(model, 'Scout the billing logs', ['payment-api']);
 
     await withLibraryRow(database.db, recordId, () =>
       withKnowledgeLimit(database.db, KNOWLEDGE_LIMIT_TOKENS_MIN, async () => {

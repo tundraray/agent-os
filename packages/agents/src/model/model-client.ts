@@ -126,6 +126,11 @@ export interface ModelAnswer {
   readonly toolCalls: readonly AgentToolCall[];
   readonly usage: CallUsage;
   readonly modelCallId: string;
+  /**
+   * The provider ended the answer at the output length limit (finish reason `length`, KD-3). Not a model
+   * error: the caller decides what a cut answer means.
+   */
+  readonly cutOff: boolean;
 }
 
 /** Why a model call failed on the provider's side: its state before the request, or its rejection (KD-2). */
@@ -491,6 +496,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
       if (result.kind === 'model_error') return result;
       const { generation, callId, durationMs } = result;
       const { usage } = generation;
+      const cutOff = generation.finishReason === 'length';
       request.logger.info('model call answered', {
         model: request.model,
         provider: connected.connection.name,
@@ -498,6 +504,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         ...usage,
         toolCalls: generation.toolCalls.length,
         finishReason: generation.finishReason,
+        cutOff,
         durationMs,
       });
       return {
@@ -506,6 +513,7 @@ export function createModelClient(deps: ModelClientDeps): ModelClient {
         toolCalls: generation.toolCalls,
         usage,
         modelCallId: callId,
+        cutOff,
       };
     },
 

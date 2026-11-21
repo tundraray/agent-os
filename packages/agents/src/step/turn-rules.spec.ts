@@ -9,6 +9,7 @@ const CHILD: EndOfTurnInput = {
   finalExecutor: null,
   finalExecutorReport: null,
   text: 'my own answer',
+  cutOff: false,
 };
 
 describe('the end of a turn waits, refuses or completes', () => {
@@ -41,5 +42,32 @@ describe('the end of a turn waits, refuses or completes', () => {
     expect(outcome.kind).toBe(kind);
     if (outcome.kind === 'complete') expect(outcome.report).toBe(report);
     if (outcome.kind === 'notice') expect(outcome.text).toContain('"answer"');
+  });
+});
+
+// agent-harness AC-01.1 (rule), KD-3, DC-1: a cut-off text is never a report; only an agent whose text would
+// become its report gets the cut-off notice, the others behave as without the cut.
+describe('a cut-off answer is not a report', () => {
+  const CUT = { ...CHILD, cutOff: true };
+  it.each<[string, EndOfTurnInput, EndOfTurn]>([
+    [
+      'an agent without an answer executor gets the cut-off notice',
+      CUT,
+      {
+        kind: 'notice',
+        text:
+          'Your answer was cut off at the output length limit and is not accepted as your report. ' +
+          'Write the report again, shorter, so that it fits in one answer.',
+      },
+    ],
+    ['an agent with an unfinished child waits', { ...CUT, unfinishedChildren: 1 }, { kind: 'wait' }],
+    ['the root session waits', { ...CUT, isRoot: true }, { kind: 'wait' }],
+    [
+      "a coordinator ends with its answer executor's completed report",
+      { ...CUT, finalExecutor: 'answer', finalExecutorReport: { status: 'completed', text: 'final report' } },
+      { kind: 'complete', report: 'final report' },
+    ],
+  ])('%s', (_, input, outcome) => {
+    expect(endOfTurn(input)).toStrictEqual(outcome);
   });
 });

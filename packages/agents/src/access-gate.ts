@@ -63,8 +63,25 @@ export interface AccessDeniedEntry {
   readonly reason: string;
 }
 
-/** Writes an `access_denied` record; supplied by the upper part together with the gate. */
-export type AccessAudit = (entry: AccessDeniedEntry) => Promise<void>;
+/**
+ * A refused MCP call whose arguments the model got wrong — invalid for the tool's schema or a repeat of the
+ * same call (agent-harness design-core.md KD-6): a model's mistake, kept apart from `access_denied`.
+ */
+export interface ToolCallRefusedEntry {
+  readonly kind: 'tool_call_refused';
+  readonly actor: string;
+  readonly objectType: 'tool';
+  /** `<server>/<tool>`. */
+  readonly objectId: string;
+  readonly outcome: 'rejected';
+  readonly reason: 'invalid_arguments' | 'repeated_call';
+}
+
+/** A record the agents write to the audit. */
+export type AuditRecord = AccessDeniedEntry | ToolCallRefusedEntry;
+
+/** Writes an audit record of a refused call; supplied by the upper part together with the gate. */
+export type AccessAudit = (entry: AuditRecord) => Promise<void>;
 
 /** A model or tool call stopped because the owner is disabled or unknown; the call does not start. */
 export class OwnerDisabledError extends Error {

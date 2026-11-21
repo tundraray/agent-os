@@ -1,10 +1,15 @@
-import { AGENT_TASK_TYPE, AgentMessageKindSchema, HistoryEventSchema } from '@agent-os/contracts';
+import {
+  AGENT_TASK_TYPE,
+  AgentMessageKindSchema,
+  HistoryEventSchema,
+  ToolCallStateSchema,
+} from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { RuntimeTx, StepContext, StepResult, TaskHandler } from '@agent-os/runtime';
 
 import type { AgentsEmbeddings } from '../embeddings/embeddings';
 import { embedQuestion } from '../knowledge/question-vector';
-import { type CallState, openCalls } from '../history/call-state';
+import { type CallState, foldCalls } from '../history/call-state';
 import type { HistoryEntry } from '../history/history';
 import { callRecords, interruptedResults } from '../store/call-records.repository';
 import { history, type NewHistoryEntry } from '../store/history.repository';
@@ -21,6 +26,7 @@ import { appendWithEvent, logStep, type ModelStep, type StepPrelude } from './mo
 import type { ToolStep } from './tool-step';
 
 const { interrupt } = AgentMessageKindSchema.enum;
+const { done } = ToolCallStateSchema.enum;
 
 /** The session fields a continuation sets (Flow 6): the turn counter from zero, `closed` cleared. */
 const CONTINUATION_PATCH: SessionPatch = { turns: 0, closed: false };
@@ -194,11 +200,12 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
     // One read of the history for the whole step: from the last compaction on, where every open call
     // and everything the model sees is. Nothing is cached between steps — any worker runs the next one.
     const own: HistoryEntry[] = await history.visible(database, ctx.taskId);
+    const calls = foldCalls(own);
     const plan: StepPlan = {
       continuation: continuationOf({ session, messages: ctx.messages }),
       interrupted: ctx.messages.some((message) => message.kind === interrupt),
       otherMessages: ctx.messages.some((message) => message.kind !== interrupt),
-      open: openCalls(own),
+      open: calls.filter((call) => call.state !== done),
     };
     const prelude = preludeOf(ctx, session, plan);
 
@@ -209,7 +216,7 @@ export function createAgentStepHandler(deps: AgentStepHandlerDeps): TaskHandler 
 
     const toRun = closesOpen(plan) ? [] : plan.open;
     if (toRun.length > 0) {
-      return withPrelude(ctx, await deps.toolStep(ctx, session, toRun), prelude);
+      return withPrelude(ctx, await deps.toolStep(ctx, session, toRun, calls), prelude);
     }
     // A compaction is written only here, with no call left open: `history.visible` relies on it.
     if (compactionDue(session, deps.compactAtTokens)) {

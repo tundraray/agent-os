@@ -7,7 +7,7 @@ import type { Database } from '@agent-os/db';
 import type { ModelPrice, StepContext, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessDeniedEntry, ModelVerdict } from './access-gate';
+import type { AccessDeniedEntry, AuditRecord, ModelVerdict } from './access-gate';
 import type { CallState } from './history/call-state';
 import type { KnowledgeVectorStore } from './knowledge/vector-store';
 import { createModelClient } from './model/model-client';
@@ -141,7 +141,7 @@ function refusedAgent(refusal: Refusal) {
   const database = emptyDatabase();
   const model = createScriptedModel();
   model.script({ agent: SNAPSHOT.name }, [], { thereafter: { text: 'answer' } });
-  const audits: AccessDeniedEntry[] = [];
+  const audits: AuditRecord[] = [];
   let toolRuns = 0;
   const lookup: AgentTool = {
     name: LOOKUP,
@@ -159,7 +159,7 @@ function refusedAgent(refusal: Refusal) {
       ? { refusedOwners: [OWNER] }
       : { refusedModels: { [MODEL]: refusal } }),
   });
-  const audit = async (entry: AccessDeniedEntry) => {
+  const audit = async (entry: AuditRecord) => {
     audits.push(entry);
   };
   const registry = createToolRegistry({
@@ -251,7 +251,7 @@ describe("an agent whose model or tool call is refused by the gate ends `failed`
     [
       'the tool step of a disabled owner',
       { kind: 'refused', reason: 'owner_disabled' },
-      (agent) => agent.toolStep(agent.ctx, SESSION, [OPEN_CALL]),
+      (agent) => agent.toolStep(agent.ctx, SESSION, [OPEN_CALL], [OPEN_CALL]),
       [],
     ],
   ])('%s', async (_, refusal, act, audits) => {

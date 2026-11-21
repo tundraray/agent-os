@@ -1,7 +1,7 @@
 import type { AgentContent } from '@agent-os/contracts';
 import type { ModelPrice } from '@agent-os/runtime';
 
-import { type AccessDeniedEntry, OwnerDisabledError } from '../access-gate';
+import { type AuditRecord, OwnerDisabledError } from '../access-gate';
 import {
   type AccessGateDoubleOptions,
   createAccessGateDouble,
@@ -260,12 +260,12 @@ describe('resolveStart', () => {
   ])('$case', async ({ source, gate, expected, resolved, audited = [] }) => {
     const library = createLibraryDouble();
     const ids = seed(library);
-    const entries: AccessDeniedEntry[] = [];
+    const entries: AuditRecord[] = [];
     const deps = {
       library,
       access: createAccessGateDouble({ prices: { [HAIKU]: PRICE, [SONNET]: PRICE }, ...gate }),
       providers: createProviderRegistryDouble({ anthropic: 'ready' }),
-      audit: async (entry: AccessDeniedEntry) => void entries.push(entry),
+      audit: async (entry: AuditRecord) => void entries.push(entry),
     };
 
     const resolution = await resolveStart({ ownerId: STARTER, source: source(ids) }, deps);

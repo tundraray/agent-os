@@ -1,4 +1,9 @@
-import { ToolCallStateSchema, ToolOutcomeSchema } from '@agent-os/contracts';
+import {
+  ToolCallStateSchema,
+  ToolOutcomeSchema,
+  type ToolRefusalReason,
+  ToolRefusalReasonSchema,
+} from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
@@ -13,17 +18,26 @@ import {
   callerOf,
   isInCommit,
   type ToolExecution,
+  reportCheck,
   type ToolRunner,
   toolDeniedEntry,
+  toolRefusedEntry,
 } from '../tools/tool-runner';
 import { entriesOf } from './deliver';
 import { appendWithEvent, logStep, refusedResult } from './model-step';
+import { type PastCall, repeatMarkText, repeatOf, repeatRefusalText } from './repeat-rule';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';
 
 const { sending, awaiting_confirmation: awaitingConfirmation } = ToolCallStateSchema.enum;
 const { refused, rejected, unknown } = ToolOutcomeSchema.enum;
+const { repeated_call: repeatedCall } = ToolRefusalReasonSchema.enum;
+
+/** A call as the repeat rule counts it. */
+function pastCallOf(call: CallState): PastCall {
+  return { callId: call.callId, tool: call.tool, server: call.server, args: call.args };
+}
 
 /** The part of a confirmation request the step needs back: which call it is about and what was shown. */
 const ConfirmationPayloadSchema = z.object({ callId: z.string(), content: z.unknown() });
@@ -56,19 +70,24 @@ export interface ToolStepDeps {
   readonly runner: ToolRunner;
   /** Asked once per step before the calls: the pairs `check` refuses with (design-access.md KD-1). */
   readonly access: Pick<AccessGate, 'tools'>;
-  /** Gets the `access_denied` record of each `no_access` the step's check decides (KD-6). */
+  /**
+   * Gets the `access_denied` record of each `no_access` the step's check decides, and the `tool_call_refused`
+   * record of each MCP call it refuses for its arguments (KD-6).
+   */
   readonly audit: AccessAudit;
 }
 
 /**
  * The tool step (KD-1): runs the open calls of the model's last answer, in answer order.
  * `openCalls` are the agent's calls without a result (`openCalls` of its history); a step that took an
- * `interrupt` never comes here (T4.4).
+ * `interrupt` never comes here (T4.4). `calls` are all the calls of the visible history (`foldCalls`): the
+ * repeat rule counts the closed ones (agent-harness KD-5).
  */
 export type ToolStep = (
   ctx: StepContext,
   session: Session,
   openCalls: readonly CallState[],
+  calls: readonly CallState[],
 ) => Promise<StepResult>;
 
 function decisionOf(ctx: StepContext): CallDecision | undefined {
@@ -155,6 +174,8 @@ function commitOf(
  * - The gate is asked once before the calls: a disabled owner fails the agent with `owner_disabled` and no
  *   call starts; a pair it does not allow is `no_access` before any confirmation, with one audit record.
  * - Every other open call, in order: a refused call never reaches its tool (`refused` with the reason);
+ *   a call the check allows goes through the repeat rule (agent-harness KD-5) — a third same call is
+ *   `repeated_call`, audited for an MCP tool; a second one runs and its result's text gets the mark;
  *   a call needing confirmation without a decision ends the step with `await_decision`, the ready
  *   results committed and the call's `tool_confirmation` written, the rest waiting; a rejected one is
  *   `rejected`; a confirmed one is sent once through `sendConfirmed` (intent through `guard`), and the step ends
@@ -168,7 +189,7 @@ function commitOf(
 export function createToolStep(deps: ToolStepDeps): ToolStep {
   const { registry, runner, access, audit } = deps;
 
-  return async function toolStep(ctx, session, openCalls) {
+  return async function toolStep(ctx, session, openCalls, calls) {
     const stepStartedAt = Date.now();
     const abandon = (why: string): StepResult => {
       ctx.logger.info('tool step abandoned without writes', {
@@ -193,8 +214,20 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
     });
     const decision = decisionOf(ctx);
     const closings: Closing[] = [];
+    // The repeat rule's past (KD-5): the closed calls of the visible history, then each call of this step it lets through.
+    const past: PastCall[] = calls.flatMap((earlier) =>
+      earlier.result === null ? [] : [{ ...pastCallOf(earlier), outcome: earlier.result.outcome }],
+    );
+    // The repeat mark of a call, by its id: appended to its result's text however it ends, never to `stored` (KD-1).
+    const marks = new Map<string, string>();
+    const marked = (call: CallState, ending: CallEnding): CallEnding => {
+      const mark = marks.get(call.callId);
+      if (mark === undefined) return ending;
+      const text = ending.resultText ?? '';
+      return { ...ending, resultText: text === '' ? mark : `${text}\n\n${mark}` };
+    };
     const close = (call: CallState, ending: CallEnding): Closing =>
-      (tx) => callRecords.close(tx, ctx.taskId, call, ending);
+      (tx) => callRecords.close(tx, ctx.taskId, call, marked(call, ending));
     /**
      * Closes a call the runner ran and stores its full result in the same transaction: every successful and
      * empty direct MCP result, as before (code-execution KD-5); only a long one reached the model as the
@@ -213,7 +246,7 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
         tx,
         ctx.taskId,
         call,
-        endingOf(execution, run.startedAt, run.finishedAt),
+        marked(call, endingOf(execution, run.startedAt, run.finishedAt)),
         decided === undefined
           ? undefined
           : { approved: decided.approve, ...(decided.args === undefined ? {} : { args: decided.args }) },
@@ -280,26 +313,61 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
           { callId: call.callId, toolName: requestedName(call), args: call.args },
           { sessionTools, caller, allows },
         );
-        if (check.kind === 'refused') {
-          // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
-          // The row keeps the name as asked when the offered set lacked the tool, so the pair comes from the check's set.
-          const target = callTargetOf(sessionTools, requestedName(call));
-          if (check.reason === 'no_access' && target.server !== null) {
-            await audit(toolDeniedEntry(session.ownerId, target.server, target.tool));
-          }
+        // The row keeps the name as asked when the offered set lacked the tool, so the pair comes from the check's set.
+        const target = callTargetOf(sessionTools, requestedName(call));
+        await reportCheck(
+          check,
+          { callId: call.callId, ...target },
+          { ownerId: session.ownerId, logger: ctx.logger, audit },
+        );
+        /** Closes the call `refused`; KD-1: the model reads why from the result's text. */
+        const refuse = (reason: ToolRefusalReason, text: string | undefined): void => {
           ctx.logger.info('tool call refused', {
             callId: call.callId,
             tool: call.tool,
             server: call.server,
             args: loggedArgsOf(sessionTools, requestedName(call), call.args),
             outcome: refused,
-            reason: check.reason,
+            reason,
             durationMs: 0,
           });
-          closings.push(close(call, { outcome: refused, refusalReason: check.reason }));
+          closings.push(
+            close(call, {
+              outcome: refused,
+              refusalReason: reason,
+              ...(text === undefined ? {} : { resultText: text }),
+            }),
+          );
+        };
+        if (check.kind === 'refused') {
+          // Before any confirmation: a pair the owner may not use is never offered to the employee (Flow 2).
+          if (check.reason === 'no_access' && target.server !== null) {
+            await audit(toolDeniedEntry(session.ownerId, target.server, target.tool));
+          }
+          refuse(check.reason, check.text);
           continue;
         }
         const resolved = check.call;
+
+        // After the check and before any confirmation: a third same call is never offered to the employee (KD-5).
+        const repeat = repeatOf({ call, past });
+        if (repeat.kind === 'refuse') {
+          if (target.server !== null) {
+            await audit(toolRefusedEntry(session.ownerId, target.server, target.tool, repeatedCall));
+          }
+          refuse(repeatedCall, repeatRefusalText(repeat.callIds));
+          continue;
+        }
+        past.push(pastCallOf(call));
+        if (repeat.kind === 'mark') {
+          ctx.logger.info('tool call repeated', {
+            callId: call.callId,
+            tool: call.tool,
+            server: call.server,
+            sameCallIds: repeat.callIds,
+          });
+          marks.set(call.callId, repeatMarkText(repeat.callIds));
+        }
 
         if (runner.needsConfirmation(resolved)) {
           const callDecision = decision?.callId === call.callId ? decision : undefined;
@@ -338,7 +406,9 @@ export function createToolStep(deps: ToolStepDeps): ToolStep {
               durationMs: 0,
             });
             closings.push((tx) =>
-              callRecords.close(tx, ctx.taskId, call, { outcome: rejected }, { approved: false }),
+              callRecords.close(tx, ctx.taskId, call, marked(call, { outcome: rejected }), {
+                approved: false,
+              }),
             );
             continue;
           }

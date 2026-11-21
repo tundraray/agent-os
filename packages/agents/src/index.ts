@@ -3,6 +3,7 @@ export {
   type AccessAudit,
   type AccessDeniedEntry,
   type AccessGate,
+  type AuditRecord,
   type EmbeddingVerdict,
   ModelNotConfiguredError,
   ModelRefusedError,

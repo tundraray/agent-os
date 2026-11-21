@@ -5,7 +5,7 @@
 // provider registry and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
-import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate';
+import type { AccessDeniedEntry, AccessGate, AuditRecord, ModelVerdict } from '../access-gate';
 import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn';
 import { createProviderRegistryDouble } from '../testing';
 import { CODE_RULE, createModelClient, type TextDelta } from './model-client';
@@ -292,7 +292,7 @@ interface VerdictRow {
    * the output tokens of its estimate; the input tokens of an estimate are counted from the sent request.
    */
   readonly ledgerRows: readonly { readonly price: ModelPrice; readonly estimatedOutputTokens?: number }[];
-  readonly audits: readonly AccessDeniedEntry[];
+  readonly audits: readonly AuditRecord[];
 }
 
 const QUOTA_REFUSAL: ModelVerdict = {
@@ -389,7 +389,7 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
     const verdictAsks: string[] = [];
     const ledgerRows: ModelCallRecord[] = [];
     let sent: AgentTurnCall | undefined;
-    const audits: AccessDeniedEntry[] = [];
+    const audits: AuditRecord[] = [];
     let providerCalls = 0;
     const cancel = new AbortController();
     const port = portDouble(row.attempts, () => cancel.abort(new Error('the step was cancelled')));
@@ -486,5 +486,47 @@ describe('the model verdict comes before the first attempt: a refusal makes no c
       })),
     );
     expect(audits).toEqual(row.audits);
+  });
+});
+
+// agent-harness KD-3: an answer the provider ended at the output length limit is marked `cutOff`, any other
+// finish reason is not; the flag is the same for every caller of `call` (model step, compaction).
+describe('ModelClient marks an answer cut off at the length limit', () => {
+  it.each<[string | undefined, boolean]>([
+    ['length', true],
+    ['stop', false],
+    ['tool-calls', false],
+    [undefined, false],
+  ])('finish reason %s gives cutOff %s', async (finishReason, cutOff) => {
+    const logger = loggerDouble();
+    const client = createModelClient({
+      turnClient: {
+        async streamTurn() {
+          return { finishReason, text: 'a text', toolCalls: [], usage: LEDGER_USAGE };
+        },
+      },
+      ledger: { record: async () => ({ callId: 'model-call-1', costUsd: 0 }) },
+      config: { maxOutputTokens: 100 },
+      providers: READY_PROVIDERS,
+      logger,
+      access: ALLOWING_GATE,
+      audit: async () => {},
+    });
+
+    const result = await client.call({
+      ownerId: 'owner-1',
+      rootId: 'root-1',
+      taskId: 'agent-1',
+      agentName: 'chat',
+      model: 'anthropic/claude-turn',
+      instructions: 'You are a chat.',
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [],
+      streamsText: false,
+      signal: new AbortController().signal,
+      logger,
+    });
+
+    expect(result).toMatchObject({ kind: 'answer', cutOff });
   });
 });

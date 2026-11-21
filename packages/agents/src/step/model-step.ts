@@ -4,6 +4,7 @@ import {
   CHILD_FINISHED_KIND,
   type ChipRecord,
   HistoryEventSchema,
+  RUN_CODE_TOOL,
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import {
@@ -27,7 +28,7 @@ import {
   modelRefusalMessage,
   refusalFields,
 } from '../model/model-client';
-import type { AgentTurnMessage } from '../model/mastra-turn';
+import type { AgentToolCall, AgentToolDefinition, AgentTurnMessage } from '../model/mastra-turn';
 import { buildProviderMessages, type ForkPrefix } from '../model/provider-messages';
 import { snapshotDefinition } from '../start/snapshot-definition';
 import { history, type NewHistoryEntry } from '../store/history.repository';
@@ -265,6 +266,27 @@ export async function callUnlessAborted<T>(ctx: StepContext, call: () => Promise
   }
 }
 
+/**
+ * The journal fields of an answered model call (FR-07, AC-07.1, DC-10): the tools the model was shown,
+ * the tools it chose in order, how many calls are direct and how many are `run_code`, and the cut-off
+ * flag. Names only — never argument values (NFR-01). Calls made from inside a script are not counted here.
+ */
+function answerFields(
+  tools: readonly AgentToolDefinition[],
+  answer: { readonly toolCalls: readonly AgentToolCall[]; readonly cutOff: boolean },
+): Record<string, unknown> {
+  const toolsChosen = answer.toolCalls.map((call) => call.toolName);
+  const runCodeCalls = toolsChosen.filter((name) => name === RUN_CODE_TOOL).length;
+  return {
+    toolsShown: tools.length,
+    toolNamesShown: tools.map((tool) => tool.name),
+    toolsChosen,
+    directCalls: toolsChosen.length - runCodeCalls,
+    runCodeCalls,
+    cutOff: answer.cutOff,
+  };
+}
+
 export interface ModelStepDeps {
   /** Reads the history outside the commit: only steps of this agent write it, one at a time. */
   readonly database: Database;
@@ -437,6 +459,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     }
 
     const counted = turns + 1;
+    const answered = answerFields(sessionTools, result);
     const answerEntry: NewHistoryEntry = {
       kind: 'model_answer',
       content: {
@@ -470,7 +493,11 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
     };
 
     if (result.toolCalls.length > 0) {
-      logStep(ctx, STEP_KIND, startedAt, 'continue', { toolCalls: result.toolCalls.length, turns: counted });
+      logStep(ctx, STEP_KIND, startedAt, 'continue', {
+        toolCalls: result.toolCalls.length,
+        turns: counted,
+        ...answered,
+      });
       return {
         outcome: 'continue',
         commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch),
@@ -489,6 +516,7 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
           ? null
           : await finalExecutorReport(ctx.taskId, finalExecutor, delivered),
       text: result.text,
+      cutOff: result.cutOff,
     });
 
     switch (ending.kind) {
@@ -497,17 +525,18 @@ export function createModelStep(deps: ModelStepDeps): ModelStep {
           turns: counted,
           unfinishedChildren: inFlight.unfinished,
           pendingChildNotices: inFlight.pending,
+          ...answered,
         });
         return { outcome: 'wait', commit: (tx, effects) => writeAnswer(tx, effects, [], callPatch) };
       case 'notice':
-        logStep(ctx, STEP_KIND, startedAt, 'continue', { notice: true, turns: counted });
+        logStep(ctx, STEP_KIND, startedAt, 'continue', { notice: true, turns: counted, ...answered });
         return {
           outcome: 'continue',
           commit: (tx, effects) =>
             writeAnswer(tx, effects, [{ kind: 'notice', content: { text: ending.text } }], callPatch),
         };
       case 'complete':
-        logStep(ctx, STEP_KIND, startedAt, 'complete', { turns: counted });
+        logStep(ctx, STEP_KIND, startedAt, 'complete', { turns: counted, ...answered });
         return {
           outcome: 'complete',
           result: { report: ending.report },

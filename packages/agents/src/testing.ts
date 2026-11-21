@@ -132,6 +132,8 @@ export interface ScriptedAnswer {
   /** Over {@link DEFAULT_USAGE}. */
   readonly usage?: Partial<CallUsage>;
   readonly latch?: Latch;
+  /** The answer ends at the output length limit: the double reports `finishReason: 'length'` (KD-3). */
+  readonly cutOff?: true;
 }
 
 /**
@@ -273,7 +275,7 @@ async function streamAnswer(
   }
   const calls = toolCalls();
   return {
-    finishReason: calls.length > 0 ? 'tool-calls' : 'stop',
+    finishReason: answer.cutOff ? 'length' : calls.length > 0 ? 'tool-calls' : 'stop',
     text: parts.join(''),
     toolCalls: calls,
     usage: { ...DEFAULT_USAGE, ...answer.usage },

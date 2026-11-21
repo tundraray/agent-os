@@ -3,7 +3,8 @@ import { type RecordHeader, RUN_CODE_TOOL, RunCodeArgsSchema } from '@agent-os/c
 import type { Database } from '@agent-os/db';
 import type { StepContext } from '@agent-os/runtime';
 import { z } from 'zod';
-import { type AccessDeniedEntry, type AccessGate, OwnerDisabledError } from '../access-gate';
+import { type AccessDeniedEntry, type AccessGate, type AuditRecord, OwnerDisabledError } from '../access-gate';
+import type { JsonSchemaObject } from '../model/mastra-turn';
 import type { AgentSnapshot } from '../start/snapshot';
 import type { CallState } from '../history/call-state';
 import { createToolStep } from '../step/tool-step';
@@ -135,7 +136,7 @@ function allowsOf(pairs: readonly string[]) {
 interface RunnerDoubles {
   readonly pairs?: readonly string[] | 'owner_disabled';
   readonly credentialsFor?: ToolRunnerOptions['accounts']['credentialsFor'];
-  readonly audits?: AccessDeniedEntry[];
+  readonly audits?: AuditRecord[];
 }
 
 /** A runner over the gate double whose client sends nothing: a call that reaches a server throws. */
@@ -459,7 +460,7 @@ function stepContext(): StepContext {
 /** What one admission scenario gave: its end, the audit records and how many credentials were read. */
 interface Admission {
   readonly end: string;
-  readonly audits: readonly AccessDeniedEntry[];
+  readonly audits: readonly AuditRecord[];
   readonly credentialsRead: number;
 }
 
@@ -477,9 +478,9 @@ const DENIED_SEARCH: AccessDeniedEntry = { ...DENIED_PURGE, objectId: 'logs/sear
 /** Runs one scenario over a runner whose credentials read counts and answers `server_gone`. */
 async function admission(
   pairs: readonly string[] | 'owner_disabled',
-  act: (runner: ToolRunner, audits: AccessDeniedEntry[]) => Promise<{ kind: string; reason?: string } | string>,
+  act: (runner: ToolRunner, audits: AuditRecord[]) => Promise<{ kind: string; reason?: string } | string>,
 ): Promise<Admission> {
-  const audits: AccessDeniedEntry[] = [];
+  const audits: AuditRecord[] = [];
   let credentialsRead = 0;
   const runner = runnerOf({
     pairs,
@@ -569,7 +570,7 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
               audits.push(entry);
             },
           });
-          const result = await step(stepContext(), SESSION, [OPEN_PURGE]);
+          const result = await step(stepContext(), SESSION, [OPEN_PURGE], [OPEN_PURGE]);
           return result.outcome;
         }),
       { end: 'continue', audits: [DENIED_PURGE], credentialsRead: 0 },
@@ -586,5 +587,151 @@ describe('a tool call is admitted only when the gate allows its server–tool pa
     ],
   ])('%s', async (_, scenario, expected) => {
     expect(await scenario()).toEqual(expected);
+  });
+});
+
+// agent-harness AC-02.2, AC-02.3, DC-2, KD-6: MCP arguments are held against the tool's stored JSON Schema; a
+// refusal names each wrong argument and what was expected, its text bounded; a schema that cannot be built lets
+// the call through unchecked, with the reason; a call from code gets the same text and one audit record.
+
+/** The fixture's way of listing a tool: zod's JSON Schema of dialect 2020-12, no extra keys. */
+const SEARCH_SCHEMA: JsonSchemaObject = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
+  required: ['query'],
+  additionalProperties: false,
+};
+
+/** A `pattern` nested in a `$defs` subschema and a `format` in a nested object. */
+const PATTERN_SCHEMA: JsonSchemaObject = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  $defs: { hex: { type: 'string', pattern: '^[0-9a-f]{32}$' } },
+  properties: {
+    query: { $ref: '#/$defs/hex' },
+    window: { type: 'object', properties: { from: { type: 'string', format: 'date-time' } } },
+    limit: { type: 'integer' },
+  },
+  additionalProperties: false,
+};
+
+const FIELD_NAMES =Array.from({ length: 60 }, (_, index) => `field${index}`);
+
+/** Sixty string fields: a number in each makes an error longer than the bound. */
+const WIDE_SCHEMA: JsonSchemaObject = {
+  type: 'object',
+  properties: Object.fromEntries(FIELD_NAMES.map((name) => [name, { type: 'string' }])),
+};
+
+/** `MCP_TOOL` listed with the given schema. */
+function searchWith(inputSchema: JsonSchemaObject): SessionTool {
+  if (MCP_TOOL.kind !== 'mcp') throw new Error('MCP_TOOL is an MCP tool');
+  return { ...MCP_TOOL, inputSchema, mcp: { ...MCP_TOOL.mcp, inputSchema } };
+}
+
+interface ArgumentCheck {
+  readonly kind: string;
+  readonly reason?: string;
+  readonly text?: string;
+  readonly unchecked?: string;
+}
+
+/** `check` of a call of `tool` with `args`; the owner may use `logs/search`. */
+function argumentCheckOf(tool: SessionTool, args: unknown): ArgumentCheck {
+  const checked = checkCall({ toolName: tool.name, sessionTools: [tool], ownerPairs: ['logs/search'], args });
+  if (checked.kind === 'allowed') {
+    return { kind: 'allowed', ...(checked.unchecked === undefined ? {} : { unchecked: checked.unchecked }) };
+  }
+  return { kind: 'refused', reason: checked.reason, ...(checked.text === undefined ? {} : { text: checked.text }) };
+}
+
+describe('the arguments of a call are held against the tool schema: a refusal names each wrong argument and what was expected, an MCP schema that cannot be built lets the call through unchecked', () => {
+  it.each<[string, () => ArgumentCheck, ArgumentCheck]>([
+    [
+      'an MCP call without a required argument',
+      () => argumentCheckOf(searchWith(SEARCH_SCHEMA), { limit: 5 }),
+      { kind: 'refused', reason: 'invalid_arguments', text: "data must have required property 'query'" },
+    ],
+    [
+      // security review: a server's regex or format is not run in the API process (ReDoS); the server checks it
+      'an MCP schema with nested pattern and format checks only the type of a value that breaks them',
+      () =>
+        argumentCheckOf(searchWith(PATTERN_SCHEMA), {
+          query: 'not-an-id',
+          window: { from: 'yesterday' },
+          limit: 'five',
+        }),
+      { kind: 'refused', reason: 'invalid_arguments', text: 'data/limit must be integer' },
+    ],
+    ['an MCP call that fits the schema', () => argumentCheckOf(searchWith(SEARCH_SCHEMA), { query: 'error' }), { kind: 'allowed' }],
+    [
+      'a built-in call with a number instead of a string',
+      () => argumentCheckOf(START_AGENT_TOOL, { ...(START_AGENT_CALL.args as object), description: 5 }),
+      {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: 'description: Invalid input: expected string, received number',
+      },
+    ],
+    [
+      'an MCP schema of an unknown dialect',
+      () =>
+        argumentCheckOf(
+          searchWith({ $schema: 'http://json-schema.org/draft-04/schema#', type: 'object' }),
+          { query: 'error' },
+        ),
+      { kind: 'allowed', unchecked: expect.stringContaining('unsupported dialect') as string },
+    ],
+    [
+      'an MCP error longer than the bound',
+      () =>
+        argumentCheckOf(
+          searchWith(WIDE_SCHEMA),
+          Object.fromEntries(FIELD_NAMES.map((name, index) => [name, index])),
+        ),
+      {
+        kind: 'refused',
+        reason: 'invalid_arguments',
+        text: expect.stringMatching(/^data\/field0 must be string, [^]{972}\nresult cut by 728 characters$/) as string,
+      },
+    ],
+  ])('%s', (_, check, expected) => {
+    expect(check()).toEqual(expected);
+  });
+
+  it('a call from code refused for its arguments carries the same error and one tool_call_refused record, and reaches no server', async () => {
+    const audits: AuditRecord[] = [];
+    const tool = searchWith(SEARCH_SCHEMA);
+    const runner = runnerOf({ pairs: ['logs/search'], audits });
+
+    const execution = await runner.callFromCode(
+      { name: tool.name, args: { limit: 5 } },
+      {
+        caller: CALLER,
+        snapshot: [tool],
+        runClass: 'read',
+        agentToolNames: [],
+        callId: 'run-1',
+        signal: new AbortController().signal,
+        logger: SILENT,
+      },
+    );
+
+    expect(execution).toEqual({
+      kind: 'refused',
+      reason: 'invalid_arguments',
+      text: "mcp__logs__search: refused, invalid_arguments (read run): data must have required property 'query'",
+    });
+    expect(audits).toEqual([
+      {
+        kind: 'tool_call_refused',
+        actor: OWNER,
+        objectType: 'tool',
+        objectId: 'logs/search',
+        outcome: 'rejected',
+        reason: 'invalid_arguments',
+      },
+    ]);
   });
 });

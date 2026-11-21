@@ -46,16 +46,17 @@ import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher';
 import { McpConnectionsController } from './mcp-connections.controller';
 
 /**
- * The agents' audit hook (design-access.md KD-6): an `access_denied` record by its own insert, outside any
- * transaction. A failed write is logged with the record and thrown, so the step that refused is repeated
- * (plan Notes 3) — a refusal is never left out of the audit silently.
+ * The agents' audit hook (design-access.md KD-6; agent-harness design-core.md KD-6): an `access_denied` or
+ * `tool_call_refused` record, as is, by its own insert, outside any transaction. A failed write is logged with
+ * the record and thrown, so the step that refused is repeated (plan Notes 3) — a refusal is never left out of
+ * the audit silently.
  */
 function accessAudit(auditLog: AuditLog, logger: Logger): AccessAudit {
   return async (entry) => {
     try {
       await auditLog.record(null, entry);
     } catch (error) {
-      logger.error('access_denied audit record not written', {
+      logger.error('audit record not written', {
         ...entry,
         error,
       });

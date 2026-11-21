@@ -6,6 +6,7 @@ import {
   type AgentSessions,
   type AgentTurnMessage,
   type AgentTurnModelClient,
+  type AuditRecord,
   createAgents,
   type EmbeddingVerdict,
   createMastraTurnClient,
@@ -306,6 +307,8 @@ export interface AgentsHarness {
   readonly fixtureProcess: FixtureProcess;
   /** Every record runtime and agents logged, in order. */
   readonly logs: readonly LogRecord[];
+  /** Every record `createAgents` gave its audit port, in order (the API hook writes each as is). */
+  readonly auditEntries: readonly AuditRecord[];
   /** The embeddings double `createAgents` got: its calls, `vectorOf`, `failure`. */
   readonly embeddings: ScriptedEmbeddings;
   /**
@@ -373,6 +376,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     ...options.variables,
   });
   const sink = memorySink();
+  const auditEntries: AuditRecord[] = [];
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
   const library = options.library ?? createLibraryDouble();
   const embeddings = options.embeddings ?? createScriptedEmbeddings();
@@ -404,7 +408,9 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
       ...(options.refusedOwners === undefined ? {} : { refusedOwners: options.refusedOwners }),
       ...(options.ownerModelRefusals === undefined ? {} : { ownerModelRefusals: options.ownerModelRefusals }),
     }),
-    audit: async () => {},
+    audit: async (entry) => {
+      auditEntries.push(entry);
+    },
     library,
     ...(options.codeRunner === undefined ? {} : { codeRunner: options.codeRunner }),
     ...(options.onTextDelta === undefined ? {} : { onTextDelta: options.onTextDelta }),
@@ -454,6 +460,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     fixture,
     fixtureProcess,
     logs: sink.records,
+    auditEntries,
     embeddings,
     get embeddingVerdict() {
       return embeddingVerdict;

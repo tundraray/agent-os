@@ -8,7 +8,7 @@ import type { Logger } from '@agent-os/common';
 import type { ModelProviderState } from '@agent-os/contracts';
 import type { CallUsage, Clock, ModelCallRecord } from '@agent-os/runtime';
 
-import type { AccessDeniedEntry } from '../access-gate';
+import type { AuditRecord } from '../access-gate';
 import { createProviderRegistryDouble } from '../testing';
 import type { AgentTurnModelClient } from './mastra-turn';
 import { createModelClient } from './model-client';
@@ -250,7 +250,7 @@ describe('a provider rejection is a named reason with its retries, its ledger ro
     const calls = { count: 0 };
     const pauses: number[] = [];
     const ledgerRows: ModelCallRecord[] = [];
-    const audits: AccessDeniedEntry[] = [];
+    const audits: AuditRecord[] = [];
     const verdictAsks: string[] = [];
     const logger = loggerDouble();
     const clock: Clock = {

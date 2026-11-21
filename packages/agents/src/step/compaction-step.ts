@@ -72,7 +72,9 @@ export type CompactionStep = (
  * the session summarizes the history it sees; the step writes a `compaction` entry with the summary
  * and the `seq` it covers, the `compacted` event, then the delivered messages (KD-1), clears
  * `last_input_tokens` and returns `continue`. The call is not a turn (DC-1). Earlier entries stay:
- * the model sees the summary and what follows it, the employee reads the whole history.
+ * the model sees the summary and what follows it, the employee reads the whole history. An empty summary
+ * compacts nothing (agent-harness KD-7): the prelude and the delivered messages are written, `last_input_tokens`
+ * is cleared, and the step returns `continue` without a `compaction` entry or `compacted` event.
  */
 export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
   const { database, registry, modelClient, audit, vectorStore } = deps;
@@ -125,7 +127,8 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
     const writePrelude = async (tx: RuntimeTx): Promise<readonly NewHistoryEntry[]> =>
       prelude === undefined ? [] : prelude.write(tx);
 
-    const writeFailureEntries = async (tx: RuntimeTx): Promise<NewHistoryEntry[]> => [
+    // The entries a step that compacts nothing still owes: the prelude, then the delivered messages.
+    const writeOwedEntries = async (tx: RuntimeTx): Promise<NewHistoryEntry[]> => [
       ...(await writePrelude(tx)),
       ...delivered,
     ];
@@ -137,7 +140,7 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         model: session.model,
         refusal: result.verdict,
         audit,
-        writeEntries: writeFailureEntries,
+        writeEntries: writeOwedEntries,
         patch: { ...prelude?.patch },
       });
     }
@@ -151,15 +154,29 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
         ctx,
         reason: result.reason,
         message: modelErrorMessage(session.model, result),
-        writeEntries: writeFailureEntries,
+        writeEntries: writeOwedEntries,
         patch: { ...prelude?.patch },
       });
     }
 
+    const patch: SessionPatch = { ...prelude?.patch, turns, lastInputTokens: null };
     const summary = result.text.trim();
     if (summary === '') {
-      // An empty summary would hide the whole history from the model: fail the step, keep the history.
-      throw new Error(`The compaction call of agent ${ctx.taskId} returned no summary`);
+      // agent-harness KD-7: an empty summary would hide the whole history, so nothing is compacted; the
+      // step writes what it owes and clears `lastInputTokens`, so the next step is the model, not a compaction.
+      ctx.logger.warn('compaction returned an empty summary', {
+        agentId: ctx.taskId,
+        stepNo: ctx.stepNo,
+        model: session.model,
+      });
+      logStep(ctx, STEP_KIND, startedAt, 'continue', { emptySummary: true, turns });
+      return {
+        outcome: 'continue',
+        commit: async (tx, effects) => {
+          await appendWithEvent(tx, effects, ctx.taskId, await writeOwedEntries(tx));
+          await sessions.update(tx, ctx.taskId, patch);
+        },
+      };
     }
     if (result.toolCalls.length > 0) {
       ctx.logger.warn('compaction answer had tool calls; they are ignored', {
@@ -168,7 +185,6 @@ export function createCompactionStep(deps: CompactionStepDeps): CompactionStep {
       });
     }
 
-    const patch: SessionPatch = { ...prelude?.patch, turns, lastInputTokens: null };
     logStep(ctx, STEP_KIND, startedAt, 'continue', {
       compactedInputTokens: session.lastInputTokens,
       turns,

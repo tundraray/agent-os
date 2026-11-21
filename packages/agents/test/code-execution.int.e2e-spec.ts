@@ -998,20 +998,23 @@ describe('INT-3: rights and isolation of calls from code - employee A, employee 
       const directCallId = toolCallIdOf(script, 0);
       const runCallId = toolCallIdOf(script, 1);
 
-      // Then: both calls reached the server, so both were checked as A: as B (no server allowed) the call from code
-      // would have been refused no_access before the server (Invariant 1)
-      expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs', args: foreignArgs })).toHaveLength(2);
+      // Then: neither call reached the server: the schema check refuses the extra key first, as A (the access check
+      // passed for A: as B, with no server allowed, the call from code would have been refused no_access)
+      expect(fixtureCallsOf(fixture.callLog, { tool: 'search_logs', args: foreignArgs })).toHaveLength(0);
       const codeRows = await codeCallRowsOf(harness.db, agentId, runCallId);
-      expect(codeCallLines(codeRows)).toEqual([`1 ${LOGS_SERVER}/search_logs tool_error null`]);
+      expect(codeCallLines(codeRows)).toEqual([`1 ${LOGS_SERVER}/search_logs refused invalid_arguments`]);
       expect(codeRows[0]?.args).toEqual(foreignArgs);
 
-      // Then: the direct call got the server's own refusal of the extra key; the script got the same outcome class, with
-      // no server text (owner decision 2026-11-14)
-      const answer = 'invalid arguments for search_logs: ✖ Unrecognized key: "ownerId"';
+      // Then: the direct call got the platform's refusal of the extra key; the script got the same outcome class and the
+      // same detail
+      const answer = 'data must NOT have additional properties';
       const history = await historyOf(harness, agentId, ownerId);
       const direct = resultEntryOf(history, directCallId);
-      expect([direct.outcome, direct.text]).toEqual(['tool_error', answer]);
-      expect(returnedBy(history, runCallId)).toEqual({ outcome: 'tool_error', text: '' });
+      expect([direct.outcome, direct.text]).toEqual(['refused', answer]);
+      expect(returnedBy(history, runCallId)).toEqual({
+        outcome: 'refused',
+        text: expect.stringMatching(new RegExp(`search_logs: refused, invalid_arguments .*: ${answer}$`)) as string,
+      });
     } finally {
       await harness.close();
     }

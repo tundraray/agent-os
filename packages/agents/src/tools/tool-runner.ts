@@ -7,6 +7,7 @@ import {
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects } from '@agent-os/runtime';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/client/validators/ajv';
 import { z } from 'zod';
 
 import {
@@ -15,10 +16,12 @@ import {
   type AccessGate,
   OwnerDisabledError,
   type ToolAccess,
+  type ToolCallRefusedEntry,
 } from '../access-gate';
 import type { McpAccounts } from '../mcp/mcp-accounts';
 import type { McpCallResponse, McpClient } from '../mcp/mcp-client';
 import type { McpFailureReason } from '../mcp/mcp-failure';
+import type { McpTool } from '../mcp/mcp-tool';
 import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome';
 import { type Session, sessionInputOf } from '../store/sessions.repository';
 import { callRecords } from '../store/call-records.repository';
@@ -53,8 +56,18 @@ export function isInCommit(call: ResolvedCall): call is InCommitCall {
 }
 
 export type CallCheck =
-  | { readonly kind: 'allowed'; readonly call: ResolvedCall }
-  | { readonly kind: 'refused'; readonly reason: ToolRefusalReason };
+  | {
+      readonly kind: 'allowed';
+      readonly call: ResolvedCall;
+      /** Why the MCP arguments went unchecked: the tool's schema could not be built (AC-02.3). */
+      readonly unchecked?: string;
+    }
+  | {
+      readonly kind: 'refused';
+      readonly reason: ToolRefusalReason;
+      /** With `invalid_arguments`: each wrong argument by its path and what was expected (AC-02.2). */
+      readonly text?: string;
+    };
 
 /** Whether the owner may call this tool of this server: the answer of `AccessGate.tools` for him. */
 export type PairAllowed = Extract<ToolAccess, { readonly kind: 'allowed' }>['allows'];
@@ -77,13 +90,58 @@ export function toolDeniedEntry(ownerId: string, server: string, tool: string): 
   };
 }
 
+/** The `tool_call_refused` record of an MCP call refused for its arguments or as a repeat (KD-6): one per refusal. */
+export function toolRefusedEntry(
+  ownerId: string,
+  server: string,
+  tool: string,
+  reason: ToolCallRefusedEntry['reason'],
+): ToolCallRefusedEntry {
+  return {
+    kind: 'tool_call_refused',
+    actor: ownerId,
+    objectType: 'tool',
+    objectId: `${server}/${tool}`,
+    outcome: 'rejected',
+    reason,
+  };
+}
+
+/** Who answers for a checked call: the owner the audit names, the step's or run's logger, the audit port. */
+export interface CheckReportScope {
+  readonly ownerId: string;
+  readonly logger: Logger;
+  readonly audit: AccessAudit;
+}
+
+/**
+ * What a decided check of an MCP call owes besides the call's ending, for a direct call and a call from code
+ * alike (KD-6, AC-02.3): one `tool_call_refused` record of a refusal for its arguments; the warning of a call
+ * whose arguments went unchecked — server, tool and why the schema could not be built, never the arguments
+ * (NFR-01). A built-in tool owes neither.
+ */
+export async function reportCheck(
+  checked: CallCheck,
+  call: { readonly callId: string; readonly server: string | null; readonly tool: string },
+  scope: CheckReportScope,
+): Promise<void> {
+  const { callId, server, tool } = call;
+  if (server === null) return;
+  if (checked.kind === 'allowed' && checked.unchecked !== undefined) {
+    scope.logger.warn('tool arguments not checked', { callId, server, tool, reason: checked.unchecked });
+  }
+  if (checked.kind === 'refused' && checked.reason === 'invalid_arguments') {
+    await scope.audit(toolRefusedEntry(scope.ownerId, server, tool, 'invalid_arguments'));
+  }
+}
+
 /** How a tool call the runner ran ended; a refusal reached no external system. */
 export type ToolExecution =
   | {
       readonly kind: 'done';
       readonly outcome: McpOutcome;
       readonly text: string;
-      /** Why an MCP call got no answer; only with `transport_failure`. */
+      /** Why an MCP call got no answer; only with `transport_failure` and `unknown`. */
       readonly failureReason?: McpFailureReason;
       /** Script output of a `run_code` run: text of a successful run, `null` of a failed one. */
       readonly output?: string | null;
@@ -162,7 +220,10 @@ export interface ToolRunnerOptions {
    * start; an MCP pair it does not allow is refused `no_access` before any credentials are read.
    */
   readonly access: Pick<AccessGate, 'tools'>;
-  /** Gets the `access_denied` record of each `no_access` the runner decides (KD-6). */
+  /**
+   * Gets the `access_denied` record of each `no_access` the runner decides, and the `tool_call_refused` record of
+   * each call from code refused for its arguments (KD-6).
+   */
   readonly audit: AccessAudit;
   /** `MCP_CALL_TIMEOUT_MS`: bounds one call, the handshake included. */
   readonly callTimeoutMs: number;
@@ -209,8 +270,8 @@ export interface CodeCallRefusal {
 
 /**
  * How a call from code ended: a refusal, the step's signal, or the MCP outcome; `fullResult` holds the
- * whole value of `success`/`empty`; a `tool_error` or `transport_failure` has an empty text (the
- * server's text is only in the run log).
+ * whole value of `success`/`empty`; a `tool_error` or `transport_failure` has an empty text (its text
+ * is only in the run log); an `unknown` keeps the platform's text that the action may have run.
  */
 export type CodeCallExecution =
   | Extract<ToolExecution, { kind: 'done' }>
@@ -230,9 +291,11 @@ export interface ToolRunner {
   /**
    * Checks a call (C3; Flow 1, Failure handling; DC-6): the tool is in the session's check set
    * (`ToolRegistry.checkTools`: a disabled, removed or unnamed server's tool is not), the owner may
-   * use its server–tool pair — `allows`, the gate's answer for this step — and the arguments of a built-in
-   * or registered tool fit its schema. A refused call never reaches the server; allowed arguments are the
-   * parsed ones. A `no_access` decided here is audited by the caller of `check`.
+   * use its server–tool pair — `allows`, the gate's answer for this step — and the arguments fit the tool's
+   * schema: a built-in or registered tool's zod schema, an MCP tool's stored JSON Schema (agent-harness KD-2).
+   * An `invalid_arguments` refusal carries the error text; an MCP schema that cannot be built lets the call
+   * through `unchecked`. A refused call never reaches the server; allowed arguments are the parsed ones. A
+   * `no_access` decided here is audited by the caller of `check`; the rest is `reportCheck`'s.
    */
   check(
     requested: RequestedCall,
@@ -287,8 +350,69 @@ export interface ToolRunner {
   ): Promise<ConfirmedSend>;
 }
 
-/** An MCP server checks its own arguments; the runner only needs an object to send. */
+/** The arguments of an MCP call are an object; `check` then holds them against the tool's own schema. */
 const MCP_ARGS_SCHEMA = z.record(z.string(), z.unknown());
+
+/** The longest argument error a refusal's text carries (design-core.md «Что модель видит об исходе вызова»). */
+const ARGUMENT_ERROR_MAX_CHARS = 1_000;
+
+/** What the tool's JSON Schema says of an MCP call's arguments (KD-2). */
+type SchemaCheck =
+  | { readonly kind: 'valid' }
+  | { readonly kind: 'invalid'; readonly text: string }
+  | { readonly kind: 'unchecked'; readonly reason: string };
+
+/** Keywords left to the server: a server-supplied regex or format runs synchronously and could block the event loop (ReDoS). */
+const SERVER_ONLY_KEYWORDS = new Set(['pattern', 'patternProperties', 'format']);
+/** Keywords whose keys are property or definition names, not keywords. */
+const NAME_MAP_KEYWORDS = new Set(['properties', '$defs', 'definitions', 'dependentSchemas']);
+/** Keywords whose values are data, not subschemas. */
+const DATA_KEYWORDS = new Set(['const', 'enum', 'default', 'examples']);
+
+/** A copy of a JSON Schema without `pattern`, `patternProperties` and `format` at any depth. */
+function withoutServerOnlyKeywords(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(withoutServerOnlyKeywords);
+  if (typeof schema !== 'object' || schema === null) return schema;
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (SERVER_ONLY_KEYWORDS.has(key)) continue;
+    if (DATA_KEYWORDS.has(key)) copy[key] = value;
+    else if (NAME_MAP_KEYWORDS.has(key) && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      copy[key] = Object.fromEntries(
+        Object.entries(value).map(([name, subschema]) => [name, withoutServerOnlyKeywords(subschema)]),
+      );
+    } else copy[key] = withoutServerOnlyKeywords(value);
+  }
+  return copy;
+}
+
+/**
+ * Holds MCP arguments against the schema the server listed, without its regex and format keywords. A schema
+ * of an unknown dialect, one that does not compile, or a throw while validating: the call goes unchecked.
+ */
+function checkMcpArgs(schema: McpTool['inputSchema'], args: unknown): SchemaCheck {
+  try {
+    // A fresh engine per call, never a shared one: ajv resolves a schema with an `$id` by that `$id`, so two
+    // tools declaring the same `$id` would have one server's calls checked against another server's schema.
+    const validator = new AjvJsonSchemaValidator();
+    const result = validator.getValidator(withoutServerOnlyKeywords(schema) as McpTool['inputSchema'])(args);
+    return result.valid ? { kind: 'valid' } : { kind: 'invalid', text: result.errorMessage ?? '' };
+  } catch (error) {
+    return { kind: 'unchecked', reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** A built-in tool's argument error: each issue by its path and what was expected. */
+function zodErrorText(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.length === 0 ? 'arguments' : issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+}
+
+/** The refusal of a call whose arguments do not fit, its text cut to the bound. */
+function invalidArguments(text: string): CallCheck {
+  return { kind: 'refused', reason: 'invalid_arguments', text: cutText(text, ARGUMENT_ERROR_MAX_CHARS) };
+}
 
 /** The calling agent of a step. */
 export function callerOf(ctx: StepContext): ToolCaller {
@@ -348,6 +472,7 @@ function logCall(
         ...fields,
         outcome: execution.outcome,
         reason: execution.failureReason ?? null,
+        resultChars: execution.text.length,
       });
       return;
     case 'refused':
@@ -362,7 +487,10 @@ function logCall(
   }
 }
 
-/** Outcomes whose text comes from the server; `auth_required` carries the platform's own text. */
+/**
+ * Outcomes whose text a script does not get: a server's text, or the platform's failure text when the reason
+ * is enough; `unknown` and `auth_required` keep the platform's own text.
+ */
 const HIDDEN_TEXT_OUTCOMES: ReadonlySet<ToolOutcome> = new Set(['tool_error', 'transport_failure']);
 
 /**
@@ -498,8 +626,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     response: McpCallResponse,
     logger: Logger,
   ): Promise<ToolExecution> {
-    const { server, tool } = call.tool.mcp;
-    const result = toOutcome(response, server);
+    const { server, tool, readOnly } = call.tool.mcp;
+    const result = toOutcome(response, { server, readOnly });
     const done = {
       kind: 'done',
       outcome: result.outcome,
@@ -531,7 +659,8 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
 
   /** A script's call's answer, as today: the whole text and, with `success` or `empty`, the value. */
   function codeExecution(call: McpCall, response: McpCallResponse): ToolExecution {
-    const result = toOutcome(response, call.tool.mcp.server);
+    const { server, readOnly } = call.tool.mcp;
+    const result = toOutcome(response, { server, readOnly });
     const hasValue =
       response.kind === 'result' && (result.outcome === 'success' || result.outcome === 'empty');
     return {
@@ -599,9 +728,18 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     }
     const schema = tool.kind === 'agent' ? tool.inputSchema : MCP_ARGS_SCHEMA;
     const parsed = schema.safeParse(requested.args);
-    return parsed.success
-      ? { kind: 'allowed', call: { callId: requested.callId, tool, args: parsed.data, caller } }
-      : { kind: 'refused', reason: 'invalid_arguments' };
+    if (!parsed.success) return invalidArguments(zodErrorText(parsed.error));
+    const call: ResolvedCall = { callId: requested.callId, tool, args: parsed.data, caller };
+    if (tool.kind !== 'mcp') return { kind: 'allowed', call };
+    const schemaCheck = checkMcpArgs(tool.mcp.inputSchema, parsed.data);
+    switch (schemaCheck.kind) {
+      case 'valid':
+        return { kind: 'allowed', call };
+      case 'invalid':
+        return invalidArguments(schemaCheck.text);
+      case 'unchecked':
+        return { kind: 'allowed', call, unchecked: schemaCheck.reason };
+    }
   };
 
   /** The filters of «Проверка вызова из кода» in their order, then the MCP call itself. */
@@ -610,11 +748,11 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
     scope: CodeCallScope,
   ): Promise<CodeCallExecution> {
     const { name } = request;
-    const refuse = (reason: ToolRefusalReason): CodeCallRefusal => ({
-      kind: 'refused',
-      reason,
-      text: codeRefusalText(name, reason, scope.runClass),
-    });
+    const refuse = (reason: ToolRefusalReason, detail?: string): CodeCallRefusal => {
+      const text = codeRefusalText(name, reason, scope.runClass);
+      // DC-2: a refusal for the arguments carries the same error a direct call's refusal does.
+      return { kind: 'refused', reason, text: detail === undefined ? text : `${text}: ${detail}` };
+    };
     if (name === RUN_CODE_TOOL || scope.agentToolNames.includes(name)) {
       return refuse('not_callable_from_code');
     }
@@ -627,12 +765,17 @@ export function createToolRunner(options: ToolRunnerOptions): ToolRunner {
       { callId: scope.callId, toolName: name, args: request.args },
       { sessionTools: scope.snapshot, caller: scope.caller, allows },
     );
+    const target = callTargetOf(scope.snapshot, name);
+    await reportCheck(
+      checked,
+      { callId: scope.callId, ...target },
+      { ownerId: scope.caller.ownerId, logger: scope.logger, audit },
+    );
     if (checked.kind === 'refused') {
-      const { server, tool } = callTargetOf(scope.snapshot, name);
-      if (checked.reason === 'no_access' && server !== null) {
-        await refuseNoAccess(scope, { server, tool }, scope.logger);
+      if (checked.reason === 'no_access' && target.server !== null) {
+        await refuseNoAccess(scope, { server: target.server, tool: target.tool }, scope.logger);
       }
-      return refuse(checked.reason);
+      return refuse(checked.reason, checked.text);
     }
     const { call } = checked;
     if (call.tool.kind !== 'mcp') {
