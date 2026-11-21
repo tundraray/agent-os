@@ -9,8 +9,6 @@ export const ADMIN_TEXT = {
   toolsFailed: 'Аккаунт подключён, но список инструментов получить не удалось. Нажмите «Обновить список».',
   // MC-27
   publicUrlRequired: 'Сначала сохраните публичный адрес Agent OS в настройках входа.',
-  // MC-20
-  listChanged: 'Список изменился. Откройте раздел заново.',
   // model-providers MC-7
   modelProviderRequired: 'Выберите провайдера',
 } as const;

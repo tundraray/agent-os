@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { SearchXIcon } from 'lucide-react';
-import { useFormatter } from 'next-intl';
-import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
+import { useFormatter, useLocale, useTranslations } from 'next-intl';
+import { BUILTIN_ROLE_KEY, type AdminUserSummary, type UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
@@ -15,48 +15,24 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from '@/hooks/use-debounc
 import { usePagedResource, type Page } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isListChanged } from '@/lib/admin/admin-errors';
-import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
+import { builtinName } from '@/lib/i18n/builtin-name';
 import { formatListTime, type Formatter } from '@/lib/i18n/formats';
+import type { Locale } from '@/lib/i18n/pick-locale';
 import { adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { AccountDialog } from './account-dialog';
 
-/** UXRD MC-22 (the list's labels). */
-const TEXT = {
-  employee: 'Сотрудник',
-  status: 'Статус',
-  roles: 'Роли',
-  lastSignIn: 'Последний вход',
-  local: 'локальная',
-  search: 'Найти по имени, логину или почте',
-  active: 'Включён',
-  disabled: 'Отключён',
-  never: 'никогда',
-  noMatches: 'Никого не нашли',
-  create: 'Завести учётную запись',
-  // Not in MC-22: the read failures follow the shell's «Не удалось загрузить …» texts, as in «Мой доступ».
-  loadFailed: 'Не удалось загрузить сотрудников',
-} as const;
-
 const EMPTY_VALUE = '—';
 
-const COLUMNS: readonly DataTableColumn[] = [
-  { header: TEXT.employee },
-  { header: TEXT.status },
-  { header: TEXT.roles, shrinks: true },
-  { header: TEXT.lastSignIn },
-];
+type UsersTranslator = ReturnType<typeof useTranslations<'admin.users'>>;
 
 async function loadUsersPage(query: string, cursor: string | null): Promise<Page<AdminUserSummary>> {
   const page = await adminApi.users.list({ query, cursor });
   return { items: page.users, nextCursor: page.nextCursor };
 }
 
-/**
- * A failed «Показать ещё»: a cursor the server no longer accepts reads the plan's Notes 6 text; any other
- * failure is a read failure, not a refused save, so it does not take `describeAdminError`'s «Не удалось сохранить».
- */
-const loadMoreErrorText = (error: unknown): string => (isListChanged(error) ? ADMIN_TEXT.listChanged : TEXT.loadFailed);
+/** A role's name in the page's language: the built-in role is named by the catalogue (KD-6). */
+export const roleName = (name: string, locale: Locale): string => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale);
 
 /** A non-empty `login` is a local account (design-admin.md, DC-4). */
 export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =>
@@ -64,14 +40,16 @@ export const isLocalAccount = (user: Pick<AdminUserSummary, 'login'>): boolean =
 
 /** «Включён» / «Отключён» of the list and the employee's page (MC-22). */
 export function UserStatusBadge({ status }: { status: UserStatus }) {
+  const t = useTranslations('admin.users');
   return status === 'active' ? (
-    <StateBadge state="ok">{TEXT.active}</StateBadge>
+    <StateBadge state="ok">{t('active')}</StateBadge>
   ) : (
-    <StateBadge state="off">{TEXT.disabled}</StateBadge>
+    <StateBadge state="off">{t('disabled')}</StateBadge>
   );
 }
 
 function EmployeeCell({ user }: { user: AdminUserSummary }) {
+  const t = useTranslations('admin.users');
   // A local account shows the badge and the login before the email.
   const local = isLocalAccount(user);
   const contact = local ? `${user.login} · ${user.email}` : user.email;
@@ -81,7 +59,7 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
         <span className="truncate" title={user.name}>
           {user.name}
         </span>
-        {local && <StateBadge variant="source">{TEXT.local}</StateBadge>}
+        {local && <StateBadge variant="source">{t('local')}</StateBadge>}
       </span>
       <span className="truncate text-xs leading-4 text-muted-foreground" title={contact}>
         {contact}
@@ -90,8 +68,10 @@ function EmployeeCell({ user }: { user: AdminUserSummary }) {
   );
 }
 
-function rowOf(user: AdminUserSummary, format: Formatter): DataTableRow {
-  const roles = user.roles.map((role) => role.name).join(' · ');
+type RowContext = { t: UsersTranslator; format: Formatter; locale: Locale };
+
+function rowOf(user: AdminUserSummary, { t, format, locale }: RowContext): DataTableRow {
+  const roles = user.roles.map((role) => roleName(role.name, locale)).join(' · ');
   return {
     key: user.id,
     name: user.name,
@@ -102,7 +82,7 @@ function rowOf(user: AdminUserSummary, format: Formatter): DataTableRow {
       <span key="roles" className="block truncate" title={roles}>
         {roles === '' ? EMPTY_VALUE : roles}
       </span>,
-      user.lastSignInAt === null ? TEXT.never : formatListTime(format, user.lastSignInAt),
+      user.lastSignInAt === null ? t('never') : formatListTime(format, user.lastSignInAt),
     ],
   };
 }
@@ -115,18 +95,35 @@ function rowOf(user: AdminUserSummary, format: Formatter): DataTableRow {
 export function UserList() {
   const titles = useAdminTitles();
   const title = titles.section('users');
+  const t = useTranslations('admin.users');
+  const tErrors = useTranslations('errors');
   const format = useFormatter();
+  const locale = useLocale();
   const [query, setQuery] = useState('');
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
   const list = usePagedResource((cursor) => loadUsersPage(searched, cursor), searched);
   const [creating, setCreating] = useState(false);
 
-  const state = resourceTableState({ ...list, data: list.items }, TEXT.loadFailed, (items) => ({
-    rows: items.map((user) => rowOf(user, format)),
+  const columns: readonly DataTableColumn[] = [
+    { header: t('employee') },
+    { header: t('status') },
+    { header: t('roles'), shrinks: true },
+    { header: t('lastSignIn') },
+  ];
+
+  /**
+   * A failed «Показать ещё»: a cursor the server no longer accepts reads the plan's Notes 6 text; any other
+   * failure is a read failure, not a refused save, so it does not take `describeAdminError`'s «Не удалось сохранить».
+   */
+  const loadMoreErrorText = (error: unknown): string =>
+    isListChanged(error) ? tErrors('admin.listChanged') : t('loadFailed');
+
+  const state = resourceTableState({ ...list, data: list.items }, t('loadFailed'), (items) => ({
+    rows: items.map((user) => rowOf(user, { t, format, locale })),
     // Always «Нет совпадений»: an empty list without a search is unreachable, the administrator reading
     // it is an employee, so the Empty state is never drawn and has no text of its own in MC-22.
-    empty: { Icon: SearchXIcon, title: TEXT.noMatches },
-    noMatches: TEXT.noMatches,
+    empty: { Icon: SearchXIcon, title: t('noMatches') },
+    noMatches: t('noMatches'),
     more:
       list.nextCursor === null
         ? undefined
@@ -144,15 +141,15 @@ export function UserList() {
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          aria-label={TEXT.search}
-          placeholder={TEXT.search}
+          aria-label={t('search')}
+          placeholder={t('search')}
           className={cn(CONTROL_SIZE, 'min-w-0 flex-1 text-data md:w-72 md:flex-none md:text-data')}
         />
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
-          {TEXT.create}
+          {t('create')}
         </Button>
       </PageHeader>
-      <DataTable caption={title} columns={COLUMNS} state={state} />
+      <DataTable caption={title} columns={columns} state={state} />
       <AccountDialog open={creating} onOpenChange={setCreating} onCreated={list.reload} />
     </>
   );

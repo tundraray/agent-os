@@ -2,7 +2,7 @@
 
 import { useId, useState, type ReactNode } from 'react';
 import { LoaderCircleIcon, ShieldIcon } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { IdentityErrorCode, type AdminUserDetail } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
@@ -13,57 +13,30 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
+import type { Locale } from '@/lib/i18n/pick-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE, describeRefusal } from '../admin-form';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
-import { DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
+import { DataTable, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
 import { ResetPasswordDialog } from './reset-password-dialog';
-import { isLocalAccount, UserStatusBadge } from './user-list';
-
-/** UXRD MC-23 and MC-24. */
-const TEXT = {
-  block: 'Заблокировать',
-  unblock: 'Разблокировать',
-  blockBody:
-    'Сеансы сотрудника закроются сразу, а работающие агенты закончатся на своём следующем шаге. Беседы и данные сохранятся.',
-  resetPassword: 'Сбросить пароль',
-  roles: 'Роли',
-  assignRole: 'Назначить роль',
-  removeRole: 'Снять роль',
-  adminRight: 'Право администратора',
-  adminPersonal: 'есть: лично',
-  adminNone: 'нет',
-  grantPersonal: 'Дать лично',
-  revokePersonal: 'Снять лично',
-  // Not in the UXRD: the owner's decision — giving the admin right is confirmed.
-  grantBody:
-    'Сотрудник сможет управлять учётными записями, ролями, правами, способами входа, MCP-серверами и моделями.',
-  grantConfirm: 'Дать право',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
-  loadFailed: 'Не удалось загрузить сотрудника',
-  // Not in the UXRD, which draws no empty state for the employee's roles.
-  noRoles: 'Ролей нет',
-  // Not in the UXRD: the notices of a status change, after «Роль удалена».
-  blocked: 'Сотрудник заблокирован',
-  unblocked: 'Сотрудник разблокирован',
-} as const;
-
-const blockTitle = (name: string): string => `Заблокировать ${name}?`;
-const grantTitle = (name: string): string => `Дать ${name} право администратора?`;
+import { isLocalAccount, roleName, UserStatusBadge } from './user-list';
 
 const PERSONAL_ADMIN_LOG_EVENT = 'admin: user personal admin';
 
-/** MC-24: the personal right first, then the roles that give it, then «нет». */
-function adminRightText({ personal, roles }: AdminUserDetail['adminRight']): string {
-  if (personal) return TEXT.adminPersonal;
-  if (roles.length > 0) return `есть: роль ${roles.map((role) => role.name).join(' · ')}`;
-  return TEXT.adminNone;
-}
+type PageTranslator = ReturnType<typeof useTranslations<'admin.users.page'>>;
 
-const ROLE_COLUMNS: readonly DataTableColumn[] = [{ header: 'Роль' }];
+/** MC-24: the personal right first, then the roles that give it, then «нет». */
+function adminRightText(
+  { personal, roles }: AdminUserDetail['adminRight'],
+  { t, locale }: { t: PageTranslator; locale: Locale },
+): string {
+  if (personal) return t('adminPersonal');
+  if (roles.length > 0) return t('adminByRole', { roles: roles.map((role) => roleName(role.name, locale)).join(' · ') });
+  return t('adminNone');
+}
 
 /** Where a page action's refusal is shown: the header's status button, «Назначить роль», the admin right, a role row. */
 type ActionPlace = 'status' | 'assign' | 'admin' | `role:${string}`;
@@ -79,7 +52,10 @@ type UserPageProps = { id: string };
  */
 export function UserPage({ id }: UserPageProps) {
   const titles = useAdminTitles();
+  const t = useTranslations('admin.users.page');
+  const tAdmin = useTranslations('admin');
   const tErrors = useTranslations('errors');
+  const locale = useLocale();
   const rolesHeadingId = useId();
   const adminHeadingId = useId();
   const user = useResource(() => adminApi.users.get(id), `user:${id}`);
@@ -143,7 +119,7 @@ export function UserPage({ id }: UserPageProps) {
 
   if (gone || isNotFound(user.error)) return <ThreadNotice variant="record-not-found" section="users" />;
 
-  if (user.data === undefined) return <RecordPlaceholder section="users" resource={user} loadFailed={TEXT.loadFailed} />;
+  if (user.data === undefined) return <RecordPlaceholder section="users" resource={user} loadFailed={t('loadFailed')} />;
 
   const detail = user.data;
   const active = detail.status === 'active';
@@ -155,17 +131,18 @@ export function UserPage({ id }: UserPageProps) {
 
   const roleRow = (role: AdminUserDetail['roles'][number]): DataTableRow => {
     const place: ActionPlace = `role:${role.id}`;
+    const name = roleName(role.name, locale);
     return {
       key: role.id,
-      name: role.name,
+      name,
       cells: [
-        <span key="name" className="block truncate" title={role.name}>
-          {role.name}
+        <span key="name" className="block truncate" title={name}>
+          {name}
         </span>,
       ],
       actions: [
         {
-          label: TEXT.removeRole,
+          label: t('removeRole'),
           onSelect: () => void act(place, 'admin: user role remove', () => adminApi.users.removeRole(id, role.id)),
           pending: pending === place,
           // One page action at a time: the other rows wait for the read that follows it.
@@ -193,7 +170,7 @@ export function UserPage({ id }: UserPageProps) {
       >
         {isLocalAccount(detail) && (
           <ActionButton disabled={busy} onClick={() => setResetting(true)}>
-            {TEXT.resetPassword}
+            {t('resetPassword')}
           </ActionButton>
         )}
         {/* One button for both states, so focus returned to it after the confirmation stays on «Разблокировать». */}
@@ -203,10 +180,10 @@ export function UserPage({ id }: UserPageProps) {
           onClick={
             active
               ? () => setBlocking(true)
-              : () => void act('status', 'admin: user unblock', () => adminApi.users.unblock(id), TEXT.unblocked)
+              : () => void act('status', 'admin: user unblock', () => adminApi.users.unblock(id), t('unblocked'))
           }
         >
-          {active ? TEXT.block : TEXT.unblock}
+          {active ? t('block') : t('unblock')}
         </ActionButton>
       </PageHeader>
 
@@ -215,15 +192,15 @@ export function UserPage({ id }: UserPageProps) {
 
         <section aria-labelledby={rolesHeadingId} className="flex flex-col gap-3">
           <h2 id={rolesHeadingId} className="text-base leading-6 font-semibold">
-            {TEXT.roles}
+            {tAdmin('users.roles')}
           </h2>
           <DataTable
-            caption={TEXT.roles}
-            columns={ROLE_COLUMNS}
+            caption={tAdmin('users.roles')}
+            columns={[{ header: tAdmin('roles.role') }]}
             state={{
               status: 'ready',
               rows: detail.roles.map(roleRow),
-              empty: { Icon: ShieldIcon, title: TEXT.noRoles },
+              empty: { Icon: ShieldIcon, title: t('noRoles') },
             }}
           />
           <div className="flex flex-col items-start gap-1.5">
@@ -233,7 +210,7 @@ export function UserPage({ id }: UserPageProps) {
                 render={<Button variant="outline" size="sm" className={CONTROL_SIZE} />}
               >
                 {pending === 'assign' && <Spinner />}
-                {TEXT.assignRole}
+                {t('assignRole')}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-auto min-w-40">
                 {assignable.map((role) => (
@@ -244,7 +221,7 @@ export function UserPage({ id }: UserPageProps) {
                       void act('assign', 'admin: user role assign', () => adminApi.users.assignRole(id, role.id))
                     }
                   >
-                    {role.name}
+                    {roleName(role.name, locale)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -258,9 +235,9 @@ export function UserPage({ id }: UserPageProps) {
         <section aria-labelledby={adminHeadingId} className="flex flex-col gap-1.5">
           <div className="flex items-center gap-3">
             <h2 id={adminHeadingId} className="text-base leading-6 font-semibold">
-              {TEXT.adminRight}
+              {tAdmin('roles.adminRight')}
             </h2>
-            <span className="text-data">{adminRightText(detail.adminRight)}</span>
+            <span className="text-data">{adminRightText(detail.adminRight, { t, locale })}</span>
             <ActionButton
               disabled={busy}
               pending={pending === 'admin'}
@@ -270,7 +247,7 @@ export function UserPage({ id }: UserPageProps) {
                   : () => setGranting(true)
               }
             >
-              {personalAdmin ? TEXT.revokePersonal : TEXT.grantPersonal}
+              {personalAdmin ? t('revokePersonal') : t('grantPersonal')}
             </ActionButton>
           </div>
           {errorAt('admin') !== undefined && <ActionError>{errorAt('admin')}</ActionError>}
@@ -280,21 +257,21 @@ export function UserPage({ id }: UserPageProps) {
       <ConfirmDialog
         open={blocking}
         onOpenChange={setBlocking}
-        title={blockTitle(detail.name)}
-        body={TEXT.blockBody}
-        confirmLabel={TEXT.block}
+        title={t('blockTitle', { name: detail.name })}
+        body={t('blockBody')}
+        confirmLabel={t('block')}
         onConfirm={async () => {
           await track(() => adminApi.users.block(id));
-          toast.success(TEXT.blocked);
+          toast.success(t('blocked'));
         }}
         logEvent="admin: user block"
       />
       <ConfirmDialog
         open={granting}
         onOpenChange={setGranting}
-        title={grantTitle(detail.name)}
-        body={TEXT.grantBody}
-        confirmLabel={TEXT.grantConfirm}
+        title={t('grantTitle', { name: detail.name })}
+        body={t('grantBody')}
+        confirmLabel={t('grantConfirm')}
         onConfirm={() => track(() => adminApi.users.setPersonalAdmin(id, true))}
         logEvent={PERSONAL_ADMIN_LOG_EVENT}
       />

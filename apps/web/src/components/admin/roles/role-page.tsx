@@ -2,9 +2,10 @@
 
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLocale, useTranslations } from 'next-intl';
 import { UsersIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
+import { BUILTIN_ROLE_KEY, IdentityErrorCode, type RoleDetail } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
 import { ThreadNotice } from '@/components/shell/thread-notice';
 import { StateBadge } from '@/components/state-badge';
@@ -12,41 +13,16 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
+import { builtinName } from '@/lib/i18n/builtin-name';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
-import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
+import { ActionsMenu, DataTable, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
 import { SavingSwitch } from '../saving-switch';
 import { RoleNameDialog } from './role-name-dialog';
 
-/** UXRD MC-26; «Удалить» — MC-20, «Сотрудник» — MC-22. */
-const TEXT = {
-  builtin: 'встроенная',
-  rename: 'Переименовать',
-  remove: 'Удалить',
-  isAdmin: 'Право администратора',
-  members: 'Сотрудники',
-  member: 'Сотрудник',
-  removeTitle: (role: string) => `Удалить роль «${role}»?`,
-  removeBody: 'Сотрудники роли сразу потеряют её права.',
-  removed: 'Роль удалена',
-  // Not in the UXRD: the owner's decision — giving the admin right is confirmed.
-  grantAdminTitle: (role: string) => `Дать роли «${role}» право администратора?`,
-  grantAdminBody: (members: number) =>
-    members > 0
-      ? `Все сотрудники роли станут администраторами: ${members}.`
-      : 'Сейчас в роли нет сотрудников; каждый, кого в неё добавят, станет администратором.',
-  grantAdmin: 'Дать право',
-  // Not in the UXRD: the read failure follows the panel's «Не удалось загрузить …» texts.
-  loadFailed: 'Не удалось загрузить роль',
-  // Not in the UXRD, which draws no empty state for the members.
-  noMembers: 'В роли нет сотрудников',
-} as const;
-
 const ADMIN_RIGHT_LOG_EVENT = 'admin: role admin right';
-
-const MEMBER_COLUMNS: readonly DataTableColumn[] = [{ header: TEXT.member }];
 
 /** Error handling: like a role that is gone (404), a built-in one (409) is read again; the page shows what the server holds. */
 const isBuiltinRefusal = (error: unknown): boolean =>
@@ -58,6 +34,8 @@ const isBuiltinRefusal = (error: unknown): boolean =>
  */
 export function RolePage({ id }: { id: string }) {
   const titles = useAdminTitles();
+  const t = useTranslations('admin.roles');
+  const locale = useLocale();
   const router = useRouter();
   const role = useResource(() => adminApi.roles.get(id), `role:${id}`);
   const [renaming, setRenaming] = useState(false);
@@ -66,7 +44,9 @@ export function RolePage({ id }: { id: string }) {
 
   if (isNotFound(role.error)) return <ThreadNotice variant="record-not-found" section="roles" />;
   const data = role.data;
-  if (data === undefined) return <RecordPlaceholder section="roles" resource={role} loadFailed={TEXT.loadFailed} />;
+  if (data === undefined) return <RecordPlaceholder section="roles" resource={role} loadFailed={t('loadFailed')} />;
+
+  const name = builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: data.name }, locale);
 
   /** Every change: the refusal of a gone or built-in role reads the role again and still reaches its control. */
   const change = rereadOnNotFound(role.reload, isBuiltinRefusal);
@@ -78,7 +58,7 @@ export function RolePage({ id }: { id: string }) {
 
   const remove = async (): Promise<void> => {
     await change(() => adminApi.roles.remove(id));
-    toast.success(TEXT.removed);
+    toast.success(t('removed'));
     router.push(adminPath('roles'));
   };
 
@@ -86,15 +66,15 @@ export function RolePage({ id }: { id: string }) {
     <>
       <PageHeader area={titles.panel}
         parent={titles.parent('roles')}
-        title={data.name}
-        badge={data.builtin ? <StateBadge variant="source">{TEXT.builtin}</StateBadge> : undefined}
+        title={name}
+        badge={data.builtin ? <StateBadge variant="source">{t('builtin')}</StateBadge> : undefined}
       >
         {data.builtin ? undefined : (
           <ActionsMenu
-            name={data.name}
+            name={name}
             actions={[
-              { label: TEXT.rename, onSelect: () => setRenaming(true) },
-              { label: TEXT.remove, onSelect: () => setDeleting(true) },
+              { label: t('rename'), onSelect: () => setRenaming(true) },
+              { label: t('remove'), onSelect: () => setDeleting(true) },
             ]}
           />
         )}
@@ -102,7 +82,7 @@ export function RolePage({ id }: { id: string }) {
       <div className="flex max-w-3xl flex-col gap-6">
         {/* DC-5: the built-in role keeps the admin right — its switch is on and unavailable. */}
         <SavingSwitch
-          label={TEXT.isAdmin}
+          label={t('adminRight')}
           checked={data.builtin || data.isAdmin}
           disabled={data.builtin}
           onSave={saveAdmin}
@@ -123,9 +103,9 @@ export function RolePage({ id }: { id: string }) {
           <ConfirmDialog
             open={deleting}
             onOpenChange={setDeleting}
-            title={TEXT.removeTitle(data.name)}
-            body={TEXT.removeBody}
-            confirmLabel={TEXT.remove}
+            title={t('removeTitle', { role: name })}
+            body={t('removeBody')}
+            confirmLabel={t('remove')}
             onConfirm={remove}
             logEvent="admin: role delete"
             focusTitleAfterConfirm
@@ -133,9 +113,9 @@ export function RolePage({ id }: { id: string }) {
           <ConfirmDialog
             open={grantingAdmin}
             onOpenChange={setGrantingAdmin}
-            title={TEXT.grantAdminTitle(data.name)}
-            body={TEXT.grantAdminBody(data.members.length)}
-            confirmLabel={TEXT.grantAdmin}
+            title={t('grantAdminTitle', { role: name })}
+            body={t('grantAdminBody', { members: data.members.length })}
+            confirmLabel={t('grantAdmin')}
             onConfirm={() => saveAdmin(true)}
             logEvent={ADMIN_RIGHT_LOG_EVENT}
           />
@@ -147,6 +127,7 @@ export function RolePage({ id }: { id: string }) {
 
 /** UXRD AD-06 «Сотрудники»: read only, each name links to the employee's page (KD-7). */
 function MembersSection({ members }: { members: RoleDetail['members'] }) {
+  const t = useTranslations('admin');
   const headingId = useId();
   const rows: DataTableRow[] = members.map((member) => ({
     key: member.id,
@@ -162,12 +143,12 @@ function MembersSection({ members }: { members: RoleDetail['members'] }) {
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {TEXT.members}
+        {t('roles.members')}
       </h2>
       <DataTable
-        caption={TEXT.members}
-        columns={MEMBER_COLUMNS}
-        state={{ status: 'ready', rows, empty: { Icon: UsersIcon, title: TEXT.noMembers } }}
+        caption={t('roles.members')}
+        columns={[{ header: t('users.employee') }]}
+        state={{ status: 'ready', rows, empty: { Icon: UsersIcon, title: t('roles.noMembers') } }}
       />
     </section>
   );
