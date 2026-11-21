@@ -1,6 +1,8 @@
+import { Suspense } from 'react';
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import { LocaleRoot } from '@/components/i18n/locale-root';
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -17,7 +19,6 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Agent OS',
-  description: 'Рабочее пространство Agent OS',
 };
 
 export const viewport: Viewport = {
@@ -32,7 +33,7 @@ const THEME_COLOR_SCRIPT = `(function(){var html=document.documentElement;var me
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html
-      lang="ru"
+      lang="en"
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
@@ -47,8 +48,14 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
           enableColorScheme
           disableTransitionOnChange
         >
-          <TooltipProvider>{children}</TooltipProvider>
-          <Toaster />
+          {/* The language is request data: with cacheComponents it is read inside a Suspense boundary,
+              and the language root fixes the static `lang` with an inline script (design-web.md, KD-2). */}
+          <Suspense fallback={null}>
+            <LocaleRoot>
+              <TooltipProvider>{children}</TooltipProvider>
+              <Toaster />
+            </LocaleRoot>
+          </Suspense>
         </ThemeProvider>
       </body>
     </html>
