@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import { Switch } from "@/components/ui/switch";
 import { CAPTION, describeRefusal } from "./admin-form";
@@ -48,12 +49,13 @@ export function SavingSwitch({
   confirmOff,
   disabled = false,
 }: SavingSwitchProps) {
+  const tErrors = useTranslations("errors");
   const id = useId();
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
   const [target, setTarget] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   // A new saved position from the re-read resource replaces the one shown since the save.
   const [savedChecked, setSavedChecked] = useState(checked);
   if (savedChecked !== checked) {
@@ -77,7 +79,7 @@ export function SavingSwitch({
       await onSave(next);
     } catch (cause) {
       setTarget(null);
-      setError(describeRefusal(cause, { logEvent })?.text ?? null);
+      setError(describeRefusal(tErrors, cause, { logEvent })?.text ?? null);
     } finally {
       setSaving(false);
     }

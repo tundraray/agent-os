@@ -1,0 +1,32 @@
+{
+  "panel": "Панель",
+  "back": "К чату",
+  "section": {
+    "users": "Сотрудники",
+    "roles": "Роли",
+    "sign-in": "Авторизация",
+    "servers": "MCP-серверы",
+    "models": "Модели",
+    "library": "Агенты и workflow"
+  },
+  "table": {
+    "retry": "Повторить",
+    "loadMore": "Показать ещё",
+    "action": "{action}: {record}",
+    "menu": "Действия: {record}",
+    "nestedIn": "в {parent}: "
+  },
+  "copy": {
+    "label": "Копировать: {label}",
+    "copied": "Скопировано"
+  },
+  "secret": {
+    "set": "Задан",
+    "replace": "Заменить",
+    "replaceLabel": "Заменить: {label}",
+    "cancelReplace": "Отменить замену",
+    "placeholder": "Новое значение",
+    "show": "Показать введённое значение",
+    "endsWith": ", заканчивается на {tail}"
+  }
+}

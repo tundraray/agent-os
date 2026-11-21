@@ -11,25 +11,60 @@ import {
   McpServerNameSchema,
   MODEL_PROVIDER_API_KEY_MAX_LENGTH,
   MODEL_PROVIDER_API_KEY_MIN_LENGTH,
+  MODEL_PROVIDER_NAME_MAX_LENGTH,
   ModelIdSchema,
   ModelProviderNameSchema,
   PROVIDER_NAME_MAX_LENGTH,
   RECORD_MAX_TURNS_MAX,
   RECORD_MAX_TURNS_MIN,
+  TOOL_RESULT_PREVIEW_CHARS_MAX,
+  TOOL_RESULT_PREVIEW_CHARS_MIN,
+  TOOL_RESULT_READ_MAX_TOKENS_MAX,
+  TOOL_RESULT_READ_MAX_TOKENS_MIN,
+  TOOL_RESULT_STORE_FROM_CHARS_MAX,
+  TOOL_RESULT_STORE_FROM_CHARS_MIN,
   UpdateToolResultSettingsBodySchema,
   type McpServerMode,
   type ModelPurpose,
   type PriceRates,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
-import { ADMIN_TEXT } from './admin-texts';
+import type { ErrorsTranslator } from '@/lib/agents/format';
+import enErrors from '@/messages/en/errors.json';
 
 /**
  * Field rules of the panel's forms (design-admin.md, KD-5): one pure function per form, checked on submit.
- * Each returns the errors of its fields as texts of `admin-texts.ts`; an empty object lets the form send.
+ * Each returns the errors of its fields as keys of the `errors` catalogue's `admin.field`; an empty object lets
+ * the form send. `fieldErrorText` reads a key as the text the field shows.
  */
 
-export type FieldErrors<Field extends string> = Partial<Record<Field, string>>;
+/** A field error: the key of its message under `admin.field` of the `errors` catalogue. */
+export type FieldRuleKey = keyof typeof enErrors.admin.field;
+
+export type FieldErrors<Field extends string> = Partial<Record<Field, FieldRuleKey>>;
+
+/**
+ * The bounds the field messages name, from `contracts`. Passed as text, so a bound reads as the server writes it
+ * («1000», not a grouped «1 000»).
+ */
+const FIELD_RULE_VALUES = {
+  maxTurnsMin: String(RECORD_MAX_TURNS_MIN),
+  maxTurnsMax: String(RECORD_MAX_TURNS_MAX),
+  knowledgeMin: String(KNOWLEDGE_LIMIT_TOKENS_MIN),
+  knowledgeMax: String(KNOWLEDGE_LIMIT_TOKENS_MAX),
+  storeFromMin: String(TOOL_RESULT_STORE_FROM_CHARS_MIN),
+  storeFromMax: String(TOOL_RESULT_STORE_FROM_CHARS_MAX),
+  previewMin: String(TOOL_RESULT_PREVIEW_CHARS_MIN),
+  previewMax: String(TOOL_RESULT_PREVIEW_CHARS_MAX),
+  readMaxMin: String(TOOL_RESULT_READ_MAX_TOKENS_MIN),
+  readMaxMax: String(TOOL_RESULT_READ_MAX_TOKENS_MAX),
+  providerNameMax: String(MODEL_PROVIDER_NAME_MAX_LENGTH),
+  apiKeyMin: String(MODEL_PROVIDER_API_KEY_MIN_LENGTH),
+  apiKeyMax: String(MODEL_PROVIDER_API_KEY_MAX_LENGTH),
+} as const;
+
+/** The text of a field error in the page's language. */
+export const fieldErrorText = (t: ErrorsTranslator, key: FieldRuleKey): string => t(`admin.field.${key}`, FIELD_RULE_VALUES);
 
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 256;
@@ -44,9 +79,12 @@ const IDLE_STEP_MINUTES = 15;
 
 type Decimal = { value: number; decimals: number };
 
-/** A number as typed: digits with an optional comma or dot fraction; spaces between digit groups are dropped. */
+/**
+ * A number as typed: digits with an optional comma or dot fraction; spaces between digit groups are dropped
+ * (`\s` also matches the no-break spaces of a pasted formatted number).
+ */
 function readDecimal(text: string): Decimal | null {
-  const compact = text.replace(/[\s ]/g, '');
+  const compact = text.replace(/\s/g, '');
   const match = /^(-?\d+)(?:[.,](\d+))?$/.exec(compact);
   if (match === null) return null;
   const [, whole, fraction = ''] = match;
@@ -89,15 +127,15 @@ export type AccountValues = { login: string; name: string; email: string; passwo
 
 export function accountRules({ login, name, email, password }: AccountValues): FieldErrors<keyof AccountValues> {
   const errors: FieldErrors<keyof AccountValues> = {};
-  if (isBlank(login)) errors.login = ADMIN_TEXT.loginRequired;
-  if (isBlank(name)) errors.name = ADMIN_TEXT.nameRequired;
-  if (isBlank(email)) errors.email = ADMIN_TEXT.emailRequired;
-  if (!isPasswordLength(password)) errors.password = ADMIN_TEXT.passwordLength;
+  if (isBlank(login)) errors.login = 'loginRequired';
+  if (isBlank(name)) errors.name = 'nameRequired';
+  if (isBlank(email)) errors.email = 'emailRequired';
+  if (!isPasswordLength(password)) errors.password = 'passwordLength';
   return errors;
 }
 
 export function passwordResetRules({ password }: { password: string }): FieldErrors<'password'> {
-  return isPasswordLength(password) ? {} : { password: ADMIN_TEXT.passwordLength };
+  return isPasswordLength(password) ? {} : { password: 'passwordLength' };
 }
 
 // ---------- Roles and providers (MC-26, MC-27) ----------
@@ -107,15 +145,15 @@ export function passwordResetRules({ password }: { password: string }): FieldErr
  * name within the server's bound.
  */
 export function roleNameRules({ name }: { name: string }): FieldErrors<'name'> {
-  return isBlank(name) ? { name: ADMIN_TEXT.roleNameRequired } : {};
+  return isBlank(name) ? { name: 'roleNameRequired' } : {};
 }
 
 /** `issuer` is the field of an `oidc` provider; `google` has none. */
 export function providerRules({ name, issuer }: { name: string; issuer?: string }): FieldErrors<'name' | 'issuer'> {
   const errors: FieldErrors<'name' | 'issuer'> = {};
   const length = lengthOf(name.trim());
-  if (length < 1 || length > PROVIDER_NAME_MAX_LENGTH) errors.name = ADMIN_TEXT.providerNameLength;
-  if (issuer !== undefined && !isSecureUrl(issuer)) errors.issuer = ADMIN_TEXT.fullUrl;
+  if (length < 1 || length > PROVIDER_NAME_MAX_LENGTH) errors.name = 'providerNameLength';
+  if (issuer !== undefined && !isSecureUrl(issuer)) errors.issuer = 'fullUrl';
   return errors;
 }
 
@@ -141,7 +179,7 @@ export function signInSettingsRules({
 }: SignInSettingsValues): FieldErrors<keyof SignInSettingsValues> {
   const errors: FieldErrors<keyof SignInSettingsValues> = {};
   // AD-14: the field checks only a full address with a scheme; the server checks the scheme.
-  if (parseUrl(publicUrl) === null) errors.publicUrl = ADMIN_TEXT.fullUrl;
+  if (parseUrl(publicUrl) === null) errors.publicUrl = 'fullUrl';
 
   const idleMinutes = hoursToMinutes(idleHours);
   const idleValid =
@@ -149,7 +187,7 @@ export function signInSettingsRules({
     idleMinutes % IDLE_STEP_MINUTES === 0 &&
     idleMinutes >= IDLE_MINUTES_MIN &&
     idleMinutes <= IDLE_MINUTES_MAX;
-  if (!idleValid) errors.idleHours = ADMIN_TEXT.idleHours;
+  if (!idleValid) errors.idleHours = 'idleHours';
 
   const absolute = parseDecimal(absoluteHours);
   const absoluteMinutes = absolute === null ? Number.NaN : absolute * MINUTES_PER_HOUR;
@@ -159,9 +197,9 @@ export function signInSettingsRules({
     absoluteMinutes < ABSOLUTE_MINUTES_MIN ||
     absoluteMinutes > ABSOLUTE_MINUTES_MAX
   ) {
-    errors.absoluteHours = ADMIN_TEXT.absoluteHours;
+    errors.absoluteHours = 'absoluteHours';
   } else if (idleValid && absoluteMinutes < idleMinutes) {
-    errors.absoluteHours = ADMIN_TEXT.absoluteBelowIdle;
+    errors.absoluteHours = 'absoluteBelowIdle';
   }
   return errors;
 }
@@ -173,7 +211,7 @@ export function librarySettingsRules({ defaultMaxTurns }: { defaultMaxTurns: str
   const turns = parseDecimal(defaultMaxTurns);
   const valid =
     turns !== null && Number.isInteger(turns) && turns >= RECORD_MAX_TURNS_MIN && turns <= RECORD_MAX_TURNS_MAX;
-  return valid ? {} : { defaultMaxTurns: ADMIN_TEXT.defaultMaxTurns };
+  return valid ? {} : { defaultMaxTurns: 'defaultMaxTurns' };
 }
 
 // ---------- Self-learning settings (self-learning AS-01, MC-8, DC-5) ----------
@@ -186,17 +224,17 @@ export function knowledgeSettingsRules({ limitTokens }: { limitTokens: string })
     Number.isInteger(tokens) &&
     tokens >= KNOWLEDGE_LIMIT_TOKENS_MIN &&
     tokens <= KNOWLEDGE_LIMIT_TOKENS_MAX;
-  return valid ? {} : { limitTokens: ADMIN_TEXT.knowledgeLimitTokens };
+  return valid ? {} : { limitTokens: 'knowledgeLimitTokens' };
 }
 
 // ---------- Large tool results (tool-result-reading R-5) ----------
 
 export type ToolResultSettingsValues = { storeFromChars: string; previewChars: string; readMaxTokens: string };
 
-const TOOL_RESULT_RANGE_TEXT: Readonly<Record<keyof ToolResultSettingsValues, string>> = {
-  storeFromChars: ADMIN_TEXT.toolResultStoreFromChars,
-  previewChars: ADMIN_TEXT.toolResultPreviewChars,
-  readMaxTokens: ADMIN_TEXT.toolResultReadMaxTokens,
+const TOOL_RESULT_RANGE_TEXT: Readonly<Record<keyof ToolResultSettingsValues, FieldRuleKey>> = {
+  storeFromChars: 'toolResultStoreFromChars',
+  previewChars: 'toolResultPreviewChars',
+  readMaxTokens: 'toolResultReadMaxTokens',
 };
 
 const isToolResultField = (key: PropertyKey | undefined): key is keyof ToolResultSettingsValues =>
@@ -224,7 +262,7 @@ export function toolResultSettingsRules(values: ToolResultSettingsValues): Field
     const field = issue.path[0];
     if (!isToolResultField(field) || errors[field] !== undefined) continue;
     errors[field] =
-      issue.code === 'custom' ? ADMIN_TEXT.toolResultPreviewBelowThreshold : TOOL_RESULT_RANGE_TEXT[field];
+      issue.code === 'custom' ? 'toolResultPreviewBelowThreshold' : TOOL_RESULT_RANGE_TEXT[field];
   }
   return errors;
 }
@@ -244,7 +282,7 @@ export function quotaRules({ quota }: { quota: string }): FieldErrors<'quota'> {
     typed.decimals <= QUOTA_MAX_DECIMALS &&
     typed.value >= QUOTA_MIN_USD &&
     typed.value <= QUOTA_MAX_USD;
-  return valid ? {} : { quota: ADMIN_TEXT.quotaRange };
+  return valid ? {} : { quota: 'quotaRange' };
 }
 
 export type GrantValues = {
@@ -258,9 +296,9 @@ export type GrantValues = {
 
 export function grantRules({ kind, server, tool, model, quota }: GrantValues): FieldErrors<'server' | 'tool' | 'model' | 'quota'> {
   const errors: FieldErrors<'server' | 'tool' | 'model' | 'quota'> = {};
-  if (kind !== 'model' && server === '') errors.server = ADMIN_TEXT.serverRequired;
-  if (kind === 'tool' && tool === '') errors.tool = ADMIN_TEXT.toolRequired;
-  if (kind === 'model' && model === '') errors.model = ADMIN_TEXT.modelRequired;
+  if (kind !== 'model' && server === '') errors.server = 'serverRequired';
+  if (kind === 'tool' && tool === '') errors.tool = 'toolRequired';
+  if (kind === 'model' && model === '') errors.model = 'modelRequired';
   if (kind === 'model' && quota !== null) Object.assign(errors, quotaRules({ quota }));
   return errors;
 }
@@ -271,8 +309,8 @@ export type ServerValues = { name: string; url: string; mode: McpServerMode; sha
 
 export function serverRules({ name, url, mode, sharedToken }: ServerValues): FieldErrors<'name' | 'url' | 'sharedToken'> {
   const errors: FieldErrors<'name' | 'url' | 'sharedToken'> = {};
-  if (name === '' || !McpServerNameSchema.safeParse(name).success) errors.name = ADMIN_TEXT.serverNameRule;
-  if (!isSecureUrl(url)) errors.url = ADMIN_TEXT.serverUrl;
+  if (name === '' || !McpServerNameSchema.safeParse(name).success) errors.name = 'serverNameRule';
+  if (!isSecureUrl(url)) errors.url = 'serverUrl';
   if (mode === 'shared') Object.assign(errors, sharedTokenRules({ sharedToken }));
   return errors;
 }
@@ -281,7 +319,7 @@ export function serverRules({ name, url, mode, sharedToken }: ServerValues): Fie
 export function sharedTokenRules({ sharedToken }: { sharedToken: string }): FieldErrors<'sharedToken'> {
   return sharedToken.length >= 1 && sharedToken.length <= SHARED_TOKEN_MAX_LENGTH
     ? {}
-    : { sharedToken: ADMIN_TEXT.sharedToken };
+    : { sharedToken: 'sharedToken' };
 }
 
 // ---------- Model providers (model-providers MP-04, MC-4) ----------
@@ -291,14 +329,14 @@ export type ModelProviderValues = { name: string; baseUrl: string; apiKey: strin
 /** Name, address and key bounds are those of `contracts`; an empty address or key is not sent. */
 export function modelProviderRules({ name, baseUrl, apiKey }: ModelProviderValues): FieldErrors<keyof ModelProviderValues> {
   const errors: FieldErrors<keyof ModelProviderValues> = {};
-  if (isBlank(name)) errors.name = ADMIN_TEXT.nameRequired;
-  else if (!ModelProviderNameSchema.safeParse(name).success) errors.name = ADMIN_TEXT.modelProviderNameRule;
+  if (isBlank(name)) errors.name = 'nameRequired';
+  else if (!ModelProviderNameSchema.safeParse(name).success) errors.name = 'modelProviderNameRule';
   if (!isBlank(baseUrl)) {
     const protocol = parseUrl(baseUrl)?.protocol;
-    if (protocol !== 'http:' && protocol !== 'https:') errors.baseUrl = ADMIN_TEXT.modelProviderUrl;
+    if (protocol !== 'http:' && protocol !== 'https:') errors.baseUrl = 'modelProviderUrl';
   }
   if (apiKey !== '' && (apiKey.length < MODEL_PROVIDER_API_KEY_MIN_LENGTH || apiKey.length > MODEL_PROVIDER_API_KEY_MAX_LENGTH)) {
-    errors.apiKey = ADMIN_TEXT.modelProviderApiKey;
+    errors.apiKey = 'modelProviderApiKey';
   }
   return errors;
 }
@@ -371,25 +409,25 @@ export function modelRules({
   dimensions,
 }: ModelValues): FieldErrors<ModelField> {
   const errors: FieldErrors<ModelField> = {};
-  if (provider === null) errors.provider = ADMIN_TEXT.modelProviderRequired;
-  if (!isModelName(provider, modelName)) errors.modelName = ADMIN_TEXT.modelNameAtProviderRequired;
+  if (provider === null) errors.provider = 'modelProviderRequired';
+  if (!isModelName(provider, modelName)) errors.modelName = 'modelNameAtProviderRequired';
   const nameLength = lengthOf(name.trim());
-  if (nameLength < 1 || nameLength > MODEL_NAME_MAX_LENGTH) errors.name = ADMIN_TEXT.modelNameLength;
+  if (nameLength < 1 || nameLength > MODEL_NAME_MAX_LENGTH) errors.name = 'modelNameLength';
   if (purpose === 'embedding') {
-    if (!isPrice(prices.inputUsdPerMTok)) errors.inputUsdPerMTok = ADMIN_TEXT.priceRule;
-    if (!isDimensions(dimensions)) errors.dimensions = ADMIN_TEXT.dimensionsRule;
+    if (!isPrice(prices.inputUsdPerMTok)) errors.inputUsdPerMTok = 'priceRule';
+    if (!isDimensions(dimensions)) errors.dimensions = 'dimensionsRule';
     return errors;
   }
   for (const field of PRICE_FIELDS) {
-    if (!isPrice(prices[field])) errors[field] = ADMIN_TEXT.priceRule;
+    if (!isPrice(prices[field])) errors[field] = 'priceRule';
   }
   if (longContext !== null) {
     const threshold = parseDecimal(longContext.aboveInputTokens);
     if (threshold === null || !Number.isInteger(threshold) || threshold <= 0) {
-      errors.aboveInputTokens = ADMIN_TEXT.thresholdRule;
+      errors.aboveInputTokens = 'thresholdRule';
     }
     for (const field of PRICE_FIELDS) {
-      if (!isPrice(longContext.prices[field])) errors[`long.${field}`] = ADMIN_TEXT.priceRule;
+      if (!isPrice(longContext.prices[field])) errors[`long.${field}`] = 'priceRule';
     }
   }
   return errors;

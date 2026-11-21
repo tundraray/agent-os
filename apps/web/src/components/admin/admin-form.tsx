@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { CircleX, LoaderCircle, TriangleAlert } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
@@ -12,16 +13,11 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { describeAdminError, type AdminErrorContext, type AdminErrorText } from "@/lib/admin/admin-errors";
+import { fieldErrorText, type FieldRuleKey } from "@/lib/admin/form-rules";
+import type { ErrorsTranslator } from "@/lib/agents/format";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
 import { focusShellTarget } from "@/lib/focus";
 import { logger } from "@/lib/logger";
-
-/** MC-20. */
-export const FORM_TEXT = {
-  saving: "Сохраняем…",
-  saved: "Сохранено",
-  cancel: "Отмена",
-} as const;
 
 /** KD-6: a panel control is 28 px, 44 px under a coarse pointer. */
 export const CONTROL_SIZE = "h-7 pointer-coarse:h-11";
@@ -34,12 +30,13 @@ export const CAPTION = "text-xs leading-4";
  * here, with the request's shape only (no body, so no secret), and turned into the UXRD text.
  */
 export function describeRefusal(
+  t: ErrorsTranslator,
   error: unknown,
   { logEvent, context }: { logEvent: string; context?: AdminErrorContext },
 ): AdminErrorText | null {
   if (isApiRequestError(error)) logger.warn(`${logEvent}: refused`, describeApiError(error));
   else logger.error(`${logEvent}: failed`, { error });
-  return describeAdminError(error, context);
+  return describeAdminError(t, error, context);
 }
 
 /**
@@ -321,11 +318,11 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
   variant: "page" | "dialog";
   initialValues: Values;
   /** The form's pure field rule (`form-rules.ts`); an empty object lets the form send. */
-  validate: (values: Values) => Partial<Record<string, string>>;
+  validate: (values: Values) => Partial<Record<string, FieldRuleKey>>;
   onSubmit: (values: Values) => Promise<void>;
   submitLabel: string;
-  /** The submit button while the request runs, e.g. «Проверяем сервер…»; a function when it depends on the values. */
-  savingLabel?: string | ((values: Values) => string);
+  /** The submit button while the request runs, e.g. «Проверяем сервер…»; a function when it depends on the values. «Сохраняем…» unless told otherwise. */
+  savingLabel?: string | ((values: Values) => string | undefined);
   /** False while the values hold nothing to send: the submit button is then unavailable. */
   hasChange?: (values: Values) => boolean;
   /** The toast after a save; a page says «Сохранено» unless told otherwise, a dialog says nothing. */
@@ -354,9 +351,9 @@ export function AdminForm<Values extends Record<string, unknown>>({
   validate,
   onSubmit,
   submitLabel,
-  savingLabel = FORM_TEXT.saving,
+  savingLabel,
   hasChange,
-  savedText = variant === "page" ? FORM_TEXT.saved : null,
+  savedText,
   onSaved,
   onCancel,
   secretFields = [],
@@ -364,10 +361,13 @@ export function AdminForm<Values extends Record<string, unknown>>({
   logEvent,
   children,
 }: AdminFormProps<Values>) {
+  const t = useTranslations("common");
+  const tErrors = useTranslations("errors");
   const idPrefix = useId();
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<ReactNode>(null);
+  const toastText = savedText === undefined ? (variant === "page" ? t("saved") : null) : savedText;
   const [saving, setSaving] = useState(false);
   /** Grows with every set of field errors shown, so focus moves to the first of them again. */
   const [fieldErrorsShown, setFieldErrorsShown] = useState(0);
@@ -390,8 +390,9 @@ export function AdminForm<Values extends Record<string, unknown>>({
     if (savingRef.current || hasChange?.(values) === false) return;
     setFormError(null);
     const checked = validate(values);
-    if (Object.values(checked).some((text) => text !== undefined)) {
-      showFieldErrors(checked);
+    const shown = Object.entries(checked).flatMap(([field, key]) => (key === undefined ? [] : [[field, fieldErrorText(tErrors, key)]]));
+    if (shown.length > 0) {
+      showFieldErrors(Object.fromEntries(shown));
       return;
     }
     setErrors({});
@@ -403,11 +404,11 @@ export function AdminForm<Values extends Record<string, unknown>>({
       if (secretFields.length > 0) {
         setValues((current) => secretFields.reduce((next, key) => ({ ...next, [key]: undefined }), current));
       }
-      if (savedText !== null) toast.success(savedText);
+      if (toastText !== null) toast.success(toastText);
       if (variant === "page") focusShellTarget("page-title");
       onSaved?.();
     } catch (cause) {
-      const refusal = describeRefusal(cause, { logEvent, context: typeof errorContext === "function" ? errorContext(values) : errorContext });
+      const refusal = describeRefusal(tErrors, cause, { logEvent, context: typeof errorContext === "function" ? errorContext(values) : errorContext });
       if (refusal === null) return;
       if (refusal.target !== "form" && refusal.target in values) showFieldErrors({ [refusal.target]: refusal.text });
       else setFormError(refusal.text);
@@ -431,17 +432,17 @@ export function AdminForm<Values extends Record<string, unknown>>({
   const submit = (
     <Button type="submit" size="sm" className={CONTROL_SIZE} disabled={saving || hasChange?.(values) === false}>
       {saving && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-      {saving ? (typeof savingLabel === "function" ? savingLabel(values) : savingLabel) : submitLabel}
+      {saving ? ((typeof savingLabel === "function" ? savingLabel(values) : savingLabel) ?? t("saving")) : submitLabel}
     </Button>
   );
   const cancel =
     variant === "dialog" ? (
       <DialogClose render={<Button type="button" variant="outline" size="sm" className={CONTROL_SIZE} />} disabled={saving}>
-        {FORM_TEXT.cancel}
+        {t("cancel")}
       </DialogClose>
     ) : onCancel !== undefined ? (
       <Button type="button" variant="outline" size="sm" className={CONTROL_SIZE} disabled={saving} onClick={onCancel}>
-        {FORM_TEXT.cancel}
+        {t("cancel")}
       </Button>
     ) : null;
 

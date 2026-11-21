@@ -5,12 +5,11 @@ import { MCP_SERVER_NAME_MAX_LENGTH, type McpServerMode, type RegisterMcpServerB
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
 import { adminApi } from '@/lib/admin/admin-api';
-import { registerFailed } from '@/lib/admin/admin-texts';
 import { serverRules } from '@/lib/admin/form-rules';
 import { logger } from '@/lib/logger';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { AdminForm, AdminRadioField, AdminTextField, FORM_TEXT, type AdminRadioOption } from '../admin-form';
-import { PANEL_TITLE, sectionParent } from '../admin-header';
+import { AdminForm, AdminRadioField, AdminTextField, type AdminRadioOption } from '../admin-form';
+import { useAdminTitles } from '../admin-header';
 import { SecretField } from '../secret-field';
 import { SERVER_MODE_LABEL, SERVER_TEXT } from './server-list';
 
@@ -58,6 +57,7 @@ function registerBodyOf({ name, url, mode, sharedToken }: RegisterValues): Regis
  * navigation, because the connect route answers with a redirect to the authorization server.
  */
 export function RegisterServerForm() {
+  const titles = useAdminTitles();
   const router = useRouter();
   const { navigate } = useShellServices();
 
@@ -73,18 +73,18 @@ export function RegisterServerForm() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={TEXT.title} parent={sectionParent('servers')} />
+      <PageHeader area={titles.panel} title={TEXT.title} parent={titles.parent('servers')} />
       <AdminForm
         variant="page"
         initialValues={INITIAL}
         validate={({ sharedToken, ...values }) => serverRules({ ...values, sharedToken: sharedToken ?? '' })}
         onSubmit={register}
         submitLabel={TEXT.register}
-        savingLabel={({ mode }) => (mode === 'shared' ? TEXT.checking : FORM_TEXT.saving)}
+        savingLabel={({ mode }) => (mode === 'shared' ? TEXT.checking : undefined)}
         savedText={null}
         onCancel={() => router.push(adminPath('servers'))}
         secretFields={['sharedToken']}
-        errorContext={{ checkFailed: registerFailed }}
+        errorContext={{ checkFailed: 'register' }}
         logEvent="admin: server register"
       >
         {(form) => (

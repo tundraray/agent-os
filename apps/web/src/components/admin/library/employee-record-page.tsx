@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import type { RecordDetail, RecordKind, RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { PANEL_TITLE, sectionParent } from '@/components/admin/admin-header';
+import { useAdminTitles } from '@/components/admin/admin-header';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
 import { DefinitionView } from '@/components/library/definition-view';
 import { KnowledgeButton } from '@/components/library/editor-header';
@@ -91,6 +91,7 @@ type EmployeeRecordPageProps = { record: RecordDetail };
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */
 export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
+  const titles = useAdminTitles();
   const router = useRouter();
   const [closing, setClosing] = useState(false);
   const roles = rolesOf(record);
@@ -98,7 +99,7 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={record.name} parent={sectionParent('library')}>
+      <PageHeader area={titles.panel} title={record.name} parent={titles.parent('library')}>
         <KnowledgeButton record={record} />
         {author !== null && (
           <Button variant="outline" size="sm" className={CONTROL_SIZE} onClick={() => setClosing(true)}>

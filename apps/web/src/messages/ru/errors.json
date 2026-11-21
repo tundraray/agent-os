@@ -143,5 +143,82 @@
     "hint": "Напишите, чтобы продолжить, когда квоту поднимут или начнётся новый месяц.",
     "announcement": "Работа завершена сбоем: исчерпана квота",
     "announcementNamed": "Работа завершена сбоем: исчерпана квота {model}"
+  },
+  "admin": {
+    "code": {
+      "LOGIN_TAKEN": "Такой логин уже есть",
+      "EMAIL_TAKEN": "Сотрудник с такой почтой уже есть",
+      "ROLE_NAME_TAKEN": "Такая роль уже есть",
+      "MCP_SERVER_NAME_TAKEN": "Сервер с таким именем уже есть",
+      "MODEL_ID_TAKEN": "Модель с таким ID уже есть в каталоге",
+      "MODEL_PROVIDER_NAME_TAKEN": "Провайдер с таким именем уже есть",
+      "MODEL_PROVIDER_HAS_MODELS": "Не удалось удалить: у провайдера есть модели в каталоге. Сначала уберите их.",
+      "GRANT_TARGET_UNKNOWN": "Этого сервера, инструмента или модели больше нет. Закройте окно и выберите цель снова.",
+      "PROVIDER_INCOMPLETE": "Нельзя включить: сначала заполните настройки провайдера.",
+      "MCP_SERVER_INCOMPLETE": "Нельзя включить: сначала подключите свой аккаунт и получите список инструментов.",
+      "PUBLIC_URL_REQUIRED": "Сначала сохраните публичный адрес Agent OS в настройках входа."
+    },
+    "listChanged": "Список изменился. Откройте раздел заново.",
+    "grantExists": "{effect, select, allow {Такое право уже есть} other {Такой запрет уже есть}}",
+    "grantInvalid": "Так нельзя: запрет даётся только лично, а квота — только у разрешения модели.",
+    "providerGone": "Не удалось сохранить: провайдера {provider} уже нет. Закройте окно — список обновится.",
+    "providerUnknown": "Не удалось сохранить: провайдера {provider} больше нет. Закройте окно и откройте его снова.",
+    "embeddingsNotSupported": "Не удалось сохранить: провайдер этого типа не считает эмбеддинги",
+    "defaultModel": {
+      "model_unknown": "Не удалось сохранить: модели {model} больше нет в каталоге",
+      "wrongPurpose": "Не удалось сохранить: модель {model} другого назначения"
+    },
+    "providerCheck": {
+      "insecure_url": "Не удалось проверить настройки провайдера: адрес не https. Настройки не сохранены.",
+      "unreachable": "Не удалось проверить настройки провайдера: адрес не ответил или ответил ошибкой. Настройки не сохранены.",
+      "invalid_document": "Не удалось проверить настройки провайдера: по этому адресу нет описания OIDC для этого Issuer. Настройки не сохранены."
+    },
+    "mcpCheck": {
+      "unreachable": "сервер не отвечает по этому адресу",
+      "timeout": "сервер не ответил вовремя, попробуйте ещё раз",
+      "not_mcp": "по этому адресу не MCP-сервер",
+      "unauthorized": "сервер не принял токен доступа",
+      "oauth_not_supported": "сервер не поддерживает личный OAuth. Выберите общую учётную запись",
+      "registration_rejected": "сервер авторизации отказал Agent OS в регистрации клиента",
+      "insecure_url": "адрес сервера или его сервера авторизации не https"
+    },
+    "mcpCheckFailed": {
+      "register": "Не удалось зарегистрировать: {reason}",
+      "save": "Не удалось сохранить: {reason}"
+    },
+    "field": {
+      "loginRequired": "Введите логин",
+      "nameRequired": "Введите имя",
+      "emailRequired": "Введите почту",
+      "passwordLength": "Пароль — от 12 до 256 знаков",
+      "serverRequired": "Выберите сервер",
+      "toolRequired": "Выберите инструмент",
+      "modelRequired": "Выберите модель",
+      "quotaRange": "Квота — от 0,01 до 1 000 000 $, не больше двух знаков после запятой",
+      "roleNameRequired": "Введите название",
+      "providerNameLength": "Название — от 1 до 60 знаков",
+      "serverNameRule": "Имя — от 1 до 32 знаков: строчные латинские буквы, цифры и дефис, например sentry-prod",
+      "serverUrl": "Введите адрес, который начинается с https://",
+      "sharedToken": "Введите токен — до 4096 знаков",
+      "modelNameLength": "Название — от 1 до 80 знаков",
+      "thresholdRule": "Порог — целое число больше нуля",
+      "priceRule": "Введите цену — число от 0",
+      "fullUrl": "Введите полный адрес, например https://agent-os.example",
+      "idleHours": "Введите от 0,25 до 24 часов с шагом 0,25",
+      "absoluteHours": "Введите целое число от 1 до 720",
+      "absoluteBelowIdle": "Общий срок не может быть меньше срока без активности",
+      "defaultMaxTurns": "Введите целое число от {maxTurnsMin} до {maxTurnsMax}",
+      "knowledgeLimitTokens": "Нужно целое число от {knowledgeMin} до {knowledgeMax}",
+      "toolResultStoreFromChars": "Нужно целое число от {storeFromMin} до {storeFromMax}",
+      "toolResultPreviewChars": "Нужно целое число от {previewMin} до {previewMax}",
+      "toolResultReadMaxTokens": "Нужно целое число от {readMaxMin} до {readMaxMax}",
+      "toolResultPreviewBelowThreshold": "Начало должно быть меньше длины, с которой ответ заменяется ссылкой",
+      "modelProviderNameRule": "Имя — до {providerNameMax} знаков: строчные латинские буквы, цифры и дефис, не с дефиса, например local-2",
+      "modelProviderUrl": "Введите полный адрес, например https://api.example.com/v1",
+      "modelProviderApiKey": "Ключ — от {apiKeyMin} до {apiKeyMax} символов",
+      "modelProviderRequired": "Выберите провайдера",
+      "modelNameAtProviderRequired": "Введите имя модели",
+      "dimensionsRule": "Размерность — целое число больше нуля"
+    }
   }
 }

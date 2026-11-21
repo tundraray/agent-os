@@ -13,7 +13,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
+import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
@@ -57,6 +57,7 @@ const isBuiltinRefusal = (error: unknown): boolean =>
  * built-in role (DC-5) has no «⋯» menu and its admin right is on and unavailable.
  */
 export function RolePage({ id }: { id: string }) {
+  const titles = useAdminTitles();
   const router = useRouter();
   const role = useResource(() => adminApi.roles.get(id), `role:${id}`);
   const [renaming, setRenaming] = useState(false);
@@ -83,8 +84,8 @@ export function RolePage({ id }: { id: string }) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE}
-        parent={sectionParent('roles')}
+      <PageHeader area={titles.panel}
+        parent={titles.parent('roles')}
         title={data.name}
         badge={data.builtin ? <StateBadge variant="source">{TEXT.builtin}</StateBadge> : undefined}
       >

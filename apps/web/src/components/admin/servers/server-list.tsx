@@ -11,8 +11,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { adminNewPath, adminRecordPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
-import { PANEL_TITLE } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
+import { useAdminTitles } from '../admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { ToolResultSettingsForm } from './tool-result-settings-form';
 
@@ -81,6 +80,7 @@ const toRow = (server: McpServerSummary): DataTableRow => ({
  * large tool results (tool-result-reading R-5).
  */
 export function ServerList() {
+  const titles = useAdminTitles();
   const servers = useResource(adminApi.servers.list, 'servers');
 
   const state = resourceTableState(servers, TEXT.loadFailed, (data) => ({
@@ -90,13 +90,13 @@ export function ServerList() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('servers')}>
+      <PageHeader area={titles.panel} title={titles.section('servers')}>
         <Link href={adminNewPath('servers')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
           {TEXT.register}
         </Link>
       </PageHeader>
       <div className="flex max-w-240 flex-col gap-8">
-        <DataTable caption={adminSectionTitle('servers')} columns={COLUMNS} state={state} />
+        <DataTable caption={titles.section('servers')} columns={COLUMNS} state={state} />
         <ToolResultSettingsForm />
       </div>
     </>

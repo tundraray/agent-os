@@ -1,22 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "cn";
 import { NO_PASSWORD_MANAGER, RevealInput } from "@/components/password-field";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { CAPTION, CONTROL_SIZE } from "./admin-form";
-
-/** MC-28. */
-const SECRET_TEXT = {
-  set: "Задан",
-  replace: "Заменить",
-  cancelReplace: "Отменить замену",
-  placeholder: "Новое значение",
-  show: "Показать введённое значение",
-  endsWith: (tail: string) => `, заканчивается на ${tail}`,
-} as const;
 
 export type SecretFieldProps = {
   id: string;
@@ -40,6 +31,7 @@ type FocusTarget = "input" | "replace";
  * «Заменить»; the replacement exists only in the form's state until it is sent (Invariant 3).
  */
 export function SecretField({ id, label, isSet, value, onChange, error, lastFour, hint }: SecretFieldProps) {
+  const t = useTranslations("admin.secret");
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
@@ -67,7 +59,7 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
   });
 
   if (isSet && !replacing) {
-    const badge = <StateBadge state="neutral">{SECRET_TEXT.set}</StateBadge>;
+    const badge = <StateBadge state="neutral">{t("set")}</StateBadge>;
     return (
       <Field
         role="group"
@@ -87,7 +79,7 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
               <span aria-hidden className="font-mono text-mono-compact text-muted-foreground">
                 …{tail}
               </span>
-              <span className="sr-only">{SECRET_TEXT.endsWith(tail)}</span>
+              <span className="sr-only">{t("endsWith", { tail })}</span>
             </span>
           )}
           <Button
@@ -96,13 +88,13 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
             variant="outline"
             size="sm"
             className={CONTROL_SIZE}
-            aria-label={`${SECRET_TEXT.replace}: ${label}`}
+            aria-label={t("replaceLabel", { label })}
             onClick={() => {
               pendingFocus.current = "input";
               onChange("");
             }}
           >
-            {SECRET_TEXT.replace}
+            {t("replace")}
           </Button>
         </div>
         {hintText}
@@ -125,10 +117,10 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
             name={id}
             autoComplete="new-password"
             spellCheck={false}
-            placeholder={SECRET_TEXT.placeholder}
+            placeholder={t("placeholder")}
             compact
             className="font-mono text-mono-compact"
-            showLabel={SECRET_TEXT.show}
+            showLabel={t("show")}
             value={value ?? ""}
             aria-invalid={error !== undefined}
             aria-describedby={describedBy === "" ? undefined : describedBy}
@@ -146,7 +138,7 @@ export function SecretField({ id, label, isSet, value, onChange, error, lastFour
               onChange(undefined);
             }}
           >
-            {SECRET_TEXT.cancelReplace}
+            {t("cancelReplace")}
           </Button>
         )}
       </div>

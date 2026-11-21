@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { testTranslator } from '@/test/intl';
 import {
   accountRules,
+  fieldErrorText,
   hoursToMinutes,
   knowledgeSettingsRules,
   minutesToHours,
@@ -13,8 +15,18 @@ import {
   serverRules,
   signInSettingsRules,
   toolResultSettingsRules,
+  type FieldRuleKey,
   type ModelValues,
 } from './form-rules';
+
+const t = testTranslator('errors');
+
+/** A rule's result as the form shows it: each field's key read as its Russian text; other values as they are. */
+const shown = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(shown);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([field, key]) => [field, fieldErrorText(t, key as FieldRuleKey)]));
+};
 
 const account = { login: 'anna', name: 'Анна', email: 'anna@example.com' };
 const settings = { publicUrl: 'https://agent-os.example', idleHours: '8', absoluteHours: '24' };
@@ -163,6 +175,6 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
       issuer: 'Введите полный адрес, например https://agent-os.example',
     }],
   ])('%s', (_name, actual, expected) => {
-    expect(actual()).toEqual(expected);
+    expect(shown(actual())).toEqual(expected);
   });
 });

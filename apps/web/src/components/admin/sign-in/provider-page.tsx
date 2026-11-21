@@ -20,7 +20,7 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { cn } from '@/lib/utils';
 import { adminPath } from '@/lib/shell-route';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
+import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { CopyValue } from '../copy-value';
 import { SecretField } from '../secret-field';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL, ProviderEnabledSwitch } from './providers-table';
@@ -75,6 +75,7 @@ const isPublicUrlRequired = (error: unknown): boolean =>
  * client secret as a `SecretField`, and the values to copy into the app at the provider (AC-26.1).
  */
 export function ProviderPage({ id }: { id: string }) {
+  const titles = useAdminTitles();
   const router = useRouter();
   const provider = useResource(() => adminApi.providers.get(id), `provider:${id}`);
   /** Counts the saved settings: each one gives the switch a fresh start, without the refusal of an older enable. */
@@ -98,9 +99,9 @@ export function ProviderPage({ id }: { id: string }) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE}
+      <PageHeader area={titles.panel}
         title={data.name}
-        parent={sectionParent('sign-in')}
+        parent={titles.parent('sign-in')}
         badge={<StateBadge state={data.enabled ? 'ok' : 'off'}>{data.enabled ? PROVIDER_TEXT.enabled : PROVIDER_TEXT.disabled}</StateBadge>}
       />
       <div className="flex max-w-160 flex-col gap-6">

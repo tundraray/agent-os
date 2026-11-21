@@ -1,0 +1,32 @@
+{
+  "panel": "Admin panel",
+  "back": "Back to chat",
+  "section": {
+    "users": "Employees",
+    "roles": "Roles",
+    "sign-in": "Sign-in",
+    "servers": "MCP servers",
+    "models": "Models",
+    "library": "Agents and workflows"
+  },
+  "table": {
+    "retry": "Retry",
+    "loadMore": "Show more",
+    "action": "{action}: {record}",
+    "menu": "Actions: {record}",
+    "nestedIn": "in {parent}: "
+  },
+  "copy": {
+    "label": "Copy: {label}",
+    "copied": "Copied"
+  },
+  "secret": {
+    "set": "Set",
+    "replace": "Replace",
+    "replaceLabel": "Replace: {label}",
+    "cancelReplace": "Cancel replacement",
+    "placeholder": "New value",
+    "show": "Show the typed value",
+    "endsWith": ", ends with {tail}"
+  }
+}

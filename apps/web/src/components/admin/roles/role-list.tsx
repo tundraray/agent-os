@@ -9,8 +9,7 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { adminRecordPath } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
-import { PANEL_TITLE } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
+import { useAdminTitles } from '../admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { RoleNameDialog } from './role-name-dialog';
 
@@ -53,6 +52,7 @@ const toRow = (role: RoleSummary): DataTableRow => ({
 
 /** UXRD AD-05: the roles list with «Создать роль». */
 export function RoleList() {
+  const titles = useAdminTitles();
   const roles = useResource(adminApi.roles.list, 'roles');
   const [creating, setCreating] = useState(false);
 
@@ -61,12 +61,12 @@ export function RoleList() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('roles')}>
+      <PageHeader area={titles.panel} title={titles.section('roles')}>
         <Button size="sm" className={CONTROL_SIZE} onClick={() => setCreating(true)}>
           {TEXT.create}
         </Button>
       </PageHeader>
-      <DataTable caption={adminSectionTitle('roles')} columns={COLUMNS} state={state} />
+      <DataTable caption={titles.section('roles')} columns={COLUMNS} state={state} />
       <RoleNameDialog open={creating} onOpenChange={setCreating} />
     </>
   );

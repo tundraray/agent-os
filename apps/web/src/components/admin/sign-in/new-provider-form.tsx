@@ -7,7 +7,7 @@ import { adminApi } from '@/lib/admin/admin-api';
 import { providerRules } from '@/lib/admin/form-rules';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminRadioField, AdminTextField, type AdminFormApi, type AdminRadioOption } from '../admin-form';
-import { PANEL_TITLE, sectionParent } from '../admin-header';
+import { useAdminTitles } from '../admin-header';
 import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL } from './providers-table';
 
 /** UXRD MC-27; the title is the UXRD's name of the screen. */
@@ -39,6 +39,7 @@ function chooseType(form: AdminFormApi<NewProviderValues>, type: ProviderType): 
  * page, where its settings and «Данные для провайдера» are.
  */
 export function NewProviderForm() {
+  const titles = useAdminTitles();
   const router = useRouter();
 
   const create = async ({ type, name }: NewProviderValues): Promise<void> => {
@@ -48,7 +49,7 @@ export function NewProviderForm() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={TEXT.title} parent={sectionParent('sign-in')} />
+      <PageHeader area={titles.panel} title={TEXT.title} parent={titles.parent('sign-in')} />
       <AdminForm
         variant="page"
         initialValues={INITIAL}

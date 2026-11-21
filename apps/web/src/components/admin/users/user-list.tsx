@@ -5,8 +5,7 @@ import { SearchXIcon } from 'lucide-react';
 import { useFormatter } from 'next-intl';
 import type { AdminUserSummary, UserStatus } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { PANEL_TITLE } from '@/components/admin/admin-header';
-import { adminSectionTitle } from '@/components/admin/admin-sections';
+import { useAdminTitles } from '@/components/admin/admin-header';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '@/components/admin/data-table';
 import { PageHeader } from '@/components/shell/page-header';
 import { StateBadge } from '@/components/state-badge';
@@ -114,7 +113,8 @@ function rowOf(user: AdminUserSummary, format: Formatter): DataTableRow {
  * «Завести учётную запись» opens AD-16; a created account reads the list again.
  */
 export function UserList() {
-  const title = adminSectionTitle('users');
+  const titles = useAdminTitles();
+  const title = titles.section('users');
   const format = useFormatter();
   const [query, setQuery] = useState('');
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
@@ -139,7 +139,7 @@ export function UserList() {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={title}>
+      <PageHeader area={titles.panel} title={title}>
         <Input
           type="search"
           value={query}

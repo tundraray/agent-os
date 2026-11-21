@@ -6,7 +6,7 @@ import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ALL_SERVERS, CHAT_BUILTIN_KEY, type RecordDetail, type RecordKind } from "@agent-os/contracts";
 import { CAPTION, FormError, FormWarning } from "@/components/admin/admin-form";
-import { PANEL_TITLE, sectionParent } from "@/components/admin/admin-header";
+import { useAdminTitles } from "@/components/admin/admin-header";
 import { PageHeader } from "@/components/shell/page-header";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { ThreadNotice } from "@/components/shell/thread-notice";
@@ -198,6 +198,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   const locale = useLocale();
   const t = useTranslations("errors");
   const tLibrary = useTranslations("library");
+  const titles = useAdminTitles();
   const { start, back, tellDraft, handOnCreated } = usePageHandoff(handoff, source, system);
   const { state, view, dispatch } = useRecordForm(start.values === undefined ? source : { ...source, values: start.values });
   const { saved, values, base } = state;
@@ -446,8 +447,8 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
     <div className="flex h-full flex-col">
       <PageHeader
         title={title}
-        area={system ? PANEL_TITLE : undefined}
-        parent={system ? sectionParent("library") : { title: tLibrary("screen.title"), href: libraryPath() }}
+        area={system ? titles.panel : undefined}
+        parent={system ? titles.parent("library") : { title: tLibrary("screen.title"), href: libraryPath() }}
       >
         {record !== null && (
           <EditorHeaderActions

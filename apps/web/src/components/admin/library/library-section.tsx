@@ -6,8 +6,7 @@ import { useFormatter, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { CHAT_BUILTIN_KEY, type BannedRecord, type RecordKind, type RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
-import { PANEL_TITLE, RecordPlaceholder } from '@/components/admin/admin-header';
-import { adminSectionTitle } from '@/components/admin/admin-sections';
+import { RecordPlaceholder, useAdminTitles } from '@/components/admin/admin-header';
 import {
   DataTable,
   resourceTableState,
@@ -126,12 +125,13 @@ function LibraryRecord({ id }: { id: string }) {
 }
 
 function LibraryTabs({ tab }: { tab: LibraryTab }) {
-  const title = adminSectionTitle('library');
+  const titles = useAdminTitles();
+  const title = titles.section('library');
   const [query, setQuery] = useState('');
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={title}>
+      <PageHeader area={titles.panel} title={title}>
         <CreateMenu />
       </PageHeader>
       <Tabs value={tab} className="gap-3">

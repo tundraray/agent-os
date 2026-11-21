@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactNode } from 'react';
 import { LoaderCircleIcon, ShieldIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { IdentityErrorCode, type AdminUserDetail } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
@@ -15,7 +16,7 @@ import { isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE, describeRefusal } from '../admin-form';
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
+import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { GrantsSection } from '../grants/grants-section';
@@ -67,7 +68,7 @@ const ROLE_COLUMNS: readonly DataTableColumn[] = [{ header: 'Роль' }];
 /** Where a page action's refusal is shown: the header's status button, «Назначить роль», the admin right, a role row. */
 type ActionPlace = 'status' | 'assign' | 'admin' | `role:${string}`;
 
-type Failure = { place: ActionPlace; text: string };
+type Failure = { place: ActionPlace; text: ReactNode };
 
 type UserPageProps = { id: string };
 
@@ -77,6 +78,8 @@ type UserPageProps = { id: string };
  * employee is «Запись не найдена» (AD-15).
  */
 export function UserPage({ id }: UserPageProps) {
+  const titles = useAdminTitles();
+  const tErrors = useTranslations('errors');
   const rolesHeadingId = useId();
   const adminHeadingId = useId();
   const user = useResource(() => adminApi.users.get(id), `user:${id}`);
@@ -114,7 +117,7 @@ export function UserPage({ id }: UserPageProps) {
       logger.info(`${logEvent}: saved`, { userId: id });
       if (doneText !== undefined) toast.success(doneText);
     } catch (error) {
-      const refusal = describeRefusal(error, { logEvent });
+      const refusal = describeRefusal(tErrors, error, { logEvent });
       if (showsText(error) && refusal !== null) setFailure({ place, text: refusal.text });
     } finally {
       setPending(null);
@@ -147,7 +150,7 @@ export function UserPage({ id }: UserPageProps) {
   const personalAdmin = detail.adminRight.personal;
   const held = new Set(detail.roles.map((role) => role.id));
   const assignable = (roles.data ?? []).filter((role) => !held.has(role.id));
-  const errorAt = (place: ActionPlace): string | undefined => (failure?.place === place ? failure.text : undefined);
+  const errorAt = (place: ActionPlace): ReactNode => (failure?.place === place ? failure.text : undefined);
   const busy = pending !== null;
 
   const roleRow = (role: AdminUserDetail['roles'][number]): DataTableRow => {
@@ -175,9 +178,9 @@ export function UserPage({ id }: UserPageProps) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE}
+      <PageHeader area={titles.panel}
         title={detail.name}
-        parent={sectionParent('users')}
+        parent={titles.parent('users')}
         badge={
           <>
             {/* The email gives way before the name does: the title stays readable in a narrow header. */}

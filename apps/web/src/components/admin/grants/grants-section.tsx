@@ -1,8 +1,8 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { KeyRoundIcon } from 'lucide-react';
-import { useFormatter } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { AccessErrorCode, type Grant, type GrantEffect, type McpServerView } from '@agent-os/contracts';
 import { Button } from '@/components/ui/button';
 import { StateBadge } from '@/components/state-badge';
@@ -46,7 +46,7 @@ const holderQuery = (holder: GrantHolderRef): { roleId: string } | { userId: str
   holder.kind === 'role' ? { roleId: holder.id } : { userId: holder.id };
 
 /** The grants whose «Убрать» is running, and the refusals shown under their rows. */
-type RowState = { pending: ReadonlySet<string>; errors: ReadonlyMap<string, string> };
+type RowState = { pending: ReadonlySet<string>; errors: ReadonlyMap<string, ReactNode> };
 
 /** Each record on its own: one that fails to read is logged and left out, the others still tell their orphans. */
 async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
@@ -63,6 +63,7 @@ async function readRecords(names: readonly string[]): Promise<McpServerView[]> {
  * A grant whose server or tool left the registry is an orphan row (GR-02) with «Убрать» only.
  */
 export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
+  const tErrors = useTranslations('errors');
   const headingId = useId();
   const format = useFormatter();
   const grants = useResource(() => adminApi.grants.list(holderQuery(holder)), `grants:${holder.kind}:${holder.id}`);
@@ -78,7 +79,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [quotaGrant, setQuotaGrant] = useState<Grant | null>(null);
 
-  const setRowError = (id: string, text: string | null): void =>
+  const setRowError = (id: string, text: ReactNode): void =>
     setRowState((current) => {
       const errors = new Map(current.errors);
       if (text === null) errors.delete(id);
@@ -102,7 +103,7 @@ export function GrantsSection({ holder }: { holder: GrantHolderRef }) {
       await adminApi.grants.remove(grant.id);
       grants.reload();
     } catch (error) {
-      const refusal = describeRefusal(error, { logEvent: 'admin: grant remove' });
+      const refusal = describeRefusal(tErrors, error, { logEvent: 'admin: grant remove' });
       // Error handling: a grant already gone is not an error of the row — the screen reads its rights again.
       if (isApiRequestError(error) && error.code === AccessErrorCode.GRANT_NOT_FOUND) grants.reload();
       else if (refusal !== null) setRowError(grant.id, refusal.text);

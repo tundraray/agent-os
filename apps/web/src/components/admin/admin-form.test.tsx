@@ -1,15 +1,14 @@
 import { render, screen, waitFor } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { ADMIN_TEXT } from "@/lib/admin/admin-texts";
 import type { FieldErrors } from "@/lib/admin/form-rules";
 import { AdminForm, AdminTextField } from "./admin-form";
 
 type Values = { login: string; name: string };
 
 const rules = ({ login, name }: Values): FieldErrors<keyof Values> => ({
-  ...(login === "" ? { login: ADMIN_TEXT.loginRequired } : {}),
-  ...(name === "" ? { name: ADMIN_TEXT.nameRequired } : {}),
+  ...(login === "" ? { login: "loginRequired" as const } : {}),
+  ...(name === "" ? { name: "nameRequired" as const } : {}),
 });
 
 function renderForm(onSubmit: (values: Values) => Promise<void>): void {

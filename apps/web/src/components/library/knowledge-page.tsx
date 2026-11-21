@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CircleMinus, Info, LightbulbIcon } from "lucide-react";
 import { useFormatter, useLocale, useTranslations } from "next-intl";
 import type { KnowledgeView, RecordDetail } from "@agent-os/contracts";
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from "@/components/admin/admin-header";
+import { RecordPlaceholder, useAdminTitles } from "@/components/admin/admin-header";
 import { DataTable, resourceTableState } from "@/components/admin/data-table";
 import { PageHeader } from "@/components/shell/page-header";
 import { ShellLink } from "@/components/shell/shell-link";
@@ -93,6 +93,7 @@ export function KnowledgePage({ id, variant }: KnowledgePageProps) {
 
 /** MC-2: the `h1`, the parent of the place and «Открыть workflow»; focus lands on the `h1` once it is drawn. */
 function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: KnowledgePageProps["variant"] }) {
+  const titles = useAdminTitles();
   const t = useTranslations("library");
   const locale = useLocale();
   useEffect(() => {
@@ -103,8 +104,8 @@ function KnowledgeHeader({ record, variant }: { record: RecordDetail; variant: K
   return (
     <PageHeader
       title={t("knowledge.title", { name: builtinName(record, locale) })}
-      parent={library ? { title: t("screen.title"), href: libraryPath() } : sectionParent("library")}
-      area={library ? undefined : PANEL_TITLE}
+      parent={library ? { title: t("screen.title"), href: libraryPath() } : titles.parent("library")}
+      area={library ? undefined : titles.panel}
     >
       <ShellLink
         href={library ? recordPath(record.id) : adminRecordPath("library", record.id)}

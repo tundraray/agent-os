@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { CircleXIcon, LoaderCircleIcon, MoreHorizontalIcon, RotateCwIcon, type LucideIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -11,16 +12,6 @@ import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, Tabl
 import type { ResourceStatus } from '@/hooks/use-resource';
 import { focusShellTarget } from '@/lib/focus';
 import { cn } from '@/lib/utils';
-
-/** UXRD MC-20 and the design-system data-table spec. */
-const TEXT = {
-  retry: 'Повторить',
-  loadMore: 'Показать ещё',
-  action: (action: string, record: string) => `${action}: ${record}`,
-  // The «⋯» menu follows the «{действие}: {запись}» naming of the row's buttons.
-  menu: (record: string) => `Действия: ${record}`,
-  nestedIn: (parent: string) => `в ${parent}: `,
-} as const;
 
 /** Matches `--duration-fast`, the collapse of a row that left. */
 const LEAVE_MS = 150;
@@ -328,6 +319,7 @@ function Collapsible({ children, shrinks = false, className }: CollapsibleProps)
 
 /** A record's row, its nested rows and its action error; they leave together. */
 function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupProps) {
+  const t = useTranslations('admin.table');
   const interactive = row.href !== undefined || (row.actions !== undefined && row.actions.length > 0);
   const groupProps = {
     'data-row-key': row.key,
@@ -377,7 +369,7 @@ function RowGroup({ row, columns, withActions, actionsAs, leaving }: RowGroupPro
               className={cn(cellClass, alignClass(columns[index]), index === 0 && 'pl-9')}
             >
               <Collapsible shrinks={shrinks(columns, index)}>
-                {index === 0 && <span className="sr-only">{TEXT.nestedIn(row.name)}</span>}
+                {index === 0 && <span className="sr-only">{t('nestedIn', { parent: row.name })}</span>}
                 {cell}
               </Collapsible>
             </TableCell>
@@ -458,6 +450,7 @@ function RowActions({
   actions: readonly DataTableAction[];
   actionsAs: 'buttons' | 'menu';
 }) {
+  const t = useTranslations('admin.table');
   if (actions.length === 0) return null;
   if (actionsAs === 'menu') return <ActionsMenu name={name} actions={actions} />;
 
@@ -468,7 +461,7 @@ function RowActions({
       variant="outline"
       size="sm"
       className="pointer-coarse:h-11"
-      aria-label={TEXT.action(action.label, name)}
+      aria-label={t('action', { action: action.label, record: name })}
       disabled={busy || action.disabled === true}
       onClick={action.onSelect}
     >
@@ -480,6 +473,7 @@ function RowActions({
 
 /** The «⋯» menu of a record's actions: in a table row and in a record page's header. */
 export function ActionsMenu({ name, actions }: { name: string; actions: readonly DataTableAction[] }) {
+  const t = useTranslations('admin.table');
   const busy = actions.some((action) => action.pending === true);
   return (
     <DropdownMenu>
@@ -490,7 +484,7 @@ export function ActionsMenu({ name, actions }: { name: string; actions: readonly
             variant="ghost"
             size="icon-sm"
             className="pointer-coarse:size-11"
-            aria-label={TEXT.menu(name)}
+            aria-label={t('menu', { record: name })}
             aria-haspopup="menu"
           />
         }
@@ -550,10 +544,11 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 }
 
 function RetryButton({ onClick }: { onClick: () => void }) {
+  const t = useTranslations('admin.table');
   return (
     <Button variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onClick}>
       <RotateCwIcon aria-hidden />
-      {TEXT.retry}
+      {t('retry')}
     </Button>
   );
 }
@@ -570,6 +565,7 @@ function EmptyTable({ Icon, title, description }: DataTableEmpty) {
 }
 
 function LoadMore({ onLoadMore, loading, error }: DataTableMore) {
+  const t = useTranslations('admin.table');
   if (error !== undefined) {
     return (
       <div className="flex flex-col items-center gap-2 py-2">
@@ -584,7 +580,7 @@ function LoadMore({ onLoadMore, loading, error }: DataTableMore) {
     <div className="flex justify-center py-2">
       <Button variant="ghost" size="sm" className="pointer-coarse:h-11" disabled={loading} onClick={onLoadMore}>
         {loading && <Spinner />}
-        {TEXT.loadMore}
+        {t('loadMore')}
       </Button>
     </div>
   );

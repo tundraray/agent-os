@@ -3,5 +3,8 @@
   "sidebar": "Боковая панель",
   "chatHistory": "История бесед",
   "showPassword": "Показать пароль",
-  "hidePassword": "Скрыть пароль"
+  "hidePassword": "Скрыть пароль",
+  "saving": "Сохраняем…",
+  "saved": "Сохранено",
+  "cancel": "Отмена"
 }

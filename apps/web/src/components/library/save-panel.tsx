@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { CAPTION, FORM_TEXT } from "@/components/admin/admin-form";
+import { CAPTION } from "@/components/admin/admin-form";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
 import type { RecordFormStatus } from "./use-record-form";
@@ -37,6 +37,7 @@ export type SavePanelProps = {
  */
 export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard, useInChatRef }: SavePanelProps) {
   const t = useTranslations("library");
+  const tCommon = useTranslations("common");
   const savedShown = useSavedShown(status);
   const saving = status === "saving";
   const changed = status === "changed" || status === "conflict";
@@ -64,10 +65,10 @@ export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard,
           {saving && (
             <>
               <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
-              {FORM_TEXT.saving}
+              {tCommon("saving")}
             </>
           )}
-          {status === "saved" && savedShown && FORM_TEXT.saved}
+          {status === "saved" && savedShown && tCommon("saved")}
         </p>
         <div className="flex shrink-0 items-center gap-2">
           {showNext ? (

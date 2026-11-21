@@ -5,8 +5,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { buttonVariants } from '@/components/ui/button';
 import { adminNewPath, type AdminPage } from '@/lib/shell-route';
 import { CONTROL_SIZE } from '../admin-form';
-import { PANEL_TITLE } from '../admin-header';
-import { adminSectionTitle } from '../admin-sections';
+import { useAdminTitles } from '../admin-header';
 import { NewProviderForm } from './new-provider-form';
 import { ProviderPage } from './provider-page';
 import { ProvidersTable } from './providers-table';
@@ -25,11 +24,12 @@ type SignInSectionProps = {
  * provider's page. The page is keyed by the provider, so another provider's address starts from a fresh read.
  */
 export function SignInSection({ page }: SignInSectionProps) {
+  const titles = useAdminTitles();
   if (page.kind === 'new') return <NewProviderForm />;
   if (page.kind === 'record') return <ProviderPage key={page.key} id={page.key} />;
   return (
     <>
-      <PageHeader area={PANEL_TITLE} title={adminSectionTitle('sign-in')}>
+      <PageHeader area={titles.panel} title={titles.section('sign-in')}>
         <Link href={adminNewPath('sign-in')} className={buttonVariants({ size: 'sm', className: CONTROL_SIZE })}>
           {TEXT.addProvider}
         </Link>

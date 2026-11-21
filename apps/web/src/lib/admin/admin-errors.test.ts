@@ -1,6 +1,21 @@
+import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import { ApiRequestError } from '@/lib/api/api-request';
-import { describeAdminError, type AdminErrorContext, type AdminErrorText } from './admin-errors';
+import { testTranslator } from '@/test/intl';
+import { render } from '@/test/render';
+import { describeAdminError, type AdminErrorContext, type AdminErrorTarget } from './admin-errors';
+
+const t = testTranslator('errors');
+
+/** A refusal as the form shows it: its text as markup, so the server text's language mark is seen. */
+type Shown = { target: AdminErrorTarget; text: string };
+
+const markup = (text: ReactNode): string => render(text).container.innerHTML;
+
+const shown = (error: unknown, context: AdminErrorContext): Shown | null => {
+  const described = describeAdminError(t, error, context);
+  return described === null ? null : { target: described.target, text: markup(described.text) };
+};
 
 /** An API refusal as `apiRequest` builds it from the error body. */
 const refusal = (status: number, code: string, reason?: string, message?: string, model?: string) =>
@@ -15,10 +30,10 @@ const refusal = (status: number, code: string, reason?: string, message?: string
     model,
   });
 
-const form = (text: string): AdminErrorText => ({ target: 'form', text });
+const form = (text: string): Shown => ({ target: 'form', text });
 
 describe('describeAdminError (C3 · web, Error handling)', () => {
-  it.each<[string, ApiRequestError, AdminErrorContext, AdminErrorText | null]>([
+  it.each<[string, ApiRequestError, AdminErrorContext, Shown | null]>([
     ['ADMIN_REQUIRED shows nothing', refusal(403, 'ADMIN_REQUIRED', undefined, 'Admin required'), {}, null],
     ['LOGIN_TAKEN', refusal(409, 'LOGIN_TAKEN'), {}, { target: 'login', text: 'Такой логин уже есть' }],
     ['EMAIL_TAKEN', refusal(409, 'EMAIL_TAKEN'), {}, { target: 'email', text: 'Сотрудник с такой почтой уже есть' }],
@@ -122,7 +137,7 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
     [
       'MCP check with the form text around it',
       refusal(422, 'MCP_SERVER_CHECK_FAILED', 'unauthorized'),
-      { checkFailed: (reason) => `Не удалось зарегистрировать: ${reason}` },
+      { checkFailed: 'register' },
       form('Не удалось зарегистрировать: сервер не принял токен доступа'),
     ],
     [
@@ -153,13 +168,13 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       'a code without a UXRD text reads the server message',
       refusal(409, 'BUILTIN_ROLE', undefined, 'Built-in role cannot be changed'),
       {},
-      form('Не удалось сохранить: Built-in role cannot be changed'),
+      form('Не удалось сохранить: <span lang="en">Built-in role cannot be changed</span>'),
     ],
     [
       'another VALIDATION_FAILED reads the server message',
       refusal(400, 'VALIDATION_FAILED', 'unknown_type', 'Unknown provider type'),
       {},
-      form('Не удалось сохранить: Unknown provider type'),
+      form('Не удалось сохранить: <span lang="en">Unknown provider type</span>'),
     ],
     [
       'no answer from the server',
@@ -168,6 +183,6 @@ describe('describeAdminError (C3 · web, Error handling)', () => {
       form('Не удалось сохранить: нет связи с сервером'),
     ],
   ])('%s', (_name, error, context, expected) => {
-    expect(describeAdminError(error, context)).toEqual(expected);
+    expect(shown(error, context)).toEqual(expected);
   });
 });

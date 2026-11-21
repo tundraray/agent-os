@@ -143,5 +143,82 @@
     "hint": "Send a message to continue once the quota is raised or a new month starts.",
     "announcement": "Work failed: quota used up",
     "announcementNamed": "Work failed: {model} quota used up"
+  },
+  "admin": {
+    "code": {
+      "LOGIN_TAKEN": "This login is already taken",
+      "EMAIL_TAKEN": "An employee with this email already exists",
+      "ROLE_NAME_TAKEN": "This role already exists",
+      "MCP_SERVER_NAME_TAKEN": "A server with this name already exists",
+      "MODEL_ID_TAKEN": "A model with this ID is already in the catalog",
+      "MODEL_PROVIDER_NAME_TAKEN": "A provider with this name already exists",
+      "MODEL_PROVIDER_HAS_MODELS": "Couldn't delete: the provider has models in the catalog. Remove them first.",
+      "GRANT_TARGET_UNKNOWN": "This server, tool or model no longer exists. Close the window and choose the target again.",
+      "PROVIDER_INCOMPLETE": "Can't turn on: fill in the provider settings first.",
+      "MCP_SERVER_INCOMPLETE": "Can't turn on: connect your account and get the tool list first.",
+      "PUBLIC_URL_REQUIRED": "Save the Agent OS public address in the sign-in settings first."
+    },
+    "listChanged": "The list has changed. Open the section again.",
+    "grantExists": "{effect, select, allow {This permission already exists} other {This block already exists}}",
+    "grantInvalid": "Not allowed: a block is given only to a person, and a quota only to a model permission.",
+    "providerGone": "Couldn't save: the {provider} provider is gone. Close the window — the list will refresh.",
+    "providerUnknown": "Couldn't save: the {provider} provider no longer exists. Close the window and open it again.",
+    "embeddingsNotSupported": "Couldn't save: a provider of this type doesn't compute embeddings",
+    "defaultModel": {
+      "model_unknown": "Couldn't save: the {model} model is no longer in the catalog",
+      "wrongPurpose": "Couldn't save: the {model} model has another purpose"
+    },
+    "providerCheck": {
+      "insecure_url": "Couldn't check the provider settings: the address isn't https. The settings weren't saved.",
+      "unreachable": "Couldn't check the provider settings: the address didn't respond or responded with an error. The settings weren't saved.",
+      "invalid_document": "Couldn't check the provider settings: there's no OIDC description for this Issuer at this address. The settings weren't saved."
+    },
+    "mcpCheck": {
+      "unreachable": "the server doesn't respond at this address",
+      "timeout": "the server didn't respond in time, try again",
+      "not_mcp": "there's no MCP server at this address",
+      "unauthorized": "the server didn't accept the access token",
+      "oauth_not_supported": "the server doesn't support personal OAuth. Choose a shared account",
+      "registration_rejected": "the authorization server refused to register Agent OS as a client",
+      "insecure_url": "the address of the server or of its authorization server isn't https"
+    },
+    "mcpCheckFailed": {
+      "register": "Couldn't register: {reason}",
+      "save": "Couldn't save: {reason}"
+    },
+    "field": {
+      "loginRequired": "Enter a login",
+      "nameRequired": "Enter a name",
+      "emailRequired": "Enter an email",
+      "passwordLength": "Password — 12 to 256 characters",
+      "serverRequired": "Choose a server",
+      "toolRequired": "Choose a tool",
+      "modelRequired": "Choose a model",
+      "quotaRange": "Quota — $0.01 to $1,000,000, at most two decimal places",
+      "roleNameRequired": "Enter a name",
+      "providerNameLength": "Name — 1 to 60 characters",
+      "serverNameRule": "Name — 1 to 32 characters: lowercase Latin letters, digits and hyphens, e.g. sentry-prod",
+      "serverUrl": "Enter an address that starts with https://",
+      "sharedToken": "Enter a token — up to 4096 characters",
+      "modelNameLength": "Name — 1 to 80 characters",
+      "thresholdRule": "Threshold — a whole number greater than zero",
+      "priceRule": "Enter a price — a number from 0",
+      "fullUrl": "Enter a full address, e.g. https://agent-os.example",
+      "idleHours": "Enter 0.25 to 24 hours in steps of 0.25",
+      "absoluteHours": "Enter a whole number from 1 to 720",
+      "absoluteBelowIdle": "The total limit can't be shorter than the inactivity limit",
+      "defaultMaxTurns": "Enter a whole number from {maxTurnsMin} to {maxTurnsMax}",
+      "knowledgeLimitTokens": "Enter a whole number from {knowledgeMin} to {knowledgeMax}",
+      "toolResultStoreFromChars": "Enter a whole number from {storeFromMin} to {storeFromMax}",
+      "toolResultPreviewChars": "Enter a whole number from {previewMin} to {previewMax}",
+      "toolResultReadMaxTokens": "Enter a whole number from {readMaxMin} to {readMaxMax}",
+      "toolResultPreviewBelowThreshold": "The preview must be shorter than the length at which a result is replaced with a link",
+      "modelProviderNameRule": "Name — up to {providerNameMax} characters: lowercase Latin letters, digits and hyphens, not starting with a hyphen, e.g. local-2",
+      "modelProviderUrl": "Enter a full address, e.g. https://api.example.com/v1",
+      "modelProviderApiKey": "Key — {apiKeyMin} to {apiKeyMax} characters",
+      "modelProviderRequired": "Choose a provider",
+      "modelNameAtProviderRequired": "Enter the model name",
+      "dimensionsRule": "Dimensions — a whole number greater than zero"
+    }
   }
 }

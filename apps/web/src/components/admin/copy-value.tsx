@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,10 +11,9 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 /** settings-form «Значение скопировано»: the check stays 2 s. */
 const COPIED_MS = 2000;
 
-const COPY_TEXT = { copy: "Копировать", copied: "Скопировано" } as const;
-
 /** settings-form «Значение для копирования»: a read-only Mono value with its copy button. */
 export function CopyValue({ label, value }: { label: string; value: string }) {
+  const t = useTranslations("admin.copy");
   const labelId = useId();
   const { announcer } = useShellServices();
   const { isCopied, copyToClipboard } = useCopyToClipboard({ copiedDuration: COPIED_MS });
@@ -42,14 +42,14 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
                   variant="ghost"
                   size="icon-sm"
                   className="pointer-coarse:size-11"
-                  aria-label={`${COPY_TEXT.copy}: ${label}`}
+                  aria-label={t("label", { label })}
                   onClick={() => copyToClipboard(value)}
                 />
               }
             >
               {isCopied ? <Check aria-hidden /> : <Copy aria-hidden />}
             </TooltipTrigger>
-            <TooltipContent>{isCopied ? COPY_TEXT.copied : `${COPY_TEXT.copy}: ${label}`}</TooltipContent>
+            <TooltipContent>{isCopied ? t("copied") : t("label", { label })}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>

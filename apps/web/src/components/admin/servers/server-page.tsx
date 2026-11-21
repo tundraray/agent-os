@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { LoaderCircle, WrenchIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,7 +13,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound, rereadOnNotFound } from '@/lib/admin/admin-errors';
-import { ADMIN_TEXT, saveFailed } from '@/lib/admin/admin-texts';
+import { ADMIN_TEXT } from '@/lib/admin/admin-texts';
 import { sharedTokenRules } from '@/lib/admin/form-rules';
 import { isApiRequestError } from '@/lib/api/api-request';
 import { logger } from '@/lib/logger';
@@ -20,7 +21,7 @@ import { takeAdminConnectReturn } from '@/lib/mcp/connect-return';
 import { adminPath } from '@/lib/shell-route';
 import { cn } from '@/lib/utils';
 import { AdminForm, CAPTION, CONTROL_SIZE, describeRefusal, FormError } from '../admin-form';
-import { PANEL_TITLE, RecordPlaceholder, sectionParent } from '../admin-header';
+import { RecordPlaceholder, useAdminTitles } from '../admin-header';
 import { ConfirmDialog } from '../confirm-dialog';
 import { ActionsMenu, DataTable, type DataTableColumn, type DataTableRow } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
@@ -108,10 +109,12 @@ function connectReturnText(server: string): string | null {
  * account, the shared token, the tools refresh and the delete. Name, address and mode only read (DC-10).
  */
 export function ServerPage({ name }: { name: string }) {
+  const titles = useAdminTitles();
+  const tErrors = useTranslations('errors');
   const router = useRouter();
   const { navigate } = useShellServices();
   /** The outcome of the connection return or of the last refresh, above the tools. */
-  const [toolsError, setToolsError] = useState<string | null>(null);
+  const [toolsError, setToolsError] = useState<ReactNode>(null);
   const returned = useRef<string | null>(null);
 
   // Read once on mount; a second run of the effect finds the address already clean and keeps the outcome.
@@ -157,7 +160,7 @@ export function ServerPage({ name }: { name: string }) {
         navigate(adminApi.servers.connectUrl(name));
         return;
       }
-      setToolsError(describeRefusal(error, { logEvent: 'admin: server tools refresh' })?.text ?? null);
+      setToolsError(describeRefusal(tErrors, error, { logEvent: 'admin: server tools refresh' })?.text ?? null);
     } finally {
       setRefreshing(false);
     }
@@ -171,7 +174,7 @@ export function ServerPage({ name }: { name: string }) {
 
   return (
     <>
-      <PageHeader area={PANEL_TITLE} parent={sectionParent('servers')} title={data.name} badge={<ServerStatusBadge status={data.status} />}>
+      <PageHeader area={titles.panel} parent={titles.parent('servers')} title={data.name} badge={<ServerStatusBadge status={data.status} />}>
         <Button variant="outline" size="sm" className={CONTROL_SIZE} disabled={refreshing} onClick={() => void refresh()}>
           {refreshing && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
           {refreshing ? TEXT.refreshing : TEXT.refresh}
@@ -276,7 +279,7 @@ function SharedTokenForm({ isSet, onSave, onSaved }: SharedTokenFormProps) {
       savingLabel={TEXT.checking}
       onSaved={onSaved}
       secretFields={['sharedToken']}
-      errorContext={{ checkFailed: saveFailed }}
+      errorContext={{ checkFailed: 'save' }}
       logEvent="admin: server token"
     >
       {(form) => (
