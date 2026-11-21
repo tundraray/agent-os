@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { KnowledgeItem, KnowledgeView } from "@agent-os/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
@@ -125,6 +125,7 @@ export type KnowledgeListProps = {
  */
 export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
   const format = useFormatter();
+  const t = useTranslations("errors");
   const tabs = knowledgeTabs(view);
   const [chosen, setChosen] = useState<KnowledgeTabId>("all");
   // Kept while the dialog closes, so its content does not change during the exit animation.
@@ -189,7 +190,7 @@ export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
           onConfirm={() => confirmDelete(deleting)}
           // `deleteItem` has logged the refusal. Without `focusTitleAfterConfirm`: focus returns to the row's menu,
           // and `DataTable` moves it on when the re-read takes the row away (next row, previous, else the `h1`).
-          refusalText={deleteFailed}
+          refusalText={(cause) => deleteFailed(t, cause)}
         />
       )}
     </Tabs>

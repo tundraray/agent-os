@@ -869,7 +869,7 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
   //   reasons), and the first-message refusal wiped from the field or put where the thread has no row for it. The words per reason are a unit
   //   table; only this test sees the failure travel through the real feed -> thread -> block, and the 409 through the real message field.
   // @category: edge-case
-  // @dependency: ChatRuntimeProvider, ChatShell, thread feed (event source mock), reply error block, message field, chatFailureText, startRefused, MSW, next/navigation mock
+  // @dependency: ChatRuntimeProvider, ChatShell, thread feed (event source mock), reply error block, message field, replyFailureText, startRefused, MSW, next/navigation mock
   // @complexity: high
   it('INT-5: a provider failure shows its words in the reply block inside a conversation and at the message field for a refused first message', async () => {
     const user = userEvent.setup({ delay: null });

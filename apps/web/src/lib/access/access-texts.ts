@@ -1,11 +1,9 @@
 import type { MyModel, MyModels, ToolRefusalReason } from '@agent-os/contracts';
 import {
-  capitalize,
   failureReasonText,
   formatModel,
   isProviderFailureReason,
   PROVIDER_FAILURE_REASONS,
-  providerReasonText,
   type ErrorsTranslator,
 } from '@/lib/agents/format';
 import { formatMonth, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
@@ -62,18 +60,6 @@ export function replyFailureText(t: ErrorsTranslator, reason: string | null, mod
     return t(`replyFailure.${reason}`, { model: formatModel(model) });
   }
   return t('replyFailed');
-}
-
-/**
- * The Russian MC-11 of a refused first message for a provider reason, for `library-errors.ts` until its
- * phrases move to the catalogue; every other reason reads «Не удалось получить ответ.».
- */
-export function chatFailureText(reason: string | null, model: string | null): string {
-  if (!isProviderFailureReason(reason)) return 'Не удалось получить ответ.';
-  const sentence = capitalize(providerReasonText(reason, model === null ? undefined : formatModel(model)));
-  return reason === 'provider_unavailable'
-    ? `${sentence}. Попробуйте перегенерировать позже.`
-    : `${sentence}. Обратитесь к администратору Agent OS.`;
 }
 
 /**

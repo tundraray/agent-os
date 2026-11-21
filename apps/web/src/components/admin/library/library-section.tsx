@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { PlusIcon, ShieldCheckIcon, UserIcon, UsersIcon } from 'lucide-react';
-import { useFormatter } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { CHAT_BUILTIN_KEY, type BannedRecord, type RecordKind, type RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
@@ -353,9 +353,10 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
 function BansTab({ caption }: { caption: string }) {
   const list = useResource(adminApi.library.bans, 'library:bans');
   const format = useFormatter();
+  const t = useTranslations('errors');
   const { libraryIndex } = useShellServices();
   const [pending, setPending] = useState<string | null>(null);
-  const [failure, setFailure] = useState<{ id: string; text: string } | null>(null);
+  const [failure, setFailure] = useState<{ id: string; text: ReactNode } | null>(null);
 
   async function liftBan(record: BannedRecord): Promise<void> {
     setFailure(null);
@@ -367,7 +368,7 @@ function BansTab({ caption }: { caption: string }) {
       toast.success(TEXT.banLifted);
       void libraryIndex.refresh();
     } catch (error) {
-      setFailure({ id: record.id, text: describeLibraryError(error, { where: 'panel', kind: record.kind }).text });
+      setFailure({ id: record.id, text: describeLibraryError(t, error, { where: 'panel', kind: record.kind }).text });
     } finally {
       setPending(null);
       list.reload();

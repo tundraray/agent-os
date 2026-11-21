@@ -1,13 +1,19 @@
+import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import { ApiRequestError } from '@/lib/api/api-request';
+import { testTranslator } from '@/test/intl';
+import { render } from '@/test/render';
 import {
   describeDraftRefusal,
   describeLibraryError,
   describeRefusal,
   isKnowledgeHidden,
+  type LibraryErrorContext,
   type LibraryErrorText,
   type RefusalText,
 } from './library-errors';
+
+const t = testTranslator('errors');
 
 /** A refusal as `apiRequest` builds it from the error body. */
 const refusal = (status: number, code: string, reason?: string, message?: string): ApiRequestError =>
@@ -38,7 +44,17 @@ const network = new ApiRequestError({ kind: 'network', method: 'POST', path: '/a
 
 const NOT_FOUND = 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.';
 
-type Outcome = LibraryErrorText | RefusalText | string | boolean | null;
+/** A library error as the page shows it: its text as markup, so the server text's language mark is seen. */
+type Shown = Omit<LibraryErrorText, 'text'> & { text: string };
+
+type Outcome = Shown | RefusalText | string | boolean | null;
+
+const markup = (text: ReactNode): string => render(text).container.innerHTML;
+
+const libraryError = (error: unknown, context: LibraryErrorContext): Shown | null => {
+  const described = describeLibraryError(t, error, context);
+  return described === null ? null : { ...described, text: markup(described.text) };
+};
 
 // Catches: the same code in another place reads the same line; the model of a refusal taken from the call's arguments;
 // «Не найдено» on any 403, or an error instead of «Не найдено» on the knowledge 403 (self-learning AC-11.3, DC-2).
@@ -47,19 +63,19 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     // 404 RECORD_NOT_FOUND: the record page gives way to RV-02; a message with a chip names the record unavailable
     [
       '404 on the record page → RV-02',
-      () => describeLibraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'record_page' }),
+      () => libraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'record_page' }),
       { place: { at: 'screen' }, text: NOT_FOUND, open: false },
     ],
     [
       '404 on a message with a workflow chip → MC-16 under the field',
-      () => describeLibraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'message', kind: 'workflow' }),
+      () => libraryError(refusal(404, 'RECORD_NOT_FOUND'), { where: 'message', kind: 'workflow' }),
       { place: { at: 'composer' }, text: 'Workflow недоступен: его удалили или закрыли для вас', open: false },
     ],
     // 409 RECORD_VERSION_CONFLICT: MC-10, employee and administrator wording
     [
       '409 conflict in the employee editor → MC-10 with the changed fields',
       () =>
-        describeLibraryError(refusal(409, 'RECORD_VERSION_CONFLICT'), {
+        libraryError(refusal(409, 'RECORD_VERSION_CONFLICT'), {
           where: 'editor',
           changedFields: ['Инструкция', 'Модель'],
         }),
@@ -71,33 +87,33 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     ],
     [
       '409 conflict in the panel without fields → MC-10 of the administrator',
-      () => describeLibraryError(refusal(409, 'RECORD_VERSION_CONFLICT'), { where: 'panel', admin: true }),
+      () => libraryError(refusal(409, 'RECORD_VERSION_CONFLICT'), { where: 'panel', admin: true }),
       { place: { at: 'conflict' }, text: 'Изменения уже сохранили в другом окне.', open: false },
     ],
     // 409 RECORD_NAME_TAKEN → the field «Имя»
     [
       'name taken, own',
       () =>
-        describeLibraryError(refusal(409, 'RECORD_NAME_TAKEN', 'own'), { where: 'editor', kind: 'agent', name: 'Сводка' }),
+        libraryError(refusal(409, 'RECORD_NAME_TAKEN', 'own'), { where: 'editor', kind: 'agent', name: 'Сводка' }),
       { place: { at: 'field', field: 'name' }, text: 'У вас уже есть агент «Сводка»', open: false },
     ],
     [
       'name taken, system',
       () =>
-        describeLibraryError(refusal(409, 'RECORD_NAME_TAKEN', 'system'), { where: 'editor', kind: 'agent', name: 'Чат' }),
+        libraryError(refusal(409, 'RECORD_NAME_TAKEN', 'system'), { where: 'editor', kind: 'agent', name: 'Чат' }),
       { place: { at: 'field', field: 'name' }, text: 'Так называется агент от компании — выберите другое имя', open: false },
     ],
     // 422 RECORD_REJECTED by reason
     [
       '422 server_not_allowed → the field «Системы»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'server_not_allowed'), { where: 'editor', server: 'sentry' }),
+        libraryError(refusal(422, 'RECORD_REJECTED', 'server_not_allowed'), { where: 'editor', server: 'sentry' }),
       { place: { at: 'field', field: 'servers' }, text: 'Нет доступа к системе sentry — уберите её', open: false },
     ],
     [
       '422 server_not_allowed of an executor → its card',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'server_not_allowed'), {
+        libraryError(refusal(422, 'RECORD_REJECTED', 'server_not_allowed'), {
           where: 'editor',
           server: 'jira',
           executor: 'Сбор тикетов',
@@ -107,15 +123,15 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       '422 all_servers_not_allowed → the field «Системы»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'all_servers_not_allowed', 'Record is rejected'), {
+        libraryError(refusal(422, 'RECORD_REJECTED', 'all_servers_not_allowed', 'Record is rejected'), {
           where: 'editor',
         }),
-      { place: { at: 'field', field: 'servers' }, text: 'Не удалось сохранить: Record is rejected', open: false },
+      { place: { at: 'field', field: 'servers' }, text: 'Не удалось сохранить: <span lang="en">Record is rejected</span>', open: false },
     ],
     [
       '422 model_not_allowed → the field «Модель»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
+        libraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
           where: 'editor',
           model: 'anthropic/claude-opus-5-5',
         }),
@@ -124,7 +140,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       '422 model_not_allowed of an executor stays at the field «Модель»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
+        libraryError(refusal(422, 'RECORD_REJECTED', 'model_not_allowed'), {
           where: 'editor',
           model: 'anthropic/claude-opus-5-5',
           executor: 'Сбор тикетов',
@@ -134,33 +150,33 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       '422 agent_not_visible → the field «Может запускать»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'agent_not_visible', 'Record is rejected'), {
+        libraryError(refusal(422, 'RECORD_REJECTED', 'agent_not_visible', 'Record is rejected'), {
           where: 'editor',
         }),
-      { place: { at: 'field', field: 'agents' }, text: 'Не удалось сохранить: Record is rejected', open: false },
+      { place: { at: 'field', field: 'agents' }, text: 'Не удалось сохранить: <span lang="en">Record is rejected</span>', open: false },
     ],
     [
       '422 role_not_member → the form of «Поделиться»',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'role_not_member'), { where: 'share', role: 'Поддержка' }),
+        libraryError(refusal(422, 'RECORD_REJECTED', 'role_not_member'), { where: 'share', role: 'Поддержка' }),
       { place: { at: 'form' }, text: 'Не удалось сохранить: вы не состоите в роли Поддержка', open: false },
     ],
     [
       '422 sharing_banned → the form of «Поделиться»',
-      () => describeLibraryError(refusal(422, 'RECORD_REJECTED', 'sharing_banned'), { where: 'share' }),
+      () => libraryError(refusal(422, 'RECORD_REJECTED', 'sharing_banned'), { where: 'share' }),
       { place: { at: 'form' }, text: 'Не удалось сохранить: доступ закрыл администратор', open: false },
     ],
     [
       '422 audience_fixed (and holder_not_found, builtin) → the panel form',
       () =>
-        describeLibraryError(refusal(422, 'RECORD_REJECTED', 'audience_fixed', 'Record is rejected'), { where: 'panel' }),
-      { place: { at: 'form' }, text: 'Не удалось сохранить: Record is rejected', open: false },
+        libraryError(refusal(422, 'RECORD_REJECTED', 'audience_fixed', 'Record is rejected'), { where: 'panel' }),
+      { place: { at: 'form' }, text: 'Не удалось сохранить: <span lang="en">Record is rejected</span>', open: false },
     ],
     // 409 START_REFUSED at «Запустить с нуля» and on a new conversation's first message
     [
       'START_REFUSED by model at «Запустить с нуля», own agent',
       () =>
-        describeLibraryError(startRefused('model_not_allowed', 'anthropic/claude-sonnet-5-5'), {
+        libraryError(startRefused('model_not_allowed', 'anthropic/claude-sonnet-5-5'), {
           where: 'restart',
           kind: 'agent',
           own: true,
@@ -174,7 +190,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'START_REFUSED by model at «Запустить с нуля», a colleague’s workflow',
       () =>
-        describeLibraryError(startRefused('model_not_allowed', 'anthropic/claude-sonnet-5-5'), {
+        libraryError(startRefused('model_not_allowed', 'anthropic/claude-sonnet-5-5'), {
           where: 'restart',
           kind: 'workflow',
           own: false,
@@ -188,24 +204,24 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'START_REFUSED record_unavailable at «Запустить с нуля»',
       () =>
-        describeLibraryError(startRefused('record_unavailable', null), { where: 'restart', kind: 'agent', own: true }),
+        libraryError(startRefused('record_unavailable', null), { where: 'restart', kind: 'agent', own: true }),
       { place: { at: 'notice' }, text: 'Агент недоступен: его удалили или закрыли для вас', open: false },
     ],
     [
       'START_REFUSED on the first message with the model → «чат», no «Открыть»',
       () =>
-        describeLibraryError(startRefused('model_not_allowed', 'anthropic/claude-haiku-5-5'), { where: 'first_message' }),
+        libraryError(startRefused('model_not_allowed', 'anthropic/claude-haiku-5-5'), { where: 'first_message' }),
       { place: { at: 'composer' }, text: 'Модель Haiku вам недоступна — чат не запустился', open: false },
     ],
     [
       'START_REFUSED on the first message without the model → MC-27',
-      () => describeLibraryError(startRefused('model_not_allowed', null), { where: 'first_message' }),
+      () => libraryError(startRefused('model_not_allowed', null), { where: 'first_message' }),
       null,
     ],
     // model-providers DC-5, MP-09: a provider or default-model refusal names its reason (MC-11, MC-12)
     [
       'START_REFUSED model_not_configured on the first message → MC-11 under the field',
-      () => describeLibraryError(startRefused('model_not_configured', null), { where: 'first_message' }),
+      () => libraryError(startRefused('model_not_configured', null), { where: 'first_message' }),
       {
         place: { at: 'composer' },
         text: 'Модель для чата не настроена. Обратитесь к администратору Agent OS.',
@@ -215,7 +231,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'START_REFUSED provider_disabled on the first message → MC-11 with the model',
       () =>
-        describeLibraryError(startRefused('provider_disabled', 'anthropic/claude-haiku-5-5'), { where: 'first_message' }),
+        libraryError(startRefused('provider_disabled', 'anthropic/claude-haiku-5-5'), { where: 'first_message' }),
       {
         place: { at: 'composer' },
         text: 'Провайдер модели Haiku выключен. Обратитесь к администратору Agent OS.',
@@ -225,7 +241,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'START_REFUSED provider_key_missing at «Запустить с нуля» → MC-12 with «Открыть»',
       () =>
-        describeLibraryError(startRefused('provider_key_missing', 'anthropic/claude-sonnet-5-5'), {
+        libraryError(startRefused('provider_key_missing', 'anthropic/claude-sonnet-5-5'), {
           where: 'restart',
           kind: 'workflow',
           own: false,
@@ -234,28 +250,29 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     ],
     // unknown code and network
     [
-      'unknown code (403 RECORD_READ_ONLY too) → «Не удалось сохранить» with the server message',
-      () => describeLibraryError(refusal(409, 'SOMETHING_NEW', undefined, 'Something odd'), { where: 'editor' }),
-      { place: { at: 'form' }, text: 'Не удалось сохранить: Something odd', open: false },
+      // UC-5 (AC-05.1, AC-05.2, DC-6): never the key, never the server text without its language mark.
+      'an unmapped refusal shows the server text inside lang="en" within the Russian phrase',
+      () => libraryError(refusal(409, 'SOMETHING_NEW', undefined, 'Something odd'), { where: 'editor' }),
+      { place: { at: 'form' }, text: 'Не удалось сохранить: <span lang="en">Something odd</span>', open: false },
     ],
     [
       'network in a form or at «Запустить с нуля»',
-      () => describeLibraryError(network, { where: 'share' }),
+      () => libraryError(network, { where: 'share' }),
       { place: { at: 'form' }, text: 'Не удалось сохранить: нет связи с сервером', open: false },
     ],
-    ['network on a message → MC-27', () => describeLibraryError(network, { where: 'message', kind: 'agent' }), null],
-    ['5xx on a message → MC-27', () => describeLibraryError(refusal(500, 'INTERNAL'), { where: 'message' }), null],
+    ['network on a message → MC-27', () => libraryError(network, { where: 'message', kind: 'agent' }), null],
+    ['5xx on a message → MC-27', () => libraryError(refusal(500, 'INTERNAL'), { where: 'message' }), null],
     // tool refusals: the model comes from `refusalDetail`
     [
       'refusal record_unavailable',
       () =>
-        describeRefusal('record_unavailable', { tool: 'start_agent', kind: 'agent', model: null, recordId: 'r1', own: true }),
+        describeRefusal(t, 'record_unavailable', { tool: 'start_agent', kind: 'agent', model: null, recordId: 'r1', own: true }),
       { text: 'Агент недоступен: его удалили или закрыли для вас', action: null },
     ],
     [
       'refusal model_not_allowed of an own agent',
       () =>
-        describeRefusal('model_not_allowed', {
+        describeRefusal(t, 'model_not_allowed', {
           tool: 'start_agent',
           kind: 'agent',
           model: 'anthropic/claude-opus-5-5',
@@ -270,7 +287,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'refusal model_not_allowed of a colleague’s workflow',
       () =>
-        describeRefusal('model_not_allowed', {
+        describeRefusal(t, 'model_not_allowed', {
           tool: 'start_workflow',
           kind: 'workflow',
           model: 'anthropic/claude-sonnet-5-5',
@@ -284,13 +301,13 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     ],
     [
       'refusal shared → «Открыть в редакторе»',
-      () => describeRefusal('shared', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r1', own: true }),
+      () => describeRefusal(t, 'shared', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r1', own: true }),
       { text: 'Агент открыт ролям — правьте его в редакторе', action: { label: 'Открыть в редакторе', recordId: 'r1' } },
     ],
     [
       'refusal read_only of a company agent',
       () =>
-        describeRefusal('read_only', {
+        describeRefusal(t, 'read_only', {
           tool: 'draft_record',
           kind: 'agent',
           model: null,
@@ -302,18 +319,18 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     ],
     [
       'refusal read_only of a colleague’s record → the platform text',
-      () => describeRefusal('read_only', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r2', own: false }),
+      () => describeRefusal(t, 'read_only', { tool: 'draft_record', kind: 'agent', model: null, recordId: 'r2', own: false }),
       null,
     ],
     [
       'refusal run_limit',
-      () => describeRefusal('run_limit', { tool: 'start_agent', kind: 'agent', model: null, recordId: null, own: true }),
+      () => describeRefusal(t, 'run_limit', { tool: 'start_agent', kind: 'agent', model: null, recordId: null, own: true }),
       { text: 'Предел вызовов исчерпан', action: null },
     ],
     [
       'refusal provider_missing → MC-12 with «Открыть»',
       () =>
-        describeRefusal('provider_missing', {
+        describeRefusal(t, 'provider_missing', {
           tool: 'start_agent',
           kind: 'agent',
           model: 'anthropic/claude-opus-5-5',
@@ -325,7 +342,7 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'refusal model_not_configured → MC-12 without a model',
       () =>
-        describeRefusal('model_not_configured', {
+        describeRefusal(t, 'model_not_configured', {
           tool: 'start_workflow',
           kind: 'workflow',
           model: null,
@@ -337,48 +354,48 @@ describe('describeLibraryError, describeRefusal and isKnowledgeHidden (design-we
     [
       'refusal invalid_arguments of draft_record → the platform text',
       () =>
-        describeRefusal('invalid_arguments', { tool: 'draft_record', kind: 'workflow', model: null, recordId: null, own: true }),
+        describeRefusal(t, 'invalid_arguments', { tool: 'draft_record', kind: 'workflow', model: null, recordId: null, own: true }),
       null,
     ],
     // Draft card, MC-8: a refused save is a 200 with `refusal` (DC-01 «Не сохранено»).
     [
       'draft refusal name_taken',
-      () => describeDraftRefusal('name_taken', { kind: 'agent', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'name_taken', { kind: 'agent', name: 'Разбор' }),
       'У вас уже есть агент «Разбор»',
     ],
     [
       'draft refusal system_name',
-      () => describeDraftRefusal('system_name', { kind: 'workflow', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'system_name', { kind: 'workflow', name: 'Разбор' }),
       'Так называется агент от компании — выберите другое имя',
     ],
     [
       'draft refusal model_not_allowed names the draft model',
-      () => describeDraftRefusal('model_not_allowed', { kind: 'agent', name: 'Разбор', model: 'anthropic/claude-opus-5-5' }),
+      () => describeDraftRefusal(t, 'model_not_allowed', { kind: 'agent', name: 'Разбор', model: 'anthropic/claude-opus-5-5' }),
       'Модель Opus вам недоступна — выберите другую',
     ],
     [
       'draft refusal model_not_allowed without a model',
-      () => describeDraftRefusal('model_not_allowed', { kind: 'workflow', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'model_not_allowed', { kind: 'workflow', name: 'Разбор' }),
       'Не удалось сохранить: модель вам недоступна',
     ],
     [
       'draft refusal not_found',
-      () => describeDraftRefusal('not_found', { kind: 'workflow', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'not_found', { kind: 'workflow', name: 'Разбор' }),
       'Workflow недоступен: его удалили или закрыли для вас',
     ],
     [
       'draft refusal shared',
-      () => describeDraftRefusal('shared', { kind: 'agent', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'shared', { kind: 'agent', name: 'Разбор' }),
       'Агент открыт ролям — правьте его в редакторе',
     ],
     [
       'draft refusal without a UXRD text shows no reason code',
-      () => describeDraftRefusal('server_not_allowed', { kind: 'agent', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'server_not_allowed', { kind: 'agent', name: 'Разбор' }),
       'Не удалось сохранить — откройте черновик в редакторе: там видно, что исправить',
     ],
     [
       'draft refusal version_conflict → the stale line, not a refusal line',
-      () => describeDraftRefusal('version_conflict', { kind: 'agent', name: 'Разбор' }),
+      () => describeDraftRefusal(t, 'version_conflict', { kind: 'agent', name: 'Разбор' }),
       null,
     ],
     // Knowledge screen «Не найдено» (self-learning design-web.md, «Клиент API»)

@@ -42,12 +42,20 @@ export function describeRefusal(
   return describeAdminError(error, context);
 }
 
-/** settings-form «Ошибка формы»: the refusal above the actions; takes focus when it appears. */
-export function FormError({ children }: { children: string }) {
+/**
+ * settings-form «Ошибка формы»: the refusal above the actions; takes focus when it appears and when its text
+ * changes. Keyed by the rendered text, not by `children`: a refusal quoting the server is a node, and a node
+ * built anew on each render must not pull focus back on every render.
+ */
+export function FormError({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const focusedText = useRef<string | null>(null);
   useEffect(() => {
+    const text = ref.current?.textContent ?? null;
+    if (text === focusedText.current) return;
+    focusedText.current = text;
     ref.current?.focus();
-  }, [children]);
+  });
   return (
     <div
       ref={ref}

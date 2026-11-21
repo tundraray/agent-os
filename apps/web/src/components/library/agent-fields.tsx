@@ -79,7 +79,7 @@ export type AgentDefinition = Extract<RecordDefinition, { kind: "agent" }>;
 
 export type AgentField = "name" | "description" | "prompt" | "servers" | "model" | "maxTurns" | "agents";
 
-export type AgentFieldErrors = Partial<Record<AgentField, string>>;
+export type AgentFieldErrors = Partial<Record<AgentField, ReactNode>>;
 
 /**
  * `employee` — the owner in the library; `system` — the administrator on a company record in the panel:
@@ -305,7 +305,7 @@ type TextFieldProps = {
   multiline?: boolean;
   /** The instruction: Body 16 / 26, from eight lines high, scrolling inside from 768 px. */
   long?: boolean;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (value: string) => void;
 };
 
@@ -368,7 +368,7 @@ type ServersFieldProps = {
   choices: readonly string[];
   /** The administrator on a company record: «Все системы» above the list (MC-9). */
   allowAll?: boolean;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (servers: string[]) => void;
 };
 
@@ -498,7 +498,7 @@ type ModelFieldProps = {
   /** `null` — the record runs on the default chat model. */
   model: string | null;
   choices: EditorChoices;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (model: string) => void;
 };
 
@@ -627,7 +627,7 @@ export function MaxTurnsField({
   /** `null` — no hint. */
   hint?: string | null;
   value: number;
-  error: string | undefined;
+  error: ReactNode;
   onChange: (value: number) => void;
 }) {
   const hintId = hint === null ? null : `${id}-hint`;
@@ -669,7 +669,7 @@ type AgentsFieldProps = {
   id: string;
   recordId: string | null;
   chosen: readonly string[];
-  error: string | undefined;
+  error: ReactNode;
   onChange: (agents: string[]) => void;
 };
 

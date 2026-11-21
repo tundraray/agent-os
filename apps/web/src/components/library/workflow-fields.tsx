@@ -96,7 +96,7 @@ export type WorkflowField =
   | `role:${string}`
   | `executor:${string}`;
 
-export type WorkflowFieldErrors = Partial<Record<WorkflowField, string>>;
+export type WorkflowFieldErrors = Partial<Record<WorkflowField, ReactNode>>;
 
 const roleKey = (name: string): WorkflowField => `role:${name}`;
 /** The key of an executor's card error. */
@@ -492,7 +492,7 @@ type RulesFieldProps = {
   rules: string;
   names: readonly string[];
   renames: readonly Rename[];
-  error: string | undefined;
+  error: ReactNode;
   onChange: (rules: string) => void;
   onReplaced: (rename: Rename) => void;
 };

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   LibraryErrorCode,
   LibraryRejectReasonSchema,
@@ -8,15 +9,16 @@ import {
   type SaveOwnRefusal,
   type ToolRefusalReason,
 } from '@agent-os/contracts';
+import { failedText } from '@/components/i18n/server-text';
+import { replyFailureText } from '@/lib/access/access-texts';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { ADMIN_TEXT, saveFailed } from '@/lib/admin/admin-texts';
+import { formatModel, type ErrorsTranslator } from '@/lib/agents/format';
 import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
-import { capitalize, formatModel, providerReasonText } from '@/lib/agents/format';
-import { chatFailureText } from '@/lib/access/access-texts';
 
 /**
  * Texts of the library's errors and refusals and where each one shows (design-web.md, «Ошибки и их
- * место»; UXRD MC-6, MC-8, MC-10, MC-14, MC-16, MC-17). Screens keep no refusal texts of their own.
+ * место»; UXRD MC-6, MC-8, MC-10, MC-14, MC-16, MC-17). Screens keep no refusal texts of their own; each
+ * function takes the `errors` messages, and a text that quotes the server is a node with its language mark.
  */
 
 /** «агент» / «workflow», or with a capital letter at the start of a sentence. */
@@ -36,10 +38,7 @@ export function shareBlockedReason(record: Pick<RecordSummary, 'ban'>, noRoles: 
   return noRoles ? 'У вас нет ролей — поделиться не с кем' : null;
 }
 
-/**
- * The reason of a failed request in the server's words, or «нет связи с сервером» — the {причина} of MC-4,
- * MC-5 and MC-13.
- */
+/** The reason of a failed request in the server's words, or «нет связи с сервером» — the {причина} of MC-13. */
 export function failureReason(cause: unknown): string {
   if (isApiRequestError(cause) && cause.kind === 'network') return 'нет связи с сервером';
   return cause instanceof Error ? cause.message : String(cause);
@@ -57,10 +56,10 @@ export const isKnowledgeHidden = (error: unknown): boolean =>
     error.code === LibraryErrorCode.KNOWLEDGE_FORBIDDEN);
 
 /** MC-4. */
-export const copyFailed = (cause: unknown): string => `Не удалось скопировать: ${failureReason(cause)}`;
+export const copyFailed = (t: ErrorsTranslator, cause: unknown): ReactNode => failedText(t, 'copy', cause);
 
 /** MC-5. */
-export const deleteFailed = (cause: unknown): string => `Не удалось удалить: ${failureReason(cause)}`;
+export const deleteFailed = (t: ErrorsTranslator, cause: unknown): ReactNode => failedText(t, 'delete', cause);
 
 /** Where the answer came from: the same code reads differently in different places. */
 export type LibraryErrorWhere =
@@ -110,16 +109,9 @@ export type LibraryErrorPlace =
   | { at: 'composer' };
 
 /** `open` — the notice carries «Открыть» to the record (MC-16). */
-export type LibraryErrorText = { place: LibraryErrorPlace; text: string; open: boolean };
+export type LibraryErrorText = { place: LibraryErrorPlace; text: ReactNode; open: boolean };
 
-const NOT_FOUND_TEXT = 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.';
 const START_REFUSED = 'START_REFUSED';
-
-const unavailableText = (kind: RecordKind): string =>
-  `${kindWord(kind, true)} недоступен: его удалили или закрыли для вас`;
-
-const notStartedText = (model: string, subject: string): string =>
-  `Модель ${formatModel(model)} вам недоступна — ${subject} не запустился`;
 
 /** The general place of a context, for an error without a place of its own. */
 function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
@@ -137,7 +129,7 @@ function placeOf(where: LibraryErrorWhere): LibraryErrorPlace {
   }
 }
 
-const at = (place: LibraryErrorPlace, text: string, open = false): LibraryErrorText => ({ place, text, open });
+const at = (place: LibraryErrorPlace, text: ReactNode, open = false): LibraryErrorText => ({ place, text, open });
 
 /** The «Системы» field of a server error, or the executor's card when the caller names it. */
 const serversPlace = (context: LibraryErrorContext): LibraryErrorPlace =>
@@ -146,69 +138,75 @@ const serversPlace = (context: LibraryErrorContext): LibraryErrorPlace =>
 /** The refused model of a 409 `START_REFUSED` body, as the core reads it. */
 const refusedModel = (error: ApiRequestError): string | null => error.model ?? null;
 
-/** model-providers MC-11 at the message field: the first message found no default chat model. */
-const CHAT_MODEL_NOT_CONFIGURED = 'Модель для чата не настроена. Обратитесь к администратору Agent OS.';
-
 /**
- * The {Причина} of model-providers MC-12, capitalised: a start refused for the model's provider (MC-9 words)
- * or for no default chat model; `null` — another reason. `model` is null only on `model_not_configured`.
+ * model-providers MC-12 of a refused start: «{Причина} — {вид} не запустился» for a start refused for the
+ * model's provider or for no default chat model; `null` — another reason. `model` is null only on
+ * `model_not_configured`, or when the refusal names no model.
  */
-function providerRefusal(reason: string | null | undefined, model: string | null): string | null {
-  if (reason === 'model_not_configured') return 'Модель не настроена';
+function providerNotStarted(t: ErrorsTranslator, reason: string | null | undefined, model: string | null, kind: RecordKind): string | null {
+  if (reason === 'model_not_configured') return t('library.providerNotStarted.model_not_configured', { kind });
   const provider = ModelUnavailableReasonSchema.safeParse(reason);
   if (!provider.success) return null;
-  return capitalize(providerReasonText(provider.data, model === null ? undefined : formatModel(model)));
+  return model === null
+    ? t(`library.providerNotStarted.unnamed.${provider.data}`, { kind })
+    : t(`library.providerNotStarted.named.${provider.data}`, { kind, model: formatModel(model) });
 }
 
-/** model-providers MC-12 of a refused start: «{Причина} — {вид} не запустился». */
-const providerNotStarted = (cause: string, kind: RecordKind): string => `${cause} — ${kindWord(kind)} не запустился`;
+/** MC-16 of a start refused for the model, with what the viewer can do: change its model, or copy it. */
+function modelNotStarted(t: ErrorsTranslator, model: string | null, kind: RecordKind, own: boolean): string {
+  if (model === null) return t(own ? 'library.notStarted.ownUnnamed' : 'library.notStarted.otherUnnamed', { kind });
+  return t(own ? 'library.notStarted.own' : 'library.notStarted.other', { kind, model: formatModel(model) });
+}
 
-/**
- * 409 `START_REFUSED`: MC-16 (or MC-12 for a provider reason) at «Запустить с нуля»; on a new conversation's
- * first message, with «чат», or MC-11 for a provider reason or no default chat model.
- */
-function startRefused(error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText | null {
+/** The first message of a new conversation, refused at start: model-providers MC-11, or MC-16 with «чат». */
+function firstMessageRefused(t: ErrorsTranslator, error: ApiRequestError): LibraryErrorText | null {
   const model = refusedModel(error);
-  const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
-  const byProvider = providerRefusal(error.reason, model);
-  if (context.where === 'first_message') {
-    if (error.reason === 'model_not_configured') return at({ at: 'composer' }, CHAT_MODEL_NOT_CONFIGURED);
-    if (byProvider !== null) return at({ at: 'composer' }, chatFailureText(error.reason ?? null, model));
-    return byModel && model !== null ? at({ at: 'composer' }, notStartedText(model, 'чат')) : null;
+  if (error.reason === 'model_not_configured') return at({ at: 'composer' }, t('library.chatModelNotConfigured'));
+  if (ModelUnavailableReasonSchema.safeParse(error.reason).success) {
+    return at({ at: 'composer' }, replyFailureText(t, error.reason ?? null, model));
   }
-  const kind = context.kind ?? 'agent';
-  if (error.reason === 'record_unavailable') return at(placeOf(context.where), unavailableText(kind));
-  if (byProvider !== null) return at(placeOf(context.where), providerNotStarted(byProvider, kind), true);
-  if (!byModel || model === null) return at(placeOf(context.where), saveFailed(error.message));
-  const next =
-    context.own === true ? 'Откройте его и выберите другую модель' : 'Скопируйте его себе — копия получит вашу модель';
-  return at(placeOf(context.where), `${notStartedText(model, kindWord(kind))}. ${next}`, true);
+  const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
+  return byModel && model !== null ? at({ at: 'composer' }, t('library.chatNotStarted', { model: formatModel(model) })) : null;
 }
 
-function rejected(error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
+/** 409 `START_REFUSED`: MC-16 (or MC-12 for a provider reason) at «Запустить с нуля» and on a message. */
+function startRefused(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText | null {
+  if (context.where === 'first_message') return firstMessageRefused(t, error);
+  const place = placeOf(context.where);
+  const kind = context.kind ?? 'agent';
+  const model = refusedModel(error);
+  if (error.reason === 'record_unavailable') return at(place, t('library.unavailable', { kind }));
+  const byProvider = providerNotStarted(t, error.reason, model, kind);
+  if (byProvider !== null) return at(place, byProvider, true);
+  const byModel = error.reason === 'model_not_allowed' || error.reason === 'model_not_connected';
+  if (!byModel || model === null) return at(place, failedText(t, 'save', error));
+  return at(place, modelNotStarted(t, model, kind, context.own === true), true);
+}
+
+function rejected(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
   const form = placeOf(context.where);
-  const fallback = saveFailed(error.message);
+  const fallback = failedText(t, 'save', error);
   const reason = LibraryRejectReasonSchema.safeParse(error.reason);
   if (!reason.success) return at(form, fallback);
   switch (reason.data) {
     case 'server_not_allowed':
       return at(
         serversPlace(context),
-        context.server === undefined ? fallback : `Нет доступа к системе ${context.server} — уберите её`,
+        context.server === undefined ? fallback : t('library.serverNotAllowed', { server: context.server }),
       );
     case 'all_servers_not_allowed':
       return at(serversPlace(context), fallback);
     case 'model_not_allowed':
       return at(
         { at: 'field', field: 'model' },
-        context.model === undefined ? fallback : `Модель ${formatModel(context.model)} вам недоступна — выберите другую`,
+        context.model === undefined ? fallback : t('library.modelNotAllowed', { model: formatModel(context.model) }),
       );
     case 'agent_not_visible':
       return at({ at: 'field', field: 'agents' }, fallback);
     case 'role_not_member':
-      return at(form, context.role === undefined ? fallback : saveFailed(`вы не состоите в роли ${context.role}`));
+      return at(form, context.role === undefined ? fallback : t('library.roleNotMember', { role: context.role }));
     case 'sharing_banned':
-      return at(form, saveFailed('доступ закрыл администратор'));
+      return at(form, t('library.sharingBanned'));
     case 'audience_fixed':
     case 'builtin':
     case 'holder_not_found':
@@ -216,59 +214,58 @@ function rejected(error: ApiRequestError, context: LibraryErrorContext): Library
   }
 }
 
-function nameTaken(error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
+function nameTaken(t: ErrorsTranslator, error: ApiRequestError, context: LibraryErrorContext): LibraryErrorText {
   const place: LibraryErrorPlace = { at: 'field', field: 'name' };
   const reason = RecordNameTakenReasonSchema.safeParse(error.reason);
-  if (reason.success && reason.data === 'system') {
-    return at(place, 'Так называется агент от компании — выберите другое имя');
-  }
+  if (reason.success && reason.data === 'system') return at(place, t('library.systemName'));
   if (reason.success && context.kind !== undefined && context.name !== undefined) {
-    return at(place, `У вас уже есть ${kindWord(context.kind)} «${context.name}»`);
+    return at(place, t('library.nameTaken', { kind: context.kind, name: context.name }));
   }
-  return at(place, saveFailed(error.message));
+  return at(place, failedText(t, 'save', error));
 }
 
-function conflict(context: LibraryErrorContext): LibraryErrorText {
-  const head =
-    context.admin === true
-      ? 'Изменения уже сохранили в другом окне.'
-      : 'Вы уже сохранили изменения в другом окне или в чате.';
+function conflict(t: ErrorsTranslator, context: LibraryErrorContext): LibraryErrorText {
   const fields = context.changedFields ?? [];
-  return at({ at: 'conflict' }, fields.length === 0 ? head : `${head} Там изменились: ${fields.join(', ')}.`);
+  const admin = context.admin === true;
+  const text =
+    fields.length === 0
+      ? t(admin ? 'library.conflict.admin' : 'library.conflict.own')
+      : t(admin ? 'library.conflict.adminFields' : 'library.conflict.ownFields', { fields: fields.join(', ') });
+  return at({ at: 'conflict' }, text);
 }
 
 /**
  * A refused library request as its place and text. `null` — no text of its own, only in a message's field:
  * it shows the failed send line of chat-shell MC-27 (network, 5xx, a refused first message without a model).
- * An unknown code reads «Не удалось сохранить: {причина}» with the server's message.
+ * An unknown code reads «Не удалось сохранить: {причина}» with the server's message marked English.
  */
 export function describeLibraryError(
+  t: ErrorsTranslator,
   error: unknown,
   context: LibraryErrorContext & { where: Exclude<LibraryErrorWhere, 'message' | 'first_message'> },
 ): LibraryErrorText;
-export function describeLibraryError(error: unknown, context: LibraryErrorContext): LibraryErrorText | null;
-export function describeLibraryError(error: unknown, context: LibraryErrorContext): LibraryErrorText | null {
+export function describeLibraryError(t: ErrorsTranslator, error: unknown, context: LibraryErrorContext): LibraryErrorText | null;
+export function describeLibraryError(t: ErrorsTranslator, error: unknown, context: LibraryErrorContext): LibraryErrorText | null {
   const inMessage = context.where === 'message' || context.where === 'first_message';
-  if (!isApiRequestError(error)) {
-    return inMessage ? null : at(placeOf(context.where), saveFailed(error instanceof Error ? error.message : String(error)));
+  if (!isApiRequestError(error) || error.kind === 'network') {
+    return inMessage ? null : at(placeOf(context.where), failedText(t, 'save', error));
   }
-  if (error.kind === 'network') return inMessage ? null : at(placeOf(context.where), ADMIN_TEXT.noConnection);
 
   switch (error.code) {
     case LibraryErrorCode.RECORD_NOT_FOUND:
-      if (context.where === 'record_page' || context.where === 'editor') return at({ at: 'screen' }, NOT_FOUND_TEXT);
-      if (inMessage) return context.kind === undefined ? null : at({ at: 'composer' }, unavailableText(context.kind));
+      if (context.where === 'record_page' || context.where === 'editor') return at({ at: 'screen' }, t('library.notFound'));
+      if (inMessage) return context.kind === undefined ? null : at({ at: 'composer' }, t('library.unavailable', { kind: context.kind }));
       break;
     case LibraryErrorCode.RECORD_VERSION_CONFLICT:
-      return conflict(context);
+      return conflict(t, context);
     case LibraryErrorCode.RECORD_NAME_TAKEN:
-      return nameTaken(error, context);
+      return nameTaken(t, error, context);
     case LibraryErrorCode.RECORD_REJECTED:
-      return rejected(error, context);
+      return rejected(t, error, context);
     case START_REFUSED:
-      return startRefused(error, context);
+      return startRefused(t, error, context);
   }
-  return inMessage ? null : at(placeOf(context.where), saveFailed(error.message));
+  return inMessage ? null : at(placeOf(context.where), failedText(t, 'save', error));
 }
 
 /**
@@ -276,6 +273,7 @@ export function describeLibraryError(error: unknown, context: LibraryErrorContex
  * `version_conflict` has no line here: the card shows the MC-15 stale line instead.
  */
 export function describeDraftRefusal(
+  t: ErrorsTranslator,
   refusal: SaveOwnRefusal,
   context: { kind: RecordKind; name: string; model?: string },
 ): string | null {
@@ -283,20 +281,20 @@ export function describeDraftRefusal(
     case 'version_conflict':
       return null;
     case 'name_taken':
-      return `У вас уже есть ${kindWord(context.kind)} «${context.name}»`;
+      return t('library.nameTaken', { kind: context.kind, name: context.name });
     case 'system_name':
-      return 'Так называется агент от компании — выберите другое имя';
+      return t('library.systemName');
     case 'model_not_allowed':
       return context.model === undefined
-        ? saveFailed('модель вам недоступна')
-        : `Модель ${formatModel(context.model)} вам недоступна — выберите другую`;
+        ? t('library.draftModelNotAllowed')
+        : t('library.modelNotAllowed', { model: formatModel(context.model) });
     case 'not_found':
-      return unavailableText(context.kind);
+      return t('library.unavailable', { kind: context.kind });
     case 'shared':
-      return `${kindWord(context.kind, true)} открыт ролям — правьте его в редакторе`;
+      return t('library.shared', { kind: context.kind });
     default:
       // The UXRD has no MC-8 text for these reasons, and a 200 refusal carries no server message to quote.
-      return 'Не удалось сохранить — откройте черновик в редакторе: там видно, что исправить';
+      return t('library.draftOther');
   }
 }
 
@@ -317,7 +315,7 @@ export type RefusalContext = {
 
 export type RefusalText = {
   text: string;
-  action: { label: 'Открыть' | 'Открыть в редакторе'; recordId: string } | null;
+  action: { label: string; recordId: string } | null;
 };
 
 /**
@@ -325,31 +323,33 @@ export type RefusalText = {
  * or one without a UXRD text (`read_only` on a colleague's record, `invalid_arguments` of `draft_record`):
  * the block shows the platform's general refusal text.
  */
-export function describeRefusal(reason: ToolRefusalReason | null, context: RefusalContext): RefusalText | null {
+export function describeRefusal(
+  t: ErrorsTranslator,
+  reason: ToolRefusalReason | null,
+  context: RefusalContext,
+): RefusalText | null {
   const { kind, model, recordId } = context;
-  const action = (label: 'Открыть' | 'Открыть в редакторе') => (recordId === null ? null : { label, recordId });
+  const open = recordId === null ? null : { label: t('library.open'), recordId };
   switch (reason) {
     case 'record_unavailable':
-      return { text: unavailableText(kind), action: null };
-    case 'model_not_allowed': {
-      const named = model === null ? 'Модель вам недоступна' : `Модель ${formatModel(model)} вам недоступна`;
-      const next = context.own
-        ? 'Откройте его и выберите другую модель'
-        : 'Скопируйте его себе — копия получит вашу модель';
-      return { text: `${named} — ${kindWord(kind)} не запустился. ${next}`, action: action('Открыть') };
-    }
+      return { text: t('library.unavailable', { kind }), action: null };
+    case 'model_not_allowed':
+      return { text: modelNotStarted(t, model, kind, context.own), action: open };
     case 'shared':
-      return { text: `${kindWord(kind, true)} открыт ролям — правьте его в редакторе`, action: action('Открыть в редакторе') };
+      return {
+        text: t('library.shared', { kind }),
+        action: recordId === null ? null : { label: t('library.openInEditor'), recordId },
+      };
     case 'read_only':
-      return context.company === true ? { text: 'Агентов от компании правят в панели администратора', action: null } : null;
+      return context.company === true ? { text: t('library.companyReadOnly'), action: null } : null;
     case 'run_limit':
-      return { text: 'Предел вызовов исчерпан', action: null };
+      return { text: t('library.runLimit'), action: null };
     case 'model_not_configured':
     case 'provider_missing':
     case 'provider_disabled':
     case 'provider_key_missing': {
-      const cause = providerRefusal(reason, model);
-      return cause === null ? null : { text: providerNotStarted(cause, kind), action: action('Открыть') };
+      const text = providerNotStarted(t, reason, model, kind);
+      return text === null ? null : { text, action: open };
     }
     default:
       return null;

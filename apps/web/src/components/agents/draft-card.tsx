@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import type { DraftActionRequest, DraftView } from "@agent-os/contracts";
 import {
@@ -97,12 +97,13 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
   const edited = useLiveRecord(draft.recordId);
   const savedRecord = useLiveRecord(draft.savedRecordId);
   const [pressed, setPressed] = useState<Pressed | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ReactNode>(null);
   const [sharing, setSharing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const actedHere = useRef(false);
 
   const format = useFormatter();
+  const t = useTranslations("errors");
   const outcome = outcomeOf(draft, format);
 
   // After an action taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
@@ -144,7 +145,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     } catch (cause) {
       // The store has logged the failure; the card keeps its buttons for a retry.
       actedHere.current = false;
-      setFailure(describeLibraryError(cause, { where: "editor", kind: draft.kind, name: draft.name }).text);
+      setFailure(describeLibraryError(t, cause, { where: "editor", kind: draft.kind, name: draft.name }).text);
     } finally {
       setPressed(null);
     }
@@ -192,7 +193,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     const refusalText =
       refusal === null
         ? null
-        : describeDraftRefusal(refusal, {
+        : describeDraftRefusal(t, refusal, {
             kind: draft.kind,
             name: draft.name,
             model: draft.kind === "agent" ? (draft.content.model ?? undefined) : undefined,
@@ -316,7 +317,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
   );
 }
 
-function ErrorLine({ text, alert = false }: { text: string; alert?: boolean }) {
+function ErrorLine({ text, alert = false }: { text: ReactNode; alert?: boolean }) {
   return (
     <p role={alert ? "alert" : undefined} className="text-foreground flex items-start gap-1.5 text-sm leading-5">
       <CircleXIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />

@@ -62,7 +62,7 @@ export type DataTableRow = {
   /** Parts of the record shown under it, always expanded. */
   nested?: ReadonlyArray<{ key: string; cells: readonly ReactNode[] }>;
   /** The last action on the row failed: the text is shown under the row. */
-  error?: string;
+  error?: ReactNode;
   /** The outcome of an action that stays visible after the answer, such as a connection check (data-table «Итог действия»). */
   result?: DataTableResult;
 };

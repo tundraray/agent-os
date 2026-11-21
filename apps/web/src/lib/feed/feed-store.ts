@@ -20,7 +20,6 @@ import type { logger as appLogger } from "@/lib/logger";
 import type { HistoryStatus, SendFailure, ShellStatusStore } from "@/lib/threads/shell-status-store";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { describeLibraryError } from "@/lib/library/library-errors";
 
 import {
   applyDraftPart,
@@ -49,8 +48,8 @@ export type FeedState = {
   /** The screen's error state: the first read failed, or a read or command found nothing. */
   loadError: "not_found" | "failed" | null;
   /**
-   * The last message the server did not accept: the composer returns its text with `notice` under the
-   * field — MC-16 for a library refusal (an unavailable chip, a refused first message), null for MC-27.
+   * The last message the server did not accept: the composer returns its text with the refusal's notice
+   * under the field — MC-16 for a library refusal (an unavailable chip, a refused first message), else MC-27.
    * The chip itself never leaves `composerSeed` until the send is accepted (KD-5).
    */
   sendFailure: SendFailure | null;
@@ -301,8 +300,7 @@ export function createFeedStore({
     try {
       accepted = await call();
     } catch (error) {
-      const notice = describeLibraryError(error, record === null ? { where } : { where, kind: record.kind });
-      set({ sendFailure: { text, notice: notice?.text ?? null } });
+      set({ sendFailure: { text, cause: error, context: record === null ? { where } : { where, kind: record.kind } } });
       throw error;
     }
     addOptimistic({ text, place, record, ...accepted });

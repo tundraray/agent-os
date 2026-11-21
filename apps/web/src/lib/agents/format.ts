@@ -18,11 +18,8 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
   stopped: "Остановлен",
 };
 
-/**
- * The text with its first letter capital: the model family of `formatModel`, and the lowercase phrase that
- * starts a sentence in `library-errors.ts` until its phrases move to the catalogue.
- */
-export function capitalize(text: string): string {
+/** The model family of `formatModel` with its first letter capital: a name, not a phrase. */
+function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -71,21 +68,6 @@ export function failureReasonText(
   if (!named.success) return { text: t("platformFailure"), hint: reason };
   if (isProviderFailureReason(named.data)) return { text: providerFailureText(t, named.data, model), hint: null };
   return { text: t(`failureReason.${named.data}`), hint: null };
-}
-
-/** The Russian MC-9 words by the reason, for `library-errors.ts` until its phrases move to the catalogue. */
-const PROVIDER_REASON_RU: Record<ProviderFailureReason, (model: string) => string> = {
-  provider_missing: (model) => `провайдер ${model} не настроен`,
-  provider_disabled: (model) => `провайдер ${model} выключен`,
-  provider_key_missing: (model) => `у провайдера ${model} нет ключа`,
-  provider_key_rejected: (model) => `провайдер ${model} отклонил ключ`,
-  provider_unavailable: (model) => `провайдер ${model} не отвечает`,
-  provider_tools_rejected: (model) => `провайдер ${model} не принял описание инструментов`,
-};
-
-/** `providerFailureText` in Russian without the catalogue: only `library-errors.ts` still reads it. */
-export function providerReasonText(reason: ProviderFailureReason, model?: string): string {
-  return PROVIDER_REASON_RU[reason](model === undefined ? "модели" : `модели ${model}`);
 }
 
 const MODEL_FAMILY = /(?:^|\/)claude-([a-z]+)-/;

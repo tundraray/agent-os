@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   ThreadsErrorCodeSchema,
   type AgentStatus as AgentStatusValue,
@@ -99,6 +100,7 @@ export function AgentHeader() {
   if (feed === null) throw new Error("AgentHeader must be used inside AgentFeedProvider");
 
   const router = useRouter();
+  const t = useTranslations("errors");
   const agent = useFeedSelector((state) => selectAgent(state.view), null);
   const loadError = useFeedSelector((state) => state.loadError, null);
   // One command at a time: a second press while the first is in flight does nothing.
@@ -132,7 +134,7 @@ export function AgentHeader() {
       isApiRequestError(error) &&
       error.code === ThreadsErrorCodeSchema.enum.START_REFUSED
     ) {
-      const refused = describeLibraryError(error, { where: "restart", kind: record.kind, own: live?.mine === true });
+      const refused = describeLibraryError(t, error, { where: "restart", kind: record.kind, own: live?.mine === true });
       const open = () => leaveThenGo(() => router.push(recordPath(record.recordId)));
       toast.error(refused.text, refused.open ? { action: { label: "Открыть", onClick: open } } : undefined);
       return;

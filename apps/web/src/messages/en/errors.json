@@ -1,6 +1,58 @@
 {
-  "saveFailed": "Couldn't save: <server>{text}</server>",
-  "noConnection": "Couldn't save: no connection to the server",
+  "failed": {
+    "save": "Couldn't save: <server>{text}</server>",
+    "copy": "Couldn't copy: <server>{text}</server>",
+    "delete": "Couldn't delete: <server>{text}</server>"
+  },
+  "noConnection": {
+    "save": "Couldn't save: no connection to the server",
+    "copy": "Couldn't copy: no connection to the server",
+    "delete": "Couldn't delete: no connection to the server"
+  },
+  "library": {
+    "notFound": "This agent or workflow doesn't exist: it was deleted, closed to you, or the link is wrong.",
+    "unavailable": "The {kind, select, agent {agent} other {workflow}} isn't available: it was deleted or closed to you",
+    "conflict": {
+      "own": "You already saved changes in another window or in a chat.",
+      "admin": "Changes were already saved in another window.",
+      "ownFields": "You already saved changes in another window or in a chat. Changed there: {fields}.",
+      "adminFields": "Changes were already saved in another window. Changed there: {fields}."
+    },
+    "nameTaken": "You already have {kind, select, agent {an agent} other {a workflow}} “{name}”",
+    "systemName": "That's the name of a company agent — choose another name",
+    "serverNotAllowed": "No access to the {server} system — remove it",
+    "modelNotAllowed": "The {model} model isn't available to you — choose another",
+    "roleNotMember": "Couldn't save: you're not in the {role} role",
+    "sharingBanned": "Couldn't save: an administrator closed access",
+    "chatModelNotConfigured": "No chat model is set up. Contact your Agent OS administrator.",
+    "chatNotStarted": "The {model} model isn't available to you — the chat didn't start",
+    "notStarted": {
+      "own": "The {model} model isn't available to you — the {kind, select, agent {agent} other {workflow}} didn't start. Open it and choose another model",
+      "other": "The {model} model isn't available to you — the {kind, select, agent {agent} other {workflow}} didn't start. Copy it to yourself — the copy gets your model",
+      "ownUnnamed": "The model isn't available to you — the {kind, select, agent {agent} other {workflow}} didn't start. Open it and choose another model",
+      "otherUnnamed": "The model isn't available to you — the {kind, select, agent {agent} other {workflow}} didn't start. Copy it to yourself — the copy gets your model"
+    },
+    "providerNotStarted": {
+      "model_not_configured": "No model is set up — the {kind, select, agent {agent} other {workflow}} didn't start",
+      "named": {
+        "provider_missing": "The {model} model's provider isn't set up — the {kind, select, agent {agent} other {workflow}} didn't start",
+        "provider_disabled": "The {model} model's provider is turned off — the {kind, select, agent {agent} other {workflow}} didn't start",
+        "provider_key_missing": "The {model} model's provider has no key — the {kind, select, agent {agent} other {workflow}} didn't start"
+      },
+      "unnamed": {
+        "provider_missing": "The model's provider isn't set up — the {kind, select, agent {agent} other {workflow}} didn't start",
+        "provider_disabled": "The model's provider is turned off — the {kind, select, agent {agent} other {workflow}} didn't start",
+        "provider_key_missing": "The model's provider has no key — the {kind, select, agent {agent} other {workflow}} didn't start"
+      }
+    },
+    "shared": "The {kind, select, agent {agent} other {workflow}} is open to roles — edit it in the editor",
+    "draftModelNotAllowed": "Couldn't save: the model isn't available to you",
+    "draftOther": "Couldn't save — open the draft in the editor to see what to fix",
+    "companyReadOnly": "Company agents are edited in the admin panel",
+    "runLimit": "Call limit reached",
+    "open": "Open",
+    "openInEditor": "Open in editor"
+  },
   "refusal": {
     "no_access": "No access to the tool",
     "model_not_allowed": "Model not allowed",

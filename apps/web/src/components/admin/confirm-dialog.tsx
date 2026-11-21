@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import {
   AlertDialog,
@@ -36,7 +36,7 @@ export type ConfirmDialogProps = {
   | {
       logEvent?: undefined;
       /** The text of a refusal that the request has logged itself (`recordAction`). */
-      refusalText: (cause: unknown) => string | null;
+      refusalText: (cause: unknown) => ReactNode;
     }
 );
 
@@ -58,7 +58,7 @@ export function ConfirmDialog({
   focusTitleAfterConfirm = false,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   const titleFocus = useRef<HTMLElement | null>(null);
   // A ref, not `pending`: the success path closes while the state still reads true.
   const running = useRef(false);

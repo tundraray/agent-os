@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type Ref } from "react";
+import { useId, useState, type ReactNode, type Ref } from "react";
 import { CircleMinus, Info, LoaderCircle, MoreHorizontalIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
@@ -46,9 +46,9 @@ export type ExecutorItemProps = {
   sourceState: ExecutorSourceState | undefined;
   /** The author's systems: any other system of the executor is marked as lost. */
   allowedServers: readonly string[];
-  roleError: string | undefined;
+  roleError: ReactNode;
   /** A check of the executor's other fields: shown under the summary, fixed in the panel. */
-  cardError: string | undefined;
+  cardError: ReactNode;
   /** Systems the last taken version brought that the author has no access to. */
   dropped: readonly string[];
   nameRef: Ref<HTMLButtonElement>;

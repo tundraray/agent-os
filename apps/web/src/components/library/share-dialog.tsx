@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useMemo, useState, type FormEvent } from "react";
+import { useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
+import { useTranslations } from "next-intl";
 import { CheckIcon, Info, LoaderCircle, Lock, User, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import type { MyRoleList, RecordAudience, RecordDetail, RecordKind, RecordSummary, RoleList } from "@agent-os/contracts";
@@ -93,20 +94,19 @@ export function ShareDialog({ variant, record, open, onOpenChange, onSaved }: Sh
 
 type AudienceProps = { record: ShareRecord; onDone: (saved: RecordDetail) => void };
 
-/** The text of a refused save. */
-const refusalText = (cause: unknown, kind: RecordKind, role?: string): string =>
-  describeLibraryError(cause, { where: "share", kind, role }).text;
 
 /** The save of both variants: one `recordAction` `audience`, then the toast, `libraryIndex` and `onDone`. */
 function useAudienceSave({ record, onDone }: AudienceProps) {
   const { libraryIndex } = useShellServices();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const t = useTranslations("errors");
+  const [error, setError] = useState<ReactNode>(null);
 
   async function save(input: {
     send: () => Promise<RecordDetail>;
     savedText: (saved: RecordDetail) => string;
-    refusal: (cause: unknown) => Promise<string>;
+    /** The role a refusal names, when the request did not say it. */
+    refusedRole?: (cause: unknown) => Promise<string | undefined>;
   }): Promise<void> {
     setSaving(true);
     setError(null);
@@ -121,7 +121,8 @@ function useAudienceSave({ record, onDone }: AudienceProps) {
       onDone(saved);
     } catch (cause) {
       // `recordAction` has logged the refusal; the choice stays as it was.
-      setError(await input.refusal(cause));
+      const role = await input.refusedRole?.(cause);
+      setError(describeLibraryError(t, cause, { where: "share", kind: record.kind, role }).text);
       setSaving(false);
     }
   }
@@ -189,11 +190,8 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
         const names = saved.audience.roles.map((role) => role.name);
         return names.length === 0 ? TEXT.onlyYou : TEXT.nowSee(names);
       },
-      refusal: async (cause) => {
-        const role =
-          isApiRequestError(cause) && cause.reason === "role_not_member" ? await leftRoleName() : undefined;
-        return refusalText(cause, record.kind, role);
-      },
+      refusedRole: async (cause) =>
+        isApiRequestError(cause) && cause.reason === "role_not_member" ? leftRoleName() : undefined,
     });
   };
 
@@ -307,7 +305,6 @@ function AdminAudience({ record, onDone }: AudienceProps) {
         const names = holdersOf(saved.audience).map((holder) => holder.name);
         return names.length === 0 ? TEXT.onlyAdmins : TEXT.nowSee(names);
       },
-      refusal: async (cause) => refusalText(cause, record.kind),
     });
   };
 

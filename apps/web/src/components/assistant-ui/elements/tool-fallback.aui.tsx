@@ -186,7 +186,7 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
   const call = libraryCallOf(toolName, args);
   // No list holds an empty id: a call without a record reads as one the list does not hold.
   const live = useLiveRecord(call.recordId ?? "");
-  const refusal: RefusalText | null = describeRefusal(refusalReasonOf(artifact), {
+  const refusal: RefusalText | null = describeRefusal(t, refusalReasonOf(artifact), {
     tool: toolName,
     kind: call.kind ?? live?.kind ?? "agent",
     model: refusedModel(artifact),

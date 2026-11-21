@@ -47,6 +47,7 @@ import {
 } from "@/lib/feed/to-feed";
 import { useTranslations } from "next-intl";
 import { replyFailureText } from "@/lib/access/access-texts";
+import { describeLibraryError } from "@/lib/library/library-errors";
 import type { ErrorsTranslator } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { recordPath } from "@/lib/shell-route";
@@ -712,8 +713,9 @@ const returnedFailures = new WeakSet<object>();
  * `newThreadFailure` — the failure of a new conversation's first message: that conversation was removed,
  * so the composer without a feed shows it.
  */
-const useSendFailure = (newThreadFailure: SendFailure | null): string | null => {
+const useSendFailure = (newThreadFailure: SendFailure | null): ReactNode => {
   const aui = useAui();
+  const t = useTranslations("errors");
   const failure = useFeedSelector((state) => state.sendFailure, newThreadFailure);
 
   useEffect(() => {
@@ -723,7 +725,8 @@ const useSendFailure = (newThreadFailure: SendFailure | null): string | null => 
     aui.composer.setText(typed === "" ? failure.text : `${failure.text}\n${typed}`);
   }, [aui, failure]);
 
-  return failure === null ? null : (failure.notice ?? SEND_FAILED);
+  if (failure === null) return null;
+  return describeLibraryError(t, failure.cause, failure.context)?.text ?? SEND_FAILED;
 };
 
 /** Chips already announced (MC-19): a remounted composer, or the chip following a new conversation, stays quiet. */
