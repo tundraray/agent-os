@@ -7,5 +7,46 @@
     "appliesEverywhere": "Applies on all your devices.",
     "saveFailed": "Couldn't save the language: try again.",
     "announced": "Interface language: English"
+  },
+  "retry": "Retry",
+  "connections": {
+    "title": "Connections",
+    "caption": "Servers agents use on your behalf. Until your account is connected, agents work without this server's tools.",
+    "needsAuth": "Sign-in needed",
+    "connected": "Connected",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "connecting": "Going to {server}…",
+    "connectedNotice": "{server} account connected",
+    "disconnectedNotice": "{server} account disconnected",
+    "connectFailed": "Couldn't connect the {server} account: sign-in was canceled or not finished. Try again.",
+    "connectFailedUnknown": "Couldn't connect the account. Try again.",
+    "empty": "Nothing to connect yet",
+    "emptyCaption": "When an administrator gives you access to a server with personal sign-in, it will appear here.",
+    "loadFailed": "Couldn't load connections",
+    "disconnectFailed": "Couldn't disconnect the {server} account. Try again."
+  },
+  "models": {
+    "title": "Models and spending for {month}",
+    "unavailable": "not working",
+    "model": "Model",
+    "spent": "Spending",
+    "quota": "Quota",
+    "remaining": "Remaining",
+    "noLimit": "no limit",
+    "exhausted": "Quota used up",
+    "loadFailed": "Couldn't load models"
+  },
+  "password": {
+    "heading": "Password",
+    "current": "Current password",
+    "next": "New password",
+    "submit": "Change password",
+    "saving": "Saving…",
+    "changed": "Password changed",
+    "wrongCurrent": "Wrong current password",
+    "currentRequired": "Enter your current password",
+    "weak": "Password must be 12 to 256 characters",
+    "failed": "Couldn't save: try again."
   }
 }

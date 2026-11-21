@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { LoaderCircle, RotateCwIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { McpConnection } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
@@ -12,29 +13,6 @@ import { logger } from "@/lib/logger";
 import { takeConnectReturn, type ConnectReturn } from "@/lib/mcp/connect-return";
 import { mcpApi } from "@/lib/mcp/mcp-api";
 import { cn } from "@/lib/utils";
-
-/** UXRD MC-7 and MC-8. */
-const TEXT = {
-  title: "Подключения",
-  caption:
-    "Серверы, к которым агенты ходят от вашего имени. Пока аккаунт не подключён, агенты работают без инструментов этого сервера.",
-  needsAuth: "Нужна аутентификация",
-  connected: "Подключено",
-  connect: "Подключить",
-  disconnect: "Отключить",
-  connecting: (server: string) => `Переходим в ${server}…`,
-  connectedNotice: (server: string) => `Аккаунт ${server} подключён`,
-  disconnectedNotice: (server: string) => `Аккаунт ${server} отключён`,
-  connectFailed: (server: string) =>
-    `Не удалось подключить аккаунт ${server}: вход отменён или не завершён. Попробуйте ещё раз.`,
-  // A failed return that names no server has no row to sit under.
-  connectFailedUnknown: "Не удалось подключить аккаунт. Попробуйте ещё раз.",
-  empty: "Подключать пока нечего",
-  emptyCaption: "Когда администратор даст вам доступ к серверу с личным входом, он появится здесь.",
-  loadFailed: "Не удалось загрузить подключения",
-  disconnectFailed: (server: string) => `Не удалось отключить аккаунт ${server}. Попробуйте ещё раз.`,
-  retry: "Повторить",
-} as const;
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready"; connections: McpConnection[] };
 
@@ -47,6 +25,7 @@ const hostOf = (url: string): string => new URL(url).host;
  * `connected` or `error=connect_failed` in the address.
  */
 export function ConnectionsSection() {
+  const t = useTranslations("account");
   const headingId = useId();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -64,6 +43,11 @@ export function ConnectionsSection() {
     if (outcome !== null) returned.current = outcome;
   }, []);
 
+  // An effect event: a change of the interface language must not read the connections again.
+  const noticeConnected = useEffectEvent((server: string) =>
+    toast.success(t("connections.connectedNotice", { server })),
+  );
+
   // `attempt` grows with «Повторить», which shows Loading itself; an answer after leaving the page or after a
   // newer attempt is dropped.
   useEffect(() => {
@@ -76,7 +60,7 @@ export function ConnectionsSection() {
         return;
       }
       logger.info("account: mcp connect returned", { kind: outcome.kind, server: outcome.server });
-      if (outcome.kind === "connected") toast.success(TEXT.connectedNotice(outcome.server));
+      if (outcome.kind === "connected") noticeConnected(outcome.server);
       else setFailedServer(outcome.server);
       setFocusServer(outcome.server);
     };
@@ -129,10 +113,10 @@ export function ConnectionsSection() {
       setFailedServer((failed) => (failed === server ? null : failed));
       // The focused «Отключить» is replaced by «Подключить»: focus follows to it instead of falling to the body.
       setFocusServer(server);
-      toast.success(TEXT.disconnectedNotice(server));
+      toast.success(t("connections.disconnectedNotice", { server }));
     } catch (error) {
       logger.error("account: mcp account disconnect failed", { server, ...describeApiError(error) });
-      toast.error(TEXT.disconnectFailed(server));
+      toast.error(t("connections.disconnectFailed", { server }));
     } finally {
       setDisconnecting(null);
     }
@@ -147,19 +131,19 @@ export function ConnectionsSection() {
     <section aria-labelledby={headingId} className="flex max-w-160 flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h2 id={headingId} className="text-base leading-6 font-semibold">
-          {TEXT.title}
+          {t("connections.title")}
         </h2>
-        <p className="text-sm leading-5 text-muted-foreground">{TEXT.caption}</p>
+        <p className="text-sm leading-5 text-muted-foreground">{t("connections.caption")}</p>
       </div>
 
       {failedUnknown && (
         <p role="alert" className="text-xs leading-4 font-medium text-destructive">
-          {TEXT.connectFailedUnknown}
+          {t("connections.connectFailedUnknown")}
         </p>
       )}
 
       {load.status === "loading" && (
-        <div role="status" aria-label={TEXT.title} className="flex flex-col gap-3">
+        <div role="status" aria-label={t("connections.title")} className="flex flex-col gap-3">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-3/4" />
         </div>
@@ -167,7 +151,7 @@ export function ConnectionsSection() {
 
       {load.status === "error" && (
         <div className="flex flex-col items-start gap-3 text-sm leading-5">
-          <p role="alert">{TEXT.loadFailed}</p>
+          <p role="alert">{t("connections.loadFailed")}</p>
           <Button
             variant="outline"
             size="sm"
@@ -178,15 +162,15 @@ export function ConnectionsSection() {
             }}
           >
             <RotateCwIcon aria-hidden />
-            {TEXT.retry}
+            {t("retry")}
           </Button>
         </div>
       )}
 
       {load.status === "ready" && load.connections.length === 0 && (
         <div className="flex flex-col gap-1 text-sm leading-5">
-          <p className="font-medium text-foreground">{TEXT.empty}</p>
-          <p className="text-xs leading-4 font-medium text-muted-foreground">{TEXT.emptyCaption}</p>
+          <p className="font-medium text-foreground">{t("connections.empty")}</p>
+          <p className="text-xs leading-4 font-medium text-muted-foreground">{t("connections.emptyCaption")}</p>
         </div>
       )}
 
@@ -222,6 +206,7 @@ type ConnectionRowProps = {
 
 /** Name and host on the left, the badge and one `outline` `sm` button on the right; below 768 px the button goes under the name. */
 function ConnectionRow({ row, connecting, disconnecting, failed, actionRef, onConnect, onDisconnect }: ConnectionRowProps) {
+  const t = useTranslations("account.connections");
   const nameId = useId();
   const connected = row.status === "connected";
   const actionClass = "pointer-coarse:h-11";
@@ -235,7 +220,7 @@ function ConnectionRow({ row, connecting, disconnecting, failed, actionRef, onCo
           <span className="text-xs leading-4 font-medium break-all text-muted-foreground">{hostOf(row.url)}</span>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <StateBadge state={connected ? "ok" : "action"}>{connected ? TEXT.connected : TEXT.needsAuth}</StateBadge>
+          <StateBadge state={connected ? "ok" : "action"}>{connected ? t("connected") : t("needsAuth")}</StateBadge>
           {connected ? (
             <Button
               ref={actionRef}
@@ -246,7 +231,7 @@ function ConnectionRow({ row, connecting, disconnecting, failed, actionRef, onCo
               onClick={onDisconnect}
             >
               {disconnecting && <LoaderCircle className="animate-spin" aria-hidden />}
-              {TEXT.disconnect}
+              {t("disconnect")}
             </Button>
           ) : (
             <a
@@ -257,14 +242,14 @@ function ConnectionRow({ row, connecting, disconnecting, failed, actionRef, onCo
               onClick={onConnect}
             >
               {connecting && <LoaderCircle className="animate-spin" aria-hidden />}
-              {connecting ? TEXT.connecting(row.server) : TEXT.connect}
+              {connecting ? t("connecting", { server: row.server }) : t("connect")}
             </a>
           )}
         </div>
       </div>
       {failed && !connected && (
         <p role="alert" className="text-xs leading-4 font-medium text-destructive">
-          {TEXT.connectFailed(row.server)}
+          {t("connectFailed", { server: row.server })}
         </p>
       )}
     </li>

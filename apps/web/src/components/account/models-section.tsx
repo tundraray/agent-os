@@ -10,37 +10,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
 import { describeApiError } from "@/lib/api/api-request";
-import { formatMonth, utcMonthOf, type Formatter } from "@/lib/i18n/formats";
+import { formatMonth, utcMonthOf } from "@/lib/i18n/formats";
 import { logger } from "@/lib/logger";
-
-/** UXRD MC-7 and MC-9; `unavailable` — model-providers UXRD MC-8. */
-const TEXT = {
-  unavailable: "не работает",
-  title: (month: string) => `Модели и расход за ${month}`,
-  model: "Модель",
-  spent: "Расход",
-  quota: "Квота",
-  remaining: "Остаток",
-  noLimit: "без предела",
-  exhausted: "Квота исчерпана",
-  // Not in MC-9: the read failure follows the shell's «Не удалось …» texts, as in «Подключения».
-  loadFailed: "Не удалось загрузить модели",
-  retry: "Повторить",
-} as const;
 
 const EMPTY_VALUE = "—";
 const SKELETON_WIDTHS = ["w-full", "w-5/6", "w-2/3", "w-3/4", "w-1/2", "w-4/5"] as const;
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready"; data: MyModels };
 
+type ModelValues = { spent: string; quota: string; remaining: string };
+
 /** Cells after the name, in column order; an exhausted quota reads remaining «0,00 $» whatever the API rounds to. */
-function valuesOf(format: Formatter, row: MyModel): { spent: string; quota: string; remaining: string } {
+function useModelValues(): (row: MyModel) => ModelValues {
+  const format = useFormatter();
+  const t = useTranslations("account.models");
   const usd = (value: number): string => format.number(value, "usd");
-  return {
+  return (row) => ({
     spent: usd(row.spentUsd),
-    quota: row.quotaUsd === null ? TEXT.noLimit : format.number(row.quotaUsd, "usdQuota"),
+    quota: row.quotaUsd === null ? t("noLimit") : format.number(row.quotaUsd, "usdQuota"),
     remaining: row.exhausted ? usd(0) : row.remainingUsd === null ? EMPTY_VALUE : usd(row.remainingUsd),
-  };
+  });
 }
 
 /**
@@ -52,6 +41,7 @@ export function ModelsSection() {
   const headingId = useId();
   const mobile = useIsMobile();
   const format = useFormatter();
+  const t = useTranslations("account");
   const tErrors = useTranslations("errors");
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -76,7 +66,9 @@ export function ModelsSection() {
   }, [attempt]);
 
   // The month is named in UTC (`formats.dateTime.month`): the server's HTML and the hydrated page agree.
-  const title = TEXT.title(formatMonth(format, load.status === "ready" ? load.data.month : utcMonthOf(new Date())));
+  const title = t("models.title", {
+    month: formatMonth(format, load.status === "ready" ? load.data.month : utcMonthOf(new Date())),
+  });
 
   return (
     <section aria-labelledby={headingId} className="flex max-w-160 flex-col gap-4">
@@ -94,7 +86,7 @@ export function ModelsSection() {
 
       {load.status === "error" && (
         <div className="flex flex-col items-center gap-3 text-sm leading-5">
-          <p role="alert">{TEXT.loadFailed}</p>
+          <p role="alert">{t("models.loadFailed")}</p>
           <Button
             variant="outline"
             size="sm"
@@ -105,7 +97,7 @@ export function ModelsSection() {
             }}
           >
             <RotateCwIcon aria-hidden />
-            {TEXT.retry}
+            {t("retry")}
           </Button>
         </div>
       )}
@@ -122,10 +114,11 @@ export function ModelsSection() {
 }
 
 function ExhaustedLabel() {
+  const t = useTranslations("account.models");
   return (
     <span className="inline-flex items-center gap-1 text-xs leading-4 font-medium text-warning">
       <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-      {TEXT.exhausted}
+      {t("exhausted")}
     </span>
   );
 }
@@ -135,23 +128,25 @@ function ExhaustedLabel() {
  * stays, its spend is real — and the provider as a Caption under it.
  */
 function ModelName({ row }: { row: MyModel }) {
+  const t = useTranslations("account.models");
   return (
     <span className="flex flex-col gap-0.5">
       <span className="inline-flex flex-wrap items-center gap-x-2">
         {row.name}
-        {row.unavailableReason !== null && <StateBadge state="off">{TEXT.unavailable}</StateBadge>}
+        {row.unavailableReason !== null && <StateBadge state="off">{t("unavailable")}</StateBadge>}
       </span>
       <span className="text-xs leading-4 font-medium text-muted-foreground">{modelProvider(row.model)}</span>
     </span>
   );
 }
 
-const headClass ="border-b border-border px-3 py-2 text-xs leading-4 font-medium text-muted-foreground";
+const headClass = "border-b border-border px-3 py-2 text-xs leading-4 font-medium text-muted-foreground";
 const cellClass = "border-b border-border px-3 py-2.5";
 const numberClass = "text-right tabular-nums";
 
 function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }) {
-  const format = useFormatter();
+  const t = useTranslations("account.models");
+  const valuesOf = useModelValues();
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm leading-5 text-foreground">
@@ -159,22 +154,22 @@ function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }
         <thead>
           <tr>
             <th scope="col" className={`${headClass} text-left`}>
-              {TEXT.model}
+              {t("model")}
             </th>
             <th scope="col" className={`${headClass} text-right`}>
-              {TEXT.spent}
+              {t("spent")}
             </th>
             <th scope="col" className={`${headClass} text-right`}>
-              {TEXT.quota}
+              {t("quota")}
             </th>
             <th scope="col" className={`${headClass} text-right`}>
-              {TEXT.remaining}
+              {t("remaining")}
             </th>
           </tr>
         </thead>
         <tbody>
           {models.map((row) => {
-            const values = valuesOf(format, row);
+            const values = valuesOf(row);
             return (
               <tr key={row.model}>
                 <td className={`${cellClass} break-words`}>
@@ -199,15 +194,16 @@ function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }
 
 /** data-table «Две строки»: no header; the name, under it the other cells through « · »; the column names stay for screen readers. */
 function ModelsTwoLines({ models }: { models: MyModel[] }) {
-  const format = useFormatter();
+  const t = useTranslations("account.models");
+  const valuesOf = useModelValues();
   return (
     <ul className="flex flex-col divide-y divide-border">
       {models.map((row) => {
-        const values = valuesOf(format, row);
+        const values = valuesOf(row);
         const cells = [
-          { label: TEXT.spent, value: values.spent },
-          { label: TEXT.quota, value: values.quota },
-          { label: TEXT.remaining, value: values.remaining },
+          { label: t("spent"), value: values.spent },
+          { label: t("quota"), value: values.quota },
+          { label: t("remaining"), value: values.remaining },
         ];
         return (
           <li key={row.model} className="flex flex-col gap-0.5 py-3">

@@ -41,7 +41,9 @@ function takeReturn<Outcome>(parse: (params: URLSearchParams) => Outcome | null)
   if (outcome === null) return null;
   const url = new URL(window.location.href);
   for (const name of RETURN_PARAMS) url.searchParams.delete(name);
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  // `null`, not the current state: Next's router takes an outside replace into its own address only when the
+  // state lacks its marker, and otherwise puts the old query back on its next refresh (the language switch).
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   return outcome;
 }
 
