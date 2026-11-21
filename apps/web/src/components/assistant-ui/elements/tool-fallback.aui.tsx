@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { memo, useState, type ReactNode } from "react";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import {
   BanIcon,
   ChevronRightIcon,
@@ -33,6 +33,7 @@ import { useLiveRecord } from "@/components/agents/run-card";
 import { ValueRows } from "@/components/agents/value-rows";
 import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
+import type { ErrorsTranslator } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
@@ -66,17 +67,6 @@ const OUTCOME_LOOK: Record<CallOutcome, OutcomeLook> = {
   interrupted: { label: "прервано", Icon: CircleStopIcon, tone: "text-muted-foreground", showsResult: false },
   unknown: { label: "исход неизвестен", Icon: CircleQuestionMarkIcon, tone: "text-warning", showsResult: false },
 };
-
-/**
- * MC-22 refusal reasons; the access ones are enterprise-access MC-10 (`refusalText`), and any other code
- * reads as one line with the code as its hint (KD-6).
- */
-const REFUSAL_TEXT: Partial<Record<ToolRefusalReason, string>> = {
-  tool_not_in_definition: "Инструмент не входит в набор агента",
-  depth_limit: "Достигнут предел вложенности",
-  not_allowed: "Шаблон не разрешает этот вызов",
-};
-const PLATFORM_REFUSAL_TEXT = "Платформа отказала в вызове";
 
 const ArgLabelsSchema = z.record(z.string(), z.string());
 
@@ -137,14 +127,16 @@ function refusalReasonOf(artifact: unknown): ToolRefusalReason | null {
 
 type ReasonLine = { content: ReactNode; hint: string | undefined };
 
-/** MC-10 or MC-22 text of a refusal; a code outside them (or none) reads as one line with the code as its hint. */
-function refusalOf(artifact: unknown): ReasonLine {
+/**
+ * MC-10 or MC-22 text of a refusal (`refusalText`); a code outside them (or none) reads as the platform's
+ * refusal with the code as its hint (KD-6).
+ */
+function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
   const reason = refusalReasonOf(artifact);
-  const text =
-    reason === null ? undefined : (refusalText(reason, refusedModel(artifact)) ?? REFUSAL_TEXT[reason]);
-  return text !== undefined
+  const text = reason === null ? null : refusalText(t, reason, refusedModel(artifact));
+  return text !== null
     ? { content: text, hint: undefined }
-    : { content: PLATFORM_REFUSAL_TEXT, hint: textField(artifact, "refusalReason") ?? undefined };
+    : { content: t("platformRefusal"), hint: textField(artifact, "refusalReason") ?? undefined };
 }
 
 /** Built-in tools whose MC-16 label stands in place of the tool's own title. */
@@ -190,6 +182,7 @@ const LINK_CLASS = "text-foreground underline underline-offset-2";
  * record, `invalid_arguments`) keeps the general line. Whose the record is comes from the library list.
  */
 function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; args: unknown; artifact: unknown }) {
+  const t = useTranslations("errors");
   const call = libraryCallOf(toolName, args);
   // No list holds an empty id: a call without a record reads as one the list does not hold.
   const live = useLiveRecord(call.recordId ?? "");
@@ -201,7 +194,7 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
     own: live?.mine === true,
     company: live != null && live.author === null,
   });
-  if (refusal === null) return <ReasonParagraph {...refusalOf(artifact)} />;
+  if (refusal === null) return <ReasonParagraph {...refusalOf(t, artifact)} />;
   const { action } = refusal;
   return (
     <ReasonParagraph
@@ -227,8 +220,8 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
  * The line under the header, shown even when collapsed: the refusal reason (MC-22), or the MC-10 way to
  * sign in to the server's account; other outcomes have none. A library call's refusal is `LibraryRefusalLine`.
  */
-function reasonLine(outcome: CallOutcome, artifact: unknown, server: string): ReasonLine | null {
-  if (outcome === "refused") return refusalOf(artifact);
+function reasonLine(t: ErrorsTranslator, outcome: CallOutcome, artifact: unknown, server: string): ReasonLine | null {
+  if (outcome === "refused") return refusalOf(t, artifact);
   if (outcome === "auth_required") {
     return {
       content: (
@@ -268,6 +261,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const [open, setOpen] = useState(false);
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
   const format = useFormatter();
+  const t = useTranslations("errors");
 
   const outcome = outcomeOf(artifact);
   const look = OUTCOME_LOOK[outcome];
@@ -288,7 +282,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
   const time = formatListTime(format, at);
   // The library line reads the library list from the shell, so other blocks never mount it.
   const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
-  const reason = libraryRefusal ? null : reasonLine(outcome, artifact, server ?? toolName);
+  const reason = libraryRefusal ? null : reasonLine(t, outcome, artifact, server ?? toolName);
   /** A code run that returned nothing shows «—» in place of its end (KD-5). */
   const shownResult = runCode !== null && (result === undefined || result === "") ? NO_RUN_VALUE : result;
   const resultText =

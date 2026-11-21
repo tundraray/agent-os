@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MyModel, MyModels } from '@agent-os/contracts';
-import { testFormatter } from '@/test/intl';
+import { testFormatter, testTranslator } from '@/test/intl';
 
 // Intl separates a Russian amount and its currency sign with U+00A0.
 const NBSP = String.fromCharCode(0xa0);
-import { chatFailureText, quotaFailureText, quotaRowOf, refusalText } from './access-texts';
+import { quotaFailureText, quotaRowOf, refusalText, replyFailureText } from './access-texts';
+
+const t = testTranslator('errors');
 
 const SONNET: MyModel = {
   model: 'anthropic/claude-sonnet-5-5',
@@ -17,76 +19,78 @@ const SONNET: MyModel = {
 };
 
 describe('access texts (MC-10, MC-11, MC-14, QS-01)', () => {
-  // AC-20.2, AC-16.3, AC-22.1: a reason never falls through to «ошибка платформы»; the quota failure names model, spend, quota and month.
+  // AC-20.2, AC-16.3, AC-22.1, i18n AC-05.1: each known reason reads its own catalogue phrase, never «ошибка платформы»
+  // or a message key; the quota failure names model, spend, quota and month.
   it.each([
-    { where: 'refusal', text: refusalText('no_access', null), expected: 'Нет доступа к инструменту' },
+    { where: 'refusal', text: refusalText(t, 'no_access', null), expected: 'Нет доступа к инструменту' },
     {
       where: 'refusal',
-      text: refusalText('model_not_allowed', 'anthropic/claude-sonnet-5-5'),
+      text: refusalText(t, 'model_not_allowed', 'anthropic/claude-sonnet-5-5'),
       expected: 'Модель не разрешена: Sonnet',
     },
     {
       where: 'refusal',
-      text: refusalText('model_not_connected', 'anthropic/claude-opus-5-5'),
+      text: refusalText(t, 'model_not_connected', 'anthropic/claude-opus-5-5'),
       expected: 'Модель не подключена: Opus',
     },
-    { where: 'refusal without the model argument', text: refusalText('model_not_allowed', null), expected: 'Модель не разрешена' },
-    { where: 'refusal outside MC-10', text: refusalText('depth_limit', null), expected: null },
+    { where: 'refusal without the model argument', text: refusalText(t, 'model_not_allowed', null), expected: 'Модель не разрешена' },
+    { where: 'refusal of MC-22', text: refusalText(t, 'depth_limit', null), expected: 'Достигнут предел вложенности' },
+    { where: 'refusal of the library', text: refusalText(t, 'record_unavailable', null), expected: null },
     {
       where: 'chat reply error',
-      text: chatFailureText('model_not_allowed', 'anthropic/claude-sonnet-5-5'),
+      text: replyFailureText(t, 'model_not_allowed', 'anthropic/claude-sonnet-5-5'),
       expected: 'Модель Sonnet вам не разрешена. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('model_not_connected', 'anthropic/claude-opus-5-5'),
+      text: replyFailureText(t, 'model_not_connected', 'anthropic/claude-opus-5-5'),
       expected: 'Модель Opus не подключена. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('no_models_allowed', 'anthropic/claude-sonnet-5-5'),
+      text: replyFailureText(t, 'no_models_allowed', 'anthropic/claude-sonnet-5-5'),
       expected: 'Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS.',
     },
-    { where: 'chat reply error', text: chatFailureText('model_error', 'anthropic/claude-sonnet-5-5'), expected: 'Не удалось получить ответ.' },
+    { where: 'chat reply error', text: replyFailureText(t, 'model_error', 'anthropic/claude-sonnet-5-5'), expected: 'Не удалось получить ответ.' },
     // model-providers AC-09.1–AC-09.5, AC-04.2, MC-11: each provider reason of the root is its own reply error.
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_missing', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_missing', 'anthropic/claude-haiku-5-5'),
       expected: 'Провайдер модели Haiku не настроен. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_disabled', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_disabled', 'anthropic/claude-haiku-5-5'),
       expected: 'Провайдер модели Haiku выключен. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_key_missing', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_key_missing', 'anthropic/claude-haiku-5-5'),
       expected: 'У провайдера модели Haiku нет ключа. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_key_rejected', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_key_rejected', 'anthropic/claude-haiku-5-5'),
       expected: 'Провайдер модели Haiku отклонил ключ. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_unavailable', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_unavailable', 'anthropic/claude-haiku-5-5'),
       expected: 'Провайдер модели Haiku не отвечает. Попробуйте перегенерировать позже.',
     },
     {
       where: 'chat reply error',
-      text: chatFailureText('provider_tools_rejected', 'anthropic/claude-haiku-5-5'),
+      text: replyFailureText(t, 'provider_tools_rejected', 'anthropic/claude-haiku-5-5'),
       expected: 'Провайдер модели Haiku не принял описание инструментов. Обратитесь к администратору Agent OS.',
     },
     {
       where: 'quota failure line',
-      text: quotaFailureText(testFormatter(), SONNET, '2026-11'),
+      text: quotaFailureText(t, testFormatter(), SONNET, '2026-11'),
       expected: `Сбой: квота Sonnet исчерпана — 100,40${NBSP}$ из 100${NBSP}$ за ноябрь`,
     },
     {
       where: 'quota failure line without the row',
-      text: quotaFailureText(testFormatter(), null, '2026-11'),
+      text: quotaFailureText(t, testFormatter(), null, '2026-11'),
       expected: 'Сбой: квота исчерпана',
     },
   ])('$where reads «$expected»', ({ text, expected }) => {

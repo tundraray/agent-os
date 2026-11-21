@@ -45,7 +45,9 @@ import {
   type ReportPartData,
   type RunCardPartData,
 } from "@/lib/feed/to-feed";
-import { chatFailureText } from "@/lib/access/access-texts";
+import { useTranslations } from "next-intl";
+import { replyFailureText } from "@/lib/access/access-texts";
+import type { ErrorsTranslator } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { recordPath } from "@/lib/shell-route";
 import type { SeedTarget } from "@/lib/threads/composer-seed";
@@ -890,14 +892,15 @@ const MessageError: FC = () => (
 );
 
 /** The text of a reply error: by the `ReplyErrorData` toFeed puts on the message, or the generic one. */
-function replyErrorText(error: unknown): string {
-  if (typeof error !== "object" || error === null) return chatFailureText(null, null);
+function replyErrorText(t: ErrorsTranslator, error: unknown): string {
+  if (typeof error !== "object" || error === null) return replyFailureText(t, null, null);
   const reason: unknown = Reflect.get(error, "reason");
   const model: unknown = Reflect.get(error, "model");
-  return chatFailureText(typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
+  return replyFailureText(t, typeof reason === "string" ? reason : null, typeof model === "string" ? model : null);
 }
 
 const ReplyErrorBlock: FC = () => {
+  const t = useTranslations("errors");
   const error = useAuiState((s) => (s.message.status?.type === "incomplete" ? s.message.status.error : undefined));
   return (
     <div
@@ -906,7 +909,7 @@ const ReplyErrorBlock: FC = () => {
     >
       <TriangleAlertIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
       <p role="alert" className="text-foreground line-clamp-2 min-w-0">
-        {replyErrorText(error)}
+        {replyErrorText(t, error)}
       </p>
     </div>
   );

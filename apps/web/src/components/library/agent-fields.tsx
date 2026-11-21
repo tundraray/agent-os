@@ -31,7 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MODEL_UNAVAILABLE_SHORT_TEXT, modelOptions, type ModelOption } from "@/lib/admin/model-providers";
-import { capitalize, formatModel, formatRecordModel, providerReasonText } from "@/lib/agents/format";
+import { formatModel, formatRecordModel } from "@/lib/agents/format";
 import type { FormatsTranslator } from "@/lib/i18n/formats";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
@@ -64,9 +64,6 @@ const TEXT = {
   // The banner shows only for a record with its own model: a record without one never lost it.
   modelGone: (model: string) => `Модель ${formatModel(model)} вам больше недоступна — агент не запустится`,
   noModels: (model: string) => `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — агент не запустится`,
-  /** model-providers UXRD MC-12 with the MC-9 words; `model` is the model's label. */
-  providerBroken: (reason: ModelUnavailableReason, model: string) =>
-    `${capitalize(providerReasonText(reason, model))} — агент не запустится`,
   replaceModel: (label: string) => `Заменить на ${label}`,
   enterName: "Введите имя",
   // Not in MC-8: the contract's name rule refuses control characters, which MC-8 has no text for.
@@ -462,6 +459,7 @@ function ModelBanner({
   choices: EditorChoices;
   onReplace: (model: string) => void;
 }) {
+  const tErrors = useTranslations("errors");
   // `null` is the default chat model, never one the author lost.
   if (model === null || choices.models === undefined) return null;
   const row = choices.models.find((option) => option.model === model);
@@ -469,7 +467,10 @@ function ModelBanner({
   const replacement = replacementModel(choices);
   const text =
     row !== undefined && row.unavailableReason !== null
-      ? TEXT.providerBroken(row.unavailableReason, formatModel(model, { models: choices.models }))
+      ? tErrors(`providerNotStarting.${row.unavailableReason}`, {
+          model: formatModel(model, { models: choices.models }),
+          kind: "agent",
+        })
       : replacement === null
         ? TEXT.noModels(model)
         : TEXT.modelGone(model);

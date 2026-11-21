@@ -2,14 +2,13 @@
 
 import { Fragment, useEffect, useId, useState } from "react";
 import { RotateCwIcon, TriangleAlert } from "lucide-react";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { modelProvider, type MyModel, type MyModels } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
-import { NO_MODELS_ALLOWED } from "@/lib/access/access-texts";
 import { describeApiError } from "@/lib/api/api-request";
 import { formatMonth, utcMonthOf, type Formatter } from "@/lib/i18n/formats";
 import { logger } from "@/lib/logger";
@@ -24,7 +23,6 @@ const TEXT = {
   remaining: "Остаток",
   noLimit: "без предела",
   exhausted: "Квота исчерпана",
-  empty: NO_MODELS_ALLOWED,
   // Not in MC-9: the read failure follows the shell's «Не удалось …» texts, as in «Подключения».
   loadFailed: "Не удалось загрузить модели",
   retry: "Повторить",
@@ -54,6 +52,7 @@ export function ModelsSection() {
   const headingId = useId();
   const mobile = useIsMobile();
   const format = useFormatter();
+  const tErrors = useTranslations("errors");
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -112,7 +111,7 @@ export function ModelsSection() {
       )}
 
       {load.status === "ready" && load.data.models.length === 0 && (
-        <p className="text-sm leading-5 font-medium text-foreground">{TEXT.empty}</p>
+        <p className="text-sm leading-5 font-medium text-foreground">{tErrors("noModelsAllowed")}</p>
       )}
 
       {load.status === "ready" &&

@@ -6,36 +6,30 @@ import {
   isProviderFailureReason,
   PROVIDER_FAILURE_REASONS,
   providerReasonText,
+  type ErrorsTranslator,
 } from '@/lib/agents/format';
 import { formatMonth, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
+import enErrors from '@/messages/en/errors.json';
 
 /**
  * Texts of the access refusals and failures (enterprise-access UXRD, MC-10, MC-11, MC-14, MC-17): one
- * place for each, picked by the reason. Model IDs read as `formatModel` gives them, the quota line names
+ * message for each, picked by the reason. Model IDs read as `formatModel` gives them, the quota line names
  * the model by its catalogue name.
  */
 
-const ASK_ADMIN = 'Обратитесь к администратору Agent OS.';
-
-/** MC-9 and MC-11: the employee is allowed no model — the empty «Модели и расход» and the reply error. */
-export const NO_MODELS_ALLOWED = `Вам не разрешена ни одна модель. ${ASK_ADMIN}`;
+/** A reason from the server names a message only when the catalogue holds it (design-web.md, «Отказы сервера»). */
+const hasMessage = <T extends object>(table: T, key: string): key is Extract<keyof T, string> =>
+  Object.hasOwn(table, key);
 
 /**
- * MC-10: the refusal line of a tool-call block; `model` is the `model` argument of `start_agent`, absent
- * when the child runs on its definition's or the default model (plan Notes 10). `null` — a reason MC-22 names.
+ * MC-10 and MC-22: the refusal line of a tool-call block; `model` is the refused model, absent when the child
+ * runs on its definition's or the default model (plan Notes 10). `null` — a reason without a message here.
  */
-export function refusalText(reason: ToolRefusalReason, model: string | null): string | null {
-  const named = model === null ? '' : `: ${formatModel(model)}`;
-  switch (reason) {
-    case 'no_access':
-      return 'Нет доступа к инструменту';
-    case 'model_not_allowed':
-      return `Модель не разрешена${named}`;
-    case 'model_not_connected':
-      return `Модель не подключена${named}`;
-    default:
-      return null;
+export function refusalText(t: ErrorsTranslator, reason: ToolRefusalReason, model: string | null): string | null {
+  if (model !== null && hasMessage(enErrors.refusalWithModel, reason)) {
+    return t(`refusalWithModel.${reason}`, { model: formatModel(model) });
   }
+  return hasMessage(enErrors.refusal, reason) ? t(`refusal.${reason}`) : null;
 }
 
 /** Failure reasons of the conversation's root that read as the reply error block TH-08. */
@@ -51,23 +45,35 @@ export type ChatFailureReason = (typeof CHAT_FAILURE_REASONS)[number];
 export const isChatFailureReason = (reason: string | null): reason is ChatFailureReason =>
   CHAT_FAILURE_REASONS.some((known) => known === reason);
 
-const REPLY_FAILED = 'Не удалось получить ответ.';
-
 /**
  * MC-11 by the reason, «Не удалось получить ответ.» for a model error (chat-shell TH-08) and for any
  * other error of a reply; `model` is the root's model ID, null only while the conversation has no root.
  * A provider reason names the model by its ID label (model-providers design-web.md, «Отличия от UXRD»).
  */
-export function chatFailureText(reason: string | null, model: string | null): string {
-  if (reason === 'no_models_allowed') return NO_MODELS_ALLOWED;
+export function replyFailureText(t: ErrorsTranslator, reason: string | null, model: string | null): string {
+  if (reason === 'no_models_allowed') return t('noModelsAllowed');
   if (isProviderFailureReason(reason)) {
-    const text = capitalize(providerReasonText(reason, model === null ? undefined : formatModel(model)));
-    return reason === 'provider_unavailable' ? `${text}. Попробуйте перегенерировать позже.` : `${text}. ${ASK_ADMIN}`;
+    return model === null
+      ? t(`replyFailure.provider.unnamed.${reason}`)
+      : t(`replyFailure.provider.named.${reason}`, { model: formatModel(model) });
   }
-  if (model === null) return REPLY_FAILED;
-  if (reason === 'model_not_allowed') return `Модель ${formatModel(model)} вам не разрешена. ${ASK_ADMIN}`;
-  if (reason === 'model_not_connected') return `Модель ${formatModel(model)} не подключена. ${ASK_ADMIN}`;
-  return REPLY_FAILED;
+  if (model === null) return t('replyFailed');
+  if (reason === 'model_not_allowed' || reason === 'model_not_connected') {
+    return t(`replyFailure.${reason}`, { model: formatModel(model) });
+  }
+  return t('replyFailed');
+}
+
+/**
+ * The Russian MC-11 of a refused first message for a provider reason, for `library-errors.ts` until its
+ * phrases move to the catalogue; every other reason reads «Не удалось получить ответ.».
+ */
+export function chatFailureText(reason: string | null, model: string | null): string {
+  if (!isProviderFailureReason(reason)) return 'Не удалось получить ответ.';
+  const sentence = capitalize(providerReasonText(reason, model === null ? undefined : formatModel(model)));
+  return reason === 'provider_unavailable'
+    ? `${sentence}. Попробуйте перегенерировать позже.`
+    : `${sentence}. Обратитесь к администратору Agent OS.`;
 }
 
 /**
@@ -81,17 +87,19 @@ export function quotaRowOf(models: MyModels, model: string, at: string): MyModel
 }
 
 /** QS-01 (MC-14) without the time, which the event line adds; without a row or a quota — «Сбой: квота исчерпана». */
-export function quotaFailureText(format: Formatter, row: MyModel | null, month: string): string {
-  if (row === null || row.quotaUsd === null) return `Сбой: ${failureReasonText('quota_exhausted').text}`;
-  const spent = format.number(row.spentUsd, 'usd');
-  const quota = format.number(row.quotaUsd, 'usdQuota');
-  return `Сбой: квота ${row.name} исчерпана — ${spent} из ${quota} за ${formatMonth(format, month)}`;
+export function quotaFailureText(t: ErrorsTranslator, format: Formatter, row: MyModel | null, month: string): string {
+  if (row === null || row.quotaUsd === null) {
+    return t('failedEvent', { reason: failureReasonText(t, 'quota_exhausted').text });
+  }
+  return t('quota.failure', {
+    model: row.name,
+    spent: format.number(row.spentUsd, 'usd'),
+    quota: format.number(row.quotaUsd, 'usdQuota'),
+    month: formatMonth(format, month),
+  });
 }
 
-/** The second line of QS-01. */
-export const QUOTA_FAILURE_HINT = 'Напишите, чтобы продолжить, когда квоту поднимут или начнётся новый месяц.';
-
 /** MC-17: the polite announcement of a QS-01 line. */
-export function quotaFailureAnnouncement(row: MyModel | null): string {
-  return row === null ? 'Работа завершена сбоем: исчерпана квота' : `Работа завершена сбоем: исчерпана квота ${row.name}`;
+export function quotaFailureAnnouncement(t: ErrorsTranslator, row: MyModel | null): string {
+  return row === null ? t('quota.announcement') : t('quota.announcementNamed', { model: row.name });
 }

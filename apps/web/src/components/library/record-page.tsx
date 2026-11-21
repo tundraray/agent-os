@@ -2,8 +2,9 @@
 
 import { useEffect, useId, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
-import type { LibraryChoices, ModelUnavailableReason, MyModels, RecordDetail, RecordKind, RecordSummary } from "@agent-os/contracts";
+import type { LibraryChoices, MyModels, RecordDetail, RecordKind, RecordSummary } from "@agent-os/contracts";
 import { useAdminRight } from "@/components/admin/admin-gate";
 import { PageHeader } from "@/components/shell/page-header";
 import { ShellLink } from "@/components/shell/shell-link";
@@ -14,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useResource, type Resource } from "@/hooks/use-resource";
 import { accessApi } from "@/lib/access/access-api";
 import { isNotFound } from "@/lib/admin/admin-errors";
-import { capitalize, formatModel, providerReasonText, type ModelNames } from "@/lib/agents/format";
+import { formatModel, type ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
 import { libraryApi } from "@/lib/library/library-api";
 import { kindWord } from "@/lib/library/library-errors";
@@ -45,9 +46,6 @@ const TEXT = {
     `Модель ${formatModel(model)} вам недоступна — у вас ${kindWord(kind)} не запустится. Копия получит вашу модель.`,
   noModels: (model: string, kind: RecordKind) =>
     `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — не запустится ни ${kindWord(kind)}, ни его копия.`,
-  /** model-providers UXRD MC-12 with the MC-9 words; `model` is the model's label. */
-  providerBroken: (reason: ModelUnavailableReason, model: string, kind: RecordKind) =>
-    `${capitalize(providerReasonText(reason, model))} — ${kindWord(kind)} не запустится`,
 } as const;
 
 /** Rows of the definition skeleton (UXRD RV-01, Loading). */
@@ -131,6 +129,7 @@ function EditorPage({
  * carries the recipient's note above its definition. Other employees' text is rendered as text only.
  */
 function RecordView({ record }: { record: RecordDetail }) {
+  const tErrors = useTranslations("errors");
   const inChat = useInChat();
   const copy = useCopyRecord();
   const errorId = useId();
@@ -198,7 +197,13 @@ function RecordView({ record }: { record: RecordDetail }) {
           )}
           {missingModel != null && <ModelHint model={missingModel} kind={record.kind} models={models} />}
           {brokenReason !== null && ownModel !== null && (
-            <Hint>{TEXT.providerBroken(brokenReason, formatModel(ownModel, modelNames), record.kind)}</Hint>
+            // model-providers UXRD MC-12 with the MC-9 words.
+            <Hint>
+              {tErrors(`providerNotStarting.${brokenReason}`, {
+                model: formatModel(ownModel, modelNames),
+                kind: record.kind,
+              })}
+            </Hint>
           )}
           {copy.error !== null && (
             <p id={errorId} role="alert" className="text-destructive text-xs leading-4">

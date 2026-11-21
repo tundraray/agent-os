@@ -1,4 +1,5 @@
 import { AgentFailureReasonSchema, type AgentFailureReason, type AgentStatus } from "@agent-os/contracts";
+import type { useTranslations } from "next-intl";
 import type { FormatsTranslator } from "@/lib/i18n/formats";
 
 /**
@@ -17,10 +18,16 @@ export const AGENT_STATUS_LABEL: Record<AgentStatus, string> = {
   stopped: "Остановлен",
 };
 
-/** The text with its first letter capital: a lowercase phrase that starts a sentence. */
+/**
+ * The text with its first letter capital: the model family of `formatModel`, and the lowercase phrase that
+ * starts a sentence in `library-errors.ts` until its phrases move to the catalogue.
+ */
 export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+/** The `errors` messages: pure functions receive them as a parameter, components take `useTranslations('errors')`. */
+export type ErrorsTranslator = ReturnType<typeof useTranslations<"errors">>;
 
 /** The failure reasons of a model provider (model-providers UXRD MC-9). */
 export const PROVIDER_FAILURE_REASONS = [
@@ -36,8 +43,38 @@ export type ProviderFailureReason = (typeof PROVIDER_FAILURE_REASONS)[number];
 export const isProviderFailureReason = (reason: string | null): reason is ProviderFailureReason =>
   PROVIDER_FAILURE_REASONS.some((known) => known === reason);
 
-/** MC-9 by the reason; `model` is «модели» or «модели {название}». */
-const PROVIDER_REASON: Record<ProviderFailureReason, (model: string) => string> = {
+/**
+ * The MC-9 words of a provider reason (model-providers design-web.md, KD-7), lowercase as after «Сбой:» and
+ * «Причина:»; `model` is the model's label, and without it the words name no model.
+ */
+export function providerFailureText(t: ErrorsTranslator, reason: ProviderFailureReason, model?: string): string {
+  return model === undefined ? t(`providerReason.unnamed.${reason}`) : t(`providerReason.named.${reason}`, { model });
+}
+
+/** MC-10: the second line under a provider failure — who can fix it, or that a retry may help. */
+export function providerFailureHint(t: ErrorsTranslator, reason: ProviderFailureReason): string {
+  return t(reason === "provider_unavailable" ? "providerHint.retry" : "providerHint.admin");
+}
+
+/**
+ * The words after «Сбой:» (event line) and «Причина:» (report) for a failure reason, and the code to show as
+ * the hint when the words do not name it (KD-6): every reason an agent fails with by itself has its message,
+ * so a new one does not compile without it; any other reads «ошибка платформы». `model` — the label a
+ * provider reason names.
+ */
+export function failureReasonText(
+  t: ErrorsTranslator,
+  reason: string | null,
+  model?: string,
+): { text: string; hint: string | null } {
+  const named = AgentFailureReasonSchema.safeParse(reason);
+  if (!named.success) return { text: t("platformFailure"), hint: reason };
+  if (isProviderFailureReason(named.data)) return { text: providerFailureText(t, named.data, model), hint: null };
+  return { text: t(`failureReason.${named.data}`), hint: null };
+}
+
+/** The Russian MC-9 words by the reason, for `library-errors.ts` until its phrases move to the catalogue. */
+const PROVIDER_REASON_RU: Record<ProviderFailureReason, (model: string) => string> = {
   provider_missing: (model) => `провайдер ${model} не настроен`,
   provider_disabled: (model) => `провайдер ${model} выключен`,
   provider_key_missing: (model) => `у провайдера ${model} нет ключа`,
@@ -46,45 +83,9 @@ const PROVIDER_REASON: Record<ProviderFailureReason, (model: string) => string> 
   provider_tools_rejected: (model) => `провайдер ${model} не принял описание инструментов`,
 };
 
-/**
- * The one place of the MC-9 words (model-providers design-web.md, KD-7), lowercase as after «Сбой:» and
- * «Причина:»; `model` is the model's label, and without it the same words name no model.
- */
+/** `providerFailureText` in Russian without the catalogue: only `library-errors.ts` still reads it. */
 export function providerReasonText(reason: ProviderFailureReason, model?: string): string {
-  return PROVIDER_REASON[reason](model === undefined ? "модели" : `модели ${model}`);
-}
-
-/** MC-10: the second line under a provider failure — who can fix it, or that a retry may help. */
-export function providerFailureHint(reason: ProviderFailureReason): string {
-  return reason === "provider_unavailable"
-    ? "Напишите, чтобы попробовать снова. Если сбой повторится, сообщите администратору Agent OS."
-    : "Исправить это может администратор Agent OS. Потом напишите, чтобы продолжить.";
-}
-
-/**
- * Failure reasons MC-14 and MC-18 (and enterprise-access MC-14) name — every reason an agent fails with
- * by itself apart from a provider's, so a new one does not compile without its words; every other one
- * reads «ошибка платформы» (KD-6).
- */
-const NAMED_FAILURE_REASON: Record<Exclude<AgentFailureReason, ProviderFailureReason>, string> = {
-  turn_limit: "исчерпан предел ходов",
-  model_error: "ошибка модели",
-  owner_disabled: "сотрудник отключён",
-  quota_exhausted: "квота исчерпана",
-  model_not_allowed: "модель не разрешена",
-  model_not_connected: "модель не подключена",
-  no_models_allowed: "не разрешена ни одна модель",
-};
-
-/**
- * The words after «Сбой:» (event line) and «Причина:» (report) for a failure reason, and the code to
- * show as the hint when the words do not name it (KD-6). `model` — the label a provider reason names.
- */
-export function failureReasonText(reason: string | null, model?: string): { text: string; hint: string | null } {
-  const named = AgentFailureReasonSchema.safeParse(reason);
-  if (!named.success) return { text: "ошибка платформы", hint: reason };
-  if (isProviderFailureReason(named.data)) return { text: providerReasonText(named.data, model), hint: null };
-  return { text: NAMED_FAILURE_REASON[named.data], hint: null };
+  return PROVIDER_REASON_RU[reason](model === undefined ? "модели" : `модели ${model}`);
 }
 
 const MODEL_FAMILY = /(?:^|\/)claude-([a-z]+)-/;

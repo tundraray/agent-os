@@ -33,8 +33,8 @@ describe("failureReasonText of a provider reason", () => {
     ["provider_unavailable", "провайдер модели Haiku не отвечает", "провайдер модели не отвечает"],
     ["provider_tools_rejected", "провайдер модели Haiku не принял описание инструментов", "провайдер модели не принял описание инструментов"],
   ])("%s", (reason, withModel, withoutModel) => {
-    expect(failureReasonText(reason, "Haiku")).toEqual({ text: withModel, hint: null });
-    expect(failureReasonText(reason)).toEqual({ text: withoutModel, hint: null });
+    expect(failureReasonText(testTranslator("errors"), reason, "Haiku")).toEqual({ text: withModel, hint: null });
+    expect(failureReasonText(testTranslator("errors"), reason)).toEqual({ text: withoutModel, hint: null });
   });
 
   // MC-10: a provider that does not answer asks for a retry; every other reason waits for the administrator.
@@ -42,6 +42,6 @@ describe("failureReasonText of a provider reason", () => {
     ["provider_unavailable", "Напишите, чтобы попробовать снова. Если сбой повторится, сообщите администратору Agent OS."],
     ["provider_key_rejected", "Исправить это может администратор Agent OS. Потом напишите, чтобы продолжить."],
   ])("the hint under %s", (reason, expected) => {
-    expect(providerFailureHint(reason)).toBe(expected);
+    expect(providerFailureHint(testTranslator("errors"), reason)).toBe(expected);
   });
 });

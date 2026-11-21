@@ -10,14 +10,14 @@ import { MarkdownText } from "@/components/markdown-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { failureReasonText } from "@/lib/agents/format";
+import { failureReasonText, type ErrorsTranslator } from "@/lib/agents/format";
 import { formatDuration, formatListTime } from "@/lib/i18n/formats";
 import type { ReportPartData } from "@/lib/feed/to-feed";
 import { agentPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
 /** MC-18: «Причина: …» of a failed or stopped child; a completed one has none. */
-function reasonLine(data: ReportPartData): { text: string; hint: string | null } | null {
+function reasonLine(t: ErrorsTranslator, data: ReportPartData): { text: string; hint: string | null } | null {
   if (data.status === "completed") return null;
   if (data.status === "stopped") {
     // The parent hears of a stop only when the child was the stopped one; a child stopped with its
@@ -25,8 +25,8 @@ function reasonLine(data: ReportPartData): { text: string; hint: string | null }
     const withParent = data.reason === "stopped_with_parent";
     return { text: `Причина: ${withParent ? "остановлен вместе с родителем" : "остановлен вами"}`, hint: null };
   }
-  const { text, hint } = failureReasonText(data.reason);
-  return { text: `Причина: ${text}`, hint };
+  const { text, hint } = failureReasonText(t, data.reason);
+  return { text: t("reportReason", { reason: text }), hint };
 }
 
 /**
@@ -69,7 +69,8 @@ function ReportCopy({ text }: { text: string }) {
 export function AgentReport({ data }: { data: ReportPartData }) {
   const format = useFormatter();
   const t = useTranslations("formats");
-  const reason = reasonLine(data);
+  const tErrors = useTranslations("errors");
+  const reason = reasonLine(tErrors, data);
   const notice = `${t("toolCallCount", { count: data.toolCalls })} · ${formatDuration(t, data.durationMs)} · ${formatListTime(format, data.createdAt)}`;
 
   return (

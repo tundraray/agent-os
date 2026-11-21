@@ -2,22 +2,17 @@
 
 import { useEffect, useState } from "react";
 import type { AgentStatus as AgentStatusValue, HistoryEvent, MyModel } from "@agent-os/contracts";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { ArchiveIcon, HistoryIcon, type LucideIcon } from "lucide-react";
 import { AgentStatus, StatusGlyph } from "@/components/agents/agent-status";
 import { accessApi } from "@/lib/access/access-api";
-import {
-  QUOTA_FAILURE_HINT,
-  quotaFailureAnnouncement,
-  quotaFailureText,
-  quotaRowOf,
-} from "@/lib/access/access-texts";
+import { quotaFailureAnnouncement, quotaFailureText, quotaRowOf } from "@/lib/access/access-texts";
 import {
   failureReasonText,
   formatModel,
   isProviderFailureReason,
   providerFailureHint,
-  providerReasonText,
+  providerFailureText,
   type ModelNames,
   type ProviderFailureReason,
 } from "@/lib/agents/format";
@@ -61,6 +56,7 @@ const MARK_ICON: Record<"continued" | "compacted", LucideIcon> = {
 export function EventLine({ data }: { data: EventPartData }) {
   const { event, reason, createdAt } = data;
   const format = useFormatter();
+  const t = useTranslations("errors");
 
   if (event === "continued" || event === "compacted") {
     return (
@@ -87,8 +83,8 @@ export function EventLine({ data }: { data: EventPartData }) {
   if (event === "failed" && isProviderFailureReason(reason)) return <ProviderFailureLine data={data} reason={reason} />;
 
   if (event === "failed") {
-    const { text, hint } = failureReasonText(reason);
-    return <AgentStatus variant="event" status="failed" text={`Сбой: ${text}`} at={createdAt} hint={hint} />;
+    const { text, hint } = failureReasonText(t, reason);
+    return <AgentStatus variant="event" status="failed" text={t("failedEvent", { reason: text })} at={createdAt} hint={hint} />;
   }
 
   return <AgentStatus variant="event" status={EVENT_STATUS[event]} text={EVENT_TEXT[event]} at={createdAt} />;
@@ -106,6 +102,7 @@ type QuotaRead = { status: "loading" } | { status: "ready"; row: MyModel | null;
 function QuotaFailureLine({ data }: { data: EventPartData }) {
   const { createdAt, model } = data;
   const format = useFormatter();
+  const t = useTranslations("errors");
   const [read, setRead] = useState<QuotaRead>({ status: "loading" });
 
   useEffect(() => {
@@ -129,13 +126,13 @@ function QuotaFailureLine({ data }: { data: EventPartData }) {
   }, [model, createdAt]);
 
   const row = read.status === "ready" ? read.row : null;
-  const text = read.status === "ready" ? quotaFailureText(format, row, read.month) : quotaFailureText(format, null, "");
+  const text = read.status === "ready" ? quotaFailureText(t, format, row, read.month) : quotaFailureText(t, format, null, "");
   return (
     <div data-slot="quota-failure" className="flex min-w-0 flex-col">
       <AgentStatus variant="event" status="failed" text={text} at={createdAt} />
-      <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{QUOTA_FAILURE_HINT}</p>
+      <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{t("quota.hint")}</p>
       <span aria-live="polite" className="sr-only">
-        {read.status === "ready" ? quotaFailureAnnouncement(row) : ""}
+        {read.status === "ready" ? quotaFailureAnnouncement(t, row) : ""}
       </span>
     </div>
   );
@@ -150,6 +147,7 @@ type NamesRead = { status: "loading" } | { status: "ready"; names: ModelNames | 
  */
 function ProviderFailureLine({ data, reason }: { data: EventPartData; reason: ProviderFailureReason }) {
   const { createdAt, model } = data;
+  const t = useTranslations("errors");
   const [read, setRead] = useState<NamesRead>({ status: "loading" });
 
   useEffect(() => {
@@ -170,13 +168,13 @@ function ProviderFailureLine({ data, reason }: { data: EventPartData; reason: Pr
   }, [model, reason]);
 
   const label = formatModel(model, read.status === "ready" ? read.names : undefined);
-  const text = providerReasonText(reason, label);
+  const text = providerFailureText(t, reason, label);
   return (
     <div data-slot="provider-failure" className="flex min-w-0 flex-col">
-      <AgentStatus variant="event" status="failed" text={`Сбой: ${text}`} at={createdAt} />
-      <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{providerFailureHint(reason)}</p>
+      <AgentStatus variant="event" status="failed" text={t("failedEvent", { reason: text })} at={createdAt} />
+      <p className="text-muted-foreground pl-5 text-xs leading-4 font-medium">{providerFailureHint(t, reason)}</p>
       <span aria-live="polite" className="sr-only">
-        {read.status === "ready" ? `Работа завершена сбоем: ${text}` : ""}
+        {read.status === "ready" ? t("failedAnnouncement", { reason: text }) : ""}
       </span>
     </div>
   );

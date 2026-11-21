@@ -1,0 +1,87 @@
+{
+  "saveFailed": "Couldn't save: <server>{text}</server>",
+  "noConnection": "Couldn't save: no connection to the server",
+  "refusal": {
+    "no_access": "No access to the tool",
+    "model_not_allowed": "Model not allowed",
+    "model_not_connected": "Model not connected",
+    "tool_not_in_definition": "The tool isn't in the agent's set",
+    "depth_limit": "Nesting limit reached",
+    "not_allowed": "The template doesn't allow this call"
+  },
+  "refusalWithModel": {
+    "model_not_allowed": "Model not allowed: {model}",
+    "model_not_connected": "Model not connected: {model}"
+  },
+  "platformRefusal": "The platform refused the call",
+  "noModelsAllowed": "You aren't allowed any model. Contact your Agent OS administrator.",
+  "replyFailed": "Couldn't get a reply.",
+  "replyFailure": {
+    "model_not_allowed": "You aren't allowed the {model} model. Contact your Agent OS administrator.",
+    "model_not_connected": "The {model} model isn't connected. Contact your Agent OS administrator.",
+    "provider": {
+      "named": {
+        "provider_missing": "The {model} model's provider isn't set up. Contact your Agent OS administrator.",
+        "provider_disabled": "The {model} model's provider is turned off. Contact your Agent OS administrator.",
+        "provider_key_missing": "The {model} model's provider has no key. Contact your Agent OS administrator.",
+        "provider_key_rejected": "The {model} model's provider rejected the key. Contact your Agent OS administrator.",
+        "provider_unavailable": "The {model} model's provider isn't responding. Try regenerating later.",
+        "provider_tools_rejected": "The {model} model's provider didn't accept the tool descriptions. Contact your Agent OS administrator."
+      },
+      "unnamed": {
+        "provider_missing": "The model's provider isn't set up. Contact your Agent OS administrator.",
+        "provider_disabled": "The model's provider is turned off. Contact your Agent OS administrator.",
+        "provider_key_missing": "The model's provider has no key. Contact your Agent OS administrator.",
+        "provider_key_rejected": "The model's provider rejected the key. Contact your Agent OS administrator.",
+        "provider_unavailable": "The model's provider isn't responding. Try regenerating later.",
+        "provider_tools_rejected": "The model's provider didn't accept the tool descriptions. Contact your Agent OS administrator."
+      }
+    }
+  },
+  "failedEvent": "Failed: {reason}",
+  "failedAnnouncement": "Work failed: {reason}",
+  "reportReason": "Reason: {reason}",
+  "platformFailure": "platform error",
+  "failureReason": {
+    "turn_limit": "turn limit reached",
+    "model_error": "model error",
+    "owner_disabled": "employee disabled",
+    "quota_exhausted": "quota used up",
+    "model_not_allowed": "model not allowed",
+    "model_not_connected": "model not connected",
+    "no_models_allowed": "no models allowed"
+  },
+  "providerReason": {
+    "named": {
+      "provider_missing": "the {model} model's provider isn't set up",
+      "provider_disabled": "the {model} model's provider is turned off",
+      "provider_key_missing": "the {model} model's provider has no key",
+      "provider_key_rejected": "the {model} model's provider rejected the key",
+      "provider_unavailable": "the {model} model's provider isn't responding",
+      "provider_tools_rejected": "the {model} model's provider didn't accept the tool descriptions"
+    },
+    "unnamed": {
+      "provider_missing": "the model's provider isn't set up",
+      "provider_disabled": "the model's provider is turned off",
+      "provider_key_missing": "the model's provider has no key",
+      "provider_key_rejected": "the model's provider rejected the key",
+      "provider_unavailable": "the model's provider isn't responding",
+      "provider_tools_rejected": "the model's provider didn't accept the tool descriptions"
+    }
+  },
+  "providerHint": {
+    "retry": "Send a message to try again. If it fails again, tell your Agent OS administrator.",
+    "admin": "Your Agent OS administrator can fix this. Then send a message to continue."
+  },
+  "providerNotStarting": {
+    "provider_missing": "The {model} model's provider isn't set up — the {kind, select, agent {agent} other {workflow}} won't start",
+    "provider_disabled": "The {model} model's provider is turned off — the {kind, select, agent {agent} other {workflow}} won't start",
+    "provider_key_missing": "The {model} model's provider has no key — the {kind, select, agent {agent} other {workflow}} won't start"
+  },
+  "quota": {
+    "failure": "Failed: {model} quota used up — {spent} of {quota} for {month}",
+    "hint": "Send a message to continue once the quota is raised or a new month starts.",
+    "announcement": "Work failed: quota used up",
+    "announcementNamed": "Work failed: {model} quota used up"
+  }
+}

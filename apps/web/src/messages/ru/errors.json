@@ -1,0 +1,87 @@
+{
+  "saveFailed": "Не удалось сохранить: <server>{text}</server>",
+  "noConnection": "Не удалось сохранить: нет связи с сервером",
+  "refusal": {
+    "no_access": "Нет доступа к инструменту",
+    "model_not_allowed": "Модель не разрешена",
+    "model_not_connected": "Модель не подключена",
+    "tool_not_in_definition": "Инструмент не входит в набор агента",
+    "depth_limit": "Достигнут предел вложенности",
+    "not_allowed": "Шаблон не разрешает этот вызов"
+  },
+  "refusalWithModel": {
+    "model_not_allowed": "Модель не разрешена: {model}",
+    "model_not_connected": "Модель не подключена: {model}"
+  },
+  "platformRefusal": "Платформа отказала в вызове",
+  "noModelsAllowed": "Вам не разрешена ни одна модель. Обратитесь к администратору Agent OS.",
+  "replyFailed": "Не удалось получить ответ.",
+  "replyFailure": {
+    "model_not_allowed": "Модель {model} вам не разрешена. Обратитесь к администратору Agent OS.",
+    "model_not_connected": "Модель {model} не подключена. Обратитесь к администратору Agent OS.",
+    "provider": {
+      "named": {
+        "provider_missing": "Провайдер модели {model} не настроен. Обратитесь к администратору Agent OS.",
+        "provider_disabled": "Провайдер модели {model} выключен. Обратитесь к администратору Agent OS.",
+        "provider_key_missing": "У провайдера модели {model} нет ключа. Обратитесь к администратору Agent OS.",
+        "provider_key_rejected": "Провайдер модели {model} отклонил ключ. Обратитесь к администратору Agent OS.",
+        "provider_unavailable": "Провайдер модели {model} не отвечает. Попробуйте перегенерировать позже.",
+        "provider_tools_rejected": "Провайдер модели {model} не принял описание инструментов. Обратитесь к администратору Agent OS."
+      },
+      "unnamed": {
+        "provider_missing": "Провайдер модели не настроен. Обратитесь к администратору Agent OS.",
+        "provider_disabled": "Провайдер модели выключен. Обратитесь к администратору Agent OS.",
+        "provider_key_missing": "У провайдера модели нет ключа. Обратитесь к администратору Agent OS.",
+        "provider_key_rejected": "Провайдер модели отклонил ключ. Обратитесь к администратору Agent OS.",
+        "provider_unavailable": "Провайдер модели не отвечает. Попробуйте перегенерировать позже.",
+        "provider_tools_rejected": "Провайдер модели не принял описание инструментов. Обратитесь к администратору Agent OS."
+      }
+    }
+  },
+  "failedEvent": "Сбой: {reason}",
+  "failedAnnouncement": "Работа завершена сбоем: {reason}",
+  "reportReason": "Причина: {reason}",
+  "platformFailure": "ошибка платформы",
+  "failureReason": {
+    "turn_limit": "исчерпан предел ходов",
+    "model_error": "ошибка модели",
+    "owner_disabled": "сотрудник отключён",
+    "quota_exhausted": "квота исчерпана",
+    "model_not_allowed": "модель не разрешена",
+    "model_not_connected": "модель не подключена",
+    "no_models_allowed": "не разрешена ни одна модель"
+  },
+  "providerReason": {
+    "named": {
+      "provider_missing": "провайдер модели {model} не настроен",
+      "provider_disabled": "провайдер модели {model} выключен",
+      "provider_key_missing": "у провайдера модели {model} нет ключа",
+      "provider_key_rejected": "провайдер модели {model} отклонил ключ",
+      "provider_unavailable": "провайдер модели {model} не отвечает",
+      "provider_tools_rejected": "провайдер модели {model} не принял описание инструментов"
+    },
+    "unnamed": {
+      "provider_missing": "провайдер модели не настроен",
+      "provider_disabled": "провайдер модели выключен",
+      "provider_key_missing": "у провайдера модели нет ключа",
+      "provider_key_rejected": "провайдер модели отклонил ключ",
+      "provider_unavailable": "провайдер модели не отвечает",
+      "provider_tools_rejected": "провайдер модели не принял описание инструментов"
+    }
+  },
+  "providerHint": {
+    "retry": "Напишите, чтобы попробовать снова. Если сбой повторится, сообщите администратору Agent OS.",
+    "admin": "Исправить это может администратор Agent OS. Потом напишите, чтобы продолжить."
+  },
+  "providerNotStarting": {
+    "provider_missing": "Провайдер модели {model} не настроен — {kind, select, agent {агент} other {workflow}} не запустится",
+    "provider_disabled": "Провайдер модели {model} выключен — {kind, select, agent {агент} other {workflow}} не запустится",
+    "provider_key_missing": "У провайдера модели {model} нет ключа — {kind, select, agent {агент} other {workflow}} не запустится"
+  },
+  "quota": {
+    "failure": "Сбой: квота {model} исчерпана — {spent} из {quota} за {month}",
+    "hint": "Напишите, чтобы продолжить, когда квоту поднимут или начнётся новый месяц.",
+    "announcement": "Работа завершена сбоем: исчерпана квота",
+    "announcementNamed": "Работа завершена сбоем: исчерпана квота {model}"
+  }
+}
