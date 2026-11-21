@@ -33,12 +33,6 @@ export function shareBlockedReason(t: ErrorsTranslator, record: Pick<RecordSumma
   return noRoles ? t('library.shareBlocked.noRoles') : null;
 }
 
-/** The reason of a failed request in the server's words, or «нет связи с сервером» — the {причина} of MC-13. */
-export function failureReason(cause: unknown): string {
-  if (isApiRequestError(cause) && cause.kind === 'network') return 'нет связи с сервером';
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
 /**
  * The knowledge screen shows «Не найдено» only for this: a 404, or a 403 `KNOWLEDGE_FORBIDDEN` of a workflow
  * the viewer sees but whose knowledge is closed to them (AC-11.3). Any other refusal stays an error.

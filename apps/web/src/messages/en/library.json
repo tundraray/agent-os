@@ -118,6 +118,82 @@
       "wholeNumber": "Enter a whole number from {min} to {max}"
     }
   },
+  "team": {
+    "title": "Team · {count}",
+    "label": "Team",
+    "hint": "The coordinator decides whom to call and when from the team's lines.",
+    "listLabel": "Team, the coordinator decides whom to call and when",
+    "final": "writes the answer",
+    "noServers": "no systems",
+    "allServers": "all systems",
+    "maxRuns": "How many times it can be called",
+    "upTo": "{count, plural, one {up to # time} other {up to # times}}",
+    "removed": "Removed: {names}",
+    "details": "Details"
+  },
+  "workflowFields": {
+    "descriptionHint": "The chat decides when to call the workflow from its description.",
+    "task": "The workflow gets only the task you confirm before the run: the question, scope and result. It doesn't see the chat.",
+    "startInChat": "It's easier to start in chat: describe what the workflow should do, and the chat will put the team together.",
+    "describeInChat": "Describe in chat",
+    "template": "Make a workflow that ",
+    "add": "Add",
+    "fromLibrary": "From the library…",
+    "emptyTitle": "No team yet",
+    "emptyText": "Add executors and write for each what it's responsible for and when to call it. You can take your own agent from the library.",
+    "optional": "optional",
+    "rulesHint": "If the order matters or who waits for whom, write it here. The coordinator decides the rest from the team's lines.",
+    "rulesPlaceholder": "For example: “Answer” writes the summary once “Log collection” and “Ticket collection” are back.",
+    "notInTeam": "There's no “{name}” in the team",
+    "notMentioned": "“{name}” isn't mentioned in the rules — the coordinator will call it by its team line",
+    "oldName": "The rules still have the old name “{name}”",
+    "replaceInRules": "Replace in the rules",
+    "coordinator": "The coordinator itself",
+    "finalHint": "This executor's report becomes the workflow's answer.",
+    "finalRemoved": "{name} was removed from the team — the coordinator writes the answer",
+    "advanced": "More: coordinator model and maximum steps",
+    "checks": {
+      "addOne": "Add at least one executor",
+      "enterRole": "Write what the executor is responsible for and when to call it",
+      "enterPromptInPanel": "Enter instructions — open the executor",
+      "nameTaken": "The team already has this name"
+    }
+  },
+  "executor": {
+    "new": "New executor",
+    "role": "What it's responsible for and when to call it",
+    "rolePlaceholder": "For example: collects Sentry errors for the period in the task",
+    "updated": "The “{source}” agent was updated in the library",
+    "takeNewVersion": "Take the new version",
+    "gone": "The “{source}” agent was deleted or closed to you — it can't be updated",
+    "edit": "Edit",
+    "remove": "Remove from the team",
+    "editName": "{name}, edit",
+    "done": "Done",
+    "advanced": "More: model, maximum steps, how many times it can be called"
+  },
+  "picker": {
+    "title": "Add from the library",
+    "find": "Find an agent",
+    "noAgents": "No agents in the library"
+  },
+  "definition": {
+    "recipient": "The author is {author}.{roleCount, plural, =0 {} one { The {kind, select, agent {agent} other {workflow}} is open to your role {roles}.} other { The {kind, select, agent {agent} other {workflow}} is open to your roles {roles}.}} It works with your permissions and connected accounts. Changes in systems happen only after you confirm them. The author or an administrator can remove the {kind, select, agent {agent} other {workflow}}.",
+    "changed": "changed",
+    "selfLearning": "{state, select, on {on} other {off}}",
+    "coordinator": "Coordinator",
+    "coordinatorSummary": "{model} · {maxTurns, plural, one {up to # step} other {up to # steps}}",
+    "expand": "Show all",
+    "collapse": "Collapse"
+  },
+  "recordPage": {
+    "colleagueHint": "Or name the {kind, select, agent {agent} other {workflow}} in chat — the chat will start it itself.",
+    "ownNamesake": "You have your own {kind, select, agent {agent} other {workflow}} with this name: name it in chat and yours will start. To start this one, press “Use in chat”.",
+    "severalNamesakes": "Several have this name: name it in chat and the chat will choose by description. To start this one, press “Use in chat”.",
+    "readOnly": "The author opened the {kind, select, agent {agent} other {workflow}} read-only: your chat doesn't start it. To use it, copy it to yourself.",
+    "modelMissing": "The {model} model isn't available to you — the {kind, select, agent {agent} other {workflow}} won't run for you. The copy gets your model.",
+    "noModels": "The {model} model isn't available to you, and you have no other models — neither the {kind, select, agent {agent} other {workflow}} nor its copy will run."
+  },
   "label": {
     "mine": "yours",
     "company": "from the company",

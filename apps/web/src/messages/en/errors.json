@@ -2,12 +2,16 @@
   "failed": {
     "save": "Couldn't save: <server>{text}</server>",
     "copy": "Couldn't copy: <server>{text}</server>",
-    "delete": "Couldn't delete: <server>{text}</server>"
+    "delete": "Couldn't delete: <server>{text}</server>",
+    "add": "Couldn't add: <server>{text}</server>",
+    "takeVersion": "Couldn't take the new version: <server>{text}</server>"
   },
   "noConnection": {
     "save": "Couldn't save: no connection to the server",
     "copy": "Couldn't copy: no connection to the server",
-    "delete": "Couldn't delete: no connection to the server"
+    "delete": "Couldn't delete: no connection to the server",
+    "add": "Couldn't add: no connection to the server",
+    "takeVersion": "Couldn't take the new version: no connection to the server"
   },
   "library": {
     "notFound": "This agent or workflow doesn't exist: it was deleted, closed to you, or the link is wrong.",

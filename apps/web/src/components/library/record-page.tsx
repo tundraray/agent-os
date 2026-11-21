@@ -2,7 +2,7 @@
 
 import { useEffect, useId, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import type { LibraryChoices, MyModels, RecordDetail, RecordKind, RecordSummary } from "@agent-os/contracts";
 import { useAdminRight } from "@/components/admin/admin-gate";
@@ -17,8 +17,8 @@ import { accessApi } from "@/lib/access/access-api";
 import { isNotFound } from "@/lib/admin/admin-errors";
 import { formatModel, type ModelNames } from "@/lib/agents/format";
 import { focusShellTarget } from "@/lib/focus";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { libraryApi } from "@/lib/library/library-api";
-import { kindWord } from "@/lib/library/library-errors";
 import { canUseInChat, recipientNote } from "@/lib/library/record-rules";
 import { adminRecordPath, libraryPath, newRecordPath, recordPath } from "@/lib/shell-route";
 import { blankAgent } from "./agent-fields";
@@ -28,25 +28,6 @@ import { RecordEditor, useTakenHandoff, type RecordEditorProps } from "./record-
 import { RecordLabel } from "./record-label";
 import { useInChat } from "./use-in-chat";
 import { blankWorkflow } from "./workflow-fields";
-
-/** UXRD MC-6. */
-const TEXT = {
-  library: "Библиотека",
-  useInChat: "Использовать в чате",
-  copy: "Скопировать себе",
-  openInPanel: "Открыть в панели",
-  colleagueHint: (kind: RecordKind) => `Или назовите ${kindWord(kind)} в чате — чат запустит его сам.`,
-  ownNamesake: (kind: RecordKind) =>
-    `У вас есть свой ${kindWord(kind)} с таким именем: назовёте в чате — запустится ваш. Чтобы запустить этот, нажмите «Использовать в чате».`,
-  severalNamesakes:
-    "Таких имён несколько: назовёте в чате — чат выберет по описанию. Чтобы запустить именно этого, нажмите «Использовать в чате».",
-  readOnly: (kind: RecordKind) =>
-    `Автор открыл ${kindWord(kind)} только для чтения: ваш чат его не запускает. Чтобы пользоваться, скопируйте себе.`,
-  modelMissing: (model: string, kind: RecordKind) =>
-    `Модель ${formatModel(model)} вам недоступна — у вас ${kindWord(kind)} не запустится. Копия получит вашу модель.`,
-  noModels: (model: string, kind: RecordKind) =>
-    `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — не запустится ни ${kindWord(kind)}, ни его копия.`,
-} as const;
 
 /** Rows of the definition skeleton (UXRD RV-01, Loading). */
 const SKELETON_ROWS = [0, 1, 2, 3] as const;
@@ -130,9 +111,12 @@ function EditorPage({
  */
 function RecordView({ record }: { record: RecordDetail }) {
   const tErrors = useTranslations("errors");
+  const t = useTranslations("library");
+  const locale = useLocale();
   const inChat = useInChat();
   const copy = useCopyRecord();
   const errorId = useId();
+  const name = builtinName(record, locale);
   const usable = canUseInChat(record);
   const note = recipientNote(record);
   const recipient = note !== null && record.author !== null ? { author: record.author.name, roles: note.roles } : null;
@@ -154,14 +138,14 @@ function RecordView({ record }: { record: RecordDetail }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <PageHeader title={record.name} parent={{ title: TEXT.library, href: libraryPath() }}>
+      <PageHeader title={name} parent={{ title: t("screen.title"), href: libraryPath() }}>
         {usable && (
           <Button
             size="sm"
             className="pointer-coarse:h-11"
-            onClick={() => inChat({ record: { id: record.id, kind: record.kind, name: record.name } })}
+            onClick={() => inChat({ record: { id: record.id, kind: record.kind, name } })}
           >
-            {TEXT.useInChat}
+            {t("row.useInChat")}
           </Button>
         )}
         <Button
@@ -173,14 +157,14 @@ function RecordView({ record }: { record: RecordDetail }) {
           onClick={() => copy.copy(record)}
         >
           {copy.pending && <LoaderCircle aria-hidden className="animate-spin motion-reduce:animate-none" />}
-          {TEXT.copy}
+          {t("row.copy")}
         </Button>
         {inPanel && (
           <ShellLink
             href={adminRecordPath("library", record.id)}
             className={buttonVariants({ variant: "outline", size: "sm", className: "pointer-coarse:h-11" })}
           >
-            {TEXT.openInPanel}
+            {t("row.openInPanel")}
           </ShellLink>
         )}
       </PageHeader>
@@ -193,7 +177,7 @@ function RecordView({ record }: { record: RecordDetail }) {
               <LaunchHint record={record} />
             </Hint>
           ) : (
-            !record.mine && record.author !== null && !record.offerInChat && <Hint>{TEXT.readOnly(record.kind)}</Hint>
+            !record.mine && record.author !== null && !record.offerInChat && <Hint>{t("recordPage.readOnly", { kind: record.kind })}</Hint>
           )}
           {missingModel != null && <ModelHint model={missingModel} kind={record.kind} models={models} />}
           {brokenReason !== null && ownModel !== null && (
@@ -236,12 +220,12 @@ function Hint({ children }: { children: ReactNode }) {
 function LaunchHint({ record }: { record: RecordDetail }) {
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
-  const tLibrary = useTranslations("library");
-  if (record.mine) return <>{tLibrary("editor.launchHint", { kind: record.kind })}</>;
+  const t = useTranslations("library");
+  if (record.mine) return <>{t("editor.launchHint", { kind: record.kind })}</>;
   const namesakes = namesakesOf(record, records);
-  if (namesakes.some((other) => other.mine)) return <>{TEXT.ownNamesake(record.kind)}</>;
-  if (namesakes.length > 0) return <>{TEXT.severalNamesakes}</>;
-  return <>{TEXT.colleagueHint(record.kind)}</>;
+  if (namesakes.some((other) => other.mine)) return <>{t("recordPage.ownNamesake", { kind: record.kind })}</>;
+  if (namesakes.length > 0) return <>{t("recordPage.severalNamesakes")}</>;
+  return <>{t("recordPage.colleagueHint", { kind: record.kind })}</>;
 }
 
 function namesakesOf(record: RecordDetail, records: ReadonlyMap<string, RecordSummary> | null): RecordSummary[] {
@@ -264,9 +248,10 @@ function modelNamesOf(models: MyModels | undefined, choices: LibraryChoices | un
  * `useResource`) shows the line of a copy that gets the viewer's model.
  */
 function ModelHint({ model, kind, models }: { model: string; kind: RecordKind; models: Resource<MyModels> }) {
+  const t = useTranslations("library.recordPage");
   if (models.status === "loading") return null;
   const none = models.data !== undefined && models.data.models.length === 0;
-  return <Hint>{none ? TEXT.noModels(model, kind) : TEXT.modelMissing(model, kind)}</Hint>;
+  return <Hint>{t(none ? "noModels" : "modelMissing", { model: formatModel(model), kind })}</Hint>;
 }
 
 /** RV-01 Loading: the header's actions and the definition rows as skeletons. */

@@ -61,7 +61,7 @@ export async function workflowsUsing(agentId: string, libraryIndex: LibraryIndex
       const record = await libraryApi.get(summary.id);
       if (record.kind === 'workflow' && staleExecutors(record, agentId).length > 0) found.push(record);
     } catch (error) {
-      logger.warn('library: workflow read for «Обновить там» failed', { agentId, workflowId: summary.id, ...describeApiError(error) });
+      logger.warn('library: workflow read for "Update there" failed', { agentId, workflowId: summary.id, ...describeApiError(error) });
     }
   }
   return found;

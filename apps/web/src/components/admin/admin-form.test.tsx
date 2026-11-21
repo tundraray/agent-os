@@ -1,4 +1,4 @@
-import { render, screen } from "@/test/render";
+import { render, screen, waitFor } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ADMIN_TEXT } from "@/lib/admin/admin-texts";
@@ -78,7 +78,7 @@ describe("AdminForm (KD-5, settings-form «Ошибка поля», «Сохра
     refuse(new Error("Okta не ответила"));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Не удалось сохранить: Okta не ответила");
-    expect(alert).toHaveFocus();
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(login).toHaveValue("ivan");
     expect(name).toHaveValue("Иван");
     expect(screen.getByRole("button", { name: "Сохранить" })).toBeEnabled();

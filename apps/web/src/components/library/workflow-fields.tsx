@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type ReactNode } from "react";
 import { ChevronRightIcon, Info, Plus } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   EXECUTOR_MAX_RUNS_MAX,
   EXECUTOR_MAX_RUNS_MIN,
@@ -37,50 +38,10 @@ import {
   type RecordDefaults,
 } from "./agent-fields";
 import { ExecutorItem } from "./executor-item";
-import { ExecutorPanel, executorNameError, type ExecutorEditing } from "./executor-panel";
+import { ExecutorPanel, executorNameError, workflowCheck, type ExecutorEditing } from "./executor-panel";
 import { ExecutorPicker } from "./executor-picker";
 import { SelfLearningField } from "./self-learning-field";
 import { useInChat } from "./use-in-chat";
-
-/** UXRD MC-12 (the editor of a workflow), MC-13 (the executor), MC-7 (name and description), MC-8, MC-19. */
-const TEXT = {
-  name: "Имя",
-  description: "Описание",
-  descriptionHint: "По описанию чат решает, когда звать workflow.",
-  task: "Workflow получает только задание, которое вы подтверждаете перед запуском: вопрос, границы и результат. Беседу он не видит.",
-  startInChat: "Проще начать в чате: опишите, что должен делать workflow, — чат соберёт команду.",
-  describeInChat: "Описать в чате",
-  // MC-1: the template of «Создать в чате» for a workflow.
-  template: "Сделай workflow, который ",
-  team: (count: number) => `Команда · ${count}`,
-  teamHint: "Кого и когда звать, решает координатор по строкам команды.",
-  teamLabel: "Команда",
-  add: "Добавить",
-  newExecutor: "Новый исполнитель",
-  fromLibrary: "Из библиотеки…",
-  emptyTitle: "Команды пока нет",
-  // MC-8: a save with an empty team.
-  addOne: "Добавьте хотя бы одного исполнителя",
-  emptyText: "Добавьте исполнителей и у каждого напишите, за что он отвечает и когда его звать. Можно взять своего агента из библиотеки.",
-  rules: "Как работает команда",
-  optional: "необязательно",
-  rulesHint: "Если важен порядок или кто кого ждёт — напишите здесь. Остальное координатор решит по строкам команды.",
-  rulesPlaceholder: "Например: «Ответ» пишет сводку, когда вернутся «Сбор логов» и «Сбор тикетов».",
-  notInTeam: (name: string) => `В команде нет «${name}»`,
-  notMentioned: (name: string) => `«${name}» в правилах не упомянут — координатор позовёт его по строке команды`,
-  oldName: (name: string) => `В правилах осталось старое имя «${name}»`,
-  replaceInRules: "Заменить в правилах",
-  finalExecutor: "Кто пишет ответ",
-  coordinator: "Координатор сам",
-  finalHint: "Отчёт этого исполнителя станет ответом workflow.",
-  finalRemoved: (name: string) => `${name} убран из команды — ответ пишет координатор`,
-  advanced: "Дополнительно: модель и максимум шагов координатора",
-  coordinatorModel: "Модель координатора",
-  coordinatorMaxTurns: "Максимум шагов координатора",
-  enterRole: "Напишите, за что отвечает исполнитель и когда его звать",
-  enterPrompt: "Введите инструкцию — откройте исполнителя",
-  wholeNumber: (min: number, max: number) => `Нужно целое число от ${min} до ${max}`,
-} as const;
 
 export type WorkflowDefinition = Extract<RecordDefinition, { kind: "workflow" }>;
 
@@ -111,23 +72,19 @@ const outside = (value: number, min: number, max: number): boolean => !Number.is
 export function validateWorkflow(values: WorkflowDefinition): WorkflowFieldErrors {
   const errors: WorkflowFieldErrors = { ...validateRecordText(values) };
   const { executors, coordinator } = values.content;
-  if (executors.length === 0) errors.team = TEXT.addOne;
+  if (executors.length === 0) errors.team = workflowCheck("addOne");
   executors.forEach((executor, index) => {
-    if (executor.role.trim() === "") errors[roleKey(executor.name)] = TEXT.enterRole;
+    if (executor.role.trim() === "") errors[roleKey(executor.name)] = workflowCheck("enterRole");
     const others = executors.filter((_, other) => other !== index);
     const card =
       executorNameError(executor, others) ??
-      (executor.prompt.trim() === "" ? TEXT.enterPrompt : undefined) ??
-      (outside(executor.maxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX)
-        ? TEXT.wholeNumber(RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX)
-        : undefined) ??
-      (outside(executor.maxRuns, EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX)
-        ? TEXT.wholeNumber(EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX)
-        : undefined);
+      (executor.prompt.trim() === "" ? workflowCheck("enterPromptInPanel") : undefined) ??
+      (outside(executor.maxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX) ? workflowCheck("maxTurns") : undefined) ??
+      (outside(executor.maxRuns, EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX) ? workflowCheck("maxRuns") : undefined);
     if (card !== undefined) errors[executorKey(executor.name)] = card;
   });
   if (outside(coordinator.maxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX)) {
-    errors.coordinatorMaxTurns = TEXT.wholeNumber(RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX);
+    errors.coordinatorMaxTurns = workflowCheck("maxTurns");
   }
   return errors;
 }
@@ -186,6 +143,8 @@ type Rename = { from: string; to: string };
  */
 export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion, errors, choices }: WorkflowFieldsProps) {
   const id = useId();
+  const t = useTranslations("library");
+  const locale = useLocale();
   const { announcer } = useShellServices();
   const inChat = useInChat();
   const content = values.content;
@@ -205,7 +164,7 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
 
   const sorted = executors
     .map((executor, index) => ({ executor, index }))
-    .sort((a, b) => a.executor.name.localeCompare(b.executor.name, "ru"));
+    .sort((a, b) => a.executor.name.localeCompare(b.executor.name, locale));
   const others = editing === null ? executors : executors.filter((_, index) => index !== editing.index);
   const advancedError = errors.coordinatorMaxTurns !== undefined || errors.coordinatorModel !== undefined;
   const offerChat = mode === "employee" && saved === null && executors.length === 0;
@@ -221,7 +180,7 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
     setEditing({ executor, index });
   };
 
-  const openNew = (executor: WorkflowExecutor, nameError?: string): void => {
+  const openNew = (executor: WorkflowExecutor, nameError?: ReactNode): void => {
     returnFocus.current = addRef.current;
     setEditing({ executor, index: null, nameError });
   };
@@ -287,7 +246,7 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
     <>
       <TextField
         id={`${id}-name`}
-        label={TEXT.name}
+        label={t("fields.name")}
         value={values.name}
         max={RECORD_NAME_MAX_LENGTH}
         error={errors.name}
@@ -295,8 +254,8 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
       />
       <TextField
         id={`${id}-description`}
-        label={TEXT.description}
-        hint={TEXT.descriptionHint}
+        label={t("fields.description")}
+        hint={t("workflowFields.descriptionHint")}
         value={values.description}
         max={RECORD_DESCRIPTION_MAX_LENGTH}
         // MC-8 names an over-long description, so it may be typed past the limit and is refused on save.
@@ -307,20 +266,27 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
       />
       <p className={cn(CAPTION, "flex items-start gap-1.5 text-foreground")}>
         <Info aria-hidden className="mt-px size-3.5 shrink-0 text-info" />
-        {TEXT.task}
+        {t("workflowFields.task")}
       </p>
       {offerChat && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-info-border bg-info-subtle px-3 py-2">
-          <p className="text-sm leading-5 text-foreground">{TEXT.startInChat}</p>
-          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={() => inChat({ text: TEXT.template })}>
-            {TEXT.describeInChat}
+          <p className="text-sm leading-5 text-foreground">{t("workflowFields.startInChat")}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="pointer-coarse:h-11"
+            // MC-1: the template of «Создать в чате» for a workflow.
+            onClick={() => inChat({ text: t("workflowFields.template") })}
+          >
+            {t("workflowFields.describeInChat")}
           </Button>
         </div>
       )}
       <section aria-labelledby={`${id}-team`} className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <h2 id={`${id}-team`} className="text-sm leading-5 font-medium">
-            {TEXT.team(executors.length)}
+            {t("team.title", { count: executors.length })}
           </h2>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -338,15 +304,15 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
               }
             >
               <Plus aria-hidden />
-              {TEXT.add}
+              {t("workflowFields.add")}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-45">
-              <DropdownMenuItem onClick={() => openNew(blankExecutor(choices))}>{TEXT.newExecutor}</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setPicking(true)}>{TEXT.fromLibrary}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openNew(blankExecutor(choices))}>{t("executor.new")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setPicking(true)}>{t("workflowFields.fromLibrary")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <p className={cn(CAPTION, "text-muted-foreground")}>{TEXT.teamHint}</p>
+        <p className={cn(CAPTION, "text-muted-foreground")}>{t("team.hint")}</p>
         {executors.length === 0 ? (
           <div
             id={`${id}-team-error`}
@@ -356,12 +322,12 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
               errors.team === undefined ? "border-border" : "border-destructive",
             )}
           >
-            <p className="text-sm leading-5 font-medium">{TEXT.emptyTitle}</p>
-            <p className={cn(CAPTION, "text-muted-foreground")}>{TEXT.emptyText}</p>
+            <p className="text-sm leading-5 font-medium">{t("workflowFields.emptyTitle")}</p>
+            <p className={cn(CAPTION, "text-muted-foreground")}>{t("workflowFields.emptyText")}</p>
             {errors.team !== undefined && <p className={cn(CAPTION, "text-destructive")}>{errors.team}</p>}
           </div>
         ) : (
-          <ul aria-label={TEXT.teamLabel} className="flex flex-col gap-2">
+          <ul aria-label={t("team.label")} className="flex flex-col gap-2">
             {sorted.map(({ executor, index }) => (
               <ExecutorItem
                 key={`${index}-${executor.name}`}
@@ -432,12 +398,12 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
             aria-hidden
             className="transition-transform duration-150 group-aria-expanded/advanced:rotate-90 motion-reduce:transition-none"
           />
-          {TEXT.advanced}
+          {t("workflowFields.advanced")}
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-5 pt-3">
           <ModelField
             id={`${id}-coordinator-model`}
-            label={TEXT.coordinatorModel}
+            label={t("fields.coordinatorModel")}
             model={content.coordinator.model}
             choices={choices}
             error={errors.coordinatorModel}
@@ -445,7 +411,7 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
           />
           <MaxTurnsField
             id={`${id}-coordinator-max-turns`}
-            label={TEXT.coordinatorMaxTurns}
+            label={t("fields.coordinatorMaxTurns")}
             hint={null}
             value={content.coordinator.maxTurns}
             error={errors.coordinatorMaxTurns}
@@ -466,13 +432,12 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
   );
 }
 
-const lower = (text: string): string => text.toLocaleLowerCase("ru");
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 type Segment = { text: string; name: boolean };
 
 /** The rules split into plain text and the team's names, so the names can be marked behind the field. */
-function segmentsOf(text: string, names: readonly string[]): Segment[] {
+function segmentsOf(text: string, names: readonly string[], lower: (text: string) => string): Segment[] {
   const needles = names.filter((name) => name.trim() !== "").sort((a, b) => b.length - a.length);
   if (needles.length === 0) return [{ text, name: false }];
   const pattern = new RegExp(`(${needles.map(escapeRegExp).join("|")})`, "giu");
@@ -482,9 +447,10 @@ function segmentsOf(text: string, names: readonly string[]): Segment[] {
     .map((part) => ({ text: part, name: needles.some((name) => lower(name) === lower(part)) }));
 }
 
-/** Names the rules quote in «…». */
+/** Names the rules quote in «…» or “…” — the quotes of either interface language. */
 function quotedNames(text: string): string[] {
-  return [...new Set([...text.matchAll(/«([^«»\n]+)»/gu)].map((match) => match[1].trim()).filter((name) => name !== ""))];
+  const quoted = [...text.matchAll(/«([^«»\n]+)»|“([^“”\n]+)”/gu)].map((match) => (match[1] ?? match[2] ?? "").trim());
+  return [...new Set(quoted.filter((name) => name !== ""))];
 }
 
 type RulesFieldProps = {
@@ -504,6 +470,9 @@ type RulesFieldProps = {
  * правилах». The notes are the field's description; they never stop a save.
  */
 function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: RulesFieldProps) {
+  const t = useTranslations("library");
+  const locale = useLocale();
+  const lower = (text: string): string => text.toLocaleLowerCase(locale);
   const hintId = `${id}-hint`;
   const notesId = `${id}-notes`;
   const errorId = `${id}-error`;
@@ -514,11 +483,11 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
   const strangers = quotedNames(rules).filter((name) => !team.includes(lower(name)) && !staleNames.includes(lower(name)));
   const unmentioned = rules.trim() === "" ? [] : names.filter((name) => name.trim() !== "" && !mentions.includes(lower(name)));
   const notes: ReactNode[] = [
-    ...strangers.map((name) => <Note key={`stranger-${name}`}>{TEXT.notInTeam(name)}</Note>),
-    ...unmentioned.map((name) => <Note key={`unmentioned-${name}`}>{TEXT.notMentioned(name)}</Note>),
+    ...strangers.map((name) => <Note key={`stranger-${name}`}>{t("workflowFields.notInTeam", { name })}</Note>),
+    ...unmentioned.map((name) => <Note key={`unmentioned-${name}`}>{t("workflowFields.notMentioned", { name })}</Note>),
     ...stale.map((rename) => (
       <Note key={`stale-${rename.from}`}>
-        {TEXT.oldName(rename.from)}{" "}
+        {t("workflowFields.oldName", { name: rename.from })}{" "}
         <Button
           type="button"
           variant="link"
@@ -529,7 +498,7 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
             onReplaced(rename);
           }}
         >
-          {TEXT.replaceInRules}
+          {t("workflowFields.replaceInRules")}
         </Button>
       </Note>
     )),
@@ -541,7 +510,7 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <div className="flex items-baseline justify-between gap-2">
         <FieldLabel htmlFor={id} className="text-sm leading-5 font-medium text-foreground">
-          {TEXT.rules} <span className="font-normal text-muted-foreground">· {TEXT.optional}</span>
+          {t("fields.rules")} <span className="font-normal text-muted-foreground">· {t("workflowFields.optional")}</span>
         </FieldLabel>
         <span aria-hidden className={cn(CAPTION, "text-muted-foreground tabular-nums")}>
           {`${rules.length} / ${COORDINATOR_RULES_MAX_LENGTH}`}
@@ -549,7 +518,7 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
       </div>
       <div className="relative">
         <div aria-hidden className={cn(box, "pointer-events-none absolute inset-0 overflow-hidden border-transparent text-transparent")}>
-          {segmentsOf(rules, names).map((segment, index) =>
+          {segmentsOf(rules, names, lower).map((segment, index) =>
             segment.name ? (
               <mark key={index} className="rounded-sm bg-muted text-transparent">
                 {segment.text}
@@ -565,7 +534,7 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
           name={id}
           value={rules}
           maxLength={COORDINATOR_RULES_MAX_LENGTH}
-          placeholder={TEXT.rulesPlaceholder}
+          placeholder={t("workflowFields.rulesPlaceholder")}
           aria-invalid={error !== undefined}
           aria-describedby={[hintId, notes.length > 0 ? notesId : null, error === undefined ? null : errorId].filter((part) => part !== null).join(" ")}
           className={cn(box, "relative bg-transparent dark:bg-transparent")}
@@ -573,7 +542,7 @@ function RulesField({ id, rules, names, renames, error, onChange, onReplaced }: 
         />
       </div>
       <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
-        {TEXT.rulesHint}
+        {t("workflowFields.rulesHint")}
       </FieldDescription>
       {notes.length > 0 && (
         <div id={notesId} className="flex flex-col gap-1">
@@ -610,13 +579,17 @@ type FinalExecutorFieldProps = {
 
 /** «Кто пишет ответ»: the one place where the last step is chosen; the card's mark only shows the choice. */
 function FinalExecutorField({ id, value, names, removed, onChange }: FinalExecutorFieldProps) {
+  const t = useTranslations("library");
   const hintId = `${id}-hint`;
   const noteId = `${id}-note`;
-  const items = [{ value: COORDINATOR_VALUE, label: TEXT.coordinator }, ...names.map((name) => ({ value: name, label: name }))];
+  const items = [
+    { value: COORDINATOR_VALUE, label: t("workflowFields.coordinator") },
+    ...names.map((name) => ({ value: name, label: name })),
+  ];
   return (
     <Field className="gap-1.5">
       <FieldLabel htmlFor={id} className="text-sm leading-5 font-medium text-foreground">
-        {TEXT.finalExecutor}
+        {t("fields.finalExecutor")}
       </FieldLabel>
       <Select
         value={value ?? COORDINATOR_VALUE}
@@ -641,11 +614,11 @@ function FinalExecutorField({ id, value, names, removed, onChange }: FinalExecut
         </SelectContent>
       </Select>
       <FieldDescription id={hintId} className={cn(CAPTION, "text-muted-foreground")}>
-        {TEXT.finalHint}
+        {t("workflowFields.finalHint")}
       </FieldDescription>
       {removed !== null && (
         <div id={noteId}>
-          <Note>{TEXT.finalRemoved(removed)}</Note>
+          <Note>{t("workflowFields.finalRemoved", { name: removed })}</Note>
         </div>
       )}
     </Field>

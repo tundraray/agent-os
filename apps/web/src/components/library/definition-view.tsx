@@ -2,10 +2,11 @@
 
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Info } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
+  BUILTIN_ROLE_KEY,
   type AgentContent,
   type MissingRight,
   type RecordBody,
@@ -18,7 +19,7 @@ import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
 import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
-import { kindWord } from "@/lib/library/library-errors";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import type { ChangedField, RecordField } from "@/lib/library/record-rules";
 import { cn } from "cn";
 
@@ -43,8 +44,6 @@ export type DefinitionViewProps = {
   modelNames?: ModelNames;
 };
 
-const TASK_ONLY_TEXT =
-  "Workflow получает только задание, которое вы подтверждаете перед запуском: вопрос, границы и результат. Беседу он не видит.";
 const CAPTION = "text-muted-foreground text-xs leading-4 font-medium";
 
 /**
@@ -94,13 +93,14 @@ export function DefinitionView({
 }
 
 function RecipientNote({ kind, recipient }: { kind: RecordKind; recipient: DefinitionRecipient }) {
-  const shared = recipient.roles.length > 0 ? ` ${kindWord(kind, true)} открыт вашей роли ${recipient.roles.join(", ")}.` : "";
+  const t = useTranslations("library");
+  const locale = useLocale();
+  const roles = recipient.roles.map((name) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale));
   return (
     <div role="note" className="bg-info-subtle border-info-border flex gap-2 rounded-md border p-3">
       <Info aria-hidden className="text-info mt-px size-4 shrink-0" />
       <p className="text-foreground text-xs leading-4 font-medium">
-        {`Автор — ${recipient.author}.${shared}`} Работает с вашими правами и подключёнными аккаунтами.
-        Изменения в системах — только после вашего подтверждения. {`Убрать ${kindWord(kind)} может автор или администратор.`}
+        {t("definition.recipient", { author: recipient.author, roleCount: roles.length, roles: roles.join(", "), kind })}
       </p>
     </div>
   );
@@ -110,11 +110,12 @@ type RowProps = { label: string; changed?: boolean; children: ReactNode };
 
 /** «подпись — значение»: the label left in a 140 px column from 560 px of width, above the value below it. */
 function Row({ label, changed = false, children }: RowProps) {
+  const t = useTranslations("library.definition");
   return (
     <div className="grid gap-0.5 @[35rem]:grid-cols-[8.75rem_minmax(0,1fr)] @[35rem]:gap-x-4">
       <dt className={cn(CAPTION, "flex flex-wrap items-center gap-1.5 @[35rem]:pt-0.5")}>
         {label}
-        {changed && <StateBadge variant="source">изменено</StateBadge>}
+        {changed && <StateBadge variant="source">{t("changed")}</StateBadge>}
       </dt>
       <dd className="text-foreground min-w-0 text-sm leading-5">{children}</dd>
     </div>
@@ -169,6 +170,7 @@ function AgentRows({ content, missing, variant, isChanged, recordHref, modelName
 function StartableAgents({ ids, recordHref }: { ids: readonly string[]; recordHref?: (recordId: string) => string }) {
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
+  const t = useTranslations("library");
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       {ids.map((id, index) => {
@@ -177,7 +179,7 @@ function StartableAgents({ ids, recordHref }: { ids: readonly string[]; recordHr
         return (
           <span key={id} className="inline-flex min-w-0 items-center gap-0.5">
             {summary === undefined ? (
-              <StateBadge state="off">{`${kindWord("agent")} недоступен`}</StateBadge>
+              <StateBadge state="off">{t("label.unavailable", { kind: "agent" })}</StateBadge>
             ) : (
               <RecordLabel variant="row" summary={summary} href={recordHref?.(id)} />
             )}
@@ -191,15 +193,16 @@ function StartableAgents({ ids, recordHref }: { ids: readonly string[]; recordHr
 
 /** «Sentry · Jira ⊖ у вас недоступна», «без систем» or «все системы» (definition-view.md, part 4). */
 function Servers({ servers, missing }: { servers: readonly string[]; missing: readonly string[] }) {
-  if (servers.includes(ALL_SERVERS)) return <>все системы</>;
-  if (servers.length === 0) return <>без систем</>;
+  const t = useTranslations("library");
+  if (servers.includes(ALL_SERVERS)) return <>{t("team.allServers")}</>;
+  if (servers.length === 0) return <>{t("team.noServers")}</>;
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       {servers.map((server, index) => (
         <span key={server} className="inline-flex items-center gap-1.5">
           {index > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
           {server}
-          {missing.includes(server) && <StateBadge state="off">у вас недоступна</StateBadge>}
+          {missing.includes(server) && <StateBadge state="off">{t("agentFields.unavailable")}</StateBadge>}
         </span>
       ))}
     </span>
@@ -225,9 +228,9 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
       <dl className="flex flex-col gap-2">
         <DescriptionRow description={description} changed={isChanged("description")} />
       </dl>
-      <p className={CAPTION}>{TASK_ONLY_TEXT}</p>
+      <p className={CAPTION}>{tLibrary("workflowFields.task")}</p>
       <dl className="flex flex-col gap-2">
-        <Row label={`Команда · ${content.executors.length}`}>
+        <Row label={tLibrary("team.title", { count: content.executors.length })}>
           <Team content={content} missingRights={missingRights} variant={variant} changed={changed} modelNames={modelNames} />
         </Row>
         {coordinator.rules !== "" && (
@@ -236,11 +239,18 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
           </Row>
         )}
         <Row label={tLibrary("fields.finalExecutor")} changed={isChanged("finalExecutor")}>
-          {finalExecutor ?? "Координатор сам"}
+          {finalExecutor ?? tLibrary("workflowFields.coordinator")}
         </Row>
-        <Row label={tLibrary("fields.selfLearning")}>{content.selfLearning ? "включено" : "выключено"}</Row>
-        <Row label="Координатор" changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
-          <span className="tabular-nums">{`${formatRecordModel(t, coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
+        <Row label={tLibrary("fields.selfLearning")}>
+          {tLibrary("definition.selfLearning", { state: content.selfLearning ? "on" : "off" })}
+        </Row>
+        <Row label={tLibrary("definition.coordinator")} changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
+          <span className="tabular-nums">
+            {tLibrary("definition.coordinatorSummary", {
+              model: formatRecordModel(t, coordinator.model, modelNames),
+              maxTurns: coordinator.maxTurns,
+            })}
+          </span>
         </Row>
       </dl>
     </>
@@ -258,15 +268,17 @@ type TeamProps = {
 /** The team as a set, not a queue: executors in alphabetical order, without numbers or arrows. */
 function Team({ content, missingRights, variant, changed, modelNames }: TeamProps) {
   const listId = useId();
+  const t = useTranslations("library.team");
+  const locale = useLocale();
   const [details, setDetails] = useState(variant === "page");
-  const executors = [...content.executors].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  const executors = [...content.executors].sort((a, b) => a.name.localeCompare(b.name, locale));
   const changedNames = changed.flatMap((item) => (item.field === "executor" ? [item.executor] : []));
   const removed = changedNames.filter((name) => !content.executors.some((executor) => executor.name === name));
 
   return (
     <div className="flex flex-col gap-1">
-      <span className={CAPTION}>Кого и когда звать, решает координатор по строкам команды.</span>
-      <ul id={listId} aria-label="Команда, кого и когда звать, решает координатор" className="flex flex-col gap-1">
+      <span className={CAPTION}>{t("hint")}</span>
+      <ul id={listId} aria-label={t("listLabel")} className="flex flex-col gap-1">
         {executors.map((executor) => (
           <ExecutorItem
             key={executor.name}
@@ -279,9 +291,9 @@ function Team({ content, missingRights, variant, changed, modelNames }: TeamProp
           />
         ))}
       </ul>
-      {removed.length > 0 && <span className={CAPTION}>{`Убрано: ${removed.join(", ")}`}</span>}
+      {removed.length > 0 && <span className={CAPTION}>{t("removed", { names: removed.join(", ") })}</span>}
       <Disclosure expanded={details} controls={listId} onToggle={() => setDetails((open) => !open)}>
-        Подробнее
+        {t("details")}
       </Disclosure>
     </div>
   );
@@ -306,8 +318,8 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
           <span className="font-medium">{executor.name}</span>
           <span className="text-muted-foreground"> — {executor.role}</span>
         </span>
-        {final && <StateBadge variant="source">пишет ответ</StateBadge>}
-        {changed && <StateBadge variant="source">изменено</StateBadge>}
+        {final && <StateBadge variant="source">{tLibrary("team.final")}</StateBadge>}
+        {changed && <StateBadge variant="source">{tLibrary("definition.changed")}</StateBadge>}
       </span>
       {details && (
         <dl className="border-border ml-1 flex flex-col gap-2 border-l pl-3">
@@ -315,8 +327,8 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
           <Row label={tLibrary("fields.servers")}>
             <Servers servers={executor.servers} missing={missing} />
           </Row>
-          <Row label="Сколько раз можно звать">
-            <span className="tabular-nums">{`до ${executor.maxRuns} раз`}</span>
+          <Row label={tLibrary("team.maxRuns")}>
+            <span className="tabular-nums">{tLibrary("team.upTo", { count: executor.maxRuns })}</span>
           </Row>
           <Row label={tLibrary("fields.prompt")}>
             <LongText text={executor.prompt} collapsible />
@@ -333,6 +345,7 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
  */
 function LongText({ text, collapsible }: { text: string; collapsible: boolean }) {
   const textId = useId();
+  const t = useTranslations("library.definition");
   const ref = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -355,7 +368,7 @@ function LongText({ text, collapsible }: { text: string; collapsible: boolean })
       </p>
       {collapsible && (overflows || expanded) && (
         <Disclosure expanded={expanded} controls={textId} onToggle={() => setExpanded((open) => !open)}>
-          {expanded ? "Свернуть" : "Показать целиком"}
+          {t(expanded ? "collapse" : "expand")}
         </Disclosure>
       )}
     </div>

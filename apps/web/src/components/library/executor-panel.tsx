@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useState, type RefObject } from "react";
+import { useId, useState, type ReactNode, type RefObject } from "react";
 import { Drawer } from "@base-ui/react/drawer";
 import { ChevronRightIcon, XIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import {
   EXECUTOR_MAX_RUNS_MAX,
   EXECUTOR_MAX_RUNS_MIN,
@@ -18,25 +19,41 @@ import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "@/compo
 import { Button } from "@/components/ui/button";
 import { MaxTurnsField, ModelField, ServersField, TextField, type EditorChoices } from "./agent-fields";
 
-/** UXRD MC-13 (panel), MC-7 (fields), MC-8 (errors). */
-const TEXT = {
-  title: (name: string) => `Исполнитель «${name}»`,
-  newTitle: "Новый исполнитель",
-  done: "Готово",
-  close: "Закрыть",
-  name: "Имя",
-  role: "За что отвечает и когда звать",
-  prompt: "Инструкция",
-  promptHint: "Что агент делает и как. Он видит только этот текст и своё поручение.",
-  advanced: "Дополнительно: модель, максимум шагов, сколько раз можно звать",
-  maxRuns: "Сколько раз можно звать",
-  enterName: "Введите имя",
-  // Not in MC-8: the contract's name rule refuses control characters, which MC-8 has no text for.
-  oneLineName: "Имя — одной строкой, без управляющих символов",
-  nameTaken: "Такое имя уже есть в команде",
-  enterPrompt: "Введите инструкцию",
-  wholeNumber: (min: number, max: number) => `Нужно целое число от ${min} до ${max}`,
-} as const;
+/**
+ * A failed check of a workflow or its executor (MC-8, MC-12, MC-13). `oneLineName` is not in MC-8: the contract's
+ * name rule refuses control characters, which MC-8 has no text for. `enterPromptInPanel` is the card's line:
+ * the instruction is typed in the panel.
+ */
+type WorkflowCheck =
+  | "enterName"
+  | "oneLineName"
+  | "nameTaken"
+  | "enterPrompt"
+  | "enterPromptInPanel"
+  | "enterRole"
+  | "addOne"
+  | "maxTurns"
+  | "maxRuns";
+
+/** A check's message, translated where the field shows it; the limits are the contract's named constants. */
+function WorkflowCheckText({ check }: { check: WorkflowCheck }) {
+  const t = useTranslations("library");
+  switch (check) {
+    case "enterName":
+    case "oneLineName":
+    case "enterPrompt":
+      return t(`agentFields.checks.${check}`);
+    case "maxTurns":
+      return t("agentFields.checks.wholeNumber", { min: RECORD_MAX_TURNS_MIN, max: RECORD_MAX_TURNS_MAX });
+    case "maxRuns":
+      return t("agentFields.checks.wholeNumber", { min: EXECUTOR_MAX_RUNS_MIN, max: EXECUTOR_MAX_RUNS_MAX });
+    default:
+      return t(`workflowFields.checks.${check}`);
+  }
+}
+
+/** A failed check as the node a field shows. */
+export const workflowCheck = (check: WorkflowCheck): ReactNode => <WorkflowCheckText check={check} />;
 
 /** The executor-name rule is the contract's own schema, never an expression of the web. */
 const ExecutorNameSchema = WorkflowContentSchema.shape.executors.element.shape.name;
@@ -64,15 +81,15 @@ function namesRepeat(executors: readonly WorkflowExecutor[]): boolean {
 }
 
 /** The name check of the panel and of «Из библиотеки…»: required, one line, not taken in the team. */
-export function executorNameError(executor: WorkflowExecutor, others: readonly WorkflowExecutor[]): string | undefined {
-  if (executor.name.trim() === "") return TEXT.enterName;
-  if (!ExecutorNameSchema.safeParse(executor.name).success) return TEXT.oneLineName;
-  if (namesRepeat([...others, executor])) return TEXT.nameTaken;
+export function executorNameError(executor: WorkflowExecutor, others: readonly WorkflowExecutor[]): ReactNode {
+  if (executor.name.trim() === "") return workflowCheck("enterName");
+  if (!ExecutorNameSchema.safeParse(executor.name).success) return workflowCheck("oneLineName");
+  if (namesRepeat([...others, executor])) return workflowCheck("nameTaken");
   return undefined;
 }
 
 type PanelField = "name" | "role" | "prompt" | "maxTurns" | "maxRuns";
-type PanelErrors = Partial<Record<PanelField, string>>;
+type PanelErrors = Partial<Record<PanelField, ReactNode>>;
 
 const outside = (value: number, min: number, max: number): boolean => !Number.isInteger(value) || value < min || value > max;
 
@@ -81,13 +98,9 @@ function validateExecutor(executor: WorkflowExecutor, others: readonly WorkflowE
   const errors: PanelErrors = {};
   const name = executorNameError(executor, others);
   if (name !== undefined) errors.name = name;
-  if (executor.prompt.trim() === "") errors.prompt = TEXT.enterPrompt;
-  if (outside(executor.maxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX)) {
-    errors.maxTurns = TEXT.wholeNumber(RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX);
-  }
-  if (outside(executor.maxRuns, EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX)) {
-    errors.maxRuns = TEXT.wholeNumber(EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX);
-  }
+  if (executor.prompt.trim() === "") errors.prompt = workflowCheck("enterPrompt");
+  if (outside(executor.maxTurns, RECORD_MAX_TURNS_MIN, RECORD_MAX_TURNS_MAX)) errors.maxTurns = workflowCheck("maxTurns");
+  if (outside(executor.maxRuns, EXECUTOR_MAX_RUNS_MIN, EXECUTOR_MAX_RUNS_MAX)) errors.maxRuns = workflowCheck("maxRuns");
   return errors;
 }
 
@@ -97,7 +110,7 @@ export type ExecutorEditing = {
   /** The member's index in the form's team; `null` — a new one, added on «Готово». */
   index: number | null;
   /** WF-02: the name of the picked agent is taken — the panel opens with this error at the name. */
-  nameError?: string;
+  nameError?: ReactNode;
 };
 
 export type ExecutorPanelProps = {
@@ -161,6 +174,8 @@ function PanelBody({
   onDone: (executor: WorkflowExecutor) => void;
 }) {
   const id = useId();
+  const t = useTranslations("library");
+  const tCommon = useTranslations("common");
   const [executor, setExecutor] = useState(editing.executor);
   const [errors, setErrors] = useState<PanelErrors>(editing.nameError === undefined ? {} : { name: editing.nameError });
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -187,7 +202,7 @@ function PanelBody({
     requestAnimationFrame(() => document.getElementById(`${id}-panel`)?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
   };
 
-  const title = editing.index === null ? TEXT.newTitle : TEXT.title(editing.executor.name);
+  const title = editing.index === null ? t("executor.new") : t("fields.executor", { name: editing.executor.name });
 
   return (
     <Drawer.Content id={`${id}-panel`} className="flex min-h-0 flex-1 flex-col">
@@ -195,13 +210,13 @@ function PanelBody({
         <Drawer.Title className="min-w-0 truncate text-base leading-6 font-medium">{title}</Drawer.Title>
         <Drawer.Close render={<Button type="button" variant="ghost" size="icon-sm" className="pointer-coarse:size-11" />}>
           <XIcon aria-hidden />
-          <span className="sr-only">{TEXT.close}</span>
+          <span className="sr-only">{tCommon("close")}</span>
         </Drawer.Close>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 py-4">
         <TextField
           id={`${id}-name`}
-          label={TEXT.name}
+          label={t("fields.name")}
           value={executor.name}
           max={EXECUTOR_NAME_MAX_LENGTH}
           error={errors.name}
@@ -209,7 +224,7 @@ function PanelBody({
         />
         <TextField
           id={`${id}-role`}
-          label={TEXT.role}
+          label={t("executor.role")}
           value={executor.role}
           max={EXECUTOR_ROLE_MAX_LENGTH}
           multiline
@@ -218,8 +233,8 @@ function PanelBody({
         />
         <TextField
           id={`${id}-prompt`}
-          label={TEXT.prompt}
-          hint={TEXT.promptHint}
+          label={t("fields.prompt")}
+          hint={t("agentFields.promptHint")}
           value={executor.prompt}
           max={RECORD_PROMPT_MAX_LENGTH}
           multiline
@@ -250,7 +265,7 @@ function PanelBody({
               aria-hidden
               className="transition-transform duration-150 group-aria-expanded/advanced:rotate-90 motion-reduce:transition-none"
             />
-            {TEXT.advanced}
+            {t("executor.advanced")}
           </CollapsibleTrigger>
           <CollapsibleContent className="flex flex-col gap-5 pt-3">
             <ModelField
@@ -268,7 +283,7 @@ function PanelBody({
             />
             <MaxTurnsField
               id={`${id}-max-runs`}
-              label={TEXT.maxRuns}
+              label={t("team.maxRuns")}
               hint={null}
               value={executor.maxRuns}
               error={errors.maxRuns}
@@ -279,7 +294,7 @@ function PanelBody({
       </div>
       <div className="flex shrink-0 justify-end border-t border-border px-4 py-3">
         <Button type="button" size="sm" className="pointer-coarse:h-11" onClick={done}>
-          {TEXT.done}
+          {t("executor.done")}
         </Button>
       </div>
     </Drawer.Content>
