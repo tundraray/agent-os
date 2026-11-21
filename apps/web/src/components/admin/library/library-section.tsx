@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { PlusIcon, ShieldCheckIcon, UserIcon, UsersIcon } from 'lucide-react';
+import { useFormatter } from 'next-intl';
 import { toast } from 'sonner';
 import { CHAT_BUILTIN_KEY, type BannedRecord, type RecordKind, type RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
@@ -27,7 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { isNotFound } from '@/lib/admin/admin-errors';
-import { formatTime } from '@/lib/agents/format';
+import { formatListTime } from '@/lib/i18n/formats';
 import { describeLibraryError, kindWord } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
 import { adminLibraryTabPath, adminNewRecordPath, adminRecordPath, LIBRARY_TABS, type AdminPage, type LibraryTab } from '@/lib/shell-route';
@@ -351,6 +352,7 @@ function SharedTab({ caption, query }: { caption: string; query: string }) {
 /** «Запреты» (AL-04): name, author and the date of the close; «Снять запрет» lifts it at once, without a dialog. */
 function BansTab({ caption }: { caption: string }) {
   const list = useResource(adminApi.library.bans, 'library:bans');
+  const format = useFormatter();
   const { libraryIndex } = useShellServices();
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; text: string } | null>(null);
@@ -378,7 +380,7 @@ function BansTab({ caption }: { caption: string }) {
     cells: [
       <NameCell key="name" name={record.name} />,
       <AuthorCell key="author" author={record.author} />,
-      formatTime(record.closedAt),
+      formatListTime(format, record.closedAt),
     ],
     actions: [
       {

@@ -2,12 +2,14 @@
 
 import { useId, useState, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useFormatter } from "next-intl";
 import { BookOpen, Bot, CircleMinus, LoaderCircle, MoreHorizontalIcon, ShieldOff, Workflow, type LucideIcon } from "lucide-react";
 import type { RecordKind, RecordSummary } from "@agent-os/contracts";
 import { Button } from "@/components/ui/button";
 import { useAdminRight } from "@/components/admin/admin-gate";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { formatDay, formatModel } from "@/lib/agents/format";
+import { formatModel } from "@/lib/agents/format";
+import { formatDay, type Formatter } from "@/lib/i18n/formats";
 import { kindWord, shareBlockedReason } from "@/lib/library/library-errors";
 import { canUseInChat } from "@/lib/library/record-rules";
 import { adminRecordPath, recordPath } from "@/lib/shell-route";
@@ -33,8 +35,8 @@ const TEXT = {
 } as const;
 
 /** «Доступ закрыл администратор · {дата} — делиться нельзя» (MC-2, MC-9). */
-export const banText = (closedAt: string): string =>
-  `Доступ закрыл администратор · ${formatDay(closedAt)} — делиться нельзя`;
+export const banText = (format: Formatter, closedAt: string): string =>
+  `Доступ закрыл администратор · ${formatDay(format, closedAt)} — делиться нельзя`;
 
 function systemsText(servers: readonly string[], kind: RecordKind): string {
   const named = servers.slice(0, NAMED_SYSTEMS).join(", ");
@@ -48,7 +50,7 @@ function systemsText(servers: readonly string[], kind: RecordKind): string {
 type RowNote = { icon: LucideIcon; text: string };
 
 /** The row's notes (library-row.md, States): what will happen when the viewer runs the record. */
-function rowNotes(record: RecordSummary): RowNote[] {
+function rowNotes(record: RecordSummary, format: Formatter): RowNote[] {
   const notes: RowNote[] = [];
   // The record's and its executors' systems together: the viewer's run works without each of them.
   const servers = [...new Set(record.missingRights.flatMap((right) => right.servers))];
@@ -61,7 +63,7 @@ function rowNotes(record: RecordSummary): RowNote[] {
     });
   }
   if (!record.mine && record.author !== null && !record.offerInChat) notes.push({ icon: BookOpen, text: TEXT.readOnly });
-  if (record.ban !== null) notes.push({ icon: ShieldOff, text: banText(record.ban.closedAt) });
+  if (record.ban !== null) notes.push({ icon: ShieldOff, text: banText(format, record.ban.closedAt) });
   return notes;
 }
 
@@ -87,7 +89,8 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
   const [deleting, setDeleting] = useState(false);
   const errorId = useId();
   const KindIcon = record.kind === "agent" ? Bot : Workflow;
-  const notes = rowNotes(record);
+  const format = useFormatter();
+  const notes = rowNotes(record, format);
 
   // The background of the row opens the page for a mouse or a touch; the keyboard has the name's link.
   // Menus and dialogs are portalled: their clicks reach this handler through React but not the row's DOM.

@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { useFormatter } from "next-intl";
 import {
   RunCodeConfirmationContentSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
@@ -26,7 +27,8 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResource } from "@/hooks/use-resource";
-import { BRIEF_PARTS, formatTime } from "@/lib/agents/format";
+import { BRIEF_PARTS } from "@/lib/agents/format";
+import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
 import { valueRows } from "@/lib/agents/value-rows";
 import { libraryApi } from "@/lib/library/library-api";
@@ -168,12 +170,12 @@ function briefOf(confirmation: Confirmation): Brief | null {
 type Outcome = { kind: "approved" | "rejected" | "cancelled"; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a decided request (MC-19, MC-20); null while it is open. */
-function outcomeOf(confirmation: Confirmation, isBrief: boolean): Outcome | null {
+function outcomeOf(confirmation: Confirmation, isBrief: boolean, format: Formatter): Outcome | null {
   if (confirmation.status === "open") return null;
   if (confirmation.status === "cancelled") {
     return { kind: "cancelled", text: TEXT.cancelled, Icon: CircleStopIcon, tone: "text-muted-foreground" };
   }
-  const time = formatTime(confirmation.resolvedAt ?? confirmation.createdAt);
+  const time = formatListTime(format, confirmation.resolvedAt ?? confirmation.createdAt);
   if (confirmation.resolution?.approve === true) {
     const word = isBrief ? TEXT.briefApproved : TEXT.approved;
     return { kind: "approved", text: `${word} · ${time}`, Icon: CircleCheckIcon, tone: "text-success" };
@@ -307,7 +309,8 @@ export type DecisionCardProps = {
  */
 export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardProps) {
   const brief = briefOf(confirmation);
-  const outcome = outcomeOf(confirmation, brief !== null);
+  const format = useFormatter();
+  const outcome = outcomeOf(confirmation, brief !== null, format);
   const edit = useBriefEdit();
   const editing = edit.draft !== null && outcome === null;
   const [pressed, setPressed] = useState<Pressed | null>(null);
@@ -393,7 +396,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
           dateTime={confirmation.createdAt}
           className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums"
         >
-          {formatTime(confirmation.createdAt)}
+          {formatListTime(format, confirmation.createdAt)}
         </time>
       </div>
     ) : (

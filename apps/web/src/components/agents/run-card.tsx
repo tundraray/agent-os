@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useFormatter } from "next-intl";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -19,7 +20,8 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_STATUS_LABEL, formatTime } from "@/lib/agents/format";
+import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
+import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
 import { isWorkflowCoordinator, type RunCardPartData } from "@/lib/feed/to-feed";
@@ -239,11 +241,12 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
  * from the library. Status changes recolour icons and labels only.
  */
 export function RunCard({ data }: RunCardProps) {
+  const format = useFormatter();
   const statusLabel = AGENT_STATUS_LABEL[data.status];
   const record = runRecord(data);
   const time = (
     <time dateTime={data.createdAt} className="text-muted-foreground shrink-0 text-xs leading-4 font-medium tabular-nums">
-      {formatTime(data.createdAt)}
+      {formatListTime(format, data.createdAt)}
     </time>
   );
   if (!isWorkflowCoordinator(data) || record === null) {

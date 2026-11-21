@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { memo, useState, type ReactNode } from "react";
+import { useFormatter } from "next-intl";
 import {
   BanIcon,
   ChevronRightIcon,
@@ -32,10 +33,10 @@ import { useLiveRecord } from "@/components/agents/run-card";
 import { ValueRows } from "@/components/agents/value-rows";
 import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
-import { formatTime } from "@/lib/agents/format";
 import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
+import { formatListTime } from "@/lib/i18n/formats";
 import { describeRefusal, type RefusalText } from "@/lib/library/library-errors";
 import { logger } from "@/lib/logger";
 import { ACCOUNT_PATH, recordPath } from "@/lib/shell-route";
@@ -266,6 +267,7 @@ function parsedResult(result: unknown): unknown {
 const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsText, result, artifact }) => {
   const [open, setOpen] = useState(false);
   const messageCreatedAt = useAuiState((s) => s.message.createdAt);
+  const format = useFormatter();
 
   const outcome = outcomeOf(artifact);
   const look = OUTCOME_LOOK[outcome];
@@ -283,7 +285,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
     runCode?.description ?? (toolTitle !== null && server !== null ? `${toolName} · ${server}` : null);
   const at =
     textField(artifact, "startedAt") ?? textField(artifact, "finishedAt") ?? messageCreatedAt.toISOString();
-  const time = formatTime(at);
+  const time = formatListTime(format, at);
   // The library line reads the library list from the shell, so other blocks never mount it.
   const libraryRefusal = outcome === "refused" && LIBRARY_TOOLS.has(toolName);
   const reason = libraryRefusal ? null : reasonLine(outcome, artifact, server ?? toolName);

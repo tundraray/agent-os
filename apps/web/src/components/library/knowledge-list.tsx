@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFormatter } from "next-intl";
 import { toast } from "sonner";
 import type { KnowledgeItem, KnowledgeView } from "@agent-os/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
@@ -19,6 +20,7 @@ import {
   knowledgeTabs,
   type KnowledgeCell,
   type KnowledgeMark,
+  type KnowledgeRow,
   type KnowledgeTabId,
 } from "@/lib/library/knowledge-view";
 
@@ -66,8 +68,7 @@ function RecordCell({ cell, mark }: { cell: KnowledgeCell; mark: KnowledgeMark |
  * One table row of a record. Texts are React text nodes only: a record holds what runs saw, never markup
  * (Security Considerations). No run and no employee are shown — the contract has neither.
  */
-function toRow(item: KnowledgeItem, selfLearning: boolean, withKind: boolean, onDelete: () => void): DataTableRow {
-  const row = knowledgeRow(item, selfLearning);
+function toRow(row: KnowledgeRow, withKind: boolean, onDelete: () => void): DataTableRow {
   return {
     key: row.key,
     name: row.name,
@@ -123,6 +124,7 @@ export type KnowledgeListProps = {
  * delete; nothing is removed locally — the re-read graph decides what stays.
  */
 export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
+  const format = useFormatter();
   const tabs = knowledgeTabs(view);
   const [chosen, setChosen] = useState<KnowledgeTabId>("all");
   // Kept while the dialog closes, so its content does not change during the exit animation.
@@ -169,7 +171,9 @@ export function KnowledgeList({ view, recordId, reload }: KnowledgeListProps) {
           columns={knowledgeColumns(withKind)}
           state={{
             status: "ready",
-            rows: active.items.map((item) => toRow(item, view.selfLearning, withKind, () => openDelete(item))),
+            rows: active.items.map((item) =>
+              toRow(knowledgeRow(item, view.selfLearning, format), withKind, () => openDelete(item)),
+            ),
             noMatches: active.noMatches ?? undefined,
           }}
           actionsAs="menu"

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AgentStatus as AgentStatusValue, HistoryEvent, MyModel } from "@agent-os/contracts";
+import { useFormatter } from "next-intl";
 import { ArchiveIcon, HistoryIcon, type LucideIcon } from "lucide-react";
 import { AgentStatus, StatusGlyph } from "@/components/agents/agent-status";
 import { accessApi } from "@/lib/access/access-api";
@@ -14,7 +15,6 @@ import {
 import {
   failureReasonText,
   formatModel,
-  formatTime,
   isProviderFailureReason,
   providerFailureHint,
   providerReasonText,
@@ -22,6 +22,7 @@ import {
   type ProviderFailureReason,
 } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
+import { formatListTime } from "@/lib/i18n/formats";
 import type { EventPartData } from "@/lib/feed/to-feed";
 import { logger } from "@/lib/logger";
 
@@ -59,6 +60,7 @@ const MARK_ICON: Record<"continued" | "compacted", LucideIcon> = {
  */
 export function EventLine({ data }: { data: EventPartData }) {
   const { event, reason, createdAt } = data;
+  const format = useFormatter();
 
   if (event === "continued" || event === "compacted") {
     return (
@@ -74,7 +76,7 @@ export function EventLine({ data }: { data: EventPartData }) {
           ·
         </span>
         <time dateTime={createdAt} className="shrink-0 tabular-nums">
-          {formatTime(createdAt)}
+          {formatListTime(format, createdAt)}
         </time>
       </p>
     );

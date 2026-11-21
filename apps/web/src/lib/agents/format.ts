@@ -3,7 +3,7 @@ import { pluralRu } from "@/lib/i18n/plural-ru";
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides
- * how a status, a model, a moment, a duration and a failure reason read (agent-status.md, tool-call.md,
+ * how a status, a model, a duration and a failure reason read (agent-status.md, tool-call.md,
  * UXRD MC-3, MC-8, MC-14, MC-18).
  */
 
@@ -117,32 +117,6 @@ export function formatModel(modelId: string | null, names?: ModelNames): string 
   const family = MODEL_FAMILY.exec(modelId)?.[1];
   if (family === undefined) return modelId;
   return capitalize(family);
-}
-
-const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
-const day = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
-
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-const toDate = (at: string | Date): Date => (typeof at === "string" ? new Date(at) : at);
-
-/** «19 нояб.» — the day of a moment in the viewer's time zone. */
-export function formatDay(at: string | Date): string {
-  return day.format(toDate(at));
-}
-
-/** «19 нояб., 14:32» — day and time, today too. */
-export function formatDayTime(at: string | Date): string {
-  const date = toDate(at);
-  return `${day.format(date)}, ${clock.format(date)}`;
-}
-
-/** «ЧЧ:ММ» for today, otherwise «12 нояб., ЧЧ:ММ»; `now` is injectable for a fixed clock. */
-export function formatTime(at: string | Date, now: Date = new Date()): string {
-  const date = toDate(at);
-  return isSameDay(date, now) ? clock.format(date) : formatDayTime(date);
 }
 
 /** A duration for MC-18: «<1 с», «42 с», «3 мин 5 с», «2 ч 14 мин». */

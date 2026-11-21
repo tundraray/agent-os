@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { useFormatter } from "next-intl";
 import { TextMessagePartProvider, useAuiState } from "@assistant-ui/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { AgentStatus } from "@/components/agents/agent-status";
@@ -9,7 +10,8 @@ import { MarkdownText } from "@/components/markdown-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { failureReasonText, formatDuration, formatTime, formatToolCallCount } from "@/lib/agents/format";
+import { failureReasonText, formatDuration, formatToolCallCount } from "@/lib/agents/format";
+import { formatListTime } from "@/lib/i18n/formats";
 import type { ReportPartData } from "@/lib/feed/to-feed";
 import { agentPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
@@ -65,8 +67,9 @@ function ReportCopy({ text }: { text: string }) {
  * in Markdown, or «Отчёта нет.».
  */
 export function AgentReport({ data }: { data: ReportPartData }) {
+  const format = useFormatter();
   const reason = reasonLine(data);
-  const notice = `${formatToolCallCount(data.toolCalls)} · ${formatDuration(data.durationMs)} · ${formatTime(data.createdAt)}`;
+  const notice = `${formatToolCallCount(data.toolCalls)} · ${formatDuration(data.durationMs)} · ${formatListTime(format, data.createdAt)}`;
 
   return (
     <div className="group/report mx-auto w-full max-w-(--prose-max-width)">

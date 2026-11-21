@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useFormatter } from "next-intl";
 import { useStore } from "zustand";
 import type { DraftActionRequest, DraftView } from "@agent-os/contracts";
 import {
@@ -20,7 +21,7 @@ import { useInChat, useLeaveThenGo } from "@/components/library/use-in-chat";
 import { ShellLink } from "@/components/shell/shell-link";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
-import { formatTime } from "@/lib/agents/format";
+import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { describeDraftRefusal, describeLibraryError, kindWord } from "@/lib/library/library-errors";
 import { changedFields, definitionOf, freeName, isDraftStale } from "@/lib/library/record-rules";
 import { useLiveRecord } from "@/components/agents/run-card";
@@ -55,8 +56,8 @@ type Pressed = "save" | "saveAs" | "reject";
 type Outcome = { key: string; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a resolved draft; null while it waits. */
-function outcomeOf(draft: DraftView): Outcome | null {
-  const at = formatTime(draft.resolvedAt ?? draft.createdAt);
+function outcomeOf(draft: DraftView, format: Formatter): Outcome | null {
+  const at = formatListTime(format, draft.resolvedAt ?? draft.createdAt);
   switch (draft.state) {
     case "pending":
     case "superseded":
@@ -101,7 +102,8 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
   const containerRef = useRef<HTMLDivElement>(null);
   const actedHere = useRef(false);
 
-  const outcome = outcomeOf(draft);
+  const format = useFormatter();
+  const outcome = outcomeOf(draft, format);
 
   // After an action taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
   useEffect(() => {
@@ -165,7 +167,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
           {TEXT.status}
         </p>
         <time dateTime={draft.createdAt} className={cn(CAPTION, "shrink-0 tabular-nums")}>
-          {formatTime(draft.createdAt)}
+          {formatListTime(format, draft.createdAt)}
         </time>
       </div>
     ) : (

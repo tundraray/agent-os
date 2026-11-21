@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { CircleMinus, Info, LightbulbIcon } from "lucide-react";
+import { useFormatter } from "next-intl";
 import type { KnowledgeView, RecordDetail } from "@agent-os/contracts";
 import { PANEL_TITLE, RecordPlaceholder, sectionParent } from "@/components/admin/admin-header";
 import { DataTable, resourceTableState } from "@/components/admin/data-table";
@@ -130,6 +131,7 @@ function KnowledgeBody({
   audience: KnowledgeAudience;
 }) {
   const view = graph.data;
+  const format = useFormatter();
   // A re-read after a delete can replace the table the focus was in (the active tab disappears, the graph becomes
   // empty) — `DataTable` then sees no row leave. Focus that fell to the page body goes to the `h1`.
   useEffect(() => {
@@ -144,7 +146,7 @@ function KnowledgeBody({
   }
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <StateLines lines={knowledgeStateLines(view, audience)} />
+      <StateLines lines={knowledgeStateLines(view, audience, format)} />
       <KnowledgeList view={view} recordId={recordId} reload={graph.reload} />
     </div>
   );

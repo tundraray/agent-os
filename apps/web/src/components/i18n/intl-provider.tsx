@@ -2,6 +2,7 @@
 
 import { useEffect, type ReactNode } from 'react';
 import { NextIntlClientProvider, type IntlError } from 'next-intl';
+import { formats } from '@/lib/i18n/formats';
 import type { Messages } from '@/lib/i18n/messages';
 import type { Locale } from '@/lib/i18n/pick-locale';
 import { logger } from '@/lib/logger';
@@ -30,6 +31,7 @@ export function IntlProvider({ locale, messages, children }: IntlProviderProps) 
       locale={locale}
       messages={messages}
       timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+      formats={formats}
       onError={onError}
       getMessageFallback={getMessageFallback}
     >
