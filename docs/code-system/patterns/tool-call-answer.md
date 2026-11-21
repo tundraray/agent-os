@@ -27,4 +27,3 @@
 ## Used In
 
 - [design-core.md](../../features/self-learning/design-core.md) — раунд извлечения `record_knowledge` и выбор похожих сущностей (KD-4)
-- [design-evidence.md](../../features/agent-harness/design-evidence.md) — вызовы утверждений и цитат прохода выписок (KD-4)

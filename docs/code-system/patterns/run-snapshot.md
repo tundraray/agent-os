@@ -29,4 +29,3 @@
 
 - [design-runtime.md](../../features/custom-agents/design-runtime.md) — старт записи, исполнителя, ответвления и перезапуск (KD-1, KD-2)
 - [design-core.md](../../features/self-learning/design-core.md) — флажок самообучения в снимке; граф знаний — живые данные, которые шаг читает рядом со снимком (KD-2, KD-6)
-- [design-evidence.md](../../features/agent-harness/design-evidence.md) — флаг прохода выписок у исполнителя в снимке (KD-7)
