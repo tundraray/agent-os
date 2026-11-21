@@ -18,10 +18,5 @@
   "inheritedHistoryCount": "История до ответвления · {count, plural, one {# сообщение} few {# сообщения} many {# сообщений} other {# сообщения}}",
   "defaultModel": "Модель по умолчанию",
   "defaultModelUnset": "Модель по умолчанию — не выбрана",
-  "defaultModelNamed": "Модель по умолчанию · {model}",
-  "spend": {
-    "ready": "Расход за {month}: {amount}",
-    "loading": "Загружаем расход…",
-    "unavailable": "Расход недоступен"
-  }
+  "defaultModelNamed": "Модель по умолчанию · {model}"
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 
 /** Server limit for a thread title (FR-15): input past it is not accepted. */
@@ -20,6 +21,7 @@ export type ThreadTitleFieldProps = {
  * value is valid and changed. An empty value on Enter keeps the field open with «Введите название» (AC-05.3).
  */
 export function ThreadTitleField({ initialTitle, onSave, onCancel }: ThreadTitleFieldProps) {
+  const t = useTranslations('shell.thread');
   const errorId = useId();
   const [value, setValue] = useState(initialTitle);
   const [invalid, setInvalid] = useState(false);
@@ -59,7 +61,7 @@ export function ThreadTitleField({ initialTitle, onSave, onCancel }: ThreadTitle
   return (
     <div data-shortcuts-blocked="" className="flex flex-col gap-1 py-0.5">
       <Input
-        aria-label="Название беседы"
+        aria-label={t('titleLabel')}
         aria-invalid={invalid || undefined}
         aria-describedby={invalid ? errorId : undefined}
         maxLength={MAX_TITLE_LENGTH}
@@ -76,7 +78,7 @@ export function ThreadTitleField({ initialTitle, onSave, onCancel }: ThreadTitle
       />
       {invalid && (
         <p id={errorId} className="text-destructive px-0.5 text-xs">
-          Введите название
+          {t('titleRequired')}
         </p>
       )}
     </div>

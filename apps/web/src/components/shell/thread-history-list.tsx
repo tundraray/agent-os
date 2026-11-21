@@ -15,6 +15,7 @@ import { usePathname } from 'next/navigation';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { THREAD_PAGE_SIZE } from '@agent-os/contracts';
 import { RotateCwIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { SidebarGroup, SidebarGroupLabel, SidebarMenu } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,7 +35,6 @@ import {
   THREAD_LINK_ATTRIBUTE,
   THREAD_ROW_ATTRIBUTE,
   ThreadHistoryItem,
-  UNTITLED_THREAD_TITLE,
 } from './thread-history-item';
 import { useShellServices, useShellStatus } from './shell-actions';
 
@@ -134,6 +134,7 @@ function moveFocusBetweenLinks(event: KeyboardEvent<HTMLElement>): void {
 
 /** SB-04/05/09/10: the thread list by date groups, its loading skeleton, empty text, load error and next page; DLG-01 for its rows. */
 export function ThreadHistoryListView({ state, pagination, renderItem, openThreadId, onDelete }: ThreadHistoryListViewProps) {
+  const t = useTranslations('shell');
   const rootRef = useRef<HTMLDivElement>(null);
   // The entry outlives `deleteOpen` so the dialog keeps its text through the exit animation.
   const [pendingDelete, setPendingDelete] = useState<ThreadListEntry | null>(null);
@@ -199,7 +200,7 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
       {state.kind === 'loading' && <ListSkeleton />}
       {state.kind === 'error' && (
         <div className="flex flex-col items-start gap-2 px-4 py-2 text-[13px]">
-          <p role="alert">Не удалось загрузить беседы</p>
+          <p role="alert">{t('list.loadFailed')}</p>
           <Button
             data-list-retry=""
             variant="outline"
@@ -210,14 +211,14 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
             }}
           >
             <RotateCwIcon aria-hidden />
-            Повторить
+            {t('list.retry')}
           </Button>
         </div>
       )}
       {state.kind === 'ready' && state.groups.length === 0 && (
         <div className="px-4 py-2 text-[13px]">
-          <p className="text-sidebar-foreground">Пока нет бесед</p>
-          <p className="text-muted-foreground">Начните новый чат — он появится здесь.</p>
+          <p className="text-sidebar-foreground">{t('list.empty')}</p>
+          <p className="text-muted-foreground">{t('list.emptyHint')}</p>
         </div>
       )}
       {state.kind === 'ready' &&
@@ -229,7 +230,7 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
         <DeleteThreadDialog
           open={deleteOpen}
           threadId={liveDeleteEntry.remoteId}
-          threadTitle={liveDeleteEntry.title ?? UNTITLED_THREAD_TITLE}
+          threadTitle={liveDeleteEntry.title ?? t('thread.untitled')}
           onConfirm={confirmDelete}
           onOpenChange={setDeleteOpen}
           finalFocus={deleteFinalFocus}
@@ -240,11 +241,12 @@ export function ThreadHistoryListView({ state, pagination, renderItem, openThrea
 }
 
 function ThreadGroupSection({ group, renderItem }: { group: ThreadGroup; renderItem: (entry: ThreadListEntry) => ReactNode }) {
+  const t = useTranslations('shell.dateGroup');
   const headingId = useId();
   return (
     <SidebarGroup className="py-0 pt-4 first:pt-2">
       <SidebarGroupLabel id={headingId} render={<h2 />} className="text-muted-foreground h-6 text-xs">
-        {group.label}
+        {t(group.key)}
       </SidebarGroupLabel>
       <SidebarMenu aria-labelledby={headingId}>{group.entries.map(renderItem)}</SidebarMenu>
     </SidebarGroup>
@@ -253,10 +255,11 @@ function ThreadGroupSection({ group, renderItem }: { group: ThreadGroup; renderI
 
 /** SB-10: «Показать ещё», its loading rows or its error, under the last group (UXRD 6.8). */
 function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadListPagination, 'hasMore'>) {
+  const t = useTranslations('shell.list');
   if (isLoadingMore) {
     return (
-      <div role="status" aria-label="Загружаем ещё беседы…" className="flex flex-col px-2">
-        <span className="sr-only">Загружаем ещё беседы…</span>
+      <div role="status" aria-label={t('loadingMore')} className="flex flex-col px-2">
+        <span className="sr-only">{t('loadingMore')}</span>
         {MORE_SKELETON_ROW_WIDTHS.map((width) => (
           <div key={width} aria-hidden className="flex h-9 items-center px-2">
             <Skeleton className="h-4 motion-reduce:animate-none" style={{ width }} />
@@ -268,10 +271,10 @@ function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadList
   if (loadMoreFailed) {
     return (
       <div className="flex flex-col items-start gap-2 px-4 py-2 text-[13px]">
-        <p role="alert">Не удалось загрузить ещё беседы</p>
+        <p role="alert">{t('loadMoreFailed')}</p>
         <Button data-load-more-retry="" variant="outline" size="sm" onClick={(event) => onLoadMore(clickSource(event))}>
           <RotateCwIcon aria-hidden />
-          Повторить
+          {t('retry')}
         </Button>
       </div>
     );
@@ -281,6 +284,7 @@ function NextPage({ isLoadingMore, loadMoreFailed, onLoadMore }: Omit<ThreadList
 
 /** «Показать ещё»: a click, or the button nearing the sidebar's visible edge, loads the next page. */
 function ShowMoreButton({ onLoadMore }: Pick<ThreadListPagination, 'onLoadMore'>) {
+  const t = useTranslations('shell.list');
   const buttonRef = useRef<HTMLButtonElement>(null);
   const loadOnView = useEffectEvent(() => onLoadMore('viewport'));
 
@@ -306,16 +310,17 @@ function ShowMoreButton({ onLoadMore }: Pick<ThreadListPagination, 'onLoadMore'>
         className="w-full"
         onClick={(event) => onLoadMore(clickSource(event))}
       >
-        Показать ещё<span className="sr-only"> беседы</span>
+        {t.rich('showMore', { hidden: (chunks) => <span className="sr-only">{chunks}</span> })}
       </Button>
     </div>
   );
 }
 
 function ListSkeleton() {
+  const t = useTranslations('shell.list');
   return (
-    <div role="status" aria-label="Загружаем беседы…" className="flex flex-col gap-0 px-2 pt-2">
-      <span className="sr-only">Загружаем беседы…</span>
+    <div role="status" aria-label={t('loading')} className="flex flex-col gap-0 px-2 pt-2">
+      <span className="sr-only">{t('loading')}</span>
       <div aria-hidden className="flex h-12 items-center px-2">
         <Skeleton className="h-3 w-20 motion-reduce:animate-none" />
       </div>
