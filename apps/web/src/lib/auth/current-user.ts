@@ -1,4 +1,4 @@
-import type { CurrentUser } from "@agent-os/contracts";
+import type { CurrentUser, Language } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { describeApiError } from "@/lib/api/api-request";
 import { loginPath } from "@/lib/auth/login-reason";
@@ -13,10 +13,12 @@ export type CurrentUserStore = StoreApi<CurrentUserState> & {
   /** Ends the session, then loads the login page in full, so no store of this session survives. */
   signOut: () => Promise<void>;
   /**
-   * The API answered 403 `ADMIN_REQUIRED`: the read employee loses `isAdmin`. The only write after the
-   * read; idempotent, because several requests in flight may get the 403 at once.
+   * The API answered 403 `ADMIN_REQUIRED`: the read employee loses `isAdmin`. Idempotent, because several
+   * requests in flight may get the 403 at once.
    */
   revokeAdmin: () => void;
+  /** The API confirmed the employee's interface language: the read employee carries it from now on. */
+  setLanguage: (language: Language) => void;
 };
 
 type CurrentUserDeps = {
@@ -50,6 +52,11 @@ export function createCurrentUserStore({ read, endSession, location, logger }: C
       const { user } = state.getState();
       if (user === null || !user.isAdmin) return;
       state.setState({ user: { ...user, isAdmin: false } });
+    },
+    setLanguage: (language: Language): void => {
+      const { user } = state.getState();
+      if (user === null) return;
+      state.setState({ user: { ...user, language } });
     },
   });
 }
