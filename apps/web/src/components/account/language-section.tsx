@@ -40,13 +40,13 @@ export function LanguageSection({ currentUser }: { currentUser: CurrentUserStore
   const savedRef = useRef(false);
   const itemRefs = useRef(new Map<Language, HTMLElement>());
 
-  // The refresh has committed: `t` already reads the new catalog, so MC-6 speaks the new language.
+  // The refresh has committed: the announcer translates with the new catalog, so MC-6 speaks the new language.
   useEffect(() => {
     if (refreshing || !savedRef.current) return;
     savedRef.current = false;
     setPending(null);
-    announcer.getState().announce(t("announced"));
-  }, [refreshing, announcer, t]);
+    announcer.getState().announce("account.language.announced");
+  }, [refreshing, announcer]);
 
   // UXRD «Focus order»: after a refusal focus stays on the option checked again, or the first one.
   useEffect(() => {

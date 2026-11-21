@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { PanelLeftIcon } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -177,6 +178,7 @@ function Sidebar({
   finalFocus?: Drawer.Popup.Props["finalFocus"]
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const t = useTranslations("common")
 
   if (collapsible === "none") {
     return (
@@ -220,7 +222,7 @@ function Sidebar({
               finalFocus={finalFocus}
               role="dialog"
               aria-modal="true"
-              aria-label="История бесед"
+              aria-label={t("chatHistory")}
               data-sidebar="sidebar"
               data-slot="sidebar"
               data-mobile="true"
@@ -297,6 +299,7 @@ function SidebarTrigger({
   ...props
 }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar()
+  const t = useTranslations("common")
 
   return (
     <Button
@@ -312,22 +315,23 @@ function SidebarTrigger({
       {...props}
     >
       <PanelLeftIcon />
-      <span className="sr-only">Боковая панель</span>
+      <span className="sr-only">{t("sidebar")}</span>
     </Button>
   )
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   const { toggleSidebar } = useSidebar()
+  const t = useTranslations("common")
 
   return (
     <button
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Боковая панель"
+      aria-label={t("sidebar")}
       tabIndex={-1}
       onClick={toggleSidebar}
-      title="Боковая панель"
+      title={t("sidebar")}
       className={cn(
         "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",

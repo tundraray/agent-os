@@ -8,6 +8,7 @@ import {
 } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
+import { Announcer } from '@/components/shell/announcer';
 import { ShellServicesContext } from '@/components/shell/shell-actions';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { createShellServices, type ShellServices } from '@/lib/threads/shell-services';
@@ -44,6 +45,9 @@ function Harness({
           <Thread />
         </TooltipProvider>
       </AssistantRuntimeProvider>
+      <div data-testid="announcer">
+        <Announcer announcer={services.announcer} />
+      </div>
     </ShellServicesContext.Provider>
   );
 }
@@ -157,17 +161,18 @@ describe('Message action bar — only «Копировать», always reachable
   ])('«Копировать» writes the $name text to the clipboard and announces «Скопировано» through the shell announcer', async ({ index, text }) => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
-    const { container, services } = renderThread(TWO_EXCHANGES);
+    const { container } = renderThread(TWO_EXCHANGES);
     const message = messageRoots(container)[index];
 
     // UXRD «Объявления»: one live region per page — the message itself holds none.
     expect(within(message).queryByRole('status')).toBeNull();
-    expect(services.announcer.getState().text).toBe('');
+    const announcer = screen.getByTestId('announcer');
+    expect(announcer.textContent).toBe('');
 
     await user.click(within(message).getByRole('button', { name: COPY }));
 
     expect(writeText).toHaveBeenCalledWith(text);
-    await waitFor(() => expect(services.announcer.getState().text).toBe('Скопировано'));
+    await waitFor(() => expect(announcer).toHaveTextContent('Скопировано'));
   });
 });
 

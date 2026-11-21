@@ -136,7 +136,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     try {
       const answer = await onAction(action);
       if (answer?.state === "saved") {
-        announcer.getState().announce(TEXT.saved);
+        announcer.getState().announce("announce.saved");
         void libraryIndex.refresh();
       }
     } catch (cause) {

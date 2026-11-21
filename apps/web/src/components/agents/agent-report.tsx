@@ -37,7 +37,7 @@ function ReportCopy({ text }: { text: string }) {
   const isLast = useAuiState((s) => s.message.isLast);
 
   useEffect(() => {
-    if (isCopied) announcer.getState().announce("Скопировано");
+    if (isCopied) announcer.getState().announce("announce.copied");
   }, [isCopied, announcer]);
 
   return (

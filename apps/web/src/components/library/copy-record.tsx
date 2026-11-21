@@ -130,7 +130,7 @@ export function useCopyRecord(): CopyRecord {
       description: notice.description,
       action: { label: TEXT.open, onClick: () => leaveThenGo(() => router.push(recordPath(result.record.id))) },
     });
-    announcer.getState().announce(TEXT.saved(result.record.name));
+    announcer.getState().announce("announce.copySaved", { name: result.record.name });
   }
 
   async function copy(record: CopySource): Promise<void> {

@@ -14,9 +14,8 @@ import {
 } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
-import { pluralRu } from "@/lib/i18n/plural-ru";
 import { createCoalescedRunner } from "@/lib/live/coalesced-runner";
-import type { AnnouncerStore } from "@/lib/live/announcer-store";
+import type { Announcement, AnnouncerStore } from "@/lib/live/announcer-store";
 import type { logger as appLogger } from "@/lib/logger";
 import type { HistoryStatus, SendFailure, ShellStatusStore } from "@/lib/threads/shell-status-store";
 import type { ThreadsApiClient } from "@/lib/threads/threads-api-client";
@@ -98,19 +97,17 @@ export type CreateFeedStoreInput = {
   onActivity?: () => void;
 };
 
-const DECISION_NOUN = ["запрос", "запроса", "запросов"] as const;
-
 /** MC-25 for decisions that opened since the previous read; a workflow task — custom-agents MC-21. */
-function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): string | null {
+function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): Announcement | null {
   if (opened.length === 0) return null;
-  if (opened.length > 1) {
-    return `Нужно ваше решение: ${opened.length} ${pluralRu(opened.length, DECISION_NOUN)}`;
-  }
+  if (opened.length > 1) return { key: "announce.decisionsOpened", values: { count: opened.length } };
   const [decision] = opened;
-  if (decision.kind === WORKFLOWS_BRIEF_CONFIRMATION) return "Задание готово — нужно ваше решение";
+  if (decision.kind === WORKFLOWS_BRIEF_CONFIRMATION) return { key: "announce.taskReady" };
   const byChat = view.kind === "thread" && decision.agentId === view.chat.rootAgentId;
-  const who = byChat ? "Чат" : `Агент «${decision.description}»`;
-  return `Нужно ваше решение: ${who} хочет выполнить ${decision.tool}`;
+  return {
+    key: "announce.decisionRequested",
+    values: { who: byChat ? "chat" : "agent", agent: decision.description, tool: decision.tool },
+  };
 }
 
 /** Waiting drafts a re-read found for the first time (MC-19 «Черновик «{имя}» готов»). */
@@ -158,14 +155,14 @@ export function createFeedStore({
   function announce(previous: FeedView, next: FeedView, added: readonly HistoryEntry[]): void {
     const known = new Set(previous.decisions.map((d) => d.decisionId));
     const opened = next.decisions.filter((d) => d.status === "open" && !known.has(d.decisionId));
-    const decisionText = decisionAnnouncement(next, opened);
-    if (decisionText !== null) announcer.getState().announce(decisionText);
+    const decision = decisionAnnouncement(next, opened);
+    if (decision !== null) announcer.getState().announce(decision.key, decision.values);
     for (const draft of newDrafts(previous, next)) {
-      announcer.getState().announce(`Черновик «${draft.name}» готов — проверьте и сохраните`);
+      announcer.getState().announce("announce.draftReady", { name: draft.name });
     }
     for (const entry of added) {
       if (entry.kind === "child_report") {
-        announcer.getState().announce(`Пришёл отчёт: ${entry.content.description}`);
+        announcer.getState().announce("announce.reportArrived", { description: entry.content.description });
       }
     }
   }

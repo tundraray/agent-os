@@ -1,12 +1,18 @@
 import enAccount from '@/messages/en/account.json';
+import enAnnounce from '@/messages/en/announce.json';
+import enCommon from '@/messages/en/common.json';
 import enLogin from '@/messages/en/login.json';
 import ruAccount from '@/messages/ru/account.json';
+import ruAnnounce from '@/messages/ru/announce.json';
+import ruCommon from '@/messages/ru/common.json';
 import ruLogin from '@/messages/ru/login.json';
 import type { Locale } from './pick-locale';
 
 /** One entry per screen area; an area is a next-intl namespace. A new area file is registered here. */
 const en = {
   account: enAccount,
+  announce: enAnnounce,
+  common: enCommon,
   login: enLogin,
 };
 
@@ -15,6 +21,8 @@ export type Messages = typeof en;
 
 const ru: Messages = {
   account: ruAccount,
+  announce: ruAnnounce,
+  common: ruCommon,
   login: ruLogin,
 };
 

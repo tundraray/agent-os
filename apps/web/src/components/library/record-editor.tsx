@@ -44,7 +44,6 @@ const TEXT = {
   library: "Библиотека",
   newTitle: (kind: RecordKind) => (kind === "agent" ? "Новый агент" : "Новый workflow"),
   created: (kind: RecordKind) => `${kindWord(kind, true)} создан`,
-  saved: "Сохранено",
   discarded: "Изменения отменены",
   restore: "Вернуть",
   // MC-13: the saved agent is the source of executors in the author's own workflows.
@@ -321,7 +320,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
       dispatch({ type: "saved", record: result });
       void tellDraft(result.id);
       void libraryIndex.refresh();
-      announcer.getState().announce(TEXT.saved);
+      announcer.getState().announce("announce.saved");
       // «Обновить там» is about the owner's own workflows; a company record has none.
       if (result.kind === "agent" && !system) void offerUpdateThere(result);
     } catch (cause) {

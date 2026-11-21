@@ -620,7 +620,7 @@ const ThreadLoadEarlier: FC = () => {
   }, [visible]);
 
   useEffect(() => {
-    if (loading) announcer.getState().announce("Загружаем предыдущие сообщения…");
+    if (loading) announcer.getState().announce("announce.loadingEarlier");
   }, [loading, announcer]);
 
   return (
@@ -758,7 +758,7 @@ const SeededComposer: FC<{ sendBlocked: boolean; placeholder: string; target: Se
   useEffect(() => {
     if (chip === null || announcedChips.has(chip)) return;
     announcedChips.add(chip);
-    announcer.getState().announce(`«${chip.name}» в поле сообщения — опишите задачу и отправьте`);
+    announcer.getState().announce("announce.chipInComposer", { name: chip.name });
   }, [announcer, chip]);
 
   const removeChip = (): void => {
@@ -1077,7 +1077,7 @@ const CopiedStatus: FC = () => {
   const { announcer } = useShellServices();
   const isCopied = useAuiState((s) => s.message.isCopied);
   useEffect(() => {
-    if (isCopied) announcer.getState().announce("Скопировано");
+    if (isCopied) announcer.getState().announce("announce.copied");
   }, [isCopied, announcer]);
   return null;
 };

@@ -77,7 +77,6 @@ const TEXT = {
   advanced: "Дополнительно: модель и максимум шагов координатора",
   coordinatorModel: "Модель координатора",
   coordinatorMaxTurns: "Максимум шагов координатора",
-  tookNewVersion: (name: string) => `Взята новая версия «${name}»`,
   enterRole: "Напишите, за что отвечает исполнитель и когда его звать",
   enterPrompt: "Введите инструкцию — откройте исполнителя",
   wholeNumber: (min: number, max: number) => `Нужно целое число от ${min} до ${max}`,
@@ -267,7 +266,7 @@ export function WorkflowFields({ mode, saved, values, onChange, onTakeNewVersion
     const taken = executorFromSource(current, agent, choices.servers);
     onTakeNewVersion(index, taken.executor);
     setDropped((map) => new Map(map).set(current.name, taken.dropped));
-    announcer.getState().announce(TEXT.tookNewVersion(current.name));
+    announcer.getState().announce("announce.tookNewVersion", { name: current.name });
     focusName(current.name);
   };
 

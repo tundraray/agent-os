@@ -12,7 +12,6 @@ const TEXT = {
   more: (n: number) => `и ещё ${n}`,
   blocked: "Ждём вашего решения по запросу выше — сообщения уйдут после него.",
   toDecision: "К запросу",
-  announce: "Сообщение ждёт доставки",
 } as const;
 
 const SOURCE_LABEL: Record<TrayEntry["source"], string> = {
@@ -47,7 +46,7 @@ function useAnnounceNewEntries(entries: readonly TrayEntry[]): void {
   const userCount = countUser(entries);
   const previous = useRef(userCount);
   useEffect(() => {
-    if (userCount > previous.current) announcer.getState().announce(TEXT.announce);
+    if (userCount > previous.current) announcer.getState().announce("announce.messageQueued");
     previous.current = userCount;
   }, [announcer, userCount]);
 }
