@@ -76,7 +76,8 @@
     "trigger": "{tool}: {outcome}, {time}",
     "authRequired": "Connect your {server} account in “<link>My access</link>”",
     "arguments": "Arguments",
-    "result": "Result"
+    "result": "Result",
+    "scriptOutput": "Script output"
   },
   "attachment": {
     "preview": "Preview: {name}",

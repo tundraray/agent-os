@@ -58,5 +58,99 @@
     "stopped": "{withParent, select, yes {остановлен вместе с родителем} other {остановлен вами}}",
     "empty": "Отчёта нет."
   },
-  "interrupt": "Прервать"
+  "interrupt": "Прервать",
+  "values": {
+    "yes": "да",
+    "no": "нет"
+  },
+  "valueRows": {
+    "showJson": "Показать как JSON",
+    "hideJson": "Скрыть JSON"
+  },
+  "runCode": {
+    "class": {
+      "read": "читающий",
+      "write": "изменяющий: может менять данные во внешних системах"
+    },
+    "script": "Скрипт",
+    "showScript": "Показать скрипт",
+    "hideScript": "Скрыть скрипт",
+    "canCall": {
+      "title": "Может вызвать",
+      "changes": "меняет",
+      "reads": "читает",
+      "note": "Составила платформа по тексту скрипта: других инструментов запуск не вызовет",
+      "none": "Ни одного инструмента: запуск не обратится к внешним системам"
+    }
+  },
+  "decision": {
+    "byChat": "Чат хочет выполнить:",
+    "byAgent": "Агент «<link>{description}</link>» хочет выполнить:",
+    "groupAction": "Нужно решение: {tool}",
+    "groupBrief": "Задание: {question}",
+    "approve": "Подтвердить",
+    "reject": "Отклонить",
+    "approved": "Подтверждено · {time}",
+    "rejected": "Отклонено · {time}",
+    "briefApproved": "Задание подтверждено · {time}",
+    "briefRejected": "Задание отклонено · {time}",
+    "cancelled": "Не понадобилось: агент остановлен",
+    "sendFailed": "Не удалось отправить решение. Попробуйте ещё раз.",
+    "launch": "Запустить",
+    "edit": "Исправить",
+    "launchEdited": "Запустить с правками",
+    "cancelEdit": "Отмена",
+    "emptyQuestion": "Вопрос не может быть пустым",
+    "selfLearning": "Workflow учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников."
+  },
+  "draft": {
+    "status": "Черновик",
+    "label": "Черновик: {name}",
+    "newTitle": "{kind, select, agent {Новый агент} other {Новый workflow}}",
+    "editTitle": "Правка «{name}»",
+    "howToFix": "Чтобы поправить — напишите в чат, что изменить",
+    "save": "Сохранить",
+    "saveAs": "Сохранить как «{name}»",
+    "openInEditor": "Открыть в редакторе",
+    "reject": "Отклонить",
+    "saved": "Сохранено · {time}",
+    "savedInEditor": "Сохранено в редакторе · {time}",
+    "rejected": "Отклонено · {time}",
+    "tryInChat": "Проверить в чате",
+    "share": "Поделиться",
+    "open": "Открыть",
+    "superseded": "Черновик «{name}» заменён новым ниже",
+    "stale": "{kind, select, agent {Агент} other {Workflow}} изменился после черновика. Попросите чат подготовить правку заново или откройте редактор."
+  },
+  "run": {
+    "label": "{name}: {status}",
+    "stepLabel": "{hasExecutor, select, yes {{executor}, } other {}}{description}, {status}",
+    "open": "Открыть",
+    "openLabel": "Открыть агента «{description}»",
+    "openRun": "Открыть запуск",
+    "rerun": "Запустить заново",
+    "changedAfterRun": "{kind, select, agent {Агент} other {Workflow}} изменён после запуска: сейчас версия {version}",
+    "recipient": "{author}{count, plural, =0 {} other { · для роли {roles}}}: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.",
+    "limitReached": "предел вызовов исчерпан",
+    "notCalled": "не вызывался"
+  },
+  "event": {
+    "interrupted": "Прервано вами",
+    "stopped": "Остановлен вами",
+    "stopped_with_parent": "Остановлен вместе с родителем",
+    "continued": "Продолжен с историей",
+    "compacted": "История сжата для модели"
+  },
+  "queue": {
+    "region": "Ждут доставки",
+    "heading": "Ждут доставки · {count}",
+    "more": "и ещё {count}",
+    "blocked": "Ждём вашего решения по запросу выше — сообщения уйдут после него.",
+    "toDecision": "К запросу",
+    "source": {
+      "user": "Вы",
+      "report": "Отчёт",
+      "parent": "Агент"
+    }
+  }
 }

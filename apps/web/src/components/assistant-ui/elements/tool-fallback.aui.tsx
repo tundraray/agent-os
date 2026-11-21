@@ -34,7 +34,7 @@ import { ValueRows } from "@/components/agents/value-rows";
 import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
 import type { ErrorsTranslator } from "@/lib/agents/format";
-import { isRunCode, NO_RUN_VALUE, runCodeView, SCRIPT_OUTPUT_LABEL } from "@/lib/agents/run-code";
+import { isRunCode, NO_RUN_VALUE, runCodeView } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
 import type { ToolCallArtifact } from "@/lib/feed/to-feed";
 import { builtinToolLabels } from "@/lib/i18n/builtin-name";
@@ -376,7 +376,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, args, argsTe
             />
           ) : null}
           {output !== null && output !== "" ? (
-            <ValueRows label={SCRIPT_OUTPUT_LABEL} rows={null} raw={output} disclosure={false} density="data" />
+            <ValueRows label={tChat("tool.scriptOutput")} rows={null} raw={output} disclosure={false} density="data" />
           ) : null}
         </div>
       </CollapsibleContent>

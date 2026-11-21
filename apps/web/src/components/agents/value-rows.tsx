@@ -1,13 +1,11 @@
 "use client";
 
 import { useId, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronRightIcon } from "lucide-react";
 import { ScriptToggle } from "@/components/agents/script-toggle";
-import type { ValueRow } from "@/lib/agents/value-rows";
+import type { RowValue, ValueRow } from "@/lib/agents/value-rows";
 import { cn } from "@/lib/utils";
-
-/** UXRD MC-28. */
-const TEXT = { showJson: "Показать как JSON", hideJson: "Скрыть JSON" } as const;
 
 const CAPTION = "text-muted-foreground text-xs leading-4 font-medium";
 /** Value text: Data in the tool-call block, UI in the decision card (tool-call.md, «Строки аргументов»). */
@@ -51,8 +49,10 @@ export type ValueRowsProps = {
  * the exact JSON under the rows. Shared by the tool-call block and the decision card.
  */
 export function ValueRows({ label, rows, raw, disclosure, density, script }: ValueRowsProps) {
+  const t = useTranslations("agents");
   const [rawOpen, setRawOpen] = useState(false);
   const rawId = useId();
+  const shown = (value: RowValue): string => (value.kind === "message" ? t(value.key) : value.text);
 
   if (rows === null) {
     return (
@@ -74,10 +74,10 @@ export function ValueRows({ label, rows, raw, disclosure, density, script }: Val
               <dd
                 className={cn(
                   "text-foreground min-w-0 break-words whitespace-pre-wrap",
-                  row.value.json ? "col-span-2 font-mono text-[13px] leading-5" : VALUE_TEXT[density],
+                  row.value.kind === "json" ? "col-span-2 font-mono text-[13px] leading-5" : VALUE_TEXT[density],
                 )}
               >
-                {row.value.text}
+                {shown(row.value)}
               </dd>
             </div>
           ))}
@@ -107,7 +107,7 @@ export function ValueRows({ label, rows, raw, disclosure, density, script }: Val
               rawOpen && "rotate-90",
             )}
           />
-          {rawOpen ? TEXT.hideJson : TEXT.showJson}
+          {t(rawOpen ? "valueRows.hideJson" : "valueRows.showJson")}
         </button>
       )}
       {rawOpen && (

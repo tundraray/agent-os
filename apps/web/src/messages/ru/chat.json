@@ -76,7 +76,8 @@
     "trigger": "{tool}: {outcome}, {time}",
     "authRequired": "Подключите аккаунт {server} в разделе «<link>Мой доступ</link>»",
     "arguments": "Аргументы",
-    "result": "Результат"
+    "result": "Результат",
+    "scriptOutput": "Вывод скрипта"
   },
   "attachment": {
     "preview": "Просмотр: {name}",

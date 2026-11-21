@@ -31,15 +31,6 @@ const EVENT_STATUS: Record<StatusEvent, AgentStatusValue> = {
   failed: "failed",
 };
 
-/** MC-14 texts of the events that carry no reason. */
-const EVENT_TEXT: Record<Exclude<HistoryEvent, "failed">, string> = {
-  interrupted: "Прервано вами",
-  stopped: "Остановлен вами",
-  stopped_with_parent: "Остановлен вместе с родителем",
-  continued: "Продолжен с историей",
-  compacted: "История сжата для модели",
-};
-
 /**
  * Lines that mark a moment rather than a status: a static muted icon, so a past «Продолжен с историей»
  * does not spin in the feed after the agent has finished.
@@ -57,6 +48,7 @@ export function EventLine({ data }: { data: EventPartData }) {
   const { event, reason, createdAt } = data;
   const format = useFormatter();
   const t = useTranslations("errors");
+  const tAgents = useTranslations("agents");
 
   if (event === "continued" || event === "compacted") {
     return (
@@ -67,7 +59,7 @@ export function EventLine({ data }: { data: EventPartData }) {
         <span className="inline-flex size-4 shrink-0 items-center justify-center">
           <StatusGlyph Icon={MARK_ICON[event]} spinning={false} />
         </span>
-        <span className="min-w-0 truncate">{EVENT_TEXT[event]}</span>
+        <span className="min-w-0 truncate">{tAgents(`event.${event}`)}</span>
         <span aria-hidden className="shrink-0">
           ·
         </span>
@@ -87,7 +79,7 @@ export function EventLine({ data }: { data: EventPartData }) {
     return <AgentStatus variant="event" status="failed" text={t("failedEvent", { reason: text })} at={createdAt} hint={hint} />;
   }
 
-  return <AgentStatus variant="event" status={EVENT_STATUS[event]} text={EVENT_TEXT[event]} at={createdAt} />;
+  return <AgentStatus variant="event" status={EVENT_STATUS[event]} text={tAgents(`event.${event}`)} at={createdAt} />;
 }
 
 type QuotaRead = { status: "loading" } | { status: "ready"; row: MyModel | null; month: string };
