@@ -32,3 +32,4 @@
 - [design-access.md](../../features/enterprise-access/design-access.md) — отказ модели и исчерпанная квота завершают агента итогом «упасть» с причиной (KD-5)
 - [design-core.md](../../features/self-learning/design-core.md) — задача `knowledge.extract`: раунд извлечения, применение операций в коммите шага (KD-4)
 - [design-core.md](../../features/agent-harness/design-core.md) — пустая сводка сжатия как итог шага, а не исключение (KD-7)
+- [design-tasks.md](../../features/deep-agents/design-tasks.md) — коммит шага создаёт задачу сабагента под глубоким агентом через `tasks.create` в своей транзакции, а не `effects.spawn`, потому что родитель — не тот, чей шаг (KD-1)
