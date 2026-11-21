@@ -6,16 +6,19 @@ import {
   Inject,
   Param,
   Post,
+  Put,
   Query,
   Req,
   Res,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
 import {
+  LanguageBodySchema,
   nextPath,
   PasswordChangeBodySchema,
   PasswordSignInBodySchema,
   type CurrentUser,
+  type LanguageBody,
   type MyRoleList,
   type PasswordChangeBody,
   type PasswordSignInBody,
@@ -36,6 +39,7 @@ import {
   frontendOrigin,
   readCookie,
   readSessionToken,
+  setLocaleCookie,
   setSessionCookie,
 } from './session-cookie';
 import { SessionStore } from './session.store';
@@ -118,6 +122,7 @@ export class AuthController {
       return;
     }
     setSessionCookie(res, signedIn.token);
+    setLocaleCookie(res, signedIn.language);
     res.redirect(302, `${frontendOrigin()}${signedIn.next}`);
   }
 
@@ -133,17 +138,23 @@ export class AuthController {
     body: PasswordSignInBody,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    const opened = await this.signIn.signInWithPassword(
+    const signedIn = await this.signIn.signInWithPassword(
       body.login,
       body.password,
     );
-    setSessionCookie(res, opened.token);
+    setSessionCookie(res, signedIn.token);
+    setLocaleCookie(res, signedIn.language);
   }
 
+  /** The employee of the session; the `aos_locale` cookie follows his choice (i18n KD-2). */
   @Get('me')
-  me(@Req() req: AuthedRequest): CurrentUser {
-    const { id, email, name, isAdmin, hasPassword } = req.user;
-    return { id, email, name, isAdmin, hasPassword };
+  me(
+    @Req() req: AuthedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): CurrentUser {
+    const { id, email, name, isAdmin, hasPassword, language } = req.user;
+    setLocaleCookie(res, language);
+    return { id, email, name, isAdmin, hasPassword, language };
   }
 
   /** The viewer's own roles by name (`MyRoleList`), only from `req.user.id` (ADR-0012). */
@@ -163,6 +174,24 @@ export class AuthController {
     return this.users.changeOwnPassword(req.user.id, body);
   }
 
+  /** 204 and the new `aos_locale`; only the employee of `req.user` changes (i18n KD-4). */
+  @Put('me/language')
+  @HttpCode(204)
+  async changeLanguage(
+    @Body(new ZodValidationPipe(LanguageBodySchema)) body: LanguageBody,
+    @Req() req: AuthedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    await this.users.setOwnLanguage(req.user.id, body.language);
+    setLocaleCookie(res, body.language);
+    this.logger.info('language saved', {
+      userId: req.user.id,
+      sessionId: req.user.sessionId,
+      language: body.language,
+      outcome: 'ok',
+    });
+  }
+
   /** 204 always; a live cookie's session row is deleted and `sign_out` written to the audit. */
   @Public()
   @Post('sign-out')
@@ -173,6 +202,7 @@ export class AuthController {
   ): Promise<void> {
     const token = readSessionToken(req);
     clearSessionCookie(res);
+    setLocaleCookie(res, null);
     const session =
       token === undefined ? undefined : await this.sessions.find(token);
     if (session === undefined) return;

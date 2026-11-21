@@ -1,3 +1,4 @@
+import type { Language } from '@agent-os/contracts';
 import type { Request } from 'express';
 
 /** The employee of a request with a live session, put into `req.user` by `SessionGuard` (KD-3). */
@@ -11,6 +12,8 @@ export interface AuthUser {
   isAdmin: boolean;
   /** A local account: it has a password (`CurrentUser.hasPassword`). */
   hasPassword: boolean;
+  /** The chosen interface language, or null while there is no choice (`CurrentUser.language`). */
+  language: Language | null;
   sessionId: string;
 }
 

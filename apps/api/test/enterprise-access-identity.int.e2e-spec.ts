@@ -1003,6 +1003,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
         name: 'Борис',
         isAdmin: false,
         hasPassword: true,
+        language: null,
       });
       expect(me.id.startsWith('system:')).toBe(false);
 
@@ -1558,6 +1559,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
               name: 'New Employee',
               isAdmin: false,
               hasPassword: false,
+              language: null,
             });
             expect(await userDetail(newcomer.id)).toMatchObject({
               login: null,
