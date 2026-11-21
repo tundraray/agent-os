@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { failureReasonText, formatModel, providerFailureHint, type ModelNames, type ProviderFailureReason } from "./format";
+import { testTranslator } from "@/test/intl";
+import { failureReasonText, formatRecordModel, providerFailureHint, type ModelNames, type ProviderFailureReason } from "./format";
 
 const models: ModelNames["models"] = [
   { model: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
@@ -8,7 +9,7 @@ const models: ModelNames["models"] = [
 
 // AC-06.1, UXRD MP-08 / MC-8: a model reads by its title from the list; a record without its own model
 // names the default chat model, or says none is chosen; without a list the label stays as before.
-describe("formatModel", () => {
+describe("formatRecordModel", () => {
   it.each<[string, string | null, ModelNames | undefined, string]>([
     ["a Claude id without a list", "anthropic/claude-haiku-5-5", undefined, "Haiku"],
     ["an id in the list", "google/gemini-2.5-flash", { models }, "Gemini 2.5 Flash"],
@@ -17,7 +18,7 @@ describe("formatModel", () => {
     ["null with the default model in the list", null, { models, defaultModel: "google/gemini-2.5-flash" }, "Модель по умолчанию · Gemini 2.5 Flash"],
     ["null with no default model chosen", null, { models, defaultModel: null }, "Модель по умолчанию — не выбрана"],
   ])("labels %s", (_case, model, names, expected) => {
-    expect(formatModel(model, names)).toBe(expected);
+    expect(formatRecordModel(testTranslator("formats"), model, names)).toBe(expected);
   });
 });
 

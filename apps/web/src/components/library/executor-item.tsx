@@ -2,6 +2,7 @@
 
 import { useId, useState, type Ref } from "react";
 import { CircleMinus, Info, LoaderCircle, MoreHorizontalIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import { EXECUTOR_ROLE_MAX_LENGTH, type ExecutorSourceState, type WorkflowExecutor } from "@agent-os/contracts";
 import { CAPTION } from "@/components/admin/admin-form";
@@ -10,7 +11,7 @@ import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
-import { formatModel } from "@/lib/agents/format";
+import { formatRecordModel } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
 import { libraryApi } from "@/lib/library/library-api";
 import { droppedServersText, failureReason } from "@/lib/library/library-errors";
@@ -222,9 +223,10 @@ export function ExecutorItem({
 /** «Haiku · Sentry, Jira ⊖ у вас недоступна · до 3 раз» (executor-item.md, part 5). */
 function Summary({ executor, allowedServers }: { executor: WorkflowExecutor; allowedServers: readonly string[] }) {
   const { servers } = executor;
+  const t = useTranslations("formats");
   return (
     <p className={cn(CAPTION, "flex flex-wrap items-center gap-x-1 text-muted-foreground")}>
-      <span>{formatModel(executor.model)}</span>
+      <span>{formatRecordModel(t, executor.model)}</span>
       <span aria-hidden>·</span>
       {servers.length === 0 ? (
         <span>{TEXT.noServers}</span>

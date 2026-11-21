@@ -1,4 +1,4 @@
-import type { createFormatter, Formats } from 'next-intl';
+import type { createFormatter, Formats, useTranslations } from 'next-intl';
 
 /**
  * The shared date formats the interface-language provider receives (design-web.md, «Форматы»;
@@ -15,6 +15,9 @@ export const formats = {
 
 /** The formatter `useFormatter()` returns; pure functions receive it as a parameter. */
 export type Formatter = ReturnType<typeof createFormatter>;
+
+/** The `formats` messages: pure functions receive them as a parameter, components take `useTranslations('formats')`. */
+export type FormatsTranslator = ReturnType<typeof useTranslations<'formats'>>;
 
 type Moment = string | Date;
 
@@ -37,4 +40,19 @@ export function formatDay(format: Formatter, at: Moment, now: Date = new Date())
 export function formatListTime(format: Formatter, at: Moment, now: Date = new Date()): string {
   const date = toDate(at);
   return format.dateTime(date, sameDay(format, date, now) ? 'time' : 'dayTime');
+}
+
+/** A duration by the foundations steps: «<1 с», «42 с», «3 мин 5 с», «2 ч 14 мин». */
+export function formatDuration(t: FormatsTranslator, ms: number): string {
+  if (ms < 1000) return t('duration.underSecond');
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return t('duration.seconds', { seconds });
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    const rest = seconds % 60;
+    return rest === 0 ? t('duration.minutes', { minutes }) : t('duration.minutesSeconds', { minutes, seconds: rest });
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? t('duration.hours', { hours }) : t('duration.hoursMinutes', { hours, minutes: rest });
 }

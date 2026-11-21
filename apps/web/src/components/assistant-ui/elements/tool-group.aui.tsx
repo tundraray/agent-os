@@ -11,7 +11,7 @@ import {
 import { ChevronDownIcon, LoaderIcon } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { useScrollLock } from "@assistant-ui/react";
-import { pluralRu } from "@/lib/i18n/plural-ru";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import {
   CollapsibleRoot as Collapsible,
@@ -20,12 +20,6 @@ import {
 } from "./collapsible-root";
 
 const ANIMATION_DURATION = 200;
-
-const TOOL_CALL_FORMS = [
-  "вызов инструмента",
-  "вызова инструментов",
-  "вызовов инструментов",
-] as const;
 
 const toolGroupVariants = cva("aui-tool-group-root group/tool-group w-full", {
   variants: {
@@ -108,7 +102,8 @@ function ToolGroupTrigger({
   count: number;
   active?: boolean;
 }) {
-  const label = `${count} ${pluralRu(count, TOOL_CALL_FORMS)}`;
+  const t = useTranslations("formats");
+  const label = t("toolCallCount", { count });
 
   return (
     <CollapsibleTrigger

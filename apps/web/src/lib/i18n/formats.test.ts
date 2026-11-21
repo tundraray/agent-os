@@ -1,7 +1,9 @@
+import { createTranslator } from 'next-intl';
 import { describe, expect, it } from 'vitest';
 import { testFormatter } from '@/test/intl';
+import { messagesOf } from './messages';
 import type { Locale } from './pick-locale';
-import { formatDay, formatListTime, type Formatter } from './formats';
+import { formatDay, formatDuration, formatListTime, type Formatter, type FormatsTranslator } from './formats';
 
 // Moments in the test zone (Europe/Berlin, UTC+1 in November).
 const NOW = new Date('2026-11-21T15:00:00Z');
@@ -25,5 +27,34 @@ describe('formats moments by the interface language', () => {
     ['day with time', 'ru', (f) => f.dateTime(new Date(THIS_YEAR), 'dayTime'), '12 нояб., 14:32'],
   ])('%s in %s', (_case, locale, render, expected) => {
     expect(render(testFormatter(locale))).toBe(expected);
+  });
+});
+
+const translatorOf = (locale: Locale): FormatsTranslator =>
+  createTranslator({ locale, messages: messagesOf(locale), namespace: 'formats' });
+
+// UC-4 / AC-04.2, foundations «Длительность» and «Слова при числах»: a count agrees with its noun in every
+// form of the language, and a duration reads by the foundations steps.
+describe('formats counts and durations by the interface language', () => {
+  it.each<[string, Locale, (t: FormatsTranslator) => string, string]>([
+    ['1 call', 'en', (t) => t('toolCallCount', { count: 1 }), '1 tool call'],
+    ['2 calls', 'en', (t) => t('toolCallCount', { count: 2 }), '2 tool calls'],
+    ['21 calls', 'en', (t) => t('toolCallCount', { count: 21 }), '21 tool calls'],
+    ['1 call', 'ru', (t) => t('toolCallCount', { count: 1 }), '1 вызов инструмента'],
+    ['2 calls', 'ru', (t) => t('toolCallCount', { count: 2 }), '2 вызова инструментов'],
+    ['5 calls', 'ru', (t) => t('toolCallCount', { count: 5 }), '5 вызовов инструментов'],
+    ['21 calls', 'ru', (t) => t('toolCallCount', { count: 21 }), '21 вызов инструмента'],
+    ['under a second', 'en', (t) => formatDuration(t, 400), '<1 s'],
+    ['seconds', 'en', (t) => formatDuration(t, 42_000), '42 s'],
+    ['minutes and seconds', 'en', (t) => formatDuration(t, 185_000), '3 min 5 s'],
+    ['hours and minutes', 'en', (t) => formatDuration(t, 8_040_000), '2 h 14 min'],
+    ['under a second', 'ru', (t) => formatDuration(t, 400), '<1 с'],
+    ['seconds', 'ru', (t) => formatDuration(t, 42_000), '42 с'],
+    ['whole minutes', 'ru', (t) => formatDuration(t, 180_000), '3 мин'],
+    ['minutes and seconds', 'ru', (t) => formatDuration(t, 185_000), '3 мин 5 с'],
+    ['whole hours', 'ru', (t) => formatDuration(t, 7_200_000), '2 ч'],
+    ['hours and minutes', 'ru', (t) => formatDuration(t, 8_040_000), '2 ч 14 мин'],
+  ])('%s in %s', (_case, locale, render, expected) => {
+    expect(render(translatorOf(locale))).toBe(expected);
   });
 });

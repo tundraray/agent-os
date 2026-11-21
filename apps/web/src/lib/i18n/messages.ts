@@ -1,10 +1,12 @@
 import enAccount from '@/messages/en/account.json';
 import enAnnounce from '@/messages/en/announce.json';
 import enCommon from '@/messages/en/common.json';
+import enFormats from '@/messages/en/formats.json';
 import enLogin from '@/messages/en/login.json';
 import ruAccount from '@/messages/ru/account.json';
 import ruAnnounce from '@/messages/ru/announce.json';
 import ruCommon from '@/messages/ru/common.json';
+import ruFormats from '@/messages/ru/formats.json';
 import ruLogin from '@/messages/ru/login.json';
 import type { Locale } from './pick-locale';
 
@@ -13,6 +15,7 @@ const en = {
   account: enAccount,
   announce: enAnnounce,
   common: enCommon,
+  formats: enFormats,
   login: enLogin,
 };
 
@@ -23,6 +26,7 @@ const ru: Messages = {
   account: ruAccount,
   announce: ruAnnounce,
   common: ruCommon,
+  formats: ruFormats,
   login: ruLogin,
 };
 

@@ -31,7 +31,7 @@
 //   - `describeAdminError` rows for `MODEL_PROVIDER_*`, `MODEL_DEFAULT_INVALID` (lib/admin/admin-errors.test.ts, existing table).
 //   - `providerReasonText` / `failureReasonText` / `chatFailureText` / `startRefused` / `describeRefusal` / `refusalText`: one row per reason
 //     in the existing reason-text tables (MC-9, MC-10, MC-11, MC-12 wording, design Test Strategy closing paragraph).
-//   - `formatModel` rows incl. `null` -> «Модель по умолчанию» (lib/agents/format.test.ts, existing table).
+//   - `formatRecordModel` rows incl. `null` -> «Модель по умолчанию» (lib/agents/format.test.ts, existing table).
 //
 // `not automated` (design UC-5, UC-6 and the L1 table): the connection check with its result row and announcements (AC-16.1, AC-15.1),
 //   the MC-3 confirmation on disabling a provider and the «Нет провайдера» mark (AC-05.4, AC-06.2), focus after dialogs and delete, the MP-01

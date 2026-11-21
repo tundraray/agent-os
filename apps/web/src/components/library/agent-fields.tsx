@@ -3,6 +3,7 @@
 import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { CheckIcon, ChevronRightIcon, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
@@ -30,7 +31,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MODEL_UNAVAILABLE_SHORT_TEXT, modelOptions, type ModelOption } from "@/lib/admin/model-providers";
-import { capitalize, formatModel, providerReasonText } from "@/lib/agents/format";
+import { capitalize, formatModel, formatRecordModel, providerReasonText } from "@/lib/agents/format";
+import type { FormatsTranslator } from "@/lib/i18n/formats";
 import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
@@ -526,10 +528,10 @@ const fieldOptionOf = (option: ModelOption): FieldOption => ({
  * The record's own model when it is not one of the offered (model-providers MP-08): no own model — the
  * default chat model; no right — custom-agents' mark; its provider does not work — the MC-8 short reason.
  */
-function ownOption(model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
+function ownOption(t: FormatsTranslator, model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
   const models = choices.models ?? [];
   if (model === null) {
-    const label = formatModel(null, { models, defaultModel: choices.defaultModel });
+    const label = formatRecordModel(t, null, { models, defaultModel: choices.defaultModel });
     return { value: null, label, name: label, provider: null, accessibleName: undefined, mark: null };
   }
   const own = options.find((option) => option.value === model);
@@ -548,8 +550,9 @@ function ownOption(model: string | null, choices: EditorChoices, options: readon
  * mark; a record without its own model shows the default chat model, and choosing another gives it its own.
  */
 export function ModelField({ id, label = TEXT.model, model, choices, error, onChange }: ModelFieldProps) {
+  const t = useTranslations("formats");
   const all = chatOptions(choices.models ?? []);
-  const own = ownOption(model, choices, all);
+  const own = ownOption(t, model, choices, all);
   const options = [
     ...(own === null ? [] : [own]),
     ...all.filter((option) => option.unavailableReason === null).map(fieldOptionOf),

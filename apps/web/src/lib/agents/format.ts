@@ -1,5 +1,5 @@
 import { AgentFailureReasonSchema, type AgentFailureReason, type AgentStatus } from "@agent-os/contracts";
-import { pluralRu } from "@/lib/i18n/plural-ru";
+import type { FormatsTranslator } from "@/lib/i18n/formats";
 
 /**
  * Display formatters shared by the agent screens, the feed and the tool-call block: one place decides
@@ -89,8 +89,6 @@ export function failureReasonText(reason: string | null, model?: string): { text
 
 const MODEL_FAMILY = /(?:^|\/)claude-([a-z]+)-/;
 
-const DEFAULT_MODEL = "Модель по умолчанию";
-
 /**
  * What a place that already reads the models knows (model-providers design-web.md, KD-6): the models with
  * their titles and the default chat model — its id, `null` while none is chosen, absent when not read.
@@ -103,15 +101,9 @@ export type ModelNames = {
 /**
  * The one label of a model (KD-6, UXRD MC-8). A model in `names` reads by its title; otherwise
  * `anthropic/claude-haiku-5-5` → «Haiku» (the segment after `claude-`, capitalised, no version) and any
- * other id as it is. `null` is a record on the default chat model, named when `names` knows it.
+ * other id as it is.
  */
-export function formatModel(modelId: string | null, names?: ModelNames): string {
-  if (modelId === null) {
-    const defaultModel = names?.defaultModel;
-    if (defaultModel === undefined) return DEFAULT_MODEL;
-    if (defaultModel === null) return `${DEFAULT_MODEL} — не выбрана`;
-    return `${DEFAULT_MODEL} · ${formatModel(defaultModel, names)}`;
-  }
+export function formatModel(modelId: string, names?: ModelNames): string {
   const named = names?.models.find((row) => row.model === modelId);
   if (named !== undefined) return named.name;
   const family = MODEL_FAMILY.exec(modelId)?.[1];
@@ -119,24 +111,13 @@ export function formatModel(modelId: string | null, names?: ModelNames): string 
   return capitalize(family);
 }
 
-/** A duration for MC-18: «<1 с», «42 с», «3 мин 5 с», «2 ч 14 мин». */
-export function formatDuration(ms: number): string {
-  if (ms < 1000) return "<1 с";
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds} с`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    const rest = seconds % 60;
-    return rest === 0 ? `${minutes} мин` : `${minutes} мин ${rest} с`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest === 0 ? `${hours} ч` : `${hours} ч ${rest} мин`;
-}
-
-/** «{N} вызовов инструментов» with «вызов» agreeing with N (MC-18). */
-export function formatToolCallCount(count: number): string {
-  return `${count} ${pluralRu(count, ["вызов", "вызова", "вызовов"])} инструментов`;
+/** The model a record runs on: `null` is the default chat model, named when `names` knows it. */
+export function formatRecordModel(t: FormatsTranslator, modelId: string | null, names?: ModelNames): string {
+  if (modelId !== null) return formatModel(modelId, names);
+  const defaultModel = names?.defaultModel;
+  if (defaultModel === undefined) return t("defaultModel");
+  if (defaultModel === null) return t("defaultModelUnset");
+  return t("defaultModelNamed", { model: formatModel(defaultModel, names) });
 }
 
 /** MC-12: the agent page composer's placeholder by the agent's status. */
@@ -152,14 +133,6 @@ export function agentComposerPlaceholder(status: AgentStatus): string {
     case "stopped":
       return "Напишите, чтобы продолжить с прежней историей";
   }
-}
-
-const INHERITED_HISTORY_TITLE = "История до ответвления";
-
-/** MC-9: the inherited history block; without a count while it is unknown (not read, or the read failed). */
-export function inheritedHistoryCaption(count: number | null): string {
-  if (count === null) return INHERITED_HISTORY_TITLE;
-  return `${INHERITED_HISTORY_TITLE} · ${count} ${pluralRu(count, ["сообщение", "сообщения", "сообщений"])}`;
 }
 
 /** The workflow brief's three parts in card order, with their labels (MC-9, MC-20). */
