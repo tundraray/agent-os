@@ -1,6 +1,7 @@
 "use client";
 
 import { CloudOff } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 
 import type { LiveStore } from "@/lib/live/live-store";
@@ -10,12 +11,13 @@ import type { LiveStore } from "@/lib/live/live-store";
  * animation and announces nothing itself — `LiveStore` speaks through the `Announcer`.
  */
 export function ConnectionBar({ live }: { live: LiveStore }) {
+  const t = useTranslations("shell");
   const lost = useStore(live, (state) => state.connection === "lost");
   if (!lost) return null;
   return (
     <div className="bg-muted text-foreground flex h-8 w-full shrink-0 items-center gap-2 px-4 text-sm">
       <CloudOff aria-hidden="true" className="size-4 shrink-0" />
-      <span className="min-w-0 truncate">Нет связи с сервером. Переподключаемся…</span>
+      <span className="min-w-0 truncate">{t("connectionLost")}</span>
     </div>
   );
 }

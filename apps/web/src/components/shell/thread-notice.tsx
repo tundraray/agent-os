@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
 import { SearchXIcon, ShieldOffIcon, SquarePenIcon, type LucideIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { pageTitle, useDocumentTitle } from '@/hooks/use-document-title';
 import { adminPath, AGENTS_PATH, libraryPath, type AdminSection } from '@/lib/shell-route';
@@ -33,44 +34,18 @@ export type ThreadNoticeProps =
 
 type ScreenVariant = Exclude<ThreadNoticeProps['variant'], 'deleted'>;
 
+/** The `shell.notice` entry of each variant: its title and description. */
 const COPY = {
-  'not-found': {
-    title: 'Беседа не найдена',
-    description: 'Возможно, её удалили или ссылка указана неверно.',
-  },
-  'load-error': {
-    title: 'Не удалось загрузить беседу',
-    description: 'Проверьте подключение и попробуйте ещё раз.',
-  },
-  deleted: {
-    title: 'Беседа удалена',
-    description: 'Её удалили в другой вкладке или окне.',
-  },
-  'agent-not-found': {
-    title: 'Агент не найден',
-    description: 'Возможно, его удалили вместе с беседой или ссылка указана неверно.',
-  },
-  'agent-load-error': {
-    title: 'Не удалось загрузить агента',
-    description: 'Проверьте подключение и попробуйте ещё раз.',
-  },
-  'no-access': {
-    title: 'Нет доступа',
-    description: 'Панель администратора открыта только администраторам Agent OS.',
-  },
-  'record-not-found': {
-    title: 'Запись не найдена',
-    description: 'Возможно, её удалили, или ссылка указана неверно.',
-  },
-  'library-not-found': {
-    title: 'Не найдено',
-    description: 'Такого агента или workflow нет: его удалили, закрыли для вас или ссылка неверна.',
-  },
-  'library-load-error': {
-    title: 'Не удалось загрузить',
-    description: 'Проверьте подключение и попробуйте ещё раз.',
-  },
-} as const satisfies Record<ThreadNoticeProps['variant'], { title: string; description: string }>;
+  'not-found': 'notFound',
+  'load-error': 'loadError',
+  deleted: 'deleted',
+  'agent-not-found': 'agentNotFound',
+  'agent-load-error': 'agentLoadError',
+  'no-access': 'noAccess',
+  'record-not-found': 'recordNotFound',
+  'library-not-found': 'libraryNotFound',
+  'library-load-error': 'libraryLoadError',
+} as const satisfies Record<ThreadNoticeProps['variant'], string>;
 
 /**
  * TH-06 / TH-07 replace the feed: the same screen for a foreign, missing or deleted thread (AC-14.2), with focus on its h1.
@@ -79,6 +54,7 @@ const COPY = {
  * `deleted` (E-8, TH-07 «Deleted while open») is the inline notice the feed shows in place of the TH-08 block.
  */
 export function ThreadNotice(props: ThreadNoticeProps) {
+  const t = useTranslations('shell');
   switch (props.variant) {
     case 'deleted':
       return <DeletedInlineNotice onNewChat={props.onNewChat} />;
@@ -86,7 +62,7 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       return (
         <NoticeScreen variant={props.variant}>
           <Link href={AGENTS_PATH} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
-            К списку агентов
+            {t('notice.toAgents')}
           </Link>
         </NoticeScreen>
       );
@@ -94,7 +70,7 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       return (
         <NoticeScreen variant={props.variant}>
           <Button className="pointer-coarse:h-11" onClick={props.onRetry}>
-            Повторить
+            {t('notice.retry')}
           </Button>
         </NoticeScreen>
       );
@@ -102,7 +78,7 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       return (
         <NoticeScreen variant={props.variant} Icon={ShieldOffIcon}>
           <Link href="/" className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
-            В чат
+            {t('notice.toChat')}
           </Link>
         </NoticeScreen>
       );
@@ -110,15 +86,15 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       return (
         <NoticeScreen variant={props.variant} Icon={SearchXIcon}>
           <Link href={adminPath(props.section)} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
-            К списку
+            {t('notice.toList')}
           </Link>
         </NoticeScreen>
       );
     case 'library-not-found':
       return (
-        <NoticeScreen variant={props.variant} Icon={SearchXIcon} tab={pageTitle(COPY[props.variant].title)}>
+        <NoticeScreen variant={props.variant} Icon={SearchXIcon} tab={pageTitle(t('notice.libraryNotFound.title'))}>
           <Link href={libraryPath()} className={buttonVariants({ className: 'pointer-coarse:h-11' })}>
-            В библиотеку
+            {t('notice.toLibrary')}
           </Link>
         </NoticeScreen>
       );
@@ -126,7 +102,7 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       return (
         <NoticeScreen variant={props.variant}>
           <Button className="pointer-coarse:h-11" onClick={props.onRetry}>
-            Повторить
+            {t('notice.retry')}
           </Button>
         </NoticeScreen>
       );
@@ -135,10 +111,10 @@ export function ThreadNotice(props: ThreadNoticeProps) {
       const canRetry = props.variant === 'load-error' && props.onRetry !== undefined;
       return (
         <NoticeScreen variant={props.variant}>
-          {canRetry && <Button onClick={props.onRetry}>Повторить</Button>}
+          {canRetry && <Button onClick={props.onRetry}>{t('notice.retry')}</Button>}
           <Button variant={canRetry ? 'outline' : 'default'} onClick={props.onNewChat}>
             <SquarePenIcon aria-hidden />
-            Новый чат
+            {t('sidebar.newChat')}
           </Button>
         </NoticeScreen>
       );
@@ -159,7 +135,7 @@ type NoticeScreenProps = {
 function NoticeScreen({ variant, Icon, tab, children }: NoticeScreenProps) {
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const { title, description } = COPY[variant];
+  const t = useTranslations('shell.notice');
   useDocumentTitle(tab);
 
   useEffect(() => {
@@ -173,9 +149,9 @@ function NoticeScreen({ variant, Icon, tab, children }: NoticeScreenProps) {
     >
       {Icon !== undefined && <Icon aria-hidden className="mb-2 size-6 text-muted-foreground" />}
       <h1 ref={headingRef} id={headingId} tabIndex={-1} className="text-xl font-semibold outline-none">
-        {title}
+        {t(`${COPY[variant]}.title`)}
       </h1>
-      <p className="text-muted-foreground text-sm">{description}</p>
+      <p className="text-muted-foreground text-sm">{t(`${COPY[variant]}.description`)}</p>
       <div className="mt-4 flex flex-wrap justify-center gap-2">{children}</div>
     </section>
   );
@@ -189,7 +165,7 @@ function DeletedInlineNotice({ onNewChat }: { onNewChat: () => void }) {
   const headingId = useId();
   const reasonId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const { title, description } = COPY.deleted;
+  const t = useTranslations('shell');
 
   useEffect(() => {
     const active = document.activeElement;
@@ -202,14 +178,14 @@ function DeletedInlineNotice({ onNewChat }: { onNewChat: () => void }) {
       className="border-border bg-background mt-2 flex flex-col items-start gap-1 rounded-md border p-3 text-sm"
     >
       <h2 id={headingId} className="text-foreground font-medium">
-        {title}
+        {t('notice.deleted.title')}
       </h2>
       <p id={reasonId} role="alert" className="text-muted-foreground">
-        {description}
+        {t('notice.deleted.description')}
       </p>
       <Button ref={buttonRef} size="sm" className="mt-2 pointer-coarse:h-11" aria-describedby={reasonId} onClick={onNewChat}>
         <SquarePenIcon aria-hidden />
-        Новый чат
+        {t('sidebar.newChat')}
       </Button>
     </section>
   );
