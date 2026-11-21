@@ -105,6 +105,7 @@ type QuotaRead = { status: "loading" } | { status: "ready"; row: MyModel | null;
  */
 function QuotaFailureLine({ data }: { data: EventPartData }) {
   const { createdAt, model } = data;
+  const format = useFormatter();
   const [read, setRead] = useState<QuotaRead>({ status: "loading" });
 
   useEffect(() => {
@@ -128,7 +129,7 @@ function QuotaFailureLine({ data }: { data: EventPartData }) {
   }, [model, createdAt]);
 
   const row = read.status === "ready" ? read.row : null;
-  const text = read.status === "ready" ? quotaFailureText(row, read.month) : quotaFailureText(null, "");
+  const text = read.status === "ready" ? quotaFailureText(format, row, read.month) : quotaFailureText(format, null, "");
   return (
     <div data-slot="quota-failure" className="flex min-w-0 flex-col">
       <AgentStatus variant="event" status="failed" text={text} at={createdAt} />

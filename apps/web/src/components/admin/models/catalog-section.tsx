@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import { BoxIcon, PlusIcon } from 'lucide-react';
+import { useFormatter } from 'next-intl';
 import { toast } from 'sonner';
 import {
   AccessErrorCode,
@@ -13,11 +14,11 @@ import {
 import { StateBadge } from '@/components/state-badge';
 import { Button } from '@/components/ui/button';
 import type { Resource } from '@/hooks/use-resource';
-import { formatPriceUsd } from '@/lib/access/money';
 import { adminApi } from '@/lib/admin/admin-api';
 import { MODEL_DIALOG_TEXT, MODELS_TEXT } from '@/lib/admin/admin-texts';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { describeApiError, isApiRequestError } from '@/lib/api/api-request';
+import type { Formatter } from '@/lib/i18n/formats';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { CAPTION, CONTROL_SIZE } from '../admin-form';
@@ -33,7 +34,7 @@ const TEXT = {
   model: 'Модель',
   noProvider: 'Нет провайдера',
   remove: 'Убрать из каталога',
-  above: (threshold: number) => `свыше ${new Intl.NumberFormat('ru-RU').format(threshold)} входных токенов`,
+  above: (threshold: string) => `свыше ${threshold} входных токенов`,
   newPrices: 'Новые цены действуют для следующих вызовов. Прошлые стоимости не пересчитываются.',
   removeTitle: (name: string) => `Убрать модель «${name}» из каталога?`,
   removeBody:
@@ -57,11 +58,12 @@ const COLUMNS: readonly DataTableColumn[] = [
   ...PRICES.map(({ label }) => ({ header: label, align: 'end' as const })),
 ];
 
-const priceCells = (prices: PriceRates): string[] => PRICES.map(({ field }) => formatPriceUsd(prices[field]));
+const priceCells = (format: Formatter, prices: PriceRates): string[] =>
+  PRICES.map(({ field }) => format.number(prices[field], 'usdPrice'));
 
 /** An embedding model has the input price only: output and both cache prices read «—» (MP-03). */
-const embeddingPriceCells = (inputUsdPerMTok: number): string[] =>
-  PRICES.map(({ field }) => (field === 'inputUsdPerMTok' ? formatPriceUsd(inputUsdPerMTok) : '—'));
+const embeddingPriceCells = (format: Formatter, inputUsdPerMTok: number): string[] =>
+  PRICES.map(({ field }) => (field === 'inputUsdPerMTok' ? format.number(inputUsdPerMTok, 'usdPrice') : '—'));
 
 /** MP-03: the catalogue by id, so the models of one provider stand together. */
 const byId = (models: readonly CatalogModel[]): CatalogModel[] => [...models].sort((a, b) => a.id.localeCompare(b.id));
@@ -102,6 +104,7 @@ type CatalogSectionProps = {
  */
 export function CatalogSection({ catalog, providers, defaults, reloadAll }: CatalogSectionProps) {
   const headingId = useId();
+  const format = useFormatter();
   const needsProviderId = useId();
   const [editing, setEditing] = useState<DialogState>(CLOSED);
   const [removing, setRemoving] = useState<DialogState>(CLOSED);
@@ -144,7 +147,7 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
       </span>,
       providerCell(model),
       model.purpose === 'chat' ? MODEL_DIALOG_TEXT.chat : `${MODEL_DIALOG_TEXT.embedding} · ${model.dimensions}`,
-      ...(model.purpose === 'chat' ? priceCells(model.prices) : embeddingPriceCells(model.inputUsdPerMTok)),
+      ...(model.purpose === 'chat' ? priceCells(format, model.prices) : embeddingPriceCells(format, model.inputUsdPerMTok)),
     ],
     nested:
       model.purpose !== 'chat' || model.longContext === null
@@ -153,10 +156,10 @@ export function CatalogSection({ catalog, providers, defaults, reloadAll }: Cata
             {
               key: `${model.id}:long`,
               cells: [
-                <Truncated key="above" text={TEXT.above(model.longContext.aboveInputTokens)} />,
+                <Truncated key="above" text={TEXT.above(format.number(model.longContext.aboveInputTokens))} />,
                 '',
                 '',
-                ...priceCells(model.longContext.prices),
+                ...priceCells(format, model.longContext.prices),
               ],
             },
           ],

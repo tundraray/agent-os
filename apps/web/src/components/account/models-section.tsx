@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useId, useState } from "react";
 import { RotateCwIcon, TriangleAlert } from "lucide-react";
+import { useFormatter } from "next-intl";
 import { modelProvider, type MyModel, type MyModels } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
@@ -9,14 +10,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { accessApi } from "@/lib/access/access-api";
 import { NO_MODELS_ALLOWED } from "@/lib/access/access-texts";
-import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from "@/lib/access/money";
 import { describeApiError } from "@/lib/api/api-request";
+import { formatMonth, utcMonthOf, type Formatter } from "@/lib/i18n/formats";
 import { logger } from "@/lib/logger";
 
 /** UXRD MC-7 and MC-9; `unavailable` — model-providers UXRD MC-8. */
 const TEXT = {
   unavailable: "не работает",
-  title: (month: string) => `Модели и расход за ${monthName(month)}`,
+  title: (month: string) => `Модели и расход за ${month}`,
   model: "Модель",
   spent: "Расход",
   quota: "Квота",
@@ -35,11 +36,12 @@ const SKELETON_WIDTHS = ["w-full", "w-5/6", "w-2/3", "w-3/4", "w-1/2", "w-4/5"] 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready"; data: MyModels };
 
 /** Cells after the name, in column order; an exhausted quota reads remaining «0,00 $» whatever the API rounds to. */
-function valuesOf(row: MyModel): { spent: string; quota: string; remaining: string } {
+function valuesOf(format: Formatter, row: MyModel): { spent: string; quota: string; remaining: string } {
+  const usd = (value: number): string => format.number(value, "usd");
   return {
-    spent: formatUsd(row.spentUsd),
-    quota: row.quotaUsd === null ? TEXT.noLimit : formatQuotaUsd(row.quotaUsd),
-    remaining: row.exhausted ? formatUsd(0) : row.remainingUsd === null ? EMPTY_VALUE : formatUsd(row.remainingUsd),
+    spent: usd(row.spentUsd),
+    quota: row.quotaUsd === null ? TEXT.noLimit : format.number(row.quotaUsd, "usdQuota"),
+    remaining: row.exhausted ? usd(0) : row.remainingUsd === null ? EMPTY_VALUE : usd(row.remainingUsd),
   };
 }
 
@@ -51,6 +53,7 @@ function valuesOf(row: MyModel): { spent: string; quota: string; remaining: stri
 export function ModelsSection() {
   const headingId = useId();
   const mobile = useIsMobile();
+  const format = useFormatter();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -73,7 +76,8 @@ export function ModelsSection() {
     };
   }, [attempt]);
 
-  const title = TEXT.title(load.status === "ready" ? load.data.month : utcMonthOf(new Date()));
+  // The month is named in UTC (`formats.dateTime.month`): the server's HTML and the hydrated page agree.
+  const title = TEXT.title(formatMonth(format, load.status === "ready" ? load.data.month : utcMonthOf(new Date())));
 
   return (
     <section aria-labelledby={headingId} className="flex max-w-160 flex-col gap-4">
@@ -148,6 +152,7 @@ const cellClass = "border-b border-border px-3 py-2.5";
 const numberClass = "text-right tabular-nums";
 
 function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }) {
+  const format = useFormatter();
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm leading-5 text-foreground">
@@ -170,7 +175,7 @@ function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }
         </thead>
         <tbody>
           {models.map((row) => {
-            const values = valuesOf(row);
+            const values = valuesOf(format, row);
             return (
               <tr key={row.model}>
                 <td className={`${cellClass} break-words`}>
@@ -195,10 +200,11 @@ function ModelsTable({ caption, models }: { caption: string; models: MyModel[] }
 
 /** data-table «Две строки»: no header; the name, under it the other cells through « · »; the column names stay for screen readers. */
 function ModelsTwoLines({ models }: { models: MyModel[] }) {
+  const format = useFormatter();
   return (
     <ul className="flex flex-col divide-y divide-border">
       {models.map((row) => {
-        const values = valuesOf(row);
+        const values = valuesOf(format, row);
         const cells = [
           { label: TEXT.spent, value: values.spent },
           { label: TEXT.quota, value: values.quota },

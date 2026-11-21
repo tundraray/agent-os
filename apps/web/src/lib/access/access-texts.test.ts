@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { MyModel, MyModels } from '@agent-os/contracts';
+import { testFormatter } from '@/test/intl';
+
+// Intl separates a Russian amount and its currency sign with U+00A0.
+const NBSP = String.fromCharCode(0xa0);
 import { chatFailureText, quotaFailureText, quotaRowOf, refusalText } from './access-texts';
 
 const SONNET: MyModel = {
@@ -77,10 +81,14 @@ describe('access texts (MC-10, MC-11, MC-14, QS-01)', () => {
     },
     {
       where: 'quota failure line',
-      text: quotaFailureText(SONNET, '2026-11'),
-      expected: 'Сбой: квота Sonnet исчерпана — 100,40 $ из 100 $ за ноябрь',
+      text: quotaFailureText(testFormatter(), SONNET, '2026-11'),
+      expected: `Сбой: квота Sonnet исчерпана — 100,40${NBSP}$ из 100${NBSP}$ за ноябрь`,
     },
-    { where: 'quota failure line without the row', text: quotaFailureText(null, '2026-11'), expected: 'Сбой: квота исчерпана' },
+    {
+      where: 'quota failure line without the row',
+      text: quotaFailureText(testFormatter(), null, '2026-11'),
+      expected: 'Сбой: квота исчерпана',
+    },
   ])('$where reads «$expected»', ({ text, expected }) => {
     expect(text).toBe(expected);
   });

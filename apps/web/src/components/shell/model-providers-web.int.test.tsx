@@ -94,6 +94,8 @@ import { renderWithRuntime } from '@/test/render-with-runtime';
 vi.mock('@/lib/logger', async () => (await import('@/test/admin-support')).loggerModule);
 
 const API = 'http://api.test';
+// Intl separates a Russian amount and its currency sign with U+00A0.
+const NBSP = String.fromCharCode(0xa0);
 
 // Support shared by the cases of this file -------------------------------------------------------------------------------------------------
 
@@ -562,7 +564,7 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
         'Gemini Embedding 001google/gemini-embedding-001',
         'google',
         'Эмбеддинги · 768',
-        '0,15 $',
+        `0,15${NBSP}$`,
         '—',
         '—',
         '—',
@@ -572,10 +574,10 @@ describe('model-providers / web - integration (jsdom + MSW)', () => {
       'Gemini 2.5 Flashgoogle/gemini-2.5-flash',
       'google',
       'Чат',
-      '0,3 $',
-      '2,5 $',
-      '1 $',
-      '0,03 $',
+      `0,3${NBSP}$`,
+      `2,5${NBSP}$`,
+      `1${NBSP}$`,
+      `0,03${NBSP}$`,
     ]);
 
     // Act: a third `google` model, refused 422 MODEL_PROVIDER_INVALID with each reason in turn

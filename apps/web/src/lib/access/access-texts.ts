@@ -7,7 +7,7 @@ import {
   PROVIDER_FAILURE_REASONS,
   providerReasonText,
 } from '@/lib/agents/format';
-import { formatQuotaUsd, formatUsd, monthName, utcMonthOf } from './money';
+import { formatMonth, utcMonthOf, type Formatter } from '@/lib/i18n/formats';
 
 /**
  * Texts of the access refusals and failures (enterprise-access UXRD, MC-10, MC-11, MC-14, MC-17): one
@@ -81,9 +81,11 @@ export function quotaRowOf(models: MyModels, model: string, at: string): MyModel
 }
 
 /** QS-01 (MC-14) without the time, which the event line adds; without a row or a quota — «Сбой: квота исчерпана». */
-export function quotaFailureText(row: MyModel | null, month: string): string {
+export function quotaFailureText(format: Formatter, row: MyModel | null, month: string): string {
   if (row === null || row.quotaUsd === null) return `Сбой: ${failureReasonText('quota_exhausted').text}`;
-  return `Сбой: квота ${row.name} исчерпана — ${formatUsd(row.spentUsd)} из ${formatQuotaUsd(row.quotaUsd)} за ${monthName(month)}`;
+  const spent = format.number(row.spentUsd, 'usd');
+  const quota = format.number(row.quotaUsd, 'usdQuota');
+  return `Сбой: квота ${row.name} исчерпана — ${spent} из ${quota} за ${formatMonth(format, month)}`;
 }
 
 /** The second line of QS-01. */

@@ -6,6 +6,8 @@ import { server } from "@/test/msw-server";
 import { ModelsSection } from "./models-section";
 
 const API = "http://api.test";
+// Intl separates a Russian amount and its currency sign with U+00A0.
+const NBSP = String.fromCharCode(0xa0);
 
 function serveModels(body: MyModels): void {
   server.use(http.get(`${API}/api/access/models`, () => HttpResponse.json(body)));
@@ -37,9 +39,9 @@ describe("«Модели и расход» (MA-02)", () => {
     expect(header).toEqual(["Модель", "Расход", "Квота", "Остаток"]);
     const [, haiku, opus, sonnet] = within(table).getAllByRole("row");
     // The name cell holds the provider Caption under the name (model-providers MP-08).
-    expect(cellsOf(haiku!)).toEqual(["Haikuanthropic", "3,10 $", "без предела", "—"]);
-    expect(cellsOf(opus!)).toEqual(["Opusanthropic", "12,50 $", "50 $", "37,50 $"]);
-    expect(cellsOf(sonnet!)).toEqual(["Sonnetanthropic", "100,40 $", "100 $", "0,00 $Квота исчерпана"]);
+    expect(cellsOf(haiku!)).toEqual(["Haikuanthropic", `3,10${NBSP}$`, "без предела", "—"]);
+    expect(cellsOf(opus!)).toEqual(["Opusanthropic", `12,50${NBSP}$`, `50${NBSP}$`, `37,50${NBSP}$`]);
+    expect(cellsOf(sonnet!)).toEqual(["Sonnetanthropic", `100,40${NBSP}$`, `100${NBSP}$`, `0,00${NBSP}$Квота исчерпана`]);
   });
 
   // AC-23.1: an employee with no allowed model reads MC-9 instead of an empty table.
