@@ -6,9 +6,11 @@ import {
   MyRoleListSchema,
   RecordDetailSchema,
   RecordSummarySchema,
+  type CopyRecordBody,
   type CopyResult,
   type CreateRecordBody,
   type KnowledgeView,
+  type Language,
   type LibraryChoices,
   type MyRoleList,
   type RecordAudienceBody,
@@ -41,8 +43,14 @@ export const libraryApi = {
     apiRequest({ path: recordRoute(id), method: 'PUT', body, schema: RecordDetailSchema }),
   saveAudience: (id: string, body: RecordAudienceBody): Promise<RecordDetail> =>
     apiRequest({ path: `${recordRoute(id)}/audience`, method: 'PUT', body, schema: RecordDetailSchema }),
-  copy: (id: string): Promise<CopyResult> =>
-    apiRequest({ path: `${recordRoute(id)}/copy`, method: 'POST', schema: CopyResultSchema }),
+  /** `language` is the page's: the copy mark and an unrenamed built-in name are written in it (i18n Flow 4). */
+  copy: (id: string, language: Language): Promise<CopyResult> =>
+    apiRequest({
+      path: `${recordRoute(id)}/copy`,
+      method: 'POST',
+      body: { language } satisfies CopyRecordBody,
+      schema: CopyResultSchema,
+    }),
   remove: (id: string): Promise<void> => apiRequest({ path: recordRoute(id), method: 'DELETE' }),
   /** The workflow's knowledge graph; the library and the panel read the same route (KD-1). */
   knowledge: (id: string): Promise<KnowledgeView> =>

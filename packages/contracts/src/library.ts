@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ModelIdSchema } from './access';
+import { LanguageSchema, type Language } from './identity';
 import { McpServerNameSchema } from './mcp';
 
 /**
@@ -26,6 +27,19 @@ export const RECORD_MAX_TURNS_DEFAULT = 40;
 
 /** Built-in key of the main-chat record: every enabled employee sees it, its audience is fixed. */
 export const CHAT_BUILTIN_KEY = 'chat';
+/** Key of the built-in role in `BUILTIN_NAMES`: the role has no `builtinKey`, it is known by its name. */
+export const BUILTIN_ROLE_KEY = 'super-admin';
+
+/**
+ * Names of the built-in records by `builtinKey` and of the built-in role, in each interface language
+ * (i18n design-web.md, KD-6; UXRD MC-7). `ru` is the name the record is seeded with and the role is
+ * created with by the migration: a name equal to it was not renamed and is shown in the page's language.
+ */
+export const BUILTIN_NAMES = {
+  [CHAT_BUILTIN_KEY]: { ru: 'Главный чат', en: 'Main chat' },
+  'deep-research': { ru: 'Глубокий ресерч', en: 'Deep research' },
+  [BUILTIN_ROLE_KEY]: { ru: 'Супер-администратор', en: 'Super administrator' },
+} as const satisfies Record<string, Record<Language, string>>;
 /** "All servers" in a record's server list; only a system record may hold it. */
 export const ALL_SERVERS = '*';
 
@@ -223,6 +237,10 @@ export const RecordAudienceBodySchema = z.object({
   offerInChat: z.boolean(),
 });
 export type RecordAudienceBody = z.infer<typeof RecordAudienceBodySchema>;
+
+/** Body of POST /api/library/:id/copy: the language of the copy mark and of an unrenamed built-in name. */
+export const CopyRecordBodySchema = z.object({ language: LanguageSchema });
+export type CopyRecordBody = z.infer<typeof CopyRecordBodySchema>;
 
 /** Body of PUT /api/admin/library/:id/audience; no holder — only admins see the record. */
 export const SystemRecordAudienceBodySchema = z.object({

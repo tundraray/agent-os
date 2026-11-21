@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "next-intl";
 import { LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -112,6 +113,7 @@ export type CopyRecord = {
 export function useCopyRecord(): CopyRecord {
   const { libraryIndex, announcer } = useShellServices();
   const router = useRouter();
+  const locale = useLocale();
   const leaveThenGo = useLeaveThenGo();
   const [plan, setPlan] = useState<CopyPlan | null>(null);
   const [pending, setPending] = useState(false);
@@ -120,7 +122,7 @@ export function useCopyRecord(): CopyRecord {
   async function run(record: CopySource): Promise<void> {
     const result = await recordAction(
       { recordId: record.id, kind: record.kind, action: "copy", version: null },
-      () => libraryApi.copy(record.id),
+      () => libraryApi.copy(record.id, locale),
     );
     void libraryIndex.refresh();
     const notice = copiedNotice(result);

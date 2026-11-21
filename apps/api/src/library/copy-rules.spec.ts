@@ -54,6 +54,8 @@ function copy(fields: Partial<CopyInput>): CopyInput {
     allowedModels: [ANYA_MODEL],
     defaultModel: PLATFORM_MODEL,
     visibleAgentIds: [AGENT_SEEN],
+    language: 'ru',
+    builtinKey: null,
     ...fields,
   };
 }
@@ -156,6 +158,31 @@ describe("copy rule: a free name with the copy suffix, the copier's servers, eac
       expected: expect.objectContaining({
         name: `${'а'.repeat(70)} — копия 2`,
       }),
+    },
+    // i18n UC-3: AC-07.1, AC-07.2 (MC-8, MC-7), AC-06.4.
+    {
+      name: 'own record en: the copy mark in the copier’s language',
+      input: copy({ language: 'en' }),
+      expected: expect.objectContaining({ name: 'разбор оплат — copy' }),
+    },
+    {
+      name: 'unrenamed Главный чат en → Main chat — copy',
+      input: copy({ name: 'Главный чат', builtinKey: 'chat', language: 'en' }),
+      expected: expect.objectContaining({ name: 'Main chat — copy' }),
+    },
+    {
+      name: 'renamed built-in keeps the admin’s name',
+      input: copy({
+        name: 'Чат поддержки',
+        builtinKey: 'chat',
+        language: 'en',
+      }),
+      expected: expect.objectContaining({ name: 'Чат поддержки — copy' }),
+    },
+    {
+      name: 'taken name gets a number en',
+      input: copy({ language: 'en', takenNames: ['Разбор оплат — copy'] }),
+      expected: expect.objectContaining({ name: 'разбор оплат — copy 2' }),
     },
   ])('$name', ({ input, expected }) => {
     expect(planCopy(input)).toEqual(expected);
