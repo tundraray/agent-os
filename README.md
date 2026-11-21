@@ -153,8 +153,10 @@ docker compose -f infra/docker-compose.yml ps -a   # migrate — Exited (0), api
 Первая учётная запись — один раз, пароль (12 символов и больше) идёт на стандартный ввод:
 
 ```bash
-printf '%s' '<пароль>' | docker compose -f infra/docker-compose.yml run --rm -T api \
+read -rs PW   # пароль вводится без эха и не попадает в историю оболочки
+printf '%s' "$PW" | docker compose -f infra/docker-compose.yml run --rm -T api \
   node dist/super-admin-cli.js --login admin --name Admin --email admin@example.com
+unset PW
 ```
 
 Веб — `http://localhost:3000`. Провайдеры моделей и их ключи задаются в панели администратора. Стек на сборке одного коммита: скачать оба образа с тегом `sha-<short sha>` и поставить им локально тег `latest` (`docker tag`); compose скачивает образ, только когда его нет на машине.

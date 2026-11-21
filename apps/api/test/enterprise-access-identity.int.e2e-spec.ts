@@ -1345,7 +1345,7 @@ describe('enterprise-access / identity - integration (real AppModule + real Post
   // Steps and rows:
   //   configuration:
   //   1. the first `POST /api/admin/providers` (type `oidc`, «Okta») with no saved public URL -> `GET /api/admin/settings/sign-in` now holds
-  //      the address the test used to reach the API and `providerData.redirectUri` is built from it; the provider is `enabled: false`; enabling
+  //      FRONTEND_ORIGIN (the web's public address) and `providerData.redirectUri` is built from it; the provider is `enabled: false`; enabling
   //      it with no options -> 409 PROVIDER_INCOMPLETE; an issuer the test issuer does not serve -> 422 PROVIDER_CHECK_FAILED with `reason:
   //      unreachable` and nothing stored; the test issuer with secret `S1` -> `complete: true`, `clientSecretSet: true`, no field of any
   //      response holds `S1`; `google` is created with its own client id and secret (its issuer is the preset, pointed at the test issuer)

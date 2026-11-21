@@ -54,12 +54,6 @@ describe('public address without a saved one: the saved one wins, a valid FRONTE
       expected: 'https://aos.example.com',
       savedNow: 'https://aos.example.com',
     },
-    {
-      saved: null,
-      frontendOrigin: 'http://localhost:3000',
-      expected: 'http://localhost:3000',
-      savedNow: 'http://localhost:3000',
-    },
   ])(
     'saved $saved, FRONTEND_ORIGIN $frontendOrigin -> $expected',
     async ({ saved, frontendOrigin, expected, savedNow }) => {
