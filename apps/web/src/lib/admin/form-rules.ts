@@ -30,6 +30,7 @@ import {
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
 import type { ErrorsTranslator } from '@/lib/agents/format';
+import type { Formatter } from '@/lib/i18n/formats';
 import enErrors from '@/messages/en/errors.json';
 
 /**
@@ -165,9 +166,9 @@ export function hoursToMinutes(text: string): number | null {
   return hours === null ? null : hours * MINUTES_PER_HOUR;
 }
 
-/** Minutes the server stores → hours the field shows, comma for the fraction: 480 → «8», 15 → «0,25». */
-export function minutesToHours(minutes: number): string {
-  return String(Number((minutes / MINUTES_PER_HOUR).toFixed(2))).replace('.', ',');
+/** Minutes the server stores → hours the field shows, the page's decimal mark, no grouping: 480 → «8», 15 → «0,25» on `ru`. */
+export function minutesToHours(format: Formatter, minutes: number): string {
+  return format.number(minutes / MINUTES_PER_HOUR, { useGrouping: false, maximumFractionDigits: 2 });
 }
 
 export type SignInSettingsValues = { publicUrl: string; idleHours: string; absoluteHours: string };

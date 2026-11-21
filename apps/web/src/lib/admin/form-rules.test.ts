@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { testTranslator } from '@/test/intl';
+import { testFormatter, testTranslator } from '@/test/intl';
 import {
   accountRules,
   fieldErrorText,
@@ -20,6 +20,7 @@ import {
 } from './form-rules';
 
 const t = testTranslator('errors');
+const format = testFormatter();
 
 /** A rule's result as the form shows it: each field's key read as its Russian text; other values as they are. */
 const shown = (value: unknown): unknown => {
@@ -81,8 +82,8 @@ describe('panel form rules (DC-4, DC-7, DC-14, GR-01, AD-09, AD-11, AD-14, AD-16
     ['a password of 257 characters', () => accountRules({ ...account, password: 'a'.repeat(257) }), { password: PASSWORD }],
     // DC-7, AD-14
     ['«0,25» hours as minutes', () => hoursToMinutes('0,25'), 15],
-    ['480 minutes as hours', () => minutesToHours(480), '8'],
-    ['15 minutes as hours', () => minutesToHours(15), '0,25'],
+    ['480 minutes as hours', () => minutesToHours(format, 480), '8'],
+    ['15 minutes as hours', () => minutesToHours(format, 15), '0,25'],
     ['idle «0,3» is off the step', () => signInSettingsRules({ ...settings, idleHours: '0,3' }), { idleHours: IDLE }],
     ['idle «0,25» under a total of «24» passes', () => signInSettingsRules({ ...settings, idleHours: '0,25' }), {}],
     ['idle «24,25» is above the bound', () => signInSettingsRules({ ...settings, idleHours: '24,25', absoluteHours: '720' }), {

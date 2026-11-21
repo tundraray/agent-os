@@ -358,5 +358,117 @@
       "saved": "Self-learning settings saved",
       "loadFailed": "Couldn't load the settings"
     }
+  },
+  "servers": {
+    "register": "Register server",
+    "server": "Server",
+    "toolCount": "Tools",
+    "status": "Status",
+    "credentials": "Credentials",
+    "empty": "No servers yet",
+    "emptyHint": "Register your first MCP server by its address.",
+    "listLoadFailed": "Couldn't load MCP servers",
+    "mode": {
+      "shared": "Shared account",
+      "oauth": "Personal OAuth"
+    },
+    "modeHint": {
+      "shared": "One token for everyone: every call goes with it.",
+      "oauth": "Each employee connects their own account. To get the tool list, connect yours."
+    },
+    "state": {
+      "enabled": "On",
+      "disabled": "Off",
+      "awaiting_admin_account": "Waiting for the admin account"
+    },
+    "sharedToken": "Access token",
+    "checking": "Checking the server…",
+    "registration": {
+      "title": "Registration",
+      "name": "Name",
+      "nameHint": "Agent definitions point to the server by this name. The name can't change after registration.",
+      "url": "Address",
+      "submit": "Register"
+    },
+    "page": {
+      "enabled": "On",
+      "disabled": "Off",
+      "refresh": "Refresh list",
+      "refreshing": "Refreshing…",
+      "refreshed": "List refreshed: {added} new, {removed} removed",
+      "connect": "Connect my account",
+      "readOnlyHint": "To change the address or mode, delete the server and register it again.",
+      "save": "Save",
+      "tool": "Tool",
+      "description": "Description",
+      "action": "Action",
+      "reads": "reads",
+      "changes": "changes",
+      "remove": "Delete",
+      "removeTitle": "Delete the “{server}” server?",
+      "removeBody": "Agents lose its tools at once. This can't be undone. Employees' connected accounts on this server will be deleted.",
+      "tools": "Tools",
+      "noTools": "No tools yet",
+      "loadFailed": "Couldn't load the server",
+      "removed": "Server deleted",
+      "connectReturn": {
+        "connect_failed": "Couldn't connect your account: the sign-in was canceled or not finished. Try again.",
+        "tools_failed": "Account connected, but the tool list couldn't be fetched. Click “Refresh list”."
+      }
+    },
+    "toolResults": {
+      "title": "Large tool results",
+      "storeFromChars": "Replace an answer with a reference if it's longer than, characters",
+      "storeFromCharsHint": "An MCP tool answer longer than this reaches the agent as a reference with the answer's beginning, and the agent reads the rest in parts.",
+      "previewChars": "Answer beginning in the reference, characters",
+      "previewCharsHint": "How many first characters of the answer the agent sees at once. Less than the length at which the answer is replaced with a reference.",
+      "readMaxTokens": "Agent reads at a time, tokens",
+      "readMaxTokensHint": "How much the agent gets for one read or one search through the saved answer.",
+      "save": "Save",
+      "saved": "Result settings saved",
+      "loadFailed": "Couldn't load the settings"
+    }
+  },
+  "signIn": {
+    "addProvider": "Add provider",
+    "methods": "Sign-in methods",
+    "button": "Button",
+    "password": "Login and password",
+    "builtin": "built-in",
+    "alwaysOn": "Always on",
+    "googleWarning": "An enabled Google provider lets in anyone with a Google account: the first sign-in creates an account without roles. Until you give it permissions, the chat doesn't answer it.",
+    "methodsLoadFailed": "Couldn't load sign-in methods",
+    "type": "Type",
+    "name": "Button name",
+    "nameHint": "Employees will see “Sign in with {name}”",
+    "enabled": "On",
+    "disabled": "Off",
+    "enabledSwitch": "On: {name}",
+    "newProvider": {
+      "title": "New provider",
+      "create": "Create",
+      "oidcHint": "Okta or any corporate IdP over OIDC"
+    },
+    "provider": {
+      "settings": "Provider settings",
+      "providerData": "Data for the provider",
+      "providerDataHint": "Copy these values into the Agent OS app settings at the provider",
+      "redirectUri": "Redirect URI",
+      "save": "Save",
+      "loadFailed": "Couldn't load the provider"
+    },
+    "settings": {
+      "title": "Sign-in settings",
+      "publicUrl": "Agent OS public address",
+      "idle": "Without activity",
+      "absolute": "Total since sign-in",
+      "hours": "hours",
+      "idleHint": "From 0.25 to 24 hours.",
+      "absoluteHint": "From 1 to 720 hours (30 days), no less than the inactivity limit.",
+      "note": "New limits also apply to employees already signed in — from their next request. Copy the new address into “Data for the provider” of each provider.",
+      "save": "Save",
+      "saved": "Sign-in settings saved",
+      "loadFailed": "Couldn't load sign-in settings"
+    }
   }
 }

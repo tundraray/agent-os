@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { useTranslations } from 'next-intl';
 import type { ProviderSummary, ProviderType } from '@agent-os/contracts';
 import { StateBadge } from '@/components/state-badge';
 import { useResource } from '@/hooks/use-resource';
@@ -11,34 +12,17 @@ import { FormWarning } from '../admin-form';
 import { DataTable, resourceTableState, type DataTableColumn, type DataTableRow } from '../data-table';
 import { SavingSwitch } from '../saving-switch';
 
-/** UXRD MC-27. */
-const TEXT = {
-  title: 'Способы входа',
-  button: 'Кнопка',
-  password: 'Логин и пароль',
-  builtin: 'встроенный',
-  alwaysOn: 'Всегда включён',
-  googleWarning:
-    'Включённый Google пускает любого владельца аккаунта Google: первый вход создаёт учётную запись без ролей. Пока вы не дадите ей права, чат ей не отвечает.',
-  loadFailed: 'Не удалось загрузить способы входа',
-} as const;
+/** UXRD MC-27 (`admin.signIn`): the texts the table, the new form and the provider page share. */
+type SignInTranslator = ReturnType<typeof useTranslations<'admin.signIn'>>;
 
-/** MC-27: the provider texts the table, the new form and the provider page share. */
-export const PROVIDER_TEXT = {
-  type: 'Тип',
-  name: 'Название кнопки',
-  nameHint: (name: string) => `Сотрудники увидят «Войти через ${name.trim()}»`,
-  enabled: 'Включено',
-  disabled: 'Выключено',
-} as const;
-
-/** MC-27: the provider types of the first version as the panel names them. */
+/** MC-27: the provider types of the first version as the panel names them — the same in every language (KD-7). */
 export const PROVIDER_TYPE_LABEL: Readonly<Record<ProviderType, string>> = { google: 'Google', oidc: 'OIDC' };
 
 /** MC-27: under «Тип» of the new form and under the header of a Google provider's page. */
 export function GoogleWarning() {
+  const t = useTranslations('admin.signIn');
   return (
-    <FormWarning>{TEXT.googleWarning}</FormWarning>
+    <FormWarning>{t('googleWarning')}</FormWarning>
   );
 }
 
@@ -55,6 +39,7 @@ type ProviderEnabledSwitchProps = {
  * `PUBLIC_URL_REQUIRED`) puts the switch back with its MC-27 text under it.
  */
 export function ProviderEnabledSwitch({ provider, inTable, onChanged }: ProviderEnabledSwitchProps) {
+  const t = useTranslations('admin.signIn');
   const save = async (enabled: boolean): Promise<void> => {
     await rereadOnNotFound(onChanged)(() => adminApi.providers.update(provider.id, { enabled }));
     onChanged();
@@ -62,8 +47,8 @@ export function ProviderEnabledSwitch({ provider, inTable, onChanged }: Provider
 
   return (
     <SavingSwitch
-      label={inTable ? `${PROVIDER_TEXT.enabled}: ${provider.name}` : PROVIDER_TEXT.enabled}
-      labelOff={PROVIDER_TEXT.disabled}
+      label={inTable ? t('enabledSwitch', { name: provider.name }) : t('enabled')}
+      labelOff={t('disabled')}
       labelHidden={inTable}
       checked={provider.enabled}
       onSave={save}
@@ -72,28 +57,29 @@ export function ProviderEnabledSwitch({ provider, inTable, onChanged }: Provider
   );
 }
 
-const COLUMNS: readonly DataTableColumn[] = [
-  { header: TEXT.button },
-  { header: PROVIDER_TEXT.type },
-  { header: PROVIDER_TEXT.enabled },
+const columns = (t: SignInTranslator): readonly DataTableColumn[] => [
+  { header: t('button') },
+  { header: t('type') },
+  { header: t('enabled') },
 ];
 
 /** FR-01: the password sign-in is always on; it is not in the response and not a link. */
-const PASSWORD_ROW: DataTableRow = {
+const passwordRow = (t: SignInTranslator): DataTableRow => ({
   key: 'password',
-  name: TEXT.password,
+  name: t('password'),
   cells: [
-    TEXT.password,
-    TEXT.builtin,
+    t('password'),
+    t('builtin'),
     <StateBadge key="enabled" state="ok">
-      {TEXT.alwaysOn}
+      {t('alwaysOn')}
     </StateBadge>,
   ],
-};
+});
 
 /** UXRD AD-07: the sign-in methods — the password row, then the providers in creation order as link rows. */
 export function ProvidersTable() {
   const headingId = useId();
+  const t = useTranslations('admin.signIn');
   const providers = useResource(adminApi.providers.list, 'providers');
 
   const toRow = (provider: ProviderSummary): DataTableRow => ({
@@ -113,14 +99,14 @@ export function ProvidersTable() {
   });
 
   // No empty state: the password row is always there.
-  const state = resourceTableState(providers, TEXT.loadFailed, (data) => ({ rows: [PASSWORD_ROW, ...data.map(toRow)] }));
+  const state = resourceTableState(providers, t('methodsLoadFailed'), (data) => ({ rows: [passwordRow(t), ...data.map(toRow)] }));
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {TEXT.title}
+        {t('methods')}
       </h2>
-      <DataTable caption={TEXT.title} columns={COLUMNS} state={state} />
+      <DataTable caption={t('methods')} columns={columns(t)} state={state} />
     </section>
   );
 }

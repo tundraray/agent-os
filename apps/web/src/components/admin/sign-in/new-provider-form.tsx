@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { PROVIDER_NAME_MAX_LENGTH, type ProviderType } from '@agent-os/contracts';
 import { PageHeader } from '@/components/shell/page-header';
@@ -8,18 +9,7 @@ import { providerRules } from '@/lib/admin/form-rules';
 import { adminPath, adminRecordPath } from '@/lib/shell-route';
 import { AdminForm, AdminRadioField, AdminTextField, type AdminFormApi, type AdminRadioOption } from '../admin-form';
 import { useAdminTitles } from '../admin-header';
-import { GoogleWarning, PROVIDER_TEXT, PROVIDER_TYPE_LABEL } from './providers-table';
-
-/** UXRD MC-27; the title is the UXRD's name of the screen. */
-const TEXT = {
-  title: 'Новый провайдер',
-  create: 'Создать',
-} as const;
-
-const TYPES: readonly AdminRadioOption<ProviderType>[] = [
-  { value: 'google', label: PROVIDER_TYPE_LABEL.google },
-  { value: 'oidc', label: PROVIDER_TYPE_LABEL.oidc, hint: 'Okta и любой корпоративный IdP по OIDC' },
-];
+import { GoogleWarning, PROVIDER_TYPE_LABEL } from './providers-table';
 
 type NewProviderValues = { type: ProviderType; name: string };
 
@@ -40,7 +30,12 @@ function chooseType(form: AdminFormApi<NewProviderValues>, type: ProviderType): 
  */
 export function NewProviderForm() {
   const titles = useAdminTitles();
+  const t = useTranslations('admin.signIn');
   const router = useRouter();
+  const types: readonly AdminRadioOption<ProviderType>[] = [
+    { value: 'google', label: PROVIDER_TYPE_LABEL.google },
+    { value: 'oidc', label: PROVIDER_TYPE_LABEL.oidc, hint: t('newProvider.oidcHint') },
+  ];
 
   const create = async ({ type, name }: NewProviderValues): Promise<void> => {
     const created = await adminApi.providers.create({ type, name: name.trim() });
@@ -49,13 +44,13 @@ export function NewProviderForm() {
 
   return (
     <>
-      <PageHeader area={titles.panel} title={TEXT.title} parent={titles.parent('sign-in')} />
+      <PageHeader area={titles.panel} title={t('newProvider.title')} parent={titles.parent('sign-in')} />
       <AdminForm
         variant="page"
         initialValues={INITIAL}
         validate={({ name }) => providerRules({ name })}
         onSubmit={create}
-        submitLabel={TEXT.create}
+        submitLabel={t('newProvider.create')}
         savedText={null}
         onCancel={() => router.push(adminPath('sign-in'))}
         logEvent="admin: provider create"
@@ -63,16 +58,16 @@ export function NewProviderForm() {
         {(form) => (
           <>
             <AdminRadioField
-              label={PROVIDER_TEXT.type}
+              label={t('type')}
               value={form.values.type}
-              options={TYPES}
+              options={types}
               onChange={(type) => chooseType(form, type)}
             />
             {form.values.type === 'google' && <GoogleWarning />}
             <AdminTextField
               {...form.field('name')}
-              label={PROVIDER_TEXT.name}
-              hint={PROVIDER_TEXT.nameHint(form.values.name)}
+              label={t('name')}
+              hint={t('nameHint', { name: form.values.name.trim() })}
               maxLength={PROVIDER_NAME_MAX_LENGTH}
               value={form.values.name}
               onChange={(value) => form.set('name', value)}
