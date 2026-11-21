@@ -33,9 +33,9 @@ export const DROPPED_SERVERS = 'Не вошли системы, к которы�
 export const droppedServersText = (servers: readonly string[]): string => `${DROPPED_SERVERS} ${servers.join(', ')}`;
 
 /** MC-14: why «Поделиться» is unavailable on the owner's record; `null` — it is available. */
-export function shareBlockedReason(record: Pick<RecordSummary, 'ban'>, noRoles: boolean): string | null {
-  if (record.ban !== null) return 'Доступ закрыл администратор — делиться нельзя';
-  return noRoles ? 'У вас нет ролей — поделиться не с кем' : null;
+export function shareBlockedReason(t: ErrorsTranslator, record: Pick<RecordSummary, 'ban'>, noRoles: boolean): string | null {
+  if (record.ban !== null) return t('library.shareBlocked.banned');
+  return noRoles ? t('library.shareBlocked.noRoles') : null;
 }
 
 /** The reason of a failed request in the server's words, or «нет связи с сервером» — the {причина} of MC-13. */

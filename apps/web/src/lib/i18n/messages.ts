@@ -5,6 +5,7 @@ import enChat from '@/messages/en/chat.json';
 import enCommon from '@/messages/en/common.json';
 import enErrors from '@/messages/en/errors.json';
 import enFormats from '@/messages/en/formats.json';
+import enLibrary from '@/messages/en/library.json';
 import enLogin from '@/messages/en/login.json';
 import enPages from '@/messages/en/pages.json';
 import enShell from '@/messages/en/shell.json';
@@ -16,6 +17,7 @@ import ruChat from '@/messages/ru/chat.json';
 import ruCommon from '@/messages/ru/common.json';
 import ruErrors from '@/messages/ru/errors.json';
 import ruFormats from '@/messages/ru/formats.json';
+import ruLibrary from '@/messages/ru/library.json';
 import ruLogin from '@/messages/ru/login.json';
 import ruPages from '@/messages/ru/pages.json';
 import ruShell from '@/messages/ru/shell.json';
@@ -32,6 +34,7 @@ const en = {
   common: enCommon,
   errors: enErrors,
   formats: enFormats,
+  library: enLibrary,
   login: enLogin,
   pages: enPages,
   shell: enShell,
@@ -44,6 +47,9 @@ export type Messages = typeof en;
 /** The translate function of the conversation area, for text functions that take it as a parameter. */
 export type ChatTranslator = ReturnType<typeof useTranslations<'chat'>>;
 
+/** The translate function of the library area, for its text functions. */
+export type LibraryTranslator = ReturnType<typeof useTranslations<'library'>>;
+
 const ru: Messages = {
   account: ruAccount,
   agents: ruAgents,
@@ -52,6 +58,7 @@ const ru: Messages = {
   common: ruCommon,
   errors: ruErrors,
   formats: ruFormats,
+  library: ruLibrary,
   login: ruLogin,
   pages: ruPages,
   shell: ruShell,

@@ -51,7 +51,11 @@
     "companyReadOnly": "Company agents are edited in the admin panel",
     "runLimit": "Call limit reached",
     "open": "Open",
-    "openInEditor": "Open in editor"
+    "openInEditor": "Open in editor",
+    "shareBlocked": {
+      "banned": "An administrator closed access — sharing isn't allowed",
+      "noRoles": "You have no roles — there's no one to share with"
+    }
   },
   "refusal": {
     "no_access": "No access to the tool",

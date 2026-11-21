@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { useTranslations } from "next-intl";
 import { LoaderCircle, Lock, MoreHorizontalIcon, Users } from "lucide-react";
 import { CHAT_BUILTIN_KEY, type RecordAudience, type RecordDetail } from "@agent-os/contracts";
 import { CAPTION, CONTROL_SIZE } from "@/components/admin/admin-form";
@@ -161,7 +162,8 @@ export function KnowledgeButton({ record }: { record: Pick<RecordDetail, "id" | 
 function EmployeeAudienceButton({ record, onOpen }: { record: RecordDetail; onOpen: () => void }) {
   const roles = useResource(libraryApi.myRoles, record.id, "library");
   const noRoles = roles.status === "ready" && roles.data?.length === 0;
-  const blocked = shareBlockedReason(record, noRoles);
+  const t = useTranslations("errors");
+  const blocked = shareBlockedReason(t, record, noRoles);
   return <AudienceButton record={record} mode="employee" blocked={blocked} onOpen={onOpen} />;
 }
 

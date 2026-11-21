@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { Bot, Workflow, X } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
-import type { ChipRecord, RecordKind, RecordSummary, RunOrigin } from "@agent-os/contracts";
+import { BUILTIN_ROLE_KEY, type ChipRecord, type RecordKind, type RecordSummary, type RunOrigin } from "@agent-os/contracts";
 import { StateBadge } from "@/components/state-badge";
 import { useShellServices } from "@/components/shell/shell-actions";
-import { kindWord } from "@/lib/library/library-errors";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
+import type { Locale } from "@/lib/i18n/pick-locale";
 import { cn } from "cn";
 
 /**
@@ -53,14 +56,17 @@ type LabelData = {
 
 /**
  * The record label (design-system record-label.md, UXRD MC-17): name, source and audience in plain
- * words. Text written by other employees is rendered as text only.
+ * words. Text written by other employees is rendered as text only. A built-in record's name, and the
+ * built-in role among the audience, show in the page's language.
  */
 export function RecordLabel(props: RecordLabelProps) {
-  const data = useLabelData(props);
+  const t = useTranslations("library");
+  const data = useLabelData(props, t);
   if (props.variant === "chip") return <RecordChip data={data} onRemove={props.onRemove} className={props.className} />;
 
   const showSource = props.showSource ?? true;
-  const source = !showSource || data.company ? null : data.mine ? "моя" : data.author;
+  const source = !showSource || data.company ? null : data.mine ? t("label.mine") : data.author;
+
   const under = props.variant === "under";
   const nameClass = under
     ? "text-muted-foreground"
@@ -90,7 +96,7 @@ export function RecordLabel(props: RecordLabelProps) {
           {data.name}
         </span>
       )}
-      <span className="sr-only">{spokenRest(data, props.showVersion === true)}</span>
+      <span className="sr-only">{spokenRest(t, data, props.showVersion === true)}</span>
       {source !== null && (
         <span aria-hidden className={under ? undefined : "text-muted-foreground"}>
           · {source}
@@ -101,7 +107,7 @@ export function RecordLabel(props: RecordLabelProps) {
       </span>
       {props.showVersion === true && (
         <span aria-hidden className="text-muted-foreground text-xs leading-4 tabular-nums">
-          · версия {data.version}
+          {t("label.version", { version: data.version })}
         </span>
       )}
     </span>
@@ -109,14 +115,16 @@ export function RecordLabel(props: RecordLabelProps) {
 }
 
 function AudienceBadge({ data }: { data: LabelData }) {
-  if (data.unavailable) return <StateBadge state="off">{`${kindWord(data.kind)} недоступен`}</StateBadge>;
+  const t = useTranslations("library");
+  if (data.unavailable) return <StateBadge state="off">{t("label.unavailable", { kind: data.kind })}</StateBadge>;
   if (data.audience === null) return null;
   return <StateBadge variant="source">{data.audience}</StateBadge>;
 }
 
 function RecordChip({ data, onRemove, className }: { data: LabelData; onRemove: () => void; className?: string }) {
+  const t = useTranslations("library");
   const KindIcon = data.kind === "agent" ? Bot : Workflow;
-  const hint = [data.company ? null : data.mine ? "моя" : data.author, data.audience].filter(Boolean).join(" · ");
+  const hint = [data.company ? null : data.mine ? t("label.mine") : data.author, data.audience].filter(Boolean).join(" · ");
   return (
     <span
       role="group"
@@ -131,7 +139,7 @@ function RecordChip({ data, onRemove, className }: { data: LabelData; onRemove: 
       <span className="text-foreground min-w-0 truncate text-sm leading-5 font-medium">{data.name}</span>
       <button
         type="button"
-        aria-label={`Убрать: ${data.name}`}
+        aria-label={t("label.remove", { name: data.name })}
         onClick={onRemove}
         className="text-muted-foreground hover:bg-accent focus-visible:bg-accent focus-visible:ring-ring inline-flex size-5 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2"
       >
@@ -142,22 +150,23 @@ function RecordChip({ data, onRemove, className }: { data: LabelData; onRemove: 
 }
 
 /** What a screen reader hears after the name, as one phrase (MC-17). */
-function spokenRest(data: LabelData, withVersion: boolean): string {
+function spokenRest(t: LibraryTranslator, data: LabelData, withVersion: boolean): string {
   const parts: string[] = [];
-  if (data.unavailable) parts.push(`${kindWord(data.kind)} недоступен`);
-  else if (data.company) parts.push("от компании");
+  if (data.unavailable) parts.push(t("label.unavailable", { kind: data.kind }));
+  else if (data.company) parts.push(t("label.company"));
   else {
-    if (data.mine) parts.push(`мой ${kindWord(data.kind)}`);
+    if (data.mine) parts.push(t("label.spoken.mine", { kind: data.kind }));
     // A chip whose row is not read yet has no known author.
-    else if (data.author !== null) parts.push(`автор ${data.author}`);
+    else if (data.author !== null) parts.push(t("label.spoken.author", { name: data.author }));
     if (data.audience !== null) parts.push(data.audience);
   }
-  if (withVersion) parts.push(`версия ${data.version}`);
+  if (withVersion) parts.push(t("label.spoken.version", { version: data.version }));
   return parts.length === 0 ? "" : `, ${parts.join(", ")}`;
 }
 
-function useLabelData(props: RecordLabelSource): LabelData {
+function useLabelData(props: RecordLabelSource, t: LibraryTranslator): LabelData {
   const { libraryIndex, currentUser } = useShellServices();
+  const locale = useLocale();
   const summary = props.summary;
   const recordId = props.summary?.id ?? props.origin?.recordId ?? props.chip?.id ?? "";
   // A summary is the live row itself; an origin or a chip looks its record up in the library list.
@@ -171,14 +180,14 @@ function useLabelData(props: RecordLabelSource): LabelData {
     const company = live != null && live.author === null;
     const mine = live != null && live.mine;
     return {
-      name: props.chip.name,
+      name: builtinName({ builtinKey: live?.builtinKey ?? null, name: props.chip.name }, locale),
       kind: props.chip.kind,
       version: live?.version ?? 0,
       unavailable: live === null,
       company,
       mine,
       author: live?.author?.name ?? null,
-      audience: audienceOf(live, company, mine),
+      audience: audienceOf(t, locale, { live, company, mine }),
     };
   }
   const header =
@@ -189,23 +198,31 @@ function useLabelData(props: RecordLabelSource): LabelData {
   const company = header.author === null;
   const mine = live != null ? live.mine : header.author !== null && header.author.id === viewerId;
   return {
-    name: header.name,
+    name: builtinName(header, locale),
     kind: header.kind,
     version: header.version,
     unavailable: live === null,
     company,
     mine,
     author: header.author?.name ?? null,
-    audience: audienceOf(live, company, mine),
+    audience: audienceOf(t, locale, { live, company, mine }),
   };
 }
 
-function audienceOf(live: RecordSummary | null | undefined, company: boolean, mine: boolean): string | null {
+type AudienceOf = {
+  live: RecordSummary | null | undefined;
+  company: boolean;
+  mine: boolean;
+};
+
+function audienceOf(t: LibraryTranslator, locale: Locale, { live, company, mine }: AudienceOf): string | null {
   if (live === null) return null;
-  if (company) return "от компании";
+  if (company) return t("label.company");
   if (live === undefined) return null;
-  if (mine && live.audience.roles.length === 0) return "только вы";
+  if (mine && live.audience.roles.length === 0) return t("label.onlyYou");
   // The viewer sees only the roles they are in themselves.
-  const roles = live.audience.roles.filter((role) => role.member).map((role) => role.name);
+  const roles = live.audience.roles
+    .filter((role) => role.member)
+    .map((role) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale));
   return roles.length > 0 ? roles.join(", ") : null;
 }

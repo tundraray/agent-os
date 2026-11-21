@@ -218,6 +218,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
   const copyErrorId = useId();
   const format = useFormatter();
   const t = useTranslations("errors");
+  const tLibrary = useTranslations("library");
   const { start, back, tellDraft, handOnCreated } = usePageHandoff(handoff, source, system);
   const { state, view, dispatch } = useRecordForm(start.values === undefined ? source : { ...source, values: start.values });
   const { saved, values, base } = state;
@@ -490,7 +491,7 @@ export function RecordEditor({ mode, source, choices, handoff }: RecordEditorPro
             )}
             {record?.ban != null && (
               <div role="alert">
-                <FormWarning>{banText(format, record.ban.closedAt)}</FormWarning>
+                <FormWarning>{banText(tLibrary, format, record.ban.closedAt)}</FormWarning>
               </div>
             )}
             {/* A disabled fieldset disables every native field inside while the save runs. */}
