@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": { "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
+    "build": { "outputs": ["dist/**", ".next/**", "!.next/cache/**"], "env": ["API_INTERNAL_URL"] },
     "dev": { "cache": false, "persistent": true },
     "lint": {},
     "typecheck": {},
