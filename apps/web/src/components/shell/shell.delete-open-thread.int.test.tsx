@@ -10,7 +10,7 @@
 //   event source for LiveStore.
 //   options.pointer: 'fine' | 'coarse' drives the matchMedia('(pointer: fine)') polyfill from src/test/setup.ts.
 //   MSW server from '@/test/msw-server' (onUnhandledRequest: 'error'); fixtures from '@/test/fixtures'.
-//   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test' (vitest.config.ts test.env). TZ = 'Europe/Berlin'.
+//   Page address in tests: jsdom url 'http://api.test' (vitest.config.ts); relative `/api/...` requests resolve against it. TZ = 'Europe/Berlin'.
 // Mock boundary: network only (MSW) + the live event source + next/navigation (framework boundary). Runtime, stores,
 //   adapters, ShellStatus, url-sync, components, sonner Toaster — real. Do NOT mock lib/threads/*, lib/feed/*, lib/live/*
 //   or @assistant-ui/*.

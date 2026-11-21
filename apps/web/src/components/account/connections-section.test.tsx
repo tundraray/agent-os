@@ -53,7 +53,7 @@ describe("«Подключения» (MA-01): a row per server with its badge an
     expect(within(sentry).getByText("Нужна аутентификация")).toBeInTheDocument();
     expect(within(sentry).getByRole("link", { name: "Подключить" })).toHaveAttribute(
       "href",
-      "http://api.test/api/mcp/connections/sentry/connect",
+      "/api/mcp/connections/sentry/connect",
     );
     const jira = rowOf("jira");
     expect(within(jira).getByText("Подключено")).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("«Подключения» (MA-01): a row per server with its badge an
     expect(await within(jira).findByText("Нужна аутентификация")).toBeInTheDocument();
     expect(deleted).toBe("jira");
     const connect = within(jira).getByRole("link", { name: "Подключить" });
-    expect(connect).toHaveAttribute("href", "http://api.test/api/mcp/connections/jira/connect");
+    expect(connect).toHaveAttribute("href", "/api/mcp/connections/jira/connect");
     await waitFor(() => expect(connect).toHaveFocus());
     expect(await screen.findByText("Аккаунт jira отключён")).toBeInTheDocument();
   });

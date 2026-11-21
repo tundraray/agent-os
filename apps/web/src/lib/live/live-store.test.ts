@@ -1,7 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setUnauthorizedHandler } from '@/lib/api/api-request';
-import { apiBaseUrl } from '@/lib/config';
 import { currentUser } from '@/test/fixtures';
 import { createTestLiveSource } from '@/test/live-source';
 import { server } from '@/test/msw-server';
@@ -24,7 +23,7 @@ describe('LiveStore — closed stream probes the session (DC-13)', () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const probe = vi.fn();
       server.use(
-        http.get(`${apiBaseUrl}/api/auth/me`, () => {
+        http.get('/api/auth/me', () => {
           probe();
           return status === 401
             ? HttpResponse.json(

@@ -6,16 +6,17 @@
 
 ## Как запустить локально
 
-1. Запустить `api` по `apps/api/README.md` («How to run locally»): API слушает `http://localhost:4000`. В `apps/api/.env` переменная `FRONTEND_ORIGIN` должна совпадать с адресом веба (по умолчанию `http://localhost:3000`), иначе браузер не пропустит запросы с куками.
-2. Создать `apps/web/.env.local` из `apps/web/.env.example`:
+1. Запустить `api` по `apps/api/README.md` («How to run locally»): API слушает `http://localhost:4000`. Браузер ходит только на адрес веба, а веб пересылает `/api/...` в API. В `apps/api/.env` переменная `FRONTEND_ORIGIN` должна совпадать с адресом веба (по умолчанию `http://localhost:3000`): по ней API проверяет `Origin` изменяющих запросов.
+2. При необходимости создать `apps/web/.env.local` из `apps/web/.env.example` — все переменные необязательны:
 
    ```
-   NEXT_PUBLIC_API_URL=http://localhost:4000
-   # необязательно; пусто — логи только в консоль браузера
+   # куда пересылается /api; читается при сборке и `next dev`, по умолчанию http://localhost:4000
+   # API_INTERNAL_URL=http://localhost:4000
+   # пусто — логи только в консоль браузера
    NEXT_PUBLIC_SENTRY_DSN=
    ```
 
-   Без `NEXT_PUBLIC_API_URL` (или с неабсолютным адресом) приложение не стартует. Переменные `NEXT_PUBLIC_*` попадают в клиентскую сборку: после правки перезапустить `dev` или пересобрать.
+   `API_INTERNAL_URL` попадает в таблицу маршрутов сборки, а `NEXT_PUBLIC_*` — в клиентскую сборку: после правки перезапустить `dev` или пересобрать.
 3. Из корня репозитория:
 
    ```bash

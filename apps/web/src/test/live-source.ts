@@ -31,9 +31,12 @@ export type TestLiveSource = {
 class TestEventSource extends EventTarget implements LiveEventSource {
   readyState = CONNECTING;
   closed = false;
+  readonly url: string;
 
-  constructor(readonly url: string) {
+  /** Resolves the URL against the page address, as `EventSource.url` does. */
+  constructor(url: string) {
     super();
+    this.url = new URL(url, location.href).href;
   }
 
   close(): void {

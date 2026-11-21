@@ -10,12 +10,12 @@
 //
 // Harness (src/test/): renderWithRuntime(options) from '@/test/render-with-runtime' mounts ChatRuntimeProvider + ChatShell with mocked
 //   next/navigation (controlled pathname, router spy). MSW server from '@/test/msw-server' (onUnhandledRequest: 'error').
-//   API base URL in tests: NEXT_PUBLIC_API_URL = 'http://api.test'. TZ = 'Europe/Berlin'.
+//   Page address in tests: jsdom url 'http://api.test' (vitest.config.ts); relative `/api/...` requests resolve against it. TZ = 'Europe/Berlin'.
 //   The implementation tasks rewrite the harness: the AI SDK fixtures (sseFromChunks, historyMessages) go away; the fixtures
 //   for ConversationView, AgentPageView, AgentNode, Confirmation and the `/api/events` frames come with the tasks.
 // Mock boundary: network (MSW) and the event source injected into LiveStore (jsdom has no EventSource; the test supplies its own source and
 //   pushes `ready`, `tree` and `delta` frames through it) + next/navigation. LiveStore, FeedStore, toFeed, useFeedRuntime, the shell,
-//   assistant-ui and every component — real. Do NOT mock lib/threads/*, lib/config.ts, @assistant-ui/* or the stores.
+//   assistant-ui and every component — real. Do NOT mock lib/threads/*, @assistant-ui/* or the stores.
 //   Contracts: docs/features/agent-platform/design-chat.md (ConversationView, AgentPageView, AgentNode, Confirmation, history `afterSeq`).
 import {
   DecisionRequestSchema,

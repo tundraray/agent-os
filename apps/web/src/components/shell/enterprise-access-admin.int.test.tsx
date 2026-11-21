@@ -362,7 +362,7 @@ function rowCells(table: HTMLElement, text: string): string[] {
 const OKTA = fixtureId(400);
 const GOOGLE = fixtureId(401);
 /** Where the tab goes to connect the administrator's own account (Flow 2): a page address, never a `fetch`. */
-const connectAddress = (server: string): string => `${API}/api/admin/mcp-servers/${server}/connect`;
+const connectAddress = (server: string): string => `/api/admin/mcp-servers/${server}/connect`;
 /** The tools of `sentry` after the refresh: `update_issue` is gone, `create_issue` is new. */
 const REFRESHED_TOOLS: McpToolView[] = [
   { name: 'create_issue', title: 'Create issue', description: 'Заводит задачу', readOnly: false },
@@ -1201,10 +1201,10 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
   //   4. sign-in settings (AC-26.3, DC-7): with `idleMinutes` 480 and `absoluteMinutes` 1440 the fields show «8» and «24»; entering «0,25» and «24» and
   //      «Сохранить» sends ONE `PUT /api/admin/settings/sign-in` with the shown address, `idleMinutes: 15`, `absoluteMinutes: 1440` (minutes, not the
   //      hours typed), then the fields show the new read and the toast «Настройки входа сохранены»; with `publicUrl: null` the address
-  //      field shows the API address the web talks to; an out-of-range value («0,3» hours) sends no request and puts the focus on the field
+  //      field shows the page address the administrator opened the web at; an out-of-range value («0,3» hours) sends no request and puts the focus on the field
   //   5. register a server, personal OAuth (AC-27.1, DC-9): «Зарегистрировать сервер» -> «Имя» sentry, «Адрес», «Личный OAuth» -> ONE
   //      `POST /api/admin/mcp-servers` with `{ name, url, mode: 'oauth' }` (no token key); `201 awaiting_admin_account` sends the TAB to
-  //      `{apiBaseUrl}/api/admin/mcp-servers/sentry/connect` by navigation ([support] `location.assign` spy) and no `fetch` goes there; the tab returns at
+  //      `/api/admin/mcp-servers/sentry/connect` by navigation ([support] `location.assign` spy) and no `fetch` goes there; the tab returns at
   //      `/admin/servers/sentry?connected=1`: «Включён» and the tools table with «читает» and «меняет», and `connected` is removed from the address (a
   //      reload does not repeat it); `?error=connect_failed` shows «Ждёт аккаунта администратора», «Подключить мой аккаунт» (the same connect address)
   //      and the MC-29 text once; `?error=tools_failed` shows its text above the table
@@ -1259,7 +1259,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     expect(within(methods).queryAllByRole('link')).toEqual([]);
     expect(readsAfterChange(api, 0)).toContain('/api/admin/providers');
 
-    // Row 4 - sign-in settings (AC-26.3, DC-7): hours from the stored minutes, the API address while none is saved
+    // Row 4 - sign-in settings (AC-26.3, DC-7): hours from the stored minutes, the page address while none is saved
     const address = await screen.findByLabelText('Публичный адрес Agent OS');
     expect(address).toHaveValue('http://api.test');
     const idle = screen.getByLabelText('Без активности');

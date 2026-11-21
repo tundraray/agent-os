@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { McpConnectionSchema, type McpConnection } from "@agent-os/contracts";
 import { apiRequest } from "@/lib/api/api-request";
-import { apiBaseUrl } from "@/lib/config";
 
 const McpConnectionListSchema = z.array(McpConnectionSchema);
 
@@ -28,7 +27,7 @@ async function disconnect(server: string): Promise<void> {
 
 /** The connect route answers 302 to the authorization server, so the tab goes to this address instead of a request. */
 function connectUrl(server: string): string {
-  return `${apiBaseUrl}/api/mcp/connections/${encodeURIComponent(server)}/connect`;
+  return `/api/mcp/connections/${encodeURIComponent(server)}/connect`;
 }
 
 export const mcpApi = { connections, disconnect, connectUrl, onConnectionsChanged };

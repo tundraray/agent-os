@@ -2,7 +2,6 @@ import { LiveEventSchema, type LiveEvent } from "@agent-os/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
 import { apiRequest, describeApiError, isApiRequestError } from "@/lib/api/api-request";
-import { apiBaseUrl } from "@/lib/config";
 import type { logger as appLogger } from "@/lib/logger";
 
 import type { AnnouncerStore } from "./announcer-store";
@@ -63,7 +62,7 @@ const defaultOpenEventSource: OpenEventSource = (url) =>
   new EventSource(url, { withCredentials: true });
 
 function eventsUrl(target: LiveTarget | null): string {
-  const base = `${apiBaseUrl}/api/events`;
+  const base = "/api/events";
   return target === null ? base : `${base}?watch=${encodeURIComponent(target)}`;
 }
 

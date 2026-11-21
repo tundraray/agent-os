@@ -129,7 +129,8 @@ cd ../..
 Переменные (`apps/web/.env.local`, образец — `apps/web/.env.example`), запуск и маршруты — `apps/web/README.md`:
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:4000
+# необязательно: куда веб пересылает /api (по умолчанию http://localhost:4000)
+# API_INTERNAL_URL=http://localhost:4000
 ```
 
 Артефакты рендерятся через Tool UI assistant-ui в правую панель `ResizablePanel`.

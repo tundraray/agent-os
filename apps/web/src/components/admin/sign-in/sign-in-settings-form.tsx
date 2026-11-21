@@ -10,7 +10,6 @@ import {
   signInSettingsRules,
   type SignInSettingsValues,
 } from '@/lib/admin/form-rules';
-import { apiBaseUrl } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
 import { DataTable, resourceTableState } from '../data-table';
@@ -31,9 +30,12 @@ const TEXT = {
   loadFailed: 'Не удалось загрузить настройки входа',
 } as const;
 
-/** DC-7: the form shows hours; until an address is saved, the address of the API this web talks to. */
+/**
+ * DC-7: the form shows hours; until an address is saved, the address the administrator opened the web at,
+ * which is also where the browser reaches the API. Runs only on `useResource` data, so in the browser.
+ */
 const valuesOf = (settings: SignInSettings): SignInSettingsValues => ({
-  publicUrl: settings.publicUrl ?? new URL(apiBaseUrl).origin,
+  publicUrl: settings.publicUrl ?? window.location.origin,
   idleHours: minutesToHours(settings.idleMinutes),
   absoluteHours: minutesToHours(settings.absoluteMinutes),
 });
