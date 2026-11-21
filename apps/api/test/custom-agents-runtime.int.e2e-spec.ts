@@ -103,7 +103,7 @@ import {
 } from '@agent-os/contracts';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { builtinRecords } from '../src/library/builtin-records.js';
+import { builtinRecords } from '../src/library/builtin-records';
 import {
   addModel,
   allowRole,
@@ -113,16 +113,16 @@ import {
   runModel,
   type RunRole,
   useRunModels,
-} from './support/access.js';
+} from './support/access';
 import {
   type ChatApi,
   chatApi,
   expectBody,
   expectError,
   waitFor,
-} from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { type DraftActionAnswer, postDraftAction } from './support/drafts.js';
+} from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { type DraftActionAnswer, postDraftAction } from './support/drafts';
 import {
   agentBody,
   auditOfRecord,
@@ -134,13 +134,13 @@ import {
   recordName,
   setSystemAudience,
   shareWith,
-} from './support/library.js';
+} from './support/library';
 import {
   apiRequest,
   createEmployee,
   seedSuperAdmin,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one test: INT-3 A boots the app twice more, the other rows settle far sooner. */
 const TEST_TIMEOUT_MS = 300_000;

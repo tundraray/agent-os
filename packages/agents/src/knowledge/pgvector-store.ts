@@ -2,7 +2,7 @@ import { KnowledgeItemTypeSchema } from '@agent-os/contracts';
 import { agentKnowledgeVectors, type Database } from '@agent-os/db';
 import { and, asc, cosineDistance, eq, inArray, sql } from 'drizzle-orm';
 
-import type { KnowledgeVectorStore } from './vector-store.js';
+import type { KnowledgeVectorStore } from './vector-store';
 
 const vectors = agentKnowledgeVectors;
 

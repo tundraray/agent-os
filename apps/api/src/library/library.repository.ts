@@ -25,7 +25,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
+import type { Executor } from '../common/executor';
 
 /**
  * Drizzle queries of `library_records` and `library_shares` (repository-over-transaction.md): each

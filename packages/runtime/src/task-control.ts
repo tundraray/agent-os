@@ -11,19 +11,19 @@ import {
 } from '@agent-os/contracts';
 import { type Database, runtimeDecisions } from '@agent-os/db';
 import { and, eq, inArray } from 'drizzle-orm';
-import { RuntimeError } from './errors.js';
-import type { EventLog } from './event-log.js';
-import { isFinished, type TaskChange, type TaskRow } from './guarded-transition.js';
+import { RuntimeError } from './errors';
+import type { EventLog } from './event-log';
+import { isFinished, type TaskChange, type TaskRow } from './guarded-transition';
 import type {
   EnqueueMessage,
   HandlerRegistry,
   StepSignalReason,
-} from './handler.registry.js';
-import { type Inbox, payloadTooLarge } from './inbox.js';
-import type { RunningTaskRegistry } from './running-task.registry.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import { endTask, type TaskFailure, writeLocked } from './step-commit.js';
-import type { TaskRepository } from './task.repository.js';
+} from './handler.registry';
+import { type Inbox, payloadTooLarge } from './inbox';
+import type { RunningTaskRegistry } from './running-task.registry';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import { endTask, type TaskFailure, writeLocked } from './step-commit';
+import type { TaskRepository } from './task.repository';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;

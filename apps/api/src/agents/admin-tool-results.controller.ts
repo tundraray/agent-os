@@ -6,13 +6,13 @@ import {
   type ToolResultSettings,
   type UpdateToolResultSettingsBody,
 } from '@agent-os/contracts';
-import { AuditLog } from '../audit/audit-log.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { loggedRoute } from '../knowledge/knowledge.controller.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { AGENTS } from './agents.tokens.js';
+import { AuditLog } from '../audit/audit-log';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { loggedRoute } from '../knowledge/knowledge.controller';
+import { APP_LOGGER } from '../logging/app-logger';
+import { AGENTS } from './agents.tokens';
 
 const SETTINGS_OBJECT_TYPE = 'tool_result_settings';
 

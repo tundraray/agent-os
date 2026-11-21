@@ -6,16 +6,16 @@ import {
 } from '@agent-os/contracts';
 import { type Database, runtimeTasks } from '@agent-os/db';
 import { and, asc, eq, lt, sql } from 'drizzle-orm';
-import type { Clock } from './clock.js';
-import type { CrashPoints } from './crash-points.js';
-import type { EventLog } from './event-log.js';
-import type { TaskRow } from './guarded-transition.js';
-import type { Inbox } from './inbox.js';
-import { WorkerLoop } from './outbox.relay.js';
-import type { RuntimeConfig } from './runtime-config.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import { endTask } from './step-commit.js';
-import type { TaskRepository } from './task.repository.js';
+import type { Clock } from './clock';
+import type { CrashPoints } from './crash-points';
+import type { EventLog } from './event-log';
+import type { TaskRow } from './guarded-transition';
+import type { Inbox } from './inbox';
+import { WorkerLoop } from './outbox.relay';
+import type { RuntimeConfig } from './runtime-config';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import { endTask } from './step-commit';
+import type { TaskRepository } from './task.repository';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
 

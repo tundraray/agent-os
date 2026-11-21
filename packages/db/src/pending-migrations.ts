@@ -9,11 +9,11 @@ import { z } from 'zod';
 export const MIGRATIONS_SCHEMA = 'app';
 export const MIGRATIONS_TABLE = '__drizzle_migrations';
 /**
- * `packages/db/migrations`. The build does not copy it; `src` and `dist` sit at the same depth,
- * so the path relative to this module holds for both.
+ * The migrations next to this module: `packages/db/src/migrations` from source; the build of `apps/api`
+ * copies them next to its bundle (`dist/migrations`), so the same relative path holds for both.
  */
 export const MIGRATIONS_FOLDER = fileURLToPath(
-  new URL('../migrations', import.meta.url),
+  new URL('./migrations', import.meta.url),
 );
 
 export interface MigrationFile {

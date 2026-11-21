@@ -1,6 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import { z } from 'zod';
-import { ZodValidationPipe } from './zod-validation.pipe.js';
+import { ZodValidationPipe } from './zod-validation.pipe';
 
 const metadata = { type: 'body' } as const;
 

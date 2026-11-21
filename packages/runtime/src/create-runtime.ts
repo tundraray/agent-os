@@ -1,21 +1,21 @@
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
-import type { Clock } from './clock.js';
-import { CrashPoints } from './crash-points.js';
-import { Decisions } from './decisions.js';
-import { Dispatcher } from './dispatcher.js';
-import { EventConsumerRegistry } from './event-consumer.registry.js';
-import { EventLog } from './event-log.js';
-import { HandlerRegistry } from './handler.registry.js';
-import { Inbox } from './inbox.js';
-import { OutboxRelay } from './outbox.relay.js';
-import { RecoverySweeper } from './recovery.sweeper.js';
-import { RunningTaskRegistry } from './running-task.registry.js';
-import type { RuntimeConfig } from './runtime-config.js';
-import { StepCommitter } from './step-commit.js';
-import { TaskControl } from './task-control.js';
-import { TaskRepository } from './task.repository.js';
-import { TokenLedger } from './token-ledger.js';
+import type { Clock } from './clock';
+import { CrashPoints } from './crash-points';
+import { Decisions } from './decisions';
+import { Dispatcher } from './dispatcher';
+import { EventConsumerRegistry } from './event-consumer.registry';
+import { EventLog } from './event-log';
+import { HandlerRegistry } from './handler.registry';
+import { Inbox } from './inbox';
+import { OutboxRelay } from './outbox.relay';
+import { RecoverySweeper } from './recovery.sweeper';
+import { RunningTaskRegistry } from './running-task.registry';
+import type { RuntimeConfig } from './runtime-config';
+import { StepCommitter } from './step-commit';
+import { TaskControl } from './task-control';
+import { TaskRepository } from './task.repository';
+import { TokenLedger } from './token-ledger';
 
 /** What the composition root hands to {@link createRuntime}. */
 export interface RuntimeOptions {

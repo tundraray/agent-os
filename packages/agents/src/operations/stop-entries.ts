@@ -1,11 +1,11 @@
 import type { Task } from '@agent-os/runtime';
 
-import { openCalls } from '../history/call-state.js';
-import type { HistoryEntry } from '../history/history.js';
-import { stopEvent, stoppedTogether } from '../step/continuation.js';
-import { interruptedResults } from '../store/call-records.repository.js';
-import { history } from '../store/history.repository.js';
-import type { StoreReader } from '../store/sessions.repository.js';
+import { openCalls } from '../history/call-state';
+import type { HistoryEntry } from '../history/history';
+import { stopEvent, stoppedTogether } from '../step/continuation';
+import { interruptedResults } from '../store/call-records.repository';
+import { history } from '../store/history.repository';
+import type { StoreReader } from '../store/sessions.repository';
 
 /** A derived stop record: a closed call or the stop event. */
 export type StopEntry = Extract<HistoryEntry, { kind: 'tool_result' | 'event' }>;

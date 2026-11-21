@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { RequestId } from '@modelcontextprotocol/server';
-import type { TransportFaultRule } from '../fault-schedule.js';
+import type { TransportFaultRule } from '../fault-schedule';
 
 /** What the HTTP server does with a request: answer it, never answer (`hang`) or break the socket (`drop`). */
 export type HttpAnswer = Response | 'hang' | 'drop';

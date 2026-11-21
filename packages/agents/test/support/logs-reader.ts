@@ -1,5 +1,5 @@
 import type { Script, ScriptedToolCall } from '@agent-os/agents/testing';
-import { LOGS_SERVER } from './mcp-servers.js';
+import { LOGS_SERVER } from './mcp-servers';
 
 /**
  * What the suites that read the fixture's payment logs share: the direct `search_logs` call and its window,

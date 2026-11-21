@@ -7,7 +7,7 @@ import {
   type KnowledgeGraph,
   type OperationRejectionReason,
   type RoundCall,
-} from './check-operations.js';
+} from './check-operations';
 
 // UC-6 (design-core.md, «Как применяются операции»): AC-04.1, AC-04.2, AC-05.1, AC-16.1, AC-16.2, DC-6,
 // DC-11, `too_many`. Each operation is applied, becomes a confirmation of an existing record or is

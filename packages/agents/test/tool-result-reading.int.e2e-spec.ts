@@ -23,8 +23,8 @@ import { agentToolResultSettings, agentToolResults, createDatabase } from '@agen
 import { createFixtureFiles, FIXTURE_SHARED_TOKEN, startFixtureProcess } from '@agent-os/mcp-fixture';
 import { eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { McpClient } from '../src/mcp/mcp-client.js';
-import { RESULT_NOT_FOUND } from '../src/tools/large-result.js';
+import { McpClient } from '../src/mcp/mcp-client';
+import { RESULT_NOT_FOUND } from '../src/tools/large-result';
 import {
   type AgentsHarness,
   createAgentsHarness,
@@ -34,11 +34,11 @@ import {
   toolOutputOf,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
-import { databaseUrl } from './support/database-url.js';
-import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader.js';
-import { LOGS_SERVER } from './support/mcp-servers.js';
-import { newUser } from './support/new-user.js';
+} from './support/agentsHarness';
+import { databaseUrl } from './support/database-url';
+import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader';
+import { LOGS_SERVER } from './support/mcp-servers';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

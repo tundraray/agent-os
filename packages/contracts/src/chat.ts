@@ -7,7 +7,7 @@ import {
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
-} from './agents.js';
+} from './agents';
 import {
   IdSchema,
   RECORD_NAME_MAX_LENGTH,
@@ -15,9 +15,9 @@ import {
   SaveOwnRefusalSchema,
   VersionSchema,
   withContentByKind,
-} from './library.js';
-import { DecisionStatusSchema } from './runtime.js';
-import { ThreadListQuerySchema, ThreadSummarySchema } from './threads.js';
+} from './library';
+import { DecisionStatusSchema } from './runtime';
+import { ThreadListQuerySchema, ThreadSummarySchema } from './threads';
 
 /**
  * The chat API of the agent platform (design-chat.md, Contract Definitions): conversations, agents,

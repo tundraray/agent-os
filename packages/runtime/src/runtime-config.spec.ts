@@ -1,4 +1,4 @@
-import { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
+import { parseRuntimeConfig, type RuntimeConfig } from './runtime-config';
 
 // Runtime settings (design-runtime.md): the composition root hands over a plain object of
 // variables; an invalid value stops the start, naming the variable.

@@ -7,7 +7,7 @@ import {
   type FetchFn,
   type ProviderOptions,
   type ProviderOptionsInput,
-} from './provider-options.js';
+} from './provider-options';
 
 const ISSUER = 'https://idp.example.com';
 const DISCOVERY = {

@@ -1,6 +1,6 @@
 import { text } from 'node:stream/consumers';
 import { ApiErrorSchema, type ApiError } from '@agent-os/contracts';
-import { frontendOrigin, SESSION_COOKIE } from '../identity/session-cookie.js';
+import { frontendOrigin, SESSION_COOKIE } from '../identity/session-cookie';
 
 /**
  * The client of the running API shared by the operator scripts (`seed:mcp`, `seed:access`): the

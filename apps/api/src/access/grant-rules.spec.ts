@@ -3,7 +3,7 @@ import {
   grantRules,
   type GrantRuleInput,
   type GrantRuleResult,
-} from './grant-rules.js';
+} from './grant-rules';
 
 const ROLE_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-000000000002';

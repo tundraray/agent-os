@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { applyMigrations, createDatabase } from '@agent-os/db';
 import type { TestProject } from 'vitest/node';
-import { databaseUrl } from './database-url.js';
+import { databaseUrl } from './database-url';
 
 /**
  * Vitest global setup of the package's Postgres suites: applies migrations once, before any test

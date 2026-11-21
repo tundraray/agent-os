@@ -1,5 +1,5 @@
 import { applyMigrations } from '@agent-os/db';
-import { databaseUrl } from './database-url.js';
+import { databaseUrl } from './database-url';
 
 /**
  * Vitest global setup of the package's Postgres suites: applies migrations once, before any test

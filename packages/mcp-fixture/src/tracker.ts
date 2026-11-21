@@ -1,5 +1,5 @@
-import { blockSeed, mulberry32, randomInt, type Random } from './prng.js';
-import { LOG_WEEK } from './versions.js';
+import { blockSeed, mulberry32, randomInt, type Random } from './prng';
+import { LOG_WEEK } from './versions';
 
 export const TICKET_STATUSES = ['open', 'closed'] as const;
 type TicketStatus = (typeof TICKET_STATUSES)[number];

@@ -14,14 +14,24 @@
         "src/identity/super-admin-cli.ts",
         "src/agents/seed-mcp-cli.ts",
         "src/access/seed-access-cli.ts",
-        "test/verify/**/*.verify.ts"
+        "test/verify/**/*.verify.ts",
+        "rspack.config.js"
       ],
-      "ignoreDependencies": ["@nestjs/mau"]
+      "rspack": false,
+      "ignoreDependencies": [
+        "@nestjs/mau",
+        "@ai-sdk/anthropic",
+        "@ai-sdk/google",
+        "@ai-sdk/openai-compatible",
+        "@jitl/quickjs-wasmfile-release-sync",
+        "@mastra/core",
+        "@modelcontextprotocol/client",
+        "@modelcontextprotocol/server",
+        "quickjs-emscripten-core"
+      ]
     },
     "packages/agents": {
       "entry": [
-        "src/index.ts",
-        "src/testing.ts",
         "test/**/*.e2e-spec.ts",
         "test/verify/**/*.verify.ts",
         "test/support/codeRunChildMain.ts"
@@ -29,21 +39,13 @@
     },
     "packages/code-runner": {
       "entry": [
-        "src/index.ts",
-        "src/executor-main.ts",
+        "src/executor/executor-main.ts",
         "test/**/*.e2e-spec.ts",
         "test/support/*-entry.ts"
       ]
     },
-    "packages/mcp-fixture": {
-      "entry": [
-        "src/index.ts",
-        "src/main.ts"
-      ]
-    },
     "packages/runtime": {
       "entry": [
-        "src/index.ts",
         "test/support/runtimeChildMain.ts",
         "test/verify/**/*.verify.ts"
       ]

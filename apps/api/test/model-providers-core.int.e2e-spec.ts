@@ -53,7 +53,7 @@ import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { APP_LOGGER } from '../src/logging/app-logger.js';
+import { APP_LOGGER } from '../src/logging/app-logger';
 import {
   addModel,
   allowRole,
@@ -63,9 +63,9 @@ import {
   runEmbeddingModel,
   runModel,
   useRunModels,
-} from './support/access.js';
-import { chatApi, expectBody, expectError, waitFor } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+} from './support/access';
+import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   BUILTIN,
@@ -73,16 +73,16 @@ import {
   getRecord,
   recordName,
   workflowBody,
-} from './support/library.js';
-import { runName } from './support/mcp-servers.js';
-import { databaseUrl } from './support/migrate.global-setup.js';
+} from './support/library';
+import { runName } from './support/mcp-servers';
+import { databaseUrl } from './support/migrate.global-setup';
 import {
   apiRequest,
   createEmployee,
   seedSuperAdmin,
   type Method,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of a case and of the hooks; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

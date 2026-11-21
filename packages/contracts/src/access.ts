@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { ModelProviderNameSchema } from './model-providers.js';
-import { ApiErrorSchema } from './threads.js';
+import { ModelProviderNameSchema } from './model-providers';
+import { ApiErrorSchema } from './threads';
 
 /**
  * Model catalogue, model defaults, grants and "My access" (design-access.md and design-core.md of

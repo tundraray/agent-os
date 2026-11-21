@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { argsHash } from '../canonical-json.js';
-import { defineTool } from './fixture-tool.js';
+import { argsHash } from '../canonical-json';
+import { defineTool } from './fixture-tool';
 
 const NOTE_ID_LENGTH = 12;
 

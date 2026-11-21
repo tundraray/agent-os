@@ -1,7 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { ModelProviderError } from '@agent-os/agents';
 import type { ModelProviderErrorCode } from '@agent-os/contracts';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /** HTTP status of each refusal of `Agents.providers` (design-core.md of model-providers, Error handling). */
 const STATUS_OF: Record<ModelProviderErrorCode, number> = {

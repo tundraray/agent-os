@@ -1,4 +1,4 @@
-import { type AgentsConfig, parseAgentsConfig } from './config.js';
+import { type AgentsConfig, parseAgentsConfig } from './config';
 
 // Runtime settings (design-agents.md, «Сборка»): a wrong setting stops the start, naming the variable.
 

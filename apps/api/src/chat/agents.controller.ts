@@ -27,11 +27,11 @@ import {
   type StopResponse,
   type WorkflowRunView,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { AgentControlService } from './agent-control.service.js';
-import { type Command, runCommand } from './chat.errors.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthedRequest } from '../identity/auth-user';
+import { APP_LOGGER } from '../logging/app-logger';
+import { AgentControlService } from './agent-control.service';
+import { type Command, runCommand } from './chat.errors';
 
 /**
  * The agent routes (design-chat.md, Contract «Агенты»). A malformed, missing or foreign `agentId`, and

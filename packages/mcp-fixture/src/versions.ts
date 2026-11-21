@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { canonicalJson, sha256Hex } from './canonical-json.js';
+import { canonicalJson, sha256Hex } from './canonical-json';
 
 export const DatasetVersionSchema = z.enum(['v1', 'v2']);
 /** A pinned dataset version selected by `FIXTURE_DATASET`. */

@@ -1,5 +1,5 @@
 import { createLogger } from '@agent-os/common';
-import { createCodeRunner } from './code-runner.js';
+import { createCodeRunner } from './code-runner';
 
 // Security review (defense gap): Node's permission model denies network only from v25, and this
 // project requires 26; on an older Node the executor would run with TCP and DNS open, so the runner

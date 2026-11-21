@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { AgentsModule } from '../agents/agents.module.js';
-import { AdminLibraryController } from './admin-library.controller.js';
-import { BuiltinRecordsSeeder } from './builtin-records.seeder.js';
-import { LibraryController } from './library.controller.js';
-import { LibraryModule } from './library.module.js';
+import { AgentsModule } from '../agents/agents.module';
+import { AdminLibraryController } from './admin-library.controller';
+import { BuiltinRecordsSeeder } from './builtin-records.seeder';
+import { LibraryController } from './library.controller';
+import { LibraryModule } from './library.module';
 
 /**
  * The library's routes (port-module-split.md, design-library.md KD-6): the controllers import

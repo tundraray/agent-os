@@ -2,4 +2,4 @@
 * text=auto eol=lf
 
 # Migration hashes are taken over raw bytes: no line-ending conversion.
-packages/db/migrations/** -text
+packages/db/src/migrations/** -text

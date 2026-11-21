@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { ModelIdSchema } from './access.js';
-import { McpServerNameSchema } from './mcp.js';
+import { ModelIdSchema } from './access';
+import { McpServerNameSchema } from './mcp';
 
 /**
  * Library of agents and workflows (design-library.md, Contract Definitions). Lengths and shapes

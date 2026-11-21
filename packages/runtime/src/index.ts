@@ -1,14 +1,14 @@
-export { type CancelTimer, type Clock, systemClock } from './clock.js';
+export { type CancelTimer, type Clock, systemClock } from './clock';
 export {
   createRuntime,
   type Runtime,
   type RuntimeOptions,
-} from './create-runtime.js';
-export type { TreeDecision, ResolveOutcome } from './decisions.js';
-export { RuntimeError, type RuntimeErrorCode } from './errors.js';
-export type { EventConsumer } from './event-consumer.registry.js';
-export { RUNTIME_EVENT_SCHEMA_VERSION, RUNTIME_EVENTS_CHANNEL } from './event-log.js';
-export { isFinished } from './guarded-transition.js';
+} from './create-runtime';
+export type { TreeDecision, ResolveOutcome } from './decisions';
+export { RuntimeError, type RuntimeErrorCode } from './errors';
+export type { EventConsumer } from './event-consumer.registry';
+export { RUNTIME_EVENT_SCHEMA_VERSION, RUNTIME_EVENTS_CHANNEL } from './event-log';
+export { isFinished } from './guarded-transition';
 export type {
   EnqueuedMessage,
   EnqueueMessage,
@@ -20,16 +20,16 @@ export type {
   StepResult,
   StepSignalReason,
   TaskHandler,
-} from './handler.registry.js';
-export type { NewMessage } from './inbox.js';
-export type { CallUsage, ModelPrice } from './model-cost.js';
-export { monthOf } from './month.js';
-export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config.js';
-export { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-export type { InterruptMessage, InterruptOutcome, Task } from './task-control.js';
+} from './handler.registry';
+export type { NewMessage } from './inbox';
+export type { CallUsage, ModelPrice } from './model-cost';
+export { monthOf } from './month';
+export { parseRuntimeConfig, type RuntimeConfig } from './runtime-config';
+export { retryingTransaction, type RuntimeTx } from './runtime-tx';
+export type { InterruptMessage, InterruptOutcome, Task } from './task-control';
 export {
   type ModelCallRecord,
   type MonthSpend,
   PLATFORM_OWNER_ID,
   type RecordedCall,
-} from './token-ledger.js';
+} from './token-ledger';

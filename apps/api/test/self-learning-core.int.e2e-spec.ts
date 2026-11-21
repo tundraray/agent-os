@@ -35,15 +35,15 @@ import {
   runModel,
   type RunRole,
   useRunModels,
-} from './support/access.js';
-import { expectBody, expectError } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+} from './support/access';
+import { expectBody, expectError } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   clearEmbeddingModel,
   removeKnowledgeTasks,
   seedKnowledge,
   type SeededGraph,
-} from './support/knowledge.js';
+} from './support/knowledge';
 import {
   auditOfRecord,
   createRecord,
@@ -51,14 +51,14 @@ import {
   shareWith,
   workflowBody,
   type LibraryAuditEvent,
-} from './support/library.js';
+} from './support/library';
 import {
   apiRequest,
   insertEmployee,
   seedSuperAdmin,
   signInWithPassword,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one test; the requests settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

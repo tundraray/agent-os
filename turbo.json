@@ -1,17 +1,11 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
+    "build": { "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
     "dev": { "cache": false, "persistent": true },
-    "lint": { "dependsOn": ["^build"] },
-    "typecheck": { "dependsOn": ["^build"] },
-    "web#typecheck": { "dependsOn": ["^build", "build"] },
-    "@agent-os/runtime#typecheck": { "dependsOn": ["^build", "build"] },
-    "@agent-os/runtime#lint": { "dependsOn": ["^build", "build"] },
-    "@agent-os/agents#typecheck": { "dependsOn": ["^build", "build"] },
-    "@agent-os/agents#lint": { "dependsOn": ["^build", "build"] },
-    "@agent-os/workflows#typecheck": { "dependsOn": ["^build", "build"] },
-    "@agent-os/workflows#lint": { "dependsOn": ["^build", "build"] },
-    "test": { "dependsOn": ["^build"] }
+    "lint": {},
+    "typecheck": {},
+    "web#typecheck": { "dependsOn": ["build"] },
+    "test": {}
   }
 }

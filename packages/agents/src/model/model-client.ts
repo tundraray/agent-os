@@ -9,11 +9,11 @@ import {
   ModelRefusedError,
   type ModelVerdict,
   OwnerDisabledError,
-} from '../access-gate.js';
-import type { AgentsConfig } from '../config.js';
-import { providerAdapter } from '../providers/adapters.js';
-import { providerReadiness } from '../providers/provider-readiness.js';
-import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry.js';
+} from '../access-gate';
+import type { AgentsConfig } from '../config';
+import { providerAdapter } from '../providers/adapters';
+import { providerReadiness } from '../providers/provider-readiness';
+import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry';
 import type {
   AgentToolCall,
   AgentToolDefinition,
@@ -21,8 +21,8 @@ import type {
   AgentTurnGeneration,
   AgentTurnMessage,
   AgentTurnModelClient,
-} from './mastra-turn.js';
-import { DATA_PREAMBLE } from './provider-messages.js';
+} from './mastra-turn';
+import { DATA_PREAMBLE } from './provider-messages';
 import {
   classifyRejection,
   PROVIDER_RETRIES,
@@ -30,8 +30,8 @@ import {
   type ProviderRejectionReason,
   pause,
   providerRetryDelayMs,
-} from './retry-policy.js';
-import { tokensOfBytes, utf8Bytes } from './token-estimate.js';
+} from './retry-policy';
+import { tokensOfBytes, utf8Bytes } from './token-estimate';
 
 /**
  * How to read a stored result and when to reach for `run_code` (code-execution PRD FR-01, AC-01.3):

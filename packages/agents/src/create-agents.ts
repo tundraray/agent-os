@@ -4,44 +4,44 @@ import type { RecordKind } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { Runtime } from '@agent-os/runtime';
 
-import type { AccessAudit, AccessGate } from './access-gate.js';
-import type { AgentsConfig } from './config.js';
-import { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client.js';
-import { type AgentsEmbeddings, createEmbeddings } from './embeddings/embeddings.js';
-import { createStopChildrenOnFailure } from './events/stop-children-on-failure.js';
-import { createKnowledgeEmbedHandler } from './knowledge/embed.handler.js';
-import { createKnowledgeExtractHandler } from './knowledge/extract.handler.js';
-import { type AgentsKnowledge, createAgentsKnowledge } from './knowledge/knowledge.js';
-import { createKnowledgeTrigger } from './knowledge/knowledge-trigger.js';
-import { createPgvectorStore } from './knowledge/pgvector-store.js';
-import { ConnectRequests } from './mcp/connect-requests.js';
-import { type AgentsMcp, createAgentsMcp } from './mcp/mcp.js';
-import { McpAccounts } from './mcp/mcp-accounts.js';
-import { McpClient } from './mcp/mcp-client.js';
-import { McpRegistry } from './mcp/mcp-registry.js';
-import type { AgentTurnModelClient } from './model/mastra-turn.js';
-import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client.js';
-import { type AgentSessions, createAgentSessions } from './operations/agent-sessions.js';
-import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry.js';
-import type { RecordLibrary } from './start/record-library.js';
+import type { AccessAudit, AccessGate } from './access-gate';
+import type { AgentsConfig } from './config';
+import { createEmbeddingClient, type EmbeddingClient } from './embeddings/embedding-client';
+import { type AgentsEmbeddings, createEmbeddings } from './embeddings/embeddings';
+import { createStopChildrenOnFailure } from './events/stop-children-on-failure';
+import { createKnowledgeEmbedHandler } from './knowledge/embed.handler';
+import { createKnowledgeExtractHandler } from './knowledge/extract.handler';
+import { type AgentsKnowledge, createAgentsKnowledge } from './knowledge/knowledge';
+import { createKnowledgeTrigger } from './knowledge/knowledge-trigger';
+import { createPgvectorStore } from './knowledge/pgvector-store';
+import { ConnectRequests } from './mcp/connect-requests';
+import { type AgentsMcp, createAgentsMcp } from './mcp/mcp';
+import { McpAccounts } from './mcp/mcp-accounts';
+import { McpClient } from './mcp/mcp-client';
+import { McpRegistry } from './mcp/mcp-registry';
+import type { AgentTurnModelClient } from './model/mastra-turn';
+import { type CompleteTextRequest, createModelClient, type OnTextDelta } from './model/model-client';
+import { type AgentSessions, createAgentSessions } from './operations/agent-sessions';
+import { type AgentsProviders, createProviderRegistry } from './providers/provider-registry';
+import type { RecordLibrary } from './start/record-library';
 import {
   auditStartRefusal,
   resolveStart,
   type StartRefusal,
   type StartRequest,
   type StartResolution,
-} from './start/resolve-start.js';
-import { createAgentStepHandler } from './step/agent-step.handler.js';
-import { createCompactionStep } from './step/compaction-step.js';
-import { createModelStep } from './step/model-step.js';
-import { createToolStep } from './step/tool-step.js';
-import { toolResults } from './store/tool-results.repository.js';
-import { createBuiltinTools, createStartChild } from './tools/builtin/index.js';
-import { createRunCodeTool } from './tools/builtin/run-code.js';
-import { createToolRegistry, type ToolRegistry } from './tools/tool-registry.js';
-import { rootMayStartRecord } from './tools/tool-gate.js';
-import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings.js';
-import { createToolRunner } from './tools/tool-runner.js';
+} from './start/resolve-start';
+import { createAgentStepHandler } from './step/agent-step.handler';
+import { createCompactionStep } from './step/compaction-step';
+import { createModelStep } from './step/model-step';
+import { createToolStep } from './step/tool-step';
+import { toolResults } from './store/tool-results.repository';
+import { createBuiltinTools, createStartChild } from './tools/builtin/index';
+import { createRunCodeTool } from './tools/builtin/run-code';
+import { createToolRegistry, type ToolRegistry } from './tools/tool-registry';
+import { rootMayStartRecord } from './tools/tool-gate';
+import { type AgentsToolResults, createAgentsToolResults } from './tools/tool-result-settings';
+import { createToolRunner } from './tools/tool-runner';
 
 export interface AgentsOptions {
   readonly database: Database;

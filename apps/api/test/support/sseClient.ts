@@ -1,7 +1,7 @@
 import { request as httpRequest } from 'node:http';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
-import { portOf, type Session, sessionHeaders } from './session.js';
+import { portOf, type Session, sessionHeaders } from './session';
 
 /**
  * A small SSE client for `GET /api/events` (EventSource is a browser API): a raw HTTP request with

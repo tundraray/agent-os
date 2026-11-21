@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LOG_LEVELS, LOG_SERVICES, LOG_STATUSES, type LogDataset, type LogRecord } from '../dataset.js';
+import { LOG_LEVELS, LOG_SERVICES, LOG_STATUSES, type LogDataset, type LogRecord } from '../dataset';
 
 /** Time window and optional record filters shared by `search_logs` and `aggregate_logs`. */
 export const LogQueryShape = {

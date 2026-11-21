@@ -1,5 +1,5 @@
 import { type INestApplication, ValidationPipe } from '@nestjs/common';
-import { frontendOrigin } from './identity/session-cookie.js';
+import { frontendOrigin } from './identity/session-cookie';
 
 /**
  * HTTP surface shared by `main.ts` and the e2e test app: global `/api` prefix,

@@ -1,7 +1,7 @@
 import type { ModelVerdict } from '@agent-os/agents';
 import type { CatalogModel } from '@agent-os/contracts';
-import { effectiveAccess, type GrantRow } from './effective-access.js';
-import { modelVerdict } from './model-verdict.js';
+import { effectiveAccess, type GrantRow } from './effective-access';
+import { modelVerdict } from './model-verdict';
 
 const A = 'anthropic/a';
 const B = 'anthropic/b';

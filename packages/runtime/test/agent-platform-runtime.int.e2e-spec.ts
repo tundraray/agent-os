@@ -56,7 +56,7 @@ import {
 import { asc, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { newUser } from './support/new-user.js';
+import { newUser } from './support/new-user';
 import {
   closeRuntimeDb,
   eventsOf,
@@ -65,7 +65,7 @@ import {
   rowVersionsOf,
   statusesOf,
   waitFor,
-} from './support/runtimeDb.js';
+} from './support/runtimeDb';
 import {
   createRuntimeHarness,
   expireLease,
@@ -75,7 +75,7 @@ import {
   TEST_MODEL_ONE_PRICE,
   TEST_MODEL_TWO,
   TEST_MODEL_TWO_PRICE,
-} from './support/runtimeHarness.js';
+} from './support/runtimeHarness';
 import {
   createGate,
   createGateBook,
@@ -86,7 +86,7 @@ import {
   scriptedHandler,
   uniqueType,
   writeHandlerRow,
-} from './support/testHandlers.js';
+} from './support/testHandlers';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 60_000;

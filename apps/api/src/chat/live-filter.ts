@@ -1,4 +1,4 @@
-import { isUuid } from '../common/is-uuid.js';
+import { isUuid } from '../common/is-uuid';
 
 /** What a stream watches besides the owner's tree notes: a conversation's root or one agent. */
 export type Watch = { kind: 'thread'; threadId: string } | { kind: 'agent'; agentId: string };

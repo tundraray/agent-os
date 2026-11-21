@@ -15,17 +15,17 @@ import {
   type AccessGate,
   OwnerDisabledError,
   type ToolAccess,
-} from '../access-gate.js';
-import type { McpAccounts } from '../mcp/mcp-accounts.js';
-import type { McpCallResponse, McpClient } from '../mcp/mcp-client.js';
-import type { McpFailureReason } from '../mcp/mcp-failure.js';
-import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome.js';
-import { type Session, sessionInputOf } from '../store/sessions.repository.js';
-import { callRecords } from '../store/call-records.repository.js';
-import type { StoredToolResult, ToolResultSettingsRow } from '../store/tool-results.repository.js';
-import { cutText, maskValue, wrapperText } from './large-result.js';
-import type { InCommitAgentTool, StartChild, ToolCaller } from './tool.js';
-import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry.js';
+} from '../access-gate';
+import type { McpAccounts } from '../mcp/mcp-accounts';
+import type { McpCallResponse, McpClient } from '../mcp/mcp-client';
+import type { McpFailureReason } from '../mcp/mcp-failure';
+import { type McpOutcome, scriptValueOf, toOutcome } from '../mcp/mcp-outcome';
+import { type Session, sessionInputOf } from '../store/sessions.repository';
+import { callRecords } from '../store/call-records.repository';
+import type { StoredToolResult, ToolResultSettingsRow } from '../store/tool-results.repository';
+import { cutText, maskValue, wrapperText } from './large-result';
+import type { InCommitAgentTool, StartChild, ToolCaller } from './tool';
+import { callTarget, callTargetOf, loggedArgs, type SessionTool } from './tool-registry';
 
 /** One tool call of a model answer, as the model wrote it. */
 export interface RequestedCall {

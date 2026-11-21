@@ -1,7 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import type { JsonSchemaObject } from '../model/mastra-turn.js';
-import type { ToolDisplay } from '../tools/tool.js';
+import type { JsonSchemaObject } from '../model/mastra-turn';
+import type { ToolDisplay } from '../tools/tool';
 
 /** A schema property that carries a human title. */
 const TitledSchema = z.object({ title: z.string().min(1) });

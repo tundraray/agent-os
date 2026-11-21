@@ -2,7 +2,7 @@ import { agentModelProviders } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { asc, eq, inArray } from 'drizzle-orm';
 
-import type { StoreReader } from '../store/sessions.repository.js';
+import type { StoreReader } from '../store/sessions.repository';
 
 /** A row of `agent_model_providers`; `apiKey` is the key as stored. */
 export type ModelProviderRow = typeof agentModelProviders.$inferSelect;

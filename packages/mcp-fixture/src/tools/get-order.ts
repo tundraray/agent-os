@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { backOfficeOf } from '../backoffice.js';
-import { defineTool } from './fixture-tool.js';
+import { backOfficeOf } from '../backoffice';
+import { defineTool } from './fixture-tool';
 
 const GetOrderArgsSchema = z.strictObject({
   orderId: z

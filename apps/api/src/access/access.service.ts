@@ -28,35 +28,35 @@ import {
   type Runtime,
   type RuntimeTx,
 } from '@agent-os/runtime';
-import { AuditLog } from '../audit/audit-log.js';
-import type { Executor } from '../common/executor.js';
-import { isUuid } from '../common/is-uuid.js';
-import { IdentityDirectory } from '../identity/identity-directory.js';
-import { identityError } from '../identity/identity.errors.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
+import { AuditLog } from '../audit/audit-log';
+import type { Executor } from '../common/executor';
+import { isUuid } from '../common/is-uuid';
+import { IdentityDirectory } from '../identity/identity-directory';
+import { identityError } from '../identity/identity.errors';
+import { APP_LOGGER } from '../logging/app-logger';
 import {
   RUNTIME,
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
-} from '../runtime/runtime.tokens.js';
+} from '../runtime/runtime.tokens';
 import {
   accessError,
   foreignFieldsError,
   modelDefaultError,
-} from './access.errors.js';
+} from './access.errors';
 import {
   modelAdditionRule,
   modelDefaultsRule,
   modelUpdateRule,
   type DefaultChoice,
-} from './catalogue-rules.js';
+} from './catalogue-rules';
 import {
   allowedCatalogue,
   effectiveAccess,
   type EffectiveAccess,
   type GrantRow,
-} from './effective-access.js';
-import { grantRules, type GrantRuleInput } from './grant-rules.js';
+} from './effective-access';
+import { grantRules, type GrantRuleInput } from './grant-rules';
 import {
   deleteGrant,
   deleteServerGrants,
@@ -66,8 +66,8 @@ import {
   listGrants,
   updateGrantQuota,
   type GrantHolderQuery,
-} from './grants.repository.js';
-import { modelVerdict, quotaExhausted } from './model-verdict.js';
+} from './grants.repository';
+import { modelVerdict, quotaExhausted } from './model-verdict';
 import {
   countByProvider,
   deleteModel,
@@ -80,7 +80,7 @@ import {
   updateModel,
   writeModelDefaults,
   type ModelDefaultsRow,
-} from './models.repository.js';
+} from './models.repository';
 
 /** A server or tool target of a grant. */
 export type McpGrantTarget = Exclude<GrantTargetBody, { kind: 'model' }>;

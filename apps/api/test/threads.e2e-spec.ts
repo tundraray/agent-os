@@ -21,15 +21,15 @@ import {
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type ChatApi, expectBody, expectError } from './support/api.js';
-import { removeRunRows } from './support/access.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { type ChatApi, expectBody, expectError } from './support/api';
+import { removeRunRows } from './support/access';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   type ConversationsSetup,
   conversationsSetup,
   startConversation,
-} from './support/library.js';
-import { seedSuperAdmin, type Session } from './support/session.js';
+} from './support/library';
+import { seedSuperAdmin, type Session } from './support/session';
 
 /** Creating 120 conversations one by one plus a page walk exceeds the default 5 s. */
 const BULK_TEST_TIMEOUT_MS = 60_000;

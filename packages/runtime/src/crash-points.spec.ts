@@ -1,4 +1,4 @@
-import { CrashPoints } from './crash-points.js';
+import { CrashPoints } from './crash-points';
 
 const POINT = 'step.after-claim';
 const OTHER_POINT = 'inbox.before-wake';

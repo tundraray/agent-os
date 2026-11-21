@@ -5,11 +5,11 @@ import {
   type DecisionRequest,
   type DecisionResponse,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { AgentControlService } from './agent-control.service.js';
-import { runCommand } from './chat.errors.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthedRequest } from '../identity/auth-user';
+import { APP_LOGGER } from '../logging/app-logger';
+import { AgentControlService } from './agent-control.service';
+import { runCommand } from './chat.errors';
 
 /**
  * `POST /decisions/:decisionId` (design-chat.md, «Решения и расход», Flow 4): a decision on a request

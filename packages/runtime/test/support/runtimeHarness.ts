@@ -12,13 +12,13 @@ import {
   type TaskHandler,
 } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
-import { databaseUrl } from './database-url.js';
-import { ensureHandlerRowsTable } from './testHandlers.js';
+import { databaseUrl } from './database-url';
+import { ensureHandlerRowsTable } from './testHandlers';
 
 /**
  * Test assembly of the runtime (design-runtime.md, Test Strategy): the package's own
- * `createRuntime` over its own pool, without `apps/api`. The package is imported by name, so the
- * in-process tests and the compiled child of E2E-1 run the same built `dist`. A second instance is
+ * `createRuntime` over its own pool, without `apps/api`. The package is imported by name, as the child of
+ * E2E-1 imports it. A second instance is
  * a second harness over the same database.
  */
 

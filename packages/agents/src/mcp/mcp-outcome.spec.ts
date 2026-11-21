@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import type { McpCallResponse } from './mcp-client.js';
-import { scriptValueOf, toOutcome } from './mcp-outcome.js';
+import type { McpCallResponse } from './mcp-client';
+import { scriptValueOf, toOutcome } from './mcp-outcome';
 
 // AC-13.1 (outcomes of a call): an MCP response becomes exactly one outcome with the server's whole text;
 // what the model gets of a long text is decided by the runner (large-result.spec.ts).

@@ -1,5 +1,4 @@
 import { type ChildProcess, fork } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
@@ -7,30 +6,29 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import type { LogRecord } from '@agent-os/common';
 import type { RunCodeArgs } from '@agent-os/contracts';
-import type { ChildMessage, HarnessMessage } from './codeRunChildMain.js';
-import { databaseUrl } from './database-url.js';
+import type { ChildMessage, HarnessMessage } from './codeRunChildMain';
+import { databaseUrl } from './database-url';
 
 /**
- * Child-process harness of code-execution E2E-1: a compiled child (`codeRunChildMain.ts`, built by
- * `pnpm --filter @agent-os/agents build:child`) plays the API process with the real code executor; a
- * build older than its sources is refused before anything is spawned. The test never talks to the
+ * Child-process harness of code-execution E2E-1: a child (`codeRunChildMain.ts`, plain Node running it and
+ * the packages from source through the `tsx` loader) plays the API process with the real code executor. The test never talks to the
  * agents inside a child: it starts one, kills it from outside while a call of the script is held on
  * the MCP fixture, starts a fresh one over the same database and fixture files, and reads the rows and
  * the child's log. One scenario serves every row: one agent record, a read run and a write run, over the
  * run's servers that the test registered at its own fixture process before the first child starts (a
- * child registers nothing: the registry rows are in the database). The module is compiled into the
+ * child registers nothing: the registry rows are in the database). The module is loaded by the
  * child, so it takes the run's server names as values and imports no vitest helper.
  */
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const CHILD_ENTRY = join(PACKAGE_ROOT, 'dist/test-child/test/support/codeRunChildMain.js');
+const CHILD_ENTRY = join(PACKAGE_ROOT, 'test/support/codeRunChildMain.ts');
 
 /** The variable that hands the child its {@link ChildScenario}. */
 export const CHILD_SCENARIO_ENV = 'CODE_RUN_CHILD_SCENARIO';
 
 /**
- * The default model of the child: the default of `agentsHarness.ts` (`TEST_MODEL_DEFAULT`, which this module, compiled
- * into the child, cannot import), so a launch of the test process is priced in the child. Its provider row
+ * The default model of the child: the default of `agentsHarness.ts` (`TEST_MODEL_DEFAULT`, which this module, loaded
+ * by the child, cannot import), so a launch of the test process is priced in the child. Its provider row
  * `agents-harness` is written by the test process's own harness before the first child starts; a child writes none.
  */
 export const CHILD_MODEL = 'agents-harness/test-default';
@@ -145,68 +143,6 @@ const STOP_MS = 30_000;
 const POLL_MS = 50;
 const OUTPUT_TAIL_LINES = 60;
 
-/** A build the child executes and the sources it is built from. */
-interface ChildBuild {
-  /** A file every build rewrites. */
-  output: string;
-  sources: string;
-  command: string;
-}
-
-const CHILD_BUILDS: readonly ChildBuild[] = [
-  {
-    output: join(PACKAGE_ROOT, 'dist/index.js'),
-    sources: join(PACKAGE_ROOT, 'src'),
-    command: 'pnpm --filter @agent-os/agents build',
-  },
-  {
-    output: join(PACKAGE_ROOT, '../code-runner/dist/index.js'),
-    sources: join(PACKAGE_ROOT, '../code-runner/src'),
-    command: 'pnpm --filter @agent-os/code-runner build',
-  },
-  {
-    output: join(PACKAGE_ROOT, '../runtime/dist/index.js'),
-    sources: join(PACKAGE_ROOT, '../runtime/src'),
-    command: 'pnpm --filter @agent-os/runtime build',
-  },
-  {
-    output: join(PACKAGE_ROOT, '../db/dist/index.js'),
-    sources: join(PACKAGE_ROOT, '../db/src'),
-    command: 'pnpm --filter @agent-os/db build',
-  },
-  {
-    output: CHILD_ENTRY,
-    sources: join(PACKAGE_ROOT, 'test/support'),
-    command: 'pnpm --filter @agent-os/agents build:child',
-  },
-];
-
-function newestMtime(dir: string): { file: string; mtimeMs: number } {
-  let newest = { file: dir, mtimeMs: 0 };
-  for (const entry of readdirSync(dir, { recursive: true })) {
-    const file = join(dir, String(entry));
-    const { mtimeMs } = statSync(file);
-    if (mtimeMs > newest.mtimeMs) newest = { file, mtimeMs };
-  }
-  return newest;
-}
-
-/** Throws, naming the build command, when a build the child runs is missing or older than its sources. */
-function assertChildBuildFresh(): void {
-  for (const build of CHILD_BUILDS) {
-    let builtMs: number;
-    try {
-      builtMs = statSync(build.output).mtimeMs;
-    } catch {
-      throw new Error(`Child build ${build.output} is missing; run \`${build.command}\``);
-    }
-    const newest = newestMtime(build.sources);
-    if (newest.mtimeMs > builtMs) {
-      throw new Error(`Child build ${build.output} is older than ${newest.file}; run \`${build.command}\``);
-    }
-  }
-}
-
 /** A console line of the child as a log record; `undefined` for any other output. */
 function logRecordOf(line: string): LogRecord | undefined {
   try {
@@ -220,7 +156,7 @@ function logRecordOf(line: string): LogRecord | undefined {
   }
 }
 
-/** One compiled child process: an API process with workers on and the real code executor. */
+/** One child process: an API process with workers on and the real code executor. */
 export class CodeRunChild {
   private readonly tail: string[] = [];
   private readonly records: LogRecord[] = [];
@@ -233,7 +169,7 @@ export class CodeRunChild {
     this.process = fork(CHILD_ENTRY, [], {
       cwd: PACKAGE_ROOT,
       // The API process starts with `--disable-sigusr1`: a script's executor cannot open its inspector.
-      execArgv: ['--disable-sigusr1', '--enable-source-maps'],
+      execArgv: ['--disable-sigusr1', '--import', import.meta.resolve('tsx')],
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
@@ -344,10 +280,6 @@ async function within<T>(promise: Promise<T>, ms: number, onTimeout: () => Error
 /** Children of one test; {@link killAll} ends whatever is left of them. */
 export class CodeRunChildren {
   private readonly started: CodeRunChild[] = [];
-
-  constructor() {
-    assertChildBuildFresh();
-  }
 
   /** Starts a child and waits until its workers run. */
   async start(scenario: ChildScenario): Promise<CodeRunChild> {

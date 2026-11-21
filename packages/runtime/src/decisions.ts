@@ -9,11 +9,11 @@ import {
 } from '@agent-os/contracts';
 import { type Database, runtimeDecisions, runtimeTasks } from '@agent-os/db';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
-import { RuntimeError } from './errors.js';
-import type { EventLog } from './event-log.js';
-import type { TaskRow } from './guarded-transition.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import type { TaskRepository } from './task.repository.js';
+import { RuntimeError } from './errors';
+import type { EventLog } from './event-log';
+import type { TaskRow } from './guarded-transition';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import type { TaskRepository } from './task.repository';
 
 export type DecisionRow = typeof runtimeDecisions.$inferSelect;
 

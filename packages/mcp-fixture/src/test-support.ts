@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { argsHash } from './canonical-json.js';
+import { argsHash } from './canonical-json';
 
 /**
  * Help for the tests that run the fixture process (`startFixtureProcess`): the fixture files of one test

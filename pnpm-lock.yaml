@@ -33,24 +33,24 @@ importers:
 
   apps/api:
     dependencies:
-      '@agent-os/agents':
-        specifier: workspace:*
-        version: link:../../packages/agents
-      '@agent-os/common':
-        specifier: workspace:*
-        version: link:../../packages/common
-      '@agent-os/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@agent-os/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@agent-os/runtime':
-        specifier: workspace:*
-        version: link:../../packages/runtime
-      '@agent-os/workflows':
-        specifier: workspace:*
-        version: link:../../packages/workflows
+      '@ai-sdk/anthropic':
+        specifier: 4.0.82
+        version: 4.0.82(zod@4.6.7)
+      '@ai-sdk/google':
+        specifier: 4.0.99
+        version: 4.0.99(zod@4.6.7)
+      '@ai-sdk/openai-compatible':
+        specifier: 3.0.71
+        version: 3.0.71(zod@4.6.7)
+      '@jitl/quickjs-wasmfile-release-sync':
+        specifier: 0.32.0
+        version: 0.32.0
+      '@mastra/core':
+        specifier: ^1.80.0
+        version: 1.83.0(@opentelemetry/api@1.10.0)(ai@7.0.155(zod@4.6.7))(express@5.3.0)(rxjs@7.8.2)(zod@4.6.7)
+      '@modelcontextprotocol/client':
+        specifier: 2.4.0
+        version: 2.4.0
       '@nestjs/common':
         specifier: ^12.5.1
         version: 12.5.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -81,6 +81,9 @@ importers:
       pg:
         specifier: ^8.23.1
         version: 8.23.1
+      quickjs-emscripten-core:
+        specifier: 0.32.0
+        version: 0.32.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -91,12 +94,33 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@agent-os/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@agent-os/common':
+        specifier: workspace:*
+        version: link:../../packages/common
+      '@agent-os/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@agent-os/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@agent-os/mcp-fixture':
         specifier: workspace:*
         version: link:../../packages/mcp-fixture
+      '@agent-os/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@agent-os/workflows':
+        specifier: workspace:*
+        version: link:../../packages/workflows
+      '@modelcontextprotocol/server':
+        specifier: 2.4.0
+        version: 2.4.0
       '@nestjs/cli':
         specifier: ^12.0.13
-        version: 12.0.13(@types/node@26.6.6)(prettier@3.10.1)
+        version: 12.0.13(@rspack/core@2.3.3(@swc/helpers@0.5.23))(@types/node@26.6.6)(prettier@3.10.1)(webpack-node-externals@3.0.0)
       '@nestjs/mau':
         specifier: ^0.2.9
         version: 0.2.9(@types/node@26.6.6)
@@ -106,6 +130,9 @@ importers:
       '@nestjs/testing':
         specifier: ^12.5.1
         version: 12.5.1(@nestjs/common@12.5.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.5.1)(@nestjs/platform-express@12.5.1)
+      '@rspack/core':
+        specifier: ^2.3.3
+        version: 2.3.3(@swc/helpers@0.5.23)
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
@@ -145,6 +172,9 @@ importers:
       vitest:
         specifier: ^4.1.2
         version: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@4.1.12)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.15.0(@types/node@26.6.6)(typescript@6.0.3))(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      webpack-node-externals:
+        specifier: ^3.0.0
+        version: 3.0.0
 
   apps/web:
     dependencies:
@@ -324,6 +354,9 @@ importers:
       oxlint-tsgolint:
         specifier: ^7.0.2001
         version: 7.0.2007
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
@@ -432,6 +465,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.4.0
         version: 2.4.0
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -476,6 +512,9 @@ importers:
       oxlint-tsgolint:
         specifier: ^7.0.2001
         version: 7.0.2007
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
@@ -1044,6 +1083,9 @@ packages:
   '@emnapi/core@2.0.0-beta.2':
     resolution: {integrity: sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A==}
 
+  '@emnapi/core@2.0.0-beta.3':
+    resolution: {integrity: sha512-KA+gOBtbifRATmUa/Gpf5C2B2EJ0r4brHUT3XSgACeHREcuiObXH56xd+B3fFsEFbUT04VBEe6MuZiCtMp0tQg==}
+
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
 
@@ -1055,6 +1097,9 @@ packages:
 
   '@emnapi/runtime@2.0.0-beta.2':
     resolution: {integrity: sha512-JcrSPzPvZuNZvJqPTF9Fw25LbOJ8avzFVlaf2grmH4Cku0oGP47tRgqPZadcfj3YoZMHkFVnCYFbQM8I+i5QEw==}
+
+  '@emnapi/runtime@2.0.0-beta.3':
+    resolution: {integrity: sha512-ayb/PyyLzpwRyFVxeC0uoEHu59QlB1iWGcGsOpXQcaB/Dc+uGfBmNmpCHp3HmTT0t8lSsMmg3j7+tdJW/TlHjQ==}
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
@@ -3645,6 +3690,90 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@rspack/binding-darwin-arm64@2.3.3':
+    resolution: {integrity: sha512-G9WcBOP/6ZWeqTM/G0/rkJRY4DWmYQvk2untzcpj92uO12tqjZ9BSMgtBFvwElwagfQBkX8PPutkAZgtnlAoWA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rspack/binding-darwin-x64@2.3.3':
+    resolution: {integrity: sha512-6agI5XDoihay+84vzZgIwwpQQ3xBWbe2HTWBRc0n42LzynIj9h7Qv8CJzf1gSDV1Ts0jzDgAJCYUFJ6Ya5F6MA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rspack/binding-linux-arm64-gnu@2.3.3':
+    resolution: {integrity: sha512-VdjK1mDq+GBexd041lmWBFmAvcWIZy7kepTJbJgxLeHYYOnI3KmBG15kemhlK0pBySa+bePX7p2w8uYtl1HsCA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rspack/binding-linux-arm64-musl@2.3.3':
+    resolution: {integrity: sha512-xF4Wy4XwGjC3m13tFm1q9p9Qpm31qrk6f5zEMPZC31UVabb+2jrgTI1pfZ8IRuo9x/Qw9s+Zq3hyDbtJvvD8Pg==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rspack/binding-linux-ppc64-gnu@2.3.3':
+    resolution: {integrity: sha512-jVmn+LpF44D4FdZyT91rlT/tPMdHIfPfQTgVzwPB5nDICp4b57SFjVBApuAPIxnLT1pKLkv/LIcdvGSdAeX12w==}
+    cpu: [ppc64]
+    os: [linux]
+
+  '@rspack/binding-linux-riscv64-gnu@2.3.3':
+    resolution: {integrity: sha512-JcQJm8M634jkbG6zJ3TfziKYsCINEAh3FwKuxLljvBgGDEupBxPuB0n2bXBIUeI8P9C33B45IYX6BwWYXll/zw==}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@rspack/binding-linux-riscv64-musl@2.3.3':
+    resolution: {integrity: sha512-YMIOS7rFvCDnpeyxoVEVbM7U/TwcC2VDtN3Oiq9BenRsNTEvk0imINhuVRFanh15+wkiQHk9h0b+pzcggYLAsA==}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@rspack/binding-linux-s390x-gnu@2.3.3':
+    resolution: {integrity: sha512-tHGtIG6GGHsk2KvSleQp/BrVqiGdjDsLJuMKR7hE7W1uJW6WDJ+a+Z23Rk5kHXh5BjeFLjXxcufGuokvmLmTag==}
+    cpu: [s390x]
+    os: [linux]
+
+  '@rspack/binding-linux-x64-gnu@2.3.3':
+    resolution: {integrity: sha512-spe8SjywfO+dD7Sk+vIpPaOXf56wstrgeuztfJdiI9zTeQmf/lhdaNUUSUAXlGIaLjrN/PhV8i5kbQ7VaAkenw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@rspack/binding-linux-x64-musl@2.3.3':
+    resolution: {integrity: sha512-4E4OJodrmsS52zkSAWShG/F07etr0OG4oSrIN+/2BBgc0qR2wwu2T+rAs308IL3lbywlS+J+cynrRcsSFMD+Kg==}
+    cpu: [x64]
+    os: [linux]
+
+  '@rspack/binding-wasm32-wasi@2.3.3':
+    resolution: {integrity: sha512-AhlsPjW31TGP8N+J7OmbCPaamARUl+OQNiT3xo0PL5Dz5oMm+bEfYLostpehKyy8MNDrmJcY97M9pDb5MDMA0w==}
+    cpu: [wasm32]
+
+  '@rspack/binding-win32-arm64-msvc@2.3.3':
+    resolution: {integrity: sha512-Zqbj7GBPtkJ8GlUKAjFgvmOxKkQwjfS3XfjwGBcmoIAUb4IxUsmMqvi+gfKrvI45SjYVFZaJnTpOJw6GL79K+Q==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@rspack/binding-win32-ia32-msvc@2.3.3':
+    resolution: {integrity: sha512-sJJmbrdzH6kI48mCsUu5a2+BzEktLmHrHUmWGkAPAi0zhi4anA7sOdS1+uERbkkd/XAzs0bdn3JXyT2djY+3IA==}
+    cpu: [ia32]
+    os: [win32]
+
+  '@rspack/binding-win32-x64-msvc@2.3.3':
+    resolution: {integrity: sha512-1r3wxV1pBNykqpbEbZWqcrZd13PKLq0e7Ku6qv8IGKKeftuf3RUxTkeM5AzppGMGEIA9sw8mRdN7NvEXxqLLxw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@rspack/binding@2.3.3':
+    resolution: {integrity: sha512-wwF++36a3rqYi0G9zj+rUavn/GIMzbzXehelGS1jkYeKPHyPXrVYwRHqwEKNKMD9z+FdW4YJKQcfFkPlHEiwUg==}
+
+  '@rspack/core@2.3.3':
+    resolution: {integrity: sha512-stAYr0SXf+ZFXFsWTv+Ljxoj/nQs2p7gX9V1kBwlO2IXlRAAhabLONYibT3ZeEGybx3kowrs7uJkcOQsuHgghw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    peerDependencies:
+      '@module-federation/runtime-tools': ^0.24.1 || ^2.0.0
+      '@swc/helpers': ^0.5.23
+    peerDependenciesMeta:
+      '@module-federation/runtime-tools':
+        optional: true
+      '@swc/helpers':
+        optional: true
+
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
 
@@ -5857,10 +5986,6 @@ packages:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
 
-  ignore@7.0.14:
-    resolution: {integrity: sha512-wCBiZ77u1tuWde6G/nfOtLaCTYcFDU5yCzARzK10y+rLhzYoL7a7yEemcopcc2Mzow7gZOIjnV2ym1NYmdiJOQ==}
-    engines: {node: '>= 4'}
-
   ignore@7.0.16:
     resolution: {integrity: sha512-52N+Y4HRMOJmbLmr+DqO4iSRyyB7N52gm7PWCT6h0p978+oKbqHCB7gIJIwZvBUsjlSdWbrBFqUSmIFNZMpn0A==}
     engines: {node: '>= 4'}
@@ -6149,9 +6274,6 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
-
-  jose@6.2.13:
-    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   jose@6.2.17:
     resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
@@ -8080,6 +8202,10 @@ packages:
     resolution: {integrity: sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==}
     engines: {node: '>=20'}
 
+  webpack-node-externals@3.0.0:
+    resolution: {integrity: sha512-LnL6Z3GGDPht/AigwRh2dvL9PQPFQ8skEpVrWZXLWBYmqcaojHNN0onvHzie6rq7EWKrrBfPYqNEzTJgiwEQDQ==}
+    engines: {node: '>=6'}
+
   whatwg-mimetype@5.0.0:
     resolution: {integrity: sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==}
     engines: {node: '>=20'}
@@ -8874,6 +9000,12 @@ snapshots:
       tslib: 2.9.1
     optional: true
 
+  '@emnapi/core@2.0.0-beta.3':
+    dependencies:
+      '@emnapi/wasi-threads': 2.2.0
+      tslib: 2.9.1
+    optional: true
+
   '@emnapi/runtime@1.10.0':
     dependencies:
       tslib: 2.9.1
@@ -8890,6 +9022,11 @@ snapshots:
     optional: true
 
   '@emnapi/runtime@2.0.0-beta.2':
+    dependencies:
+      tslib: 2.9.1
+    optional: true
+
+  '@emnapi/runtime@2.0.0-beta.3':
     dependencies:
       tslib: 2.9.1
     optional: true
@@ -9566,7 +9703,7 @@ snapshots:
       fastq: 1.20.3
       hono: 4.13.19
       hono-openapi: 1.5.0(hono@4.13.19)(zod@4.6.7)
-      ignore: 7.0.14
+      ignore: 7.0.16
       jpeg-js: 0.4.4
       json-schema: 0.4.0
       lru-cache: 11.5.3
@@ -9611,7 +9748,7 @@ snapshots:
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.1
-      jose: 6.2.13
+      jose: 6.2.18
       pkce-challenge: 5.0.1
       zod: 4.6.7
 
@@ -9654,7 +9791,14 @@ snapshots:
       '@tybys/wasm-util': 0.10.4
     optional: true
 
-  '@nestjs/cli@12.0.13(@types/node@26.6.6)(prettier@3.10.1)':
+  '@napi-rs/wasm-runtime@1.2.7(@emnapi/core@2.0.0-beta.3)(@emnapi/runtime@2.0.0-beta.3)':
+    dependencies:
+      '@emnapi/core': 2.0.0-beta.3
+      '@emnapi/runtime': 2.0.0-beta.3
+      '@tybys/wasm-util': 0.10.4
+    optional: true
+
+  '@nestjs/cli@12.0.13(@rspack/core@2.3.3(@swc/helpers@0.5.23))(@types/node@26.6.6)(prettier@3.10.1)(webpack-node-externals@3.0.0)':
     dependencies:
       '@angular-devkit/core': 22.2.6(chokidar@5.0.0)
       '@angular-devkit/schematics': 22.2.6(chokidar@5.0.0)
@@ -9671,6 +9815,9 @@ snapshots:
       ora: 9.4.1
       tsconfig-paths: 4.2.0
       typescript: 6.0.3
+    optionalDependencies:
+      '@rspack/core': 2.3.3(@swc/helpers@0.5.23)
+      webpack-node-externals: 3.0.0
     transitivePeerDependencies:
       - '@types/node'
       - prettier
@@ -10990,6 +11137,75 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.68.3':
     optional: true
+
+  '@rspack/binding-darwin-arm64@2.3.3':
+    optional: true
+
+  '@rspack/binding-darwin-x64@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-arm64-gnu@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-arm64-musl@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-ppc64-gnu@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-riscv64-gnu@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-riscv64-musl@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-s390x-gnu@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-x64-gnu@2.3.3':
+    optional: true
+
+  '@rspack/binding-linux-x64-musl@2.3.3':
+    optional: true
+
+  '@rspack/binding-wasm32-wasi@2.3.3':
+    dependencies:
+      '@emnapi/core': 2.0.0-beta.3
+      '@emnapi/runtime': 2.0.0-beta.3
+      '@napi-rs/wasm-runtime': 1.2.7(@emnapi/core@2.0.0-beta.3)(@emnapi/runtime@2.0.0-beta.3)
+    optional: true
+
+  '@rspack/binding-win32-arm64-msvc@2.3.3':
+    optional: true
+
+  '@rspack/binding-win32-ia32-msvc@2.3.3':
+    optional: true
+
+  '@rspack/binding-win32-x64-msvc@2.3.3':
+    optional: true
+
+  '@rspack/binding@2.3.3':
+    optionalDependencies:
+      '@rspack/binding-darwin-arm64': 2.3.3
+      '@rspack/binding-darwin-x64': 2.3.3
+      '@rspack/binding-linux-arm64-gnu': 2.3.3
+      '@rspack/binding-linux-arm64-musl': 2.3.3
+      '@rspack/binding-linux-ppc64-gnu': 2.3.3
+      '@rspack/binding-linux-riscv64-gnu': 2.3.3
+      '@rspack/binding-linux-riscv64-musl': 2.3.3
+      '@rspack/binding-linux-s390x-gnu': 2.3.3
+      '@rspack/binding-linux-x64-gnu': 2.3.3
+      '@rspack/binding-linux-x64-musl': 2.3.3
+      '@rspack/binding-wasm32-wasi': 2.3.3
+      '@rspack/binding-win32-arm64-msvc': 2.3.3
+      '@rspack/binding-win32-ia32-msvc': 2.3.3
+      '@rspack/binding-win32-x64-msvc': 2.3.3
+
+  '@rspack/core@2.3.3(@swc/helpers@0.5.23)':
+    dependencies:
+      '@rspack/binding': 2.3.3
+    optionalDependencies:
+      '@swc/helpers': 0.5.23
 
   '@rtsao/scc@1.1.0': {}
 
@@ -13288,8 +13504,6 @@ snapshots:
 
   ignore@5.3.2: {}
 
-  ignore@7.0.14: {}
-
   ignore@7.0.16: {}
 
   import-fresh@3.3.1:
@@ -13551,8 +13765,6 @@ snapshots:
       set-function-name: 2.0.2
 
   jiti@2.7.0: {}
-
-  jose@6.2.13: {}
 
   jose@6.2.17: {}
 
@@ -16069,6 +16281,8 @@ snapshots:
   web-vitals@6.2.3: {}
 
   webidl-conversions@8.0.1: {}
+
+  webpack-node-externals@3.0.0: {}
 
   whatwg-mimetype@5.0.0: {}
 

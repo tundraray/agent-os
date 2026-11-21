@@ -6,15 +6,15 @@ import {
   runtimeEvents,
 } from '@agent-os/db';
 import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
-import type { CancelTimer, Clock } from './clock.js';
+import type { CancelTimer, Clock } from './clock';
 import type {
   EventConsumer,
   EventConsumerRegistry,
-} from './event-consumer.registry.js';
-import type { StoredEvent } from './event-log.js';
-import type { RuntimeConfig } from './runtime-config.js';
-import type { RuntimeTx } from './runtime-tx.js';
-import type { TaskRepository } from './task.repository.js';
+} from './event-consumer.registry';
+import type { StoredEvent } from './event-log';
+import type { RuntimeConfig } from './runtime-config';
+import type { RuntimeTx } from './runtime-tx';
+import type { TaskRepository } from './task.repository';
 
 const { pending, done, needs_attention } = DeliveryStatusSchema.enum;
 

@@ -4,7 +4,7 @@ import {
   type SaveChoices,
   type SaveDecision,
   type SaveInput,
-} from './save-rules.js';
+} from './save-rules';
 
 const HAIKU = 'anthropic/haiku';
 const SONNET = 'anthropic/sonnet';

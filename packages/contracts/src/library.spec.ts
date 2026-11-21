@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CreateRecordBodySchema } from './library.js';
+import { CreateRecordBodySchema } from './library';
 
 const MODEL = 'anthropic/claude-haiku-5-5';
 

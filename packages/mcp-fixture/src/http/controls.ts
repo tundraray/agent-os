@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { FixtureSourceSchema, type FixtureServer, type FixtureSource } from '../fixture-server.js';
-import { defineTool } from '../tools/fixture-tool.js';
-import type { FixtureAuthorizationServer } from './authorization-server.js';
+import { FixtureSourceSchema, type FixtureServer, type FixtureSource } from '../fixture-server';
+import { defineTool } from '../tools/fixture-tool';
+import type { FixtureAuthorizationServer } from './authorization-server';
 
 /** What the test controls change: the authorization server, the sources and the shared token per source. */
 export interface ControlTargets {

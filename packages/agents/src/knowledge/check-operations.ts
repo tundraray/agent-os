@@ -5,7 +5,7 @@ import {
   KNOWLEDGE_OPERATIONS_MAX,
   type KnowledgeOperation,
   KnowledgeOperationSchema,
-} from './operations.js';
+} from './operations';
 
 /** Outcome of a call of the extraction input: only these outcomes are taken into it. */
 export type RoundCallOutcome = Extract<ToolOutcome, 'success' | 'empty' | 'tool_error'>;

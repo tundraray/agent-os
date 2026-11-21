@@ -1,7 +1,7 @@
 import type { ModelVerdict } from '@agent-os/agents';
 import type { CatalogModel } from '@agent-os/contracts';
 import type { ModelPrice } from '@agent-os/runtime';
-import type { EffectiveAccess } from './effective-access.js';
+import type { EffectiveAccess } from './effective-access';
 
 export interface ModelVerdictInput {
   /** The employee is enabled. */

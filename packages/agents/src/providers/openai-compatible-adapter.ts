@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-import { type ProviderAdapter, keyHeader, rejectionText } from './adapters.js';
-import type { ProviderConnection } from './provider-registry.js';
+import { type ProviderAdapter, keyHeader, rejectionText } from './adapters';
+import type { ProviderConnection } from './provider-registry';
 
 /** The server is named by the provider's name; it streams the usage only when asked (`includeUsage`). */
 function provider(connection: ProviderConnection) {

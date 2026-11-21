@@ -1,5 +1,5 @@
 import type { AgentContent, RecordBody } from '@agent-os/contracts';
-import { planCopy, type CopyInput } from './copy-rules.js';
+import { planCopy, type CopyInput } from './copy-rules';
 
 const ANYA_MODEL = 'anthropic/sonnet';
 const PLATFORM_MODEL = 'anthropic/haiku';

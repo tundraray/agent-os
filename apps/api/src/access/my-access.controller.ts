@@ -1,9 +1,9 @@
 import { Controller, Get, Inject, Req } from '@nestjs/common';
 import type { Agents } from '@agent-os/agents';
 import type { MyModels } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { AccessService } from './access.service.js';
+import { AGENTS } from '../agents/agents.tokens';
+import type { AuthedRequest } from '../identity/auth-user';
+import { AccessService } from './access.service';
 
 /**
  * "My access" of the signed-in employee (design-access.md, Contract «Для веба — сотрудник»). It lives in

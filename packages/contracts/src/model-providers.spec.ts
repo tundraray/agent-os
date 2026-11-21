@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CreateModelProviderBodySchema, UpdateModelProviderBodySchema } from './model-providers.js';
+import { CreateModelProviderBodySchema, UpdateModelProviderBodySchema } from './model-providers';
 
 // One row type for both bodies: the table mixes the two schemas.
 type Row = {

@@ -5,7 +5,7 @@ import {
 } from '@agent-os/db';
 import { UserStatusSchema, type UserStatus } from '@agent-os/contracts';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
+import type { Executor } from '../common/executor';
 
 /** A row of `identity_users`. */
 export type UserRow = typeof identityUsers.$inferSelect;

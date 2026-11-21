@@ -4,7 +4,7 @@ import { parseEnv } from 'node:util';
 
 /**
  * `.env` of the composition root, the file the developer already keeps for `apps/api`. Resolved
- * from the source location; a compiled child gets `DATABASE_URL` from its harness and never
+ * from the source location; a child process gets `DATABASE_URL` from its harness and never
  * reaches this fallback.
  */
 const ENV_FILE = fileURLToPath(

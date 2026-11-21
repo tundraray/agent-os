@@ -86,9 +86,9 @@ import {
   runModel,
   type RunRole,
   useRunModels,
-} from './support/access.js';
-import { expectBody, expectError } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+} from './support/access';
+import { expectBody, expectError } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
   auditOfRecord,
@@ -103,19 +103,19 @@ import {
   shareWith,
   workflowBody,
   type LibraryRoute,
-} from './support/library.js';
+} from './support/library';
 import {
   BACKOFFICE_SERVER,
   LOGS_SERVER,
   runName,
-} from './support/mcp-servers.js';
+} from './support/mcp-servers';
 import {
   apiRequest,
   insertEmployee,
   seedSuperAdmin,
   signInWithPassword,
   type Session,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one test; the requests settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

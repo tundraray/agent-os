@@ -1,5 +1,5 @@
 import type { AgentStatus, ChatStatus, TaskStatus, WaitReason } from '@agent-os/contracts';
-import { chatStatus } from './chat-status.js';
+import { chatStatus } from './chat-status';
 
 type Row = {
   name: string;

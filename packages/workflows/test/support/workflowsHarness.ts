@@ -38,7 +38,7 @@ import {
 } from '@agent-os/runtime';
 import { createWorkflows, type Workflows } from '@agent-os/workflows';
 import { inject } from 'vitest';
-import { databaseUrl } from './database-url.js';
+import { databaseUrl } from './database-url';
 
 /**
  * Test assembly of the workflows package (design-runtime.md, Test Strategy): `createRuntime`, `createAgents`

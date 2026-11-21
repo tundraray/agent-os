@@ -1,26 +1,26 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { RuntimeModule } from '../runtime/runtime.module.js';
-import { AdminProvidersController } from './admin-providers.controller.js';
-import { AdminRolesController } from './admin-roles.controller.js';
-import { AdminSettingsController } from './admin-settings.controller.js';
-import { AdminUsersController } from './admin-users.controller.js';
-import { AuthController } from './auth.controller.js';
-import { HealthController } from './health.controller.js';
-import { IdentityDirectory } from './identity-directory.js';
-import { IdentitySettings } from './identity-settings.js';
+import { RuntimeModule } from '../runtime/runtime.module';
+import { AdminProvidersController } from './admin-providers.controller';
+import { AdminRolesController } from './admin-roles.controller';
+import { AdminSettingsController } from './admin-settings.controller';
+import { AdminUsersController } from './admin-users.controller';
+import { AuthController } from './auth.controller';
+import { HealthController } from './health.controller';
+import { IdentityDirectory } from './identity-directory';
+import { IdentitySettings } from './identity-settings';
 import {
   DEFAULT_GOOGLE_ISSUER_URL,
   GOOGLE_ISSUER_URL,
-} from './identity.tokens.js';
-import { OidcSignIn } from './oidc-sign-in.js';
-import { PasswordSignIn } from './password-sign-in.js';
-import { ProvidersService } from './providers.service.js';
-import { RolesService } from './roles.service.js';
-import { SessionStore } from './session.store.js';
-import { SessionGuard } from './session.guard.js';
-import { SignInService } from './sign-in.service.js';
-import { UsersService } from './users.service.js';
+} from './identity.tokens';
+import { OidcSignIn } from './oidc-sign-in';
+import { PasswordSignIn } from './password-sign-in';
+import { ProvidersService } from './providers.service';
+import { RolesService } from './roles.service';
+import { SessionStore } from './session.store';
+import { SessionGuard } from './session.guard';
+import { SignInService } from './sign-in.service';
+import { UsersService } from './users.service';
 
 /**
  * Employees, sign-in and sessions (design-identity.md, C3 api). `SessionGuard` is the global guard

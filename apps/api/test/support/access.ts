@@ -19,9 +19,9 @@ import {
 import type { DatabaseConnection } from '@agent-os/db';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
-import { expectBody } from './api.js';
-import { runName } from './mcp-servers.js';
-import { apiRequest, type Session } from './session.js';
+import { expectBody } from './api';
+import { runName } from './mcp-servers';
+import { apiRequest, type Session } from './session';
 
 /**
  * The model providers, catalogue, default models and rights of the tests (design-access.md; model-providers

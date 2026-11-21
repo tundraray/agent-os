@@ -19,8 +19,7 @@
 3. Из корня репозитория:
 
    ```bash
-   pnpm turbo build --filter=web^...   # собрать @agent-os/contracts и @agent-os/common
-   pnpm --filter web dev               # http://localhost:3000
+   pnpm --filter web dev               # http://localhost:3000; пакеты @agent-os/contracts и @agent-os/common берутся из исходников (transpilePackages)
    ```
 
    Сборка и запуск собранного: `pnpm --filter web build`, затем `pnpm --filter web start` (тоже порт 3000).

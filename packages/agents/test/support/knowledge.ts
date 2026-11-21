@@ -17,15 +17,15 @@ import {
   findRunById,
   type KnowledgeEmbeddingRow,
   type KnowledgeRun,
-} from '../../src/knowledge/knowledge-runs.repository.js';
+} from '../../src/knowledge/knowledge-runs.repository';
 import {
   KNOWLEDGE_EMBED_TASK_TYPE,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
-} from '../../src/knowledge/knowledge-tasks.js';
-import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations.js';
-import { createPgvectorStore } from '../../src/knowledge/pgvector-store.js';
-import type { KnowledgeVector } from '../../src/knowledge/vector-store.js';
-import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from './agentsHarness.js';
+} from '../../src/knowledge/knowledge-tasks';
+import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations';
+import { createPgvectorStore } from '../../src/knowledge/pgvector-store';
+import type { KnowledgeVector } from '../../src/knowledge/vector-store';
+import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from './agentsHarness';
 
 /**
  * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.library_records` row the
@@ -33,9 +33,9 @@ import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from 
  * the background work, and the reads the cases assert on. The reads are the package's own repositories and
  * store, re-exported so a case has one import place.
  */
-export { readGraph } from '../../src/knowledge/knowledge.repository.js';
-export { findEmbeddingRow, findRunById, readQuestion } from '../../src/knowledge/knowledge-runs.repository.js';
-export { createPgvectorStore } from '../../src/knowledge/pgvector-store.js';
+export { readGraph } from '../../src/knowledge/knowledge.repository';
+export { findEmbeddingRow, findRunById, readQuestion } from '../../src/knowledge/knowledge-runs.repository';
+export { createPgvectorStore } from '../../src/knowledge/pgvector-store';
 
 /** The agent name of the extraction's model calls: the scripted model's key `{ agent: KNOWLEDGE_EXTRACT_AGENT }`. */
 export const KNOWLEDGE_EXTRACT_AGENT = 'knowledge-extract';

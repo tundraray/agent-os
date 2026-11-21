@@ -1,12 +1,12 @@
-import { envelope } from '../model/provider-messages.js';
-import { knowledgeKey, knowledgeLineWithKey } from './knowledge-text.js';
+import { envelope } from '../model/provider-messages';
+import { knowledgeKey, knowledgeLineWithKey } from './knowledge-text';
 import {
   type ChooseEntitiesArgs,
   KNOWLEDGE_OPERATIONS_MAX,
   KnowledgeOperationSchema,
-} from './operations.js';
-import type { GraphItem } from './select-knowledge.js';
-import type { KnowledgeCloseness } from './vector-store.js';
+} from './operations';
+import type { GraphItem } from './select-knowledge';
+import type { KnowledgeCloseness } from './vector-store';
 
 /**
  * Similar entities at extraction (self-learning design-core.md, KD-4, FR-20, AC-20.1, DC-17). Code only

@@ -1,4 +1,4 @@
-import { cutText, linesOf, pageOf, previewOf, searchOf, wrapperText } from './large-result.js';
+import { cutText, linesOf, pageOf, previewOf, searchOf, wrapperText } from './large-result';
 
 // R-1…R-3 of the tool-result-reading plan; risk «a page splits a character or a very long line».
 // Expected values are literals counted by hand.

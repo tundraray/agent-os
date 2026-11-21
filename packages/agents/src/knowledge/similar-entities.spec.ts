@@ -1,15 +1,15 @@
 import { createSecretMasker } from '@agent-os/common';
 
-import { type CheckedOperations, checkOperations, type KnowledgeGraph, type RoundCall } from './check-operations.js';
-import type { ChooseEntitiesArgs } from './operations.js';
-import type { GraphItem } from './select-knowledge.js';
+import { type CheckedOperations, checkOperations, type KnowledgeGraph, type RoundCall } from './check-operations';
+import type { ChooseEntitiesArgs } from './operations';
+import type { GraphItem } from './select-knowledge';
 import {
   applyChoices,
   type EntityChoice,
   proposedEntities,
   similarCandidates,
-} from './similar-entities.js';
-import type { KnowledgeCloseness } from './vector-store.js';
+} from './similar-entities';
+import type { KnowledgeCloseness } from './vector-store';
 
 // UC-10, AC-20.1, DC-17 (design-core.md, KD-4): code offers only close graph entities as candidates and
 // merges a new entity only into a candidate the model chose for it; no candidates — no `choose_entities` call.

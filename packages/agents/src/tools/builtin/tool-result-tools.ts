@@ -1,9 +1,9 @@
 import type { Database } from '@agent-os/db';
 import { z } from 'zod';
 
-import { toolResults } from '../../store/tool-results.repository.js';
-import { pageOf, RESULT_NOT_FOUND, searchOf } from '../large-result.js';
-import type { OutsideAgentTool, ToolCaller, ToolRunResult } from '../tool.js';
+import { toolResults } from '../../store/tool-results.repository';
+import { pageOf, RESULT_NOT_FOUND, searchOf } from '../large-result';
+import type { OutsideAgentTool, ToolCaller, ToolRunResult } from '../tool';
 
 const ReadToolResultArgsSchema = z.object({
   callId: z.string().min(1).describe('The callId the stored result names.'),

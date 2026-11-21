@@ -1,6 +1,6 @@
 import type { Clock } from '@agent-os/runtime';
 
-import type { ProviderAdapter } from '../providers/adapters.js';
+import type { ProviderAdapter } from '../providers/adapters';
 
 /** A provider error (408, 429, 5xx, network) is retried this many times (KD-6). */
 export const PROVIDER_RETRIES = 2;

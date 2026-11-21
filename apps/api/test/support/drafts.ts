@@ -7,7 +7,7 @@ import {
   type DraftView,
 } from '@agent-os/contracts';
 import type { App } from 'supertest/types.js';
-import { apiRequest, type Session } from './session.js';
+import { apiRequest, type Session } from './session';
 
 /**
  * The answer of a draft action (design-runtime.md, «Маршрут черновиков»): 200 with the draft, a refused

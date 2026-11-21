@@ -8,7 +8,7 @@ import {
   SdkHttpError,
   UnauthorizedError,
 } from '@modelcontextprotocol/client';
-import { type McpFailure, mcpFailureReason } from './mcp-failure.js';
+import { type McpFailure, mcpFailureReason } from './mcp-failure';
 
 // DC-10, KD-5 (map), UC-E4 (class): every MCP client error maps to its own outcome and reason;
 // an error outside the known classes is a defect and propagates.

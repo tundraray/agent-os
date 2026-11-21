@@ -1,6 +1,6 @@
 import type { ModelProviderKind, ModelProviderState } from '@agent-os/contracts';
 
-import { PROVIDER_KINDS } from './provider-kinds.js';
+import { PROVIDER_KINDS } from './provider-kinds';
 
 /** A provider's readiness: its state, or `missing` when no provider of that name is registered. */
 export type ProviderReadiness = ModelProviderState | 'missing';

@@ -1,5 +1,5 @@
-import type { StoredEvent } from './event-log.js';
-import type { RuntimeTx } from './runtime-tx.js';
+import type { StoredEvent } from './event-log';
+import type { RuntimeTx } from './runtime-tx';
 
 /**
  * A consumer of outbox events. `handle` only makes database writes inside the given transaction

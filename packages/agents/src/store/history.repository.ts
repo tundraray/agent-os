@@ -24,9 +24,9 @@ import {
   sql,
 } from 'drizzle-orm';
 
-import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history.js';
-import { START_AGENT_TOOL } from '../tools/builtin/start-agent.js';
-import type { StoreReader } from './sessions.repository.js';
+import { type HistoryContent, HistoryContentSchemas, type HistoryEntry } from '../history/history';
+import { START_AGENT_TOOL } from '../tools/builtin/start-agent';
+import type { StoreReader } from './sessions.repository';
 
 /** An entry to append: its kind, its content and, for a `model_answer`, the token ledger row. */
 export type NewHistoryEntry = {

@@ -1,10 +1,10 @@
 import type { ModelProviderCheck, ModelProviderKind } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { type EmbeddingInputType, type ProviderOptions, providerAdapter } from './adapters.js';
-import { type CheckFetch, checkProvider } from './provider-check.js';
-import { PROVIDER_KINDS } from './provider-kinds.js';
-import type { ProviderConnection } from './provider-registry.js';
+import { type EmbeddingInputType, type ProviderOptions, providerAdapter } from './adapters';
+import { type CheckFetch, checkProvider } from './provider-check';
+import { PROVIDER_KINDS } from './provider-kinds';
+import type { ProviderConnection } from './provider-registry';
 
 // design-core.md KD-3, «Как разбирается ошибка провайдера», FR-15 / AC-15.1, DC-12: one row per kind — the
 // default address the requests go to, the AI SDK provider of the model (a `google` one is what makes Mastra

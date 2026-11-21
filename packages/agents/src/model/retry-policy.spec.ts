@@ -8,10 +8,10 @@ import type { Logger } from '@agent-os/common';
 import type { ModelProviderState } from '@agent-os/contracts';
 import type { CallUsage, Clock, ModelCallRecord } from '@agent-os/runtime';
 
-import type { AccessDeniedEntry } from '../access-gate.js';
-import { createProviderRegistryDouble } from '../testing.js';
-import type { AgentTurnModelClient } from './mastra-turn.js';
-import { createModelClient } from './model-client.js';
+import type { AccessDeniedEntry } from '../access-gate';
+import { createProviderRegistryDouble } from '../testing';
+import type { AgentTurnModelClient } from './mastra-turn';
+import { createModelClient } from './model-client';
 
 /** One provider answer of the seam: a rejection in the shape of `AI_APICallError`, or an answer with its usage. */
 type SeamAttempt =

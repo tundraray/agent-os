@@ -74,7 +74,7 @@ import {
 /**
  * Model of Postgres schema `app` (ADR-0003): every table, constraint and index of `app` is
  * declared here; runtime tables carry the prefix `runtime_`. drizzle-kit generates the
- * migrations in `packages/db/migrations/` from this module.
+ * migrations in `packages/db/src/migrations/` from this module.
  *
  * CHECK domains are built from the contract enums in `@agent-os/contracts`, never duplicated here.
  * The cascade starts at the root task: deleting it deletes its tree with its messages, decisions

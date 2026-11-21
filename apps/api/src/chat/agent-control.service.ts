@@ -23,12 +23,12 @@ import {
 } from '@agent-os/contracts';
 import { monthOf, type Runtime } from '@agent-os/runtime';
 import type { Workflows } from '@agent-os/workflows';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { isUuid } from '../common/is-uuid.js';
-import { RUNTIME } from '../runtime/runtime.tokens.js';
-import { WORKFLOWS } from '../workflows/workflows.tokens.js';
-import { httpError } from './chat.errors.js';
-import { AGENT_LIST_PAGE_SIZE } from './chat.tokens.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { isUuid } from '../common/is-uuid';
+import { RUNTIME } from '../runtime/runtime.tokens';
+import { WORKFLOWS } from '../workflows/workflows.tokens';
+import { httpError } from './chat.errors';
+import { AGENT_LIST_PAGE_SIZE } from './chat.tokens';
 import {
   nextAfterSeqOf,
   toAgentTree,
@@ -37,9 +37,9 @@ import {
   toHistoryEntry,
   toPending,
   toWorkflowRunView,
-} from './conversation-view.js';
-import { decodeRowCursor, toThreadSummary } from './conversations.service.js';
-import { selectThreadPage, sortThreadsForList } from './thread-cursor.js';
+} from './conversation-view';
+import { decodeRowCursor, toThreadSummary } from './conversations.service';
+import { selectThreadPage, sortThreadsForList } from './thread-cursor';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');
 

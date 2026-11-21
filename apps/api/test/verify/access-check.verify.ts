@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
-import { AccessService } from '../../src/access/access.service.js';
+import { AccessService } from '../../src/access/access.service';
 import {
   allowRole,
   grantTo,
@@ -20,10 +20,10 @@ import {
   removeRunRows,
   runModel,
   useRunModels,
-} from '../support/access.js';
-import { createTestApp } from '../support/createTestApp.js';
-import { runName } from '../support/mcp-servers.js';
-import { createEmployee, seedSuperAdmin } from '../support/session.js';
+} from '../support/access';
+import { createTestApp } from '../support/createTestApp';
+import { runName } from '../support/mcp-servers';
+import { createEmployee, seedSuperAdmin } from '../support/session';
 
 const MODEL = runModel('n1');
 /** «Performance Requirements»: the check adds at most this much, p95. */

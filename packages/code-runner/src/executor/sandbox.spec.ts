@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { type QuickJSWASMModule, newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core';
-import type { RunLimits } from './protocol.js';
-import { type ScriptEnd, runScript } from './sandbox.js';
+import type { RunLimits } from './protocol';
+import { type ScriptEnd, runScript } from './sandbox';
 
 // Real QuickJS, no executor process and no database; only the bridge to the API process is a double.
 // The process layer of the same escapes and limits is E2E-2 (test/).

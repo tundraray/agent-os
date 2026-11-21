@@ -4,7 +4,7 @@ import type {
   LibraryRejectReason,
   RecordNameTakenReason,
 } from '@agent-os/contracts';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /**
  * HTTP status and constant message of each library error code (design-library.md, Error handling).

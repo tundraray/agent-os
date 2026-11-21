@@ -5,18 +5,18 @@ import type {
   UpdateSignInSettingsBody,
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { AuditLog } from '../audit/audit-log.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { identityError } from './identity.errors.js';
-import { publicUrlOf, type AddressedRequest } from './public-url.js';
+import { AuditLog } from '../audit/audit-log';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { identityError } from './identity.errors';
+import { publicUrlOf, type AddressedRequest } from './public-url';
 import {
   readSettings,
   savePublicUrlIfUnset,
   writeSettings,
   type SettingsChange,
   type SettingsRow,
-} from './settings.repository.js';
+} from './settings.repository';
 
 /** The audit object of the sign-in settings (FR-11). */
 const SETTINGS_OBJECT_TYPE = 'sign_in_settings';

@@ -1,9 +1,9 @@
 import { HistoryEventSchema, TaskStatusSchema } from '@agent-os/contracts';
 import type { StepMessage, Task } from '@agent-os/runtime';
 
-import type { NewHistoryEntry } from '../store/history.repository.js';
-import type { Session } from '../store/sessions.repository.js';
-import { type ResumeMark, resumeMarkOf } from './deliver.js';
+import type { NewHistoryEntry } from '../store/history.repository';
+import type { Session } from '../store/sessions.repository';
+import { type ResumeMark, resumeMarkOf } from './deliver';
 
 const { stopped } = TaskStatusSchema.enum;
 

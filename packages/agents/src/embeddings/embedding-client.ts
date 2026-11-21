@@ -1,5 +1,5 @@
-import { type EmbeddingInputType, providerAdapter } from '../providers/adapters.js';
-import type { ProviderConnection } from '../providers/provider-registry.js';
+import { type EmbeddingInputType, providerAdapter } from '../providers/adapters';
+import type { ProviderConnection } from '../providers/provider-registry';
 
 /** One provider request takes at most this long (design-core.md, Contract `Agents.embeddings.embed`). */
 const EMBEDDING_REQUEST_TIMEOUT_MS = 30_000;

@@ -29,14 +29,14 @@ import {
   RoleListSchema,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SYSTEM_ACTOR } from '../src/audit/audit-log.js';
-import { expectBody, expectError } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
+import { SYSTEM_ACTOR } from '../src/audit/audit-log';
+import { expectBody, expectError } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   apiRequest,
   createEmployee,
   signInWithPassword,
-} from './support/session.js';
+} from './support/session';
 
 /** Bound of one test: two argon2id hashes in child processes and a few requests. */
 const TEST_TIMEOUT_MS = 120_000;
@@ -45,7 +45,7 @@ const TEST_TIMEOUT_MS = 120_000;
 const API_DIR = fileURLToPath(new URL('..', import.meta.url));
 
 /** The compiled command entry, relative to `API_DIR`. */
-const COMMAND_ENTRY = 'dist/identity/super-admin-cli.js';
+const COMMAND_ENTRY = 'dist/super-admin-cli.js';
 
 /** The sources the compiled entry runs, relative to `API_DIR`. */
 const COMMAND_SOURCES = [
@@ -86,7 +86,7 @@ interface CommandRun {
 
 /**
  * Runs the operator command as `pnpm --filter api identity:super-admin` does (`node
- * --env-file-if-exists=.env dist/identity/super-admin-cli.js`, from `apps/api`) with the app's
+ * --env-file-if-exists=.env dist/super-admin-cli.js`, from `apps/api`) with the app's
  * `DATABASE_URL`, writes `password` and one line break to its standard input and waits for its exit.
  */
 function runSuperAdminCommand(

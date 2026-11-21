@@ -1,11 +1,11 @@
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
-import { createLogDataset } from './dataset.js';
-import { createFixtureHttpServer } from './http/http-server.js';
-import { DatasetVersionSchema } from './versions.js';
+import { createLogDataset } from './dataset';
+import { createFixtureHttpServer } from './http/http-server';
+import { DatasetVersionSchema } from './versions';
 
 /**
- * HTTP process entry: `node dist/main.js --port <n>` (default 4100, `0` picks a free port) serves the three
+ * HTTP process entry: `node --import tsx src/main.ts --port <n>` (default 4100, `0` picks a free port) serves the three
  * sources, the fixture's authorization server and the test controls on `127.0.0.1`, and prints one line
  * `fixture listening <port>` once it listens. `FIXTURE_DATASET` (default `v1`), `FIXTURE_CALL_LOG` and
  * `FIXTURE_FAULTS` (the call log and the fault rules of `test-support.ts`) are variables of the fixture

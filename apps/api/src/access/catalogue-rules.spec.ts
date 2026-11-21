@@ -1,5 +1,5 @@
 import type { CatalogModel } from '@agent-os/contracts';
-import { modelAdditionRule, modelDefaultsRule } from './catalogue-rules.js';
+import { modelAdditionRule, modelDefaultsRule } from './catalogue-rules';
 
 const CHAT: CatalogModel = {
   id: 'anthropic/claude-haiku-4-5',

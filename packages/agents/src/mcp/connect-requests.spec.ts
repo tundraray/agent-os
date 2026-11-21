@@ -2,7 +2,7 @@
 // 10 minutes and only by the employee who began it; any take of a known `state` removes it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConnectRequests } from './connect-requests.js';
+import { ConnectRequests } from './connect-requests';
 
 const OPENED_AT = new Date('2026-11-16T10:00:00.000Z');
 const TEN_MINUTES_MS = 10 * 60 * 1000;

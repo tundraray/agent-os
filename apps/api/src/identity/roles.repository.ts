@@ -4,7 +4,7 @@ import {
   identityUsers,
 } from '@agent-os/db';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
+import type { Executor } from '../common/executor';
 
 /**
  * Drizzle queries of `identity_roles` and `identity_role_members` (repository-over-transaction.md):

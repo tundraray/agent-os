@@ -4,10 +4,10 @@ import {
   type ModelDefaults,
   type UpdateModelDefaultsBody,
 } from '@agent-os/contracts';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { AccessService } from './access.service.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { AccessService } from './access.service';
 
 /**
  * The default chat and embedding models for an administrator (design-core.md of model-providers, Contract

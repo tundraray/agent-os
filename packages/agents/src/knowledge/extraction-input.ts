@@ -1,13 +1,13 @@
 import type { Runtime } from '@agent-os/runtime';
 
-import { envelope } from '../model/provider-messages.js';
-import { utf8Bytes } from '../model/token-estimate.js';
-import { codeCalls } from '../store/code-calls.repository.js';
-import { history } from '../store/history.repository.js';
-import type { StoreReader } from '../store/sessions.repository.js';
-import { descendantsOf } from '../tools/builtin/list-agents.js';
-import type { RoundCall, RoundCallOutcome } from './check-operations.js';
-import type { KnowledgeRun } from './knowledge-runs.repository.js';
+import { envelope } from '../model/provider-messages';
+import { utf8Bytes } from '../model/token-estimate';
+import { codeCalls } from '../store/code-calls.repository';
+import { history } from '../store/history.repository';
+import type { StoreReader } from '../store/sessions.repository';
+import { descendantsOf } from '../tools/builtin/list-agents';
+import type { RoundCall, RoundCallOutcome } from './check-operations';
+import type { KnowledgeRun } from './knowledge-runs.repository';
 
 /*
  * The input of an extraction round (design-core.md, Contract «Вход извлечения», KD-3): the MCP calls

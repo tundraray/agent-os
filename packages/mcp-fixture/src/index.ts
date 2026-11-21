@@ -1,8 +1,8 @@
-export { argsHash } from './canonical-json.js';
-export type { FixtureSource } from './fixture-server.js';
-export { type FixtureControl, type FixtureProcess, startFixtureProcess } from './fixture-process.js';
-export type { AccountStats } from './http/authorization-server.js';
-export { FIXTURE_SHARED_TOKEN } from './http/http-server.js';
+export { argsHash } from './canonical-json';
+export type { FixtureSource } from './fixture-server';
+export { type FixtureControl, type FixtureProcess, startFixtureProcess } from './fixture-process';
+export type { AccountStats } from './http/authorization-server';
+export { FIXTURE_SHARED_TOKEN } from './http/http-server';
 export {
   createFixtureFiles,
   type FileLatch,
@@ -13,4 +13,4 @@ export {
   fixtureCallsOf,
   holdCall,
   readFixtureLog,
-} from './test-support.js';
+} from './test-support';

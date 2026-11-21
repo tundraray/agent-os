@@ -3,15 +3,15 @@
 // Test Type: End-to-End Test (the real executor process with its production flags, real OS resources)
 //
 // Harness: `createCodeRunner` starts the executor with the PRODUCTION flags (permission model, empty `env`, read
-// access to one directory without links) and a test entry from `build/test-child/` (built by `pnpm build:child`, outside the default read path `dist/`)
+// access to directories without links) and a test entry from `test/support/`, run by Node from source as the executor is in tests,
 // that, after the same `prepareProcess()`, runs hostile Node code (`test/support/hostile-entry.ts`) or breaks
 // the protocol (`test/support/broken-entry.ts`) instead of QuickJS. The test entries need no QuickJS, so the
-// host reads only `build/test-child/`. The test process plays "the API": its workers run with
+// host reads only `test/support/` and the executor-side modules in `src/executor/`. The test process plays "the API": its workers run with
 // `--disable-sigusr1` (`vitest.config.e2e.ts`), it listens on TCP, UDP and a named pipe (a unix socket on
 // Linux), and holds a sentinel `.env` outside the executor's readable directory. Run on Windows locally and on
 // Ubuntu in CI: the model's behaviour differs per platform, which is the reason this test exists.
 //
-// The sandbox rules (what QuickJS refuses) are the unit tables of `src/sandbox.spec.ts`; this file proves only
+// The sandbox rules (what QuickJS refuses) are the unit tables of `src/executor/sandbox.spec.ts`; this file proves only
 // what a unit test cannot see - the OS-level second barrier and the host's handling of a dead or lying process.
 //
 // Budget: E2E 2 of 2 across the part (this file is E2E-2; E2E-1 is `packages/agents/test/code-execution.e2e-spec.ts`).
@@ -27,16 +27,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger, type LogRecord, type Logger } from '@agent-os/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type CodeRunner, type RequestAnswer, type RunLimits, type RunOutcome, createCodeRunner } from '../src/index.js';
-import type { BrokenMode } from './support/broken-entry.js';
-import type { AttemptName, ProbeOutcome, ProbeTargets } from './support/hostile-entry.js';
+import { type CodeRunner, type RequestAnswer, type RunLimits, type RunOutcome, createCodeRunner } from '../src/index';
+import type { BrokenMode } from './support/broken-entry';
+import type { AttemptName, ProbeOutcome, ProbeTargets } from './support/hostile-entry';
 
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const REPO_ROOT = path.resolve(PACKAGE_ROOT, '..', '..');
-/** The compiled test entries; the directory holds no links, so it is the executor's only readable one. */
-const CHILD_ROOT = path.join(PACKAGE_ROOT, 'build', 'test-child');
-const HOSTILE_ENTRY = path.join(CHILD_ROOT, 'test', 'support', 'hostile-entry.js');
-const BROKEN_ENTRY = path.join(CHILD_ROOT, 'test', 'support', 'broken-entry.js');
+/** The test entries; the directory holds no links. */
+const CHILD_ROOT = path.join(PACKAGE_ROOT, 'test', 'support');
+const HOSTILE_ENTRY = path.join(CHILD_ROOT, 'hostile-entry.ts');
+const BROKEN_ENTRY = path.join(CHILD_ROOT, 'broken-entry.ts');
+/** All a test entry may read: its own directory and the executor-side modules it imports. */
+const READ_PATHS = [CHILD_ROOT, path.join(PACKAGE_ROOT, 'src', 'executor')];
 
 /** NFR-03: a run ends no later than this after its time limit, whatever the executor does. */
 const END_AFTER_LIMIT_MS = 5000;
@@ -142,7 +144,7 @@ describe('E2E-2: the executor process is a second barrier and cannot take the AP
         writeOwnDirPath: path.join(CHILD_ROOT, 'written-by-executor.txt'),
       };
       ({ logger } = recordingLogger());
-      runner = createCodeRunner({ maxConcurrent: 4, logger, entryPath: HOSTILE_ENTRY, readPaths: [CHILD_ROOT] });
+      runner = createCodeRunner({ maxConcurrent: 4, logger, entryPath: HOSTILE_ENTRY, readPaths: READ_PATHS });
     });
 
     afterAll(async () => {
@@ -223,7 +225,7 @@ describe('E2E-2: the executor process is a second barrier and cannot take the AP
     function brokenHost(maxConcurrent: number): { runner: CodeRunner; logger: Logger; sink: MemorySink } {
       const { logger, sink } = recordingLogger();
       return {
-        runner: createCodeRunner({ maxConcurrent, logger, entryPath: BROKEN_ENTRY, readPaths: [CHILD_ROOT] }),
+        runner: createCodeRunner({ maxConcurrent, logger, entryPath: BROKEN_ENTRY, readPaths: READ_PATHS }),
         logger,
         sink,
       };

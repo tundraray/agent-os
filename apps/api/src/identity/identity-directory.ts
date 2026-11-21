@@ -1,14 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { isUuid } from '../common/is-uuid.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { existingRoleIds } from './roles.repository.js';
+import { isUuid } from '../common/is-uuid';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { existingRoleIds } from './roles.repository';
 import {
   existingUserIds,
   findUserById,
   rolesOfUsers,
-} from './users.repository.js';
+} from './users.repository';
 
 /** Role ids and employee ids, read together. */
 export interface HolderIds {

@@ -9,7 +9,7 @@ import {
 } from '@agent-os/contracts';
 import { chatDrafts } from '@agent-os/db';
 import { and, asc, eq } from 'drizzle-orm';
-import type { Executor } from '../common/executor.js';
+import type { Executor } from '../common/executor';
 
 /** A row of `chat_drafts` with its kind and content read back as a record body. */
 export interface Draft {

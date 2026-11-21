@@ -9,19 +9,19 @@ import {
   systemClock,
 } from '@agent-os/runtime';
 
-import type { AccessGate } from '../access-gate.js';
+import type { AccessGate } from '../access-gate';
 import {
   classifyRejection,
   PROVIDER_RETRIES,
   type ProviderError,
   pause,
   providerRetryDelayMs,
-} from '../model/retry-policy.js';
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
-import { type EmbeddingInputType, providerAdapter } from '../providers/adapters.js';
-import { providerState } from '../providers/provider-readiness.js';
-import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry.js';
-import { type EmbeddingBatch, type EmbeddingClient, EmbeddingTimeoutError } from './embedding-client.js';
+} from '../model/retry-policy';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
+import { type EmbeddingInputType, providerAdapter } from '../providers/adapters';
+import { providerState } from '../providers/provider-readiness';
+import type { AgentsProviders, ProviderConnection } from '../providers/provider-registry';
+import { type EmbeddingBatch, type EmbeddingClient, EmbeddingTimeoutError } from './embedding-client';
 
 /** At most this many texts go in one provider request; a longer list goes in batches, one after another (DC-9). */
 export const EMBEDDING_BATCH_SIZE = 100;

@@ -1,4 +1,4 @@
-import { findPendingMigrations } from './pending-migrations.js';
+import { findPendingMigrations } from './pending-migrations';
 
 const file = (tag: string, hash: string, folderMillis: number) => ({
   tag,

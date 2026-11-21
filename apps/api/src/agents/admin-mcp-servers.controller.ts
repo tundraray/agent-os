@@ -22,20 +22,20 @@ import {
   type UpdateMcpServerBody,
 } from '@agent-os/contracts';
 import type { Response } from 'express';
-import { AccessService } from '../access/access.service.js';
-import { AuditLog } from '../audit/audit-log.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { IdentitySettings } from '../identity/identity-settings.js';
-import { AGENTS } from './agents.tokens.js';
+import { AccessService } from '../access/access.service';
+import { AuditLog } from '../audit/audit-log';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { IdentitySettings } from '../identity/identity-settings';
+import { AGENTS } from './agents.tokens';
 import {
   adminServerPage,
   mcpCallbackUrl,
   recordServerChange,
   refuseCrossSite,
-} from './mcp-connections.controller.js';
-import { mcpAnswer } from './mcp.errors.js';
+} from './mcp-connections.controller';
+import { mcpAnswer } from './mcp.errors';
 
 /**
  * The MCP server registry for an administrator (design-mcp-connect.md, Contract «Реестр — для `admin`»).

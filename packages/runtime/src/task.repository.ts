@@ -1,14 +1,14 @@
 import { TaskStatusSchema } from '@agent-os/contracts';
 import { runtimeTasks } from '@agent-os/db';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { RuntimeError } from './errors.js';
+import { RuntimeError } from './errors';
 import {
   guardedTaskWrite,
   type TaskChange,
   type TaskGuard,
   type TaskRow,
-} from './guarded-transition.js';
-import type { RuntimeTx } from './runtime-tx.js';
+} from './guarded-transition';
+import type { RuntimeTx } from './runtime-tx';
 
 export type NewTaskRow = Pick<
   typeof runtimeTasks.$inferInsert,

@@ -3,20 +3,20 @@ import type { Agents } from '@agent-os/agents';
 import type { DraftActionRequest, DraftView } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { isUuid } from '../common/is-uuid.js';
-import { libraryError } from '../library/library.errors.js';
-import { LibraryService } from '../library/library.service.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { httpError } from './chat.errors.js';
-import { toDraftView } from './conversation-view.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { isUuid } from '../common/is-uuid';
+import { libraryError } from '../library/library.errors';
+import { LibraryService } from '../library/library.service';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { httpError } from './chat.errors';
+import { toDraftView } from './conversation-view';
 import {
   type Draft,
   listDrafts,
   lockDraft,
   resolveDraft,
   setDraftRefusal,
-} from './drafts.repository.js';
+} from './drafts.repository';
 
 /**
  * The employee's answer to a record draft (design-runtime.md, KD-6, Flow 3, DC-8, DC-9): the draft is

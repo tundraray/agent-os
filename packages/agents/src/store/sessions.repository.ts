@@ -4,9 +4,9 @@ import type { RuntimeTx } from '@agent-os/runtime';
 import { and, count, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository.js';
-import { RunSnapshotSchema } from '../start/snapshot.js';
-import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition.js';
+import { insertKnowledgeRun } from '../knowledge/knowledge-runs.repository';
+import { RunSnapshotSchema } from '../start/snapshot';
+import { learningRunOf, snapshotDefinition } from '../start/snapshot-definition';
 
 /** A reader of the store: the step's transaction, or the database for a read outside a step. */
 export type StoreReader = Database | RuntimeTx;

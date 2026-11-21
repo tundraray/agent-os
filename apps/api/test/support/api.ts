@@ -38,9 +38,9 @@ import {
 import type { Response } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { z } from 'zod';
-import { apiRequest, type Method, type Session } from './session.js';
+import { apiRequest, type Method, type Session } from './session';
 
-export type { Method } from './session.js';
+export type { Method } from './session';
 
 /**
  * Typed helpers over supertest for the chat API (design-chat.md, Contract Definitions): every request

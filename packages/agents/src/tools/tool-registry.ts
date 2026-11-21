@@ -3,18 +3,18 @@ import { ALL_SERVERS, McpServerModeSchema } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 import type { z } from 'zod';
 
-import type { AccessGate } from '../access-gate.js';
-import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-listing.js';
-import { accountsOf } from '../mcp/mcp-accounts.repository.js';
-import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository.js';
-import { type McpTool, storedMcpTools } from '../mcp/mcp-tool.js';
-import type { JsonSchemaObject } from '../model/mastra-turn.js';
-import type { RecordLibrary } from '../start/record-library.js';
-import type { RunSnapshot } from '../start/snapshot.js';
-import { snapshotDefinition } from '../start/snapshot-definition.js';
-import { sessions } from '../store/sessions.repository.js';
-import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent.js';
-import type { AgentTool, ToolDisplay } from './tool.js';
+import type { AccessGate } from '../access-gate';
+import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from '../chat-listing';
+import { accountsOf } from '../mcp/mcp-accounts.repository';
+import { type McpServerRow, enabledServersWithTools, findServers } from '../mcp/mcp-servers.repository';
+import { type McpTool, storedMcpTools } from '../mcp/mcp-tool';
+import type { JsonSchemaObject } from '../model/mastra-turn';
+import type { RecordLibrary } from '../start/record-library';
+import type { RunSnapshot } from '../start/snapshot';
+import { snapshotDefinition } from '../start/snapshot-definition';
+import { sessions } from '../store/sessions.repository';
+import { describeStartAgent, START_AGENT_TOOL } from './builtin/start-agent';
+import type { AgentTool, ToolDisplay } from './tool';
 
 /**
  * The root's tool that starts a workflow (design-runtime.md, «Инструменты модели»); `workflows` registers

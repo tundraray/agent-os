@@ -21,21 +21,21 @@ import {
 } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import type { AccessAudit, AccessGate } from '../access-gate.js';
-import { type AgentView, toAgentView } from '../agent-view.js';
-import { AgentsError } from '../errors.js';
-import { foldCalls } from '../history/call-state.js';
-import { messagePayload } from '../step/continuation.js';
-import { ConfirmationResolutionSchema } from '../step/tool-step.js';
-import { history, type PageEntry } from '../store/history.repository.js';
-import type { RecordLibrary } from '../start/record-library.js';
+import type { AccessAudit, AccessGate } from '../access-gate';
+import { type AgentView, toAgentView } from '../agent-view';
+import { AgentsError } from '../errors';
+import { foldCalls } from '../history/call-state';
+import { messagePayload } from '../step/continuation';
+import { ConfirmationResolutionSchema } from '../step/tool-step';
+import { history, type PageEntry } from '../store/history.repository';
+import type { RecordLibrary } from '../start/record-library';
 import {
   auditStartRefusal,
   resolveStart,
   type StartDeps,
   type StartSource,
-} from '../start/resolve-start.js';
-import type { RunSnapshot } from '../start/snapshot.js';
+} from '../start/resolve-start';
+import type { RunSnapshot } from '../start/snapshot';
 import {
   type RootPosition,
   type RootSession,
@@ -43,11 +43,11 @@ import {
   type SessionInput,
   sessionInputOf,
   sessions,
-} from '../store/sessions.repository.js';
-import { logStart } from '../tools/builtin/start-child.js';
-import type { ToolDisplay } from '../tools/tool.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
-import { stopEntries } from './stop-entries.js';
+} from '../store/sessions.repository';
+import { logStart } from '../tools/builtin/start-child';
+import type { ToolDisplay } from '../tools/tool';
+import type { ToolRegistry } from '../tools/tool-registry';
+import { stopEntries } from './stop-entries';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
 const { user_message: userMessage, interrupt } = AgentMessageKindSchema.enum;

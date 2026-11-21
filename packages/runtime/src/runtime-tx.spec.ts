@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import type { Database } from '@agent-os/db';
-import { retryingTransaction, TRANSACTION_ATTEMPTS } from './runtime-tx.js';
+import { retryingTransaction, TRANSACTION_ATTEMPTS } from './runtime-tx';
 
 /** A database whose transaction only runs the work: the helper's retries are what is tested. */
 const db = {

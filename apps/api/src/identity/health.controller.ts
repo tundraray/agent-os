@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { Public } from './public.decorator.js';
+import { Public } from './public.decorator';
 
 /** `GET /api/health`: 200 with an empty body while the process accepts requests. */
 @Controller('health')

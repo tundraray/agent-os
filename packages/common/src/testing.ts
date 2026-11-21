@@ -1,4 +1,4 @@
-import type { LogRecord, LogSink } from './logger.js';
+import type { LogRecord, LogSink } from './logger';
 
 export interface MemorySink extends LogSink {
   readonly records: LogRecord[];

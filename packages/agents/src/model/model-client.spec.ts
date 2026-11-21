@@ -5,11 +5,11 @@
 // provider registry and the ledger are doubles; the clock fires the retry pause at once.
 import type { Logger } from '@agent-os/common';
 import type { Clock, ModelCallRecord, ModelPrice } from '@agent-os/runtime';
-import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate.js';
-import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn.js';
-import { createProviderRegistryDouble } from '../testing.js';
-import { CODE_RULE, createModelClient, type TextDelta } from './model-client.js';
-import { DATA_PREAMBLE } from './provider-messages.js';
+import type { AccessDeniedEntry, AccessGate, ModelVerdict } from '../access-gate';
+import type { AgentTurnCall, AgentTurnModelClient } from './mastra-turn';
+import { createProviderRegistryDouble } from '../testing';
+import { CODE_RULE, createModelClient, type TextDelta } from './model-client';
+import { DATA_PREAMBLE } from './provider-messages';
 
 /** One attempt of the port: its text parts, then the provider status it fails with or the cancel that cuts it, if any. */
 interface PortAttempt {

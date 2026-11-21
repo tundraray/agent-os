@@ -7,7 +7,7 @@ import {
   type RuntimeTx,
 } from '@agent-os/runtime';
 
-import { sessions } from '../store/sessions.repository.js';
+import { sessions } from '../store/sessions.repository';
 import {
   advanceExtractedUpTo,
   ensureEmbeddingRow,
@@ -21,13 +21,13 @@ import {
   updateEmbeddingRow,
   updateKnowledgeRun,
   writeRoundOutcome,
-} from './knowledge-runs.repository.js';
+} from './knowledge-runs.repository';
 import {
   embedPassRequest,
   isForeignKeyViolation,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
   type KnowledgeExtractInput,
-} from './knowledge-tasks.js';
+} from './knowledge-tasks';
 
 /*
  * The consumer `agents.knowledge-trigger` (design-core.md, KD-3, KD-8): the end of a run that

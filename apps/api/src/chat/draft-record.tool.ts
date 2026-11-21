@@ -7,8 +7,8 @@ import {
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { z } from 'zod';
-import type { LibraryService } from '../library/library.service.js';
-import { insertDraft } from './drafts.repository.js';
+import type { LibraryService } from '../library/library.service';
+import { insertDraft } from './drafts.repository';
 
 const DRAFT_RECORD_TOOL = 'draft_record';
 

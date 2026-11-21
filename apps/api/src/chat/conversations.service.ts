@@ -13,23 +13,23 @@ import {
   type ThreadSummary,
 } from '@agent-os/contracts';
 import { RuntimeError, type Runtime } from '@agent-os/runtime';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { isUuid } from '../common/is-uuid.js';
-import { libraryError } from '../library/library.errors.js';
-import { LibraryService } from '../library/library.service.js';
-import { RUNTIME } from '../runtime/runtime.tokens.js';
-import { chatStatus } from './chat-status.js';
-import { httpError, threadNotFound } from './chat.errors.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { isUuid } from '../common/is-uuid';
+import { libraryError } from '../library/library.errors';
+import { LibraryService } from '../library/library.service';
+import { RUNTIME } from '../runtime/runtime.tokens';
+import { chatStatus } from './chat-status';
+import { httpError, threadNotFound } from './chat.errors';
 import {
   nextAfterSeqOf,
   toAgentTree,
   toConfirmation,
   toHistoryEntry,
   toPending,
-} from './conversation-view.js';
-import { DraftsService } from './drafts.service.js';
-import { decodeThreadCursor, encodeThreadCursor, type ThreadCursor } from './thread-cursor.js';
-import { TitleService } from './title.service.js';
+} from './conversation-view';
+import { DraftsService } from './drafts.service';
+import { decodeThreadCursor, encodeThreadCursor, type ThreadCursor } from './thread-cursor';
+import { TitleService } from './title.service';
 
 /** The root's description: the first characters of the first message (code points, never half a pair). */
 const ROOT_DESCRIPTION_LENGTH = 80;

@@ -22,17 +22,17 @@ import {
   removeRunRows,
   runModel,
   useRunModels,
-} from '../support/access.js';
-import { chatApi, waitFor } from '../support/api.js';
-import { createTestApp } from '../support/createTestApp.js';
+} from '../support/access';
+import { chatApi, waitFor } from '../support/api';
+import { createTestApp } from '../support/createTestApp';
 import {
   agentBody,
   createRecord,
   pointBuiltinsAt,
   recordName,
   workflowBody,
-} from '../support/library.js';
-import { createEmployee, seedSuperAdmin } from '../support/session.js';
+} from '../support/library';
+import { createEmployee, seedSuperAdmin } from '../support/session';
 
 /** The model of the built-in records and of the employee's records: a model of the run, allowed to him. */
 const MODEL = runModel('chat-listing');

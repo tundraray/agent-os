@@ -16,14 +16,14 @@ import {
 } from '@agent-os/contracts';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { removeRunRows } from './support/access.js';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { removeRunRows } from './support/access';
 import {
   type ConversationsSetup,
   conversationsSetup,
   startConversation,
-} from './support/library.js';
-import { seedSuperAdmin } from './support/session.js';
+} from './support/library';
+import { seedSuperAdmin } from './support/session';
 
 const WARM_UP_REQUESTS = 5;
 const TIMED_REQUESTS = 50;

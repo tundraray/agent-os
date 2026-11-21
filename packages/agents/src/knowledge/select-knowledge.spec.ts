@@ -1,14 +1,14 @@
 import type { KnowledgeCounts, KnowledgeItemState, KnowledgePlacement, KnowledgeSelection } from '@agent-os/contracts';
-import { utf8Bytes } from '../model/token-estimate.js';
-import { KNOWLEDGE_RULE, knowledgeKey, knowledgeLine, knowledgeText } from './knowledge-text.js';
+import { utf8Bytes } from '../model/token-estimate';
+import { KNOWLEDGE_RULE, knowledgeKey, knowledgeLine, knowledgeText } from './knowledge-text';
 import {
   type EmbeddingState,
   type GraphItem,
   knowledgeViewParts,
   selectKnowledge,
   type ToolAlive,
-} from './select-knowledge.js';
-import type { KnowledgeCloseness } from './vector-store.js';
+} from './select-knowledge';
+import type { KnowledgeCloseness } from './vector-store';
 
 // UC-5 (self-learning design-core.md): AC-04.3, AC-17.1 (outdated relation and a lesson whose tool is gone
 // are `outdated` and out of the text), DC-12 (a returned tool brings the lesson back), AC-18.1 / AC-06.3

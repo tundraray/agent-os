@@ -1,6 +1,6 @@
 import type { ArgumentMetadata, PipeTransform } from '@nestjs/common';
 import type { ZodType, z } from 'zod';
-import { apiError } from './api-error.js';
+import { apiError } from './api-error';
 
 /**
  * Validates a route argument against a zod schema from `@agent-os/contracts`.

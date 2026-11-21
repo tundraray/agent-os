@@ -47,28 +47,28 @@ import { FIXTURE_SHARED_TOKEN } from '@agent-os/mcp-fixture';
 import type { Response } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { frontendOrigin } from '../src/identity/session-cookie.js';
+import { frontendOrigin } from '../src/identity/session-cookie';
 import {
   grantTo,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
   useRunModels,
-} from './support/access.js';
-import { chatApi, expectBody, waitFor } from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { pointBuiltinsAt } from './support/library.js';
+} from './support/access';
+import { chatApi, expectBody, waitFor } from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { pointBuiltinsAt } from './support/library';
 import {
   authorize,
   beginConnect,
   returnTo,
   type OAuthReturn,
-} from './support/mcp-browser.js';
+} from './support/mcp-browser';
 import {
   BACKOFFICE_SERVER,
   LOGS_SERVER,
   runName,
-} from './support/mcp-servers.js';
+} from './support/mcp-servers';
 import {
   apiOrigin,
   apiRequest,
@@ -78,8 +78,8 @@ import {
   signInWithPassword,
   type Method,
   type Session,
-} from './support/session.js';
-import { databaseUrl } from './support/migrate.global-setup.js';
+} from './support/session';
+import { databaseUrl } from './support/migrate.global-setup';
 
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

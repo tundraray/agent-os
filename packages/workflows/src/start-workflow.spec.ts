@@ -11,7 +11,7 @@ import {
   createStartWorkflowTool,
   type PreparedWorkflowStart,
   type StartWorkflowArgs,
-} from './start-workflow.tool.js';
+} from './start-workflow.tool';
 
 const WORKFLOW_ID = '0b7c6a52-3f5e-4d6a-9a43-2f1e8c0d9b11';
 const EDITED_WORKFLOW_ID = '7d2e4f61-1a3b-4c5d-8e9f-0a1b2c3d4e5f';

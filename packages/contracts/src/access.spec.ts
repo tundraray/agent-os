@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CreateCatalogModelBodySchema, UpdateCatalogModelBodySchema, modelProvider } from './access.js';
+import { CreateCatalogModelBodySchema, UpdateCatalogModelBodySchema, modelProvider } from './access';
 
 // One row type for both bodies: the table mixes the two schemas.
 type Row = {

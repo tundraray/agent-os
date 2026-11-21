@@ -1,5 +1,5 @@
 import type { FailReason, RunOutcome } from '@agent-os/code-runner';
-import { confirmedNamesOf, outcomeOfRun, runTexts } from './run-code.js';
+import { confirmedNamesOf, outcomeOfRun, runTexts } from './run-code';
 
 const TEXTS = runTexts({
   timeoutMs: 30000,

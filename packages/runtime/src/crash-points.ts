@@ -1,4 +1,4 @@
-import type { RuntimeConfig } from './runtime-config.js';
+import type { RuntimeConfig } from './runtime-config';
 
 /**
  * Test crash points of `RUNTIME_CRASH_AT` (design-runtime.md, Runtime settings). The kill

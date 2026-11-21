@@ -9,17 +9,17 @@ import {
 } from '@agent-os/contracts';
 import { type Database, runtimeInbox } from '@agent-os/db';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { CrashPoints } from './crash-points.js';
-import { RuntimeError } from './errors.js';
-import type { EventLog } from './event-log.js';
+import type { CrashPoints } from './crash-points';
+import { RuntimeError } from './errors';
+import type { EventLog } from './event-log';
 import {
   isFinished,
   type TaskChange,
   type TaskRow,
-} from './guarded-transition.js';
-import type { EnqueuedMessage, StepMessage } from './handler.registry.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import type { TaskRepository } from './task.repository.js';
+} from './guarded-transition';
+import type { EnqueuedMessage, StepMessage } from './handler.registry';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import type { TaskRepository } from './task.repository';
 
 export type MessageRow = typeof runtimeInbox.$inferSelect;
 

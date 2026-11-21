@@ -1,13 +1,13 @@
 import type { RecordHeader, RecordTool, ResolvedRecord, RunOrigin } from '@agent-os/contracts';
 
-import { descriptionLine } from '../chat-listing.js';
+import { descriptionLine } from '../chat-listing';
 import type {
   AgentSnapshot,
   ExecutorSnapshot,
   RunSnapshot,
   StartableAgent,
   WorkflowSnapshot,
-} from './snapshot.js';
+} from './snapshot';
 
 /**
  * What a step hands the model, computed from the run's snapshot by one pure function (ADR-0017,

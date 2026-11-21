@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Database, DatabaseConnection } from '@agent-os/db';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
-import { normalizeIdentifier } from './identity-input.js';
-import { verifyPassword } from './password.js';
-import { findUserByLogin, type UserRow } from './users.repository.js';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
+import { normalizeIdentifier } from './identity-input';
+import { verifyPassword } from './password';
+import { findUserByLogin, type UserRow } from './users.repository';
 
 /** The real reason of a refused password; the client always gets the same answer (KD-5). */
 export type PasswordRejection = 'unknown_login' | 'wrong_password';

@@ -20,7 +20,7 @@ import {
 import type { StepMessage } from '@agent-os/runtime';
 import type { WorkflowRun } from '@agent-os/workflows';
 import { z } from 'zod';
-import type { Draft } from './drafts.repository.js';
+import type { Draft } from './drafts.repository';
 
 /**
  * The views of `agents`, `workflows` and `runtime` as the chat API returns them (design-chat.md,

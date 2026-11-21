@@ -2,9 +2,9 @@ import type { Database } from '@agent-os/db';
 import type { Runtime, Task } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import { agentStatus } from '../../agent-view.js';
-import { sessions } from '../../store/sessions.repository.js';
-import type { OutsideAgentTool } from '../tool.js';
+import { agentStatus } from '../../agent-view';
+import { sessions } from '../../store/sessions.repository';
+import type { OutsideAgentTool } from '../tool';
 
 /** The task operations the built-in tools use. */
 export type BuiltinTasks = Pick<Runtime['tasks'], 'listTree' | 'stop'>;

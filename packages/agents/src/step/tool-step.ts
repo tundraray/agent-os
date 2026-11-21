@@ -2,22 +2,22 @@ import { ToolCallStateSchema, ToolOutcomeSchema } from '@agent-os/contracts';
 import type { RuntimeTx, StepContext, StepEffects, StepResult } from '@agent-os/runtime';
 import { z } from 'zod';
 
-import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate.js';
-import { type CallState, requestedName } from '../history/call-state.js';
-import type { HistoryEntry } from '../history/history.js';
-import { type CallEnding, callRecords } from '../store/call-records.repository.js';
-import type { Session } from '../store/sessions.repository.js';
-import { toolResults } from '../store/tool-results.repository.js';
-import { callTargetOf, loggedArgsOf, type ToolRegistry } from '../tools/tool-registry.js';
+import { type AccessAudit, type AccessGate, OwnerDisabledError } from '../access-gate';
+import { type CallState, requestedName } from '../history/call-state';
+import type { HistoryEntry } from '../history/history';
+import { type CallEnding, callRecords } from '../store/call-records.repository';
+import type { Session } from '../store/sessions.repository';
+import { toolResults } from '../store/tool-results.repository';
+import { callTargetOf, loggedArgsOf, type ToolRegistry } from '../tools/tool-registry';
 import {
   callerOf,
   isInCommit,
   type ToolExecution,
   type ToolRunner,
   toolDeniedEntry,
-} from '../tools/tool-runner.js';
-import { entriesOf } from './deliver.js';
-import { appendWithEvent, logStep, refusedResult } from './model-step.js';
+} from '../tools/tool-runner';
+import { entriesOf } from './deliver';
+import { appendWithEvent, logStep, refusedResult } from './model-step';
 
 /** The step kind in the step log. */
 const STEP_KIND = 'tools';

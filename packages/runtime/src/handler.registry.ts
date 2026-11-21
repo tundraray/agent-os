@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import type { z } from 'zod';
-import type { RuntimeTx } from './runtime-tx.js';
+import type { RuntimeTx } from './runtime-tx';
 
 /**
  * Why the step's `signal` was aborted; it is the signal's `reason`. After the signal a next step of

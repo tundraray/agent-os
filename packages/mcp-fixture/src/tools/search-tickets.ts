@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { pageOf } from '../cursor.js';
-import { TICKET_ASSIGNEES, TICKET_STATUSES, TICKET_TEAMS, trackerTickets } from '../tracker.js';
-import { defineTool } from './fixture-tool.js';
+import { pageOf } from '../cursor';
+import { TICKET_ASSIGNEES, TICKET_STATUSES, TICKET_TEAMS, trackerTickets } from '../tracker';
+import { defineTool } from './fixture-tool';
 
 /** Small pages on purpose: a full summary needs the cursor (AC-01.4, paged search). */
 const SEARCH_PAGE_SIZE_MAX = 100;

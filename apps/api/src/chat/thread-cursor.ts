@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { httpError } from './chat.errors.js';
+import { httpError } from './chat.errors';
 
 /** Position of the last thread of a page: `updatedAt` in ms and `id`. */
 export type ThreadCursor = { u: number; i: string };

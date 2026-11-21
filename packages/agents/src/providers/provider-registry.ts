@@ -14,7 +14,7 @@ import {
   providerHasModels,
   providerNameTaken,
   providerNotFound,
-} from './model-provider-errors.js';
+} from './model-provider-errors';
 import {
   type ModelProviderRow,
   deleteProvider,
@@ -23,10 +23,10 @@ import {
   insertProvider,
   listProviders,
   updateProvider,
-} from './model-providers.repository.js';
-import { checkProvider } from './provider-check.js';
-import { PROVIDER_KINDS } from './provider-kinds.js';
-import { type ProviderReadiness, providerReadiness, providerState } from './provider-readiness.js';
+} from './model-providers.repository';
+import { checkProvider } from './provider-check';
+import { PROVIDER_KINDS } from './provider-kinds';
+import { type ProviderReadiness, providerReadiness, providerState } from './provider-readiness';
 
 /** Stands in for the key in «было/стало»: `AuditLog` writes `secret_changed` for its field name. */
 const SECRET_MARK = 'changed';

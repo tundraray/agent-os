@@ -3,8 +3,8 @@
 // `done` frame, so the test can show the host still runs the next start. Run under the production flags,
 // so it imports only `node:` built-ins and the executor-side modules of the package.
 import { Buffer } from 'node:buffer';
-import { prepareProcess } from '../../src/prepare-process.js';
-import { FRAME_MAX_BYTES, createFrameDecoder, encodeFrame } from '../../src/protocol.js';
+import { prepareProcess } from '#executor/prepare-process';
+import { FRAME_MAX_BYTES, createFrameDecoder, encodeFrame } from '#executor/protocol';
 
 prepareProcess();
 

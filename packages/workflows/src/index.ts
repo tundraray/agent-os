@@ -3,6 +3,6 @@ export {
   type Workflows,
   type WorkflowsAgents,
   type WorkflowsOptions,
-} from './create-workflows.js';
-export { WorkflowsError, type WorkflowsErrorCode } from './errors.js';
-export type { WorkflowRun, WorkflowRuns, WorkflowTeamMember } from './runs.js';
+} from './create-workflows';
+export { WorkflowsError, type WorkflowsErrorCode } from './errors';
+export type { WorkflowRun, WorkflowRuns, WorkflowTeamMember } from './runs';

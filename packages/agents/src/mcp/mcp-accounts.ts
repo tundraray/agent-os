@@ -15,8 +15,8 @@ import {
   type OAuthTokens,
 } from '@modelcontextprotocol/client';
 
-import type { AccessGate, ToolAccess } from '../access-gate.js';
-import type { ConnectRequest, ConnectRequests, ConnectTarget } from './connect-requests.js';
+import type { AccessGate, ToolAccess } from '../access-gate';
+import type { ConnectRequest, ConnectRequests, ConnectTarget } from './connect-requests';
 import {
   type McpAccountRow,
   type McpTokens,
@@ -25,12 +25,12 @@ import {
   findAccount,
   updateTokens,
   upsertAccount,
-} from './mcp-accounts.repository.js';
-import { type McpAuth, deadlineFetch } from './mcp-client.js';
-import { type McpFailure, failureName, transportFailureReason } from './mcp-failure.js';
-import { type McpServerRow, findServer, listServers } from './mcp-servers.repository.js';
-import { storedMcpTools } from './mcp-tool.js';
-import { checkServerUrl } from './mcp-url.js';
+} from './mcp-accounts.repository';
+import { type McpAuth, deadlineFetch } from './mcp-client';
+import { type McpFailure, failureName, transportFailureReason } from './mcp-failure';
+import { type McpServerRow, findServer, listServers } from './mcp-servers.repository';
+import { storedMcpTools } from './mcp-tool';
+import { checkServerUrl } from './mcp-url';
 
 /** A token closer than this to its end is refreshed before the call (Runtime settings). */
 const REFRESH_BEFORE_EXPIRY_MS = 60 * 1000;

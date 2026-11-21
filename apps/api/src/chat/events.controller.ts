@@ -9,11 +9,11 @@ import {
 import type { Logger } from '@agent-os/common';
 import { EventsQuerySchema, type EventsQuery } from '@agent-os/contracts';
 import { defer, finalize, map, type Observable } from 'rxjs';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { parseWatch } from './live-filter.js';
-import { LiveHub } from './live-hub.js';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthedRequest } from '../identity/auth-user';
+import { APP_LOGGER } from '../logging/app-logger';
+import { parseWatch } from './live-filter';
+import { LiveHub } from './live-hub';
 
 /** The reconnection hint of the stream (`retry`), sent with its first event. */
 const RETRY_MS = 2000;

@@ -4,18 +4,18 @@ import {
   PASSWORD_SET,
   SYSTEM_ACTOR,
   type AuditLog,
-} from '../audit/audit-log.js';
-import { identityError } from './identity.errors.js';
-import { normalizeIdentifier } from './identity-input.js';
-import { checkNewPassword, hashPassword } from './password.js';
-import { addRoleMember, builtinRoleId } from './roles.repository.js';
-import { deleteSessionsOf } from './session.store.js';
+} from '../audit/audit-log';
+import { identityError } from './identity.errors';
+import { normalizeIdentifier } from './identity-input';
+import { checkNewPassword, hashPassword } from './password';
+import { addRoleMember, builtinRoleId } from './roles.repository';
+import { deleteSessionsOf } from './session.store';
 import {
   findUserByLogin,
   insertLocalUser,
   setPasswordAndEnable,
   takenField,
-} from './users.repository.js';
+} from './users.repository';
 
 export interface SuperAdminInput {
   login: string;

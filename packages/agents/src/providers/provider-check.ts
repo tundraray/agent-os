@@ -1,8 +1,8 @@
 import { createSecretMasker } from '@agent-os/common';
 import type { ModelProviderCheck } from '@agent-os/contracts';
 
-import { providerAdapter } from './adapters.js';
-import type { ProviderConnection } from './provider-registry.js';
+import { providerAdapter } from './adapters';
+import type { ProviderConnection } from './provider-registry';
 
 /** No answer within this time is «the address is unreachable» (DC-12). */
 const CHECK_TIMEOUT_MS = 10_000;

@@ -3,7 +3,7 @@ import {
   decideSystemAudience,
   type EmployeeAudienceInput,
   type SystemAudienceInput,
-} from './audience-rules.js';
+} from './audience-rules';
 
 const SRE = '00000000-0000-4000-8000-0000000000a1';
 const FINANCE = '00000000-0000-4000-8000-0000000000a2';

@@ -1,9 +1,9 @@
 import { AgentMessageKindSchema } from '@agent-os/contracts';
 import { z } from 'zod';
 
-import { messagePayload } from '../../step/continuation.js';
-import type { InCommitAgentTool } from '../tool.js';
-import { type BuiltinTasks, descendantsOf } from './list-agents.js';
+import { messagePayload } from '../../step/continuation';
+import type { InCommitAgentTool } from '../tool';
+import { type BuiltinTasks, descendantsOf } from './list-agents';
 
 const MessageAgentArgsSchema = z.object({
   agentId: z.string().min(1).describe('Id of an agent you started, or of one it started'),

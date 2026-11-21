@@ -2,7 +2,7 @@ import type { Logger } from '@agent-os/common';
 import type { ToolResultSettings } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
-import { type ToolResultSettingsRow, toolResults } from '../store/tool-results.repository.js';
+import { type ToolResultSettingsRow, toolResults } from '../store/tool-results.repository';
 
 export interface ToolResultSettingsUpdate {
   /** The administrator, named in the log. */

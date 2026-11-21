@@ -17,14 +17,13 @@ import {
   readRun,
   type ScenarioServers,
   writeRun,
-} from './codeRunChild.js';
+} from './codeRunChild';
 
 /**
- * Entry of the code-execution E2E-1 child process, run only compiled (`pnpm --filter @agent-os/agents
- * build:child` → `dist/test-child/`). It plays the API process: the composition root of `createRuntime`
+ * Entry of the code-execution E2E-1 child process, run from source through `tsx`. It plays the API process: the composition root of `createRuntime`
  * + `createAgents` with the REAL code executor (`createCodeRunner`, the default of `createAgents`), the
  * scripted model and the MCP fixture servers the test registered in the database at its own fixture
- * process, all from the packages' built `dist`. It reads its environment — `DATABASE_URL`, the Runtime
+ * process. It reads its environment — `DATABASE_URL`, the Runtime
  * settings (workers on, short lease and reaper) and the scenario (`CODE_RUN_CHILD_SCENARIO`: the agents
  * settings and the run's server names) — and logs every record as a JSON line to the console, which the
  * harness parses. It creates no agents and registers no server or model provider: the test process does. IPC:

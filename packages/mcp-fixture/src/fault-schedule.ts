@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { DatasetVersionSchema } from './versions.js';
+import { DatasetVersionSchema } from './versions';
 
 const RuleMatchShape = {
   tool: z.string().min(1),

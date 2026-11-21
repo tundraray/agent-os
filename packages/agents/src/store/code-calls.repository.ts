@@ -8,8 +8,8 @@ import { agentCodeCalls, agentMessages, type Database } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
-import { type FinishedMcpCall, type FinishedWindow, finishedIn } from './history.repository.js';
-import type { StoreReader } from './sessions.repository.js';
+import { type FinishedMcpCall, type FinishedWindow, finishedIn } from './history.repository';
+import type { StoreReader } from './sessions.repository';
 
 /** One call of an agent: its session and the call id its provider gave. */
 export interface CallKey {

@@ -13,14 +13,14 @@ import {
 import type { Database } from '@agent-os/db';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
-import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate.js';
-import type { EmbeddingClient } from './embeddings/embedding-client.js';
-import { foldCalls } from './history/call-state.js';
-import { history } from './store/history.repository.js';
-import type { EmbeddingInputType } from './providers/adapters.js';
-import type { ProviderReadiness } from './providers/provider-readiness.js';
-import type { AgentsProviders } from './providers/provider-registry.js';
-import type { RecordLibrary } from './start/record-library.js';
+import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
+import type { EmbeddingClient } from './embeddings/embedding-client';
+import { foldCalls } from './history/call-state';
+import { history } from './store/history.repository';
+import type { EmbeddingInputType } from './providers/adapters';
+import type { ProviderReadiness } from './providers/provider-readiness';
+import type { AgentsProviders } from './providers/provider-registry';
+import type { RecordLibrary } from './start/record-library';
 import type {
   AgentToolCall,
   AgentTurnCall,
@@ -28,7 +28,7 @@ import type {
   AgentTurnMessage,
   AgentTurnModelClient,
   StreamTurnOptions,
-} from './model/mastra-turn.js';
+} from './model/mastra-turn';
 
 /**
  * The scripted model of the integration tests (ADR-0004: a test double of the package's contract,

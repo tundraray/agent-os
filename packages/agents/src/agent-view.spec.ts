@@ -1,5 +1,5 @@
 import type { AgentStatus } from '@agent-os/contracts';
-import { type AgentStatusInput, agentStatus } from './agent-view.js';
+import { type AgentStatusInput, agentStatus } from './agent-view';
 
 // State Transitions (MC-3 labels) and KD-3: «Прерван» is visible right after the command, from the
 // pending `interrupt`, and after the step took it, from the session's mark.

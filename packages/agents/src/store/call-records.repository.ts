@@ -1,10 +1,10 @@
 import { type ToolOutcome, ToolOutcomeSchema, type ToolRefusalReason } from '@agent-os/contracts';
 import type { RuntimeTx } from '@agent-os/runtime';
 
-import { type CallState, isRunCodeCall, openCalls } from '../history/call-state.js';
-import type { AnswerCall, HistoryContent, HistoryEntry } from '../history/history.js';
-import { type CallKey, codeCalls, interruptedRunOutcome } from './code-calls.repository.js';
-import { history, type NewHistoryEntry } from './history.repository.js';
+import { type CallState, isRunCodeCall, openCalls } from '../history/call-state';
+import type { AnswerCall, HistoryContent, HistoryEntry } from '../history/history';
+import { type CallKey, codeCalls, interruptedRunOutcome } from './code-calls.repository';
+import { history, type NewHistoryEntry } from './history.repository';
 
 /** The refused model of a refusal by model (design-runtime.md, «Данные для `web`»). */
 export type RefusalDetail = HistoryContent<'tool_result'>['refusalDetail'];

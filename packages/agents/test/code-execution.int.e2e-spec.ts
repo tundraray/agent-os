@@ -81,10 +81,10 @@ import {
   toolOutputOf,
   waitFor,
   waitForTaskStatus,
-} from './support/agentsHarness.js';
-import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader.js';
-import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers.js';
-import { newUser } from './support/new-user.js';
+} from './support/agentsHarness';
+import { ONE_RECORD, runCode, SEARCH_LOGS, toolCallIdOf, WINDOW } from './support/logs-reader';
+import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers';
+import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

@@ -1,5 +1,5 @@
 import { McpError, type McpRefusalCode } from '@agent-os/agents';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /** HTTP status of each refusal of `Agents.mcp` (design-mcp-connect.md, Error handling). */
 const STATUS_OF: Record<McpRefusalCode, number> = {

@@ -9,27 +9,27 @@ import {
 import { type Database, runtimeTasks } from '@agent-os/db';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type pg from 'pg';
-import type { CancelTimer, Clock } from './clock.js';
-import type { CrashPoints } from './crash-points.js';
-import { type EventLog, RUNTIME_EVENTS_CHANNEL } from './event-log.js';
-import type { TaskRow } from './guarded-transition.js';
+import type { CancelTimer, Clock } from './clock';
+import type { CrashPoints } from './crash-points';
+import { type EventLog, RUNTIME_EVENTS_CHANNEL } from './event-log';
+import type { TaskRow } from './guarded-transition';
 import type {
   HandlerRegistry,
   StepResult,
   StepSignalReason,
   TaskHandler,
-} from './handler.registry.js';
-import type { DecisionRow, Decisions } from './decisions.js';
-import type { Inbox, MessageRow } from './inbox.js';
-import type { RuntimeConfig } from './runtime-config.js';
-import type { RuntimeTx } from './runtime-tx.js';
+} from './handler.registry';
+import type { DecisionRow, Decisions } from './decisions';
+import type { Inbox, MessageRow } from './inbox';
+import type { RuntimeConfig } from './runtime-config';
+import type { RuntimeTx } from './runtime-tx';
 import type {
   RunningStepHandle,
   RunningTaskRegistry,
-} from './running-task.registry.js';
-import { endTask, type StepCommitter } from './step-commit.js';
-import { boundTransaction, TaskStepContext } from './step-context.js';
-import type { TaskRepository } from './task.repository.js';
+} from './running-task.registry';
+import { endTask, type StepCommitter } from './step-commit';
+import { boundTransaction, TaskStepContext } from './step-context';
+import type { TaskRepository } from './task.repository';
 
 const { queued, running, waiting, failed, stopped } = TaskStatusSchema.enum;
 const EVENT = RuntimeEventTypeSchema.enum;

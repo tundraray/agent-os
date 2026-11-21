@@ -6,8 +6,8 @@ import {
   recordSnapshot,
   type RunDefinition,
   snapshotDefinition,
-} from './snapshot-definition.js';
-import type { WorkflowSnapshot } from './snapshot.js';
+} from './snapshot-definition';
+import type { WorkflowSnapshot } from './snapshot';
 
 // AC-16.4, DC-7, AC-15.3 (rule): the definition a step hands the model comes from the snapshot alone —
 // an agent's prompt, tools, servers and limit with the visible records of its `agents`; a coordinator's

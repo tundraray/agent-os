@@ -1,17 +1,17 @@
 // agent-platform / runtime — on-demand timing checks, not part of any suite (testing-principles: timing-sensitive checks live in a separate
 // script). Run: `pnpm --filter @agent-os/runtime test:verify` (builds the package and the child first).
 // Design Doc: docs/features/agent-platform/design-runtime.md, Non-Functional Use Cases UC-N1 (NFR-05), UC-N2 (NFR-01).
-// The step runs in a compiled child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test process
+// The step runs in a child process (test/support/runtimeChild.ts) with the Runtime settings at their defaults; the test process
 // creates the tasks and sends the commands through its own runtime with `RUNTIME_WORKERS=off`.
 
 import { consoleSink, createLogger } from '@agent-os/common';
 import { afterAll, describe, expect, it } from 'vitest';
-import { newUser } from '../support/new-user.js';
-import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild.js';
-import { handlersFor } from '../support/runtimeChildHandlers.js';
-import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb.js';
-import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness.js';
-import { uniqueType } from '../support/testHandlers.js';
+import { newUser } from '../support/new-user';
+import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild';
+import { handlersFor } from '../support/runtimeChildHandlers';
+import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb';
+import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness';
+import { uniqueType } from '../support/testHandlers';
 
 /** NFR-05: the step is started again within 60 s of the kill. */
 const RESUME_TARGET_MS = 60_000;

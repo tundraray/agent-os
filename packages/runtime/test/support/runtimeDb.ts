@@ -1,8 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDatabase } from '@agent-os/db';
 import type pg from 'pg';
-import { databaseUrl } from './database-url.js';
-import { HANDLER_ROWS_TABLE } from './testHandlers.js';
+import { databaseUrl } from './database-url';
+import { HANDLER_ROWS_TABLE } from './testHandlers';
 
 /**
  * Read-only snapshots of the rows the runtime and the test handlers wrote, over the test's own

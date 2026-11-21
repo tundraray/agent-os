@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { pageOf } from '../cursor.js';
-import { defineTool } from './fixture-tool.js';
-import { LogQueryShape, matchingRecords, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query.js';
+import { pageOf } from '../cursor';
+import { defineTool } from './fixture-tool';
+import { LogQueryShape, matchingRecords, WINDOW_ORDER_MESSAGE, windowIsOrdered } from './log-query';
 
 const SEARCH_PAGE_SIZE_MAX = 500;
 

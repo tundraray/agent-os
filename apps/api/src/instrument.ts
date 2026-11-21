@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import * as Sentry from '@sentry/nestjs';
-import { maskSentryEvent } from './logging/sentry-mask.js';
+import { maskSentryEvent } from './logging/sentry-mask';
 
 // Imported first by `main.ts`: Sentry must be initialised before the rest of the application loads.
 if (existsSync('.env')) process.loadEnvFile('.env');

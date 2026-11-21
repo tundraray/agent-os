@@ -6,13 +6,13 @@ import {
   type KnowledgeSettings,
   type UpdateKnowledgeSettingsBody,
 } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { AuditLog } from '../audit/audit-log.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { loggedRoute } from './knowledge.controller.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { AuditLog } from '../audit/audit-log';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { APP_LOGGER } from '../logging/app-logger';
+import { loggedRoute } from './knowledge.controller';
 
 const SETTINGS_OBJECT_TYPE = 'knowledge_settings';
 

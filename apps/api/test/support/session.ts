@@ -6,14 +6,14 @@ import { AdminUserSummarySchema, CurrentUserSchema } from '@agent-os/contracts';
 import type { DatabaseConnection } from '@agent-os/db';
 import request, { type Test } from 'supertest';
 import type { App } from 'supertest/types.js';
-import { AuditLog } from '../../src/audit/audit-log.js';
-import { hashPassword } from '../../src/identity/password.js';
+import { AuditLog } from '../../src/audit/audit-log';
+import { hashPassword } from '../../src/identity/password';
 import {
   SESSION_COOKIE,
   frontendOrigin,
-} from '../../src/identity/session-cookie.js';
-import { seedSuperAdmin as seedSuperAdminRow } from '../../src/identity/super-admin.js';
-import { RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens.js';
+} from '../../src/identity/session-cookie';
+import { seedSuperAdmin as seedSuperAdminRow } from '../../src/identity/super-admin';
+import { RUNTIME_DATABASE } from '../../src/runtime/runtime.tokens';
 
 /**
  * Sign-in for the e2e suites (design-identity.md, Contract «Вход в тестах»): an employee signs in through

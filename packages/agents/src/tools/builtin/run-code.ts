@@ -11,16 +11,16 @@ import {
 } from '@agent-os/contracts';
 import type { Database } from '@agent-os/db';
 
-import { OwnerDisabledError } from '../../access-gate.js';
-import type { CodeRunConfig } from '../../config.js';
-import { callRecords } from '../../store/call-records.repository.js';
-import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository.js';
-import { toolResults } from '../../store/tool-results.repository.js';
-import { RESULT_NOT_FOUND } from '../large-result.js';
-import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool.js';
-import { callTargetOf, type ToolRegistry } from '../tool-registry.js';
-import type { CodeCallScope, ToolRunner } from '../tool-runner.js';
-import { canCallOf } from './can-call.js';
+import { OwnerDisabledError } from '../../access-gate';
+import type { CodeRunConfig } from '../../config';
+import { callRecords } from '../../store/call-records.repository';
+import { codeCalls, interruptedRunOutcome } from '../../store/code-calls.repository';
+import { toolResults } from '../../store/tool-results.repository';
+import { RESULT_NOT_FOUND } from '../large-result';
+import type { OutsideAgentTool, OutsideToolInput, ToolCaller, ToolRunResult } from '../tool';
+import { callTargetOf, type ToolRegistry } from '../tool-registry';
+import type { CodeCallScope, ToolRunner } from '../tool-runner';
+import { canCallOf } from './can-call';
 
 /** What the texts of a run name: the run settings with its result limit. */
 type RunTextSettings = Omit<CodeRunConfig, 'maxConcurrent'>;

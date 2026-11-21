@@ -8,7 +8,7 @@ import {
   type ProviderType,
 } from '@agent-os/contracts';
 import { z } from 'zod';
-import { identityError, validationFailed } from './identity.errors.js';
+import { identityError, validationFailed } from './identity.errors';
 
 /**
  * Settings of a provider as `identity_providers.options` stores them, the client secret as is (KD-7);

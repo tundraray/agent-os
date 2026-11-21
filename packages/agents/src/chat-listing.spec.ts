@@ -1,6 +1,6 @@
 import { CHAT_BUILTIN_KEY, type RecordHeader } from '@agent-os/contracts';
 
-import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from './chat-listing.js';
+import { CHAT_LISTING_BUDGET, type ChatListing, chatListing } from './chat-listing';
 
 // UC-7, AC-15.3, AC-15.5 / AC-15.7 (the budget half), Failure Mode «missing-sort-key ordering»: the
 // chat offers own records first with «ваша», another's only with «предлагать в главном чате» and its

@@ -10,13 +10,13 @@ import {
   type AccessDeniedEntry,
   type AccessGate,
   OwnerDisabledError,
-} from '../access-gate.js';
-import { modelDeniedEntry } from '../model/model-client.js';
-import { providerReadiness } from '../providers/provider-readiness.js';
-import type { AgentsProviders } from '../providers/provider-registry.js';
-import type { RecordLibrary } from './record-library.js';
-import type { RunSnapshot, WorkflowSnapshot } from './snapshot.js';
-import { executorSnapshot, recordSnapshot, snapshotDefinition } from './snapshot-definition.js';
+} from '../access-gate';
+import { modelDeniedEntry } from '../model/model-client';
+import { providerReadiness } from '../providers/provider-readiness';
+import type { AgentsProviders } from '../providers/provider-registry';
+import type { RecordLibrary } from './record-library';
+import type { RunSnapshot, WorkflowSnapshot } from './snapshot';
+import { executorSnapshot, recordSnapshot, snapshotDefinition } from './snapshot-definition';
 
 /**
  * Where a start takes its snapshot (design-runtime.md, «Откуда берётся снимок»). Only `builtin` and

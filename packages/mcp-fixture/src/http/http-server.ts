@@ -1,13 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isJSONRPCRequest, requireBearerAuth, type JSONRPCRequest } from '@modelcontextprotocol/server';
-import { CallLog } from '../call-log.js';
-import { argsHash } from '../canonical-json.js';
-import type { LogDataset } from '../dataset.js';
-import { FaultSchedule, isResultFault, type FaultRule, type ResultFaultRule } from '../fault-schedule.js';
-import { FixtureServer, FixtureSourceSchema, type FixtureSource } from '../fixture-server.js';
-import { FixtureAuthorizationServer } from './authorization-server.js';
-import { handleControl, type ControlTargets } from './controls.js';
-import { answerWithFault, type HttpAnswer } from './http-faults.js';
+import { CallLog } from '../call-log';
+import { argsHash } from '../canonical-json';
+import type { LogDataset } from '../dataset';
+import { FaultSchedule, isResultFault, type FaultRule, type ResultFaultRule } from '../fault-schedule';
+import { FixtureServer, FixtureSourceSchema, type FixtureSource } from '../fixture-server';
+import { FixtureAuthorizationServer } from './authorization-server';
+import { handleControl, type ControlTargets } from './controls';
+import { answerWithFault, type HttpAnswer } from './http-faults';
 
 /**
  * The constant bearer token of every `/<source>/mcp` path. A fixture constant for development and tests,

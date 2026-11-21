@@ -1,11 +1,11 @@
 import type { ModelProviderKind } from '@agent-os/contracts';
 import type { OpenAICompatibleProvider } from '@ai-sdk/openai-compatible';
 
-import type { JsonValue, TurnModel } from '../model/mastra-turn.js';
-import { anthropicAdapter } from './anthropic-adapter.js';
-import { geminiAdapter } from './gemini-adapter.js';
-import { openAICompatibleAdapter } from './openai-compatible-adapter.js';
-import type { ProviderConnection } from './provider-registry.js';
+import type { JsonValue, TurnModel } from '../model/mastra-turn';
+import { anthropicAdapter } from './anthropic-adapter';
+import { geminiAdapter } from './gemini-adapter';
+import { openAICompatibleAdapter } from './openai-compatible-adapter';
+import type { ProviderConnection } from './provider-registry';
 
 /** Whether the texts are kept (`document`) or are the question searched with (`query`). */
 export type EmbeddingInputType = 'document' | 'query';

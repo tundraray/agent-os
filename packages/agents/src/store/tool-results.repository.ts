@@ -2,7 +2,7 @@ import { agentSessions, agentToolResultSettings, agentToolResults } from '@agent
 import type { RuntimeTx } from '@agent-os/runtime';
 import { and, eq } from 'drizzle-orm';
 
-import type { StoreReader } from './sessions.repository.js';
+import type { StoreReader } from './sessions.repository';
 
 /** The full result of a successful or empty direct MCP call, secrets masked (code-execution KD-5; R-1, R-4). */
 export interface StoredToolResult {

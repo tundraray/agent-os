@@ -66,34 +66,34 @@ import {
 } from '@agent-os/contracts';
 import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub.js';
+import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub';
 import {
   allowRole,
   HAIKU_TEST_PRICES,
   removeRunRows,
   runModel,
   useRunModels,
-} from './support/access.js';
+} from './support/access';
 import {
   type ChatApi,
   chatApi,
   expectError,
   type Method,
   waitFor,
-} from './support/api.js';
-import { createTestApp, type TestApp } from './support/createTestApp.js';
-import { BUILTIN, pointBuiltinsAt } from './support/library.js';
-import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers.js';
+} from './support/api';
+import { createTestApp, type TestApp } from './support/createTestApp';
+import { BUILTIN, pointBuiltinsAt } from './support/library';
+import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers';
 import {
   createEmployee,
   seedSuperAdmin,
   type Session,
-} from './support/session.js';
+} from './support/session';
 import {
   openStream,
   type SseEvent,
   type SseStream,
-} from './support/sseClient.js';
+} from './support/sseClient';
 
 /** Bound of one test; the rows and notes settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

@@ -23,13 +23,13 @@ import {
   type ModelProviderView,
   type UpdateModelProviderBody,
 } from '@agent-os/contracts';
-import { AccessService } from '../access/access.service.js';
-import { AuditLog } from '../audit/audit-log.js';
-import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
-import { AdminOnly } from '../identity/admin-only.decorator.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { AGENTS } from './agents.tokens.js';
-import { providerAnswer } from './model-providers.errors.js';
+import { AccessService } from '../access/access.service';
+import { AuditLog } from '../audit/audit-log';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AdminOnly } from '../identity/admin-only.decorator';
+import type { AuthedRequest } from '../identity/auth-user';
+import { AGENTS } from './agents.tokens';
+import { providerAnswer } from './model-providers.errors';
 
 const MODEL_PROVIDER_OBJECT_TYPE = 'model_provider';
 

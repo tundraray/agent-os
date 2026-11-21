@@ -19,20 +19,20 @@ import {
 } from '@agent-os/contracts';
 import type { Database, DatabaseConnection } from '@agent-os/db';
 import type { RuntimeTx } from '@agent-os/runtime';
-import { AccessService } from '../access/access.service.js';
-import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log.js';
-import type { Executor } from '../common/executor.js';
-import { isUuid } from '../common/is-uuid.js';
-import { IdentityDirectory } from '../identity/identity-directory.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { RUNTIME_DATABASE } from '../runtime/runtime.tokens.js';
+import { AccessService } from '../access/access.service';
+import { AuditLog, SYSTEM_ACTOR } from '../audit/audit-log';
+import type { Executor } from '../common/executor';
+import { isUuid } from '../common/is-uuid';
+import { IdentityDirectory } from '../identity/identity-directory';
+import { APP_LOGGER } from '../logging/app-logger';
+import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
 import {
   decideEmployeeAudience,
   decideSystemAudience,
-} from './audience-rules.js';
-import { planCopy, replaceModel } from './copy-rules.js';
-import { readLibrarySettings } from './library-settings.repository.js';
-import { kindChangedError, libraryError } from './library.errors.js';
+} from './audience-rules';
+import { planCopy, replaceModel } from './copy-rules';
+import { readLibrarySettings } from './library-settings.repository';
+import { kindChangedError, libraryError } from './library.errors';
 import {
   closeSharing,
   deleteRecord,
@@ -51,7 +51,7 @@ import {
   type LibraryRecord,
   type RecordKey,
   type Viewer,
-} from './library.repository.js';
+} from './library.repository';
 import {
   auditSample,
   banAuditSample,
@@ -63,8 +63,8 @@ import {
   resolvedRecord,
   type ViewContext,
   type VisibleVersions,
-} from './record-view.js';
-import { decideSave, type SaveChoices, type SaveInput } from './save-rules.js';
+} from './record-view';
+import { decideSave, type SaveChoices, type SaveInput } from './save-rules';
 
 /** The employee of a route: the id from the session and the admin right (`req.user`). */
 export interface LibraryActor {

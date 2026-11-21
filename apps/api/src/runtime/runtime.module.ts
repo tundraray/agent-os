@@ -20,14 +20,14 @@ import {
   type Runtime,
   type RuntimeConfig,
 } from '@agent-os/runtime';
-import { APP_LOGGER } from '../logging/app-logger.js';
-import { readRuntimeSettings } from './runtime-settings.js';
+import { APP_LOGGER } from '../logging/app-logger';
+import { readRuntimeSettings } from './runtime-settings';
 import {
   RUNTIME,
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
   RUNTIME_SETTINGS,
-} from './runtime.tokens.js';
+} from './runtime.tokens';
 
 /**
  * Composition root of the runtime in `apps/api` (composition-root.md, design-runtime.md C2 `api`): reads

@@ -10,26 +10,26 @@ import {
 } from '@agent-os/contracts';
 import { type Database, runtimeInbox } from '@agent-os/db';
 import { and, eq } from 'drizzle-orm';
-import type { CrashPoints } from './crash-points.js';
-import { RuntimeError } from './errors.js';
-import { type EventLog, upperEventProblem } from './event-log.js';
+import type { CrashPoints } from './crash-points';
+import { RuntimeError } from './errors';
+import { type EventLog, upperEventProblem } from './event-log';
 import type {
   TaskChange,
   TaskFields,
   TaskRow,
-} from './guarded-transition.js';
+} from './guarded-transition';
 import type {
   EnqueueMessage,
   EnqueuedMessage,
   HandlerRegistry,
   StepEffects,
   StepResult,
-} from './handler.registry.js';
-import type { Decisions } from './decisions.js';
-import { type Inbox, jsonByteLength, payloadTooLarge } from './inbox.js';
-import { retryingTransaction, type RuntimeTx } from './runtime-tx.js';
-import { boundTransaction, type TaskStepContext } from './step-context.js';
-import type { TaskRepository } from './task.repository.js';
+} from './handler.registry';
+import type { Decisions } from './decisions';
+import { type Inbox, jsonByteLength, payloadTooLarge } from './inbox';
+import { retryingTransaction, type RuntimeTx } from './runtime-tx';
+import { boundTransaction, type TaskStepContext } from './step-context';
+import type { TaskRepository } from './task.repository';
 
 const { queued, running, completed, failed, stopped } = TaskStatusSchema.enum;
 const { messages, decision } = WaitReasonSchema.enum;

@@ -1,5 +1,5 @@
 import { applyMigrations } from '@agent-os/db';
-import { createAppLogger } from '../logging/app-logger.js';
+import { createAppLogger } from '../logging/app-logger';
 
 const logger = createAppLogger(process.env);
 

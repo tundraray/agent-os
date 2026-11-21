@@ -1,7 +1,7 @@
 import type { ToolOutcome } from '@agent-os/contracts';
 import type { CallToolResult } from '@modelcontextprotocol/client';
-import type { McpCallResponse } from './mcp-client.js';
-import type { McpFailureReason } from './mcp-failure.js';
+import type { McpCallResponse } from './mcp-client';
+import type { McpFailureReason } from './mcp-failure';
 
 /** The outcomes an MCP response can have; refusals, rejections and interruptions are decided elsewhere. */
 export type McpOutcome = Extract<

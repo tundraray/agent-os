@@ -18,32 +18,32 @@ import {
 import type { Logger } from '@agent-os/common';
 import type { DatabaseConnection } from '@agent-os/db';
 import type { Clock, Runtime } from '@agent-os/runtime';
-import { AccessModule } from '../access/access.module.js';
-import { AccessService } from '../access/access.service.js';
-import { AuditLog } from '../audit/audit-log.js';
-import { IdentityModule } from '../identity/identity.module.js';
-import { LibraryModule } from '../library/library.module.js';
-import { LibraryService } from '../library/library.service.js';
-import { APP_LOGGER, createAppLogger } from '../logging/app-logger.js';
-import { RuntimeModule } from '../runtime/runtime.module.js';
+import { AccessModule } from '../access/access.module';
+import { AccessService } from '../access/access.service';
+import { AuditLog } from '../audit/audit-log';
+import { IdentityModule } from '../identity/identity.module';
+import { LibraryModule } from '../library/library.module';
+import { LibraryService } from '../library/library.service';
+import { APP_LOGGER, createAppLogger } from '../logging/app-logger';
+import { RuntimeModule } from '../runtime/runtime.module';
 import {
   RUNTIME,
   RUNTIME_CLOCK,
   RUNTIME_DATABASE,
-} from '../runtime/runtime.tokens.js';
-import { AdminMcpServersController } from './admin-mcp-servers.controller.js';
-import { AdminModelProvidersController } from './admin-model-providers.controller.js';
-import { AdminToolResultsController } from './admin-tool-results.controller.js';
-import { readAgentsSettings } from './agents-settings.js';
+} from '../runtime/runtime.tokens';
+import { AdminMcpServersController } from './admin-mcp-servers.controller';
+import { AdminModelProvidersController } from './admin-model-providers.controller';
+import { AdminToolResultsController } from './admin-tool-results.controller';
+import { readAgentsSettings } from './agents-settings';
 import {
   AGENT_TURN_CLIENT,
   AGENTS,
   AGENTS_SETTINGS,
   DELTA_PUBLISHER,
   EMBEDDING_CLIENT,
-} from './agents.tokens.js';
-import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher.js';
-import { McpConnectionsController } from './mcp-connections.controller.js';
+} from './agents.tokens';
+import { AGENT_TEXT_DELTA_CHANNEL, DeltaPublisher } from './delta-publisher';
+import { McpConnectionsController } from './mcp-connections.controller';
 
 /**
  * The agents' audit hook (design-access.md KD-6): an `access_denied` record by its own insert, outside any

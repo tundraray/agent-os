@@ -1,12 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { FixtureSource } from './fixture-server.js';
-import type { AccountStats, RevokeWhich } from './http/authorization-server.js';
-import type { FixtureFiles } from './test-support.js';
+import type { FixtureSource } from './fixture-server';
+import type { AccountStats, RevokeWhich } from './http/authorization-server';
+import type { FixtureFiles } from './test-support';
 
-/** Absolute path of the HTTP process entry (`dist/main.js`), resolved next to this module. */
-const fixtureMainPath: string = fileURLToPath(new URL('./main.js', import.meta.url));
+/** The HTTP process entry next to this module. */
+const fixtureMainPath: string = fileURLToPath(new URL('./main.ts', import.meta.url));
 const LISTENING_LINE = /^fixture listening (\d+)$/m;
 const START_TIMEOUT_MS = 10_000;
 
@@ -38,14 +37,12 @@ export interface FixtureProcess {
 }
 
 /**
- * Starts `node dist/main.js --port 0` logging into the test's call log under its fault rules, and resolves
- * once it listens. Throws when the fixture is not built or the process does not start.
+ * Starts `node --import tsx src/main.ts --port 0` logging into the test's call log under its fault rules, and
+ * resolves once it listens. Throws when the process does not start.
  */
 export async function startFixtureProcess(files: FixtureFiles): Promise<FixtureProcess> {
-  if (!existsSync(fixtureMainPath)) {
-    throw new Error(`MCP fixture is not built (${fixtureMainPath}): run pnpm --filter @agent-os/mcp-fixture build`);
-  }
-  const child = spawn(process.execPath, [fixtureMainPath, '--port', '0'], {
+  // Node runs the TypeScript source through the `tsx` loader, a dependency of this package.
+  const child = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), fixtureMainPath, '--port', '0'], {
     env: { ...process.env, FIXTURE_CALL_LOG: files.callLog, FIXTURE_FAULTS: files.faults },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -4,7 +4,7 @@ import {
   type ListedThread,
   selectThreadPage,
   sortThreadsForList,
-} from './thread-cursor.js';
+} from './thread-cursor';
 
 const NEWEST = Date.UTC(2026, 9, 29, 12, 0, 0, 0);
 

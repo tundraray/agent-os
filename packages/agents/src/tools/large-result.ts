@@ -1,4 +1,4 @@
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
 
 /**
  * Large tool results (tool-result-reading plan, R-1…R-3): the wrapper the model gets instead of a long

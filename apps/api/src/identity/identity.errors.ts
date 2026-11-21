@@ -4,7 +4,7 @@ import type {
   IdentityValidationReason,
   ProviderCheckFailure,
 } from '@agent-os/contracts';
-import { apiError } from '../common/api-error.js';
+import { apiError } from '../common/api-error';
 
 /** HTTP status and constant message of each identity error code (design-identity.md, Error handling). */
 const ANSWERS: Record<IdentityErrorCode, { status: number; message: string }> =

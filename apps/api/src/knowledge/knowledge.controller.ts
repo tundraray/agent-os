@@ -11,11 +11,11 @@ import {
 import type { Agents } from '@agent-os/agents';
 import type { Logger, LogFields } from '@agent-os/common';
 import type { KnowledgeView } from '@agent-os/contracts';
-import { AGENTS } from '../agents/agents.tokens.js';
-import { AuditLog } from '../audit/audit-log.js';
-import type { AuthedRequest } from '../identity/auth-user.js';
-import { LibraryService } from '../library/library.service.js';
-import { APP_LOGGER } from '../logging/app-logger.js';
+import { AGENTS } from '../agents/agents.tokens';
+import { AuditLog } from '../audit/audit-log';
+import type { AuthedRequest } from '../identity/auth-user';
+import { LibraryService } from '../library/library.service';
+import { APP_LOGGER } from '../logging/app-logger';
 
 const LIBRARY_RECORD_OBJECT_TYPE = 'library_record';
 const KNOWLEDGE_DELETE_KIND = 'knowledge_delete';

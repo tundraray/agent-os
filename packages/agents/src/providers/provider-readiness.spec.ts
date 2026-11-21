@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ProviderReadiness, type ProviderReadinessInput, providerReadiness } from './provider-readiness.js';
+import { type ProviderReadiness, type ProviderReadinessInput, providerReadiness } from './provider-readiness';
 
 // design-core.md, Terms «Готовность провайдера»: the order `missing` → `disabled` → `key_missing` → `ready`,
 // the first that holds; a disabled provider without a key is `disabled`, an OpenAI-compatible one needs no key.

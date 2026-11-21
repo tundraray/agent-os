@@ -10,21 +10,21 @@ import {
   type TaskHandler,
 } from '@agent-os/runtime';
 
-import type { AgentsEmbeddings } from '../embeddings/embeddings.js';
-import type { AgentToolCall, AgentToolDefinition, AgentTurnMessage } from '../model/mastra-turn.js';
-import type { ModelCallRequest, ModelCallResult, ModelClient } from '../model/model-client.js';
-import { envelope } from '../model/provider-messages.js';
-import { tokensOfBytes, utf8Bytes } from '../model/token-estimate.js';
-import { sessions } from '../store/sessions.repository.js';
-import { type CheckedOperations, checkOperations, type RoundCall } from './check-operations.js';
-import { type ExtractionInput, readExtractionInput } from './extraction-input.js';
+import type { AgentsEmbeddings } from '../embeddings/embeddings';
+import type { AgentToolCall, AgentToolDefinition, AgentTurnMessage } from '../model/mastra-turn';
+import type { ModelCallRequest, ModelCallResult, ModelClient } from '../model/model-client';
+import { envelope } from '../model/provider-messages';
+import { tokensOfBytes, utf8Bytes } from '../model/token-estimate';
+import { sessions } from '../store/sessions.repository';
+import { type CheckedOperations, checkOperations, type RoundCall } from './check-operations';
+import { type ExtractionInput, readExtractionInput } from './extraction-input';
 import {
   advanceExtractedUpTo,
   findRunById,
   type KnowledgeRun,
   updateKnowledgeRun,
   writeRoundOutcome,
-} from './knowledge-runs.repository.js';
+} from './knowledge-runs.repository';
 import {
   confirmItem,
   insertEntity,
@@ -34,30 +34,30 @@ import {
   type NewKnowledgeRelation,
   readGraph,
   readKnowledgeSettings,
-} from './knowledge.repository.js';
-import { graphItemsOf, registryToolAlive } from './knowledge-block.js';
+} from './knowledge.repository';
+import { graphItemsOf, registryToolAlive } from './knowledge-block';
 import {
   isForeignKeyViolation,
   KNOWLEDGE_EXTRACT_TASK_TYPE,
   KnowledgeExtractInputSchema,
-} from './knowledge-tasks.js';
-import { knowledgeLineWithKey } from './knowledge-text.js';
+} from './knowledge-tasks';
+import { knowledgeLineWithKey } from './knowledge-text';
 import {
   CHOOSE_ENTITIES_TOOL,
   ChooseEntitiesArgsSchema,
   RECORD_KNOWLEDGE_TOOL,
   RecordKnowledgeAnswerSchema,
   RecordKnowledgeArgsSchema,
-} from './operations.js';
-import { type GraphItem, selectKnowledge } from './select-knowledge.js';
+} from './operations';
+import { type GraphItem, selectKnowledge } from './select-knowledge';
 import {
   applyChoices,
   proposedEntities,
   SIMILAR_ENTITY_LIMIT,
   similarCandidates,
   similarEntitiesText,
-} from './similar-entities.js';
-import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store.js';
+} from './similar-entities';
+import type { KnowledgeCloseness, KnowledgeVectorStore } from './vector-store';
 
 /*
  * The handler of `knowledge.extract` (design-core.md, KD-3, KD-4, Flow 1): one extraction round per
