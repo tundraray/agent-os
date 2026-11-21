@@ -1,4 +1,25 @@
 {
   "title": "Вход",
-  "heading": "Вход в Agent OS"
+  "heading": "Вход в Agent OS",
+  "loginLabel": "Логин",
+  "passwordLabel": "Пароль",
+  "loginRequired": "Введите логин",
+  "passwordRequired": "Введите пароль",
+  "submit": "Войти",
+  "submitting": "Входим…",
+  "forgotPassword": "Забыли пароль — обратитесь к администратору Agent OS.",
+  "or": "или",
+  "providerSignIn": "Войти через {provider}",
+  "providerLeaving": "Переходим в {provider}…",
+  "reason": {
+    "invalidCredentials": "Неверный логин или пароль.",
+    "cancelled": "Вход отменён. Попробуйте ещё раз.",
+    "accountDisabled": "Ваша учётная запись отключена. Обратитесь к администратору Agent OS.",
+    "sessionExpired": "Сеанс закончился. Войдите снова.",
+    "signedOut": "Вы вышли из Agent OS.",
+    "signInFailed": "Не удалось войти. Попробуйте ещё раз или обратитесь к администратору Agent OS.",
+    "signInFailedNamed": "Не удалось войти через {provider}. Попробуйте ещё раз или обратитесь к администратору Agent OS.",
+    "noEmail": "Провайдер не сообщил вашу почту, поэтому войти нельзя. Войдите другим способом или обратитесь к администратору Agent OS.",
+    "noEmailNamed": "{provider} не сообщил вашу почту, поэтому войти нельзя. Войдите другим способом или обратитесь к администратору Agent OS."
+  }
 }

@@ -1,4 +1,25 @@
 {
   "title": "Sign in",
-  "heading": "Sign in to Agent OS"
+  "heading": "Sign in to Agent OS",
+  "loginLabel": "Login",
+  "passwordLabel": "Password",
+  "loginRequired": "Enter your login",
+  "passwordRequired": "Enter your password",
+  "submit": "Sign in",
+  "submitting": "Signing in…",
+  "forgotPassword": "Forgot your password? Contact your Agent OS administrator.",
+  "or": "or",
+  "providerSignIn": "Sign in with {provider}",
+  "providerLeaving": "Going to {provider}…",
+  "reason": {
+    "invalidCredentials": "Wrong login or password.",
+    "cancelled": "Sign-in cancelled. Try again.",
+    "accountDisabled": "Your account is disabled. Contact your Agent OS administrator.",
+    "sessionExpired": "Your session has ended. Sign in again.",
+    "signedOut": "You signed out of Agent OS.",
+    "signInFailed": "Couldn't sign in. Try again or contact your Agent OS administrator.",
+    "signInFailedNamed": "Couldn't sign in with {provider}. Try again or contact your Agent OS administrator.",
+    "noEmail": "The provider didn't share your email, so you can't sign in. Sign in another way or contact your Agent OS administrator.",
+    "noEmailNamed": "{provider} didn't share your email, so you can't sign in. Sign in another way or contact your Agent OS administrator."
+  }
 }

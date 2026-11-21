@@ -4,6 +4,7 @@ import enCommon from '@/messages/en/common.json';
 import enErrors from '@/messages/en/errors.json';
 import enFormats from '@/messages/en/formats.json';
 import enLogin from '@/messages/en/login.json';
+import enPages from '@/messages/en/pages.json';
 import enTools from '@/messages/en/tools.json';
 import ruAccount from '@/messages/ru/account.json';
 import ruAnnounce from '@/messages/ru/announce.json';
@@ -11,6 +12,7 @@ import ruCommon from '@/messages/ru/common.json';
 import ruErrors from '@/messages/ru/errors.json';
 import ruFormats from '@/messages/ru/formats.json';
 import ruLogin from '@/messages/ru/login.json';
+import ruPages from '@/messages/ru/pages.json';
 import ruTools from '@/messages/ru/tools.json';
 import type { Locale } from './pick-locale';
 
@@ -22,6 +24,7 @@ const en = {
   errors: enErrors,
   formats: enFormats,
   login: enLogin,
+  pages: enPages,
   tools: enTools,
 };
 
@@ -35,6 +38,7 @@ const ru: Messages = {
   errors: ruErrors,
   formats: ruFormats,
   login: ruLogin,
+  pages: ruPages,
   tools: ruTools,
 };
 

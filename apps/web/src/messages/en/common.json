@@ -1,5 +1,7 @@
 {
   "close": "Close",
   "sidebar": "Sidebar",
-  "chatHistory": "Chat history"
+  "chatHistory": "Chat history",
+  "showPassword": "Show password",
+  "hidePassword": "Hide password"
 }
