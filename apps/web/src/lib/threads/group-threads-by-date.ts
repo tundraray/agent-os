@@ -7,15 +7,8 @@ export type ThreadListEntry = {
   activityAt: number;
 };
 
-export type ThreadGroup = { key: DateGroupKey; label: string; entries: ThreadListEntry[] };
-
-const DATE_GROUP_LABELS = {
-  today: 'Сегодня',
-  yesterday: 'Вчера',
-  previous7: 'Предыдущие 7 дней',
-  previous30: 'Предыдущие 30 дней',
-  older: 'Старше',
-} as const satisfies Record<DateGroupKey, string>;
+/** A date group by its key; the list translates the key into the group's heading. */
+export type ThreadGroup = { key: DateGroupKey; entries: ThreadListEntry[] };
 
 const GROUP_ORDER: readonly DateGroupKey[] = ['today', 'yesterday', 'previous7', 'previous30', 'older'];
 
@@ -64,6 +57,6 @@ export function groupThreadsByDate(entries: readonly ThreadListEntry[], now: Dat
 
   return GROUP_ORDER.flatMap((key) => {
     const bucket = buckets.get(key);
-    return bucket ? [{ key, label: DATE_GROUP_LABELS[key], entries: bucket }] : [];
+    return bucket ? [{ key, entries: bucket }] : [];
   });
 }

@@ -24,6 +24,7 @@ import type {
   ImageMessagePart,
   ImageMessagePartComponent,
 } from "@assistant-ui/react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { hostOf, safeHref } from "@/utils/href";
 
@@ -214,10 +215,11 @@ function ImagePreview({
   fit = "contain",
   onLoad,
   onError,
-  alt = "Изображение",
+  alt,
   src,
   ...props
 }: ImagePreviewProps) {
+  const t = useTranslations("chat.image");
   const imgRef = useRef<HTMLImageElement>(null);
   const [loadedSrc, setLoadedSrc] = useState<string | undefined>(undefined);
   const [errorSrc, setErrorSrc] = useState<string | undefined>(undefined);
@@ -274,7 +276,7 @@ function ImagePreview({
         <img
           ref={imgRef}
           src={src}
-          alt={alt}
+          alt={alt ?? t("alt")}
           className={cn(
             fixedRatio
               ? cn("block h-full w-full", {
@@ -313,6 +315,7 @@ function ImageSource({
   iconUrl,
   ...props
 }: ImageSourceProps) {
+  const t = useTranslations("chat");
   const href = safeHref(url);
   const host = hostOf(url);
   const displayLabel = label || host;
@@ -357,7 +360,7 @@ function ImageSource({
           className="hover:text-foreground truncate"
         >
           {displayLabel}
-          <span className="sr-only"> (откроется в новой вкладке)</span>
+          <span className="sr-only"> {t("newTab")}</span>
         </a>
       ) : (
         <span data-slot="image-source-label" className="truncate">
@@ -394,7 +397,8 @@ type ImageZoomProps = PropsWithChildren<{
   alt?: string;
 }>;
 
-function ImageZoom({ src, alt = "Просмотр изображения", children }: ImageZoomProps) {
+function ImageZoom({ src, alt, children }: ImageZoomProps) {
+  const t = useTranslations("chat.image");
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -464,7 +468,7 @@ function ImageZoom({ src, alt = "Просмотр изображения", child
         role="button"
         tabIndex={0}
         className="aui-image-zoom-trigger cursor-zoom-in"
-        aria-label="Увеличить изображение"
+        aria-label={t("zoom")}
       >
         {children}
       </div>
@@ -477,12 +481,12 @@ function ImageZoom({ src, alt = "Просмотр изображения", child
             aria-modal="true"
             className="aui-image-zoom-overlay fade-in animate-in fixed inset-0 z-50 flex items-center justify-center bg-black/80 duration-200 motion-reduce:animate-none"
             onClick={handleClose}
-            aria-label="Увеличенное изображение"
+            aria-label={t("zoomed")}
           >
             <img
               data-slot="image-zoom-content"
               src={src}
-              alt={alt}
+              alt={alt ?? t("zoomAlt")}
               className="aui-image-zoom-content fade-in zoom-in-95 animate-in max-h-[90%] max-w-[90%] cursor-zoom-out object-contain duration-200 motion-reduce:animate-none"
               onClick={(e) => {
                 e.stopPropagation();
@@ -492,7 +496,7 @@ function ImageZoom({ src, alt = "Просмотр изображения", child
             <button
               ref={closeRef}
               type="button"
-              aria-label="Закрыть увеличенное изображение"
+              aria-label={t("closeZoom")}
               onClick={(e) => {
                 e.stopPropagation();
                 handleClose();
@@ -509,6 +513,7 @@ function ImageZoom({ src, alt = "Просмотр изображения", child
 }
 
 function ImageGenerating({ className }: { className?: string }) {
+  const t = useTranslations("chat.image");
   return (
     <div
       data-slot="image-generating"
@@ -518,7 +523,7 @@ function ImageGenerating({ className }: { className?: string }) {
       )}
     >
       <Loader2Icon className="text-muted-foreground size-8 animate-spin motion-reduce:animate-none" />
-      <span className="sr-only">Создаём изображение…</span>
+      <span className="sr-only">{t("generating")}</span>
     </div>
   );
 }
@@ -530,6 +535,7 @@ function ImageContentFilterError({
   className?: string;
   reason?: string;
 }) {
+  const t = useTranslations("chat.image");
   return (
     <div
       data-slot="image-content-filter-error"
@@ -539,7 +545,7 @@ function ImageContentFilterError({
       )}
     >
       <ShieldAlertIcon className="text-muted-foreground size-8" />
-      <p className="text-sm font-medium">Не удалось создать изображение</p>
+      <p className="text-sm font-medium">{t("generateFailed")}</p>
       {reason && <p className="text-muted-foreground text-xs">{reason}</p>}
     </div>
   );
@@ -560,6 +566,7 @@ function RegenerateButton({
 }: {
   onRegenerate: () => void | Promise<void>;
 }) {
+  const t = useTranslations("chat.image");
   const [isRegenerating, setIsRegenerating] = useState(false);
   return (
     <button
@@ -575,7 +582,7 @@ function RegenerateButton({
       }}
       disabled={isRegenerating}
       data-slot="image-regenerate"
-      aria-label="Создать изображение заново"
+      aria-label={t("regenerate")}
       className="hover:bg-muted inline-flex size-7 items-center justify-center rounded disabled:opacity-50"
     >
       <RefreshCwIcon
@@ -586,6 +593,7 @@ function RegenerateButton({
 }
 
 function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
+  const t = useTranslations("chat.image");
   return (
     <div
       data-slot="image-actions"
@@ -595,7 +603,7 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
         type="button"
         onClick={() => downloadImagePart(part)}
         data-slot="image-download"
-        aria-label="Скачать изображение"
+        aria-label={t("download")}
         className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
       >
         <DownloadIcon className="size-4" />
@@ -606,7 +614,7 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
           copyImagePart(part).catch(() => {});
         }}
         data-slot="image-copy"
-        aria-label="Копировать изображение"
+        aria-label={t("copy")}
         className="hover:bg-muted inline-flex size-7 items-center justify-center rounded"
       >
         <CopyIcon className="size-4" />
@@ -618,6 +626,7 @@ function ImageActions({ part, onRegenerate, className }: ImageActionsProps) {
 
 const ImageImpl: ImageMessagePartComponent = (props) => {
   const { image, filename, status } = props;
+  const t = useTranslations("chat.image");
 
   if (status?.type === "running") {
     return (
@@ -631,15 +640,15 @@ const ImageImpl: ImageMessagePartComponent = (props) => {
   if (status?.type === "incomplete" && status.reason === "content-filter") {
     return (
       <ImageRoot>
-        <ImageContentFilterError reason="Провайдер заблокировал это изображение." />
+        <ImageContentFilterError reason={t("blocked")} />
       </ImageRoot>
     );
   }
 
   return (
     <ImageRoot>
-      <ImageZoom src={image} alt={filename || "Изображение"}>
-        <ImagePreview src={image} alt={filename || "Изображение"} />
+      <ImageZoom src={image} alt={filename || t("alt")}>
+        <ImagePreview src={image} alt={filename || t("alt")} />
       </ImageZoom>
       <ImageFilename>{filename}</ImageFilename>
     </ImageRoot>

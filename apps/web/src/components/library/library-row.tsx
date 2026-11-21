@@ -2,15 +2,17 @@
 
 import { useId, useState, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useFormatter } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { BookOpen, Bot, CircleMinus, LoaderCircle, MoreHorizontalIcon, ShieldOff, Workflow, type LucideIcon } from "lucide-react";
 import type { RecordKind, RecordSummary } from "@agent-os/contracts";
 import { Button } from "@/components/ui/button";
 import { useAdminRight } from "@/components/admin/admin-gate";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatModel } from "@/lib/agents/format";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatDay, type Formatter } from "@/lib/i18n/formats";
-import { kindWord, shareBlockedReason } from "@/lib/library/library-errors";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
+import { shareBlockedReason } from "@/lib/library/library-errors";
 import { canUseInChat } from "@/lib/library/record-rules";
 import { adminRecordPath, recordPath } from "@/lib/shell-route";
 import { useCopyRecord } from "./copy-record";
@@ -22,48 +24,31 @@ import { useInChat } from "./use-in-chat";
 /** Systems a note names before «и ещё {N}» (library-row.md, Content Rules). */
 const NAMED_SYSTEMS = 3;
 
-/** UXRD MC-2. */
-const TEXT = {
-  actions: (name: string) => `Действия: ${name}`,
-  useInChat: "Использовать в чате",
-  open: "Открыть",
-  share: "Поделиться",
-  copy: "Скопировать себе",
-  delete: "Удалить",
-  openInPanel: "Открыть в панели",
-  readOnly: "Только для чтения — чтобы пользоваться, скопируйте себе",
-} as const;
-
 /** «Доступ закрыл администратор · {дата} — делиться нельзя» (MC-2, MC-9). */
-export const banText = (format: Formatter, closedAt: string): string =>
-  `Доступ закрыл администратор · ${formatDay(format, closedAt)} — делиться нельзя`;
+export const banText = (t: LibraryTranslator, format: Formatter, closedAt: string): string =>
+  t("ban", { date: formatDay(format, closedAt) });
 
-function systemsText(servers: readonly string[], kind: RecordKind): string {
-  const named = servers.slice(0, NAMED_SYSTEMS).join(", ");
-  const rest = servers.length - NAMED_SYSTEMS;
-  const list = rest > 0 ? `${named} и ещё ${rest}` : named;
-  return servers.length === 1
-    ? `${list} у вас недоступна — ${kindWord(kind)} будет работать без неё`
-    : `${list} у вас недоступны — ${kindWord(kind)} будет работать без них`;
+/** The unavailable systems, the first `NAMED_SYSTEMS` by name and «и ещё {N}» for the rest. */
+function systemsText(t: LibraryTranslator, servers: readonly string[], kind: RecordKind): string {
+  const names = servers.slice(0, NAMED_SYSTEMS).join(", ");
+  const rest = Math.max(servers.length - NAMED_SYSTEMS, 0);
+  return t("row.systems", { count: servers.length, names, rest, kind });
 }
 
 type RowNote = { icon: LucideIcon; text: string };
 
 /** The row's notes (library-row.md, States): what will happen when the viewer runs the record. */
-function rowNotes(record: RecordSummary, format: Formatter): RowNote[] {
+function rowNotes(t: LibraryTranslator, record: RecordSummary, format: Formatter): RowNote[] {
   const notes: RowNote[] = [];
   // The record's and its executors' systems together: the viewer's run works without each of them.
   const servers = [...new Set(record.missingRights.flatMap((right) => right.servers))];
-  if (servers.length > 0) notes.push({ icon: CircleMinus, text: systemsText(servers, record.kind) });
+  if (servers.length > 0) notes.push({ icon: CircleMinus, text: systemsText(t, servers, record.kind) });
   const model = record.missingRights.find((right) => right.executor === null && right.model !== null)?.model;
   if (model != null) {
-    notes.push({
-      icon: CircleMinus,
-      text: `Модель ${formatModel(model)} вам недоступна — у вас ${kindWord(record.kind)} не запустится`,
-    });
+    notes.push({ icon: CircleMinus, text: t("row.modelUnavailable", { model: formatModel(model), kind: record.kind }) });
   }
-  if (!record.mine && record.author !== null && !record.offerInChat) notes.push({ icon: BookOpen, text: TEXT.readOnly });
-  if (record.ban !== null) notes.push({ icon: ShieldOff, text: banText(format, record.ban.closedAt) });
+  if (!record.mine && record.author !== null && !record.offerInChat) notes.push({ icon: BookOpen, text: t("row.readOnly") });
+  if (record.ban !== null) notes.push({ icon: ShieldOff, text: banText(t, format, record.ban.closedAt) });
   return notes;
 }
 
@@ -90,7 +75,10 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
   const errorId = useId();
   const KindIcon = record.kind === "agent" ? Bot : Workflow;
   const format = useFormatter();
-  const notes = rowNotes(record, format);
+  const t = useTranslations("library");
+  const locale = useLocale();
+  const name = builtinName(record, locale);
+  const notes = rowNotes(t, record, format);
 
   // The background of the row opens the page for a mouse or a touch; the keyboard has the name's link.
   // Menus and dialogs are portalled: their clicks reach this handler through React but not the row's DOM.
@@ -110,7 +98,7 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <RecordLabel variant="row" summary={record} href={recordPath(record.id)} showSource={showSource} />
         <p className="line-clamp-2 text-sm leading-5">
-          <span className="text-muted-foreground text-xs leading-4">{kindWord(record.kind)}</span>
+          <span className="text-muted-foreground text-xs leading-4">{t("kind", { kind: record.kind })}</span>
           <span className="text-muted-foreground"> · </span>
           <span className="text-foreground">{record.description}</span>
         </p>
@@ -132,10 +120,11 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
       </div>
       <RowMenu
         record={record}
+        name={name}
         noRoles={noRoles}
         pending={copy.pending}
         describedBy={copy.error === null ? undefined : errorId}
-        onUseInChat={() => inChat({ record: { id: record.id, kind: record.kind, name: record.name } })}
+        onUseInChat={() => inChat({ record: { id: record.id, kind: record.kind, name } })}
         onOpen={() => router.push(recordPath(record.id))}
         onOpenInPanel={() => router.push(adminRecordPath("library", record.id))}
         onShare={() => setSharing(true)}
@@ -155,6 +144,8 @@ export function LibraryRow({ record, showSource, noRoles }: LibraryRowProps) {
 
 type RowMenuProps = {
   record: RecordSummary;
+  /** The record's name as the page shows it. */
+  name: string;
   noRoles: boolean;
   pending: boolean;
   describedBy: string | undefined;
@@ -166,9 +157,11 @@ type RowMenuProps = {
   onOpenInPanel: () => void;
 };
 
-function RowMenu({ record, noRoles, pending, describedBy, ...on }: RowMenuProps) {
+function RowMenu({ record, name, noRoles, pending, describedBy, ...on }: RowMenuProps) {
+  const t = useTranslations("library");
+  const tErrors = useTranslations("errors");
   const shareReasonId = useId();
-  const shareBlocked = shareBlockedReason(record, noRoles);
+  const shareBlocked = shareBlockedReason(tErrors, record, noRoles);
   // A company record changes only in the panel: an administrator gets the way there (library-row.md).
   const inPanel = useAdminRight() === "admin" && record.author === null;
   return (
@@ -178,7 +171,7 @@ function RowMenu({ record, noRoles, pending, describedBy, ...on }: RowMenuProps)
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={TEXT.actions(record.name)}
+            aria-label={t("row.actions", { name })}
             aria-describedby={describedBy}
             disabled={pending}
             className="shrink-0 pointer-coarse:size-11"
@@ -188,8 +181,8 @@ function RowMenu({ record, noRoles, pending, describedBy, ...on }: RowMenuProps)
         {pending ? <LoaderCircle aria-hidden className="animate-spin motion-reduce:animate-none" /> : <MoreHorizontalIcon aria-hidden />}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-45">
-        {canUseInChat(record) && <DropdownMenuItem onClick={on.onUseInChat}>{TEXT.useInChat}</DropdownMenuItem>}
-        <DropdownMenuItem onClick={on.onOpen}>{TEXT.open}</DropdownMenuItem>
+        {canUseInChat(record) && <DropdownMenuItem onClick={on.onUseInChat}>{t("row.useInChat")}</DropdownMenuItem>}
+        <DropdownMenuItem onClick={on.onOpen}>{t("open")}</DropdownMenuItem>
         {/* Under a ban the server says `canShare: false`, yet the owner sees the item with the reason (MC-14). */}
         {record.mine && (record.canShare || record.ban !== null) && (
           <DropdownMenuItem
@@ -198,7 +191,7 @@ function RowMenu({ record, noRoles, pending, describedBy, ...on }: RowMenuProps)
             aria-describedby={shareBlocked === null ? undefined : shareReasonId}
             onClick={on.onShare}
           >
-            {TEXT.share}
+            {t("row.share")}
             {shareBlocked !== null && (
               <span id={shareReasonId} className="sr-only">
                 {shareBlocked}
@@ -206,13 +199,13 @@ function RowMenu({ record, noRoles, pending, describedBy, ...on }: RowMenuProps)
             )}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={on.onCopy}>{TEXT.copy}</DropdownMenuItem>
+        <DropdownMenuItem onClick={on.onCopy}>{t("row.copy")}</DropdownMenuItem>
         {record.mine && record.canDelete && (
           <DropdownMenuItem variant="destructive" onClick={on.onDelete}>
-            {TEXT.delete}
+            {t("row.delete")}
           </DropdownMenuItem>
         )}
-        {inPanel && <DropdownMenuItem onClick={on.onOpenInPanel}>{TEXT.openInPanel}</DropdownMenuItem>}
+        {inPanel && <DropdownMenuItem onClick={on.onOpenInPanel}>{t("row.openInPanel")}</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

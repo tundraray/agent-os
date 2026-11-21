@@ -17,9 +17,9 @@ const entry = (id: string, title: string | undefined, overrides: Partial<ThreadL
 });
 
 const GROUPS: readonly ThreadGroup[] = [
-  { key: 'today', label: 'Сегодня', entries: [entry('a', 'План релиза'), entry('b', 'Отчёт')] },
-  { key: 'yesterday', label: 'Вчера', entries: [entry('c', 'Заметки')] },
-  { key: 'older', label: 'Старше', entries: [entry('d', 'Архив')] },
+  { key: 'today', entries: [entry('a', 'План релиза'), entry('b', 'Отчёт')] },
+  { key: 'yesterday', entries: [entry('c', 'Заметки')] },
+  { key: 'older', entries: [entry('d', 'Архив')] },
 ];
 
 function Wrapper({ children }: { children: ReactNode }) {

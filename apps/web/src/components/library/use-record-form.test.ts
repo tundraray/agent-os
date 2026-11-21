@@ -1,8 +1,9 @@
 import type { RecordDetail, WorkflowExecutor } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import type { LibraryErrorText } from '@/lib/library/library-errors';
-import type { RecordDefinition } from '@/lib/library/record-rules';
+import { changedFieldLabel, type RecordDefinition } from '@/lib/library/record-rules';
 import { agentContent, fixtureId, recordDetail, workflowContent } from '@/test/fixtures';
+import { testTranslator } from '@/test/intl';
 import {
   initialRecordForm,
   recordFormReducer,
@@ -12,6 +13,7 @@ import {
   type RecordFormStatus,
 } from './use-record-form';
 
+const t = testTranslator('library');
 const RECORD_ID = fixtureId(11);
 const SOURCE_ID = fixtureId(12);
 const DESCRIPTION = 'Ищет причины ошибок в логах';
@@ -209,7 +211,7 @@ describe('recordFormReducer', () => {
     if (conflict !== undefined) {
       const shown = view.conflict && {
         saved: view.conflict.saved?.version ?? null,
-        fields: view.conflict.fields.map((field) => field.label),
+        fields: view.conflict.fields.map((field) => changedFieldLabel(t, field)),
       };
       expect(shown).toEqual(conflict);
     }

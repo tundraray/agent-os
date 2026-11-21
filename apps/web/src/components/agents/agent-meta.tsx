@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useFormatter } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import type { AgentPageView, RunOrigin } from "@agent-os/contracts";
 import { AgentStatus } from "@/components/agents/agent-status";
 import { ChangedAfterRun, runRecord, useLiveRecord } from "@/components/agents/run-card";
 import { RecordLabel } from "@/components/library/record-label";
-import { UNTITLED_THREAD_TITLE } from "@/components/shell/thread-history-item";
 import { formatModel } from "@/lib/agents/format";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { isWorkflowCoordinator } from "@/lib/feed/to-feed";
 import { agentPath, recordPath, threadPath } from "@/lib/shell-route";
@@ -46,9 +46,10 @@ export function AgentMeta({ agent }: { agent: AgentPageView["agent"] }) {
  */
 function AgentRecordLine({ origin }: { origin: RunOrigin }) {
   const live = useLiveRecord(origin.recordId);
+  const locale = useLocale();
   return (
     <>
-      <RecordLabel origin={origin} variant="under" showVersion href={recordPath(origin.recordId)} />
+      <RecordLabel origin={{ ...origin, name: builtinName(origin, locale) }} variant="under" showVersion href={recordPath(origin.recordId)} />
       <ChangedAfterRun origin={origin} live={live} />
     </>
   );
@@ -56,13 +57,24 @@ function AgentRecordLine({ origin }: { origin: RunOrigin }) {
 
 function AgentMetaLine({ agent }: { agent: AgentPageView["agent"] }) {
   const format = useFormatter();
+  const locale = useLocale();
+  const t = useTranslations("agents.meta");
+  const tShell = useTranslations("shell");
   const model = formatModel(agent.model);
+  const parent =
+    agent.parentDescription !== undefined && agent.parentId !== null
+      ? { agentId: agent.parentId, description: agent.parentDescription }
+      : null;
   const started = (
     <span>
-      запущен{" "}
-      <time dateTime={agent.createdAt} className="tabular-nums">
-        {formatListTime(format, agent.createdAt)}
-      </time>
+      {t.rich("started", {
+        at: formatListTime(format, agent.createdAt),
+        time: (chunks) => (
+          <time dateTime={agent.createdAt} className="tabular-nums">
+            {chunks}
+          </time>
+        ),
+      })}
     </span>
   );
 
@@ -75,9 +87,11 @@ function AgentMetaLine({ agent }: { agent: AgentPageView["agent"] }) {
       <Separator className="md:hidden" />
       {isWorkflowCoordinator(agent) ? (
         <>
-          <span>Workflow «{agent.name}»</span>
+          <span>
+            {t("workflow", { name: builtinName({ builtinKey: agent.origin?.builtinKey ?? null, name: agent.name }, locale) })}
+          </span>
           <Separator />
-          <span>координатор</span>
+          <span>{t("coordinator")}</span>
           <Separator />
           <span>{model}</span>
           <Separator />
@@ -89,21 +103,27 @@ function AgentMetaLine({ agent }: { agent: AgentPageView["agent"] }) {
           <Separator />
           {started}
           <Separator />
-          {agent.parentDescription !== undefined && agent.parentId !== null ? (
+          {parent !== null ? (
             <span>
-              запущен агентом «
-              <Link href={agentPath(agent.parentId)} className={LINK_CLASS}>
-                {agent.parentDescription}
-              </Link>
-              »
+              {t.rich("fromAgent", {
+                name: parent.description,
+                link: (chunks) => (
+                  <Link href={agentPath(parent.agentId)} className={LINK_CLASS}>
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </span>
           ) : (
             <span>
-              из беседы «
-              <Link href={threadPath(agent.threadId)} className={LINK_CLASS}>
-                {agent.threadTitle ?? UNTITLED_THREAD_TITLE}
-              </Link>
-              »
+              {t.rich("fromChat", {
+                title: agent.threadTitle ?? tShell("thread.untitled"),
+                link: (chunks) => (
+                  <Link href={threadPath(agent.threadId)} className={LINK_CLASS}>
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </span>
           )}
         </>

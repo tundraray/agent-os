@@ -1,10 +1,12 @@
 "use client";
 
 import { useAui, useAuiState } from "@assistant-ui/react";
+import { useTranslations } from "next-intl";
 import { useAttachmentSrc } from "@/hooks/use-attachment-src";
 
 export function useAttachmentState() {
   const aui = useAui();
+  const t = useTranslations("chat.attachment");
   const isComposer = aui.attachment.source !== "message";
   const src = useAttachmentSrc();
 
@@ -29,7 +31,7 @@ export function useAttachmentState() {
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
     s.attachment.status.reason === "error"
-      ? (s.attachment.status.message ?? "Не удалось загрузить файл")
+      ? (s.attachment.status.message ?? t("uploadFailed"))
       : undefined,
   );
 

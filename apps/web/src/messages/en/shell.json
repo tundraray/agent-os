@@ -1,0 +1,136 @@
+{
+  "sidebar": {
+    "closeMenu": "Close menu",
+    "newChat": "New chat",
+    "newChatTooltip": "New chat · {shortcut}",
+    "panel": "Admin panel",
+    "agents": "Agents",
+    "library": "Library",
+    "awaiting": "{section}, decisions waiting: {count}"
+  },
+  "dateGroup": {
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "previous7": "Previous 7 days",
+    "previous30": "Previous 30 days",
+    "older": "Older"
+  },
+  "list": {
+    "loading": "Loading chats…",
+    "loadFailed": "Couldn't load chats",
+    "retry": "Retry",
+    "empty": "No chats yet",
+    "emptyHint": "Start a new chat — it will appear here.",
+    "loadingMore": "Loading more chats…",
+    "loadMoreFailed": "Couldn't load more chats",
+    "showMore": "Show more<hidden> chats</hidden>"
+  },
+  "thread": {
+    "untitled": "New chat",
+    "actions": "Actions for chat “{title}”",
+    "rename": "Rename",
+    "delete": "Delete",
+    "titleLabel": "Chat title",
+    "titleRequired": "Enter a title",
+    "renameFailed": "Couldn't rename the chat. Try again.",
+    "deleted": "Chat deleted",
+    "deleteFailed": "Couldn't delete the chat. Try again."
+  },
+  "deleteDialog": {
+    "title": "Delete chat?",
+    "description": "Chat “{title}” and all its messages will be deleted. This can't be undone.",
+    "agents": "This chat's agents and workflow runs will be deleted too, and running ones will be stopped.",
+    "cancel": "Cancel",
+    "confirm": "Delete"
+  },
+  "userMenu": {
+    "label": "{named, select, yes {User menu {name}} other {User menu}}{needsAuth, plural, =0 {} other {, sign-in needed: #}}",
+    "myAccess": "My access",
+    "adminPanel": "Admin panel",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "signOut": "Sign out",
+    "signOutFailed": "Couldn't sign out. Try again."
+  },
+  "spend": {
+    "ready": "Spending for {month}: {amount}",
+    "loading": "Loading spending…",
+    "unavailable": "Spending unavailable"
+  },
+  "header": {
+    "menu": "Menu",
+    "menuTooltip": "Menu · {shortcut}",
+    "sidebarTooltip": "Sidebar · {shortcut}"
+  },
+  "page": {
+    "agents": "Agents",
+    "account": "My access"
+  },
+  "skipLink": {
+    "content": "Skip to content",
+    "message": "Skip to message"
+  },
+  "connectionLost": "No connection to the server. Reconnecting…",
+  "welcome": {
+    "title": "How can I help?",
+    "hint": "Ask a question, request a text or a breakdown of a task."
+  },
+  "workspace": {
+    "title": "Workspace",
+    "resize": "Resize workspace",
+    "close": "Close workspace",
+    "empty": "Tool artifacts will appear here: tables, documents, charts."
+  },
+  "leaveGuard": {
+    "title": "Leave without saving?",
+    "body": "Changes to “{name}” aren't saved and will be lost.",
+    "bodyNew": "Changes aren't saved and will be lost.",
+    "stay": "Stay",
+    "leave": "Leave without saving"
+  },
+  "notice": {
+    "notFound": {
+      "title": "Chat not found",
+      "description": "It may have been deleted, or the link is wrong."
+    },
+    "loadError": {
+      "title": "Couldn't load the chat",
+      "description": "Check your connection and try again."
+    },
+    "deleted": {
+      "title": "Chat deleted",
+      "description": "It was deleted in another tab or window."
+    },
+    "agentNotFound": {
+      "title": "Agent not found",
+      "description": "It may have been deleted together with its chat, or the link is wrong."
+    },
+    "agentLoadError": {
+      "title": "Couldn't load the agent",
+      "description": "Check your connection and try again."
+    },
+    "noAccess": {
+      "title": "No access",
+      "description": "The admin panel is open only to Agent OS administrators."
+    },
+    "recordNotFound": {
+      "title": "Record not found",
+      "description": "It may have been deleted, or the link is wrong."
+    },
+    "libraryNotFound": {
+      "title": "Not found",
+      "description": "No such agent or workflow: it was deleted, closed to you, or the link is wrong."
+    },
+    "libraryLoadError": {
+      "title": "Couldn't load",
+      "description": "Check your connection and try again."
+    },
+    "retry": "Retry",
+    "toAgents": "Back to agents",
+    "toChat": "Go to chat",
+    "toList": "Back to list",
+    "toLibrary": "Go to library"
+  }
+}

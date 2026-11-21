@@ -1,35 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import type { RecordSummary } from "@agent-os/contracts";
+import { BUILTIN_ROLE_KEY, type RecordSummary } from "@agent-os/contracts";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { adminApi } from "@/lib/admin/admin-api";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
+import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
-import { deleteFailed, kindWord } from "@/lib/library/library-errors";
+import { deleteFailed } from "@/lib/library/library-errors";
 import { recordAction } from "@/lib/library/record-action";
 import { adminLibraryTabPath, libraryPath } from "@/lib/shell-route";
 
 /** What the dialog reads of a record: a library row and a record page both fit. */
 export type DeleteRecord = Pick<RecordSummary, "id" | "kind" | "name" | "author" | "audience">;
 
-const RUNS_FINISH = "Запуски, которые уже идут, доработают.";
-
-/** UXRD MC-5. */
-const TEXT = {
-  title: (name: string) => `Удалить «${name}»?`,
-  body: ({ kind, author, audience }: DeleteRecord): string => {
-    const Kind = kindWord(kind, true);
-    if (author === null || audience.everyone === true) return `${Kind} пропадёт у всех, кому открыт. ${RUNS_FINISH}`;
-    if (audience.roles.length === 0) return `${Kind} удалится насовсем. ${RUNS_FINISH}`;
-    const roles = audience.roles.map((role) => role.name).join(", ");
-    return `${Kind} пропадёт у вас и у ролей ${roles}. ${RUNS_FINISH}`;
-  },
-  confirm: "Удалить",
-  deleted: (record: DeleteRecord) => `${kindWord(record.kind, true)} удалён`,
-} as const;
+/** UXRD MC-5: who loses the record, then that runs already going finish. */
+function bodyText(t: LibraryTranslator, locale: Locale, { kind, author, audience }: DeleteRecord): string {
+  if (author === null || audience.everyone === true) return t("delete.everyone", { kind });
+  if (audience.roles.length === 0) return t("delete.onlyYou", { kind });
+  const roles = audience.roles.map((role) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name: role.name }, locale));
+  return t("delete.roles", { kind, roles: roles.join(", ") });
+}
 
 export type DeleteRecordDialogProps = {
   record: DeleteRecord;
@@ -58,6 +53,8 @@ export function DeleteRecordDialog({
 }: DeleteRecordDialogProps) {
   const { libraryIndex, leaveGuard } = useShellServices();
   const t = useTranslations("errors");
+  const tLibrary = useTranslations("library");
+  const locale = useLocale();
   const router = useRouter();
 
   async function remove(): Promise<void> {
@@ -65,7 +62,7 @@ export function DeleteRecordDialog({
       variant === "admin" ? adminApi.library.remove(record.id) : libraryApi.remove(record.id),
     );
     void libraryIndex.refresh();
-    toast.success(TEXT.deleted(record));
+    toast.success(tLibrary("delete.deleted", { kind: record.kind }));
     onDeleted?.();
     if (leaveToLibrary) {
       leaveGuard.release();
@@ -77,9 +74,9 @@ export function DeleteRecordDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={TEXT.title(record.name)}
-      body={TEXT.body(record)}
-      confirmLabel={TEXT.confirm}
+      title={tLibrary("delete.title", { name: record.name })}
+      body={bodyText(tLibrary, locale, record)}
+      confirmLabel={tLibrary("delete.confirm")}
       onConfirm={remove}
       // `recordAction` has logged the refusal.
       refusalText={(cause) => deleteFailed(t, cause)}

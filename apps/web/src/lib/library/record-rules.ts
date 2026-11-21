@@ -8,6 +8,7 @@ import {
   type WorkflowContent,
   type WorkflowExecutor,
 } from '@agent-os/contracts';
+import type { LibraryTranslator } from '@/lib/i18n/messages';
 
 /**
  * Rules of the web (design-web.md, «Правила веба»): pure decisions over data the caller has already
@@ -59,9 +60,9 @@ export function isDraftStale(
 export type SummaryLookup = { summaryOf(recordId: string): LiveRecord<'name'> };
 
 /** Title of a workflow task card (MC-21): «Задание · {имя}», or «Задание» while the record is unknown. */
-export function taskTitleName(workflowId: string | null | undefined, index: SummaryLookup): string {
+export function taskTitleName(t: LibraryTranslator, workflowId: string | null | undefined, index: SummaryLookup): string {
   const live = workflowId ? index.summaryOf(workflowId) : null;
-  return live == null ? 'Задание' : `Задание · ${live.name}`;
+  return live == null ? t('task.title') : t('task.titleNamed', { name: live.name });
 }
 
 /** «{имя} 2», «{имя} 3», … — the first not among the owner's names; names compare without case, as the server does. */
@@ -74,29 +75,31 @@ export function freeName(name: string, ownNames: readonly string[]): string {
 }
 
 /**
- * Form labels of a record's fields (MC-7, MC-12): the editor, the conflict block (MC-10) and the draft
- * card (MC-15) name changed fields by them. The platform tools of an agent have no form field.
+ * A record's form fields (MC-7, MC-12), each labelled by `library.fields.{field}`: the editor, the conflict
+ * block (MC-10) and the draft card (MC-15) name changed fields by them. The platform tools of an agent have no
+ * form field.
  */
-export const RECORD_FIELD_LABELS = {
-  name: 'Имя',
-  description: 'Описание',
-  prompt: 'Инструкция',
-  servers: 'Системы',
-  model: 'Модель',
-  maxTurns: 'Максимум шагов',
-  agents: 'Может запускать',
-  rules: 'Как работает команда',
-  finalExecutor: 'Кто пишет ответ',
-  selfLearning: 'Самообучение',
-  coordinatorModel: 'Модель координатора',
-  coordinatorMaxTurns: 'Максимум шагов координатора',
-} as const;
-export type RecordField = keyof typeof RECORD_FIELD_LABELS;
+export type RecordField =
+  | 'name'
+  | 'description'
+  | 'prompt'
+  | 'servers'
+  | 'model'
+  | 'maxTurns'
+  | 'agents'
+  | 'rules'
+  | 'finalExecutor'
+  | 'selfLearning'
+  | 'coordinatorModel'
+  | 'coordinatorMaxTurns';
 
 /** A changed field; an executor is one unit, named as its panel is (MC-13 «Исполнитель «{имя}»»). */
-export type ChangedField =
-  | { field: RecordField; label: string }
-  | { field: 'executor'; executor: string; label: string };
+export type ChangedField = { field: RecordField } | { field: 'executor'; executor: string };
+
+/** The form label a changed field is named by. */
+export function changedFieldLabel(t: LibraryTranslator, changed: ChangedField): string {
+  return changed.field === 'executor' ? t('fields.executor', { name: changed.executor }) : t(`fields.${changed.field}`);
+}
 
 /** A record's definition as the form, a saved record and a draft hold it. */
 export type RecordDefinition = { readonly name: string; readonly description: string } & RecordBody;
@@ -125,11 +128,11 @@ export function changedFields(before: RecordDefinition, after: RecordDefinition)
 }
 
 function fieldOf(field: RecordField): ChangedField {
-  return { field, label: RECORD_FIELD_LABELS[field] };
+  return { field };
 }
 
 function executorOf(name: string): ChangedField {
-  return { field: 'executor', executor: name, label: `Исполнитель «${name}»` };
+  return { field: 'executor', executor: name };
 }
 
 /** `previous` `null` — the other definition is of another kind, so every field counts as changed. */

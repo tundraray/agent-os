@@ -1,4 +1,6 @@
+import { createElement } from 'react';
 import { AuiConfig } from '@assistant-ui/react';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { createAgentListStore, type AgentListStore } from '@/lib/agents/agent-list-store';
 import { authApi } from '@/lib/auth/auth-api';
@@ -59,15 +61,24 @@ export type CreateShellServicesOptions = {
   location?: Pick<Location, 'assign'>;
 };
 
+type ThreadNoticeKey = keyof OperationNotifier;
+
+/** A thread operation's notice, translated where the toast renders, so it follows the interface language (KD-5). */
+function ThreadOperationNotice({ notice }: { notice: ThreadNoticeKey }) {
+  return useTranslations('shell.thread')(notice);
+}
+
+const noticeOf = (notice: ThreadNoticeKey) => createElement(ThreadOperationNotice, { notice });
+
 const notify: OperationNotifier = {
   renameFailed: () => {
-    toast.error('Не удалось переименовать беседу. Попробуйте ещё раз.');
+    toast.error(noticeOf('renameFailed'));
   },
   deleted: () => {
-    toast('Беседа удалена');
+    toast(noticeOf('deleted'));
   },
   deleteFailed: () => {
-    toast.error('Не удалось удалить беседу. Попробуйте ещё раз.');
+    toast.error(noticeOf('deleteFailed'));
   },
 };
 
@@ -129,7 +140,7 @@ function createThreadFeeds({ api, status, live, announcer }: ThreadFeedsDeps): T
   };
 }
 
-/** Builds the shell's dependencies once per provider mount. Pure wiring, no React. */
+/** Builds the shell's dependencies once per provider mount: wiring, no React state. */
 export function createShellServices({ openEventSource, location }: CreateShellServicesOptions = {}): ShellServices {
   const apiClient = threadsApiClient;
   const currentUser = createCurrentUserStore({ read: authApi.me, endSession: authApi.signOut, location, logger });

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { RotateCwIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import { AgentTree, AgentTreeSkeleton } from "@/components/agents/agent-tree";
 import { useShellServices } from "@/components/shell/shell-actions";
@@ -16,6 +17,7 @@ import { focusShellTarget } from "@/lib/focus";
 export function AgentsScreen({ store }: { store: AgentListStore }) {
   const { status, agents, nextCursor, loadingMore, loadMoreFailed, expanded } = useStore(store);
   const { libraryIndex } = useShellServices();
+  const t = useTranslations("agents.list");
 
   useEffect(() => store.attach(), [store]);
   // The «Из библиотеки» labels read the library list on every visit (KD-2).
@@ -40,18 +42,18 @@ export function AgentsScreen({ store }: { store: AgentListStore }) {
 
         {status === "error" && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-sm leading-5">
-            <p role="alert">Не удалось загрузить агентов</p>
+            <p role="alert">{t("loadFailed")}</p>
             <Button variant="outline" size="sm" onClick={() => void store.load()} className="pointer-coarse:h-11">
               <RotateCwIcon aria-hidden />
-              Повторить
+              {t("retry")}
             </Button>
           </div>
         )}
 
         {status === "ready" && agents.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-sm leading-5">
-            <p className="text-foreground font-medium">Агентов пока нет</p>
-            <p className="text-muted-foreground">Попросите в беседе сделать задачу в фоне — агент появится здесь.</p>
+            <p className="text-foreground font-medium">{t("empty")}</p>
+            <p className="text-muted-foreground">{t("emptyHint")}</p>
           </div>
         )}
 

@@ -25,7 +25,7 @@ function keyOf(activityAt: Date, now: Date): DateGroupKey | undefined {
 }
 
 function shape(entries: readonly ThreadListEntry[], now: Date): Array<[string, string[]]> {
-  return groupThreadsByDate(entries, now).map((group) => [group.label, group.entries.map((e) => e.id)]);
+  return groupThreadsByDate(entries, now).map((group) => [group.key, group.entries.map((e) => e.id)]);
 }
 
 describe('groupThreadsByDate', () => {
@@ -33,7 +33,7 @@ describe('groupThreadsByDate', () => {
     expect(new Date(2026, 2, 28).getTimezoneOffset()).not.toBe(new Date(2026, 2, 30).getTimezoneOffset());
   });
 
-  it('AC-01.1: today, yesterday, 5 and 40 days ago form exactly four labelled groups in order, no empty ones', () => {
+  it('AC-01.1: today, yesterday, 5 and 40 days ago form exactly four groups in order, no empty ones', () => {
     const now = local(2026, 10, 30, 15);
     const entries = [
       entry('d40', local(2026, 9, 20, 9)),
@@ -43,10 +43,10 @@ describe('groupThreadsByDate', () => {
     ];
 
     expect(shape(entries, now)).toEqual([
-      ['Сегодня', ['d0']],
-      ['Вчера', ['d1']],
-      ['Предыдущие 7 дней', ['d5']],
-      ['Старше', ['d40']],
+      ['today', ['d0']],
+      ['yesterday', ['d1']],
+      ['previous7', ['d5']],
+      ['older', ['d40']],
     ]);
   });
 
@@ -81,18 +81,18 @@ describe('groupThreadsByDate', () => {
     const same = local(2026, 10, 30, 10);
     const entries = [entry('first', same), entry('second', same), entry('third', same), entry('newer', local(2026, 10, 30, 11))];
 
-    expect(shape(entries, now)).toEqual([['Сегодня', ['newer', 'first', 'second', 'third']]]);
+    expect(shape(entries, now)).toEqual([['today', ['newer', 'first', 'second', 'third']]]);
   });
 
-  it('AC-19.1: concatenating a second page keeps group order monotonic — no "Сегодня" after "Вчера"', () => {
+  it('AC-19.1: concatenating a second page keeps group order monotonic — no today after yesterday', () => {
     const now = local(2026, 10, 30, 15);
     const pageOne = [entry('p1-today', local(2026, 10, 30, 9)), entry('p1-yesterday', local(2026, 10, 29, 9))];
     const pageTwo = [entry('p2-today', local(2026, 10, 30, 8)), entry('p2-old', local(2026, 8, 1, 9))];
 
     expect(shape([...pageOne, ...pageTwo], now)).toEqual([
-      ['Сегодня', ['p1-today', 'p2-today']],
-      ['Вчера', ['p1-yesterday']],
-      ['Старше', ['p2-old']],
+      ['today', ['p1-today', 'p2-today']],
+      ['yesterday', ['p1-yesterday']],
+      ['older', ['p2-old']],
     ]);
   });
 
@@ -112,15 +112,15 @@ describe('groupThreadsByDate', () => {
         entries: (['a', 'b', 'c'] as const).map((id) =>
           entry(id, entryActivityAt({ lastMessageAt: lastMessageAt[id], activityAt: lifted[id] }, now)),
         ),
-        expected: [['Сегодня', ['c', 'b', 'a']]],
+        expected: [['today', ['c', 'b', 'a']]],
       },
       {
-        name: 'a thread without sort keys lands at the top of "Сегодня" instead of disappearing',
+        name: 'a thread without sort keys lands at the top of today instead of disappearing',
         entries: [
           entry('known', local(2026, 10, 30, 9)),
           entry('fresh', entryActivityAt({ lastMessageAt: undefined, activityAt: undefined }, now)),
         ],
-        expected: [['Сегодня', ['fresh', 'known']]],
+        expected: [['today', ['fresh', 'known']]],
       },
     ])('$name', ({ entries, expected }) => {
       expect(shape(entries, now)).toEqual(expected);

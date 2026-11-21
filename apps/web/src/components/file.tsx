@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { FileMessagePartComponent } from "@assistant-ui/react";
 import type { FormatsTranslator } from "@/lib/i18n/formats";
+import type { ChatTranslator } from "@/lib/i18n/messages";
 import { cn } from "@/lib/utils";
 import { AudioPlayer, VideoPlayer } from "./media-player";
 
@@ -139,13 +140,13 @@ function getDataUrlSize(data: string): number {
     .byteLength;
 }
 
-function getFileLabel(mimeType: string): string {
+function getFileLabel(t: ChatTranslator, mimeType: string): string {
   const subtype = /^[^/;]+\/(?:x-)?(?:[^;+]*\.)?([^;+.\s]+)/.exec(
     mimeType.toLowerCase(),
   )?.[1];
-  if (!subtype || subtype === "octet-stream") return "Файл";
-  if (subtype === "plain") return "Текстовый файл";
-  return `Файл ${subtype.toUpperCase()}`;
+  if (!subtype || subtype === "octet-stream") return t("file.generic");
+  if (subtype === "plain") return t("file.text");
+  return t("file.typed", { type: subtype.toUpperCase() });
 }
 
 function formatFileSize(t: FormatsTranslator, bytes: number): string {
@@ -206,13 +207,14 @@ function FileName({
   children,
   ...props
 }: React.ComponentProps<"span">) {
+  const t = useTranslations("chat");
   return (
     <span
       data-slot="file-name"
       className={cn("min-w-0 flex-1 truncate font-medium", className)}
       {...props}
     >
-      {children || "Файл без названия"}
+      {children || t("file.untitled")}
     </span>
   );
 }
@@ -250,6 +252,7 @@ function FileDownload({
   children,
   ...props
 }: FileDownloadProps) {
+  const t = useTranslations("chat");
   if (typeof data !== "string") return null;
   const kind = getFileDataKind(data, sourceType);
   const href = getFileHref(data, mimeType, sourceType);
@@ -265,7 +268,9 @@ function FileDownload({
         "text-muted-foreground hover:bg-accent hover:text-accent-foreground shrink-0 rounded-md p-1 transition-colors motion-reduce:transition-none",
         className,
       )}
-      aria-label={!children ? `Скачать ${filename || "файл"}` : undefined}
+      aria-label={
+        children ? undefined : filename ? t("file.download", { name: filename }) : t("file.downloadUnnamed")
+      }
       {...props}
     >
       {children || <DownloadIcon className="size-4" />}
@@ -319,6 +324,7 @@ const FileImpl: FileMessagePartComponent = ({
   mimeType,
   sourceType,
 }) => {
+  const t = useTranslations("chat");
   const kind = getFileDataKind(data, sourceType);
   const showSize =
     typeof data === "string" && (kind === "base64" || kind === "data-uri");
@@ -360,7 +366,7 @@ const FileImpl: FileMessagePartComponent = ({
     <FileRoot>
       <FileIconDisplay mimeType={mimeType} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <FileName>{filename || getFileLabel(mimeType)}</FileName>
+        <FileName>{filename || getFileLabel(t, mimeType)}</FileName>
         {showSize && (
           <FileSize
             bytes={

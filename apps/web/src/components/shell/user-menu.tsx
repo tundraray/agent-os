@@ -33,19 +33,19 @@ import { displayName, initialsOf } from '@/lib/auth/current-user';
 import { logger } from '@/lib/logger';
 import { mcpApi } from '@/lib/mcp/mcp-api';
 import { ACCOUNT_PATH, adminPath } from '@/lib/shell-route';
-import { formatMonth, type Formatter, type FormatsTranslator } from '@/lib/i18n/formats';
+import { formatMonth, type Formatter } from '@/lib/i18n/formats';
 import { useSpend, type SpendState } from '@/lib/spend';
 import { cn } from '@/lib/utils';
 import { useShellServices } from './shell-actions';
 import { ShellLink } from './shell-link';
 
-const SIGN_OUT_FAILED_TEXT = 'Не удалось выйти. Попробуйте ещё раз.';
+type ShellTranslator = ReturnType<typeof useTranslations<'shell'>>;
 
 const THEMES = [
-  { value: 'light', label: 'Светлая', icon: SunIcon },
-  { value: 'dark', label: 'Тёмная', icon: MoonIcon },
-  { value: 'system', label: 'Системная', icon: MonitorIcon },
-] as const satisfies ReadonlyArray<{ value: string; label: string; icon: LucideIcon }>;
+  { value: 'light', label: 'userMenu.themeLight', icon: SunIcon },
+  { value: 'dark', label: 'userMenu.themeDark', icon: MoonIcon },
+  { value: 'system', label: 'userMenu.themeSystem', icon: MonitorIcon },
+] as const satisfies ReadonlyArray<{ value: string; label: Parameters<ShellTranslator>[0]; icon: LucideIcon }>;
 
 type ThemeValue = (typeof THEMES)[number]['value'];
 
@@ -55,7 +55,7 @@ const isThemeValue = (value: unknown): value is ThemeValue => THEMES.some((theme
  * MC-2 text of SP-01 for the visible line once read, and for the strip's avatar tooltip in every state:
  * «Расход за {месяц}: {сумма}» — «Расход за ноябрь: 3,42 $».
  */
-function spendText(spend: SpendState, t: FormatsTranslator, format: Formatter): string {
+function spendText(spend: SpendState, t: ShellTranslator, format: Formatter): string {
   if (spend.kind === 'ready') {
     const { month, costUsd } = spend.spend;
     return t('spend.ready', { month: formatMonth(format, month), amount: format.number(costUsd, 'usd') });
@@ -90,9 +90,8 @@ function useNeedsAuthCount(): number {
 }
 
 /** MC-6: the trigger's name for a screen reader. */
-function menuLabel(name: string | null, needsAuth: number): string {
-  const base = name === null ? 'Меню пользователя' : `Меню пользователя ${name}`;
-  return needsAuth > 0 ? `${base}, нужна аутентификация: ${needsAuth}` : base;
+function menuLabel(t: ShellTranslator, name: string | null, needsAuth: number): string {
+  return t('userMenu.label', { named: name === null ? 'no' : 'yes', name: name ?? '', needsAuth });
 }
 
 /**
@@ -107,7 +106,7 @@ export function UserMenu() {
   const { isMobile, state } = useSidebar();
   const isStrip = !isMobile && state === 'collapsed';
   const spend = useSpend();
-  const t = useTranslations('formats');
+  const t = useTranslations('shell');
   const format = useFormatter();
   const spendLine = spendText(spend, t, format);
   const spendId = useId();
@@ -130,7 +129,7 @@ export function UserMenu() {
       await currentUser.signOut();
     } catch (error) {
       logger.error('sign-out failed', describeApiError(error));
-      toast.error(SIGN_OUT_FAILED_TEXT);
+      toast.error(t('userMenu.signOutFailed'));
       if (held !== null) leaveGuard.hold(held);
     }
   };
@@ -156,7 +155,7 @@ export function UserMenu() {
                         ),
                       }
                 }
-                aria-label={menuLabel(name, needsAuth)}
+                aria-label={menuLabel(t, name, needsAuth)}
                 aria-describedby={spendId}
                 className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
               />
@@ -211,7 +210,7 @@ export function UserMenu() {
             <DropdownMenuSeparator />
             <DropdownMenuItem render={<ShellLink href={ACCOUNT_PATH} />}>
               <KeyRoundIcon aria-hidden />
-              Мой доступ
+              {t('userMenu.myAccess')}
               {/* The trigger's name already tells a screen reader the count. */}
               {needsAuth > 0 && (
                 <span aria-hidden className="ml-auto flex items-center gap-1.5 text-warning tabular-nums">
@@ -223,7 +222,7 @@ export function UserMenu() {
             {user?.isAdmin === true && (
               <DropdownMenuItem render={<ShellLink href={adminPath('users')} />}>
                 <ShieldCheckIcon aria-hidden />
-                Панель администратора
+                {t('userMenu.adminPanel')}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -233,18 +232,18 @@ export function UserMenu() {
                 if (isThemeValue(value)) setTheme(value);
               }}
             >
-              <DropdownMenuLabel>Тема</DropdownMenuLabel>
+              <DropdownMenuLabel>{t('userMenu.theme')}</DropdownMenuLabel>
               {THEMES.map(({ value, label, icon: Icon }) => (
                 <DropdownMenuRadioItem key={value} value={value} closeOnClick>
                   <Icon aria-hidden />
-                  {label}
+                  {t(label)}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => void signOut()}>
               <LogOutIcon aria-hidden />
-              Выйти
+              {t('userMenu.signOut')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

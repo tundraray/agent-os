@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import type { AgentStatus as AgentStatusValue } from "@agent-os/contracts";
-import { useFormatter } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -14,7 +14,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
 import { formatListTime } from "@/lib/i18n/formats";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +24,7 @@ const ICON_HINT_DELAY_MS = 500;
 
 type StatusLook = { Icon: LucideIcon; tone: string };
 
-/** Icons and colour roles (agent-status.md, States); the MC-3 labels are `AGENT_STATUS_LABEL`. */
+/** Icons and colour roles (agent-status.md, States); the MC-3 labels are `agents.status.{status}`. */
 const STATUS_LOOK: Record<AgentStatusValue, StatusLook> = {
   working: { Icon: LoaderCircleIcon, tone: "text-info" },
   awaiting_confirmation: { Icon: HandIcon, tone: "text-approval" },
@@ -105,14 +104,15 @@ export type AgentStatusProps =
 
 /**
  * The agent status of agent-status.md: «Метка» (icon and label), «Иконка» (icon only, label as the
- * accessible name and a delayed hint) and «Строка события» (icon, event text and time). Every variant has
- * a fixed height, so a status change never moves its neighbours.
+ * accessible name and a delayed hint) and «Строка события» (icon, event text and time). A status change
+ * never changes a variant's height, so it never moves its neighbours; only a long event text wraps.
  */
 export function AgentStatus(props: AgentStatusProps) {
   const { status, className } = props;
   const format = useFormatter();
+  const t = useTranslations("agents");
   const { Icon, tone } = STATUS_LOOK[status];
-  const label = AGENT_STATUS_LABEL[status];
+  const label = t(`status.${status}`);
   const glyph = (
     <FadeSlot swapKey={status} className={cn(tone, "transition-colors duration-(--duration-fast) motion-reduce:transition-none")}>
       <StatusGlyph Icon={Icon} spinning={status === "working"} />
@@ -161,10 +161,11 @@ export function AgentStatus(props: AgentStatusProps) {
       data-slot="agent-status-event"
       data-status={status}
       title={props.hint ?? undefined}
-      className={cn("text-muted-foreground flex h-5 min-w-0 items-center gap-1 text-xs leading-4", className)}
+      className={cn("text-muted-foreground flex min-h-5 min-w-0 items-start gap-1 py-0.5 text-xs leading-4", className)}
     >
       {glyph}
-      <span className="min-w-0 truncate">{props.text}</span>
+      {/* The status text is never truncated: a long source wraps to a second line (foundations, «Длина текста»). */}
+      <span className="min-w-0 wrap-break-word">{props.text}</span>
       <span aria-hidden className="shrink-0">
         ·
       </span>

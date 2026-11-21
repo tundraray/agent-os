@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuiState } from '@assistant-ui/react';
 import { MenuIcon, PanelLeftIcon, PanelLeftOpenIcon, PanelRightIcon, SquarePenIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { AgentHeader } from '@/components/agents/agent-header';
 import { pressable, ShimmerLabel } from '@/components/surfaces';
 import { Button } from '@/components/ui/button';
@@ -18,7 +19,6 @@ import { MENU_BUTTON_ATTRIBUTE, SIDEBAR_ID } from './app-sidebar';
 import { useMainViewState } from './main-view';
 import { PageHeaderSlot } from './page-header';
 import { useShellActions, useShellStatus } from './shell-actions';
-import { UNTITLED_THREAD_TITLE } from './thread-history-item';
 import { WORKSPACE_ID } from './workspace-panel';
 
 /**
@@ -58,6 +58,8 @@ export function ChatHeaderView({
   heading,
   showWorkspaceToggle = true,
 }: ChatHeaderViewProps) {
+  const t = useTranslations('shell');
+  const tCommon = useTranslations('common');
   const { open, toggleSidebar } = useSidebar();
   const menuButtonProps = { [MENU_BUTTON_ATTRIBUTE]: '' };
   const sidebarShortcut = useShortcutLabel('toggle-sidebar');
@@ -69,25 +71,25 @@ export function ChatHeaderView({
       // A panel screen's actions take a second line below 768 px; every other heading fills one line.
       className="bg-background flex min-h-(--header-height) shrink-0 flex-wrap items-center gap-x-1 border-b border-transparent px-2 md:flex-nowrap md:px-3 data-scrolled:border-border"
     >
-      <WithTooltip label={`Меню · ${sidebarShortcut}`}>
+      <WithTooltip label={t('header.menuTooltip', { shortcut: sidebarShortcut })}>
         <Button
           {...menuButtonProps}
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'size-11 md:hidden')}
-          aria-label="Меню"
+          aria-label={t('header.menu')}
           aria-haspopup="dialog"
           onClick={toggleSidebar}
         >
           <MenuIcon aria-hidden />
         </Button>
       </WithTooltip>
-      <WithTooltip label={`Боковая панель · ${sidebarShortcut}`}>
+      <WithTooltip label={t('header.sidebarTooltip', { shortcut: sidebarShortcut })}>
         <Button
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'hidden size-8 md:inline-flex')}
-          aria-label="Боковая панель"
+          aria-label={tCommon('sidebar')}
           aria-expanded={open}
           aria-controls={SIDEBAR_ID}
           aria-keyshortcuts="Control+B Meta+B"
@@ -102,7 +104,7 @@ export function ChatHeaderView({
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'aria-expanded:bg-accent hidden size-8 lg:inline-flex')}
-          aria-label="Рабочая область"
+          aria-label={t('workspace.title')}
           aria-expanded={workspaceOpen}
           aria-controls={workspaceOpen ? WORKSPACE_ID : undefined}
           data-shell-focus="workspace-toggle"
@@ -111,12 +113,12 @@ export function ChatHeaderView({
           <PanelRightIcon aria-hidden />
         </Button>
       )}
-      <WithTooltip label={`Новый чат · ${newChatShortcut}`}>
+      <WithTooltip label={t('sidebar.newChatTooltip', { shortcut: newChatShortcut })}>
         <Button
           variant="ghost"
           size="icon"
           className={cn(iconButton, 'size-11 md:hidden')}
-          aria-label="Новый чат"
+          aria-label={t('sidebar.newChat')}
           aria-keyshortcuts="Control+Shift+O Meta+Shift+O"
           onClick={onNewChat}
         >
@@ -139,6 +141,7 @@ function WithTooltip({ label, children }: { label: string; children: ReactElemen
 
 /** HD-03: the page's level-one heading; focused programmatically after navigation with a coarse pointer. */
 function PageTitle({ title }: { title: HeaderTitle }) {
+  const t = useTranslations('shell.sidebar');
   return (
     <h1
       tabIndex={-1}
@@ -146,7 +149,7 @@ function PageTitle({ title }: { title: HeaderTitle }) {
       aria-busy={title.kind === 'loading' ? true : undefined}
       className="min-w-0 flex-1 truncate px-1 text-sm font-medium outline-none"
     >
-      {title.kind === 'hidden' && <span className="sr-only">Новый чат</span>}
+      {title.kind === 'hidden' && <span className="sr-only">{t('newChat')}</span>}
       {title.kind === 'loading' && <Skeleton aria-hidden className="h-4 w-40" />}
       {title.kind === 'text' && (
         <ShimmerLabel active={title.pending} title={title.text}>
@@ -170,13 +173,15 @@ type ChatHeaderProps = {
  */
 export function ChatHeader({ workspaceOpen, onToggleWorkspace }: ChatHeaderProps) {
   const { newChat } = useShellActions();
+  const t = useTranslations('shell.page');
   const route = parseShellRoute(usePathname());
   const title = useHeaderTitle();
   const scrolled = useThreadScrolled();
+  const routeTitle = ROUTE_TITLES[route.kind];
 
   return (
     <ChatHeaderView
-      title={ROUTE_TITLES[route.kind] ?? title}
+      title={routeTitle === undefined ? title : { kind: 'text', text: t(routeTitle), pending: false }}
       heading={routeHeading(route)}
       showWorkspaceToggle={route.kind === 'chat'}
       workspaceOpen={workspaceOpen}
@@ -194,9 +199,9 @@ function routeHeading(route: ShellRoute): ReactNode {
 }
 
 /** Fixed page headings: «Агенты» (agent-platform MC-4), «Мой доступ» (enterprise-access MC-7). */
-const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
-  agents: { kind: 'text', text: 'Агенты', pending: false },
-  account: { kind: 'text', text: 'Мой доступ', pending: false },
+const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], 'agents' | 'account'>> = {
+  agents: 'agents',
+  account: 'account',
 };
 
 /**
@@ -205,6 +210,7 @@ const ROUTE_TITLES: Partial<Record<ShellRoute['kind'], HeaderTitle>> = {
  * or the pending placeholder.
  */
 function useHeaderTitle(): HeaderTitle {
+  const t = useTranslations('shell.thread');
   const { view, routeThreadId } = useMainViewState();
   const mainItem = useAuiState(selectMainItem);
   const remoteId = mainItem?.remoteId;
@@ -215,7 +221,7 @@ function useHeaderTitle(): HeaderTitle {
   if (view.kind === 'switching' || mainItem === undefined || remoteId !== routeThreadId) return { kind: 'loading' };
   const text = mainItem.title?.trim() ?? '';
   if (text !== '') return { kind: 'text', text, pending: false };
-  return { kind: 'text', text: UNTITLED_THREAD_TITLE, pending: titleWaiting };
+  return { kind: 'text', text: t('untitled'), pending: titleWaiting };
 }
 
 /** Whether the thread feed is scrolled away from its top; the viewport is owned by `Thread`. */

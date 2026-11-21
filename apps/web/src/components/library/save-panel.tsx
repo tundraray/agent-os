@@ -2,24 +2,11 @@
 
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { CAPTION, FORM_TEXT } from "@/components/admin/admin-form";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
 import type { RecordFormStatus } from "./use-record-form";
-
-/** UXRD MC-7 (panel) and MC-10 (conflict). */
-const TEXT = {
-  region: "Сохранение",
-  changed: "Есть несохранённые изменения",
-  create: "Создать",
-  save: "Сохранить",
-  discard: "Отменить изменения",
-  discardShort: "Отменить правки",
-  useInChat: "Использовать в чате",
-  backToChat: "Вернуться в беседу",
-  saveMine: "Сохранить мои правки",
-  takeSaved: "Взять сохранённое",
-} as const;
 
 /** «Сохранено» stays this long, then the state line is empty (record-editor.md, States). */
 const SAVED_SHOWN_MS = 4000;
@@ -49,19 +36,20 @@ export type SavePanelProps = {
  * «Использовать в чате» (or «Вернуться в беседу») takes their place. The panel keeps its height when its state changes.
  */
 export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard, useInChatRef }: SavePanelProps) {
+  const t = useTranslations("library");
   const savedShown = useSavedShown(status);
   const saving = status === "saving";
   const changed = status === "changed" || status === "conflict";
   const next =
     onBackToChat !== null
-      ? { label: TEXT.backToChat, onClick: onBackToChat }
+      ? { label: t("editor.panel.backToChat"), onClick: onBackToChat }
       : onUseInChat !== null
-        ? { label: TEXT.useInChat, onClick: onUseInChat }
+        ? { label: t("row.useInChat"), onClick: onUseInChat }
         : null;
   const showNext = status === "saved" && next !== null;
 
   return (
-    <div role="region" aria-label={TEXT.region} className="shrink-0 border-t border-border bg-background">
+    <div role="region" aria-label={t("editor.panel.region")}className="shrink-0 border-t border-border bg-background">
       <div className="mx-auto flex min-h-12 w-full max-w-180 items-center justify-between gap-2 px-4 py-2">
         <p
           key={`${status}-${savedShown}`}
@@ -70,7 +58,7 @@ export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard,
           {changed && (
             <>
               <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
-              <span className="max-md:sr-only">{TEXT.changed}</span>
+              <span className="max-md:sr-only">{t("editor.panel.changed")}</span>
             </>
           )}
           {saving && (
@@ -99,8 +87,8 @@ export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard,
                     if (!unavailable(event, saving)) onDiscard();
                   }}
                 >
-                  <span className="max-md:hidden">{TEXT.discard}</span>
-                  <span className="md:hidden">{TEXT.discardShort}</span>
+                  <span className="max-md:hidden">{t("editor.panel.discard")}</span>
+                  <span className="md:hidden">{t("editor.panel.discardShort")}</span>
                 </Button>
               )}
               <Button
@@ -110,7 +98,7 @@ export function SavePanel({ status, isNew, onUseInChat, onBackToChat, onDiscard,
                 aria-disabled={saving || !changed}
                 onClick={(event) => unavailable(event, saving || !changed)}
               >
-                {isNew ? TEXT.create : TEXT.save}
+                {t(isNew ? "editor.panel.create" : "editor.panel.save")}
               </Button>
             </>
           )}
@@ -145,6 +133,7 @@ export type ConflictBlockProps = {
 
 /** Part 9 of record-editor.md: above the panel; takes the focus when it appears; the typed values stay. */
 export function ConflictBlock({ text, canTakeSaved, onSaveMine, onTakeSaved }: ConflictBlockProps) {
+  const t = useTranslations("library.editor.panel");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.focus();
@@ -161,11 +150,11 @@ export function ConflictBlock({ text, canTakeSaved, onSaveMine, onTakeSaved }: C
         <p>{text}</p>
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" className="pointer-coarse:h-11" onClick={onSaveMine}>
-            {TEXT.saveMine}
+            {t("saveMine")}
           </Button>
           {canTakeSaved && (
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onTakeSaved}>
-              {TEXT.takeSaved}
+              {t("takeSaved")}
             </Button>
           )}
         </div>

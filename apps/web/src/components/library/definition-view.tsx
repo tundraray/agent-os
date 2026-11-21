@@ -19,7 +19,7 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { RecordLabel } from "@/components/library/record-label";
 import { formatRecordModel, type ModelNames } from "@/lib/agents/format";
 import { kindWord } from "@/lib/library/library-errors";
-import { RECORD_FIELD_LABELS, type ChangedField, type RecordField } from "@/lib/library/record-rules";
+import type { ChangedField, RecordField } from "@/lib/library/record-rules";
 import { cn } from "cn";
 
 /** «В карточке» — a draft card in the conversation; «На странице» — a colleague's, company's or panel record. */
@@ -122,8 +122,9 @@ function Row({ label, changed = false, children }: RowProps) {
 }
 
 function DescriptionRow({ description, changed }: { description: string; changed: boolean }) {
+  const tLibrary = useTranslations("library");
   return (
-    <Row label={RECORD_FIELD_LABELS.description} changed={changed}>
+    <Row label={tLibrary("fields.description")} changed={changed}>
       <span className="break-words whitespace-pre-wrap">{description === "" ? "—" : description}</span>
     </Row>
   );
@@ -140,22 +141,23 @@ type AgentRowsProps = {
 
 function AgentRows({ content, missing, variant, isChanged, recordHref, modelNames }: AgentRowsProps) {
   const t = useTranslations("formats");
+  const tLibrary = useTranslations("library");
   return (
     <>
-      <Row label={RECORD_FIELD_LABELS.prompt} changed={isChanged("prompt")}>
+      <Row label={tLibrary("fields.prompt")} changed={isChanged("prompt")}>
         <LongText text={content.prompt} collapsible={variant === "card"} />
       </Row>
-      <Row label={RECORD_FIELD_LABELS.model} changed={isChanged("model")}>
+      <Row label={tLibrary("fields.model")} changed={isChanged("model")}>
         {formatRecordModel(t, content.model, modelNames)}
       </Row>
-      <Row label={RECORD_FIELD_LABELS.maxTurns} changed={isChanged("maxTurns")}>
+      <Row label={tLibrary("fields.maxTurns")} changed={isChanged("maxTurns")}>
         <span className="tabular-nums">{content.maxTurns}</span>
       </Row>
-      <Row label={RECORD_FIELD_LABELS.servers} changed={isChanged("servers")}>
+      <Row label={tLibrary("fields.servers")} changed={isChanged("servers")}>
         <Servers servers={content.servers} missing={missing} />
       </Row>
       {content.agents.length > 0 && (
-        <Row label={RECORD_FIELD_LABELS.agents} changed={isChanged("agents")}>
+        <Row label={tLibrary("fields.agents")} changed={isChanged("agents")}>
           <StartableAgents ids={content.agents} recordHref={recordHref} />
         </Row>
       )}
@@ -217,6 +219,7 @@ type WorkflowRowsProps = {
 function WorkflowRows({ description, content, missingRights, variant, changed, isChanged, modelNames }: WorkflowRowsProps) {
   const { coordinator, finalExecutor } = content;
   const t = useTranslations("formats");
+  const tLibrary = useTranslations("library");
   return (
     <>
       <dl className="flex flex-col gap-2">
@@ -228,14 +231,14 @@ function WorkflowRows({ description, content, missingRights, variant, changed, i
           <Team content={content} missingRights={missingRights} variant={variant} changed={changed} modelNames={modelNames} />
         </Row>
         {coordinator.rules !== "" && (
-          <Row label={RECORD_FIELD_LABELS.rules} changed={isChanged("rules")}>
+          <Row label={tLibrary("fields.rules")} changed={isChanged("rules")}>
             <LongText text={coordinator.rules} collapsible={variant === "card"} />
           </Row>
         )}
-        <Row label={RECORD_FIELD_LABELS.finalExecutor} changed={isChanged("finalExecutor")}>
+        <Row label={tLibrary("fields.finalExecutor")} changed={isChanged("finalExecutor")}>
           {finalExecutor ?? "Координатор сам"}
         </Row>
-        <Row label={RECORD_FIELD_LABELS.selfLearning}>{content.selfLearning ? "включено" : "выключено"}</Row>
+        <Row label={tLibrary("fields.selfLearning")}>{content.selfLearning ? "включено" : "выключено"}</Row>
         <Row label="Координатор" changed={isChanged("coordinatorModel") || isChanged("coordinatorMaxTurns")}>
           <span className="tabular-nums">{`${formatRecordModel(t, coordinator.model, modelNames)} · до ${coordinator.maxTurns} шагов`}</span>
         </Row>
@@ -295,6 +298,7 @@ type ExecutorItemProps = {
 
 function ExecutorItem({ executor, final, changed, missing, details, modelNames }: ExecutorItemProps) {
   const t = useTranslations("formats");
+  const tLibrary = useTranslations("library");
   return (
     <li className="flex flex-col gap-1">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -307,14 +311,14 @@ function ExecutorItem({ executor, final, changed, missing, details, modelNames }
       </span>
       {details && (
         <dl className="border-border ml-1 flex flex-col gap-2 border-l pl-3">
-          <Row label={RECORD_FIELD_LABELS.model}>{formatRecordModel(t, executor.model, modelNames)}</Row>
-          <Row label={RECORD_FIELD_LABELS.servers}>
+          <Row label={tLibrary("fields.model")}>{formatRecordModel(t, executor.model, modelNames)}</Row>
+          <Row label={tLibrary("fields.servers")}>
             <Servers servers={executor.servers} missing={missing} />
           </Row>
           <Row label="Сколько раз можно звать">
             <span className="tabular-nums">{`до ${executor.maxRuns} раз`}</span>
           </Row>
-          <Row label={RECORD_FIELD_LABELS.prompt}>
+          <Row label={tLibrary("fields.prompt")}>
             <LongText text={executor.prompt} collapsible />
           </Row>
         </dl>

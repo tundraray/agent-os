@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { ShimmerLabel } from '@/components/surfaces';
 import {
   DropdownMenu,
@@ -27,9 +28,6 @@ export const THREAD_ROW_ATTRIBUTE = 'data-thread-row';
 /** Marks the SB-07 «⋯» button of a row. */
 export const THREAD_ACTIONS_ATTRIBUTE = 'data-thread-actions';
 
-/** Placeholder for a thread without a title (D-06). */
-export const UNTITLED_THREAD_TITLE = 'Новая беседа';
-
 /** Hover time before the full-title tooltip opens (UXRD 6.5 Truncated). */
 const TOOLTIP_DELAY_MS = 500;
 
@@ -52,13 +50,14 @@ export type ThreadHistoryItemProps = {
  * «Удалить» asks the list for DLG-01.
  */
 export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onRequestDelete }: ThreadHistoryItemProps) {
+  const t = useTranslations('shell.thread');
   const { isMobile, setOpenMobile } = useSidebar();
   const rowRef = useRef<HTMLLIElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const focusLinkAfterEdit = useRef(false);
-  const label = entry.title ?? UNTITLED_THREAD_TITLE;
+  const label = entry.title ?? t('untitled');
   const linkProps = { [THREAD_LINK_ATTRIBUTE]: '' };
   const rowProps = { [THREAD_ROW_ATTRIBUTE]: entry.id };
   const actionsProps = { [THREAD_ACTIONS_ATTRIBUTE]: '' };
@@ -146,7 +145,7 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
             <SidebarMenuAction
               {...actionsProps}
               showOnHover
-              aria-label={`Действия с беседой «${label}»`}
+              aria-label={t('actions', { title: label })}
               aria-haspopup="menu"
               className={cn(
                 'top-1/2 peer-data-[size=default]/menu-button:top-1/2 size-6 -translate-y-1/2 data-popup-open:bg-sidebar-accent data-popup-open:opacity-100',
@@ -163,7 +162,7 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
               animation delays the field's focus, and the menu has no focus to return to «⋯». */}
           <DropdownMenuItem onClick={() => setEditing(true)}>
             <PencilIcon aria-hidden />
-            Переименовать
+            {t('rename')}
           </DropdownMenuItem>
           {/* The dialog opens from the click, like the field above: no wait for the menu's exit animation. */}
           <DropdownMenuItem
@@ -172,7 +171,7 @@ export function ThreadHistoryItem({ entry, isActive, titlePending, onRename, onR
             className="data-highlighted:bg-destructive data-highlighted:text-destructive-foreground data-highlighted:*:[svg]:text-destructive-foreground"
           >
             <Trash2Icon aria-hidden />
-            Удалить
+            {t('delete')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

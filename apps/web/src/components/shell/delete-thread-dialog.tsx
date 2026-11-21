@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useTranslations } from 'next-intl';
 import { logger } from '@/lib/logger';
 import { threadsApiClient } from '@/lib/threads/threads-api-client';
 import { describeApiError } from '@/lib/api/api-request';
@@ -29,9 +30,6 @@ export type DeleteThreadDialogProps = {
   /** Element focused once the dialog closes; an empty ref leaves focus to the caller (e.g. the route change). */
   finalFocus: RefObject<HTMLElement | null>;
 };
-
-/** MC-26. */
-const AGENTS_PARAGRAPH = 'Агенты и запуски workflow этой беседы тоже будут удалены, работающие — остановлены.';
 
 /**
  * Whether the thread has agents, read each time the dialog opens. Until the answer arrives, and after a
@@ -71,6 +69,7 @@ export function DeleteThreadDialog({
   onOpenChange,
   finalFocus,
 }: DeleteThreadDialogProps) {
+  const t = useTranslations('shell.deleteDialog');
   const cancelRef = useRef<HTMLButtonElement>(null);
   const hasAgents = useThreadHasAgents(threadId, open);
   return (
@@ -81,14 +80,15 @@ export function DeleteThreadDialog({
         className="max-w-[calc(100%-2rem)] data-[size=default]:max-w-[calc(100%-2rem)] data-[size=default]:sm:max-w-100"
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Удалить беседу?</AlertDialogTitle>
+          <AlertDialogTitle>{t('title')}</AlertDialogTitle>
           <AlertDialogDescription render={<div />} className="flex flex-col gap-2 wrap-break-word">
-            <p>Беседа «{threadTitle}» и все её сообщения будут удалены. Это действие нельзя отменить.</p>
-            {hasAgents && <p>{AGENTS_PARAGRAPH}</p>}
+            <p>{t('description', { title: threadTitle })}</p>
+            {/* MC-26 */}
+            {hasAgents && <p>{t('agents')}</p>}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel ref={cancelRef}>Отмена</AlertDialogCancel>
+          <AlertDialogCancel ref={cancelRef}>{t('cancel')}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
             onClick={() => {
@@ -96,7 +96,7 @@ export function DeleteThreadDialog({
               onOpenChange(false);
             }}
           >
-            Удалить
+            {t('confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

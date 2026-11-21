@@ -12,31 +12,20 @@ import {
   type RecordDetail,
   type RecordSummary,
 } from "@agent-os/contracts";
-import { FORM_TEXT, FormError } from "@/components/admin/admin-form";
+import { FormError } from "@/components/admin/admin-form";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatModel } from "@/lib/agents/format";
 import { describeApiError } from "@/lib/api/api-request";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import type { LibraryTranslator } from "@/lib/i18n/messages";
 import { libraryApi } from "@/lib/library/library-api";
-import { copyFailed, DROPPED_SERVERS } from "@/lib/library/library-errors";
+import { copyFailed } from "@/lib/library/library-errors";
 import { recordAction } from "@/lib/library/record-action";
 import { logger } from "@/lib/logger";
 import { recordPath } from "@/lib/shell-route";
 import { useLeaveThenGo } from "./use-in-chat";
-
-/** UXRD MC-4 and MC-19; the dropped systems in the notice use the wording of MC-13. */
-const TEXT = {
-  title: (name: string) => `Скопировать «${name}» себе?`,
-  onlyYou: "Копию увидите только вы. Правки оригинала её не изменят.",
-  dropped: "Не войдут системы, к которым у вас нет доступа:",
-  allServers: "Копия получит системы, к которым у вас есть доступ:",
-  copy: "Скопировать",
-  saved: (name: string) => `Копия «${name}» сохранена`,
-  noModels: (name: string) => `Копия «${name}» сохранена, но не запустится: у вас нет доступных моделей`,
-  replaced: (from: string, to: string) => `Модель ${formatModel(from)} вам недоступна — стоит ${formatModel(to)}`,
-  open: "Открыть",
-} as const;
 
 /** What a copy reads of a record: a library row, or a record page with its content. */
 export type CopySource = RecordSummary | RecordDetail;
@@ -72,24 +61,29 @@ async function planCopy(record: CopySource): Promise<CopyPlan> {
   return { record, dropped, allServers: (await libraryApi.choices()).servers };
 }
 
-const partLine = ({ executor, servers }: PartServers): string =>
-  executor === null ? servers.join(", ") : `${executor}: ${servers.join(", ")}`;
+const partLine = (t: LibraryTranslator, { executor, servers }: PartServers): string =>
+  executor === null ? servers.join(", ") : t("executorLine", { executor, text: servers.join(", ") });
 
-/** The notice of MC-4: the copy's name, then the dropped systems and both models of every replacement. */
-function copiedNotice(result: CopyResult): { title: string; description: string | undefined } {
+/**
+ * The notice of MC-4 (and MC-19): the copy's name, then the dropped systems in the wording of MC-13 and both
+ * models of every replacement.
+ */
+function copiedNotice(t: LibraryTranslator, result: CopyResult): { title: string; description: string | undefined } {
   const { name } = result.record;
   const runsNowhere =
     result.replacedModels.length === 0 && result.record.missingRights.some((right) => right.model !== null);
+  const replaced = (from: string, to: string): string =>
+    t("copy.replaced", { from: formatModel(from), to: formatModel(to) });
   const details = [
     ...(result.removedServers.length === 0
       ? []
-      : [`${DROPPED_SERVERS} ${result.removedServers.map(partLine).join("; ")}`]),
+      : [t("droppedServers", { servers: result.removedServers.map((part) => partLine(t, part)).join("; ") })]),
     ...result.replacedModels.map(({ executor, from, to }) =>
-      executor === null ? TEXT.replaced(from, to) : `${executor}: ${TEXT.replaced(from, to)}`,
+      executor === null ? replaced(from, to) : t("executorLine", { executor, text: replaced(from, to) }),
     ),
   ];
   return {
-    title: runsNowhere ? TEXT.noModels(name) : TEXT.saved(name),
+    title: runsNowhere ? t("copy.noModels", { name }) : t("copy.saved", { name }),
     description: details.length === 0 ? undefined : `${details.join(". ")}.`,
   };
 }
@@ -115,6 +109,7 @@ export function useCopyRecord(): CopyRecord {
   const router = useRouter();
   const locale = useLocale();
   const t = useTranslations("errors");
+  const tLibrary = useTranslations("library");
   const leaveThenGo = useLeaveThenGo();
   const [plan, setPlan] = useState<CopyPlan | null>(null);
   const [pending, setPending] = useState(false);
@@ -126,10 +121,10 @@ export function useCopyRecord(): CopyRecord {
       () => libraryApi.copy(record.id, locale),
     );
     void libraryIndex.refresh();
-    const notice = copiedNotice(result);
+    const notice = copiedNotice(tLibrary, result);
     toast.success(notice.title, {
       description: notice.description,
-      action: { label: TEXT.open, onClick: () => leaveThenGo(() => router.push(recordPath(result.record.id))) },
+      action: { label: tLibrary("open"), onClick: () => leaveThenGo(() => router.push(recordPath(result.record.id))) },
     });
     announcer.getState().announce("announce.copySaved", { name: result.record.name });
   }
@@ -187,23 +182,23 @@ export function useCopyRecord(): CopyRecord {
       {plan !== null && (
         <DialogContent size="full-narrow">
           <DialogHeader>
-            <DialogTitle>{TEXT.title(plan.record.name)}</DialogTitle>
+            <DialogTitle>{tLibrary("copy.title", { name: builtinName(plan.record, locale) })}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-3 text-sm leading-5">
-            <p>{TEXT.onlyYou}</p>
-            <CopyLines heading={TEXT.dropped} parts={plan.dropped} />
+            <p>{tLibrary("copy.onlyYou")}</p>
+            <CopyLines heading={tLibrary("copy.dropped")} parts={plan.dropped} />
             {plan.allServers !== null && (
-              <CopyLines heading={TEXT.allServers} parts={[{ executor: null, servers: plan.allServers }]} />
+              <CopyLines heading={tLibrary("copy.allServers")} parts={[{ executor: null, servers: plan.allServers }]} />
             )}
             {error !== null && <FormError>{error}</FormError>}
           </div>
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" size="sm" />} disabled={pending}>
-              {FORM_TEXT.cancel}
+              {tLibrary("cancel")}
             </DialogClose>
             <Button type="button" size="sm" disabled={pending} onClick={() => void confirm()}>
               {pending && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-              {TEXT.copy}
+              {tLibrary("copy.confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -216,6 +211,7 @@ export function useCopyRecord(): CopyRecord {
 
 /** «{системы}» of the agent itself in one line; a workflow's executors one line each. */
 function CopyLines({ heading, parts }: { heading: string; parts: readonly PartServers[] }) {
+  const t = useTranslations("library");
   if (parts.length === 0) return null;
   const single = parts.length === 1 && parts[0]?.executor === null ? parts[0] : null;
   if (single !== null) return <p>{`${heading} ${single.servers.join(", ")}`}</p>;
@@ -225,7 +221,7 @@ function CopyLines({ heading, parts }: { heading: string; parts: readonly PartSe
       <ul className="flex flex-col gap-1 pl-4">
         {parts.map((part) => (
           <li key={part.executor ?? ""} className="list-disc">
-            {partLine(part)}
+            {partLine(t, part)}
           </li>
         ))}
       </ul>

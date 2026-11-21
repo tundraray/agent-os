@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useFormatter, useTranslations } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import type { DraftActionRequest, DraftView } from "@agent-os/contracts";
 import {
@@ -21,53 +21,36 @@ import { useInChat, useLeaveThenGo } from "@/components/library/use-in-chat";
 import { ShellLink } from "@/components/shell/shell-link";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
+import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime, type Formatter } from "@/lib/i18n/formats";
-import { describeDraftRefusal, describeLibraryError, kindWord } from "@/lib/library/library-errors";
+import { describeDraftRefusal, describeLibraryError } from "@/lib/library/library-errors";
 import { changedFields, definitionOf, freeName, isDraftStale } from "@/lib/library/record-rules";
 import { useLiveRecord } from "@/components/agents/run-card";
 import { newRecordPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
-/** custom-agents UXRD MC-15 (the card), MC-8 (save-as), MC-19 (announcement). */
-const TEXT = {
-  status: "Черновик",
-  newTitle: (draft: DraftView) => (draft.kind === "agent" ? "Новый агент" : "Новый workflow"),
-  editTitle: (name: string) => `Правка «${name}»`,
-  howToFix: "Чтобы поправить — напишите в чат, что изменить",
-  save: "Сохранить",
-  saveAs: (name: string) => `Сохранить как «${name}»`,
-  openInEditor: "Открыть в редакторе",
-  reject: "Отклонить",
-  saved: "Сохранено",
-  savedInEditor: "Сохранено в редакторе",
-  rejected: "Отклонено",
-  tryInChat: "Проверить в чате",
-  share: "Поделиться",
-  open: "Открыть",
-  superseded: (name: string) => `Черновик «${name}» заменён новым ниже`,
-  stale: (draft: DraftView) =>
-    `${kindWord(draft.kind, true)} изменился после черновика. Попросите чат подготовить правку заново или откройте редактор.`,
-} as const;
-
+/** custom-agents UXRD MC-15 (the card), MC-8 (save-as): the `agents.draft` messages. */
 const CAPTION = "text-muted-foreground text-xs leading-4 font-medium";
 
 type Pressed = "save" | "saveAs" | "reject";
 
+type DraftTranslator = ReturnType<typeof useTranslations<"agents.draft">>;
+
 type Outcome = { key: string; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a resolved draft; null while it waits. */
-function outcomeOf(draft: DraftView, format: Formatter): Outcome | null {
-  const at = formatListTime(format, draft.resolvedAt ?? draft.createdAt);
+function outcomeOf(t: DraftTranslator, draft: DraftView, format: Formatter): Outcome | null {
+  const time = formatListTime(format, draft.resolvedAt ?? draft.createdAt);
   switch (draft.state) {
     case "pending":
     case "superseded":
       return null;
     case "saved":
-      return { key: "saved", text: `${TEXT.saved} · ${at}`, Icon: CircleCheckIcon, tone: "text-success" };
+      return { key: "saved", text: t("saved", { time }), Icon: CircleCheckIcon, tone: "text-success" };
     case "saved_in_editor":
-      return { key: "saved", text: `${TEXT.savedInEditor} · ${at}`, Icon: CircleCheckIcon, tone: "text-success" };
+      return { key: "saved", text: t("savedInEditor", { time }), Icon: CircleCheckIcon, tone: "text-success" };
     case "rejected":
-      return { key: "rejected", text: `${TEXT.rejected} · ${at}`, Icon: CircleMinusIcon, tone: "text-muted-foreground" };
+      return { key: "rejected", text: t("rejected", { time }), Icon: CircleMinusIcon, tone: "text-muted-foreground" };
   }
 }
 
@@ -104,7 +87,9 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
 
   const format = useFormatter();
   const t = useTranslations("errors");
-  const outcome = outcomeOf(draft, format);
+  const tDraft = useTranslations("agents.draft");
+  const locale = useLocale();
+  const outcome = outcomeOf(tDraft, draft, format);
 
   // After an action taken here, focus moves to the card once its outcome shows (decision-card.md, Focus).
   useEffect(() => {
@@ -123,12 +108,12 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
         )}
       >
         <CircleMinusIcon aria-hidden className="size-3.5 shrink-0" />
-        <span className="min-w-0 break-words">{TEXT.superseded(draft.name)}</span>
+        <span className="min-w-0 break-words">{tDraft("superseded", { name: draft.name })}</span>
       </p>
     );
   }
 
-  const name = edited?.name ?? draft.name;
+  const name = edited == null ? draft.name : builtinName(edited, locale);
   const busy = pressed !== null;
 
   async function act(which: Pressed, action: DraftActionRequest): Promise<void> {
@@ -165,7 +150,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
       <div className="flex h-5 min-w-0 items-center justify-between gap-3">
         <p className={cn(CAPTION, "flex min-w-0 items-center gap-1")}>
           <PencilLineIcon aria-hidden className="size-3.5 shrink-0" />
-          {TEXT.status}
+          {tDraft("status")}
         </p>
         <time dateTime={draft.createdAt} className={cn(CAPTION, "shrink-0 tabular-nums")}>
           {formatListTime(format, draft.createdAt)}
@@ -210,7 +195,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
       <>
         <div className="flex min-w-0 flex-col gap-0.5">
           <h3 className="text-base leading-6 font-semibold break-words">
-            {draft.recordId === null ? TEXT.newTitle(draft) : TEXT.editTitle(name)}
+            {draft.recordId === null ? tDraft("newTitle", { kind: draft.kind }) : tDraft("editTitle", { name })}
           </h3>
           {nameLine}
         </div>
@@ -218,18 +203,18 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
         {stale && (
           <p className="text-foreground flex items-start gap-1.5 text-sm leading-5">
             <TriangleAlertIcon aria-hidden className="text-warning mt-0.5 size-4 shrink-0" />
-            {TEXT.stale(draft)}
+            {tDraft("stale", { kind: draft.kind })}
           </p>
         )}
         {!stale && refusalText !== null && <ErrorLine text={refusalText} />}
         {failure !== null && <ErrorLine text={failure} alert />}
-        <p className={CAPTION}>{TEXT.howToFix}</p>
+        <p className={CAPTION}>{tDraft("howToFix")}</p>
       </>
     );
     actions = (
       <>
         <DecisionButton
-          label={TEXT.save}
+          label={tDraft("save")}
           variant="default"
           pressed={pressed === "save"}
           busy={busy}
@@ -238,16 +223,16 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
         />
         {saveAsName !== null && !stale && (
           <DecisionButton
-            label={TEXT.saveAs(saveAsName)}
+            label={tDraft("saveAs", { name: saveAsName })}
             variant="outline"
             pressed={pressed === "saveAs"}
             busy={busy}
             onClick={() => void act("saveAs", { action: "save", name: saveAsName })}
           />
         )}
-        <DecisionButton label={TEXT.openInEditor} variant="outline" pressed={false} busy={busy} onClick={openInEditor} />
+        <DecisionButton label={tDraft("openInEditor")} variant="outline" pressed={false} busy={busy} onClick={openInEditor} />
         <DecisionButton
-          label={TEXT.reject}
+          label={tDraft("reject")}
           variant="ghost"
           pressed={pressed === "reject"}
           busy={busy}
@@ -276,18 +261,18 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
           className="pointer-coarse:h-11"
           onClick={() => inChat({ record: { id: recordId, kind: draft.kind, name: savedName } }, threadId)}
         >
-          {TEXT.tryInChat}
+          {tDraft("tryInChat")}
         </Button>
         {savedRecord != null && savedRecord.canShare && (
           <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-11" onClick={() => setSharing(true)}>
-            {TEXT.share}
+            {tDraft("share")}
           </Button>
         )}
         <ShellLink
           href={recordPath(recordId)}
           className="text-foreground focus-visible:ring-ring rounded-sm text-sm leading-5 font-medium underline-offset-2 outline-none hover:underline focus-visible:ring-2"
         >
-          {TEXT.open}
+          {tDraft("open")}
         </ShellLink>
       </>
     );
@@ -297,7 +282,7 @@ export function DraftCard({ draft, previous, threadId, onAction }: DraftCardProp
     <div
       ref={containerRef}
       role="group"
-      aria-label={`${TEXT.status}: ${draft.name}`}
+      aria-label={tDraft("label", { name: draft.name })}
       tabIndex={-1}
       data-slot="draft-card"
       data-draft-id={draft.draftId}

@@ -1,11 +1,9 @@
 "use client";
 
 import { useId, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-/** code-execution UXRD, MC-5. */
-const TEXT = { show: "Показать скрипт", hide: "Скрыть скрипт" } as const;
 
 /** Mono 13 / 20 up to 320 px in the tool-call block, Mono 14 / 22 whole in the decision card (tool-call.md). */
 const CODE = {
@@ -28,6 +26,7 @@ const LINE_TERMINATOR = /\r\n|[\n\r\u2028\u2029]/;
  * `dd` parts, so it stands in a `dl` right after the row's `dt`.
  */
 export function ScriptToggle({ script, density }: ScriptToggleProps) {
+  const t = useTranslations("agents");
   const [open, setOpen] = useState(false);
   const blockId = useId();
   const lines = script.split(LINE_TERMINATOR);
@@ -50,7 +49,7 @@ export function ScriptToggle({ script, density }: ScriptToggleProps) {
               open && "rotate-90",
             )}
           />
-          {open ? TEXT.hide : TEXT.show}
+          {t(open ? "runCode.hideScript" : "runCode.showScript")}
         </button>
       </dd>
       {open && (
@@ -58,7 +57,7 @@ export function ScriptToggle({ script, density }: ScriptToggleProps) {
           <div
             id={blockId}
             role="region"
-            aria-label="Скрипт"
+            aria-label={t("runCode.script")}
             // Only the bounded block scrolls, so only it is a focus stop for the arrow keys.
             tabIndex={density === "data" ? 0 : undefined}
             className={cn(

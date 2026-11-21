@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { useFormatter, useLocale, useMessages } from "next-intl";
+import { useFormatter, useLocale, useMessages, useTranslations } from "next-intl";
 import {
   RunCodeConfirmationContentSchema,
   WORKFLOWS_BRIEF_CONFIRMATION,
@@ -27,7 +27,7 @@ import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResource } from "@/hooks/use-resource";
-import { BRIEF_PARTS } from "@/lib/agents/format";
+import { BRIEF_PARTS, type AgentsTranslator } from "@/lib/agents/format";
 import { builtinName, builtinToolLabels } from "@/lib/i18n/builtin-name";
 import { formatListTime, type Formatter } from "@/lib/i18n/formats";
 import { isRunCode, runCodeView } from "@/lib/agents/run-code";
@@ -37,39 +37,6 @@ import { taskTitleName } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { agentPath, recordPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
-
-/**
- * agent-platform UXRD MC-19 (action) and MC-20 (brief); the brief's title and outcomes — custom-agents MC-21;
- * the self-learning line — self-learning MC-9.
- */
-const TEXT = {
-  byChat: "Чат хочет выполнить:",
-  args: "Аргументы",
-  approve: "Подтвердить",
-  reject: "Отклонить",
-  approved: "Подтверждено",
-  rejected: "Отклонено",
-  cancelled: "Не понадобилось: агент остановлен",
-  sendFailed: "Не удалось отправить решение. Попробуйте ещё раз.",
-  briefTitle: "Задание",
-  launch: "Запустить",
-  edit: "Исправить",
-  launchEdited: "Запустить с правками",
-  cancelEdit: "Отмена",
-  emptyQuestion: "Вопрос не может быть пустым",
-  briefApproved: "Задание подтверждено",
-  briefRejected: "Задание отклонено",
-  selfLearning: "Workflow учится: что найдёт этот запуск, он запомнит, и это получат запуски других сотрудников.",
-} as const;
-
-/** code-execution UXRD, MC-6–MC-9, verbatim. */
-const CAN_CALL_TEXT = {
-  title: "Может вызвать",
-  changes: "меняет",
-  reads: "читает",
-  note: "Составила платформа по тексту скрипта: других инструментов запуск не вызовет",
-  none: "Ни одного инструмента: запуск не обратится к внешним системам",
-} as const;
 
 type CanCall = RunCodeConfirmationContent["canCall"];
 
@@ -92,14 +59,15 @@ function canCallOf(confirmation: Confirmation): CanCall | null {
  * «— читает»; the mark is a word, weight only helps. The same in every state of the card (KD-7).
  */
 function CanCallList({ items }: { items: CanCall }) {
+  const t = useTranslations("agents.runCode.canCall");
   const titleId = useId();
   return (
     <div data-slot="can-call" className="flex flex-col gap-1">
       <p id={titleId} className="text-muted-foreground text-xs leading-4 font-medium">
-        {CAN_CALL_TEXT.title}
+        {t("title")}
       </p>
       {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm leading-5">{CAN_CALL_TEXT.none}</p>
+        <p className="text-muted-foreground text-sm leading-5">{t("none")}</p>
       ) : (
         <>
           <ul aria-labelledby={titleId} className="flex flex-col gap-0.5">
@@ -108,19 +76,19 @@ function CanCallList({ items }: { items: CanCall }) {
                 <span className="text-foreground font-mono text-[13px] leading-5 break-all">{name}</span>
                 {" — "}
                 <span className={changes ? "text-foreground font-medium" : "text-muted-foreground"}>
-                  {changes ? CAN_CALL_TEXT.changes : CAN_CALL_TEXT.reads}
+                  {t(changes ? "changes" : "reads")}
                 </span>
               </li>
             ))}
           </ul>
-          <p className="text-muted-foreground text-xs leading-4 font-medium">{CAN_CALL_TEXT.note}</p>
+          <p className="text-muted-foreground text-xs leading-4 font-medium">{t("note")}</p>
         </>
       )}
     </div>
   );
 }
 
-type BriefField = (typeof BRIEF_PARTS)[number]["key"];
+type BriefField = (typeof BRIEF_PARTS)[number];
 type BriefText = Record<BriefField, string>;
 
 /**
@@ -171,18 +139,18 @@ function briefOf(confirmation: Confirmation): Brief | null {
 type Outcome = { kind: "approved" | "rejected" | "cancelled"; text: string; Icon: LucideIcon; tone: string };
 
 /** The final line of a decided request (MC-19, MC-20); null while it is open. */
-function outcomeOf(confirmation: Confirmation, isBrief: boolean, format: Formatter): Outcome | null {
+function outcomeOf(t: AgentsTranslator, confirmation: Confirmation, isBrief: boolean, format: Formatter): Outcome | null {
   if (confirmation.status === "open") return null;
   if (confirmation.status === "cancelled") {
-    return { kind: "cancelled", text: TEXT.cancelled, Icon: CircleStopIcon, tone: "text-muted-foreground" };
+    return { kind: "cancelled", text: t("decision.cancelled"), Icon: CircleStopIcon, tone: "text-muted-foreground" };
   }
   const time = formatListTime(format, confirmation.resolvedAt ?? confirmation.createdAt);
   if (confirmation.resolution?.approve === true) {
-    const word = isBrief ? TEXT.briefApproved : TEXT.approved;
-    return { kind: "approved", text: `${word} · ${time}`, Icon: CircleCheckIcon, tone: "text-success" };
+    const text = t(isBrief ? "decision.briefApproved" : "decision.approved", { time });
+    return { kind: "approved", text, Icon: CircleCheckIcon, tone: "text-success" };
   }
-  const word = isBrief ? TEXT.briefRejected : TEXT.rejected;
-  return { kind: "rejected", text: `${word} · ${time}`, Icon: CircleMinusIcon, tone: "text-muted-foreground" };
+  const text = t(isBrief ? "decision.briefRejected" : "decision.rejected", { time });
+  return { kind: "rejected", text, Icon: CircleMinusIcon, tone: "text-muted-foreground" };
 }
 
 /**
@@ -267,6 +235,7 @@ export function DecisionButton({
 function TaskHeading({ workflowId }: { workflowId: string }) {
   const { libraryIndex } = useShellServices();
   const locale = useLocale();
+  const tLibrary = useTranslations("library");
   // Subscribes to the list: the title follows a read that lands after the card.
   useStore(libraryIndex, (state) => state.records);
   const found = libraryIndex.summaryOf(workflowId);
@@ -274,7 +243,7 @@ function TaskHeading({ workflowId }: { workflowId: string }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <h3 className="text-base leading-6 font-semibold break-words">
-        {taskTitleName(workflowId, { summaryOf: () => live })}
+        {taskTitleName(tLibrary, workflowId, { summaryOf: () => live })}
       </h3>
       {live != null && <RecordLabel summary={live} variant="under" href={recordPath(live.id)} />}
     </div>
@@ -287,13 +256,14 @@ function TaskHeading({ workflowId }: { workflowId: string }) {
  * `useResource`'s) and when the flag is off there is no line, and the card decides as before (DC-4).
  */
 function SelfLearningNote({ workflowId }: { workflowId: string }) {
+  const t = useTranslations("agents");
   const record = useResource(() => libraryApi.get(workflowId), workflowId, "library");
   const learns = record.data?.kind === "workflow" && record.data.content.selfLearning;
   if (!learns) return null;
   return (
     <p className="text-foreground flex items-start gap-1.5 text-xs leading-4 font-medium">
       <InfoIcon aria-hidden className="text-info mt-px size-3.5 shrink-0" />
-      {TEXT.selfLearning}
+      {t("decision.selfLearning")}
     </p>
   );
 }
@@ -316,8 +286,10 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   const brief = briefOf(confirmation);
   const format = useFormatter();
   const locale = useLocale();
+  const tAgents = useTranslations("agents");
+  const tChat = useTranslations("chat");
   const { tools } = useMessages();
-  const outcome = outcomeOf(confirmation, brief !== null, format);
+  const outcome = outcomeOf(tAgents, confirmation, brief !== null, format);
   const edit = useBriefEdit();
   const editing = edit.draft !== null && outcome === null;
   const [pressed, setPressed] = useState<Pressed | null>(null);
@@ -397,7 +369,10 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   const toolName = builtin?.title ?? toolTitle ?? tool;
   const runCode = brief === null && isRunCode(tool, server) ? runCodeView(args, argLabels) : null;
   const canCall = canCallOf(confirmation);
-  const groupName = brief !== null ? `${TEXT.briefTitle}: ${brief.text.question}` : `Нужно решение: ${toolName}`;
+  const groupName =
+    brief !== null
+      ? tAgents("decision.groupBrief", { question: brief.text.question })
+      : tAgents("decision.groupAction", { tool: toolName });
 
   const header =
     outcome === null ? (
@@ -424,7 +399,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
   const errorLine = failed && outcome === null && (
     <p role="alert" className="text-foreground flex items-start gap-1.5 text-sm leading-5">
       <CircleXIcon aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-      {TEXT.sendFailed}
+      {tAgents("decision.sendFailed")}
     </p>
   );
 
@@ -436,20 +411,19 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <div className="flex min-w-0 flex-col gap-0.5">
           <p className="text-foreground text-sm leading-5">
-            {byChat ? (
-              TEXT.byChat
-            ) : (
-              <>
-                {"Агент «"}
-                <Link
-                  href={agentPath(confirmation.agentId)}
-                  className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
-                >
-                  {confirmation.description}
-                </Link>
-                {"» хочет выполнить:"}
-              </>
-            )}
+            {byChat
+              ? tAgents("decision.byChat")
+              : tAgents.rich("decision.byAgent", {
+                  description: confirmation.description,
+                  link: (chunks) => (
+                    <Link
+                      href={agentPath(confirmation.agentId)}
+                      className="focus-visible:ring-ring rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
+                    >
+                      {chunks}
+                    </Link>
+                  ),
+                })}
           </p>
           {/* RN-04: the asking agent's record; the chat's own request has none. */}
           {!byChat && confirmation.origin !== null && (
@@ -473,7 +447,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
           )}
         </div>
         <ValueRows
-          label={TEXT.args}
+          label={tChat("tool.arguments")}
           rows={runCode?.rows ?? valueRows(args, argLabels)}
           script={runCode?.script}
           raw={typeof args === "string" ? args : JSON.stringify(args, null, 2)}
@@ -487,14 +461,14 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       actions = (
         <>
           <DecisionButton
-            label={TEXT.approve}
+            label={tAgents("decision.approve")}
             variant="default"
             pressed={pressed === "approve"}
             busy={busy}
             onClick={() => void decide("approve", true)}
           />
           <DecisionButton
-            label={TEXT.reject}
+            label={tAgents("decision.reject")}
             variant="outline"
             pressed={pressed === "reject"}
             busy={busy}
@@ -510,13 +484,13 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <TaskHeading workflowId={brief.workflow} />
         <div className="flex flex-col gap-2" onKeyDown={onEditKeyDown}>
-          {BRIEF_PARTS.map(({ key: field, label }) => {
+          {BRIEF_PARTS.map((field) => {
             const id = `${fieldId}-${field}`;
             const invalid = field === "question" && edit.emptyQuestion;
             return (
               <div key={field} className="flex flex-col gap-1">
                 <label htmlFor={id} className="text-muted-foreground text-xs leading-4 font-medium">
-                  {label}
+                  {tAgents(`brief.${field}`)}
                 </label>
                 <Textarea
                   id={id}
@@ -530,7 +504,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
                 />
                 {invalid && (
                   <p id={errorId} className="text-destructive text-xs leading-4 font-medium">
-                    {TEXT.emptyQuestion}
+                    {tAgents("decision.emptyQuestion")}
                   </p>
                 )}
               </div>
@@ -542,13 +516,13 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
     actions = (
       <>
         <DecisionButton
-          label={TEXT.launchEdited}
+          label={tAgents("decision.launchEdited")}
           variant="default"
           pressed={pressed === "launchEdited"}
           busy={busy}
           onClick={launchEdited}
         />
-        <DecisionButton label={TEXT.cancelEdit} variant="outline" pressed={false} busy={busy} onClick={cancelEdit} />
+        <DecisionButton label={tAgents("decision.cancelEdit")} variant="outline" pressed={false} busy={busy} onClick={cancelEdit} />
       </>
     );
   } else {
@@ -556,9 +530,9 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       <>
         <TaskHeading workflowId={brief.workflow} />
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-          {BRIEF_PARTS.map(({ key: field, label }) => (
+          {BRIEF_PARTS.map((field) => (
             <div key={field} className="contents">
-              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{label}</dt>
+              <dt className="text-muted-foreground pt-0.5 text-xs leading-4 font-medium">{tAgents(`brief.${field}`)}</dt>
               <dd className="text-foreground text-sm leading-5 break-words whitespace-pre-wrap">{brief.text[field]}</dd>
             </div>
           ))}
@@ -569,14 +543,14 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
       actions = (
         <>
           <DecisionButton
-            label={TEXT.launch}
+            label={tAgents("decision.launch")}
             variant="default"
             pressed={pressed === "launch"}
             busy={busy}
             onClick={() => void decide("launch", true, briefArgs(brief.text))}
           />
           <DecisionButton
-            label={TEXT.edit}
+            label={tAgents("decision.edit")}
             variant="outline"
             pressed={false}
             busy={busy}
@@ -586,7 +560,7 @@ export function DecisionCard({ confirmation, byChat, onDecide }: DecisionCardPro
             }}
           />
           <DecisionButton
-            label={TEXT.reject}
+            label={tAgents("decision.reject")}
             variant="ghost"
             pressed={pressed === "reject"}
             busy={busy}

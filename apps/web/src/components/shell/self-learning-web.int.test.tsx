@@ -23,7 +23,7 @@
 //   scripted MSW response; the test proves what the browser shows, sends and re-reads for it.
 //
 // Proven by unit tests (NOT repeated here; named for the plan):
-//   - AC-10.1 rule half (provenAt: unit): `workflowChanges` row `selfLearning` + `RECORD_FIELD_LABELS` «Самообучение»
+//   - AC-10.1 rule half (provenAt: unit): `workflowChanges` row `selfLearning` + `changedFieldLabel` (`library.fields.*`) «Самообучение»
 //     (lib/library/record-rules.test.ts, existing table; one new row).
 //   - `parseShellRoute` rows `/library/<id>/knowledge` and `/admin/library/<id>/knowledge` (lib/shell-route.test.ts, existing table).
 //   - `isKnowledgeHidden` rows 404 / 403 KNOWLEDGE_FORBIDDEN / 403 other / 500 (lib/library/library-errors.test.ts, existing table).

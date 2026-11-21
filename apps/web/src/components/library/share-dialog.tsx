@@ -2,11 +2,19 @@
 
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CheckIcon, Info, LoaderCircle, Lock, User, Users, X } from "lucide-react";
 import { toast } from "sonner";
-import type { MyRoleList, RecordAudience, RecordDetail, RecordKind, RecordSummary, RoleList } from "@agent-os/contracts";
-import { AdminRadioField, CAPTION, FORM_TEXT, FormError, type AdminRadioOption } from "@/components/admin/admin-form";
+import {
+  BUILTIN_ROLE_KEY,
+  type MyRoleList,
+  type RecordAudience,
+  type RecordDetail,
+  type RecordKind,
+  type RecordSummary,
+  type RoleList,
+} from "@agent-os/contracts";
+import { AdminRadioField, CAPTION, FormError, type AdminRadioOption } from "@/components/admin/admin-form";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,41 +27,16 @@ import { EMPLOYEE_SEARCH_DELAY_MS, useDebouncedValue } from "@/hooks/use-debounc
 import { useResource } from "@/hooks/use-resource";
 import { adminApi } from "@/lib/admin/admin-api";
 import { describeApiError, isApiRequestError } from "@/lib/api/api-request";
+import { builtinName } from "@/lib/i18n/builtin-name";
+import type { Locale } from "@/lib/i18n/pick-locale";
 import { libraryApi } from "@/lib/library/library-api";
-import { describeLibraryError, kindWord } from "@/lib/library/library-errors";
+import { describeLibraryError } from "@/lib/library/library-errors";
 import { recordAction } from "@/lib/library/record-action";
 import { logger } from "@/lib/logger";
 import { cn } from "cn";
 
-/** UXRD MC-14; «Сохранить» and «Отмена» — MC-20. */
-const TEXT = {
-  title: (name: string) => `Поделиться «${name}»`,
-  who: "Кто видит",
-  ownerAlways: "Вы видите всегда",
-  leftRole: "вы больше не в этой роли",
-  employeeDelivery: (name: string) => `Как коллеги получают «${name}»`,
-  adminDelivery: (name: string) => `Как сотрудники получают «${name}»`,
-  offer: (kind: RecordKind) => `Их чат предлагает и запускает ${kind === "agent" ? "агента" : "workflow"}`,
-  libraryOnly: "Только в библиотеке — прочитать и скопировать",
-  consequence: (kind: RecordKind) => `Коллеги увидят, что ${kindWord(kind)} от вас, и он будет работать с их правами.`,
-  everyone: "Все сотрудники",
-  selected: "Выбранные роли и сотрудники",
-  search: "Найти роль или сотрудника",
-  onlyAdmins: "Пока видят только администраторы",
-  remove: (name: string, kind: HolderKind) => `Убрать: ${name}, ${kind === "role" ? "роль" : "сотрудник"}`,
-  save: "Сохранить",
-  nowSee: (names: readonly string[]) => `Теперь видят: ${names.join(", ")}`,
-  onlyYou: "Теперь видите только вы",
-  nowEveryone: "Теперь видят все сотрудники",
-  rolesFailed: "Не удалось загрузить роли",
-  retry: "Повторить",
-  // Not in MC-14: the search list has no texts of its own there.
-  noMatches: "Никого не нашли",
-  usersFailed: "Не удалось найти сотрудников",
-} as const;
-
 /** What the dialog reads of a record: a library row and a record page both fit. */
-export type ShareRecord = Pick<RecordSummary, "id" | "kind" | "name" | "audience" | "offerInChat">;
+export type ShareRecord = Pick<RecordSummary, "id" | "kind" | "name" | "builtinKey" | "audience" | "offerInChat">;
 
 export type ShareDialogProps = {
   /** «Сотрудник» shares their own record with their roles; «Администратор» shares a company record. */
@@ -72,6 +55,9 @@ export type ShareDialogProps = {
  * form with the choice as it was.
  */
 export function ShareDialog({ variant, record, open, onOpenChange, onSaved }: ShareDialogProps) {
+  const t = useTranslations("library");
+  const locale = useLocale();
+  const name = builtinName(record, locale);
   const done = (saved: RecordDetail): void => {
     onOpenChange(false);
     onSaved(saved);
@@ -80,12 +66,12 @@ export function ShareDialog({ variant, record, open, onOpenChange, onSaved }: Sh
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="full-narrow">
         <DialogHeader>
-          <DialogTitle>{TEXT.title(record.name)}</DialogTitle>
+          <DialogTitle>{t("share.title", { name })}</DialogTitle>
         </DialogHeader>
         {variant === "employee" ? (
-          <EmployeeAudience record={record} onDone={done} />
+          <EmployeeAudience record={record} name={name} onDone={done} />
         ) : (
-          <AdminAudience record={record} onDone={done} />
+          <AdminAudience record={record} name={name} onDone={done} />
         )}
       </DialogContent>
     </Dialog>
@@ -94,6 +80,8 @@ export function ShareDialog({ variant, record, open, onOpenChange, onSaved }: Sh
 
 type AudienceProps = { record: ShareRecord; onDone: (saved: RecordDetail) => void };
 
+/** `name` — the record's name as the page shows it. */
+type AudienceFormProps = AudienceProps & { name: string };
 
 /** The save of both variants: one `recordAction` `audience`, then the toast, `libraryIndex` and `onDone`. */
 function useAudienceSave({ record, onDone }: AudienceProps) {
@@ -133,23 +121,31 @@ function useAudienceSave({ record, onDone }: AudienceProps) {
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
   a.size === b.size && [...a].every((item) => b.has(item));
 
-const byName = (a: { name: string }, b: { name: string }): number => a.name.localeCompare(b.name, "ru");
+const byName =
+  (locale: Locale) =>
+  (a: { name: string }, b: { name: string }): number =>
+    a.name.localeCompare(b.name, locale);
+
+/** A role's name as the page shows it: the built-in role in the page's language. */
+const roleName = (name: string, locale: Locale): string => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale);
 
 // ---------- Сотрудник ----------
 
 type RoleOption = { id: string; name: string; left: boolean };
 
 /** The viewer's roles and the record's roles the owner has left (ticked, marked), by name. */
-function roleOptions(mine: MyRoleList, audience: RecordAudience): RoleOption[] {
+function roleOptions(mine: MyRoleList, audience: RecordAudience, locale: Locale): RoleOption[] {
   const mineIds = new Set(mine.map((role) => role.id));
   const left = audience.roles.filter((role) => !mineIds.has(role.id));
   return [
-    ...mine.map((role) => ({ id: role.id, name: role.name, left: false })),
-    ...left.map((role) => ({ id: role.id, name: role.name, left: true })),
-  ].sort(byName);
+    ...mine.map((role) => ({ id: role.id, name: roleName(role.name, locale), left: false })),
+    ...left.map((role) => ({ id: role.id, name: roleName(role.name, locale), left: true })),
+  ].sort(byName(locale));
 }
 
-function EmployeeAudience({ record, onDone }: AudienceProps) {
+function EmployeeAudience({ record, name, onDone }: AudienceFormProps) {
+  const t = useTranslations("library");
+  const locale = useLocale();
   const id = useId();
   const roles = useResource(libraryApi.myRoles, record.id, "library");
   const savedIds = useMemo(() => new Set(record.audience.roles.map((role) => role.id)), [record]);
@@ -158,7 +154,7 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
   const [offer, setOffer] = useState(savedIds.size === 0 ? true : record.offerInChat);
   const { saving, error, save } = useAudienceSave({ record, onDone });
 
-  const options = roles.data === undefined ? [] : roleOptions(roles.data, record.audience);
+  const options = roles.data === undefined ? [] : roleOptions(roles.data, record.audience, locale);
   const changed = !sameSet(chosen, savedIds) || (chosen.size > 0 && offer !== record.offerInChat);
 
   const toggle = (roleId: string, checked: boolean): void =>
@@ -187,8 +183,8 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
     void save({
       send: () => libraryApi.saveAudience(record.id, { roleIds: [...chosen], offerInChat: offer }),
       savedText: (saved) => {
-        const names = saved.audience.roles.map((role) => role.name);
-        return names.length === 0 ? TEXT.onlyYou : TEXT.nowSee(names);
+        const names = saved.audience.roles.map((role) => roleName(role.name, locale));
+        return names.length === 0 ? t("share.onlyYouNow") : t("share.nowSee", { names: names.join(", ") });
       },
       refusedRole: async (cause) =>
         isApiRequestError(cause) && cause.reason === "role_not_member" ? leftRoleName() : undefined,
@@ -201,11 +197,11 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
       <fieldset disabled={saving} className="contents">
         <FieldSet className="gap-2">
           <FieldLegend variant="label" className="mb-0 text-data font-medium text-foreground">
-            {TEXT.who}
+            {t("share.who")}
           </FieldLegend>
           <p className="flex items-center gap-2 text-data text-muted-foreground">
             <Lock className="size-4 shrink-0" aria-hidden />
-            {TEXT.ownerAlways}
+            {t("share.ownerAlways")}
           </p>
           {roles.status === "loading" && <RowSkeletons />}
           {roles.status === "error" && <LoadFailed onRetry={roles.reload} />}
@@ -226,7 +222,7 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
                 </Label>
                 {option.left && (
                   <span id={noteId} className={cn(CAPTION, "text-muted-foreground")}>
-                    {TEXT.leftRole}
+                    {t("share.leftRole")}
                   </span>
                 )}
               </div>
@@ -235,11 +231,11 @@ function EmployeeAudience({ record, onDone }: AudienceProps) {
         </FieldSet>
         {chosen.size > 0 && (
           <Delivery
-            label={TEXT.employeeDelivery(record.name)}
+            label={t("share.employeeDelivery", { name })}
             kind={record.kind}
             offer={offer}
             onChange={setOffer}
-            consequence={TEXT.consequence(record.kind)}
+            consequence={t("share.consequence", { kind: record.kind })}
           />
         )}
       </fieldset>
@@ -258,22 +254,23 @@ type Holder = { kind: HolderKind; id: string; name: string; email?: string };
 
 const holderKey = (holder: Holder): string => `${holder.kind}:${holder.id}`;
 
-const holdersOf = (audience: RecordAudience): Holder[] => [
-  ...audience.roles.map((role): Holder => ({ kind: "role", id: role.id, name: role.name })),
+const holdersOf = (audience: RecordAudience, locale: Locale): Holder[] => [
+  ...audience.roles.map((role): Holder => ({ kind: "role", id: role.id, name: roleName(role.name, locale) })),
   ...(audience.users ?? []).map((user): Holder => ({ kind: "user", id: user.id, name: user.name })),
 ];
 
 type Reach = "everyone" | "selected";
 
-const REACH: readonly AdminRadioOption<Reach>[] = [
-  { value: "everyone", label: TEXT.everyone },
-  { value: "selected", label: TEXT.selected },
-];
-
-function AdminAudience({ record, onDone }: AudienceProps) {
+function AdminAudience({ record, name, onDone }: AudienceFormProps) {
+  const t = useTranslations("library");
+  const locale = useLocale();
+  const reachOptions: readonly AdminRadioOption<Reach>[] = [
+    { value: "everyone", label: t("share.everyone") },
+    { value: "selected", label: t("share.selected") },
+  ];
   const roles = useResource(adminApi.roles.list, record.id, "library");
   const savedEveryone = record.audience.everyone === true;
-  const savedHolders = useMemo(() => holdersOf(record.audience), [record]);
+  const savedHolders = useMemo(() => holdersOf(record.audience, locale), [record, locale]);
   const [reach, setReach] = useState<Reach>(savedEveryone ? "everyone" : "selected");
   const [chosen, setChosen] = useState<Holder[]>(savedHolders);
   const [offer, setOffer] = useState(savedEveryone || savedHolders.length > 0 ? record.offerInChat : true);
@@ -301,9 +298,9 @@ function AdminAudience({ record, onDone }: AudienceProps) {
           offerInChat: offer,
         }),
       savedText: (saved) => {
-        if (saved.audience.everyone === true) return TEXT.nowEveryone;
-        const names = holdersOf(saved.audience).map((holder) => holder.name);
-        return names.length === 0 ? TEXT.onlyAdmins : TEXT.nowSee(names);
+        if (saved.audience.everyone === true) return t("share.nowEveryone");
+        const names = holdersOf(saved.audience, locale).map((holder) => holder.name);
+        return names.length === 0 ? t("share.onlyAdmins") : t("share.nowSee", { names: names.join(", ") });
       },
     });
   };
@@ -312,7 +309,7 @@ function AdminAudience({ record, onDone }: AudienceProps) {
     <form noValidate onSubmit={submit} className="flex flex-col gap-4">
       <fieldset disabled={saving} className="contents">
         <div className="flex flex-col gap-2">
-          <AdminRadioField label={TEXT.who} value={reach} options={REACH} onChange={setReach} />
+          <AdminRadioField label={t("share.who")} value={reach} options={reachOptions} onChange={setReach} />
           {!everyone && (
             <>
               {roles.status === "loading" && <RowSkeletons />}
@@ -328,7 +325,7 @@ function AdminAudience({ record, onDone }: AudienceProps) {
           )}
         </div>
         {reachesSomeone && (
-          <Delivery label={TEXT.adminDelivery(record.name)} kind={record.kind} offer={offer} onChange={setOffer} />
+          <Delivery label={t("share.adminDelivery", { name })} kind={record.kind} offer={offer} onChange={setOffer} />
         )}
       </fieldset>
       {error !== null && <FormError>{error}</FormError>}
@@ -347,21 +344,23 @@ function HolderSearch({
   chosen: Holder[];
   onChange: (chosen: Holder[]) => void;
 }) {
+  const t = useTranslations("library");
+  const locale = useLocale();
   const [query, setQuery] = useState("");
   const searched = useDebouncedValue(query.trim(), EMPLOYEE_SEARCH_DELAY_MS);
   const users = useResource(() => adminApi.users.list({ query: searched, cursor: null }), searched, "library");
 
   const candidates = useMemo((): Holder[] => {
-    const needle = query.trim().toLocaleLowerCase("ru");
+    const needle = query.trim().toLocaleLowerCase(locale);
     const matchingRoles = roles
-      .filter((role) => role.name.toLocaleLowerCase("ru").includes(needle))
-      .sort(byName)
-      .map((role): Holder => ({ kind: "role", id: role.id, name: role.name }));
+      .map((role): Holder => ({ kind: "role", id: role.id, name: roleName(role.name, locale) }))
+      .filter((role) => role.name.toLocaleLowerCase(locale).includes(needle))
+      .sort(byName(locale));
     const found = (users.data?.users ?? []).map(
       (user): Holder => ({ kind: "user", id: user.id, name: user.name, email: user.email }),
     );
     return [...matchingRoles, ...found];
-  }, [roles, users.data, query]);
+  }, [roles, users.data, query, locale]);
 
   return (
     <Combobox.Root
@@ -378,14 +377,14 @@ function HolderSearch({
     >
       <Combobox.Input
         render={<Input className="text-data md:text-data" />}
-        aria-label={TEXT.search}
-        placeholder={`${TEXT.search}…`}
+        aria-label={t("share.search")}
+        placeholder={t("share.searchPlaceholder")}
       />
       <Combobox.Portal>
         <Combobox.Positioner sideOffset={4} className="isolate z-50">
           <Combobox.Popup className="max-h-[min(var(--available-height),16rem)] w-(--anchor-width) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
             <Combobox.Empty className={cn(CAPTION, "px-2 py-1.5 text-muted-foreground empty:hidden")}>
-              {users.status === "error" ? TEXT.usersFailed : TEXT.noMatches}
+              {users.status === "error" ? t("share.usersFailed") : t("share.noMatches")}
             </Combobox.Empty>
             <Combobox.List>
               {(holder: Holder) => (
@@ -421,8 +420,9 @@ function HolderIcon({ kind }: { kind: HolderKind }) {
 
 /** «Выбранные»: a chip per role or employee with «Убрать»; empty — only administrators see the record. */
 function HolderChips({ chosen, onRemove }: { chosen: Holder[]; onRemove: (holder: Holder) => void }) {
+  const t = useTranslations("library");
   if (chosen.length === 0) {
-    return <p className={cn(CAPTION, "text-muted-foreground")}>{TEXT.onlyAdmins}</p>;
+    return <p className={cn(CAPTION, "text-muted-foreground")}>{t("share.onlyAdmins")}</p>;
   }
   return (
     <ul className="flex flex-wrap gap-2">
@@ -437,7 +437,7 @@ function HolderChips({ chosen, onRemove }: { chosen: Holder[]; onRemove: (holder
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={TEXT.remove(holder.name, holder.kind)}
+            aria-label={t("share.remove", { name: holder.name, holder: holder.kind })}
             onClick={() => onRemove(holder)}
           >
             <X aria-hidden />
@@ -468,9 +468,10 @@ function Delivery({
   /** The employee's line about what colleagues see; the administrator has none. */
   consequence?: string;
 }) {
+  const t = useTranslations("library");
   const options: readonly AdminRadioOption<DeliveryValue>[] = [
-    { value: "chat", label: TEXT.offer(kind) },
-    { value: "library", label: TEXT.libraryOnly },
+    { value: "chat", label: t("share.offer", { kind }) },
+    { value: "library", label: t("share.libraryOnly") },
   ];
   return (
     <div className="flex flex-col gap-2 duration-150 animate-in fade-in-0 slide-in-from-top-1 motion-reduce:animate-none">
@@ -502,25 +503,27 @@ function RowSkeletons() {
 
 /** «Ошибка загрузки»: the text and «Повторить» in place of the roles. */
 function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  const t = useTranslations("library");
   return (
     <div className="flex flex-wrap items-center gap-2 text-data text-muted-foreground">
-      {TEXT.rolesFailed}
+      {t("share.rolesFailed")}
       <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-        {TEXT.retry}
+        {t("retry")}
       </Button>
     </div>
   );
 }
 
 function ShareActions({ saving, disabled }: { saving: boolean; disabled: boolean }) {
+  const t = useTranslations("library");
   return (
     <DialogFooter>
       <DialogClose render={<Button type="button" variant="outline" size="sm" />} disabled={saving}>
-        {FORM_TEXT.cancel}
+        {t("cancel")}
       </DialogClose>
       <Button type="submit" size="sm" disabled={saving || disabled}>
         {saving && <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />}
-        {TEXT.save}
+        {t("share.save")}
       </Button>
     </DialogFooter>
   );

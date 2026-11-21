@@ -1,24 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ArrowUpIcon, ClockIcon, InfoIcon } from "lucide-react";
 import { useShellServices } from "@/components/shell/shell-actions";
 import type { Tray, TrayEntry } from "@/lib/feed/to-feed";
 import { cn } from "@/lib/utils";
-
-/** UXRD MC-21, verbatim. */
-const TEXT = {
-  region: "Ждут доставки",
-  more: (n: number) => `и ещё ${n}`,
-  blocked: "Ждём вашего решения по запросу выше — сообщения уйдут после него.",
-  toDecision: "К запросу",
-} as const;
-
-const SOURCE_LABEL: Record<TrayEntry["source"], string> = {
-  user: "Вы",
-  report: "Отчёт",
-  parent: "Агент",
-};
 
 /** message-queue.md, Variants: three entries are shown, the rest fold into «и ещё {N}». */
 const VISIBLE_ENTRIES = 3;
@@ -62,6 +49,7 @@ export type QueueTrayProps = {
  */
 export function QueueTray({ tray }: QueueTrayProps) {
   const { entries, blocked, decisionId } = tray;
+  const t = useTranslations("agents.queue");
   useAnnounceNewEntries(entries);
   // Entries present at first render (a reload, a re-read) do not animate; only later ones open.
   const [initialIds] = useState(() => new Set(entries.map((entry) => entry.id)));
@@ -73,14 +61,14 @@ export function QueueTray({ tray }: QueueTrayProps) {
 
   return (
     <section
-      aria-label={TEXT.region}
+      aria-label={t("region")}
       data-slot="queue-tray"
       data-state={blocked ? "blocked" : "queued"}
       className="bg-muted mb-2 flex w-full min-w-0 flex-col gap-1 rounded-lg border px-3 py-2"
     >
       <p className="text-muted-foreground flex h-4 items-center gap-1.5 text-xs leading-4 font-medium tabular-nums">
         <ClockIcon aria-hidden className="size-3.5 shrink-0" />
-        {`${TEXT.region} · ${entries.length}`}
+        {t("heading", { count: entries.length })}
       </p>
       <ul className="flex flex-col">
         {visible.map((entry) => (
@@ -94,7 +82,7 @@ export function QueueTray({ tray }: QueueTrayProps) {
           >
             <div className="flex min-h-0 min-w-0 items-baseline gap-2 overflow-hidden py-0.5">
               <span className="text-muted-foreground w-20 shrink-0 text-xs leading-4 font-medium">
-                {SOURCE_LABEL[entry.source]}
+                {t(`source.${entry.source}`)}
               </span>
               <span className="text-foreground line-clamp-2 min-w-0 flex-1 text-sm leading-5 break-words">
                 {entry.text}
@@ -104,13 +92,13 @@ export function QueueTray({ tray }: QueueTrayProps) {
         ))}
       </ul>
       {hidden > 0 && (
-        <p className="text-muted-foreground pl-22 text-xs leading-4 font-medium tabular-nums">{TEXT.more(hidden)}</p>
+        <p className="text-muted-foreground pl-22 text-xs leading-4 font-medium tabular-nums">{t("more", { count: hidden })}</p>
       )}
       {blocked && (
         <p className="text-foreground flex items-start gap-1.5 text-sm leading-5">
           <InfoIcon aria-hidden className="text-info mt-0.5 size-4 shrink-0" />
           <span className="min-w-0">
-            {TEXT.blocked}
+            {t("blocked")}
             {decisionId !== null && (
               <>
                 {" "}
@@ -119,7 +107,7 @@ export function QueueTray({ tray }: QueueTrayProps) {
                   onClick={() => focusDecision(decisionId)}
                   className="text-primary focus-visible:ring-ring inline-flex items-center gap-0.5 rounded-sm align-baseline outline-none hover:underline focus-visible:ring-2 pointer-coarse:h-11"
                 >
-                  {TEXT.toDecision}
+                  {t("toDecision")}
                   <ArrowUpIcon aria-hidden className="size-3.5" />
                 </button>
               </>

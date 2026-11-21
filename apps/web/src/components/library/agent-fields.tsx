@@ -3,7 +3,7 @@
 import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { CheckIcon, ChevronRightIcon, X } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useStore } from "zustand";
 import {
   ALL_SERVERS,
@@ -37,43 +37,27 @@ import type { RecordDefinition } from "@/lib/library/record-rules";
 import { cn } from "cn";
 import { RecordLabel } from "./record-label";
 
-/** UXRD MC-7 (fields), MC-8 (errors), MC-9 (marks and the model banner). */
-const TEXT = {
-  name: "Имя",
-  description: "Описание",
-  descriptionHint: "По описанию чат решает, когда звать агента.",
-  prompt: "Инструкция",
-  promptHint: "Что агент делает и как. Он видит только этот текст и своё поручение.",
-  servers: "Системы",
-  serversHint: "Агент получит инструменты только тех систем, к которым есть доступ у запустившего.",
-  lostServer: "у вас недоступна",
-  lostServerRest: "останется и будет работать у тех, у кого есть доступ",
-  // MC-9, the administrator on a company record.
-  allServers: "Все системы",
-  allServersHint: "Агент получит все системы, в том числе подключённые позже.",
-  advanced: "Дополнительно: модель, максимум шагов, кого может запускать",
-  model: "Модель",
-  modelHint: "Сильнее модель — дольше и дороже. Для большинства задач хватит модели по умолчанию.",
-  lostModel: "у вас недоступна",
-  maxTurns: "Максимум шагов",
-  maxTurnsHint: "Сколько шагов агент делает за один запуск. Дойдя до предела, он останавливается и отдаёт то, что успел.",
-  agents: "Может запускать",
-  findAgent: "Найти агента",
-  noAgents: "Агентов не нашли",
-  agentGone: "агент недоступен",
-  // The banner shows only for a record with its own model: a record without one never lost it.
-  modelGone: (model: string) => `Модель ${formatModel(model)} вам больше недоступна — агент не запустится`,
-  noModels: (model: string) => `Модель ${formatModel(model)} вам недоступна, а других моделей у вас нет — агент не запустится`,
-  replaceModel: (label: string) => `Заменить на ${label}`,
-  enterName: "Введите имя",
-  // Not in MC-8: the contract's name rule refuses control characters, which MC-8 has no text for.
-  oneLineName: "Имя — одной строкой, без управляющих символов",
-  // Not in MC-8: the contract requires a description, and MC-8 names only its length.
-  enterDescription: "Введите описание",
-  descriptionTooLong: `Описание длиннее ${RECORD_DESCRIPTION_MAX_LENGTH} знаков`,
-  enterPrompt: "Введите инструкцию",
-  wholeNumber: `Нужно целое число от ${RECORD_MAX_TURNS_MIN} до ${RECORD_MAX_TURNS_MAX}`,
-} as const;
+/**
+ * A failed check before sending (MC-8). `oneLineName` is not in MC-8: the contract's name rule refuses control
+ * characters, which MC-8 has no text for; `enterDescription` neither: the contract requires a description, and
+ * MC-8 names only its length.
+ */
+type Check = "enterName" | "oneLineName" | "enterDescription" | "descriptionTooLong" | "enterPrompt" | "wholeNumber";
+
+/** A check's message, translated where the field shows it; the limits are the contract's named constants. */
+function CheckText({ check }: { check: Check }) {
+  const t = useTranslations("library.agentFields.checks");
+  switch (check) {
+    case "descriptionTooLong":
+      return t("descriptionTooLong", { max: RECORD_DESCRIPTION_MAX_LENGTH });
+    case "wholeNumber":
+      return t("wholeNumber", { min: RECORD_MAX_TURNS_MIN, max: RECORD_MAX_TURNS_MAX });
+    default:
+      return t(check);
+  }
+}
+
+const failed = (check: Check): ReactNode => <CheckText check={check} />;
 
 export type AgentDefinition = Extract<RecordDefinition, { kind: "agent" }>;
 
@@ -117,23 +101,23 @@ const RecordNameSchema = CreateRecordBodySchema.options[0].shape.name;
 const ADVANCED_FIELDS: readonly AgentField[] = ["model", "maxTurns", "agents"];
 
 /** The checks of a record's name and description, the same for both kinds (MC-8). */
-export function validateRecordText(values: { name: string; description: string }): Partial<Record<"name" | "description", string>> {
-  const errors: Partial<Record<"name" | "description", string>> = {};
-  if (values.name.trim() === "") errors.name = TEXT.enterName;
-  else if (!RecordNameSchema.safeParse(values.name).success) errors.name = TEXT.oneLineName;
+export function validateRecordText(values: { name: string; description: string }): Partial<Record<"name" | "description", ReactNode>> {
+  const errors: Partial<Record<"name" | "description", ReactNode>> = {};
+  if (values.name.trim() === "") errors.name = failed("enterName");
+  else if (!RecordNameSchema.safeParse(values.name).success) errors.name = failed("oneLineName");
   const description = values.description.trim();
-  if (description === "") errors.description = TEXT.enterDescription;
-  else if (description.length > RECORD_DESCRIPTION_MAX_LENGTH) errors.description = TEXT.descriptionTooLong;
+  if (description === "") errors.description = failed("enterDescription");
+  else if (description.length > RECORD_DESCRIPTION_MAX_LENGTH) errors.description = failed("descriptionTooLong");
   return errors;
 }
 
 /** The checks before sending (MC-8); limits are the contract's named constants. */
 export function validateAgent(values: AgentDefinition): AgentFieldErrors {
   const errors: AgentFieldErrors = validateRecordText(values);
-  if (values.content.prompt.trim() === "") errors.prompt = TEXT.enterPrompt;
+  if (values.content.prompt.trim() === "") errors.prompt = failed("enterPrompt");
   const { maxTurns } = values.content;
   if (!Number.isInteger(maxTurns) || maxTurns < RECORD_MAX_TURNS_MIN || maxTurns > RECORD_MAX_TURNS_MAX) {
-    errors.maxTurns = TEXT.wholeNumber;
+    errors.maxTurns = failed("wholeNumber");
   }
   return errors;
 }
@@ -191,6 +175,7 @@ export type AgentFieldsProps = {
  */
 export function AgentFields({ mode, recordId, base, values, onChange, errors, choices }: AgentFieldsProps) {
   const id = useId();
+  const t = useTranslations("library");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const content = values.content;
   const setContent = (next: Partial<AgentContent>, field: AgentField): void =>
@@ -203,7 +188,7 @@ export function AgentFields({ mode, recordId, base, values, onChange, errors, ch
       <ModelBanner model={content.model} choices={choices} onReplace={(model) => setContent({ model }, "model")} />
       <TextField
         id={`${id}-name`}
-        label={TEXT.name}
+        label={t("fields.name")}
         value={values.name}
         max={RECORD_NAME_MAX_LENGTH}
         error={errors.name}
@@ -211,8 +196,8 @@ export function AgentFields({ mode, recordId, base, values, onChange, errors, ch
       />
       <TextField
         id={`${id}-description`}
-        label={TEXT.description}
-        hint={TEXT.descriptionHint}
+        label={t("fields.description")}
+        hint={t("agentFields.descriptionHint")}
         value={values.description}
         max={RECORD_DESCRIPTION_MAX_LENGTH}
         // MC-8 names an over-long description, so it may be typed past the limit and is refused on save.
@@ -223,8 +208,8 @@ export function AgentFields({ mode, recordId, base, values, onChange, errors, ch
       />
       <TextField
         id={`${id}-prompt`}
-        label={TEXT.prompt}
-        hint={TEXT.promptHint}
+        label={t("fields.prompt")}
+        hint={t("agentFields.promptHint")}
         value={content.prompt}
         max={RECORD_PROMPT_MAX_LENGTH}
         multiline
@@ -256,7 +241,7 @@ export function AgentFields({ mode, recordId, base, values, onChange, errors, ch
             aria-hidden
             className="transition-transform duration-150 group-aria-expanded/advanced:rotate-90 motion-reduce:transition-none"
           />
-          {TEXT.advanced}
+          {t("agentFields.advanced")}
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-5 pt-3">
           <ModelField
@@ -377,6 +362,7 @@ type ServersFieldProps = {
  * has lost comes first, ticked and marked; it does not stop a save, and once unticked it cannot come back.
  */
 export function ServersField({ id, saved, chosen, choices, allowAll = false, error, onChange }: ServersFieldProps) {
+  const t = useTranslations("library");
   // «Все системы» is a mark of the list, not a system: it is never listed as a lost one.
   const all = chosen.includes(ALL_SERVERS);
   const lost = [...new Set([...saved, ...chosen])].filter((server) => server !== ALL_SERVERS && !choices.includes(server));
@@ -390,10 +376,10 @@ export function ServersField({ id, saved, chosen, choices, allowAll = false, err
   return (
     <FieldSet data-invalid={error !== undefined} className="gap-2">
       <FieldLegend variant="label" className={cn(LABEL, "mb-0")}>
-        {TEXT.servers}
+        {t("fields.servers")}
       </FieldLegend>
       <FieldDescription id={hintId} className={HINT}>
-        {TEXT.serversHint}
+        {t("agentFields.serversHint")}
       </FieldDescription>
       {allowAll && (
         <div className="flex flex-col gap-0.5">
@@ -404,10 +390,10 @@ export function ServersField({ id, saved, chosen, choices, allowAll = false, err
               // On — the record holds «all» alone; off — no system is chosen, the list is open to tick.
               onCheckedChange={(next) => onChange(next ? [ALL_SERVERS] : [])}
             />
-            {TEXT.allServers}
+            {t("agentFields.allServers")}
           </Label>
           <p id={allHintId} className={HINT}>
-            {TEXT.allServersHint}
+            {t("agentFields.allServersHint")}
           </p>
         </div>
       )}
@@ -430,8 +416,8 @@ export function ServersField({ id, saved, chosen, choices, allowAll = false, err
             {isLost && (
               // The mark and its consequence are the checkbox's description (record-editor.md, Accessibility).
               <span id={noteId} className="flex flex-wrap items-center gap-x-1.5">
-                <StateBadge state="off">{TEXT.lostServer}</StateBadge>
-                <span className={HINT}>{`— ${TEXT.lostServerRest}`}</span>
+                <StateBadge state="off">{t("agentFields.unavailable")}</StateBadge>
+                <span className={HINT}>{t("agentFields.lostServerRest")}</span>
               </span>
             )}
           </div>
@@ -460,6 +446,7 @@ function ModelBanner({
   onReplace: (model: string) => void;
 }) {
   const tErrors = useTranslations("errors");
+  const t = useTranslations("library.agentFields");
   // `null` is the default chat model, never one the author lost.
   if (model === null || choices.models === undefined) return null;
   const row = choices.models.find((option) => option.model === model);
@@ -471,9 +458,8 @@ function ModelBanner({
           model: formatModel(model, { models: choices.models }),
           kind: "agent",
         })
-      : replacement === null
-        ? TEXT.noModels(model)
-        : TEXT.modelGone(model);
+      : // The banner shows only for a record with its own model: a record without one never lost it.
+        t(replacement === null ? "noModels" : "modelGone", { model: formatModel(model) });
   return (
     // The banner is announced but takes no focus (record-editor.md, Accessibility).
     <div role="alert">
@@ -482,7 +468,7 @@ function ModelBanner({
           <p>{text}</p>
           {replacement !== null && (
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={() => onReplace(replacement)}>
-              {TEXT.replaceModel(formatModel(replacement, { models: choices.models }))}
+              {t("replaceModel", { model: formatModel(replacement, { models: choices.models }) })}
             </Button>
           )}
         </div>
@@ -529,7 +515,13 @@ const fieldOptionOf = (option: ModelOption): FieldOption => ({
  * The record's own model when it is not one of the offered (model-providers MP-08): no own model — the
  * default chat model; no right — custom-agents' mark; its provider does not work — the MC-8 short reason.
  */
-function ownOption(t: FormatsTranslator, model: string | null, choices: EditorChoices, options: readonly ModelOption[]): FieldOption | null {
+function ownOption(
+  t: FormatsTranslator,
+  unavailable: string,
+  model: string | null,
+  choices: EditorChoices,
+  options: readonly ModelOption[],
+): FieldOption | null {
   const models = choices.models ?? [];
   if (model === null) {
     const label = formatRecordModel(t, null, { models, defaultModel: choices.defaultModel });
@@ -538,7 +530,7 @@ function ownOption(t: FormatsTranslator, model: string | null, choices: EditorCh
   const own = options.find((option) => option.value === model);
   if (own === undefined) {
     const label = formatModel(model);
-    return { value: model, label, name: label, provider: null, accessibleName: undefined, mark: TEXT.lostModel };
+    return { value: model, label, name: label, provider: null, accessibleName: undefined, mark: unavailable };
   }
   if (own.unavailableReason === null) return null;
   const reason = MODEL_UNAVAILABLE_SHORT_TEXT[own.unavailableReason];
@@ -550,10 +542,11 @@ function ownOption(t: FormatsTranslator, model: string | null, choices: EditorCh
  * when it is not offered, comes first: a model without a right or of a broken provider stays chosen with its
  * mark; a record without its own model shows the default chat model, and choosing another gives it its own.
  */
-export function ModelField({ id, label = TEXT.model, model, choices, error, onChange }: ModelFieldProps) {
+export function ModelField({ id, label, model, choices, error, onChange }: ModelFieldProps) {
   const t = useTranslations("formats");
+  const tLibrary = useTranslations("library");
   const all = chatOptions(choices.models ?? []);
-  const own = ownOption(t, model, choices, all);
+  const own = ownOption(t, tLibrary("agentFields.unavailable"), model, choices, all);
   const options = [
     ...(own === null ? [] : [own]),
     ...all.filter((option) => option.unavailableReason === null).map(fieldOptionOf),
@@ -563,7 +556,7 @@ export function ModelField({ id, label = TEXT.model, model, choices, error, onCh
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {label}
+        {label ?? tLibrary("fields.model")}
       </FieldLabel>
       <Select
         value={model}
@@ -600,7 +593,7 @@ export function ModelField({ id, label = TEXT.model, model, choices, error, onCh
         </SelectContent>
       </Select>
       <FieldDescription id={hintId} className={HINT}>
-        {TEXT.modelHint}
+        {tLibrary("agentFields.modelHint")}
       </FieldDescription>
       <FieldError id={errorId} className={CAPTION}>
         {error}
@@ -615,8 +608,8 @@ export function ModelField({ id, label = TEXT.model, model, choices, error, onCh
  */
 export function MaxTurnsField({
   id,
-  label = TEXT.maxTurns,
-  hint = TEXT.maxTurnsHint,
+  label,
+  hint: givenHint,
   value,
   error,
   onChange,
@@ -630,12 +623,14 @@ export function MaxTurnsField({
   error: ReactNode;
   onChange: (value: number) => void;
 }) {
+  const t = useTranslations("library");
+  const hint = givenHint === undefined ? t("agentFields.maxTurnsHint") : givenHint;
   const hintId = hint === null ? null : `${id}-hint`;
   const errorId = `${id}-error`;
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {label}
+        {label ?? t("fields.maxTurns")}
       </FieldLabel>
       <Input
         id={id}
@@ -663,8 +658,6 @@ export function MaxTurnsField({
   );
 }
 
-const byName = (a: RecordSummary, b: RecordSummary): number => a.name.localeCompare(b.name, "ru");
-
 type AgentsFieldProps = {
   id: string;
   recordId: string | null;
@@ -680,6 +673,8 @@ type AgentsFieldProps = {
 function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps) {
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
+  const t = useTranslations("library");
+  const locale = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
   const errorId = `${id}-error`;
 
@@ -687,8 +682,10 @@ function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps
     () =>
       records === null
         ? []
-        : [...records.values()].filter((record) => record.kind === "agent" && record.id !== recordId).sort(byName),
-    [records, recordId],
+        : [...records.values()]
+            .filter((record) => record.kind === "agent" && record.id !== recordId)
+            .sort((a, b) => a.name.localeCompare(b.name, locale)),
+    [records, recordId, locale],
   );
   const selected = candidates.filter((record) => chosen.includes(record.id));
 
@@ -704,7 +701,7 @@ function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps
   return (
     <Field data-invalid={error !== undefined} className="gap-1.5">
       <FieldLabel htmlFor={id} className={LABEL}>
-        {TEXT.agents}
+        {t("fields.agents")}
       </FieldLabel>
       <Combobox.Root
         multiple
@@ -718,7 +715,7 @@ function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps
           id={id}
           ref={inputRef}
           render={<Input className="max-w-90 pointer-coarse:h-11" />}
-          placeholder={`${TEXT.findAgent}…`}
+          placeholder={t("agentFields.findAgent")}
           aria-invalid={error !== undefined}
           aria-describedby={error === undefined ? undefined : errorId}
         />
@@ -726,7 +723,7 @@ function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps
           <Combobox.Positioner sideOffset={4} className="isolate z-50">
             <Combobox.Popup className="max-h-[min(var(--available-height),16rem)] w-(--anchor-width) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
               <Combobox.Empty className={cn(CAPTION, "px-2 py-1.5 text-muted-foreground empty:hidden")}>
-                {TEXT.noAgents}
+                {t("agentFields.noAgents")}
               </Combobox.Empty>
               <Combobox.List>
                 {(record: RecordSummary) => (
@@ -771,11 +768,13 @@ function AgentsField({ id, recordId, chosen, error, onChange }: AgentsFieldProps
 
 /** A chosen agent the read list does not hold: unavailable to the author, or the list is still being read. */
 function GoneChip({ loading, onRemove }: { loading: boolean; onRemove: () => void }): ReactNode {
+  const t = useTranslations("library.label");
   if (loading) return <Skeleton aria-hidden className="h-7 w-28" />;
+  const gone = t("unavailable", { kind: "agent" });
   return (
-    <span role="group" aria-label={TEXT.agentGone} className="flex items-center gap-1 rounded-md border border-border bg-muted py-0.5 pr-0.5 pl-2">
-      <StateBadge state="off">{TEXT.agentGone}</StateBadge>
-      <Button type="button" variant="ghost" size="icon-xs" aria-label={`Убрать: ${TEXT.agentGone}`} onClick={onRemove}>
+    <span role="group" aria-label={gone} className="flex items-center gap-1 rounded-md border border-border bg-muted py-0.5 pr-0.5 pl-2">
+      <StateBadge state="off">{gone}</StateBadge>
+      <Button type="button" variant="ghost" size="icon-xs" aria-label={t("remove", { name: gone })} onClick={onRemove}>
         <X aria-hidden />
       </Button>
     </span>

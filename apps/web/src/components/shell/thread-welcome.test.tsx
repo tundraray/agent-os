@@ -14,10 +14,11 @@ import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { ShellServicesContext } from './shell-actions';
-import { WELCOME_SUGGESTIONS } from '@/lib/welcome-suggestions';
+import { welcomeSuggestions } from '@/lib/welcome-suggestions';
+import { testTranslator } from '@/test/intl';
 import { ShellWelcome } from './shell-welcome';
 
-const config = AuiConfig({ suggestions: Suggestions(WELCOME_SUGGESTIONS) });
+const config = AuiConfig({ suggestions: Suggestions(welcomeSuggestions(testTranslator('chat'))) });
 
 function WelcomeHarness({ adapter }: { adapter: ChatModelAdapter }) {
   const runtime = useLocalRuntime(adapter);

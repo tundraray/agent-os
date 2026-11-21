@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   AssistantRuntimeProvider,
   AuiConfig,
@@ -15,7 +16,7 @@ import { parseShellRoute } from '@/lib/shell-route';
 import { selectMainItem } from '@/lib/threads/main-thread';
 import { createShellServices } from '@/lib/threads/shell-services';
 import { syncUrlWithThread } from '@/lib/threads/url-sync';
-import { WELCOME_SUGGESTIONS } from '@/lib/welcome-suggestions';
+import { welcomeSuggestions } from '@/lib/welcome-suggestions';
 import { ShellActionsProvider } from './shell-actions';
 
 type ChatRuntimeProviderProps = {
@@ -32,10 +33,11 @@ export function ChatRuntimeProvider({ openEventSource, location, children }: Cha
   const route = parseShellRoute(usePathname());
   const threadId = route.kind === 'chat' ? route.threadId : undefined;
   const [services] = useState(() => createShellServices({ openEventSource, location }));
+  const t = useTranslations('chat');
   // TH-03 starter suggestions feed `ThreadPrimitive.Suggestions` through the provider's root scope.
   const config = useMemo(
-    () => AuiConfig({ ...services.auiConfig, suggestions: Suggestions(WELCOME_SUGGESTIONS) }),
-    [services],
+    () => AuiConfig({ ...services.auiConfig, suggestions: Suggestions(welcomeSuggestions(t)) }),
+    [services, t],
   );
 
   // Runs inside assistant-ui tap resources, once per hosted thread.

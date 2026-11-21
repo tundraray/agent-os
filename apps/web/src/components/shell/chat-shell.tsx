@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { Layout, LayoutChangedMeta } from 'react-resizable-panels';
 import { AgentFeedProvider } from '@/components/agents/agent-feed-provider';
 import { LocaleSync } from '@/components/i18n/locale-sync';
@@ -177,6 +178,7 @@ function RouteFeedProvider({ route, children }: { route: ShellRoute; children: R
  * leads to the screen's `h1`.
  */
 function SkipLink() {
+  const t = useTranslations('shell.skipLink');
   const kind = parseShellRoute(usePathname()).kind;
   const panel = kind === 'admin' || kind === 'library';
   const target: FocusTarget = panel ? 'page-title' : 'composer';
@@ -191,7 +193,7 @@ function SkipLink() {
       onClick={onClick}
       className="bg-background text-foreground focus-visible:ring-ring sr-only z-50 rounded-md px-3 py-2 text-sm font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus-visible:ring-3"
     >
-      {panel ? 'Перейти к содержимому' : 'Перейти к сообщению'}
+      {panel ? t('content') : t('message')}
     </a>
   );
 }

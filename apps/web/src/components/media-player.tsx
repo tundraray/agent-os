@@ -84,6 +84,7 @@ export function AudioPlayer({
   ...props
 }: AudioPlayerProps) {
   const t = useTranslations("formats");
+  const tMedia = useTranslations("chat.media");
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playback, setPlayback] = useState({
     src,
@@ -108,8 +109,10 @@ export function AudioPlayer({
         : { src, currentTime: 0, playing: false, hasError: false }),
       ...patch,
     }));
-  const displayTitle = title ?? "Аудио";
-  const playbackLabel = title ? ` ${title}` : " аудио";
+  const displayTitle = title ?? tMedia("audio");
+  const playbackLabel = playing
+    ? title ? tMedia("pauseTitled", { title }) : tMedia("pause")
+    : title ? tMedia("playTitled", { title }) : tMedia("play");
   const durationLabel =
     duration === undefined ? "--:--" : formatDuration(duration);
 
@@ -157,7 +160,7 @@ export function AudioPlayer({
       ) : null}
       <button
         type="button"
-        aria-label={`${playing ? "Пауза" : "Воспроизвести"}${playbackLabel}`}
+        aria-label={playbackLabel}
         disabled={hasError}
         onClick={togglePlayback}
         className={cn(
@@ -181,7 +184,7 @@ export function AudioPlayer({
           max={duration ?? 0}
           step={0.1}
           value={Math.min(currentTime, duration ?? 0)}
-          aria-label="Перемотка"
+          aria-label={tMedia("seek")}
           aria-valuetext={t("playbackPosition", { position: formatDuration(currentTime), duration: durationLabel })}
           disabled={hasError}
           onChange={(event) => {
@@ -214,7 +217,7 @@ export function AudioPlayer({
       />
       {hasError ? (
         <span role="alert" className="text-muted-foreground text-xs">
-          Не удалось воспроизвести аудио
+          {tMedia("playFailed")}
         </span>
       ) : null}
     </div>
@@ -230,6 +233,7 @@ export function VideoPlayer({
   className,
   ...props
 }: VideoPlayerProps) {
+  const t = useTranslations("chat.media");
   const videoRef = useRef<HTMLVideoElement>(null);
   const { duration, setDurationFromMetadata } = useMediaDuration(
     videoRef,
@@ -261,7 +265,7 @@ export function VideoPlayer({
           controls
           playsInline
           preload="metadata"
-          aria-label={title ?? "Видео"}
+          aria-label={title ?? t("video")}
           className={cn(
             "block max-w-full",
             ratio !== "auto" && "h-full w-full object-contain",

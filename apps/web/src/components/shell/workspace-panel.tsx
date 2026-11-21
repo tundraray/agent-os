@@ -2,6 +2,7 @@
 
 import type { KeyboardEvent } from 'react';
 import { XIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { usePanelRef, type PanelSize } from 'react-resizable-panels';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { ResizableHandle, ResizablePanel } from '@/components/ui/resizable';
@@ -35,6 +36,7 @@ type WorkspacePanelProps = {
  * `ResizablePanelGroup`, and only while the workspace is open.
  */
 export function WorkspacePanel({ defaultSize, onClose }: WorkspacePanelProps) {
+  const t = useTranslations('shell.workspace');
   const panelRef = usePanelRef();
 
   // A drag past the collapse threshold closes the workspace instead of leaving an open, zero-width panel.
@@ -59,7 +61,7 @@ export function WorkspacePanel({ defaultSize, onClose }: WorkspacePanelProps) {
   return (
     <>
       <ResizableHandle
-        aria-label="Изменить ширину рабочей области"
+        aria-label={t('resize')}
         onKeyDownCapture={resizeByKeyboard}
         className="data-[separator=hover]:bg-ring data-[separator=active]:bg-ring after:w-2 focus-visible:ring-2"
       />
@@ -72,16 +74,16 @@ export function WorkspacePanel({ defaultSize, onClose }: WorkspacePanelProps) {
         collapsedSize={0}
         onResize={closeWhenCollapsed}
       >
-        <aside id={WORKSPACE_ID} aria-label="Рабочая область" className="flex h-full min-w-0 flex-col">
+        <aside id={WORKSPACE_ID} aria-label={t('title')} className="flex h-full min-w-0 flex-col">
           <div className="flex h-(--header-height) shrink-0 items-center justify-between gap-2 px-3">
-            <span className="truncate text-sm font-medium">Рабочая область</span>
-            <TooltipIconButton tooltip="Закрыть рабочую область" className="size-8 [&_svg]:size-4.5" onClick={onClose}>
+            <span className="truncate text-sm font-medium">{t('title')}</span>
+            <TooltipIconButton tooltip={t('close')} className="size-8 [&_svg]:size-4.5" onClick={onClose}>
               <XIcon aria-hidden />
             </TooltipIconButton>
           </div>
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
             <p className="text-muted-foreground max-w-xs text-center text-sm">
-              Здесь появятся артефакты инструментов: таблицы, документы, графики.
+              {t('empty')}
             </p>
           </div>
         </aside>

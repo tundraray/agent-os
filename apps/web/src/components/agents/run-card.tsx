@@ -3,7 +3,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useFormatter, useLocale } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
+import { BUILTIN_ROLE_KEY } from "@agent-os/contracts";
 import type {
   AgentNode,
   AgentStatus as AgentStatusValue,
@@ -20,13 +21,11 @@ import { RecordLabel } from "@/components/library/record-label";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { StateBadge } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_STATUS_LABEL } from "@/lib/agents/format";
 import { builtinName } from "@/lib/i18n/builtin-name";
 import { formatListTime } from "@/lib/i18n/formats";
 import { describeApiError } from "@/lib/api/api-request";
 import { useFeedSelector } from "@/lib/feed/feed-context";
 import { isWorkflowCoordinator, type RunCardPartData } from "@/lib/feed/to-feed";
-import { kindWord } from "@/lib/library/library-errors";
 import { changedAfterRun, recipientNote } from "@/lib/library/record-rules";
 import { logger } from "@/lib/logger";
 import { NEW_THREAD_TARGET, type SeedTarget } from "@/lib/threads/composer-seed";
@@ -67,10 +66,11 @@ export function ChangedAfterRun({
   live: RecordSummary | null | undefined;
   children?: ReactNode;
 }) {
+  const t = useTranslations("agents.run");
   if (live == null || !changedAfterRun(origin, live)) return null;
   return (
     <div data-slot="changed-after-run" className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-      <StateBadge state="info">{`${kindWord(origin.kind, true)} изменён после запуска: сейчас версия ${live.version}`}</StateBadge>
+      <StateBadge state="info">{t("changedAfterRun", { kind: origin.kind, version: live.version })}</StateBadge>
       {children}
     </div>
   );
@@ -92,6 +92,7 @@ function RerunLine({ origin }: { origin: RunOrigin }) {
   const live = useLiveRecord(origin.recordId);
   const inChat = useInChat();
   const thread = useCardThread();
+  const t = useTranslations("agents.run");
   return (
     <ChangedAfterRun origin={origin} live={live}>
       <Button
@@ -104,7 +105,7 @@ function RerunLine({ origin }: { origin: RunOrigin }) {
           inChat({ record: { id: live.id, kind: live.kind, name: live.name } }, thread);
         }}
       >
-        Запустить заново
+        {t("rerun")}
       </Button>
     </ChangedAfterRun>
   );
@@ -116,12 +117,14 @@ function RerunLine({ origin }: { origin: RunOrigin }) {
  */
 function RecipientLine({ origin, firstRun }: { origin: RunOrigin; firstRun: boolean }) {
   const live = useLiveRecord(origin.recordId);
+  const t = useTranslations("agents.run");
+  const locale = useLocale();
   const note = recipientNote(live, firstRun);
   if (note === null || origin.author === null) return null;
-  const roles = note.roles.length > 0 ? ` · для роли ${note.roles.join(", ")}` : "";
+  const roles = note.roles.map((name) => builtinName({ builtinKey: BUILTIN_ROLE_KEY, name }, locale));
   return (
     <p className="text-muted-foreground line-clamp-3 text-xs leading-4 font-medium">
-      {`${origin.author.name}${roles}: работает с вашими правами и аккаунтами, изменения — только после вашего подтверждения. Убрать может автор или администратор.`}
+      {t("recipient", { author: origin.author.name, count: roles.length, roles: roles.join(", ") })}
     </p>
   );
 }
@@ -200,13 +203,18 @@ const ROW_TEXT_CLASS = "text-muted-foreground min-w-0 truncate text-sm leading-5
 
 /** One agent the coordinator started: a 28 px link row; a row added after mount opens over 150 ms. */
 function StepRow({ step, appeared }: { step: AgentNode; appeared: boolean }) {
+  const t = useTranslations("agents");
   const executor = step.origin?.executor ?? null;
-  const spoken = [executor, step.description, AGENT_STATUS_LABEL[step.status]].filter((part) => part !== null && part !== "");
   return (
     <li className={cn(ROW_CLASS, appeared && OPENS_CLASS)}>
       <Link
         href={agentPath(step.agentId)}
-        aria-label={spoken.join(", ")}
+        aria-label={t("run.stepLabel", {
+          hasExecutor: executor === null || executor === "" ? "no" : "yes",
+          executor: executor ?? "",
+          description: step.description,
+          status: t(`status.${step.status}`),
+        })}
         title={step.description}
         className="hover:bg-accent focus-visible:ring-ring col-span-full grid h-full grid-cols-subgrid items-center rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-inset"
       >
@@ -244,7 +252,8 @@ function MutedRow({ Icon, executor, note, opens }: { Icon: LucideIcon; executor:
 export function RunCard({ data }: RunCardProps) {
   const format = useFormatter();
   const locale = useLocale();
-  const statusLabel = AGENT_STATUS_LABEL[data.status];
+  const t = useTranslations("agents");
+  const statusLabel = t(`status.${data.status}`);
   const origin = runRecord(data);
   const record = origin === null ? null : { ...origin, name: builtinName(origin, locale) };
   const time = (
@@ -256,7 +265,7 @@ export function RunCard({ data }: RunCardProps) {
     return (
       <div
         role="group"
-        aria-label={`${data.description}: ${statusLabel}`}
+        aria-label={t("run.label", { name: data.description, status: statusLabel })}
         data-slot="run-card"
         data-variant="agent"
         className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border px-3 py-2"
@@ -269,10 +278,10 @@ export function RunCard({ data }: RunCardProps) {
           {time}
           <Link
             href={agentPath(data.agentId)}
-            aria-label={`Открыть агента «${data.description}»`}
+            aria-label={t("run.openLabel", { description: data.description })}
             className={LINK_CLASS}
           >
-            Открыть
+            {t("run.open")}
             <ArrowUpRightIcon aria-hidden className="size-3.5" />
           </Link>
         </div>
@@ -301,10 +310,11 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
   const [initialStepIds] = useState(() => new Set(data.children.map((child) => child.agentId)));
   const run = useWorkflowRun(data.agentId, data.status, data.children.length);
   const rows = runRows([...data.children].sort(byCreation), run, RUN_ENDED.has(data.status));
+  const t = useTranslations("agents");
   return (
     <div
       role="group"
-      aria-label={`${origin.name}: ${AGENT_STATUS_LABEL[data.status]}`}
+      aria-label={t("run.label", { name: origin.name, status: t(`status.${data.status}`) })}
       data-slot="run-card"
       data-variant="workflow"
       className="bg-card text-card-foreground mx-auto flex w-full max-w-(--prose-max-width) min-w-0 flex-col gap-1 rounded-lg border p-3"
@@ -336,7 +346,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
                 key={`refused-${row.executor}-${row.at}-${index}`}
                 Icon={BanIcon}
                 executor={row.executor}
-                note="предел вызовов исчерпан"
+                note={t("run.limitReached")}
                 opens={false}
               />
             ) : (
@@ -344,7 +354,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
                 key={`not-called-${row.executor}`}
                 Icon={CircleIcon}
                 executor={row.executor}
-                note="не вызывался"
+                note={t("run.notCalled")}
                 opens
               />
             ),
@@ -353,7 +363,7 @@ function WorkflowRunCard({ data, origin, time }: { data: RunCardPartData; origin
       )}
       <RerunLine origin={origin} />
       <Link href={agentPath(data.agentId)} className={cn(LINK_CLASS, "self-start")}>
-        Открыть запуск
+        {t("run.openRun")}
         <ArrowUpRightIcon aria-hidden className="size-3.5" />
       </Link>
     </div>

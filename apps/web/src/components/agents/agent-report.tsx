@@ -10,20 +10,24 @@ import { MarkdownText } from "@/components/markdown-text";
 import { useShellServices } from "@/components/shell/shell-actions";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { failureReasonText, type ErrorsTranslator } from "@/lib/agents/format";
+import { failureReasonText, type AgentsTranslator, type ErrorsTranslator } from "@/lib/agents/format";
 import { formatDuration, formatListTime } from "@/lib/i18n/formats";
 import type { ReportPartData } from "@/lib/feed/to-feed";
 import { agentPath } from "@/lib/shell-route";
 import { cn } from "@/lib/utils";
 
 /** MC-18: «Причина: …» of a failed or stopped child; a completed one has none. */
-function reasonLine(t: ErrorsTranslator, data: ReportPartData): { text: string; hint: string | null } | null {
+function reasonLine(
+  t: ErrorsTranslator,
+  tAgents: AgentsTranslator,
+  data: ReportPartData,
+): { text: string; hint: string | null } | null {
   if (data.status === "completed") return null;
   if (data.status === "stopped") {
     // The parent hears of a stop only when the child was the stopped one; a child stopped with its
     // parent reports to a stopped parent.
-    const withParent = data.reason === "stopped_with_parent";
-    return { text: `Причина: ${withParent ? "остановлен вместе с родителем" : "остановлен вами"}`, hint: null };
+    const withParent = data.reason === "stopped_with_parent" ? "yes" : "no";
+    return { text: t("reportReason", { reason: tAgents("report.stopped", { withParent }) }), hint: null };
   }
   const { text, hint } = failureReasonText(t, data.reason);
   return { text: t("reportReason", { reason: text }), hint };
@@ -37,6 +41,7 @@ function ReportCopy({ text }: { text: string }) {
   const { announcer } = useShellServices();
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const isLast = useAuiState((s) => s.message.isLast);
+  const t = useTranslations("chat");
 
   useEffect(() => {
     if (isCopied) announcer.getState().announce("announce.copied");
@@ -50,7 +55,7 @@ function ReportCopy({ text }: { text: string }) {
           "opacity-0 transition-opacity duration-(--duration-fast) group-hover/report:opacity-100 group-focus-within/report:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none",
       )}
     >
-      <TooltipIconButton tooltip="Копировать" onClick={() => copyToClipboard(text)}>
+      <TooltipIconButton tooltip={t("copy")} onClick={() => copyToClipboard(text)}>
         {isCopied ? (
           <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out motion-reduce:animate-none" />
         ) : (
@@ -70,27 +75,33 @@ export function AgentReport({ data }: { data: ReportPartData }) {
   const format = useFormatter();
   const t = useTranslations("formats");
   const tErrors = useTranslations("errors");
-  const reason = reasonLine(tErrors, data);
+  const tAgents = useTranslations("agents");
+  const reason = reasonLine(tErrors, tAgents, data);
   const notice = `${t("toolCallCount", { count: data.toolCalls })} · ${formatDuration(t, data.durationMs)} · ${formatListTime(format, data.createdAt)}`;
 
   return (
     <div className="group/report mx-auto w-full max-w-(--prose-max-width)">
       <article
-        aria-label={`Отчёт: ${data.description}`}
+        aria-label={tAgents("report.label", { description: data.description })}
         data-slot="agent-report"
         data-status={data.status}
         className="bg-card text-card-foreground rounded-lg border p-4"
       >
         <div className="flex min-w-0 items-center justify-between gap-3">
           <h2 className="flex min-w-0 text-base leading-6 font-semibold">
-            <span className="shrink-0 whitespace-pre">{"Отчёт · "}</span>
-            <Link
-              href={agentPath(data.agentId)}
-              title={data.description}
-              className="focus-visible:ring-ring min-w-0 truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
-            >
-              {data.description}
-            </Link>
+            {tAgents.rich("report.title", {
+              description: data.description,
+              prefix: (chunks) => <span className="shrink-0 whitespace-pre">{chunks}</span>,
+              link: (chunks) => (
+                <Link
+                  href={agentPath(data.agentId)}
+                  title={data.description}
+                  className="focus-visible:ring-ring min-w-0 truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2"
+                >
+                  {chunks}
+                </Link>
+              ),
+            })}
           </h2>
           <AgentStatus variant="label" status={data.status} className="shrink-0" />
         </div>
@@ -102,7 +113,7 @@ export function AgentReport({ data }: { data: ReportPartData }) {
         )}
         <div className="mt-3">
           {data.text === null ? (
-            <p className="text-muted-foreground text-sm leading-5">Отчёта нет.</p>
+            <p className="text-muted-foreground text-sm leading-5">{tAgents("report.empty")}</p>
           ) : (
             <TextMessagePartProvider text={data.text}>
               <MarkdownText />

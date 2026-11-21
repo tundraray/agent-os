@@ -18,10 +18,5 @@
   "inheritedHistoryCount": "History before the fork · {count, plural, one {# message} other {# messages}}",
   "defaultModel": "Default model",
   "defaultModelUnset": "Default model — not chosen",
-  "defaultModelNamed": "Default model · {model}",
-  "spend": {
-    "ready": "Spending for {month}: {amount}",
-    "loading": "Loading spending…",
-    "unavailable": "Spending unavailable"
-  }
+  "defaultModelNamed": "Default model · {model}"
 }

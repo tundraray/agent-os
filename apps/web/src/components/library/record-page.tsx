@@ -24,7 +24,7 @@ import { adminRecordPath, libraryPath, newRecordPath, recordPath } from "@/lib/s
 import { blankAgent } from "./agent-fields";
 import { useCopyRecord } from "./copy-record";
 import { DefinitionView } from "./definition-view";
-import { ownLaunchHint, RecordEditor, useTakenHandoff, type RecordEditorProps } from "./record-editor";
+import { RecordEditor, useTakenHandoff, type RecordEditorProps } from "./record-editor";
 import { RecordLabel } from "./record-label";
 import { useInChat } from "./use-in-chat";
 import { blankWorkflow } from "./workflow-fields";
@@ -236,7 +236,8 @@ function Hint({ children }: { children: ReactNode }) {
 function LaunchHint({ record }: { record: RecordDetail }) {
   const { libraryIndex } = useShellServices();
   const records = useStore(libraryIndex, (state) => state.records);
-  if (record.mine) return <>{ownLaunchHint(record.kind)}</>;
+  const tLibrary = useTranslations("library");
+  if (record.mine) return <>{tLibrary("editor.launchHint", { kind: record.kind })}</>;
   const namesakes = namesakesOf(record, records);
   if (namesakes.some((other) => other.mine)) return <>{TEXT.ownNamesake(record.kind)}</>;
   if (namesakes.length > 0) return <>{TEXT.severalNamesakes}</>;
