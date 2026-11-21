@@ -940,7 +940,7 @@ describe('enterprise-access / admin - web integration (jsdom + MSW)', () => {
     confirm = await screen.findByRole('alertdialog', { name: 'Удалить роль «Дежурный»?' });
     expect(within(confirm).getByText('Сотрудники роли сразу потеряют её права.')).toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
-    expect(await within(confirm).findByText('Не удалось сохранить: The built-in role cannot be changed')).toBeInTheDocument();
+    expect(await within(confirm).findByRole('alert')).toHaveTextContent('Не удалось сохранить: The built-in role cannot be changed');
     await expectSent(api, mark, [{ method: 'DELETE', path: `/api/admin/roles/${DUTY}`, body: null }], `/api/admin/roles/${DUTY}`);
     mark = api.requests.length;
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
