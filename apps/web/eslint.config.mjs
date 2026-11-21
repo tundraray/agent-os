@@ -18,6 +18,33 @@ const eslintConfig = defineConfig([
     ],
     rules: { "@next/next/no-img-element": "off" },
   },
+  {
+    // Interface text lives in the message catalogues (src/messages, not linted);
+    // Russian text or the 'ru-RU' locale in code means a phrase escaped them.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value=/[А-Яа-яЁё]/]",
+          message: "Interface text belongs in the message catalogue (src/messages).",
+        },
+        {
+          selector: "TemplateElement[value.raw=/[А-Яа-яЁё]/]",
+          message: "Interface text belongs in the message catalogue (src/messages).",
+        },
+        {
+          selector: "JSXText[value=/[А-Яа-яЁё]/]",
+          message: "Interface text belongs in the message catalogue (src/messages).",
+        },
+        {
+          selector: "Literal[value='ru-RU']",
+          message: "Take the locale from useLocale() or useFormatter(), not 'ru-RU'.",
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

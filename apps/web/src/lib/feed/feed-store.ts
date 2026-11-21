@@ -105,7 +105,12 @@ function decisionAnnouncement(view: FeedView, opened: readonly Confirmation[]): 
   const byChat = view.kind === "thread" && decision.agentId === view.chat.rootAgentId;
   return {
     key: "announce.decisionRequested",
-    values: { who: byChat ? "chat" : "agent", agent: decision.description, tool: decision.tool },
+    values: {
+      who: byChat ? "chat" : "agent",
+      agent: decision.description,
+      // Only a call without a server is a built-in tool's; an MCP tool reads by its name.
+      tool: decision.server === null ? { builtinTool: decision.tool } : decision.tool,
+    },
   };
 }
 

@@ -341,6 +341,15 @@ export type AdminFormProps<Values extends Record<string, unknown>> = {
 };
 
 /**
+ * A field error as the form keeps it: a rule's key is translated when shown, so a language switch while it is
+ * visible changes it too; a server refusal arrives as text.
+ */
+type ShownFieldError = { rule: FieldRuleKey } | { text: string };
+
+const shownErrorText = (t: ErrorsTranslator, shown: ShownFieldError | undefined): string | undefined =>
+  shown === undefined ? undefined : "rule" in shown ? fieldErrorText(t, shown.rule) : shown.text;
+
+/**
  * KD-5: the panel's form. Checks on submit and sends nothing with field errors (focus on the first one in
  * order); disables itself while saving, so a second press sends nothing; shows a refusal at its field or
  * above the actions, keeping what was typed.
@@ -365,7 +374,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
   const tErrors = useTranslations("errors");
   const idPrefix = useId();
   const [values, setValues] = useState(initialValues);
-  const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<string, ShownFieldError>>>({});
   const [formError, setFormError] = useState<ReactNode>(null);
   const toastText = savedText === undefined ? (variant === "page" ? t("saved") : null) : savedText;
   const [saving, setSaving] = useState(false);
@@ -380,7 +389,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
     formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [fieldErrorsShown]);
 
-  const showFieldErrors = (shown: Partial<Record<string, string>>): void => {
+  const showFieldErrors = (shown: Partial<Record<string, ShownFieldError>>): void => {
     setErrors(shown);
     setFieldErrorsShown((count) => count + 1);
   };
@@ -390,7 +399,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
     if (savingRef.current || hasChange?.(values) === false) return;
     setFormError(null);
     const checked = validate(values);
-    const shown = Object.entries(checked).flatMap(([field, key]) => (key === undefined ? [] : [[field, fieldErrorText(tErrors, key)]]));
+    const shown = Object.entries(checked).flatMap(([field, rule]) => (rule === undefined ? [] : [[field, { rule }]]));
     if (shown.length > 0) {
       showFieldErrors(Object.fromEntries(shown));
       return;
@@ -410,7 +419,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
     } catch (cause) {
       const refusal = describeRefusal(tErrors, cause, { logEvent, context: typeof errorContext === "function" ? errorContext(values) : errorContext });
       if (refusal === null) return;
-      if (refusal.target !== "form" && refusal.target in values) showFieldErrors({ [refusal.target]: refusal.text });
+      if (refusal.target !== "form" && refusal.target in values) showFieldErrors({ [refusal.target]: { text: refusal.text } });
       else setFormError(refusal.text);
     } finally {
       savingRef.current = false;
@@ -425,7 +434,7 @@ export function AdminForm<Values extends Record<string, unknown>>({
       setErrors((shown) => ({ ...shown, [name]: undefined }));
     },
     clearError: (key) => setErrors((shown) => ({ ...shown, [key]: undefined })),
-    field: (key) => ({ id: `${idPrefix}-${key}`, error: errors[key] }),
+    field: (key) => ({ id: `${idPrefix}-${key}`, error: shownErrorText(tErrors, errors[key]) }),
     saving,
   };
 
