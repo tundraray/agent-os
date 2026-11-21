@@ -86,9 +86,15 @@ const SHAPED_TOOLS: readonly ShapedTool[] = [
       'Each ticket has id, title, team, assignee, status, createdAt and closedAt (null while open). ' +
       'Returns up to pageSize tickets in creation order; pass nextCursor back as cursor for the next page.',
     shapeFragments: [
-      '{ snapshot: string, tickets: { id: string, title: string, ',
-      'status: "open" | "closed", createdAt: string, closedAt: string | null }[], ',
-      'totalMatched: integer, totalRelation: "eq", nextCursor: string | null }',
+      'snapshot: string',
+      'tickets: { ',
+      'id: string',
+      'status: "open" | "closed"',
+      'closedAt: string | null',
+      '}[]',
+      'totalMatched: integer',
+      'totalRelation: "eq"',
+      'nextCursor: string | null',
     ],
   },
   {
@@ -98,8 +104,15 @@ const SHAPED_TOOLS: readonly ShapedTool[] = [
       'Search back-office orders created in [from, to) with optional status (paid, failed) and paymentMethod filters. ' +
       'Returns up to pageSize orders in time order; pass nextCursor back as cursor for the next page.',
     shapeFragments: [
-      '{ snapshot: string, orders: { orderId: string, createdAt: string, amount: number, currency: "EUR", ',
-      'totalMatched: integer, totalRelation: "eq", nextCursor: string | null }',
+      'snapshot: string',
+      'orders: { ',
+      'orderId: string',
+      'amount: number',
+      'currency: "EUR"',
+      '}[]',
+      'totalMatched: integer',
+      'totalRelation: "eq"',
+      'nextCursor: string | null',
     ],
   },
   {
@@ -109,17 +122,21 @@ const SHAPED_TOOLS: readonly ShapedTool[] = [
       'Get one back-office order (orderId: ord- and 8 lowercase hex characters) with its payments, ' +
       'each with its status, failure reason and the traceId of its payment logs.',
     shapeFragments: [
-      '{ snapshot: string, order: { orderId: string, ',
-      'payments: { paymentId: string, traceId: string, ',
-      'failureReason: "provider_timeout" | null, ',
-      '}[] } | null }',
+      'snapshot: string',
+      'order: { ',
+      'orderId: string',
+      'payments: { ',
+      'traceId: string',
+      'failureReason: "provider_timeout" | null',
+      '}[]',
+      '} | null',
     ],
   },
   {
     server: LOGS_SERVER,
     tool: 'get_trace',
     description: 'Get every log record of one trace (traceId: 32 lowercase hex characters) in time order.',
-    shapeFragments: ['{ snapshot: string, records: { ts: string, ', 'traceId: string, ', '}[], totalMatched: integer }'],
+    shapeFragments: ['snapshot: string', 'records: { ', 'ts: string', 'traceId: string', '}[]', 'totalMatched: integer'],
   },
 ];
 
