@@ -306,5 +306,57 @@
       "loadFailed": "Couldn't load the model catalog",
       "removed": "Model removed from the catalog"
     }
+  },
+  "library": {
+    "tabs": {
+      "system": "System",
+      "shared": "Shared with roles",
+      "bans": "Blocks"
+    },
+    "record": "Agent or workflow",
+    "kind": "Type",
+    "audience": "Seen by",
+    "version": "Version",
+    "author": "Author",
+    "roles": "Roles",
+    "inChat": "In roles' chat",
+    "closedAt": "Access closed",
+    "yes": "yes",
+    "no": "no",
+    "builtin": "built-in",
+    "disabled": "disabled",
+    "everyone": "all employees",
+    "everyoneWithRights": "everyone with permissions",
+    "search": "Find by name or author",
+    "delete": "Delete",
+    "liftBan": "Lift block",
+    "banLifted": "Block lifted: the author can share again",
+    "sharedEmpty": "Employees haven't shared anything with roles yet",
+    "bansEmpty": "No blocks",
+    "loadFailed": "Couldn't load",
+    "noMatches": "Nothing found",
+    "rolesLine": "<label>Roles:</label> {roles}",
+    "close": "Close access",
+    "closeTitle": "Close access to “{name}”?",
+    "closeBody": "The {kind, select, agent {agent} other {workflow}} becomes private to its author, {author}: the roles {roles} will no longer see it. The author can't share it again until you lift the block. Runs already in progress will finish.",
+    "closed": "Access closed",
+    "settings": {
+      "title": "New record settings",
+      "defaultMaxTurns": "Step limit for a new record",
+      "hint": "This number fills in “Maximum steps” of a new agent or workflow. Each record can change it; records already created stay as they are.",
+      "save": "Save",
+      "saved": "Step limit saved",
+      "loadFailed": "Couldn't load the settings"
+    },
+    "knowledge": {
+      "title": "Workflow self-learning",
+      "limitTokens": "Room for knowledge in a run, tokens",
+      "limitTokensHint": "How much knowledge each step of a run gets: up to half goes to the records closest in meaning to the question, the rest to the most confirmed ones.",
+      "lessonsEnabled": "Give lessons to runs",
+      "lessonsEnabledHint": "Turn this off if lessons don't shorten the search. Lessons stay in each workflow's knowledge, and runs get facts and “searched — found nothing” as usual.",
+      "save": "Save",
+      "saved": "Self-learning settings saved",
+      "loadFailed": "Couldn't load the settings"
+    }
   }
 }

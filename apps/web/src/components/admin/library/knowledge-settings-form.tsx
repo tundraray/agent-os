@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { useTranslations } from 'next-intl';
 import type { KnowledgeSettings } from '@agent-os/contracts';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
@@ -10,20 +11,6 @@ import { knowledgeSettingsRules, parseDecimal } from '@/lib/admin/form-rules';
 import { cn } from '@/lib/utils';
 import { AdminForm, AdminTextField, CAPTION } from '../admin-form';
 import { DataTable, resourceTableState } from '../data-table';
-
-/** self-learning UXRD MC-8. */
-const TEXT = {
-  title: 'Самообучение workflow',
-  limitTokens: 'Место для знаний в запуске, токенов',
-  limitTokensHint:
-    'Сколько знаний получает каждый шаг запуска: до половины — записи, ближайшие по смыслу к вопросу, остальное — самые подтверждённые.',
-  lessonsEnabled: 'Давать запускам уроки',
-  lessonsEnabledHint:
-    'Выключите, если уроки не сокращают поиск. Уроки останутся в знаниях каждого workflow, а факты и «искал — не нашёл» запуски получают как обычно.',
-  save: 'Сохранить',
-  saved: 'Настройки самообучения сохранены',
-  loadFailed: 'Не удалось загрузить настройки',
-} as const;
 
 type KnowledgeSettingsValues = { limitTokens: string; lessonsEnabled: boolean };
 
@@ -41,6 +28,7 @@ async function save({ limitTokens, lessonsEnabled }: KnowledgeSettingsValues): P
 
 /** AS-01 under «Системные»: the place for knowledge in a run and the lessons switch, one «Сохранить» for both. */
 export function KnowledgeSettingsForm() {
+  const t = useTranslations('admin.library.knowledge');
   const headingId = useId();
   const lessonsId = useId();
   const lessonsHintId = `${lessonsId}-hint`;
@@ -50,10 +38,10 @@ export function KnowledgeSettingsForm() {
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} className="text-base leading-6 font-semibold">
-        {TEXT.title}
+        {t('title')}
       </h2>
       {data === undefined ? (
-        <DataTable caption={TEXT.title} columns={[]} state={resourceTableState(settings, TEXT.loadFailed)} />
+        <DataTable caption={t('title')} columns={[]} state={resourceTableState(settings, t('loadFailed'))} />
       ) : (
         // Every save moves `updatedAt`: the new read starts the form from the values the server now holds.
         <AdminForm<KnowledgeSettingsValues>
@@ -66,8 +54,8 @@ export function KnowledgeSettingsForm() {
             return values.limitTokens !== saved.limitTokens || values.lessonsEnabled !== saved.lessonsEnabled;
           }}
           onSubmit={save}
-          submitLabel={TEXT.save}
-          savedText={TEXT.saved}
+          submitLabel={t('save')}
+          savedText={t('saved')}
           onSaved={settings.reload}
           logEvent="admin: knowledge settings"
         >
@@ -75,8 +63,8 @@ export function KnowledgeSettingsForm() {
             <>
               <AdminTextField
                 {...form.field('limitTokens')}
-                label={TEXT.limitTokens}
-                hint={TEXT.limitTokensHint}
+                label={t('limitTokens')}
+                hint={t('limitTokensHint')}
                 inputMode="numeric"
                 inputClassName="w-24"
                 value={form.values.limitTokens}
@@ -93,11 +81,11 @@ export function KnowledgeSettingsForm() {
                     onCheckedChange={(checked) => form.set('lessonsEnabled', checked)}
                   />
                   <FieldLabel htmlFor={lessonsId} className="text-data font-normal text-foreground">
-                    {TEXT.lessonsEnabled}
+                    {t('lessonsEnabled')}
                   </FieldLabel>
                 </Field>
                 <FieldDescription id={lessonsHintId} className={cn(CAPTION, 'pl-6 text-muted-foreground')}>
-                  {TEXT.lessonsEnabledHint}
+                  {t('lessonsEnabledHint')}
                 </FieldDescription>
               </div>
             </>

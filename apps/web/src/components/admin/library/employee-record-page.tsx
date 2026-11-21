@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import type { RecordDetail, RecordKind, RecordSummary } from '@agent-os/contracts';
+import type { RecordDetail, RecordSummary } from '@agent-os/contracts';
 import { CONTROL_SIZE } from '@/components/admin/admin-form';
 import { useAdminTitles } from '@/components/admin/admin-header';
 import { ConfirmDialog } from '@/components/admin/confirm-dialog';
@@ -13,21 +13,14 @@ import { KnowledgeButton } from '@/components/library/editor-header';
 import { RecordLabel } from '@/components/library/record-label';
 import { PageHeader } from '@/components/shell/page-header';
 import { useShellServices } from '@/components/shell/shell-actions';
+import { roleName } from '@/components/admin/users/user-list';
 import { Button } from '@/components/ui/button';
 import { adminApi } from '@/lib/admin/admin-api';
-import { describeLibraryError, kindWord } from '@/lib/library/library-errors';
+import { builtinName } from '@/lib/i18n/builtin-name';
+import type { Locale } from '@/lib/i18n/pick-locale';
+import { describeLibraryError } from '@/lib/library/library-errors';
 import { recordAction } from '@/lib/library/record-action';
 import { adminLibraryTabPath, adminRecordPath } from '@/lib/shell-route';
-
-/** UXRD MC-18. */
-const TEXT = {
-  close: 'Закрыть доступ',
-  closeTitle: (name: string) => `Закрыть доступ к «${name}»?`,
-  closeBody: (kind: RecordKind, author: string, roles: string) =>
-    `${kindWord(kind, true)} станет личным у автора, ${author}: роли ${roles} перестанут его видеть. Поделиться им снова автор не сможет, пока вы не снимете запрет. Запуски, которые уже идут, доработают.`,
-  closed: 'Доступ закрыт',
-  roles: 'Роли',
-} as const;
 
 const EMPTY_VALUE = '—';
 
@@ -39,8 +32,9 @@ export type ClosableRecord = Pick<RecordSummary, 'id' | 'kind' | 'name' | 'audie
   author: NonNullable<RecordSummary['author']>;
 };
 
-const rolesOf = (record: Pick<RecordSummary, 'audience'>): string =>
-  record.audience.roles.map((role) => role.name).join(', ');
+/** The roles a record is open to, in the page's language (KD-6). */
+const rolesOf = (record: Pick<RecordSummary, 'audience'>, locale: Locale): string =>
+  record.audience.roles.map((role) => roleName(role.name, locale)).join(', ');
 
 type CloseAccessDialogProps = {
   record: ClosableRecord;
@@ -57,6 +51,8 @@ type CloseAccessDialogProps = {
  */
 export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: CloseAccessDialogProps) {
   const t = useTranslations('errors');
+  const tLibrary = useTranslations('admin.library');
+  const locale = useLocale();
   const { libraryIndex } = useShellServices();
 
   async function close(): Promise<void> {
@@ -64,7 +60,7 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
       adminApi.library.close(record.id),
     );
     void libraryIndex.refresh();
-    toast.success(TEXT.closed);
+    toast.success(tLibrary('closed'));
     onClosed();
   }
 
@@ -72,9 +68,9 @@ export function CloseAccessDialog({ record, open, onOpenChange, onClosed }: Clos
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={TEXT.closeTitle(record.name)}
-      body={TEXT.closeBody(record.kind, record.author.name, rolesOf(record))}
-      confirmLabel={TEXT.close}
+      title={tLibrary('closeTitle', { name: record.name })}
+      body={tLibrary('closeBody', { kind: record.kind, author: record.author.name, roles: rolesOf(record, locale) })}
+      confirmLabel={tLibrary('close')}
       onConfirm={close}
       // `recordAction` has logged the refusal.
       refusalText={(cause) => describeLibraryError(t, cause, { where: 'panel', kind: record.kind }).text}
@@ -91,19 +87,21 @@ type EmployeeRecordPageProps = { record: RecordDetail };
  * Other employees' text is rendered as text only. A company record (no author) has nothing to close.
  */
 export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
+  const t = useTranslations('admin.library');
+  const locale = useLocale();
   const titles = useAdminTitles();
   const router = useRouter();
   const [closing, setClosing] = useState(false);
-  const roles = rolesOf(record);
+  const roles = rolesOf(record, locale);
   const author = record.author;
 
   return (
     <>
-      <PageHeader area={titles.panel} title={record.name} parent={titles.parent('library')}>
+      <PageHeader area={titles.panel} title={builtinName(record, locale)} parent={titles.parent('library')}>
         <KnowledgeButton record={record} />
         {author !== null && (
           <Button variant="outline" size="sm" className={CONTROL_SIZE} onClick={() => setClosing(true)}>
-            {TEXT.close}
+            {t('close')}
           </Button>
         )}
       </PageHeader>
@@ -111,8 +109,10 @@ export function EmployeeRecordPage({ record }: EmployeeRecordPageProps) {
         <div className="flex flex-col gap-1">
           <RecordLabel variant="under" summary={record} href={panelRecordHref(record.id)} />
           <p className="text-data text-foreground">
-            <span className="text-muted-foreground">{TEXT.roles}: </span>
-            {roles === '' ? EMPTY_VALUE : roles}
+            {t.rich('rolesLine', {
+              roles: roles === '' ? EMPTY_VALUE : roles,
+              label: (chunks) => <span className="text-muted-foreground">{chunks}</span>,
+            })}
           </p>
         </div>
         <DefinitionView

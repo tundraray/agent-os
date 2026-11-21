@@ -21,12 +21,6 @@ import { isApiRequestError, type ApiRequestError } from '@/lib/api/api-request';
  * function takes the `errors` messages, and a text that quotes the server is a node with its language mark.
  */
 
-/** «агент» / «workflow», or with a capital letter at the start of a sentence. */
-export function kindWord(kind: RecordKind, capital = false): string {
-  const word = kind === 'agent' ? 'агент' : 'workflow';
-  return capital ? word.charAt(0).toUpperCase() + word.slice(1) : word;
-}
-
 /** MC-14: why «Поделиться» is unavailable on the owner's record; `null` — it is available. */
 export function shareBlockedReason(t: ErrorsTranslator, record: Pick<RecordSummary, 'ban'>, noRoles: boolean): string | null {
   if (record.ban !== null) return t('library.shareBlocked.banned');

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import type { RecordDetail, RecordKind } from '@agent-os/contracts';
 import { RecordPlaceholder } from '@/components/admin/admin-header';
 import { blankAgent } from '@/components/library/agent-fields';
@@ -9,9 +10,6 @@ import { useResource } from '@/hooks/use-resource';
 import { adminApi } from '@/lib/admin/admin-api';
 import { modelUnavailableReason } from '@/lib/admin/model-providers';
 import { libraryApi } from '@/lib/library/library-api';
-
-// Not in MC-18, which names the failed read «Не удалось загрузить» + «Повторить».
-const LOAD_FAILED = 'Не удалось загрузить';
 
 /** `/admin/library/<id>` of a company record (no author): AL-02, the editor in mode `system`. */
 export function SystemRecordPage({ record, handoff }: { record: RecordDetail; handoff: RecordEditorProps['handoff'] }) {
@@ -37,6 +35,7 @@ function SystemEditor({
   start: { saved: RecordDetail } | { newKind: RecordKind };
   handoff: RecordEditorProps['handoff'];
 }) {
+  const t = useTranslations('admin.library');
   const choices = useResource(libraryApi.choices, 'choices', 'library');
   const servers = useResource(adminApi.servers.list, 'servers', 'library');
   const models = useResource(adminApi.models.list, 'models', 'library');
@@ -45,7 +44,7 @@ function SystemEditor({
 
   if (choices.data === undefined || servers.data === undefined) {
     const waiting = choices.data === undefined ? choices : servers;
-    return <RecordPlaceholder section="library" resource={waiting} loadFailed={LOAD_FAILED} />;
+    return <RecordPlaceholder section="library" resource={waiting} loadFailed={t('loadFailed')} />;
   }
   const source: RecordEditorSource =
     'saved' in start
