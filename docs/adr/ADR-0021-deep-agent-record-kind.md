@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Дополняет [ADR-0016](ADR-0016-library-records-and-visibility.md) и [ADR-0017](ADR-0017-run-snapshots-from-library.md), не заменяя их; [ADR-0004](ADR-0004-agent-framework-packages.md) не меняет.
+Accepted (2026-11-22). Дополняет [ADR-0016](ADR-0016-library-records-and-visibility.md) и [ADR-0017](ADR-0017-run-snapshots-from-library.md), не заменяя их; [ADR-0004](ADR-0004-agent-framework-packages.md) не меняет.
 
 ## Decision
 
