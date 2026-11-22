@@ -1180,7 +1180,7 @@ export const agentKnowledgeRelations = app.table(
 
 /**
  * A run that learns (KD-2, KD-3): written with the coordinator session; deleting the conversation
- * deletes it. The deep agent has no FK here: the row only answers «which workflow».
+ * deletes it. The deep agent has no FK here: the row only answers «which deep agent».
  */
 export const agentKnowledgeRuns = app.table(
   'agent_knowledge_runs',
