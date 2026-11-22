@@ -3,16 +3,16 @@ import {
   Delete,
   Get,
   HttpCode,
-  HttpException,
   Inject,
   Param,
   Req,
 } from '@nestjs/common';
 import type { Agents } from '@agent-os/agents';
-import type { Logger, LogFields } from '@agent-os/common';
+import type { Logger } from '@agent-os/common';
 import type { KnowledgeView } from '@agent-os/contracts';
 import { AGENTS } from '../agents/agents.tokens';
 import { AuditLog } from '../audit/audit-log.repository';
+import { loggedRoute } from '../common/logged-route';
 import type { AuthedRequest } from '../identity/auth-user';
 import { LibraryService } from '../library/library.service';
 import { APP_LOGGER } from '../logging/app-logger';
@@ -30,56 +30,6 @@ function itemIdOf(raw: string): number | null {
   if (!/^[1-9]\d{0,9}$/.test(raw)) return null;
   const id = Number(raw);
   return id <= MAX_ITEM_ID ? id : null;
-}
-
-/**
- * Runs one route and logs it once (design-core.md, Logging «Маршруты»): the route, the
- * caller's fields, the outcome (`ok`, or the status and `errorCode` of a refusal), `durationMs`. The
- * fields carry ids and counts only, never the text of a graph entry.
- */
-export async function loggedRoute<T>(
-  logger: Logger,
-  route: string,
-  fields: LogFields,
-  work: () => Promise<T>,
-  outcomeOf: (result: T) => LogFields = () => ({}),
-): Promise<T> {
-  const startedAt = Date.now();
-  try {
-    const result = await work();
-    logger.info('route answered', {
-      route,
-      ...fields,
-      outcome: 'ok',
-      ...outcomeOf(result),
-      durationMs: Date.now() - startedAt,
-    });
-    return result;
-  } catch (error) {
-    if (error instanceof HttpException && error.getStatus() < 500) {
-      const body = error.getResponse();
-      logger.info('route refused', {
-        route,
-        ...fields,
-        outcome: 'refused',
-        status: error.getStatus(),
-        errorCode:
-          typeof body === 'object' && 'errorCode' in body
-            ? body.errorCode
-            : undefined,
-        durationMs: Date.now() - startedAt,
-      });
-    } else {
-      logger.error('route failed', {
-        route,
-        ...fields,
-        outcome: 'error',
-        durationMs: Date.now() - startedAt,
-        error,
-      });
-    }
-    throw error;
-  }
 }
 
 /**
@@ -109,16 +59,15 @@ export class KnowledgeController {
     @Param('id') id: string,
     @Req() req: AuthedRequest,
   ): Promise<KnowledgeView> {
-    return loggedRoute(
-      this.logger,
-      'GET /library/:id/knowledge',
-      { actorId: req.user.id, recordId: id },
-      async () =>
+    return loggedRoute(this.logger, {
+      route: 'GET /library/:id/knowledge',
+      fields: { actorId: req.user.id, recordId: id },
+      work: async () =>
         this.agents.knowledge.view(
           await this.library.knowledgeTarget(req.user, id),
         ),
-      (view) => ({ items: view.items.length }),
-    );
+      outcomeOf: (view) => ({ items: view.items.length }),
+    });
   }
 
   /** 204, also when the entity is not there; its fact relations go with it. 404, 403. */
@@ -130,11 +79,15 @@ export class KnowledgeController {
     @Req() req: AuthedRequest,
   ): Promise<void> {
     const actor = req.user.id;
-    return loggedRoute(
-      this.logger,
-      'DELETE /library/:id/knowledge/entities/:entityId',
-      { actorId: actor, recordId: id, itemType: 'entity', itemId: rawEntityId },
-      async () => {
+    return loggedRoute(this.logger, {
+      route: 'DELETE /library/:id/knowledge/entities/:entityId',
+      fields: {
+        actorId: actor,
+        recordId: id,
+        itemType: 'entity',
+        itemId: rawEntityId,
+      },
+      work: async () => {
         const { recordId } = await this.library.knowledgeTarget(req.user, id);
         const entityId = itemIdOf(rawEntityId);
         if (entityId === null) return { deleted: false, relations: 0 };
@@ -150,11 +103,11 @@ export class KnowledgeController {
           });
         return deletion;
       },
-      (deletion) => ({
+      outcomeOf: (deletion) => ({
         deleted: deletion.deleted,
         relations: deletion.relations,
       }),
-    ).then(() => undefined);
+    }).then(() => undefined);
   }
 
   /** 204, also when the relation, lesson or «searched — found nothing» is not there. 404, 403. */
@@ -166,16 +119,15 @@ export class KnowledgeController {
     @Req() req: AuthedRequest,
   ): Promise<void> {
     const actor = req.user.id;
-    return loggedRoute(
-      this.logger,
-      'DELETE /library/:id/knowledge/relations/:relationId',
-      {
+    return loggedRoute(this.logger, {
+      route: 'DELETE /library/:id/knowledge/relations/:relationId',
+      fields: {
         actorId: actor,
         recordId: id,
         itemType: 'relation',
         itemId: rawRelationId,
       },
-      async () => {
+      work: async () => {
         const { recordId } = await this.library.knowledgeTarget(req.user, id);
         const relationId = itemIdOf(rawRelationId);
         if (relationId === null) return { deleted: false };
@@ -190,8 +142,8 @@ export class KnowledgeController {
           });
         return deletion;
       },
-      (deletion) => ({ deleted: deletion.deleted }),
-    ).then(() => undefined);
+      outcomeOf: (deletion) => ({ deleted: deletion.deleted }),
+    }).then(() => undefined);
   }
 
   /** The audit of a delete: the record, the entry's kind and id — not its text (KD-7, UC-5 PRD). */

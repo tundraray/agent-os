@@ -24,7 +24,7 @@ import { libraryError } from '../library/library.errors';
 import { LibraryService } from '../library/library.service';
 import { RUNTIME } from '../runtime/runtime.tokens';
 import { chatStatus } from './chat-status';
-import { httpError, threadNotFound } from './chat.errors';
+import { threadNotFound } from './chat.errors';
 import {
   focusOf,
   nextAfterSeqOf,
@@ -33,28 +33,12 @@ import {
   toHistoryEntry,
   toPending,
 } from './conversation-view';
-import { decodeThreadCursor, encodeThreadCursor, type ThreadCursor } from './thread-cursor';
+import { encodeThreadCursor } from './thread-cursor';
+import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { TitleService } from './title.service';
 
 /** The root's description: the first characters of the first message (code points, never half a pair). */
 const ROOT_DESCRIPTION_LENGTH = 80;
-
-/** A cursor of a previous page; a well-formed cursor must still name a row id (`INVALID_CURSOR`). */
-export function decodeRowCursor(cursor: string): ThreadCursor {
-  const position = decodeThreadCursor(cursor);
-  if (!isUuid(position.i)) throw httpError('INVALID_CURSOR');
-  return position;
-}
-
-/** A root session as the API shows it: its id is the conversation's, an empty title is `null` («Новая беседа»). */
-export function toThreadSummary(root: RootSession): ThreadSummary {
-  return {
-    id: root.rootId,
-    title: root.title === '' ? null : root.title,
-    createdAt: root.createdAt.toISOString(),
-    updatedAt: root.updatedAt.toISOString(),
-  };
-}
 
 /**
  * Conversations over agents (design-chat.md, Flows 1, 2, 6): a conversation is the root session of the

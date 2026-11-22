@@ -92,6 +92,19 @@ export async function existingRoleIds(
   return rows.map((row) => row.id);
 }
 
+/** Id and name of the roles named, by name. */
+export async function roleNames(
+  executor: Executor,
+  roleIds: string[],
+): Promise<{ id: string; name: string }[]> {
+  if (roleIds.length === 0) return [];
+  return executor
+    .select({ id: identityRoles.id, name: identityRoles.name })
+    .from(identityRoles)
+    .where(inArray(identityRoles.id, roleIds))
+    .orderBy(asc(identityRoles.name));
+}
+
 /** The employees of the role by name, then id. */
 export async function roleMembers(
   executor: Executor,

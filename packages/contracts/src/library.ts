@@ -98,6 +98,25 @@ export type RecordKind = z.infer<typeof RecordKindSchema>;
 export const RecordToolSchema = z.enum(['start_agent', 'message_agent', 'list_agents', 'stop_agent']);
 export type RecordTool = z.infer<typeof RecordToolSchema>;
 
+/** The names of the two start tools, as the API registers them and the web recognises them in a feed. */
+export const START_AGENT_TOOL = RecordToolSchema.enum.start_agent;
+export const START_DEEP_AGENT_TOOL = 'start_deep_agent';
+
+/** The names of the record tools of the main chat (deep-agents design-agent-types.md, «Инструменты записей»). */
+export const LIST_RECORDS_TOOL = 'list_records';
+export const READ_RECORD_TOOL = 'read_record';
+export const CREATE_RECORD_TOOL = 'create_record';
+export const EDIT_RECORD_TOOL = 'edit_record';
+export const DELETE_RECORD_TOOL = 'delete_record';
+export const ChatRecordToolSchema = z.enum([
+  LIST_RECORDS_TOOL,
+  READ_RECORD_TOOL,
+  CREATE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+]);
+export type ChatRecordTool = z.infer<typeof ChatRecordToolSchema>;
+
 /** The id of a record, role or user. */
 export const IdSchema = z.uuid();
 const IsoDateSchema = z.iso.datetime();

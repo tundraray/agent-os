@@ -12,10 +12,10 @@ export default (defaults, rspack) => ({
   // Every entry lands flat in `dist/`: the bundled packages find `./migrations` and `./executor/` next to themselves.
   entry: {
     main: './src/main.ts',
-    'migrate-cli': './src/runtime/migrate-cli.ts',
-    'super-admin-cli': './src/identity/super-admin-cli.ts',
-    'seed-mcp-cli': './src/agents/seed-mcp-cli.ts',
-    'seed-access-cli': './src/access/seed-access-cli.ts',
+    'migrate-cli': './src/cli/migrate-cli.ts',
+    'super-admin-cli': './src/cli/super-admin-cli.ts',
+    'seed-mcp-cli': './src/cli/seed-mcp-cli.ts',
+    'seed-access-cli': './src/cli/seed-access-cli.ts',
     // The code executor is its own process: one plain file in its own directory, the only one it may read.
     'executor/executor-main': path.join(packages, 'code-runner/src/executor/executor-main.ts'),
   },

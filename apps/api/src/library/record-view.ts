@@ -10,7 +10,7 @@ import {
   type RecordSummary,
   type ResolvedRecord,
 } from '@agent-os/contracts';
-import type { BannedRecordRow, LibraryRecord } from './library.repository';
+import type { BannedRecordRow, LibraryRecord } from './library.types';
 import { contentParts } from './record-content';
 
 /**

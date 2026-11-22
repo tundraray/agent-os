@@ -8,6 +8,9 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "test:e2e": "pnpm --filter api build && pnpm -r --workspace-concurrency=1 --if-present test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "knip": "knip",
     "check": "turbo lint typecheck build test && knip",
     "db:up": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d postgres",
@@ -27,6 +30,7 @@
     "@commitlint/config-conventional": "^21.2.4",
     "husky": "^9.1.7",
     "knip": "^6.47.0",
+    "prettier": "^3.10.1",
     "turbo": "^2.11.13",
     "typescript": "^6.0.3"
   },

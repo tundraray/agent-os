@@ -7,13 +7,16 @@
     "apps/web/src/components/{file,image,media-player,surfaces}.tsx": ["exports", "types"]
   },
   "workspaces": {
+    ".": {
+      "ignoreUnresolved": ["vitest/globals"]
+    },
     "apps/api": {
       "entry": [
         "src/main.ts",
-        "src/runtime/migrate-cli.ts",
-        "src/identity/super-admin-cli.ts",
-        "src/agents/seed-mcp-cli.ts",
-        "src/access/seed-access-cli.ts",
+        "src/cli/migrate-cli.ts",
+        "src/cli/super-admin-cli.ts",
+        "src/cli/seed-mcp-cli.ts",
+        "src/cli/seed-access-cli.ts",
         "test/verify/**/*.verify.ts",
         "rspack.config.js"
       ],

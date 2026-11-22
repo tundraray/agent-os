@@ -1,12 +1,19 @@
 import {
   AGENTS_BRIEF_CONFIRMATION,
+  ChatRecordToolSchema,
+  CREATE_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
   LIBRARY_RECORD_CONFIRMATION,
   LibraryRecordCardSchema,
+  START_AGENT_TOOL,
+  START_DEEP_AGENT_TOOL,
   type AgentNode,
   type AgentPageView,
   type AgentStatus,
   type AgentView,
   type AnswerToolCall,
+  type ChatRecordTool,
   type ChatStatus,
   type ChipRecord,
   type Confirmation,
@@ -156,15 +163,16 @@ export type DecisionPartData = {
 /** The end of a record card's call: a success, or a refusal with the platform's text (KD-4). */
 export type RecordSave = { outcome: ToolOutcome; text: string | null };
 
-/** The chat's record tools (deep-agents design-agent-types.md, «Инструменты записей»). */
-const RECORD_TOOLS = ["list_records", "read_record", "create_record", "edit_record", "delete_record"] as const;
-export type RecordTool = (typeof RECORD_TOOLS)[number];
-
 /** The record tools that change a record: their refusal reads «Не сохранено:» and the platform's text (KD-4). */
-export const RECORD_CHANGE_TOOLS: ReadonlySet<string> = new Set<RecordTool>(["create_record", "edit_record", "delete_record"]);
+export const RECORD_CHANGE_TOOLS: ReadonlySet<string> = new Set<ChatRecordTool>([
+  CREATE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+]);
 
-export function isRecordTool(toolName: string): toolName is RecordTool {
-  return RECORD_TOOLS.some((tool) => tool === toolName);
+/** One of the chat's record tools (deep-agents design-agent-types.md, «Инструменты записей»). */
+export function isRecordTool(toolName: string): toolName is ChatRecordTool {
+  return ChatRecordToolSchema.safeParse(toolName).success;
 }
 
 /** The content of a `library.record` card; null for any other decision and for content outside the contract. */
@@ -230,7 +238,7 @@ type ToolCallLikePart = Extract<LikePart, { type: "tool-call" }>;
 type JsonObject = NonNullable<ToolCallLikePart["args"]>;
 
 /** Calls another feed piece already shows: a start — the run card or the brief card (MC-23). Only other outcomes draw a block. */
-const SHOWN_ELSEWHERE = new Set(["start_agent", "start_deep_agent"]);
+const SHOWN_ELSEWHERE = new Set<string>([START_AGENT_TOOL, START_DEEP_AGENT_TOOL]);
 const HIDDEN_OUTCOMES = new Set<ToolOutcome>(["success", "rejected"]);
 const ERROR_OUTCOMES = new Set<ToolOutcome>([
   "tool_error",

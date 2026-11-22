@@ -1,6 +1,6 @@
 import type { Transaction } from '@agent-os/db';
 import type { Logger } from '@agent-os/common';
-import type { RecordKind } from '@agent-os/contracts';
+import { START_AGENT_TOOL, type RecordKind } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import type { AccessAudit, AccessGate } from '../../access-gate';
@@ -18,9 +18,6 @@ import { history } from '../../store/history.repository';
 import { FORK_AGENT, type InCommitAgentTool, type ToolCaller } from '../tool';
 import { gateStart, type LaunchSet, type StartGate, type StartTarget } from './tool-gate';
 import { logStart } from './start-child';
-
-/** The system tool that starts an agent; its description lists whom the session may start. */
-const START_AGENT_TOOL = 'start_agent';
 
 /**
  * How an agent waits for what it started (KD-2): the model reads it in the description and in every

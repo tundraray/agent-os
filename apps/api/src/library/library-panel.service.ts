@@ -1,0 +1,263 @@
+import { Injectable } from '@nestjs/common';
+import type {
+  BannedRecord,
+  CreateRecordBody,
+  RecordDetail,
+  RecordSummary,
+  SystemRecordAudienceBody,
+  UpdateRecordBody,
+} from '@agent-os/contracts';
+import { AuditLog } from '../audit/audit-log.repository';
+import { isUuid } from '../common/is-uuid';
+import { IdentityDirectory } from '../identity/identity-directory';
+import { decideSystemAudience } from './audience-rules';
+import {
+  AUDIT_OBJECT_TYPE,
+  LibraryRecords,
+  notFound,
+  present,
+  readOnly,
+  recordFields,
+} from './library-records';
+import { LibrarySave } from './library-save';
+import { libraryError } from './library.errors';
+import {
+  closeSharing,
+  liftBan,
+  lockRecord,
+  replaceHolders,
+  setOfferInChat,
+} from './library.repository';
+import type {
+  LibraryActor,
+  LibraryRecord,
+  PanelServerFacts,
+  ServerFacts,
+} from './library.types';
+import { banAuditSample, bannedRecord, recordSummary } from './record-view';
+
+/** An empty audience: after a close (Flow 4). */
+const NO_HOLDERS: LibraryRecord['holders'] = {
+  everyone: false,
+  roles: [],
+  users: [],
+};
+
+/**
+ * The library of the admin panel (design-library.md, KD-2): system records and the employee records
+ * open to a role, read under the panel condition; a record outside it answers as a missing one. A write
+ * and its audit event are one transaction.
+ */
+@Injectable()
+export class LibraryPanelService {
+  constructor(
+    private readonly records: LibraryRecords,
+    private readonly saving: LibrarySave,
+    private readonly identity: IdentityDirectory,
+    private readonly auditLog: AuditLog,
+  ) {}
+
+  /** GET /api/admin/library/system and /shared: whole audience, the author's `disabled`. */
+  panelList(
+    actor: LibraryActor,
+    list: 'system' | 'shared',
+    facts: ServerFacts,
+  ): Promise<RecordSummary[]> {
+    return this.records.logged(
+      'panel_list',
+      { viewerId: actor.id, list },
+      async () => {
+        const viewer = await this.records.viewerOf(actor.id);
+        const [records, context] = await Promise.all([
+          this.records.panel(this.records.db, { list }),
+          this.records.contextOf(viewer, actor.isAdmin, 'panel', facts),
+        ]);
+        return records.map((record) => recordSummary(record, context));
+      },
+      (records) => ({ count: records.length }),
+    );
+  }
+
+  /** GET /api/admin/library/bans: no description, no content. */
+  bans(actor: LibraryActor): Promise<BannedRecord[]> {
+    return this.records.logged(
+      'bans',
+      { viewerId: actor.id },
+      async () => (await this.records.bans(this.records.db)).map(bannedRecord),
+      (rows) => ({ count: rows.length }),
+    );
+  }
+
+  /** GET /api/admin/library/:id: a system record or a role-shared employee record; any other — 404. */
+  panelGet(
+    actor: LibraryActor,
+    id: string,
+    facts: ServerFacts,
+  ): Promise<RecordDetail> {
+    return this.records.logged(
+      'panel_get',
+      { viewerId: actor.id, recordId: id },
+      async () => {
+        const viewer = await this.records.viewerOf(actor.id);
+        const record = await this.records.panelOr404(this.records.db, id);
+        return this.records.detail(record, viewer, actor.isAdmin, 'panel', facts);
+      },
+      recordFields,
+    );
+  }
+
+  /** POST /api/admin/library: a system record without holders — only admins see it. */
+  createSystem(
+    actor: LibraryActor,
+    body: CreateRecordBody,
+    facts: PanelServerFacts,
+  ): Promise<RecordDetail> {
+    return this.records.logged(
+      'create_system',
+      { actorId: actor.id, kind: body.kind },
+      async () => {
+        const author = await this.records.viewerOf(actor.id);
+        const result = await this.saving.save({
+          scope: 'system',
+          author,
+          target: null,
+          body,
+          servers: facts.registryServers,
+        });
+        return this.saving.savedDetail(result, author, actor.isAdmin, 'panel', facts);
+      },
+      recordFields,
+    );
+  }
+
+  /** PUT /api/admin/library/:id: a role-shared employee record — 403 RECORD_READ_ONLY (FR-09). */
+  updateSystem(
+    actor: LibraryActor,
+    id: string,
+    body: UpdateRecordBody,
+    facts: PanelServerFacts,
+  ): Promise<RecordDetail> {
+    return this.records.logged(
+      'update_system',
+      { actorId: actor.id, recordId: id, fromVersion: body.version },
+      async () => {
+        const author = await this.records.viewerOf(actor.id);
+        const result = await this.saving.save({
+          scope: 'system',
+          author,
+          target: { id, version: body.version },
+          body,
+          servers: facts.registryServers,
+        });
+        return this.saving.savedDetail(result, author, actor.isAdmin, 'panel', facts);
+      },
+      recordFields,
+    );
+  }
+
+  /** PUT /api/admin/library/:id/audience: locked like the employee's; the version stays (DC-11). */
+  setSystemAudience(
+    actor: LibraryActor,
+    id: string,
+    body: SystemRecordAudienceBody,
+    facts: ServerFacts,
+  ): Promise<RecordDetail> {
+    return this.records.logged(
+      'system_audience',
+      {
+        actorId: actor.id,
+        recordId: id,
+        everyone: body.everyone,
+        roleIds: body.roleIds,
+        userIds: body.userIds,
+      },
+      async () => {
+        if (!isUuid(id)) throw notFound();
+        const record = await this.records.db.transaction(async (tx) => {
+          if (!(await lockRecord(tx, id))) throw notFound();
+          const before = await this.records.panelOr404(tx, id);
+          if (before.ownerId !== null) throw readOnly();
+          const existing = await this.identity.existing(body);
+          const decision = decideSystemAudience({
+            builtinKey: before.builtinKey,
+            roleIds: body.roleIds,
+            userIds: body.userIds,
+            existingRoleIds: existing.roleIds,
+            existingUserIds: existing.userIds,
+          });
+          if (decision.kind === 'refused')
+            throw libraryError('RECORD_REJECTED', decision.reason);
+          await replaceHolders(tx, id, body);
+          await setOfferInChat(tx, id, body.offerInChat);
+          const after = present(await this.records.panelOne(tx, id), id);
+          await this.records.audit(tx, actor.id, 'library_audience', before, after);
+          return after;
+        });
+        const viewer = await this.records.viewerOf(actor.id);
+        return this.records.detail(record, viewer, actor.isAdmin, 'panel', facts);
+      },
+      recordFields,
+    );
+  }
+
+  /** DELETE /api/admin/library/:id: a built-in record — 422 `builtin`. */
+  deleteSystem(actor: LibraryActor, id: string): Promise<void> {
+    return this.records.logged(
+      'delete_system',
+      { actorId: actor.id, recordId: id },
+      () =>
+        this.records.db.transaction(async (tx) => {
+          const record = await this.records.panelOr404(tx, id);
+          if (record.ownerId !== null) throw readOnly();
+          await this.records.deleteChecked(tx, actor.id, record);
+        }),
+    );
+  }
+
+  /**
+   * POST /api/admin/library/:id/close (Flow 4): every holder removed and the ban set. Only an
+   * employee record the panel lists; any other — 404. Locked like the owner's audience change.
+   */
+  close(actor: LibraryActor, id: string): Promise<void> {
+    return this.records.logged(
+      'close',
+      { actorId: actor.id, recordId: id },
+      async () => {
+        if (!isUuid(id)) throw notFound();
+        await this.records.db.transaction(async (tx) => {
+          if (!(await lockRecord(tx, id))) throw notFound();
+          const before = await this.records.panelOr404(tx, id);
+          if (before.ownerId === null) throw notFound();
+          const closedAt = await closeSharing(tx, id);
+          const after = { ...before, holders: NO_HOLDERS, closedAt };
+          await this.records.audit(tx, actor.id, 'library_close', before, after);
+        });
+      },
+    );
+  }
+
+  /** DELETE /api/admin/library/:id/ban: no ban — 404. The version stays (DC-11). */
+  unban(actor: LibraryActor, id: string): Promise<void> {
+    return this.records.logged(
+      'unban',
+      { actorId: actor.id, recordId: id },
+      async () => {
+        if (!isUuid(id)) throw notFound();
+        await this.records.db.transaction(async (tx) => {
+          if (!(await lockRecord(tx, id))) throw notFound();
+          const ban = await this.records.ban(tx, id);
+          if (ban === undefined || !(await liftBan(tx, id))) throw notFound();
+          await this.auditLog.record(tx, {
+            kind: 'library_unban',
+            actor: actor.id,
+            objectType: AUDIT_OBJECT_TYPE,
+            objectId: id,
+            before: banAuditSample(ban, ban.closedAt),
+            after: banAuditSample(ban, null),
+            outcome: 'ok',
+          });
+        });
+      },
+    );
+  }
+}

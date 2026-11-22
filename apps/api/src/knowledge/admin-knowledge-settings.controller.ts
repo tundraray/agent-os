@@ -12,7 +12,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
 import { APP_LOGGER } from '../logging/app-logger';
-import { loggedRoute } from './knowledge.controller';
+import { loggedRoute } from '../common/logged-route';
 
 const SETTINGS_OBJECT_TYPE = 'knowledge_settings';
 
@@ -46,12 +46,11 @@ export class AdminKnowledgeSettingsController {
   /** `KnowledgeSettings`. */
   @Get('settings')
   settings(@Req() req: AuthedRequest): Promise<KnowledgeSettings> {
-    return loggedRoute(
-      this.logger,
-      'GET /admin/knowledge/settings',
-      { actorId: req.user.id },
-      () => this.agents.knowledge.settings(),
-    );
+    return loggedRoute(this.logger, {
+      route: 'GET /admin/knowledge/settings',
+      fields: { actorId: req.user.id },
+      work: () => this.agents.knowledge.settings(),
+    });
   }
 
   /** `KnowledgeSettings` after the change. */
@@ -62,11 +61,10 @@ export class AdminKnowledgeSettingsController {
     @Req() req: AuthedRequest,
   ): Promise<KnowledgeSettings> {
     const actor = req.user.id;
-    return loggedRoute(
-      this.logger,
-      'PUT /admin/knowledge/settings',
-      { actorId: actor },
-      async () => {
+    return loggedRoute(this.logger, {
+      route: 'PUT /admin/knowledge/settings',
+      fields: { actorId: actor },
+      work: async () => {
         const { before, after } = await this.agents.knowledge.updateSettings({
           actorId: actor,
           limitTokens: body.limitTokens,
@@ -82,10 +80,10 @@ export class AdminKnowledgeSettingsController {
         });
         return after;
       },
-      (after) => ({
+      outcomeOf: (after) => ({
         limitTokens: after.limitTokens,
         lessonsEnabled: after.lessonsEnabled,
       }),
-    );
+    });
   }
 }

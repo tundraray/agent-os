@@ -3,17 +3,9 @@ import {
   CHAT_BUILTIN_KEY,
   DeepAgentContentSchema,
   RecordKindSchema,
-  UserStatusSchema,
-  type RecordAuthor,
   type RecordBody,
 } from '@agent-os/contracts';
-import {
-  type Executor,
-  identityRoles,
-  identityUsers,
-  libraryRecords,
-  libraryShares,
-} from '@agent-os/db';
+import { type Executor, libraryRecords, libraryShares } from '@agent-os/db';
 import {
   and,
   asc,
@@ -33,7 +25,8 @@ import {
  * library tables (ADR-0016). Records are read by exactly two functions: {@link findVisibleRecords}
  * under the visibility procedure (design-library.md, «Как решается видимость») and
  * {@link findPanelRecords} under the panel condition, which never finds a personal record (KD-2).
- * The admin right takes no part in either (DC-3).
+ * The admin right takes no part in either (DC-3). Authors and holders come by id: their names live in
+ * `identity` and are added by `LibraryRecords`.
  */
 
 /** Who looks: the employee, whether they are enabled, and the roles they are in now. */
@@ -43,20 +36,15 @@ export interface Viewer {
   readonly roleIds: readonly string[];
 }
 
-interface NamedHolder {
-  readonly id: string;
-  readonly name: string;
-}
-
-/** The audience of a record as stored: "everyone", roles and employees, each by name. */
-export interface RecordHolders {
+/** The audience of a record as stored: "everyone", roles and employees, each in the order of its row's id. */
+export interface StoredHolders {
   readonly everyone: boolean;
-  readonly roles: readonly NamedHolder[];
-  readonly users: readonly NamedHolder[];
+  readonly roleIds: readonly string[];
+  readonly userIds: readonly string[];
 }
 
-/** A stored record with its author and its audience. */
-export interface LibraryRecord {
+/** A stored record with its audience. */
+export interface StoredRecord {
   readonly id: string;
   /** `null` — a system record. */
   readonly ownerId: string | null;
@@ -69,9 +57,7 @@ export interface LibraryRecord {
   readonly closedAt: Date | null;
   readonly updatedAt: Date;
   readonly body: RecordBody;
-  /** `null` — a system record. */
-  readonly author: RecordAuthor | null;
-  readonly holders: RecordHolders;
+  readonly holders: StoredHolders;
 }
 
 /** One record by id or by the key of a built-in record; none — every record the condition finds. */
@@ -82,16 +68,17 @@ export type PanelQuery =
   | { readonly id: string }
   | { readonly list: 'system' | 'shared' };
 
-/** A row of the ban list: no description, no content (AC-09.4). */
-export interface BannedRecordRow {
+/** A stored record under a sharing ban: no description, no content (AC-09.4). */
+export interface StoredBan {
   readonly id: string;
   readonly kind: RecordBody['kind'];
   readonly name: string;
-  readonly author: RecordAuthor;
+  /** `null` — a system record. */
+  readonly ownerId: string | null;
   readonly closedAt: Date;
 }
 
-const NO_HOLDERS: RecordHolders = { everyone: false, roles: [], users: [] };
+const NO_HOLDERS: StoredHolders = { everyone: false, roleIds: [], userIds: [] };
 
 /** SQLSTATE unique_violation. */
 const UNIQUE_VIOLATION = '23505';
@@ -197,80 +184,51 @@ function recordBody(kind: string, content: unknown): RecordBody {
     : { kind: 'deep_agent', content: DeepAgentContentSchema.parse(content) };
 }
 
-function authorOf(
-  ownerId: string | null,
-  user: { name: string; status: string } | null,
-): RecordAuthor | null {
-  if (ownerId === null) return null;
-  if (user === null)
-    throw new Error(`library_records owner ${ownerId} is missing`);
-  return {
-    id: ownerId,
-    name: user.name,
-    disabled: user.status !== UserStatusSchema.enum.active,
-  };
-}
-
-/** The holders of the records, by record id; roles and employees each by name, then id. */
+/** The holders of the records, by record id; roles and employees each by the id of the holder row. */
 async function holdersOf(
   executor: Executor,
   recordIds: readonly string[],
-): Promise<Map<string, RecordHolders>> {
-  const result = new Map<string, RecordHolders>();
+): Promise<Map<string, StoredHolders>> {
+  const result = new Map<string, StoredHolders>();
   if (recordIds.length === 0) return result;
   const rows = await executor
     .select({
       recordId: libraryShares.recordId,
       everyone: libraryShares.everyone,
       roleId: libraryShares.roleId,
-      roleName: identityRoles.name,
       userId: libraryShares.userId,
-      userName: identityUsers.name,
     })
     .from(libraryShares)
-    .leftJoin(identityRoles, eq(identityRoles.id, libraryShares.roleId))
-    .leftJoin(identityUsers, eq(identityUsers.id, libraryShares.userId))
     .where(inArray(libraryShares.recordId, [...recordIds]))
-    .orderBy(
-      sql`coalesce(${identityRoles.name}, ${identityUsers.name})`,
-      asc(libraryShares.id),
-    );
+    .orderBy(asc(libraryShares.id));
   for (const row of rows) {
     const current = result.get(row.recordId) ?? NO_HOLDERS;
     result.set(row.recordId, {
       everyone: current.everyone || row.everyone,
-      roles:
-        row.roleId !== null && row.roleName !== null
-          ? [...current.roles, { id: row.roleId, name: row.roleName }]
-          : current.roles,
-      users:
-        row.userId !== null && row.userName !== null
-          ? [...current.users, { id: row.userId, name: row.userName }]
-          : current.users,
+      roleIds:
+        row.roleId === null ? current.roleIds : [...current.roleIds, row.roleId],
+      userIds:
+        row.userId === null ? current.userIds : [...current.userIds, row.userId],
     });
   }
   return result;
 }
 
-/** Records meeting the condition, by name without regard to case, then id, with author and holders. */
+/** Records meeting the condition, by name without regard to case, then id, with holders. */
 async function recordsWhere(
   executor: Executor,
   where: SQL,
-): Promise<LibraryRecord[]> {
+): Promise<StoredRecord[]> {
   const rows = await executor
-    .select({
-      record: libraryRecords,
-      author: { name: identityUsers.name, status: identityUsers.status },
-    })
+    .select()
     .from(libraryRecords)
-    .leftJoin(identityUsers, eq(identityUsers.id, libraryRecords.ownerId))
     .where(where)
     .orderBy(sql`lower(${libraryRecords.name})`, asc(libraryRecords.id));
   const holders = await holdersOf(
     executor,
-    rows.map(({ record }) => record.id),
+    rows.map((record) => record.id),
   );
-  return rows.map(({ record, author }) => ({
+  return rows.map((record) => ({
     id: record.id,
     ownerId: record.ownerId,
     name: record.name,
@@ -281,7 +239,6 @@ async function recordsWhere(
     closedAt: record.closedAt,
     updatedAt: record.updatedAt,
     body: recordBody(record.kind, record.content),
-    author: authorOf(record.ownerId, author),
     holders: holders.get(record.id) ?? NO_HOLDERS,
   }));
 }
@@ -294,7 +251,7 @@ export function findVisibleRecords(
   executor: Executor,
   viewer: Viewer,
   key?: RecordKey,
-): Promise<LibraryRecord[]> {
+): Promise<StoredRecord[]> {
   return recordsWhere(
     executor,
     and(visibleTo(executor, viewer), keyCondition(key)) ?? sql`false`,
@@ -305,7 +262,7 @@ export function findVisibleRecords(
 export function findPanelRecords(
   executor: Executor,
   query?: PanelQuery,
-): Promise<LibraryRecord[]> {
+): Promise<StoredRecord[]> {
   return recordsWhere(
     executor,
     and(inPanel(executor), panelQueryCondition(query)) ?? sql`false`,
@@ -316,7 +273,7 @@ export function findPanelRecords(
 async function bansWhere(
   executor: Executor,
   where?: SQL,
-): Promise<BannedRecordRow[]> {
+): Promise<StoredBan[]> {
   const rows = await executor
     .select({
       id: libraryRecords.id,
@@ -324,28 +281,25 @@ async function bansWhere(
       name: libraryRecords.name,
       closedAt: libraryRecords.closedAt,
       ownerId: libraryRecords.ownerId,
-      author: { name: identityUsers.name, status: identityUsers.status },
     })
     .from(libraryRecords)
-    .innerJoin(identityUsers, eq(identityUsers.id, libraryRecords.ownerId))
     .where(and(isNotNull(libraryRecords.closedAt), where))
     .orderBy(sql`lower(${libraryRecords.name})`, asc(libraryRecords.id));
   return rows.map((row) => {
-    const author = authorOf(row.ownerId, row.author);
-    if (author === null || row.closedAt === null)
+    if (row.closedAt === null)
       throw new Error(`library_records ban row ${row.id} is broken`);
     return {
       id: row.id,
       kind: RecordKindSchema.parse(row.kind),
       name: row.name,
-      author,
+      ownerId: row.ownerId,
       closedAt: row.closedAt,
     };
   });
 }
 
 /** The panel's ban list. */
-export function listBans(executor: Executor): Promise<BannedRecordRow[]> {
+export function listBans(executor: Executor): Promise<StoredBan[]> {
   return bansWhere(executor);
 }
 
@@ -353,7 +307,7 @@ export function listBans(executor: Executor): Promise<BannedRecordRow[]> {
 export async function findBan(
   executor: Executor,
   id: string,
-): Promise<BannedRecordRow | undefined> {
+): Promise<StoredBan | undefined> {
   const [ban] = await bansWhere(executor, eq(libraryRecords.id, id));
   return ban;
 }

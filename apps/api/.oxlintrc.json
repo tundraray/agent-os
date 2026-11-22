@@ -1,21 +1,25 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "env": {
+    "node": true
+  },
   "rules": {
     "typescript/no-explicit-any": "off",
-    "typescript/no-floating-promises": "error",
+    // The application is where Nest and Sentry live: the Mastra ban and the package entry rule apply.
     "no-restricted-imports": [
       "error",
       {
         "patterns": [
           {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: Mastra is declared by packages/agents only."
+          },
+          {
             "group": ["@agent-os/*/**", "!@agent-os/*/testing"],
-            "message": "ADR-0004: a package is imported only through its single entry `.`."
+            "message": "ADR-0004: a package is imported only through its single entry `.` (or `./testing`)."
           }
         ]
       }
     ]
-  },
-  "env": {
-    "node": true
   }
 }

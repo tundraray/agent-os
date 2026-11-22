@@ -2,12 +2,17 @@ import type { AgentsMcp, InCommitAgentTool } from '@agent-os/agents';
 import type { Logger } from '@agent-os/common';
 import {
   AgentContentSchema,
+  CREATE_RECORD_TOOL,
   CreateRecordBodySchema,
   DEEP_AGENT_SUBAGENTS_MAX,
   DeepAgentContentSchema,
+  DELETE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
   GENERAL_PURPOSE_SUBAGENT,
   LIBRARY_RECORD_CONFIRMATION,
   LibraryRecordCardSchema,
+  LIST_RECORDS_TOOL,
+  READ_RECORD_TOOL,
   RecordKindSchema,
   SUBAGENT_MAX_RUNS_MAX,
   type LibraryRecordAction,
@@ -17,19 +22,9 @@ import {
 } from '@agent-os/contracts';
 import { z } from 'zod';
 import type { IdentityDirectory } from '../identity/identity-directory';
-import type {
-  ChatChange,
-  ChatContext,
-  ChatRefusal,
-  LibraryService,
-} from './library.service';
+import type { LibraryChatService } from './library-chat.service';
+import type { ChatChange, ChatContext, ChatRefusal } from './library.types';
 import { recordListText, recordText } from './record-listing';
-
-const LIST_RECORDS_TOOL = 'list_records';
-export const READ_RECORD_TOOL = 'read_record';
-export const CREATE_RECORD_TOOL = 'create_record';
-export const EDIT_RECORD_TOOL = 'edit_record';
-export const DELETE_RECORD_TOOL = 'delete_record';
 
 /** The registration of the record tools in `LibraryApiModule`: a marker provider whose factory does the work. */
 export const RECORD_TOOLS_REGISTRATION = Symbol('RECORD_TOOLS_REGISTRATION');
@@ -275,7 +270,7 @@ function namesOrNone(names: readonly string[]): string {
 
 export interface RecordToolsOptions {
   readonly library: Pick<
-    LibraryService,
+    LibraryChatService,
     | 'chatContext'
     | 'chatRecords'
     | 'chatRecord'
@@ -297,7 +292,7 @@ const CARD_ACTION: Record<string, LibraryRecordAction> = {
 /**
  * The five record tools of the main chat (deep-agents KD-3, Flow 1): built-in and `rootOnly`, so only the
  * root of a conversation gets them — a deep agent or a subagent gets `tool_not_in_definition` (AC-06.5).
- * Each is a thin adapter: rights and rules live in `LibraryService` and `decideSave`. `create_record`,
+ * Each is a thin adapter: rights and rules live in `LibraryChatService` and `decideSave`. `create_record`,
  * `edit_record` and `delete_record` wait for the employee's `library.record` card: `review` asks the
  * library before the card, and a refusal closes the call with its text and no card; `execute` saves the
  * approved card's content in the step's transaction, where the library checks it again under the row

@@ -1038,7 +1038,7 @@ describe('custom-agents / library - integration (real AppModule + real Postgres,
   //   ban but leaves the audience (Борис still sees it), a ban list that leaks the prompt, an unban that leaves the ban in force, a
   //   disabled author whose records silently disappear for the role.
   // @category: core-functionality
-  // @dependency: AdminLibraryController, LibraryService, library repository (panel condition), AdminUsersController (disable/enable), AuditLog, Postgres
+  // @dependency: AdminLibraryController, LibraryPanelService, library repository (panel condition), AdminUsersController (disable/enable), AuditLog, Postgres
   // @complexity: medium
   it(
     'INT-4: closing access removes the audience and bans sharing, the panel never lists personal records and the ban list carries no content, unban lets the owner share again',

@@ -37,7 +37,7 @@ import {
   toDeepAgentRunView,
   toPending,
 } from './conversation-view';
-import { decodeRowCursor, toThreadSummary } from './conversations.service';
+import { decodeRowCursor, toThreadSummary } from './thread-summary';
 import { selectThreadPage, sortThreadsForList } from './thread-cursor';
 
 const agentNotFound = () => httpError('AGENT_NOT_FOUND');

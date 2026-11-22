@@ -1,10 +1,10 @@
 import { STATUS_CODES } from 'node:http';
 import { HttpException, InternalServerErrorException } from '@nestjs/common';
 import { AgentsError, type StartRefusalDetail } from '@agent-os/agents';
-import type { Logger } from '@agent-os/common';
 import type { StartRefusedError, ThreadsErrorCode } from '@agent-os/contracts';
 import { RuntimeError } from '@agent-os/runtime';
 import { apiError } from '../common/api-error';
+import type { RouteCall, RouteStyle } from '../common/logged-route';
 
 /**
  * The not-found codes a route answers with; a runtime `TASK_NOT_FOUND` and an agents `AGENT_NOT_FOUND`
@@ -124,60 +124,15 @@ export type CommandFields = {
 };
 
 /** One API command: its route, ids, the work, and the outcome fields read from the result. */
-export type Command<T> = {
-  readonly route: string;
-  readonly fields: CommandFields;
-  readonly work: () => Promise<T>;
-  readonly outcomeOf?: (result: T) => Record<string, unknown>;
-};
+export type Command<T> = RouteCall<T> & { readonly fields: CommandFields };
 
 /**
- * Runs a command and writes its one log record (design-chat.md, Constraints): route, ids, outcome and
- * `durationMs`; an expected refusal is `info` with its `errorCode`, a server failure is `error` with
- * the original error in `error`. Errors leave as the `HttpException` of {@link toHttpError}.
+ * How the chat's routes log and answer (design-chat.md, Constraints): one `api command …` record per
+ * command, and every error leaves as the `HttpException` of {@link toHttpError}.
  */
-export async function runCommand<T>(
-  logger: Logger,
-  { route, fields, work, outcomeOf }: Command<T>,
-  notFound: NotFoundCode = 'AGENT_NOT_FOUND',
-): Promise<T> {
-  const startedAt = Date.now();
-  try {
-    const result = await work();
-    logger.info('api command answered', {
-      route,
-      ...fields,
-      outcome: 'ok',
-      ...outcomeOf?.(result),
-      durationMs: Date.now() - startedAt,
-    });
-    return result;
-  } catch (error) {
-    const answer = toHttpError(error, notFound);
-    const status = answer.getStatus();
-    if (status >= 500) {
-      logger.error('api command failed', {
-        route,
-        ...fields,
-        outcome: 'error',
-        status,
-        durationMs: Date.now() - startedAt,
-        error,
-      });
-    } else {
-      const body = answer.getResponse();
-      logger.info('api command refused', {
-        route,
-        ...fields,
-        outcome: 'refused',
-        status,
-        errorCode:
-          typeof body === 'object' && 'errorCode' in body
-            ? body.errorCode
-            : undefined,
-        durationMs: Date.now() - startedAt,
-      });
-    }
-    throw answer;
-  }
+export function chatRoute(notFound: NotFoundCode = 'AGENT_NOT_FOUND'): RouteStyle {
+  return {
+    subject: 'api command',
+    toHttpError: (error) => toHttpError(error, notFound),
+  };
 }

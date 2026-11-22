@@ -1,10 +1,10 @@
 import type { RecordBody, RecordKind } from '@agent-os/contracts';
-import type { LibraryRecord } from './library.repository';
+import type { LibraryRecord } from './library.types';
 import { hasHolders } from './record-view';
 
 /**
  * The texts the main chat reads from `list_records` and `read_record` (deep-agents design-agent-types.md,
- * «Инструменты записей», DC-7; pure-decision.md): pure functions over what `LibraryService` and
+ * «Инструменты записей», DC-7; pure-decision.md): pure functions over what `LibraryChatService` and
  * `Agents.mcp` read for the employee. Nothing here decides who sees what: the records are the ones the
  * library let through, the servers the ones the employee may use with the tools he has a right to.
  */

@@ -10,6 +10,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
+import { loggedRoute } from '../common/logged-route';
 import {
   AgentListQuerySchema,
   HistoryQuerySchema,
@@ -32,7 +33,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
 import { APP_LOGGER } from '../logging/app-logger';
 import { AgentControlService } from './agent-control.service';
-import { type Command, runCommand } from './chat.errors';
+import { chatRoute, type Command } from './chat.errors';
 
 /**
  * The agent routes (design-chat.md, Contract «Агенты»). A malformed, missing or foreign `agentId`, and
@@ -190,6 +191,6 @@ export class AgentsController {
   }
 
   private run<T>(command: Command<T>): Promise<T> {
-    return runCommand(this.logger, command, 'AGENT_NOT_FOUND');
+    return loggedRoute(this.logger, command, chatRoute('AGENT_NOT_FOUND'));
   }
 }

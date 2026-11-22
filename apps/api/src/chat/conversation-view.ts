@@ -9,9 +9,13 @@ import {
   AgentMessageKindSchema,
   CHILD_FINISHED_KIND,
   ConfirmationKindSchema,
+  CREATE_RECORD_TOOL,
+  DELETE_RECORD_TOOL,
+  EDIT_RECORD_TOOL,
   HISTORY_PAGE_SIZE,
   IdSchema,
   LIBRARY_RECORD_CONFIRMATION,
+  READ_RECORD_TOOL,
   type AgentNode,
   type AgentView,
   type Confirmation,
@@ -24,12 +28,6 @@ import {
 } from '@agent-os/contracts';
 import type { StepMessage } from '@agent-os/runtime';
 import { z } from 'zod';
-import {
-  CREATE_RECORD_TOOL,
-  DELETE_RECORD_TOOL,
-  EDIT_RECORD_TOOL,
-  READ_RECORD_TOOL,
-} from '../library/record-tools';
 
 /**
  * The views of `agents` and `runtime` as the chat API returns them (design-chat.md,

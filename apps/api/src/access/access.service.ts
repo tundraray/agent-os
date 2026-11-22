@@ -64,6 +64,7 @@ import {
   listGrants,
   updateGrantQuota,
   type GrantHolderQuery,
+  type StoredGrant,
 } from './grants.repository';
 import { modelVerdict, quotaExhausted } from './model-verdict';
 import {
@@ -146,12 +147,6 @@ function ruleInputOf(grant: Grant, quotaUsd: number | null): GrantRuleInput {
     modelPurpose: null,
     quotaUsd,
   };
-}
-
-async function grantOr404(executor: Executor, id: string): Promise<Grant> {
-  const grant = isUuid(id) ? await findGrant(executor, id) : undefined;
-  if (grant === undefined) throw accessError('GRANT_NOT_FOUND');
-  return grant;
 }
 
 /**
@@ -500,7 +495,7 @@ export class AccessService implements AccessGate {
   /** The grants of a role or an employee by creation time. 404 ROLE_NOT_FOUND, USER_NOT_FOUND. */
   async listGrants(holder: GrantHolderQuery): Promise<Grant[]> {
     await this.holderOr404(holder);
-    return listGrants(this.db, holder);
+    return this.named(this.db, await listGrants(this.db, holder));
   }
 
   /**
@@ -534,7 +529,7 @@ export class AccessService implements AccessGate {
     const created = await this.db.transaction(async (tx) => {
       const id = await insertGrant(tx, body);
       if (id === undefined) throw accessError('GRANT_EXISTS');
-      const grant = await grantOr404(tx, id);
+      const grant = await this.grantOr404(tx, id);
       await this.audit(tx, actorId, 'grant', id, null, grant);
       return grant;
     });
@@ -549,12 +544,12 @@ export class AccessService implements AccessGate {
     quotaUsd: number | null,
   ): Promise<Grant> {
     const updated = await this.db.transaction(async (tx) => {
-      const before = await grantOr404(tx, id);
+      const before = await this.grantOr404(tx, id);
       const rules = grantRules(ruleInputOf(before, quotaUsd));
       if (rules.kind === 'invalid')
         throw accessError('GRANT_INVALID', rules.reason);
       await updateGrantQuota(tx, id, quotaUsd);
-      const after = await grantOr404(tx, id);
+      const after = await this.grantOr404(tx, id);
       await this.audit(tx, actorId, 'grant', id, before, after);
       return after;
     });
@@ -565,7 +560,7 @@ export class AccessService implements AccessGate {
   /** 404 GRANT_NOT_FOUND. */
   async deleteGrant(actorId: string, id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
-      const before = await grantOr404(tx, id);
+      const before = await this.grantOr404(tx, id);
       await deleteGrant(tx, id);
       await this.audit(tx, actorId, 'grant', id, before, null);
     });
@@ -656,6 +651,35 @@ export class AccessService implements AccessGate {
   ): Promise<number> {
     const spend = await this.runtime.ledger.monthSpendByModel(ownerId, month);
     return spend.get(model) ?? 0;
+  }
+
+  private async grantOr404(executor: Executor, id: string): Promise<Grant> {
+    const stored = isUuid(id) ? await findGrant(executor, id) : undefined;
+    if (stored === undefined) throw accessError('GRANT_NOT_FOUND');
+    const [grant] = await this.named(executor, [stored]);
+    if (grant === undefined) throw new Error(`grant ${id} lost its holder`);
+    return grant;
+  }
+
+  /** The grants with the name of each role holder, read in `identity` on the same executor. */
+  private async named(
+    executor: Executor,
+    grants: readonly StoredGrant[],
+  ): Promise<Grant[]> {
+    const roles = await this.identity.roleNames(
+      executor,
+      grants.flatMap(({ holder }) => (holder.kind === 'role' ? holder.id : [])),
+    );
+    const names = new Map(roles.map((role) => [role.id, role.name]));
+    return grants.map((grant) => {
+      const { kind, id } = grant.holder;
+      if (kind === 'user') return { ...grant, holder: { kind, id } };
+      const name = names.get(id);
+      // The FK keeps the role of a grant in place.
+      if (name === undefined)
+        throw new Error('access_grants row has a broken holder');
+      return { ...grant, holder: { kind, id, name } };
+    });
   }
 
   private async holderOr404(holder: GrantHolderQuery): Promise<void> {

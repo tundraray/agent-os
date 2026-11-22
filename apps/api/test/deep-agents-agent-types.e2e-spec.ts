@@ -16,7 +16,7 @@
 // Not repeated here (proven at a lower level): the card refusals, the stale version and the administrator edit (INT-1, INT-2 next to this file); the task list surviving
 // a replayed step, a restart and compaction, and the block in every model call (UC-3 of packages/agents); the rules of the list (packages/agents/src/tools/system/task-list-rules.spec.ts); the end-of-turn
 // branch by session kind (turn-rules.spec.ts); the brief's own lifecycle (agent-platform-chat INT-2 D); the research team's
-// run (agents agent-platform-workflows INT-2 A / INT-3 B); the schema rule of 11 subagents (unit, contracts) — step 1 only shows the record tool's arguments ARE that schema.
+// run (agents deep-agents-run INT-2 A / INT-3 B); the schema rule of 11 subagents (unit, contracts) — step 1 only shows the record tool's arguments ARE that schema.
 //
 // acProof of this file: AC-06.1, AC-01.2, AC-28.1 (the `focus` half), AC-27.1 (wiring), AC-12.1 and AC-15.1 for the chat's list: E2E-1 steps 1-3; AC-03.1 (a record
 // made by the chat starts after a brief), AC-04.1 (read route), AC-05.2, AC-28.3 (the `started` focus), AC-12.1 and AC-14.4 for the deep agent's list, AC-23.2 and

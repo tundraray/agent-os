@@ -204,7 +204,7 @@ pnpm db:up
 cp apps/api/.env.example apps/api/.env       # провайдеры и ключ задаются посевом seed:access или в панели
 pnpm --filter api build
 pnpm --filter api db:migrate
-pnpm --filter api start:dev
+pnpm --filter api dev
 ```
 
 Хост-порт Postgres задаётся переменной `POSTGRES_PORT` (по умолчанию 5432). Если 5432 занят, поднимите базу на другом порту и укажите тот же порт в `DATABASE_URL` в `apps/api/.env`:
@@ -259,8 +259,9 @@ POSTGRES_PORT=5433 pnpm db:up
 | `pnpm lint` | oxlint (`api` и пакеты в `packages/`) и ESLint (`web`); любое предупреждение — ошибка |
 | `pnpm typecheck` | `tsc --noEmit` по всем пакетам, включая тесты (`web` сначала генерирует типы роутов `next typegen`) |
 | `pnpm build` | сборка приложений: `apps/api` (бандл Nest CLI на rspack, исходники пакетов внутри) и `apps/web` (Next); у пакетов в `packages/` сборки нет |
+| `pnpm format:check` | prettier (`.prettierrc` в корне, один на весь репозиторий) сообщает о файлах не по формату; `pnpm format` их переписывает. В `pnpm check` и CI не входит |
 | `pnpm knip` | неиспользуемые файлы, экспорты и зависимости ([knip](https://knip.dev)); настройки в `knip.json` |
-| `pnpm check` | всё вышеперечисленное плюс `pnpm test` — то же, что гоняет CI (`.github/workflows/ci.yml`) |
+| `pnpm check` | `lint`, `typecheck`, `build`, `knip` и `pnpm test` — то же, что гоняет CI (`.github/workflows/ci.yml`) |
 
 Сообщения коммитов пишутся на английском и проверяются [commitlint](https://commitlint.js.org) по [Conventional Commits](https://www.conventionalcommits.org): `type(scope): subject`, например `feat(web): add new chat button` или `fix(api): keep thread title after delete`. Хук `commit-msg` ставит husky при `pnpm install`; в CI проверяются все коммиты PR.
 

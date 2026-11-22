@@ -215,14 +215,14 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
   }
 
   private exchangeCode(form: FormData): Response {
-    const code = String(form.get('code') ?? '');
+    const code = textField(form, 'code');
     const pending = this.codes.get(code);
     this.codes.delete(code);
     if (pending === undefined) {
       return oauthError('invalid_grant', 'unknown or used authorization code');
     }
     this.statsOf(pending.account).codeExchanges += 1;
-    const verifier = String(form.get('code_verifier') ?? '');
+    const verifier = textField(form, 'code_verifier');
     if (
       form.get('client_id') !== pending.clientId ||
       form.get('redirect_uri') !== pending.redirectUri ||
@@ -234,7 +234,7 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
   }
 
   private async refresh(form: FormData): Promise<Response> {
-    const refreshToken = String(form.get('refresh_token') ?? '');
+    const refreshToken = textField(form, 'refresh_token');
     const stored = this.refreshTokens.get(refreshToken);
     if (stored === undefined) {
       return oauthError('invalid_grant', 'unknown refresh token');
@@ -281,6 +281,12 @@ export class FixtureAuthorizationServer implements OAuthTokenVerifier {
     }
     return stats;
   }
+}
+
+/** A form field as text; a missing field or an uploaded file reads as empty. */
+function textField(form: FormData, name: string): string {
+  const value = form.get(name);
+  return typeof value === 'string' ? value : '';
 }
 
 function oauthError(error: string, description: string, status = 400): Response {

@@ -1,20 +1,38 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { UserStatusSchema } from '@agent-os/contracts';
-import type { Database, DatabaseConnection } from '@agent-os/db';
+import type { Database, DatabaseConnection, Executor } from '@agent-os/db';
 import { isUuid } from '../common/is-uuid';
 import { RUNTIME_DATABASE } from '../runtime/runtime.tokens';
-import { existingRoleIds } from './roles.repository';
+import { existingRoleIds, roleNames } from './roles.repository';
 import {
   existingUserIds,
   findUserById,
   hasAdminRight,
   rolesOfUsers,
+  userNames,
 } from './users.repository';
 
 /** Role ids and employee ids, read together. */
 export interface HolderIds {
   readonly roleIds: readonly string[];
   readonly userIds: readonly string[];
+}
+
+/** A role as another module shows it. */
+export interface RoleName {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** An employee as another module shows him: the name and whether he is on. */
+export interface UserName {
+  readonly id: string;
+  readonly name: string;
+  readonly active: boolean;
+}
+
+function uniqueUuids(ids: readonly string[]): string[] {
+  return [...new Set(ids)].filter(isUuid);
 }
 
 /**
@@ -60,5 +78,30 @@ export class IdentityDirectory {
       existingUserIds(this.db, ids.userIds.filter(isUuid)),
     ]);
     return { roleIds, userIds };
+  }
+
+  /**
+   * The names of the roles named, in the database's order of names; a missing role and an id that is
+   * not a UUID are left out. Read on the caller's executor, so a caller inside a transaction takes no
+   * second connection.
+   */
+  roleNames(
+    executor: Executor,
+    roleIds: readonly string[],
+  ): Promise<RoleName[]> {
+    return roleNames(executor, uniqueUuids(roleIds));
+  }
+
+  /** The same for employees, each with whether he is on. */
+  async userNames(
+    executor: Executor,
+    userIds: readonly string[],
+  ): Promise<UserName[]> {
+    const users = await userNames(executor, uniqueUuids(userIds));
+    return users.map(({ id, name, status }) => ({
+      id,
+      name,
+      active: status === UserStatusSchema.enum.active,
+    }));
   }
 }

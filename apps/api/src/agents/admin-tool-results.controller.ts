@@ -10,7 +10,7 @@ import { AuditLog } from '../audit/audit-log.repository';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
-import { loggedRoute } from '../knowledge/knowledge.controller';
+import { loggedRoute } from '../common/logged-route';
 import { APP_LOGGER } from '../logging/app-logger';
 import { AGENTS } from './agents.tokens';
 
@@ -47,12 +47,11 @@ export class AdminToolResultsController {
   /** `ToolResultSettings`. */
   @Get('settings')
   settings(@Req() req: AuthedRequest): Promise<ToolResultSettings> {
-    return loggedRoute(
-      this.logger,
-      'GET /admin/tool-results/settings',
-      { actorId: req.user.id },
-      () => this.agents.toolResults.settings(),
-    );
+    return loggedRoute(this.logger, {
+      route: 'GET /admin/tool-results/settings',
+      fields: { actorId: req.user.id },
+      work: () => this.agents.toolResults.settings(),
+    });
   }
 
   /** `ToolResultSettings` after the change. */
@@ -63,11 +62,10 @@ export class AdminToolResultsController {
     @Req() req: AuthedRequest,
   ): Promise<ToolResultSettings> {
     const actor = req.user.id;
-    return loggedRoute(
-      this.logger,
-      'PUT /admin/tool-results/settings',
-      { actorId: actor },
-      async () => {
+    return loggedRoute(this.logger, {
+      route: 'PUT /admin/tool-results/settings',
+      fields: { actorId: actor },
+      work: async () => {
         const { before, after } = await this.agents.toolResults.updateSettings({
           actorId: actor,
           storeFromChars: body.storeFromChars,
@@ -84,7 +82,7 @@ export class AdminToolResultsController {
         });
         return after;
       },
-      settingsValues,
-    );
+      outcomeOf: settingsValues,
+    });
   }
 }

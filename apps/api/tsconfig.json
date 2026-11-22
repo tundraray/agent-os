@@ -1,20 +1,11 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "preserve",
-    "moduleResolution": "bundler",
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "emitDecoratorMetadata": true,
+    // Nest: decorators with emitted metadata, and DTO classes whose fields the framework fills.
     "experimentalDecorators": true,
-    "allowSyntheticDefaultImports": true,
-    "target": "ES2023",
-    "sourceMap": true,
-    "outDir": "./dist",
-    "noEmit": true,
-    "skipLibCheck": true,
-    "strict": true,
+    "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false,
-    "types": ["vitest/globals", "node"]
-  },
-  "include": ["src", "test", "vitest.config.ts", "vitest.config.e2e.ts", "vitest.config.verify.ts"]
+    // Read by the rspack builder of the Nest CLI: the bundle gets its source maps.
+    "sourceMap": true
+  }
 }

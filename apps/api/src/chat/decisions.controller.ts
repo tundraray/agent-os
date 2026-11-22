@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, Inject, Param, Post, Req } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
+import { loggedRoute } from '../common/logged-route';
 import {
   DecisionRequestSchema,
   type DecisionRequest,
@@ -9,7 +10,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
 import { APP_LOGGER } from '../logging/app-logger';
 import { AgentControlService } from './agent-control.service';
-import { runCommand } from './chat.errors';
+import { chatRoute } from './chat.errors';
 
 /**
  * `POST /decisions/:decisionId` (design-chat.md, «Решения и расход», Flow 4): a decision on a request
@@ -35,7 +36,7 @@ export class DecisionsController {
     @Req() req: AuthedRequest,
   ): Promise<DecisionResponse> {
     const ownerId = req.user.id;
-    return runCommand(
+    return loggedRoute(
       this.logger,
       {
         route: 'POST /decisions/:decisionId',
@@ -47,7 +48,7 @@ export class DecisionsController {
           withArgs: body.args !== undefined,
         }),
       },
-      'DECISION_NOT_FOUND',
+      chatRoute('DECISION_NOT_FOUND'),
     );
   }
 }

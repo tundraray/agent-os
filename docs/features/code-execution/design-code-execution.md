@@ -106,7 +106,7 @@
 - **PoC.** Без переключателей и параллельных версий; поля контрактов обязательны там, где они есть по смыслу.
 - **Логи** — через логгер `common` по [logging.md](../../code-system/patterns/logging.md); процесс исполнителя сам не пишет логов, всё пишет процесс API.
 - **Процесс API стартует с `--disable-sigusr1`** — в `apps/api`, в e2e и в CI: `process._debugProcess` в процессе исполнителя целится именно в процесс API, а флаг защищает только тот процесс, которому передан ([Node CLI](https://nodejs.org/api/cli.html)).
-  - Скрипты `apps/api`: `start` — `nest start --exec "node --disable-sigusr1"`; `start:dev` и `dev` — `nest start --watch --exec "node --disable-sigusr1"`; `start:prod` — `node --disable-sigusr1 dist/main`.
+  - Скрипты `apps/api`: `start` — `nest start --exec "node --disable-sigusr1"`; `dev` — `nest start --watch --exec "node --disable-sigusr1"`; `start:prod` — `node --disable-sigusr1 dist/main`.
   - Тесты, где процесс API — работник Vitest, получают флаг опцией `test.execArgv` со значением `['--disable-sigusr1']`. Опция действует на пул `forks`, а он в конфигурациях репозитория стоит по умолчанию.
   - `NODE_OPTIONS` для флага не подходит: его наследуют все дочерние процессы API, в том числе MCP-серверы по stdio, а на Windows переменная окружения в скрипте `package.json` требует `cross-env`.
 - **Тесты** — немного и только критичное: набор на побег из песочницы одной таблицей на слой; замеры скорости — отдельным скриптом по запросу, не в обычном прогоне.

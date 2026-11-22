@@ -5,7 +5,7 @@ import {
   CreateRecordBodySchema,
   type RecordTool,
 } from '@agent-os/contracts';
-import type { BuiltinRecordInput } from './library.service';
+import type { BuiltinRecordInput } from './library.types';
 
 /**
  * Ids of the built-in records: constants of the code, so the records can name each other and a reseed after a

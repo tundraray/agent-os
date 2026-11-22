@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { createDatabase } from '@agent-os/db';
 import { AuditLog } from '../audit/audit-log.repository';
 import { createAppLogger } from '../logging/app-logger';
-import { seedSuperAdmin } from './super-admin';
+import { seedSuperAdmin } from '../identity/super-admin';
 
 const logger = createAppLogger(process.env);
 

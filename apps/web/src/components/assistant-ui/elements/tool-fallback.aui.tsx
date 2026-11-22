@@ -19,9 +19,13 @@ import {
 import { useAuiState, type ToolCallMessagePartComponent } from "@assistant-ui/react";
 import {
   IdSchema,
+  LIST_RECORDS_TOOL,
+  START_AGENT_TOOL,
+  START_DEEP_AGENT_TOOL,
   ToolCallStateSchema,
   ToolOutcomeSchema,
   ToolRefusalReasonSchema,
+  type ChatRecordTool,
   type RecordKind,
   type ToolOutcome,
   type ToolRefusalReason,
@@ -34,7 +38,7 @@ import { ShellLink } from "@/components/shell/shell-link";
 import { refusalText } from "@/lib/access/access-texts";
 import { isRunCode, NO_RUN_VALUE, runCodeView } from "@/lib/agents/run-code";
 import { flatRows, valueRows } from "@/lib/agents/value-rows";
-import { isRecordTool, RECORD_CHANGE_TOOLS, type RecordTool, type ToolCallArtifact } from "@/lib/feed/to-feed";
+import { isRecordTool, RECORD_CHANGE_TOOLS, type ToolCallArtifact } from "@/lib/feed/to-feed";
 import { toolCallLabels } from "@/lib/i18n/builtin-name";
 import type { AgentsTranslator, ChatTranslator, ErrorsTranslator } from "@/lib/i18n/messages";
 import { formatListTime } from "@/lib/i18n/formats";
@@ -138,7 +142,7 @@ function refusalOf(t: ErrorsTranslator, artifact: unknown): ReasonLine {
 }
 
 /** The library's start tools: their refusals name the record (MC-16, MC-17; DC-02, RN-06). */
-const LIBRARY_TOOLS = new Set(["start_agent", "start_deep_agent"]);
+const LIBRARY_TOOLS = new Set<string>([START_AGENT_TOOL, START_DEEP_AGENT_TOOL]);
 
 /**
  * The record a library call names and its kind: `agent` of `start_agent` (only a record id — not a fork
@@ -151,7 +155,7 @@ function libraryCallOf(toolName: string, args: unknown): { recordId: string | nu
     const parsed = IdSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   };
-  return toolName === "start_agent"
+  return toolName === START_AGENT_TOOL
     ? { recordId: id(arg("agent")), kind: "agent" }
     : { recordId: id(arg("deepAgent")), kind: "deep_agent" };
 }
@@ -208,20 +212,20 @@ function LibraryRefusalLine({ toolName, args, artifact }: { toolName: string; ar
  * MC-23: a record tool's block names its record — «Чтение «{имя}»», «Создание «{имя}»» — by the name the feed
  * knows, else by the live library list; a record known by neither reads by the catalogue's title.
  */
-function useRecordToolTitle(toolName: RecordTool, args: unknown, artifact: unknown): string | null {
+function useRecordToolTitle(toolName: ChatRecordTool, args: unknown, artifact: unknown): string | null {
   const t = useTranslations("agents.recordTool");
   const recordId = IdSchema.safeParse(
     typeof args === "object" && args !== null ? Reflect.get(args, "recordId") : undefined,
   );
   // No list holds an empty id: a call without a record reads as one the list does not hold.
   const live = useLiveRecord(recordId.success ? recordId.data : "");
-  if (toolName === "list_records") return t("list_records");
+  if (toolName === LIST_RECORDS_TOOL) return t(LIST_RECORDS_TOOL);
   const name = textField(artifact, "recordName") ?? live?.name ?? null;
   return name === null ? null : t(toolName, { name });
 }
 
 /** A record tool's block: the library list is read only here, so other blocks never subscribe to it. */
-function RecordToolBlock(props: ToolBlockProps & { toolName: RecordTool }) {
+function RecordToolBlock(props: ToolBlockProps & { toolName: ChatRecordTool }) {
   const title = useRecordToolTitle(props.toolName, props.args, props.artifact);
   return <ToolBlock {...props} title={title} />;
 }

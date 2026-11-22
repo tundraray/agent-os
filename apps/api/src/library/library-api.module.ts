@@ -10,7 +10,7 @@ import { AdminLibraryController } from './admin-library.controller';
 import { BuiltinRecordsSeeder } from './builtin-records.seeder';
 import { LibraryController } from './library.controller';
 import { LibraryModule } from './library.module';
-import { LibraryService } from './library.service';
+import { LibraryChatService } from './library-chat.service';
 import { createRecordTools, RECORD_TOOLS_REGISTRATION } from './record-tools';
 
 /**
@@ -31,7 +31,7 @@ import { createRecordTools, RECORD_TOOLS_REGISTRATION } from './record-tools';
       provide: RECORD_TOOLS_REGISTRATION,
       useFactory: (
         agents: Agents,
-        library: LibraryService,
+        library: LibraryChatService,
         identity: IdentityDirectory,
         logger: Logger,
       ): true => {
@@ -44,7 +44,7 @@ import { createRecordTools, RECORD_TOOLS_REGISTRATION } from './record-tools';
           agents.tools.register(tool);
         return true;
       },
-      inject: [AGENTS, LibraryService, IdentityDirectory, APP_LOGGER],
+      inject: [AGENTS, LibraryChatService, IdentityDirectory, APP_LOGGER],
     },
   ],
 })

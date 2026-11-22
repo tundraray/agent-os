@@ -1,7 +1,10 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "env": {
+    "node": true
+  },
   "rules": {
-    "typescript/no-floating-promises": "error",
+    // The shared list plus the layer rule of this package.
     "no-restricted-imports": [
       "error",
       {
@@ -12,7 +15,11 @@
           },
           {
             "group": ["@sentry/*", "@sentry/**"],
-            "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in apps/api."
+            "message": "ADR-0004: packages log through the logger of @agent-os/common; Sentry stays in the applications."
+          },
+          {
+            "group": ["@mastra/*", "@mastra/**"],
+            "message": "ADR-0004: Mastra is declared by packages/agents only."
           },
           {
             "group": ["@agent-os/*", "!@agent-os/common"],
@@ -25,8 +32,5 @@
         ]
       }
     ]
-  },
-  "env": {
-    "node": true
   }
 }

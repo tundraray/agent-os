@@ -5,7 +5,7 @@ import type {
   GrantTargetBody,
   GrantTargetKind,
 } from '@agent-os/contracts';
-import { accessGrants, accessModels, type Executor, identityRoles } from '@agent-os/db';
+import { accessGrants, accessModels, type Executor } from '@agent-os/db';
 import { asc, eq, inArray, or, type SQL } from 'drizzle-orm';
 import type { GrantRow } from './effective-access';
 
@@ -35,13 +35,17 @@ function targetOf(row: TargetColumns): GrantTargetBody {
   throw new Error(`access_grants row has a broken ${row.targetKind} target`);
 }
 
-/** The holder of a row; the CHECK keeps exactly one of role and employee, the FK the role's name. */
-function holderOf(
-  row: { roleId: string | null; userId: string | null },
-  roleName: string | null,
-): Grant['holder'] {
-  if (row.roleId !== null && roleName !== null)
-    return { kind: 'role', id: row.roleId, name: roleName };
+/** A grant as stored: the holder by id — the role's name is read in `identity` by the service. */
+export type StoredGrant = Omit<Grant, 'holder'> & {
+  readonly holder: { readonly kind: 'role' | 'user'; readonly id: string };
+};
+
+/** The holder of a row; the CHECK keeps exactly one of role and employee. */
+function holderOf(row: {
+  roleId: string | null;
+  userId: string | null;
+}): StoredGrant['holder'] {
+  if (row.roleId !== null) return { kind: 'role', id: row.roleId };
   if (row.userId !== null) return { kind: 'user', id: row.userId };
   throw new Error('access_grants row has a broken holder');
 }
@@ -77,27 +81,22 @@ export async function grantsOf(
   }));
 }
 
-/** The grants as the admin sees them: holder with the role name, model target with the catalogue name. */
+/** The grants as the admin sees them, but for the role's name: model target with the catalogue name. */
 async function grantViews(
   executor: Executor,
   where: SQL | undefined,
-): Promise<Grant[]> {
+): Promise<StoredGrant[]> {
   const rows = await executor
-    .select({
-      grant: accessGrants,
-      roleName: identityRoles.name,
-      modelName: accessModels.name,
-    })
+    .select({ grant: accessGrants, modelName: accessModels.name })
     .from(accessGrants)
-    .leftJoin(identityRoles, eq(identityRoles.id, accessGrants.roleId))
     .leftJoin(accessModels, eq(accessModels.id, accessGrants.model))
     .where(where)
     .orderBy(asc(accessGrants.createdAt), asc(accessGrants.id));
-  return rows.map(({ grant, roleName, modelName }) => {
+  return rows.map(({ grant, modelName }) => {
     const target = targetOf(grant);
     return {
       id: grant.id,
-      holder: holderOf(grant, roleName),
+      holder: holderOf(grant),
       effect: grant.effect as GrantEffect,
       target:
         target.kind === 'model'
@@ -112,7 +111,7 @@ async function grantViews(
 export function listGrants(
   executor: Executor,
   holder: GrantHolderQuery,
-): Promise<Grant[]> {
+): Promise<StoredGrant[]> {
   return grantViews(
     executor,
     'roleId' in holder
@@ -124,7 +123,7 @@ export function listGrants(
 export async function findGrant(
   executor: Executor,
   id: string,
-): Promise<Grant | undefined> {
+): Promise<StoredGrant | undefined> {
   const [grant] = await grantViews(executor, eq(accessGrants.id, id));
   return grant;
 }

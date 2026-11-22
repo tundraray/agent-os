@@ -1,0 +1,19 @@
+{
+  // The one TypeScript setup of the repository; every workspace `tsconfig.json` extends it and
+  // states only what it really needs to differ in. Nothing is emitted by `tsc`: the applications
+  // are built by their bundlers, the packages are consumed as source (ADR-0004).
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // Every bundler here (rspack, Next, Vite) compiles file by file.
+    "isolatedModules": true,
+    "noEmit": true,
+    // The Vitest configs import the root `vitest.shared.mts` by its full name: the native config loader of Vite resolves nothing else.
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["${configDir}/src", "${configDir}/test", "${configDir}/*.ts"]
+}

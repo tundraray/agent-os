@@ -30,7 +30,8 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AdminOnly } from '../identity/admin-only.decorator';
 import type { AuthedRequest } from '../identity/auth-user';
 import { LibrarySettingsService } from './library-settings';
-import { LibraryService, type PanelServerFacts } from './library.service';
+import { LibraryPanelService } from './library-panel.service';
+import type { PanelServerFacts } from './library.types';
 import { serverFacts } from './server-facts';
 
 /**
@@ -42,7 +43,7 @@ import { serverFacts } from './server-facts';
 @AdminOnly()
 export class AdminLibraryController {
   constructor(
-    private readonly library: LibraryService,
+    private readonly library: LibraryPanelService,
     private readonly settings: LibrarySettingsService,
     @Inject(AGENTS) private readonly agents: Agents,
   ) {}

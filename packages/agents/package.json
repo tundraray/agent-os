@@ -8,8 +8,8 @@
     "./testing": "./src/testing.ts"
   },
   "scripts": {
-    "lint": "oxlint --type-aware --deny-warnings src/ test/",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint --type-aware --deny-warnings",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
     "test:verify": "vitest run --config ./vitest.config.verify.ts"
@@ -25,7 +25,10 @@
     "@ai-sdk/openai-compatible": "3.0.94",
     "@mastra/core": "^1.85.0",
     "@modelcontextprotocol/client": "2.4.0",
+    "@nestjs/common": "^12.6.0",
+    "@nestjs/core": "^12.6.0",
     "drizzle-orm": "0.45.4",
+    "reflect-metadata": "^0.2.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {

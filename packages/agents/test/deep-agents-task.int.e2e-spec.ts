@@ -4,7 +4,7 @@
 // Test type: Integration, run with `pnpm --filter @agent-os/agents test:e2e`.
 //
 // Harness: `createAgentsHarness` of support/agentsHarness.ts, the library double with a `deep_agent` record the root starts through
-// `start_test_deep_agent` (a plain task, so a subagent's task is its description alone). A subagent fails as in agent-platform-workflows
+// `start_test_deep_agent` (a plain task, so a subagent's task is its description alone). A subagent fails as in deep-agents-run
 // INT-2 A: its model errors on every attempt. A unique owner `newUser()` per run; no sleeps, `waitForTaskStatus` orders the steps.
 //
 // Proven elsewhere (not restated here):

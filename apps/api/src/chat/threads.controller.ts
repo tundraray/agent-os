@@ -12,6 +12,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Logger } from '@agent-os/common';
+import { loggedRoute } from '../common/logged-route';
 import {
   HistoryQuerySchema,
   RenameThreadRequestSchema,
@@ -31,7 +32,7 @@ import {
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import type { AuthedRequest } from '../identity/auth-user';
 import { APP_LOGGER } from '../logging/app-logger';
-import { type Command, runCommand } from './chat.errors';
+import { chatRoute, type Command } from './chat.errors';
 import { ConversationsService } from './conversations.service';
 
 /**
@@ -172,6 +173,6 @@ export class ThreadsController {
   }
 
   private run<T>(command: Command<T>): Promise<T> {
-    return runCommand(this.logger, command, 'THREAD_NOT_FOUND');
+    return loggedRoute(this.logger, command, chatRoute('THREAD_NOT_FOUND'));
   }
 }

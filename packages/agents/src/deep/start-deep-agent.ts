@@ -1,5 +1,5 @@
 import type { Logger } from '@agent-os/common';
-import { AGENTS_BRIEF_CONFIRMATION } from '@agent-os/contracts';
+import { AGENTS_BRIEF_CONFIRMATION, START_DEEP_AGENT_TOOL } from '@agent-os/contracts';
 import { z } from 'zod';
 
 import type { StartRefusal, StartRequest, StartResolution } from '../start/resolve-start';
@@ -7,9 +7,6 @@ import type { InCommitAgentTool } from '../tools/tool';
 import { WAITING_RULE } from '../tools/system/start-agent';
 import { logStart } from '../tools/system/start-child';
 import { type DeepAgentBrief, DeepAgentBriefSchema } from './brief';
-
-/** The root's tool that starts a deep agent on a brief; its description lists the chat's deep agents. */
-const START_DEEP_AGENT_TOOL = 'start_deep_agent';
 
 /** Arguments of `start_deep_agent`: the deep agent record and the brief. */
 const StartDeepAgentArgsSchema = DeepAgentBriefSchema.extend({

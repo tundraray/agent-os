@@ -153,14 +153,14 @@ Follows the [code system](../../code-system/README.md). Поиск перед «
 
 | Building block | Pattern | Status | Note |
 |---|---|---|---|
-| `LibraryModule`: `LibraryService`, репозиторий `library` | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | сервис открывает транзакцию, пишет запись и аудит (KD-1) |
+| `LibraryModule`: `LibraryService` (сотрудник и часть `runtime`), `LibraryPanelService` (панель), `LibraryChatService` (инструменты записей) над общими `LibraryRecords` и `LibrarySave`, репозиторий `library` | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | сервис открывает транзакцию, пишет запись и аудит (KD-1) |
 | Условие видимости в репозитории | [auth-boundary.md](../../code-system/patterns/auth-boundary.md) | extended | поиск по видимости вместо поиска по владельцу (KD-2) |
 | Правила сохранения, аудитории и копии | [pure-decision.md](../../code-system/patterns/pure-decision.md) | new | три чистые функции, по таблице тестов на каждую |
 | `LibraryApiModule`: `LibraryController`, `AdminLibraryController`, `BuiltinRecordsSeeder`, регистрация инструментов записей | [port-module-split.md](../../code-system/patterns/port-module-split.md) | new | второе использование после `access` (KD-6) |
 | Таблицы `library_records`, `library_shares` | [ADR-0003](../../adr/ADR-0003-drizzle-data-layer.md) | new | адресат «роль или сотрудник» — как у `access_grants` |
 | `LibrarySettingsService` и таблица `library_settings` | [settings-row.md](../../code-system/patterns/settings-row.md) | new | одна строка настроек; сохранение и аудит в одной транзакции (KD-9) |
 | `packages/contracts/src/library.ts` | — | new | схемы тел, ответов и содержимого, коды ошибок |
-| `IdentityDirectory` | — | extended | `isActive` и `rolesOf` — вход процедуры видимости; `existing({ roleIds, userIds })` — какие из названных ролей и сотрудников есть. Её зовут и `library` (`holder_not_found`), и `access`; репозитории `identity` вне модуля `identity` никто не импортирует |
+| `IdentityDirectory` | — | extended | `isActive` и `rolesOf` — вход процедуры видимости; `existing({ roleIds, userIds })` — какие из названных ролей и сотрудников есть; `roleNames` и `userNames` — имена адресатов и автора записи, которые `LibraryRecords` добавляет к прочитанным записям. `existing` зовут и `library` (`holder_not_found`), и `access`; репозитории `identity` вне модуля `identity` никто не импортирует |
 | `AuthController` | [auth-boundary.md](../../code-system/patterns/auth-boundary.md) | extended | маршрут `GET /api/auth/me/roles` (FR-03) |
 | `AccessService` | — | extended | `allowedModels(ownerId)`; она и `myModels` — над одним закрытым помощником поверх чистой `allowedCatalogue` |
 | `Agents.mcp` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | операция `usable(ownerId)` над `usableServer` |
@@ -348,7 +348,7 @@ flowchart TB
 - Правила сохранения (`decideSave`) — чистая функция: по входу она отвечает «можно» или отказом с причиной, частью записи и значениями (KD-4).
 - Репозиторий меняет запись, только если она ещё в версии из тела, и вместе с ней в той же транзакции `AuditLog` пишет событие (KD-5, KD-7).
 
-Сохранение из чата идёт тем же путём: инструмент записей берёт серверы из `Agents.mcp` и зовёт операции чата `LibraryService` ([Contract Definitions](#contract-definitions), «Для инструментов записей главного чата»).
+Сохранение из чата идёт тем же путём: инструмент записей берёт серверы из `Agents.mcp` и зовёт операции `LibraryChatService` ([Contract Definitions](#contract-definitions), «Для инструментов записей главного чата»).
 
 **api — список и чтение записи**
 
@@ -771,7 +771,7 @@ sequenceDiagram
 
 **Для инструментов записей главного чата**
 
-Пять инструментов записей и их отказы описывает [design-agent-types.md](../deep-agents/design-agent-types.md), KD-3 и Contract Definitions. Им `LibraryService` даёт операции, которые идут по тем же правилам сохранения, видимости и аудита, что маршруты:
+Пять инструментов записей и их отказы описывает [design-agent-types.md](../deep-agents/design-agent-types.md), KD-3 и Contract Definitions. Им `LibraryChatService` даёт операции, которые идут по тем же правилам сохранения, видимости и аудита, что маршруты:
 
 - **`chatContext(actor, servers)`** — сотрудник, доступные ему серверы и, для администратора, реестр, разрешённые модели и модели каталога; читается до транзакции шага.
 - **`chatRecords(context)`**, **`chatRecord(context, recordId)`** — видимые записи и, для администратора, системные записи панели; невидимая запись — `null`.

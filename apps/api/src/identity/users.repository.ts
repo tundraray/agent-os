@@ -125,6 +125,23 @@ export async function existingUserIds(
   return rows.map((row) => row.id);
 }
 
+/** Id, name and status of the employees named, by name. */
+export async function userNames(
+  executor: Executor,
+  userIds: string[],
+): Promise<{ id: string; name: string; status: string }[]> {
+  if (userIds.length === 0) return [];
+  return executor
+    .select({
+      id: identityUsers.id,
+      name: identityUsers.name,
+      status: identityUsers.status,
+    })
+    .from(identityUsers)
+    .where(inArray(identityUsers.id, userIds))
+    .orderBy(asc(identityUsers.name));
+}
+
 /** Position of the last employee of a list page: the order is name, then id. */
 export interface UserListPosition {
   name: string;
