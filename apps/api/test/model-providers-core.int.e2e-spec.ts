@@ -63,7 +63,7 @@ import {
   runModel,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   agentBody,
@@ -74,7 +74,7 @@ import {
   recordName,
 } from './support/library';
 import { runName } from './support/mcp-servers';
-import { databaseUrl } from './support/migrate.global-setup';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   apiRequest,
   createEmployee,

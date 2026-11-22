@@ -66,6 +66,7 @@ import {
 } from '@agent-os/contracts';
 import request, { type Response, type Test } from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import { AccessService } from '../src/access/access.service';
 import { IdentityDirectory } from '../src/identity/identity-directory';
 import { SESSION_COOKIE, frontendOrigin } from '../src/identity/session-cookie';
@@ -78,7 +79,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { pointBuiltinsAt } from './support/library';
 import {

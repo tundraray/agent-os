@@ -24,6 +24,9 @@ const FINISHED_STATUSES: readonly TaskStatus[] = [
   stopped,
 ];
 
+/** Statuses of a task that has not ended. */
+export const UNFINISHED_STATUSES: readonly TaskStatus[] = [queued, running, waiting];
+
 export const isFinished = (status: string): boolean =>
   (FINISHED_STATUSES as readonly string[]).includes(status);
 

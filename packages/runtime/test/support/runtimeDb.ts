@@ -1,15 +1,12 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import { createDatabase } from '@agent-os/db';
 import type pg from 'pg';
-import { databaseUrl } from './database-url';
+import { databaseUrl } from '@agent-os/db/testing';
 import { HANDLER_ROWS_TABLE } from './testHandlers';
 
 /**
  * Read-only snapshots of the rows the runtime and the test handlers wrote, over the test's own
  * connections apart from any runtime's pool. Nothing here writes.
  */
-
-const SETTLE_POLL_MS = 25;
 
 let pool: pg.Pool | undefined;
 
@@ -121,32 +118,6 @@ export function rowVersionsOf(rootId: string): Promise<RowVersion[]> {
      ORDER BY 1, 2`,
     [rootId],
   );
-}
-
-/**
- * Polls `read` until `done` holds and returns that value; fails naming `what` and the last value
- * after `timeoutMs`. Tests synchronise on rows with it, never on sleeps.
- */
-export async function waitFor<T>(
-  read: () => Promise<T>,
-  done: (value: T) => boolean,
-  what: string,
-  timeoutMs = 30_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let value = await read();
-  while (!done(value)) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(
-          value instanceof Map ? [...value] : value,
-        )}`,
-      );
-    }
-    await delay(SETTLE_POLL_MS);
-    value = await read();
-  }
-  return value;
 }
 
 /** Closes the test's own connections; call from `afterAll`. */

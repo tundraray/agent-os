@@ -5,7 +5,6 @@ import {
   TaskEndStatusSchema,
   type TasksFinishedPayload,
   TaskStatusSchema,
-  TrackerStatusSchema,
 } from '@agent-os/contracts';
 import type { RuntimeTrackersRepository } from '@agent-os/db';
 import type { EventLog } from '../events/event-log';
@@ -57,10 +56,11 @@ const eventFailure = (failure: TaskFailure): TaskFailure => ({
 });
 
 /**
- * A guarded write of a task row the caller has just read, by its status and attempt. A row changed
- * since that read is an error, which rolls the caller's transaction back.
+ * A guarded write, by its status and attempt, of a task row the caller's transaction holds: the
+ * row a write of this transaction returned (`Tasks.hold`, `Tasks.transition`). No other writer
+ * changes such a row, so a write that matches nothing is a bug; it rolls the transaction back.
  */
-export async function writeLocked(
+export async function writeHeld(
   tasks: Tasks,
   task: TaskRow,
   change: TaskChange,
@@ -73,7 +73,7 @@ export async function writeLocked(
     },
     change,
   );
-  if (!row) throw new Error(`Write of task ${task.taskId} matched no row: it changed after the read`);
+  if (!row) throw new Error(`Write of held task ${task.taskId} matched no row`);
   return row;
 }
 
@@ -109,6 +109,9 @@ async function notifyParent(inbox: Inbox, child: TaskRow): Promise<void> {
  * tasks are counted, not a counter kept: a revived task makes the tracker wait for it again, and
  * a task that `revives` at once is not reported at all. Returns `false` when the task has no open
  * tracker, so the caller notifies the parent as usual.
+ *
+ * The recount follows a write of the tracker row (`holdOpen`): two tasks of one tracker that end
+ * at once recount one after the other, and the second sees the first one ended.
  */
 async function reportToTracker(
   deps: TaskEndDeps,
@@ -116,8 +119,8 @@ async function reportToTracker(
   revives: boolean,
 ): Promise<boolean> {
   if (child.trackerId === null) return false;
-  const tracker = await deps.trackers.find(child.trackerId);
-  if (tracker?.status !== TrackerStatusSchema.enum.open) return false;
+  const tracker = await deps.trackers.holdOpen(child.trackerId);
+  if (!tracker) return false;
   if (revives) return true;
   const ended: TasksFinishedPayload['tasks'] = [];
   for (const task of await deps.trackers.taskStatuses(tracker.trackerId)) {
@@ -143,14 +146,15 @@ async function reportToTracker(
  * transaction: the final status with its event, one
  * `child_finished` to the parent (for a task of an open tracker, the tracker's recount instead),
  * and — when the task completed or failed while a message with `revive` arrived — `queued` again
- * with `task.queued` (Invariant 9). A stop never revives. Returns the last row.
+ * with `task.queued` (Invariant 9). A stop never revives. Returns the last row. `task` is a row
+ * the transaction holds ({@link writeHeld}).
  */
 export async function endTask(
   deps: TaskEndDeps,
   task: TaskRow,
   end: TaskEnd,
 ): Promise<TaskRow> {
-  const ended = await writeLocked(deps.tasks, task, {
+  const ended = await writeHeld(deps.tasks, task, {
     kind: 'set',
     status: end.status,
     fields: {
@@ -173,7 +177,7 @@ export async function endTask(
     await notifyParent(deps.inbox, ended);
   }
   if (!revives) return ended;
-  const revived = await writeLocked(deps.tasks, ended, {
+  const revived = await writeHeld(deps.tasks, ended, {
     kind: 'set',
     status: queued,
     fields: { result: null, failure: null },

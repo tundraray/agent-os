@@ -62,6 +62,7 @@ export { ModelClient, type OnTextDelta, type TextDelta } from './model/model-cli
 export type { AgentConfirmation, AgentHistoryEntry } from './operations/agent-sessions';
 export { ControlOperations } from './operations/control-operations';
 export { StartOperations } from './operations/start-operations';
+export type { RootSession } from './store/sessions';
 export { ViewOperations } from './operations/view-operations';
 export type { DeepAgentRun } from './deep/deep-agent-run';
 export type { EmbeddingInputType } from './providers/adapters';

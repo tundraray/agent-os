@@ -35,7 +35,6 @@ import {
   historyOf,
   testRecord,
   toolCallRowsOf,
-  waitFor,
 } from './support/agentsHarness';
 import {
   type ChildScenario,
@@ -50,7 +49,7 @@ import {
   writeRun,
 } from './support/codeRunChild';
 import { BACKOFFICE_SERVER, LOGS_SERVER } from './support/mcp-servers';
-import { newUser } from './support/new-user';
+import { newUser, waitFor } from '@agent-os/db/testing';
 
 /** The run's servers of the scenario; the test's harness registers them at its fixture process. */
 const SERVERS = { logs: LOGS_SERVER, backoffice: BACKOFFICE_SERVER };

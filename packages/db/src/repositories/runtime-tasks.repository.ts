@@ -158,7 +158,7 @@ export class RuntimeTasksRepository {
    * UPDATE of `columns` and `updated_at`, guarded by the allowed source statuses and, when given,
    * by the attempt (fencing, ADR-0001) and the wait reason. Returns the updated row, or `undefined`
    * when the guard matched nothing — the write is fenced and dropped. Which columns a change sets
-   * and which changes are allowed is the rule of the runtime's `Tasks.transition`, the only caller.
+   * and which changes are allowed is the rule of the runtime's `Tasks`, the only caller.
    */
   async updateGuarded(
     guard: RuntimeTaskRowGuard,

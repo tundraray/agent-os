@@ -30,7 +30,7 @@
 import type { Task } from '@agent-os/runtime';
 import { sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { newUser } from './support/new-user';
+import { newUser } from '@agent-os/db/testing';
 import { Children } from './support/runtimeChild';
 import {
   type ChildTypes,

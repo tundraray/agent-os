@@ -68,6 +68,7 @@ import type { ModelPrice } from '@agent-os/runtime';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { registerServer, removeServer } from '@agent-os/agents/testing';
 import {
   type AgentsHarness,
   createAgentsHarness,
@@ -75,7 +76,6 @@ import {
   historyOf,
   setRootRecord,
   testRecord,
-  waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness';
 import {
@@ -86,8 +86,8 @@ import {
   readBody,
   startFakeProvider,
 } from './support/fake-provider';
-import { registerServer, removeServer, runName } from './support/mcp-servers';
-import { newUser } from './support/new-user';
+import { runName } from './support/mcp-servers';
+import { newUser, waitFor } from '@agent-os/db/testing';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

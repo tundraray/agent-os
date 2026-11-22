@@ -32,6 +32,7 @@ import {
   type CreateRecordBody,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import {
   allowRole,
   HAIKU_TEST_PRICES,
@@ -40,7 +41,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { deepAgentBody, getRecord, listLibrary, pointBuiltinsAt, recordName } from './support/library';
 import { createArgs, pendingCardOf, recordToolCall, toolResultsOf } from './support/record-tools';

@@ -55,7 +55,7 @@ import {
   runModel,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, waitFor } from './support/api';
+import { chatApi, expectBody } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { pointBuiltinsAt } from './support/library';
 import {
@@ -79,7 +79,7 @@ import {
   type Method,
   type Session,
 } from './support/session';
-import { databaseUrl } from './support/migrate.global-setup';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 
 /** Bound of the case; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Частично заменён: механизм восстановления — lease, heartbeat, reaper по истёкшему lease — и блокировки строк заменяет [ADR-0023](ADR-0023-live-task-objects-one-stepping-process.md): шаги исполняет один процесс, команда обрывает шаг в нём, а задачу в `running` без шага в процессе возвращает `RecoverySweeper`. Fencing по `attempt` и остальные решения ADR-0001 действуют.
 
 ## Decision
 

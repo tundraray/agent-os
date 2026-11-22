@@ -20,11 +20,16 @@ export class RuntimeTrackersRepository {
     await this.db.client.insert(runtimeTrackers).values({ ...tracker, status: open });
   }
 
-  async find(trackerId: string): Promise<RuntimeTrackerRow | undefined> {
+  /**
+   * The tracker if it is `open`, by an UPDATE that changes nothing: another transaction that ends
+   * a task of the tracker waits here until this one ends, and then reads what it wrote.
+   */
+  async holdOpen(trackerId: string): Promise<RuntimeTrackerRow | undefined> {
     const [row] = await this.db.client
-      .select()
-      .from(runtimeTrackers)
-      .where(eq(runtimeTrackers.trackerId, trackerId));
+      .update(runtimeTrackers)
+      .set({ status: open })
+      .where(and(eq(runtimeTrackers.trackerId, trackerId), eq(runtimeTrackers.status, open)))
+      .returning();
     return row;
   }
 

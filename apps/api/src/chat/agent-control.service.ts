@@ -5,8 +5,8 @@ import {
   ControlOperations,
   StartOperations,
   type AgentView as AgentsAgentView,
+  type RootSession,
 } from '@agent-os/agents';
-import type { RootSession } from '@agent-os/db';
 import {
   HISTORY_PAGE_SIZE,
   type AgentListNode,

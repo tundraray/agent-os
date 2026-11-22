@@ -6,11 +6,7 @@ import {
   TaskStatusSchema,
   WaitReasonSchema,
 } from '@agent-os/contracts';
-import {
-  Db,
-  RuntimeTasksRepository,
-  RuntimeTrackersRepository,
-} from '@agent-os/db';
+import { Db, RuntimeTrackersRepository } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { CrashPoints } from '../crash-points';
 import { RuntimeError } from '../errors';
@@ -21,7 +17,7 @@ import type {
   TaskRow,
 } from '../tasks/guarded-transition';
 import { isFinished } from '../tasks/guarded-transition';
-import { endTask, type TaskEndDeps, writeLocked } from '../tasks/task-end';
+import { endTask, type TaskEndDeps, writeHeld } from '../tasks/task-end';
 import {
   type ChildTask,
   type EnqueueMessage,
@@ -55,7 +51,6 @@ const COMMIT_RETRIES = 3;
 /** Services of the step's commit. */
 interface StepCommitDeps extends TaskEndDeps {
   db: Db;
-  taskRows: RuntimeTasksRepository;
   handlers: HandlerRegistry;
   decisions: Decisions;
   crashPoints: CrashPoints;
@@ -112,7 +107,7 @@ interface CommittedStep {
   adopted: readonly AdoptedTask[];
 }
 
-/** The attempt is no longer current when the commit reads the task. */
+/** The attempt is no longer current when the commit takes the task row. */
 const REJECTED = Symbol('rejected');
 
 const OUTCOMES = new Set(['continue', 'wait', 'await_decision', 'complete', 'fail']);
@@ -129,7 +124,6 @@ export class StepCommitter {
   constructor(
     @Inject(Db) db: Db,
     @Inject(Tasks) tasks: Tasks,
-    @Inject(RuntimeTasksRepository) taskRows: RuntimeTasksRepository,
     @Inject(RuntimeTrackersRepository) trackers: RuntimeTrackersRepository,
     @Inject(EventLog) events: EventLog,
     @Inject(Inbox) inbox: Inbox,
@@ -141,7 +135,6 @@ export class StepCommitter {
     this.deps = {
       db,
       tasks,
-      taskRows,
       trackers,
       events,
       inbox,
@@ -210,10 +203,12 @@ export class StepCommitter {
     step: TaskStepContext,
     result: StepResult,
   ): Promise<CommittedStep | typeof REJECTED> {
-    const { db, tasks, taskRows, inbox, decisions, events, crashPoints } = this.deps;
+    const { db, tasks, inbox, decisions, events, crashPoints } = this.deps;
     return db.transaction(async () => {
-      const task = await taskRows.find(step.taskId);
-      if (task?.status !== running || task.attempt !== step.attempt) return REJECTED;
+      // The step's first write is of its own row: a stop, an interrupt or a message of this task
+      // comes entirely before this commit or entirely after it.
+      const task = await tasks.hold({ taskId: step.taskId, from: [running], attempt: step.attempt });
+      if (!task) return REJECTED;
       this.checkOutcome(result);
 
       let tracker: OpenedTracker | undefined;
@@ -271,7 +266,7 @@ export class StepCommitter {
       if (tracker) {
         // KD-3: only the tracker's `tasks_finished` wakes the task; messages pending now or
         // arriving meanwhile come with it to the next step.
-        const row = await writeLocked(tasks, task, {
+        const row = await writeHeld(tasks, task, {
           kind: 'wait',
           reason: tasksReason,
           fields: stepFields,
@@ -288,7 +283,7 @@ export class StepCommitter {
       if (result.outcome === 'await_decision') {
         // Messages that arrive meanwhile wait: the decision wakes the task, and its next step
         // receives them with the decision (Flow 3).
-        const row = await writeLocked(tasks, task, {
+        const row = await writeHeld(tasks, task, {
           kind: 'wait',
           reason: decision,
           fields: stepFields,
@@ -308,7 +303,7 @@ export class StepCommitter {
 
       const pending = await inbox.loadPending(task.taskId);
       const waits = result.outcome === 'wait' && pending.length === 0;
-      const row = await writeLocked(
+      const row = await writeHeld(
         tasks,
         task,
         waits
@@ -486,8 +481,12 @@ export class StepCommitter {
     let ended: boolean;
     try {
       ended = await this.deps.db.transaction(async () => {
-        const task = await this.deps.taskRows.find(step.taskId);
-        if (task?.status !== running || task.attempt !== step.attempt) return false;
+        const task = await this.deps.tasks.hold({
+          taskId: step.taskId,
+          from: [running],
+          attempt: step.attempt,
+        });
+        if (!task) return false;
         await endTask(this.deps, task, {
           status: failed,
           failure,

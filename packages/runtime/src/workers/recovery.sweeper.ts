@@ -20,7 +20,7 @@ import type { RuntimeConfig } from '../runtime-config';
 import { CLOCK, RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
 import { HandlerRegistry } from '../steps/handler.registry';
 import { RunningTaskRegistry } from '../tasks/running-task.registry';
-import { endTask } from '../tasks/task-end';
+import { endTask, writeHeld } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
 
 const { queued, running, failed } = TaskStatusSchema.enum;
@@ -162,9 +162,9 @@ export class RecoverySweeper {
   }
 
   private async recoverIn(lost: { taskId: string; attempt: number }): Promise<Recovery> {
-    const { tasks, taskRows, events, config } = this.deps;
-    const task = await taskRows.find(lost.taskId);
-    if (task?.status !== running || task.attempt !== lost.attempt) return { kind: 'skipped' };
+    const { tasks, events, config } = this.deps;
+    const task = await tasks.hold({ taskId: lost.taskId, from: [running], attempt: lost.attempt });
+    if (!task) return { kind: 'skipped' };
 
     if (task.recoveries >= config.maxRecoveries) {
       const row = await endTask(this.deps, task, {
@@ -179,16 +179,12 @@ export class RecoverySweeper {
       return { kind: 'exhausted', row };
     }
 
-    const row = await tasks.transition(
-      { taskId: task.taskId, from: [running], attempt: task.attempt },
-      {
-        kind: 'set',
-        status: queued,
-        fields: { recoveries: task.recoveries + 1 },
-        fence: true,
-      },
-    );
-    if (!row) throw new Error(`Guarded write of task ${task.taskId} matched no row`);
+    const row = await writeHeld(tasks, task, {
+      kind: 'set',
+      status: queued,
+      fields: { recoveries: task.recoveries + 1 },
+      fence: true,
+    });
     await events.append({
       type: RuntimeEventTypeSchema.enum['task.recovered'],
       task: row,

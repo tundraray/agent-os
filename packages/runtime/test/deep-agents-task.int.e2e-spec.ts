@@ -14,8 +14,8 @@ import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
 import type { OpenedTracker } from '@agent-os/runtime';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { newUser } from './support/new-user';
-import { closeRuntimeDb, inboxOf, waitFor } from './support/runtimeDb';
+import { newUser, waitFor } from '@agent-os/db/testing';
+import { closeRuntimeDb, inboxOf } from './support/runtimeDb';
 import { createRuntimeHarness, type RuntimeHarness } from './support/runtimeHarness';
 import {
   createGateBook,

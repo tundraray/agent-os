@@ -1,10 +1,7 @@
-import { type ChildProcess, fork } from 'node:child_process';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { databaseUrl } from './database-url';
+import { TestChild, within } from '@agent-os/runtime/testing';
 import { type ChildTypes, CHILD_TYPES_ENV } from './runtimeChildHandlers';
-import type { ChildMessage, HarnessMessage } from './runtimeChildMain';
 
 /**
  * Child-process harness of E2E-1 and of the on-demand measurements. A child is plain Node running
@@ -20,19 +17,6 @@ const CHILD_ENTRY = join(PACKAGE_ROOT, 'test/support/runtimeChildMain.ts');
 /** Exit code of a crash point (the code of a process killed by SIGKILL). */
 const CRASH_EXIT_CODE = 137;
 
-/**
- * Runtime settings of the kill matrix: a short sweeper period so a lost step comes back within
- * seconds, fast polling.
- */
-const KILL_MATRIX_SETTINGS: Readonly<Record<string, string>> = {
-  RUNTIME_CONCURRENCY: '4',
-  RUNTIME_POLL_MS: '50',
-  RUNTIME_NOTIFY: 'on',
-  RUNTIME_REAPER_MS: '200',
-  RUNTIME_MAX_RECOVERIES: '3',
-  DB_POOL_MAX: '4',
-};
-
 /** Runtime settings at their design defaults (design-runtime.md, Runtime settings). */
 export const DEFAULT_SETTINGS: Readonly<Record<string, string>> = {
   RUNTIME_CONCURRENCY: '16',
@@ -43,69 +27,32 @@ export const DEFAULT_SETTINGS: Readonly<Record<string, string>> = {
   DB_POOL_MAX: '10',
 };
 
-/** How long a child may take to boot. */
-const BOOT_MS = 60_000;
 /** How long a dying child may take to reach its crash point. */
 const CRASH_MS = 60_000;
-const STOP_MS = 30_000;
-const POLL_MS = 50;
-const OUTPUT_TAIL_LINES = 60;
 
 export interface ChildOptions {
   /** Task types the child registers; it claims only these. */
   types: ChildTypes;
   /** `RUNTIME_CRASH_AT` (`<point>[:n]`); unset for a child that must not crash. */
   crashAt?: string;
-  /** Runtime settings; {@link KILL_MATRIX_SETTINGS} by default. */
+  /** Runtime settings; those of the kill matrix (`TestChild`) by default. */
   settings?: Readonly<Record<string, string>>;
 }
 
 /** One child process running a runtime with workers on. */
-export class RuntimeChild {
-  private readonly output: string[] = [];
-  private readonly process: ChildProcess;
-  private readyValue = false;
-  /** Exit code (`null` when ended by a signal), once the process has ended. */
-  readonly exited: Promise<number | null>;
-
+export class RuntimeChild extends TestChild {
   constructor(options: ChildOptions) {
-    this.process = fork(CHILD_ENTRY, [], {
+    super({
+      name: 'Runtime child',
+      entry: CHILD_ENTRY,
       cwd: PACKAGE_ROOT,
       execArgv: ['--import', import.meta.resolve('tsx')],
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: {
-        ...process.env,
-        ...(options.settings ?? KILL_MATRIX_SETTINGS),
-        DATABASE_URL: databaseUrl(),
-        NODE_ENV: 'test',
-        // Whatever the environment says: the child is a worker.
-        RUNTIME_WORKERS: 'on',
-        // Empty means unset, also over a value inherited from the environment.
+        ...options.settings,
         RUNTIME_CRASH_AT: options.crashAt ?? '',
         [CHILD_TYPES_ENV]: JSON.stringify(options.types),
       },
     });
-    const keep = (chunk: Buffer) => {
-      this.output.push(...chunk.toString().split('\n'));
-      this.output.splice(0, Math.max(this.output.length - OUTPUT_TAIL_LINES, 0));
-    };
-    this.process.stdout?.on('data', keep);
-    this.process.stderr?.on('data', keep);
-    this.process.on('message', (message: ChildMessage) => {
-      if (message.kind === 'ready') this.readyValue = true;
-    });
-    this.exited = new Promise((resolve) => {
-      this.process.on('exit', (code) => resolve(code));
-    });
-  }
-
-  get running(): boolean {
-    return this.process.exitCode === null && this.process.signalCode === null;
-  }
-
-  /** Resolves once the child's workers run; fails when it exits first. */
-  async ready(): Promise<void> {
-    await this.until(async () => this.readyValue, { what: 'its workers to start', timeoutMs: BOOT_MS });
   }
 
   /** Waits for the exit of a crash point and fails on any other exit code. */
@@ -116,79 +63,6 @@ export class RuntimeChild {
     if (code !== CRASH_EXIT_CODE) {
       throw this.failure(`exited with ${String(code)} instead of the crash code ${CRASH_EXIT_CODE}`);
     }
-  }
-
-  /**
-   * Polls `condition` while the child lives; fails with the child's output when it exits first or
-   * `timeoutMs` passes. Resolves the elapsed milliseconds.
-   */
-  async until(
-    condition: () => Promise<boolean>,
-    options: { what: string; timeoutMs: number },
-  ): Promise<number> {
-    const startedAt = Date.now();
-    for (;;) {
-      if (await condition()) return Date.now() - startedAt;
-      if (!this.running) throw this.failure(`exited while waiting for ${options.what}`);
-      if (Date.now() - startedAt > options.timeoutMs) {
-        throw this.failure(`did not reach ${options.what} within ${options.timeoutMs} ms`);
-      }
-      await delay(POLL_MS);
-    }
-  }
-
-  /**
-   * Polls until `condition` holds or the child exits, whichever comes first; fails after
-   * `timeoutMs`. For the rows where either end is expected.
-   */
-  async untilOrExit(
-    condition: () => Promise<boolean>,
-    options: { what: string; timeoutMs: number },
-  ): Promise<'condition' | 'exited'> {
-    const startedAt = Date.now();
-    for (;;) {
-      if (await condition()) return 'condition';
-      if (!this.running) return 'exited';
-      if (Date.now() - startedAt > options.timeoutMs) {
-        throw this.failure(`did not reach ${options.what} within ${options.timeoutMs} ms`);
-      }
-      await delay(POLL_MS);
-    }
-  }
-
-  /** Stops the child's runtime over IPC (steps in flight get `shutdown`) and waits for exit 0. */
-  async stop(): Promise<void> {
-    if (!this.running) return;
-    const message: HarnessMessage = { kind: 'stop' };
-    this.process.send(message);
-    const code = await within(this.exited, STOP_MS, () =>
-      this.failure(`did not stop within ${STOP_MS} ms`),
-    );
-    if (code !== 0) throw this.failure(`stopped with exit code ${String(code)}`);
-  }
-
-  /** Kills the process outright, as a server that dies without shutdown, and waits for its end. */
-  async kill(): Promise<void> {
-    if (this.running) this.process.kill('SIGKILL');
-    await this.exited;
-  }
-
-  failure(what: string): Error {
-    return new Error(`Runtime child ${what}; its last output:\n${this.output.join('\n')}`);
-  }
-}
-
-/** `promise`, or the error of `onTimeout` after `ms`. */
-async function within<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
-  const controller = new AbortController();
-  const timeout = delay(ms, undefined, { signal: controller.signal }).then(() => {
-    throw onTimeout();
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    controller.abort();
-    timeout.catch(() => undefined);
   }
 }
 

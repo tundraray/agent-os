@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ModelProviderKindSchema,
+  McpErrorCode,
+  type McpServerMode,
   type ModelProviderState,
   type RecordBody,
   type RecordHeader,
@@ -11,11 +13,15 @@ import {
   type ToolRefusalReason,
 } from '@agent-os/contracts';
 import { AgentMessagesRepository, type Database, Db } from '@agent-os/db';
+import { FIXTURE_SHARED_TOKEN, type FixtureProcess, type FixtureSource } from '@agent-os/mcp-fixture';
 import type { CallUsage, ModelPrice } from '@agent-os/runtime';
 
 import type { AccessGate, EmbeddingVerdict, ModelVerdict } from './access-gate';
 import type { EmbeddingClient } from './embeddings/embedding-client';
 import { foldCalls } from './history/call-state';
+import type { AgentsMcp } from './mcp/mcp';
+import { McpError } from './mcp/mcp-errors';
+import type { McpServerWrite } from './mcp/mcp-registry';
 import { History } from './store/history';
 import type { EmbeddingInputType } from './providers/adapters';
 import type { ProviderReadiness } from './providers/provider-readiness';
@@ -750,10 +756,10 @@ export interface ToolCallRow {
 
 /**
  * The tool calls of an agent, by answer and position, folded from its whole history in `agent_messages`
- * by the package's own `foldCalls` — one row per call, whatever was compacted since.
+ * (every entry after `seq` 0) by the package's own `foldCalls` — one row per call, whatever was compacted since.
  */
 export async function toolCallRowsOf(db: Database, agentId: string): Promise<ToolCallRow[]> {
-  const entries = await new History(new AgentMessagesRepository(new Db(db))).all(agentId);
+  const entries = await new History(new AgentMessagesRepository(new Db(db))).after(agentId, 0);
   return foldCalls(entries).map(({ sentAt, result, ...call }) => {
     const startedAt = sentAt ?? result?.startedAt ?? null;
     return {
@@ -769,4 +775,73 @@ export async function toolCallRowsOf(db: Database, agentId: string): Promise<Too
       output: result?.output ?? null,
     };
   });
+}
+
+/**
+ * MCP servers of the tests in the registry (design-mcp-connect.md, KD-7). The tests run on the developer's
+ * database, whose registry holds the developer's own `logs`, `backoffice` and `tracker` (`seed:mcp`), so a
+ * test never registers those names: every server of a test run is `<source>-t<runId>` (`runName` of the
+ * suite's `mcp-servers.ts`), and the suite's global setup deletes the run's servers in its teardown.
+ */
+
+/**
+ * The OAuth return address of `server` the tests register and connect with. The tests never open it: a
+ * connecting test reads the code, and the server of the address, from the authorization server's redirect.
+ */
+export function mcpRedirectUrl(server: string): string {
+  return `http://localhost:3000/api/mcp/oauth/callback/${encodeURIComponent(server)}`;
+}
+
+/** The registry part of the package the server helpers need. */
+interface McpOf {
+  readonly mcp: AgentsMcp;
+}
+
+export interface TestServer {
+  readonly name: string;
+  readonly url: string;
+  readonly mode: McpServerMode;
+  /** Required for `shared`. */
+  readonly sharedToken?: string;
+}
+
+/** Deletes the server named `name` when the registry has it. */
+export async function removeServer(agents: McpOf, name: string): Promise<void> {
+  try {
+    await agents.mcp.remove(name);
+  } catch (error) {
+    if (!(error instanceof McpError && error.code === McpErrorCode.MCP_SERVER_NOT_FOUND)) throw error;
+  }
+}
+
+/**
+ * Registers `server` through the registry (the server check included), replacing a row of the same name
+ * left by an earlier harness of the run, which may point at a stopped fixture process.
+ */
+export async function registerServer(agents: McpOf, server: TestServer): Promise<McpServerWrite> {
+  await removeServer(agents, server.name);
+  const common = { name: server.name, url: server.url, redirectUrl: mcpRedirectUrl(server.name) };
+  if (server.mode === 'oauth') return agents.mcp.register({ ...common, mode: 'oauth' });
+  if (server.sharedToken === undefined) throw new Error(`Shared server ${server.name} needs a shared token`);
+  return agents.mcp.register({ ...common, mode: 'shared', sharedToken: server.sharedToken });
+}
+
+/**
+ * Registers the run's server of each source, named by `nameOf` (the suite's `runName`), at the fixture
+ * process's shared-token path.
+ */
+export async function registerFixtureServers(
+  agents: McpOf,
+  fixture: FixtureProcess,
+  sources: readonly FixtureSource[],
+  nameOf: (source: FixtureSource) => string,
+): Promise<void> {
+  for (const source of sources) {
+    await registerServer(agents, {
+      name: nameOf(source),
+      url: fixture.sharedUrl(source),
+      mode: 'shared',
+      sharedToken: FIXTURE_SHARED_TOKEN,
+    });
+  }
 }

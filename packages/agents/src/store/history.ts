@@ -109,9 +109,11 @@ export class History {
     return rows.map(toEntry) as PageEntry[];
   }
 
-  /** Every entry, in order, whatever was compacted since. */
-  async all(taskId: string): Promise<HistoryEntry[]> {
-    return (await this.rows.all(taskId)).map(toEntry);
+  /** The `tool_sent` entries of the `task` calls that name a task of the session's list, in order. */
+  async sentForListTask(taskId: string): Promise<Extract<HistoryEntry, { kind: 'tool_sent' }>[]> {
+    const rows = await this.rows.sentForListTask(taskId);
+    // The query selects `tool_sent` entries only.
+    return rows.map(toEntry) as Extract<HistoryEntry, { kind: 'tool_sent' }>[];
   }
 
   /** Every entry through `throughSeq`, in order: the parent's part of a fork's history (KD-7). */

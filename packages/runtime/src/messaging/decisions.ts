@@ -19,6 +19,7 @@ import { RuntimeError } from '../errors';
 import { EventLog } from '../events/event-log';
 import type { TaskRow } from '../tasks/guarded-transition';
 import { RUNTIME_LOGGER } from '../runtime.tokens';
+import { writeHeld } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
 
 /** A request of a tree, in any status, as `listTree` returns it. */
@@ -183,21 +184,18 @@ export class Decisions {
     if (!task || task.deletedAt !== null || !request) {
       throw new RuntimeError('DECISION_NOT_FOUND', `Decision ${decisionId} not found`);
     }
-    if (request.status !== open) {
-      return { outcome: 'already_resolved', taskId: task.taskId, rootId: task.rootId };
-    }
+    const answered = { outcome: 'already_resolved', taskId: task.taskId, rootId: task.rootId } as const;
+    if (request.status !== open) return answered;
 
-    await repository.resolve(decisionId, resolution);
-    // Invariant 3: an open request means its task waits for it.
-    const woken = await tasks.transition(
-      { taskId: task.taskId, from: [waiting], waitReason: WaitReasonSchema.enum.decision },
-      { kind: 'set', status: queued },
-    );
-    if (!woken) {
-      throw new Error(
-        `Task ${task.taskId} of open decision ${decisionId} is ${task.status}/${task.waitReason}, not waiting for it`,
-      );
-    }
+    // The task row first, as a stop writes them. A stop or another resolve that came first has
+    // taken the task out of its wait and closed the request (Invariant 3): nothing to do then.
+    const held = await tasks.hold({
+      taskId: task.taskId,
+      from: [waiting],
+      waitReason: WaitReasonSchema.enum.decision,
+    });
+    if (!held || !(await repository.resolve(decisionId, resolution))) return answered;
+    const woken = await writeHeld(tasks, held, { kind: 'set', status: queued });
     await events.append({
       type: EVENT['decision.resolved'],
       task: woken,

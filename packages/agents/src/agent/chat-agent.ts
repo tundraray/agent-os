@@ -56,7 +56,8 @@ export class ChatAgent extends BaseAgent {
     const { library, sessionRows } = this.chatDeps;
     const startedAt = Date.now();
     const headers = await library.listVisible(ctx.ownerId);
-    const sessionCounts = await sessionRows.recordCounts(ctx.ownerId);
+    const counts = await sessionRows.recordCounts(ctx.ownerId);
+    const sessionCounts = new Map(counts.map((row) => [row.recordId, row.sessions]));
     const listing = chatListing({ headers, sessionCounts, budget: CHAT_LISTING_BUDGET });
     this.chatDeps.logger.child({ service: 'agents.tools' }).info('chat listing built', {
       ownerId: ctx.ownerId,

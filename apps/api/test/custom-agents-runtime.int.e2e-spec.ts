@@ -96,6 +96,7 @@ import {
 } from '@agent-os/contracts';
 import type { App } from 'supertest/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import { builtinRecords } from '../src/library/builtin-records';
 import {
   addModel,
@@ -112,7 +113,6 @@ import {
   chatApi,
   expectBody,
   expectError,
-  waitFor,
 } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {

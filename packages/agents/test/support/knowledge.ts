@@ -17,6 +17,7 @@ import {
 } from '@agent-os/db';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
+import { waitFor } from '@agent-os/db/testing';
 import { type KnowledgeRun, knowledgeRunOf } from '../../src/knowledge/knowledge-runs';
 import {
   KNOWLEDGE_EMBED_TASK_TYPE,
@@ -24,7 +25,7 @@ import {
 } from '../../src/knowledge/knowledge-tasks';
 import { RECORD_KNOWLEDGE_TOOL } from '../../src/knowledge/operations';
 import type { KnowledgeVector, KnowledgeVectorStore } from '../../src/knowledge/vector-store';
-import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT, waitFor } from './agentsHarness';
+import { type AgentsHarness, TEST_AUTHOR_ID, TEST_MODEL_DEFAULT } from './agentsHarness';
 
 /**
  * Fixtures of the self-learning tests (design-core.md, Test Strategy): the real `app.library_records` row the

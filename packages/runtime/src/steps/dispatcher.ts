@@ -303,7 +303,7 @@ export class Dispatcher {
     const step = new TaskStepContext(
       {
         db: this.deps.db,
-        taskRows: this.deps.taskRows,
+        tasks: this.deps.tasks,
         crashPoints: this.deps.crashPoints,
         logger: this.deps.logger,
       },
@@ -430,10 +430,10 @@ export class Dispatcher {
     error: unknown,
     startedAt: number,
   ): Promise<void> {
-    const { db, taskRows } = this.deps;
+    const { db, tasks } = this.deps;
     const ended = await db.transaction(async () => {
-      const task = await taskRows.find(step.taskId);
-      if (task?.status !== running || task.attempt !== step.attempt) return undefined;
+      const task = await tasks.hold({ taskId: step.taskId, from: [running], attempt: step.attempt });
+      if (!task) return undefined;
       return endTask(this.deps, task, {
         status: failed,
         failure: { reason, message: errorMessage(error) },

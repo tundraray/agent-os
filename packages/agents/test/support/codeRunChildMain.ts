@@ -9,6 +9,7 @@ import {
 import { consoleSink, createLogger } from '@agent-os/common';
 import { RUN_CODE_TOOL } from '@agent-os/contracts';
 import { type ModelPrice, parseRuntimeConfig } from '@agent-os/runtime';
+import { runtimeModules, serveHarness } from '@agent-os/runtime/testing';
 import { Test } from '@nestjs/testing';
 import {
   CHILD_MODEL,
@@ -18,7 +19,7 @@ import {
   type ScenarioServers,
   writeRun,
 } from './codeRunChild';
-import { agentsModule, runtimeModules } from './runtimeContext';
+import { agentsModule } from './runtimeContext';
 
 /**
  * Entry of the code-execution E2E-1 child process, run from source through `tsx`. It plays the API process: a Nest context of `DbModule`,
@@ -31,11 +32,6 @@ import { agentsModule, runtimeModules } from './runtimeContext';
  * `{ kind: 'ready' }` once the workers run; `{ kind: 'stop' }` closes the context — the workers stop,
  * then the agents, then the pool — and exits 0. The test kills it from outside.
  */
-
-/** Messages of the child to the harness. */
-export type ChildMessage = { kind: 'ready' };
-/** Messages of the harness to the child. */
-export type HarnessMessage = { kind: 'stop' };
 
 /** The catalogue of the child: {@link CHILD_MODEL} priced as in `agentsHarness.ts`, input 1, output 5 USD per million tokens. */
 const CHILD_MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
@@ -70,11 +66,6 @@ function scenarioModel(servers: ScenarioServers): ScriptedModel {
   return model;
 }
 
-function send(message: ChildMessage): void {
-  if (!process.send) throw new Error('The child process has no IPC channel');
-  process.send(message);
-}
-
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
@@ -105,18 +96,7 @@ async function main(): Promise<void> {
   // The registrations of `onModuleInit`, then the workers start.
   await app.init();
 
-  process.on('message', (message: HarnessMessage) => {
-    if (message.kind !== 'stop') return;
-    app.close().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        logger.error('code-run child stop failed', { error });
-        process.exit(1);
-      },
-    );
-  });
-
-  send({ kind: 'ready' });
+  serveHarness(app, logger, 'code-run child');
 }
 
 main().catch((error: unknown) => {

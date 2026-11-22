@@ -115,7 +115,7 @@ Follows the [code system](../../code-system/README.md).
 | `McpAccounts`, `ConnectRequests` — подключение, токены, обновление | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | new | Таблица `agent_mcp_accounts`; запросы подключения в памяти (KD-4, KD-5, KD-6) |
 | `ToolRegistry` | — | extended | `toolsFor`, `checkTools`, `declaredMcpTools`, `displays` из базы (KD-2) |
 | `ToolRunner`, `mcp-outcome`, `mcp-failure` | [step-handler.md](../../code-system/patterns/step-handler.md) | extended | Владелец в вызове, исход `auth_required`, ошибки OAuth и HTTP (KD-5) |
-| `parseAgentsConfig`, `createAgents` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | `MCP_CALL_TIMEOUT_MS`, разрешение `http`; операции `mcp` (Contract Definitions) |
+| `parseAgentsConfig`, `AgentsModule` | [composition-root.md](../../code-system/patterns/composition-root.md) | extended | `MCP_CALL_TIMEOUT_MS`, разрешение `http`; операции `mcp` (Contract Definitions) |
 | Контроллеры `McpConnectionsController`, `AdminMcpServersController` в `apps/api/src/agents` | [auth-boundary.md](../../code-system/patterns/auth-boundary.md) | new | Все маршруты под сеансом; администратор — `@AdminOnly()` |
 | `AuditLog`, `IdentitySettings.publicUrlFor`, `IdentitySettings.savedPublicUrl` | контракты `identity` | reused | Аудит изменений реестра; адрес возврата OAuth |
 | `AccessGate.tools` | контракт `access` | reused | Права в наборе, проверке вызова и списках серверов |
@@ -705,7 +705,7 @@ sequenceDiagram
 
 #### Пакет `agents` — для `apps/api`
 
-- **`createAgents`** получает настройки MCP из `parseAgentsConfig`: `MCP_CALL_TIMEOUT_MS` и разрешение адресов `http`. Операции регистрации сервера и подключения принимают `redirectUrl` — `<публичный адрес>/api/mcp/oauth/callback/<имя сервера>`, который строит контроллер: у операций администратора по `IdentitySettings.publicUrlFor()`, у подключения сотрудника по `IdentitySettings.savedPublicUrl()`.
+- **`AgentsModule.forRootAsync`** получает настройки MCP из `parseAgentsConfig`: `MCP_CALL_TIMEOUT_MS` и разрешение адресов `http`. Операции регистрации сервера и подключения принимают `redirectUrl` — `<публичный адрес>/api/mcp/oauth/callback/<имя сервера>`, который строит контроллер: у операций администратора по `IdentitySettings.publicUrlFor()`, у подключения сотрудника по `IdentitySettings.savedPublicUrl()`.
 - **`Agents.mcp`** — операции реестра (`list`, `get`, `register`, `update`, `refreshTools`, `remove`), подключения (`connections`, `beginConnect`, `finishConnect`, `disconnect`) и списки серверов, доступных сотруднику (`usable`, `usableTools`), для инструментов записей библиотеки. Пишущая операция реестра возвращает «было» и «стало» без значений секретов, и контроллер пишет по ним `AuditLog.record(null, …)`.
 - **`ToolOutcomeSchema`** содержит `auth_required`. Исход хранится в записи `tool_result` истории агента и в `agent_code_calls`, приходит в историю чата (`refusalReason` — `null`) и в скрипт `run_code`. Веб показывает его по `uxrd.md` RF-01.
 

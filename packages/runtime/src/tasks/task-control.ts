@@ -21,6 +21,7 @@ import {
   type TaskChange,
   type TaskFailure,
   type TaskRow,
+  UNFINISHED_STATUSES,
 } from './guarded-transition';
 import { HandlerRegistry } from '../steps/handler.registry';
 import { LiveTasks } from '../steps/live-tasks';
@@ -32,7 +33,7 @@ import { Inbox, payloadTooLarge, reservedKindProblem } from '../messaging/inbox'
 import { RunningTaskRegistry } from './running-task.registry';
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
-import { endTask, writeLocked } from './task-end';
+import { endTask, writeHeld } from './task-end';
 import { Tasks } from './tasks';
 
 const { queued, running, waiting, stopped } = TaskStatusSchema.enum;
@@ -378,15 +379,15 @@ export class TaskControl {
       depth: 0,
     };
     if (request.parentId !== undefined) {
-      const parent = await taskRows.findOwned(request.parentId, request.ownerId);
-      if (!parent) {
+      const found = await taskRows.findOwned(request.parentId, request.ownerId);
+      if (!found) {
         throw new RuntimeError('TASK_NOT_FOUND', `Task ${request.parentId} not found`);
       }
-      if (isFinished(parent.status)) {
-        throw new RuntimeError(
-          'PARENT_FINISHED',
-          `Parent task ${parent.taskId} is ${parent.status}`,
-        );
+      // A write of the parent's row: a stop of the parent comes before it, and the child is
+      // refused, or after this creation, and stops the child too.
+      const parent = await tasks.hold({ taskId: found.taskId, from: UNFINISHED_STATUSES });
+      if (!parent) {
+        throw new RuntimeError('PARENT_FINISHED', `Parent task ${found.taskId} is finished`);
       }
       lineage = { parentId: parent.taskId, rootId: parent.rootId, depth: parent.depth + 1 };
     }
@@ -412,14 +413,17 @@ export class TaskControl {
     message: InterruptMessage | undefined,
   ): Promise<{ task: TaskRow; messageId: string | undefined } | undefined> {
     const { tasks, taskRows, events, inbox } = this.deps;
-    const task = await taskRows.findOwned(taskId, ownerId);
-    if (!task) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
-    if (!isInterruptible(task)) return undefined;
+    const found = await taskRows.findOwned(taskId, ownerId);
+    if (!found) throw new RuntimeError('TASK_NOT_FOUND', `Task ${taskId} not found`);
+    // Checked on the plain read too, so that a task that is not active is not written at all.
+    if (!isInterruptible(found)) return undefined;
+    const task = await tasks.hold({ taskId, from: UNFINISHED_STATUSES });
+    if (!task || !isInterruptible(task)) return undefined;
 
     const change: TaskChange = message
       ? { kind: 'set', status: queued, fence: true }
       : { kind: 'wait', reason: WaitReasonSchema.enum.interrupted, fence: true };
-    const row = await writeLocked(tasks, task, change);
+    const row = await writeHeld(tasks, task, change);
     await events.append({
       type: EVENT['task.interrupted'],
       task: row,
@@ -439,54 +443,36 @@ export class TaskControl {
   }
 
   /**
-   * Stops `top` (unless finished) and every unfinished descendant. Descendants are read level by
-   * level; a parent stopped here has its attempt raised, so its commit that would spawn a child
-   * afterwards is fenced. Tasks end top-down: only a task's children, ending later, write to it.
+   * Stops `top` (unless finished) and every unfinished descendant, top-down, level by level. Each
+   * task is taken by a write of its row as it is now (`Tasks.hold`) and ended; its children are
+   * read after that. A commit or a creation that adds a child writes the parent's row too, so it
+   * came before the parent's stop, and its child is read here, or it comes after and is refused.
    */
   private async stopTree(top: TaskRow): Promise<TaskRow[]> {
-    const tree = [top, ...(await this.listDescendants(top.taskId))];
+    const { tasks, taskRows } = this.deps;
     const stoppedTasks: TaskRow[] = [];
-    for (const task of tree) {
-      if (isFinished(task.status)) continue;
-      stoppedTasks.push(
-        await endTask(this.deps, task, {
-          status: stopped,
-          fields: { stepClaims: 0, recoveries: 0 },
-          fence: true,
-        }),
-      );
+    for (
+      let level: readonly TaskRow[] = [top];
+      level.length > 0;
+      level = await taskRows.listChildren(level.map((task) => task.taskId))
+    ) {
+      for (const { taskId } of level) {
+        const task = await tasks.hold({ taskId, from: UNFINISHED_STATUSES });
+        if (!task) continue;
+        stoppedTasks.push(
+          await endTask(this.deps, task, {
+            status: stopped,
+            fields: { stepClaims: 0, recoveries: 0 },
+            fence: true,
+          }),
+        );
+      }
     }
     if (stoppedTasks.length > 0) {
       // Invariant 3: a task that no longer waits has no open request.
       await this.deps.decisions.cancelOpen(stoppedTasks.map((task) => task.taskId));
     }
     return stoppedTasks;
-  }
-
-  /** Every descendant of the task, read level by level, in that order. */
-  private async listDescendants(taskId: string): Promise<TaskRow[]> {
-    const descendants: TaskRow[] = [];
-    let parentIds = [taskId];
-    while (parentIds.length > 0) {
-      const level = await this.listLevel(parentIds);
-      descendants.push(...level);
-      parentIds = level.map((task) => task.taskId);
-    }
-    return descendants;
-  }
-
-  /** The children of `parentIds`, re-read until no new one shows up, by `task_id`. */
-  private async listLevel(parentIds: readonly string[]): Promise<TaskRow[]> {
-    const children = new Map<string, TaskRow>();
-    for (;;) {
-      const rows = await this.deps.taskRows.listChildren(parentIds);
-      const known = children.size;
-      for (const row of rows) children.set(row.taskId, row);
-      if (children.size === known) break;
-    }
-    return [...children.values()].sort((left, right) =>
-      left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0,
-    );
   }
 
   /**

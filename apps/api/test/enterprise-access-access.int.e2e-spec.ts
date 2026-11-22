@@ -111,7 +111,6 @@ import {
   chatApi,
   expectBody,
   expectError,
-  waitFor,
 } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
@@ -128,7 +127,7 @@ import {
   LOGS_SERVER,
   runName,
 } from './support/mcp-servers';
-import { databaseUrl } from './support/migrate.global-setup';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   apiRequest,
   insertEmployee,

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 import {
   AGENT_TURN_CLIENT,
   type AgentHistoryEntry,
@@ -35,6 +34,7 @@ import {
   runtimeInbox,
   runtimeModelCalls,
 } from '@agent-os/db';
+import { databaseUrl, waitFor } from '@agent-os/db/testing';
 import {
   createFixtureFiles,
   type FixtureFiles,
@@ -52,6 +52,8 @@ import {
   type ScriptedEmbeddings,
   type ScriptedModel,
   type ScriptedToolCall,
+  registerFixtureServers,
+  removeServer,
 } from '@agent-os/agents/testing';
 
 export { toolCallRowsOf } from '@agent-os/agents/testing';
@@ -64,14 +66,14 @@ import {
   TaskControl,
   TokenLedger,
 } from '@agent-os/runtime';
+import { runtimeModules } from '@agent-os/runtime/testing';
 import { Test } from '@nestjs/testing';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { resolveStart, type StartDeps } from '../../src/start/resolve-start';
 import { TASK_BLOCK_HEADING } from '../../src/tools/system/task-list-block';
-import { databaseUrl } from './database-url';
-import { agentsModule, runtimeModules } from './runtimeContext';
-import { registerFixtureServers, removeServer, runName } from './mcp-servers';
+import { agentsModule } from './runtimeContext';
+import { runName } from './mcp-servers';
 
 /**
  * Test assembly of the agents part (design-agents.md, Test Strategy): the package's own `RuntimeModule` and
@@ -143,9 +145,6 @@ const ALL_SOURCES: readonly FixtureSource[] = ['logs', 'backoffice', 'tracker'];
  * ("the restarted server") requeues its step as a lost one.
  */
 export const ZOMBIE_RUNTIME: Partial<RuntimeConfig> = { concurrency: 1, reaperMs: 600_000 };
-
-/** Polling of {@link waitFor}. */
-const SETTLE_POLL_MS = 25;
 
 /** The largest page of `history`. */
 const HISTORY_PAGE = 500;
@@ -559,7 +558,7 @@ export async function createAgentsHarness(options: AgentsHarnessOptions): Promis
     if (sources.length === 0) {
       for (const source of ALL_SOURCES) await removeServer(agents, runName(source));
     }
-    await registerFixtureServers(agents, fixtureProcess, sources);
+    await registerFixtureServers(agents, fixtureProcess, sources, runName);
   } catch (error) {
     await close();
     throw error;
@@ -596,28 +595,6 @@ export async function closeAll(harnesses: readonly AgentsHarness[]): Promise<voi
     (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
   );
   if (failed) throw failed.reason;
-}
-
-/**
- * Polls `read` until `done` holds and returns that value; fails naming `what` and the last value after
- * `timeoutMs`. Tests synchronise on rows and latches with it, never on sleeps.
- */
-export async function waitFor<T>(
-  read: () => Promise<T> | T,
-  done: (value: T) => boolean,
-  what: string,
-  timeoutMs = 30_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let value = await read();
-  while (!done(value)) {
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(value)}`);
-    }
-    await delay(SETTLE_POLL_MS);
-    value = await read();
-  }
-  return value;
 }
 
 /** Waits until the runtime task of the agent has `status` and returns it. */

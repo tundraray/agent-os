@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   inRootLaunchSet,
   type AgentHistoryEntry,
+  type RootSession,
   ViewOperations,
   ControlOperations,
   StartOperations,
@@ -18,7 +19,6 @@ import {
   type ThreadListResponse,
   type ThreadSummary,
 } from '@agent-os/contracts';
-import type { RootSession } from '@agent-os/db';
 import { Inbox, RuntimeError, TaskControl } from '@agent-os/runtime';
 import { isUuid } from '../common/is-uuid';
 import { libraryError } from '../library/library.errors';

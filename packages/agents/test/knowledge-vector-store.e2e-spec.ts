@@ -10,7 +10,7 @@ import { createDatabase, type DatabaseConnection } from '@agent-os/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { KnowledgeVector, KnowledgeVectorStore } from '../src/knowledge/vector-store';
-import { databaseUrl } from './support/database-url';
+import { databaseUrl } from '@agent-os/db/testing';
 import { createPgvectorStore, withLibraryRow } from './support/knowledge';
 
 const MODEL_A = 'test-embed/model-a';

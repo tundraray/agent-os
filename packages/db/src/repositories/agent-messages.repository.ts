@@ -125,15 +125,6 @@ export class AgentMessagesRepository {
       .limit(limit);
   }
 
-  /** Every entry, in order, whatever was compacted since. */
-  all(taskId: string): Promise<AgentMessageRow[]> {
-    return this.db.client
-      .select(ENTRY_COLUMNS)
-      .from(agentMessages)
-      .where(eq(agentMessages.taskId, taskId))
-      .orderBy(asc(agentMessages.seq));
-  }
-
   /** Every entry with `seq` greater than `seq`, in order: what was appended since. */
   after(taskId: string, seq: number): Promise<AgentMessageRow[]> {
     return this.db.client
@@ -149,6 +140,24 @@ export class AgentMessagesRepository {
       .select(ENTRY_COLUMNS)
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), lte(agentMessages.seq, throughSeq)))
+      .orderBy(asc(agentMessages.seq));
+  }
+
+  /**
+   * The `tool_sent` entries that name a task of the session's list, in order, whatever was compacted since:
+   * only an accepted `task` call writes `taskId` into its `tool_sent`.
+   */
+  sentForListTask(taskId: string): Promise<AgentMessageRow[]> {
+    return this.db.client
+      .select(ENTRY_COLUMNS)
+      .from(agentMessages)
+      .where(
+        and(
+          eq(agentMessages.taskId, taskId),
+          eq(agentMessages.kind, 'tool_sent'),
+          sql`${agentMessages.content} ->> 'taskId' is not null`,
+        ),
+      )
       .orderBy(asc(agentMessages.seq));
   }
 
@@ -241,14 +250,13 @@ export class AgentMessagesRepository {
    * How many single assignments each subagent got from the agent's calls of the tool, whatever was
    * compacted since. List items and refused or interrupted calls do not count.
    */
-  async singleTaskRuns(taskId: string, tool: string): Promise<Map<string, number>> {
+  singleTaskRuns(taskId: string, tool: string): Promise<{ subagent: string; runs: number }[]> {
     const subagent = sql<string>`${agentMessages.content} -> 'args' ->> 'subagentType'`;
-    const rows = await this.db.client
+    return this.db.client
       .select({ subagent, runs: count() })
       .from(agentMessages)
       .where(and(eq(agentMessages.taskId, taskId), isSingleTaskResult(tool)))
       .groupBy(subagent);
-    return new Map(rows.map((row) => [row.subagent, row.runs]));
   }
 
   /**

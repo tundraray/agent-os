@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import type { INestApplication } from '@nestjs/common';
 import {
   AgentListPageSchema,
@@ -48,9 +47,6 @@ export type { Method } from './session';
  * every success body is parsed with its `packages/contracts` schema (time fields are ISO strings), and an
  * unexpected status fails with the body.
  */
-
-/** Poll interval of {@link waitFor}. */
-const POLL_MS = 50;
 
 /** Fails unless the response has `status`; returns the body parsed with `schema`. */
 export async function expectBody<T>(
@@ -216,25 +212,4 @@ export function chatApi(app: INestApplication<App>, session: Session): ChatApi {
       ),
     spend: () => ok(200, SpendResponseSchema, 'get', '/spend'),
   };
-}
-
-/** Polls `read` until `done` holds and returns that value; fails after `timeoutMs` with the last value. */
-export async function waitFor<T>(
-  read: () => Promise<T> | T,
-  done: (value: T) => boolean,
-  what: string,
-  timeoutMs = 30_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let value = await read();
-  while (!done(value)) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(value)}`,
-      );
-    }
-    await delay(POLL_MS);
-    value = await read();
-  }
-  return value;
 }

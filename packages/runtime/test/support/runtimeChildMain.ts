@@ -1,9 +1,9 @@
 import { consoleSink, createLogger } from '@agent-os/common';
-import { Db, DbModule } from '@agent-os/db';
-import { HandlerRegistry, parseRuntimeConfig, RuntimeModule } from '@agent-os/runtime';
+import { Db } from '@agent-os/db';
+import { HandlerRegistry, parseRuntimeConfig } from '@agent-os/runtime';
+import { runtimeModules, serveHarness } from '@agent-os/runtime/testing';
 import { Inject, Injectable, Module, type OnModuleInit } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { loggerModule } from './loggerModule';
 import { type ChildTypes, CHILD_TYPES_ENV, handlersFor } from './runtimeChildHandlers';
 import { ensureHandlerRowsTable } from './testHandlers';
 
@@ -16,11 +16,6 @@ import { ensureHandlerRowsTable } from './testHandlers';
  * IPC: the child sends `{ kind: 'ready' }` once its workers run; `{ kind: 'stop' }` closes the
  * context — the workers stop, then the pool closes — and exits 0. A crash point exits 137 on its own.
  */
-
-/** Messages of the child to the harness. */
-export type ChildMessage = { kind: 'ready' };
-/** Messages of the harness to the child. */
-export type HarnessMessage = { kind: 'stop' };
 
 function readTypes(): ChildTypes {
   const raw = process.env[CHILD_TYPES_ENV];
@@ -45,11 +40,6 @@ class ChildHandlers implements OnModuleInit {
 @Module({})
 class ChildModule {}
 
-function send(message: ChildMessage): void {
-  if (!process.send) throw new Error('The child process has no IPC channel');
-  process.send(message);
-}
-
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
@@ -58,30 +48,13 @@ async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     {
       module: ChildModule,
-      imports: [
-        loggerModule(logger),
-        DbModule.forRootAsync({
-          useFactory: () => ({ connectionString, poolMax: config.dbPoolMax }),
-        }),
-        RuntimeModule.forRootAsync({ useFactory: () => config }),
-      ],
+      imports: runtimeModules(logger, connectionString, config),
       providers: [ChildHandlers],
     },
     { logger: false, abortOnError: false },
   );
 
-  process.on('message', (message: HarnessMessage) => {
-    if (message.kind !== 'stop') return;
-    app.close().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        logger.error('child runtime stop failed', { error });
-        process.exit(1);
-      },
-    );
-  });
-
-  send({ kind: 'ready' });
+  serveHarness(app, logger, 'child runtime');
 }
 
 main().catch((error: unknown) => {

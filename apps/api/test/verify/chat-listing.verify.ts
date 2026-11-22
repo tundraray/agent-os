@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { RECORD_DESCRIPTION_MAX_LENGTH } from '@agent-os/contracts';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { waitFor } from '@agent-os/db/testing';
 import {
   allowRole,
   HAIKU_TEST_PRICES,
@@ -23,7 +24,7 @@ import {
   runModel,
   useRunModels,
 } from '../support/access';
-import { chatApi, waitFor } from '../support/api';
+import { chatApi } from '../support/api';
 import { createTestApp } from '../support/createTestApp';
 import {
   agentBody,

@@ -32,7 +32,7 @@
 | Looks like | Use instead |
 |---|---|
 | короткий запрос API, который отвечает сразу | обычный сервис с транзакцией |
-| периодическая служебная работа runtime (возврат брошенных задач, доставка событий) | `WorkerLoop` внутри runtime (`packages/runtime/src/workers/worker-loop.ts`) |
+| периодическая служебная работа runtime (возврат брошенных задач, доставка событий) | `WorkerLoop` внутри runtime (`packages/runtime/src/workers/worker-loop.ts`); его экземпляры — `RecoverySweeper` (`packages/runtime/src/workers/recovery.sweeper.ts`), который сверяет задачи в `running` с `RunningTaskRegistry` (`packages/runtime/src/tasks/running-task.registry.ts`), и `OutboxRelay` (`packages/runtime/src/events/outbox.relay.ts`) |
 
 ## Used In
 

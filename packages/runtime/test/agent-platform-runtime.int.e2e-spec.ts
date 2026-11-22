@@ -52,7 +52,7 @@ import {
 import { asc, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { newUser } from './support/new-user';
+import { newUser, waitFor } from '@agent-os/db/testing';
 import {
   closeRuntimeDb,
   eventsOf,
@@ -60,7 +60,6 @@ import {
   inboxOf,
   rowVersionsOf,
   statusesOf,
-  waitFor,
 } from './support/runtimeDb';
 import {
   createRuntimeHarness,

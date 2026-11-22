@@ -66,6 +66,7 @@ import {
 } from '@agent-os/contracts';
 import { fixtureCallsOf, holdCall } from '@agent-os/mcp-fixture';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import { LIVE_HUB_APPLICATION_NAME } from '../src/chat/live-hub';
 import {
   allowRole,
@@ -79,7 +80,6 @@ import {
   chatApi,
   expectError,
   type Method,
-  waitFor,
 } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import { BUILTIN, pointBuiltinsAt } from './support/library';

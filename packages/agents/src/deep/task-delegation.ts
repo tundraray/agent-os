@@ -347,7 +347,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
     async decide(caller, calls) {
       const deepAgent = deepAgentOf(caller);
       const definition = snapshotDefinition(deepAgent);
-      const [singleRuns, tasks] = await Promise.all([
+      const [runs, tasks] = await Promise.all([
         messageRows.singleTaskRuns(caller.agentId, TASK_TOOL),
         definition.taskList ? sessionTaskRows.read(caller.agentId) : Promise.resolve(null),
       ]);
@@ -355,7 +355,7 @@ export function createDelegations(deps: DelegationsDeps): Delegations {
       return decideDelegations({
         calls: delegationCalls,
         team: delegationTeam(deepAgent),
-        singleRuns,
+        singleRuns: new Map(runs.map((row) => [row.subagent, row.runs])),
         tasks,
         childTooDeep: caller.depth + 1 > maxDepth,
       });

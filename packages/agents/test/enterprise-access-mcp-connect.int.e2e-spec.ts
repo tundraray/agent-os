@@ -45,6 +45,8 @@ import {
   type Script,
   type ScriptedAnswer,
   type ScriptedToolCall,
+  registerServer,
+  removeServer,
 } from '@agent-os/agents/testing';
 import { agentMcpAccounts, agentSessions } from '@agent-os/db';
 import { FIXTURE_SHARED_TOKEN, createFixtureFiles, fixtureCallsOf, holdCall, readFixtureLog } from '@agent-os/mcp-fixture';
@@ -60,7 +62,6 @@ import {
   testRecord,
   toolOutputOf,
   toolCallRowsOf,
-  waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness';
 import {
@@ -68,11 +69,9 @@ import {
   LOGS_SERVER,
   TRACKER_SERVER,
   connectAccount,
-  registerServer,
-  removeServer,
   runName,
 } from './support/mcp-servers';
-import { newUser } from './support/new-user';
+import { newUser, waitFor } from '@agent-os/db/testing';
 
 /** Bound of one in-process test; the story settles far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

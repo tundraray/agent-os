@@ -1,13 +1,9 @@
 import type { Logger } from '@agent-os/common';
 import { TaskStatusSchema } from '@agent-os/contracts';
-import type {
-  Db,
-  RuntimeDecisionRow,
-  RuntimeInboxRow,
-  RuntimeTasksRepository,
-} from '@agent-os/db';
+import type { Db, RuntimeDecisionRow, RuntimeInboxRow } from '@agent-os/db';
 import type { CrashPoints } from '../crash-points';
 import type { TaskRow } from '../tasks/guarded-transition';
+import type { Tasks } from '../tasks/tasks';
 import type {
   GuardResult,
   StepContext,
@@ -21,7 +17,7 @@ const { running } = TaskStatusSchema.enum;
 /** Services a step context writes through. */
 export interface StepContextDeps {
   db: Db;
-  taskRows: RuntimeTasksRepository;
+  tasks: Tasks;
   crashPoints: CrashPoints;
   /** The runtime's logger; the step's logger is its child. */
   logger: Logger;
@@ -107,18 +103,21 @@ export class TaskStepContext implements StepContext {
   }
 
   /**
-   * One short transaction: the task row is read, then `work` runs only if the task is `running`
-   * with this attempt. An interrupt, a stop or a requeue raises the attempt, so `fenced` follows
-   * from it; nothing is written then.
+   * One short transaction: `work` runs only if the task is `running` with this attempt, checked by
+   * a write of the task row (`Tasks.hold`), so a stop or an interrupt waits for `work`'s commit.
+   * An interrupt, a stop or a requeue raises the attempt, so `fenced` follows from it; nothing is
+   * written then.
    */
   async guard<T>(work: () => Promise<T>): Promise<GuardResult<T>> {
     const startedAt = Date.now();
     try {
       const result = await this.deps.db.transaction(async (): Promise<GuardResult<T>> => {
-        const own = await this.deps.taskRows.find(this.taskId);
-        if (own?.status !== running || own.attempt !== this.attempt) {
-          return { outcome: 'fenced' };
-        }
+        const own = await this.deps.tasks.hold({
+          taskId: this.taskId,
+          from: [running],
+          attempt: this.attempt,
+        });
+        if (!own) return { outcome: 'fenced' };
         return { outcome: 'committed', value: await work() };
       });
       const durationMs = Date.now() - startedAt;

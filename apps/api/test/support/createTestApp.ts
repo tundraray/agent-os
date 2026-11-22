@@ -15,6 +15,7 @@ import {
   createScriptedModel,
   type ScriptedEmbeddings,
   type ScriptedModel,
+  registerFixtureServers,
 } from '@agent-os/agents/testing';
 import { DATABASE_CONNECTION, type DatabaseConnection } from '@agent-os/db';
 import {
@@ -30,7 +31,7 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 import { AGENT_LIST_PAGE_SIZE } from '../../src/chat/chat.tokens';
 import { GOOGLE_ISSUER_URL } from '../../src/identity/identity.tokens';
-import { registerFixtureServers } from './mcp-servers';
+import { runName } from './mcp-servers';
 
 export interface TestAppOptions {
   /** The scripted model double behind `AGENT_TURN_CLIENT`; default — one with no scripts. */
@@ -155,7 +156,12 @@ export async function createTestApp(
   };
   if (fixtureProcess !== undefined && options.mcpServers !== undefined) {
     try {
-      await registerFixtureServers(agents, fixtureProcess, options.mcpServers);
+      await registerFixtureServers(
+        agents,
+        fixtureProcess,
+        options.mcpServers,
+        runName,
+      );
     } catch (error) {
       await close();
       throw error;

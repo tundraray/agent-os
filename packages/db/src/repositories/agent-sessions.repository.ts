@@ -29,15 +29,16 @@ export type NewAgentSessionRow = Pick<
   | 'forkedThroughSeq'
 >;
 
-/** A root session as its owner lists it: the conversation it is to the employee. */
-export interface RootSession {
+/**
+ * The columns of a root session's row its owner lists it by. `title` and `updatedAt` are set on every root
+ * and only there; the service narrows them.
+ */
+export interface RootSessionRow {
   readonly rootId: string;
   readonly ownerId: string;
-  /** Empty until a title is written. */
-  readonly title: string;
+  readonly title: string | null;
   readonly createdAt: Date;
-  /** The last change, in milliseconds: the key of the owner's list. */
-  readonly updatedAt: Date;
+  readonly updatedAt: Date | null;
 }
 
 /** The position of a root session in the owner's list: the cursor of the next page. */
@@ -80,19 +81,6 @@ const ROOT_COLUMNS = {
   createdAt: agentSessions.createdAt,
   updatedAt: agentSessions.updatedAt,
 };
-
-function toRootSession(row: {
-  rootId: string;
-  ownerId: string;
-  title: string | null;
-  createdAt: Date;
-  updatedAt: Date | null;
-}): RootSession {
-  if (row.title === null || row.updatedAt === null) {
-    throw new Error(`Session ${row.rootId} is not a root session`);
-  }
-  return { ...row, title: row.title, updatedAt: row.updatedAt };
-}
 
 /**
  * Drizzle queries of `agent_sessions`: one row per agent, keyed by its runtime task. No method opens a transaction.
@@ -168,8 +156,8 @@ export class AgentSessionsRepository {
    * sessions of the record itself — a subagent carries its deep agent's record id and a fork its
    * source's, so neither counts — and never a root session, which the employee starts by writing.
    */
-  async recordCounts(ownerId: string): Promise<Map<string, number>> {
-    const rows = await this.db.client
+  recordCounts(ownerId: string): Promise<{ recordId: string; sessions: number }[]> {
+    return this.db.client
       .select({ recordId: agentSessions.recordId, sessions: count() })
       .from(agentSessions)
       .where(
@@ -181,7 +169,6 @@ export class AgentSessionsRepository {
         ),
       )
       .groupBy(agentSessions.recordId);
-    return new Map(rows.map((row) => [row.recordId, row.sessions] as const));
   }
 
   /** The root of the agent's tree, from its session; `undefined` when it has none. */
@@ -211,12 +198,12 @@ export class AgentSessionsRepository {
   }
 
   /** The owner's root session; another owner's and a session that is not a root are as absent as a missing one. */
-  async root(rootId: string, ownerId: string): Promise<RootSession | undefined> {
+  async root(rootId: string, ownerId: string): Promise<RootSessionRow | undefined> {
     const [row] = await this.db.client
       .select(ROOT_COLUMNS)
       .from(agentSessions)
       .where(ownedRoot(rootId, ownerId));
-    return row === undefined ? undefined : toRootSession(row);
+    return row;
   }
 
   /** The owner of a root session, whoever it is; `undefined` when `rootId` names no root session. */
@@ -232,10 +219,10 @@ export class AgentSessionsRepository {
    * The owner's root sessions, last changed first (`updated_at DESC, task_id DESC`, the order of
    * `agent_sessions_owner_page_idx`): strictly after `after`, at most `limit`; all of them without either.
    */
-  async roots(
+  roots(
     ownerId: string,
     page: { readonly after?: RootPosition; readonly limit?: number } = {},
-  ): Promise<RootSession[]> {
+  ): Promise<RootSessionRow[]> {
     const owned = and(eq(agentSessions.ownerId, ownerId), isRoot);
     const { after } = page;
     const query = this.db.client
@@ -250,8 +237,7 @@ export class AgentSessionsRepository {
             ),
       )
       .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.taskId));
-    const rows = await (page.limit === undefined ? query : query.limit(page.limit));
-    return rows.map(toRootSession);
+    return page.limit === undefined ? query : query.limit(page.limit);
   }
 
   /** `updated_at = now()`: the owner's root session moves to the top of the list. */
@@ -267,13 +253,13 @@ export class AgentSessionsRepository {
     rootId: string,
     ownerId: string,
     title: string,
-  ): Promise<RootSession | undefined> {
+  ): Promise<RootSessionRow | undefined> {
     const [row] = await this.db.client
       .update(agentSessions)
       .set({ title, updatedAt: NOW_MS })
       .where(ownedRoot(rootId, ownerId))
       .returning(ROOT_COLUMNS);
-    return row === undefined ? undefined : toRootSession(row);
+    return row;
   }
 
   /** Writes a generated title only into an empty one; `true` when it was written. */

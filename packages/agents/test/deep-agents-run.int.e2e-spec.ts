@@ -44,11 +44,10 @@ import {
   testDeepAgent,
   testRecord,
   testSubagent,
-  waitFor,
   waitForStatus,
 } from './support/agentsHarness';
 import { LOGS_SERVER } from './support/mcp-servers';
-import { newUser } from './support/new-user';
+import { newUser, waitFor } from '@agent-os/db/testing';
 
 /** Name of the test root: the conversation that starts deep agents. */
 const ROOT_NAME = 'deep-agents-root';

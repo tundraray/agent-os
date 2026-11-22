@@ -14,7 +14,6 @@ import {
   AgentMessagesRepository,
   AgentSessionsRepository,
   AgentSessionTasksRepository,
-  type RootSession,
 } from '@agent-os/db';
 import { Decisions, Inbox, type Task, TaskControl, Trackers, type TrackerTask } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
@@ -27,7 +26,7 @@ import { type DeepAgentRun, readDeepAgentRun } from '../deep/deep-agent-run';
 import { foldCalls } from '../history/call-state';
 import type { RunSnapshot } from '../start/snapshot';
 import { History, type PageEntry } from '../store/history';
-import { type Session, sessionInputOf, Sessions } from '../store/sessions';
+import { type RootSession, type Session, sessionInputOf, Sessions, toRootSession } from '../store/sessions';
 import { ToolRegistry } from '../tools/tool-registry';
 import type {
   AgentConfirmation,
@@ -277,7 +276,10 @@ export class ViewOperations {
     return this.logged(
       'root',
       { rootId, ownerId },
-      () => this.sessionRows.root(rootId, ownerId),
+      async () => {
+        const row = await this.sessionRows.root(rootId, ownerId);
+        return row === undefined ? undefined : toRootSession(row);
+      },
       (found) => ({ found: found !== undefined }),
     );
   }
@@ -299,11 +301,13 @@ export class ViewOperations {
     return this.logged(
       'roots',
       { ownerId, afterRootId: after?.rootId ?? null, limit: limit ?? null },
-      () =>
-        this.sessionRows.roots(ownerId, {
+      async () => {
+        const rows = await this.sessionRows.roots(ownerId, {
           ...(after === undefined ? {} : { after }),
           ...(limit === undefined ? {} : { limit }),
-        }),
+        });
+        return rows.map(toRootSession);
+      },
       (found) => ({ roots: found.length }),
     );
   }
@@ -323,16 +327,16 @@ export class ViewOperations {
     const trackers = await this.trackers.list(agentId, ownerId);
     const tasks = trackers.flatMap((tracker) => tracker.tasks);
     if (tasks.length === 0) return [];
-    const [found, entries] = await Promise.all([
+    const [found, sent] = await Promise.all([
       this.sessions.getMany(
         tasks.map((task) => task.taskId),
       ),
-      this.entries.all(agentId),
+      this.entries.sentForListTask(agentId),
     ]);
     const listTaskOf = new Map<string, number>();
-    for (const entry of entries) {
-      if (entry.kind !== 'tool_sent' || entry.content.taskId === undefined) continue;
-      for (const taskId of entry.content.taskIds ?? []) listTaskOf.set(taskId, entry.content.taskId);
+    for (const { content } of sent) {
+      if (content.taskId === undefined) continue;
+      for (const taskId of content.taskIds ?? []) listTaskOf.set(taskId, content.taskId);
     }
     return tasks.flatMap((task) => {
       const session = found.get(task.taskId);

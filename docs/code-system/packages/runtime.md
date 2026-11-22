@@ -54,11 +54,11 @@ flowchart LR
 
 | Путь | Что там |
 |---|---|
-| `src/tasks/` | `Tasks` — строки задач и охраняемые переходы статуса; `TaskControl` — команды над задачей (создать, прервать, остановить, удалить дерево); конец задачи; `Trackers` — трекеры дочерних задач; реестр задач, которые идут в этом процессе |
+| `src/tasks/` | `Tasks` — строки задач и охраняемые переходы статуса; `TaskControl` — команды над задачей (создать, прервать, остановить, удалить дерево); конец задачи; `Trackers` — трекеры дочерних задач; `RunningTaskRegistry` (`running-task.registry.ts`) — шаги, которые идут в этом процессе |
 | `src/steps/` | контракт шага (`TaskHandler`, `LiveTask`, `LiveTaskType`, `StepContext`, `StepResult`, `StepEffects`) в `step-contract.ts`, `HandlerRegistry`, `LiveTasks` — объекты задач в памяти, `Dispatcher`, `StepCommitter` |
 | `src/messaging/` | `Inbox` — очередь сообщений задаче; `Decisions` — запросы решений человека |
 | `src/events/` | `EventLog` — журнал событий; `EventConsumerRegistry` — потребители; `OutboxRelay` — доставка |
-| `src/workers/` | `WorkerLoop` — цикл фонового воркера; возврат брошенных задач; `RuntimeWorkers` — старт и остановка всех воркеров |
+| `src/workers/` | `WorkerLoop` — цикл фонового воркера (`worker-loop.ts`); `RecoverySweeper` (`recovery.sweeper.ts`) — возврат задач в `running`, шага которых нет в `RunningTaskRegistry`; `RuntimeWorkers` (`runtime-workers.ts`) — старт и остановка всех воркеров |
 | `src/ledger/` | `TokenLedger` — журнал токенов и цена вызова модели |
 | `src/` | `RuntimeModule`, токены (`runtime.tokens.ts`), разбор настроек `parseRuntimeConfig`, часы, ошибки |
 
@@ -72,6 +72,6 @@ flowchart LR
 
 - Статус задачи меняют только сервисы этого пакета — итогом шага и командами `TaskControl`: правила переходов живут в них.
 - Транзакция идёт к обработчику, а не от него: `StepCommitter` открывает транзакцию итога шага и зовёт в ней `commit(effects)` итога. Репозитории и сервисы, которые обработчик зовёт там, сами входят в эту транзакцию. Охраняемую запись посреди шага обработчик делает через `StepContext.guard(work)`: `work` идёт в короткой отдельной транзакции.
-- Шаги исполняет один процесс. Команда (прерывание, остановка, удаление дерева) обрывает идущий шаг в этом же процессе, через сигнал шага, и отпускает объект задачи. Задачу, которая после падения процесса осталась в `running`, процесс при старте возвращает в очередь ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)).
+- Шаги исполняет один процесс. `Dispatcher` заносит шаг в `RunningTaskRegistry` (`src/tasks/running-task.registry.ts`) ещё в транзакции захвата. Команда (прерывание, остановка, удаление дерева) после своей транзакции обрывает идущий шаг в этом же процессе: `TaskControl.cutOff` (`src/tasks/task-control.ts`) подаёт сигнал шага через `RunningTaskRegistry.abortTask` и отпускает объект задачи через `LiveTasks.evict`. Задачу в `running`, шага которой нет в реестре, `RecoverySweeper` (`src/workers/recovery.sweeper.ts`) возвращает в очередь при старте и затем раз в `RUNTIME_REAPER_MS` ([ADR-0023](../../adr/ADR-0023-live-task-objects-one-stepping-process.md)).
 - Объект задачи — кэш над базой: `LiveTasks` держит его после закоммиченного шага и отпускает при любом другом конце шага, после 15 минут простоя и сверх 500 объектов. Задаче без объекта новый строит `restore` её типа.
 - Чужой домен пакет не знает: проверку владельца, удаление беседы и цены моделей ему передают верхние слои параметрами или портом.

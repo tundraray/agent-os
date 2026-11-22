@@ -21,7 +21,7 @@ import {
   waitForTaskStatus,
 } from '../support/agentsHarness';
 import { LOGS_SERVER } from '../support/mcp-servers';
-import { newUser } from '../support/new-user';
+import { newUser } from '@agent-os/db/testing';
 
 /** NFR-01: a run over 5 MB of data ends within 30 s. */
 const LARGE_RUN_TARGET_MS = 30_000;

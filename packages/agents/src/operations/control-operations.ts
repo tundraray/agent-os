@@ -1,6 +1,6 @@
 import type { Logger } from '@agent-os/common';
 import { AgentMessageKindSchema, TaskStatusSchema, WaitReasonSchema } from '@agent-os/contracts';
-import { AgentSessionsRepository, Db, type RootSession } from '@agent-os/db';
+import { AgentSessionsRepository, Db } from '@agent-os/db';
 import { Decisions, Inbox, type ResolveOutcome, TaskControl } from '@agent-os/runtime';
 import { Inject, Injectable } from '@nestjs/common';
 import type { z } from 'zod';
@@ -8,6 +8,7 @@ import type { z } from 'zod';
 import { AGENTS_LOGGER } from '../agents.tokens';
 import { AgentsError } from '../errors';
 import { messagePayload } from '../resume';
+import { type RootSession, toRootSession } from '../store/sessions';
 import { ToolRegistry } from '../tools/tool-registry';
 import type { AgentRef, ResolveConfirmationRequest, SendRequest } from './agent-sessions';
 import { agentTask, asAgent, ConfirmationPayloadSchema, createLogged, parentOf } from './operation-support';
@@ -133,7 +134,10 @@ export class ControlOperations {
     return this.logged(
       'renameRoot',
       { rootId, ownerId },
-      () => this.sessionRows.renameRoot(rootId, ownerId, title),
+      async () => {
+        const row = await this.sessionRows.renameRoot(rootId, ownerId, title);
+        return row === undefined ? undefined : toRootSession(row);
+      },
       (renamed) => ({ found: renamed !== undefined }),
     );
   }

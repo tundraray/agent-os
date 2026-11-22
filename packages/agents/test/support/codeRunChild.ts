@@ -1,13 +1,8 @@
-import { type ChildProcess, fork } from 'node:child_process';
 import { join } from 'node:path';
-import type { Readable } from 'node:stream';
-import { StringDecoder } from 'node:string_decoder';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import type { LogRecord } from '@agent-os/common';
 import type { RunCodeArgs } from '@agent-os/contracts';
-import type { ChildMessage, HarnessMessage } from './codeRunChildMain';
-import { databaseUrl } from './database-url';
+import { TestChild } from '@agent-os/runtime/testing';
 
 /**
  * Child-process harness of code-execution E2E-1: a child (`codeRunChildMain.ts`, plain Node running it and
@@ -32,19 +27,6 @@ export const CHILD_SCENARIO_ENV = 'CODE_RUN_CHILD_SCENARIO';
  * `agents-harness` is written by the test process's own harness before the first child starts; a child writes none.
  */
 export const CHILD_MODEL = 'agents-harness/test-default';
-
-/**
- * Runtime settings of the child, copied from `KILL_MATRIX_SETTINGS` of the runtime's E2E harness: a
- * short reaper so a lost step comes back within seconds, fast polling.
- */
-const KILL_MATRIX_SETTINGS: Readonly<Record<string, string>> = {
-  RUNTIME_CONCURRENCY: '4',
-  RUNTIME_POLL_MS: '50',
-  RUNTIME_NOTIFY: 'on',
-  RUNTIME_REAPER_MS: '200',
-  RUNTIME_MAX_RECOVERIES: '3',
-  DB_POOL_MAX: '4',
-};
 
 /** The run's names of the two fixture servers of the scenario. */
 export interface ScenarioServers {
@@ -134,12 +116,6 @@ export function childScenario(
   };
 }
 
-/** How long a child may take to boot. */
-const BOOT_MS = 60_000;
-const STOP_MS = 30_000;
-const POLL_MS = 50;
-const OUTPUT_TAIL_LINES = 60;
-
 /** A console line of the child as a log record; `undefined` for any other output. */
 function logRecordOf(line: string): LogRecord | undefined {
   try {
@@ -154,59 +130,24 @@ function logRecordOf(line: string): LogRecord | undefined {
 }
 
 /** One child process: an API process with workers on and the real code executor. */
-export class CodeRunChild {
-  private readonly tail: string[] = [];
+export class CodeRunChild extends TestChild {
   private readonly records: LogRecord[] = [];
-  private readonly process: ChildProcess;
-  private readyValue = false;
-  /** Exit code (`null` when ended by a signal), once the process has ended. */
-  readonly exited: Promise<number | null>;
 
   constructor(scenario: ChildScenario) {
-    this.process = fork(CHILD_ENTRY, [], {
+    super({
+      name: 'Code-run child',
+      entry: CHILD_ENTRY,
       cwd: PACKAGE_ROOT,
       // The API process starts with `--disable-sigusr1`: a script's executor cannot open its inspector.
       execArgv: ['--disable-sigusr1', '--import', import.meta.resolve('tsx')],
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: {
-        ...process.env,
-        ...KILL_MATRIX_SETTINGS,
-        DATABASE_URL: databaseUrl(),
-        NODE_ENV: 'test',
-        // Whatever the environment says: the child is a worker that never crashes on its own.
-        RUNTIME_WORKERS: 'on',
-        RUNTIME_CRASH_AT: '',
-        [CHILD_SCENARIO_ENV]: JSON.stringify(scenario),
-      },
-    });
-    if (this.process.stdout) this.read(this.process.stdout);
-    if (this.process.stderr) this.read(this.process.stderr);
-    this.process.on('message', (message: ChildMessage) => {
-      if (message.kind === 'ready') this.readyValue = true;
-    });
-    this.exited = new Promise((resolve) => {
-      this.process.on('exit', (code) => resolve(code));
+      env: { [CHILD_SCENARIO_ENV]: JSON.stringify(scenario) },
     });
   }
 
-  /** Splits a stream into whole lines: the tail for failures, and every log record. */
-  private read(stream: Readable): void {
-    const decoder = new StringDecoder('utf8');
-    let pending = '';
-    stream.on('data', (chunk: Buffer) => {
-      const lines = (pending + decoder.write(chunk)).split('\n');
-      pending = lines.pop() ?? '';
-      for (const line of lines) {
-        this.tail.push(line);
-        const record = logRecordOf(line);
-        if (record !== undefined) this.records.push(record);
-      }
-      this.tail.splice(0, Math.max(this.tail.length - OUTPUT_TAIL_LINES, 0));
-    });
-  }
-
-  get running(): boolean {
-    return this.process.exitCode === null && this.process.signalCode === null;
+  /** Keeps every log record of the child's output. */
+  protected override line(line: string): void {
+    const record = logRecordOf(line);
+    if (record !== undefined) this.records.push(record);
   }
 
   /** The child's log records of one `run_code` run (its `runId` is the run's `callId`) with this message. */
@@ -217,60 +158,6 @@ export class CodeRunChild {
   /** The pids of the executor processes this child started for the run, in start order. */
   executorPids(runId: string): number[] {
     return this.runLogs(runId, 'code executor started').map((record) => Number(record.fields.pid));
-  }
-
-  /** Resolves once the child's workers run; fails when it exits first. */
-  async ready(): Promise<void> {
-    await this.until(async () => this.readyValue, { what: 'its workers to start', timeoutMs: BOOT_MS });
-  }
-
-  /**
-   * Polls `condition` while the child lives; fails with the child's output when it exits first or
-   * `timeoutMs` passes.
-   */
-  async until(condition: () => Promise<boolean>, options: { what: string; timeoutMs: number }): Promise<void> {
-    const startedAt = Date.now();
-    for (;;) {
-      if (await condition()) return;
-      if (!this.running) throw this.failure(`exited while waiting for ${options.what}`);
-      if (Date.now() - startedAt > options.timeoutMs) {
-        throw this.failure(`did not reach ${options.what} within ${options.timeoutMs} ms`);
-      }
-      await delay(POLL_MS);
-    }
-  }
-
-  /** Stops the child over IPC (workers, agents, pool) and waits for exit 0. */
-  async stop(): Promise<void> {
-    if (!this.running) return;
-    const message: HarnessMessage = { kind: 'stop' };
-    this.process.send(message);
-    const code = await within(this.exited, STOP_MS, () => this.failure(`did not stop within ${STOP_MS} ms`));
-    if (code !== 0) throw this.failure(`stopped with exit code ${String(code)}`);
-  }
-
-  /** Kills the process outright, as a server that dies without shutdown, and waits for its end. */
-  async kill(): Promise<void> {
-    if (this.running) this.process.kill('SIGKILL');
-    await this.exited;
-  }
-
-  failure(what: string): Error {
-    return new Error(`Code-run child ${what}; its last output:\n${this.tail.join('\n')}`);
-  }
-}
-
-/** `promise`, or the error of `onTimeout` after `ms`. */
-async function within<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
-  const controller = new AbortController();
-  const timeout = delay(ms, undefined, { signal: controller.signal }).then(() => {
-    throw onTimeout();
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    controller.abort();
-    timeout.catch(() => undefined);
   }
 }
 

@@ -25,6 +25,7 @@ import {
 import type { EnqueuedMessage, StepMessage } from '../steps/step-contract';
 import type { RuntimeConfig } from '../runtime-config';
 import { RUNTIME_CONFIG, RUNTIME_LOGGER } from '../runtime.tokens';
+import { writeHeld } from '../tasks/task-end';
 import { Tasks } from '../tasks/tasks';
 
 /** Size of a JSON value as UTF-8 text: the measure of `INBOX_PAYLOAD_MAX_BYTES`. */
@@ -208,24 +209,25 @@ export class Inbox {
   }
 
   /**
-   * Reads the recipient, takes its `next_message_seq`, writes the `pending` message and
-   * `inbox.enqueued`, then wakes the recipient by the wake-up rule with `task.queued`. Throws
-   * `TASK_NOT_FOUND` for a missing or another owner's recipient.
+   * Takes the recipient's next message number, writes the `pending` message and `inbox.enqueued`,
+   * then wakes the recipient by the wake-up rule with `task.queued`. Throws `TASK_NOT_FOUND` for a
+   * missing, another owner's or a deleted recipient.
+   *
+   * Taking the number is the first write and it is a write of the recipient's row, so the message
+   * and a step commit, a command or another message of the same task go one after the other: the
+   * row it returns is the one the wake-up rule reads and writes. A step commit that came first has
+   * left the task `waiting` and the message wakes it; one that comes second sees the message.
    */
   async insertMessage(message: NewMessage): Promise<InsertedMessage> {
-    const { repository, taskRows, events, crashPoints } = this.deps;
+    const { repository, tasks, taskRows, events, crashPoints } = this.deps;
+    const notFound = () =>
+      new RuntimeError('TASK_NOT_FOUND', `Task ${message.recipientId} not found`);
     const found = await taskRows.findOwned(message.recipientId, message.ownerId);
-    if (!found) {
-      throw new RuntimeError(
-        'TASK_NOT_FOUND',
-        `Task ${message.recipientId} not found`,
-      );
-    }
-    const seq = found.nextMessageSeq;
-    const recipient = await this.write(found, {
-      kind: 'set',
-      fields: { nextMessageSeq: seq + 1 },
-    });
+    if (!found) throw notFound();
+    const recipient = await tasks.takeMessageSeq(found.taskId);
+    // Deleted while this message waited for the deletion: it must not revive the root.
+    if (!recipient || recipient.deletedAt !== null) throw notFound();
+    const seq = recipient.nextMessageSeq - 1;
     const messageId = randomUUID();
     const revive = message.revive ?? false;
     await repository.insert({
@@ -247,7 +249,7 @@ export class Inbox {
 
     const wake = wakeChange(recipient, { kind: message.kind, revive });
     if (wake === undefined) return { messageId, seq, recipient };
-    const woken = await this.write(recipient, wake);
+    const woken = await writeHeld(tasks, recipient, wake);
     await events.append({
       type: EVENT['task.queued'],
       task: woken,
@@ -284,24 +286,5 @@ export class Inbox {
   /** Whether a message with `revive` waits in the task's inbox. */
   hasPendingRevive(taskId: string): Promise<boolean> {
     return this.deps.repository.hasPendingRevive(taskId);
-  }
-
-  /** A guarded write of the recipient as it was read; throws when it changed meanwhile. */
-  private async write(
-    recipient: TaskRow,
-    change: TaskChange,
-  ): Promise<TaskRow> {
-    const row = await this.deps.tasks.transition(
-      {
-        taskId: recipient.taskId,
-        from: [TaskStatusSchema.parse(recipient.status)],
-        attempt: recipient.attempt,
-      },
-      change,
-    );
-    if (!row) {
-      throw new Error(`Guarded write of task ${recipient.taskId} matched no row`);
-    }
-    return row;
   }
 }

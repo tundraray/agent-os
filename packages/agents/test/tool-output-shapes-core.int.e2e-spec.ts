@@ -57,7 +57,7 @@ import {
 } from './support/agentsHarness';
 import { runCode, toolCallIdOf } from './support/logs-reader';
 import { BACKOFFICE_SERVER, LOGS_SERVER, TRACKER_SERVER } from './support/mcp-servers';
-import { newUser } from './support/new-user';
+import { newUser } from '@agent-os/db/testing';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 120_000;

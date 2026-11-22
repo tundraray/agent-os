@@ -1,6 +1,7 @@
 import { createLogger, type LogRecord } from '@agent-os/common';
 import { memorySink } from '@agent-os/common/testing';
-import { DATABASE, type Database, Db, DbModule } from '@agent-os/db';
+import { DATABASE, type Database, Db } from '@agent-os/db';
+import { databaseUrl } from '@agent-os/db/testing';
 import {
   CLOCK,
   type Clock,
@@ -12,7 +13,6 @@ import {
   type ModelPrice,
   parseRuntimeConfig,
   type RuntimeConfig,
-  RuntimeModule,
   RuntimeWorkers,
   systemClock,
   type TaskHandler,
@@ -20,9 +20,8 @@ import {
   TokenLedger,
   Trackers,
 } from '@agent-os/runtime';
+import { runtimeModules } from '@agent-os/runtime/testing';
 import { Test } from '@nestjs/testing';
-import { databaseUrl } from './database-url';
-import { loggerModule } from './loggerModule';
 import { boundToDb, ensureHandlerRowsTable } from './testHandlers';
 
 /**
@@ -123,13 +122,7 @@ export async function createRuntimeHarness(
   const sink = memorySink();
   const logger = createLogger({ sinks: [sink], secrets: [], minLevel: 'debug' });
   const app = await Test.createTestingModule({
-    imports: [
-      loggerModule(logger),
-      DbModule.forRootAsync({
-        useFactory: () => ({ connectionString: databaseUrl(), poolMax: config.dbPoolMax }),
-      }),
-      RuntimeModule.forRootAsync({ useFactory: () => config }),
-    ],
+    imports: runtimeModules(logger, databaseUrl(), config),
   })
     .overrideProvider(CLOCK)
     .useValue(options.clock ?? systemClock)

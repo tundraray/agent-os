@@ -10,36 +10,7 @@ import {
   RECORD_LIBRARY,
   type RecordLibrary,
 } from '@agent-os/agents';
-import { LOGGER, type Logger } from '@agent-os/common';
-import { DbModule } from '@agent-os/db';
-import { type RuntimeConfig, RuntimeModule } from '@agent-os/runtime';
 import { type DynamicModule, Module, type Provider } from '@nestjs/common';
-
-@Module({})
-class LoggerModule {}
-
-/**
- * The modules a test process builds its runtime from, as `apps/api` does: `LOGGER` for every module,
- * `DbModule` over its own pool and `RuntimeModule`.
- */
-export function runtimeModules(
-  logger: Logger,
-  connectionString: string,
-  config: RuntimeConfig,
-): DynamicModule[] {
-  return [
-    {
-      module: LoggerModule,
-      global: true,
-      providers: [{ provide: LOGGER, useValue: logger }],
-      exports: [LOGGER],
-    },
-    DbModule.forRootAsync({
-      useFactory: () => ({ connectionString, poolMax: config.dbPoolMax }),
-    }),
-    RuntimeModule.forRootAsync({ useFactory: () => config }),
-  ];
-}
 
 /** The doubles of the ports `apps/api` implements for the agents. */
 export interface AgentsPorts {
@@ -54,7 +25,7 @@ export interface AgentsPorts {
 class PortsModule {}
 
 /**
- * `AgentsModule` of a test process, over the modules of {@link runtimeModules}: the given settings and the
+ * `AgentsModule` of a test process, over the modules of `runtimeModules` (`@agent-os/runtime/testing`): the given settings and the
  * given doubles behind the port tokens. The seams with a default of the package (`AGENT_TURN_CLIENT`,
  * `EMBEDDING_CLIENT`, `CODE_RUNNER`) are replaced by the caller with `overrideProvider`.
  */

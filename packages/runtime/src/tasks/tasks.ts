@@ -80,4 +80,27 @@ export class Tasks {
     assertAllowed(guard, change);
     return this.rows.updateGuarded(guard, changeColumns(change));
   }
+
+  /**
+   * The first statement of a transaction that goes on to write the task: one UPDATE that changes
+   * only `updated_at`, guarded as {@link transition}. Returns the row as it is now, or `undefined`
+   * when the guard matches nothing. Postgres makes every other writer of the row wait for this
+   * transaction, so the returned row stays current until it ends and the guarded writes after it
+   * match; a writer that waited sees the row this transaction left.
+   */
+  hold(guard: TaskGuard): Promise<TaskRow | undefined> {
+    return this.rows.updateGuarded(guard, {});
+  }
+
+  /**
+   * Takes the task's next message number in one UPDATE (`next_message_seq + 1`), whatever its
+   * status: two senders never get the same number. Returns the row as {@link hold} does — the
+   * number taken is its `nextMessageSeq - 1` — or `undefined` for a missing task.
+   */
+  takeMessageSeq(taskId: string): Promise<TaskRow | undefined> {
+    return this.rows.updateGuarded(
+      { taskId, from: TaskStatusSchema.options },
+      { nextMessageSeq: sql`${runtimeTasks.nextMessageSeq} + 1` },
+    );
+  }
 }

@@ -134,10 +134,9 @@ import {
   TEST_MODEL_DEFAULT,
   testRecord,
   toolCallRowsOf,
-  waitFor,
   waitForTaskStatus,
 } from './support/agentsHarness';
-import { databaseUrl } from './support/database-url';
+import { databaseUrl, newUser, waitFor } from '@agent-os/db/testing';
 import {
   createPgvectorStore,
   findEmbeddingRow,
@@ -160,7 +159,6 @@ import {
   withLibraryRow,
 } from './support/knowledge';
 import { LOGS_SERVER } from './support/mcp-servers';
-import { newUser } from './support/new-user';
 
 /** Bound of one in-process test; the rows settle far sooner. */
 const TEST_TIMEOUT_MS = 180_000;

@@ -46,9 +46,9 @@
 
 Паузы до решения администратора нет (PRD, Won't Have), как нет и остановки дерева беседы сверху: агенты на других моделях остановились бы без причины.
 
-#### KD-6: Отказы по правам пишутся в аудит в момент решения об отказе через хук `audit(entry)` из `createAgents`
+#### KD-6: Отказы по правам пишутся в аудит в момент решения об отказе через хук `AccessAudit`
 
-`AuditLog` живёт в `apps/api`, а отказы решаются в пакете `agents`: отказ в инструменте закрывает вызов, отказ модели и исчерпанная квота завершают агента или закрывают запуск, отказ заголовка бросает ошибку. Агенты зовут хук, как только отказ решён, — до коммита шага, который этот отказ записывает, — и `apps/api` пишет `AuditLog.record(null, entry)` с видом `access_denied` (AC-18.1, AC-20.4, FR-22). Общей транзакции с записью отказа нет: шаг, который потом не закоммитился, при повторе может записать ту же запись ещё раз. Изменения каталога и прав администратора `apps/api` пишет в аудит в транзакции самого изменения: изменение без записи откатывается. Хук нужен, потому что пакет не импортирует `apps/api`: `createAgents` получает его параметром, как порт `AccessGate`. Тот же хук несёт отказы MCP-вызовов по аргументам и по повтору — вид `tool_call_refused` из [agent-harness design-core](../agent-harness/design-core.md), KD-6.
+`AuditLog` живёт в `apps/api`, а отказы решаются в пакете `agents`: отказ в инструменте закрывает вызов, отказ модели и исчерпанная квота завершают агента или закрывают запуск, отказ заголовка бросает ошибку. Агенты зовут хук, как только отказ решён, — до коммита шага, который этот отказ записывает, — и `apps/api` пишет `AuditLog.record(null, entry)` с видом `access_denied` (AC-18.1, AC-20.4, FR-22). Общей транзакции с записью отказа нет: шаг, который потом не закоммитился, при повторе может записать ту же запись ещё раз. Изменения каталога и прав администратора `apps/api` пишет в аудит в транзакции самого изменения: изменение без записи откатывается. Хук нужен, потому что пакет не импортирует `apps/api`: `AgentsModule` получает его по токену `ACCESS_AUDIT`, как порт `AccessGate` по `ACCESS_GATE`, а отдаёт оба `AgentsPortsModule` в `apps/api`. Тот же хук несёт отказы MCP-вызовов по аргументам и по повтору — вид `tool_call_refused` из [agent-harness design-core](../agent-harness/design-core.md), KD-6.
 
 ## Terms
 
@@ -77,7 +77,7 @@
 
 - Новых переменных окружения часть не добавляет: каталог, права и квоты лежат в базе.
 - Один процесс API: часть не добавляет своей координации между экземплярами.
-- Слои: пакеты получают порт `AccessGate` и хук `audit` параметрами `createAgents` и не импортируют `apps/api` (code-system README, Layer Map).
+- Слои: пакет `agents` получает порт `AccessGate` и хук `AccessAudit` по токенам `ACCESS_GATE` и `ACCESS_AUDIT` и не импортирует `apps/api` (code-system README, Layer Map).
 - Квота не резервирует денег: вызовы, которые уже идут, заканчиваются и учитываются, поэтому расход может превысить квоту на их стоимость (PRD FR-22, Won't Have).
 - Логи идут через логгер `packages/common` с id сотрудника, агента, задачи, вызова, модели и права; в лог пишутся вердикт, расход, квота и длительность проверки. Права на инструменты дают одну запись на чтение прав (`ownerActive`, `grantsRead`) и по одной на каждую отклонённую пару «сервер — инструмент». Отказ порта заголовку беседы — запись уровня info с причиной.
 - Тестов мало и на критичное: правила прав одной таблицей, отказ без вызова сервера, деньги и квота, основной путь.
@@ -92,7 +92,7 @@ Follows the [code system](../../code-system/README.md).
 | `AccessAdminModule` в `apps/api/src/access`: маршруты администратора | — | new | Отдельный модуль: цель права сверяется с реестром MCP из `AgentsModule`, а `AgentsModule` импортирует `AccessModule` ради порта; так нет цикла импорта |
 | `effectiveAccess`, `modelVerdict`, `grant-rules` | [pure-decision.md](../../code-system/patterns/pure-decision.md) | new | Правила прав, вердикта и проверки права (KD-2) |
 | `AdminModelsController`, `AdminAccessController`, `MyAccessController` | [auth-boundary.md](../../code-system/patterns/auth-boundary.md) | new | Администратор — `@AdminOnly()`, сотрудник — под сеансом |
-| `AccessGate` и хук `audit` в `createAgents` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | Порт и хук параметрами (KD-1, KD-6) |
+| `AccessGate` и хук `AccessAudit` по токенам `ACCESS_GATE`, `ACCESS_AUDIT` | [composition-root.md](../../code-system/patterns/composition-root.md) | new | Порт и хук отдаёт `AgentsPortsModule` в `apps/api` (KD-1, KD-6) |
 | `ModelClient`, шаг модели, шаг сжатия | [step-handler.md](../../code-system/patterns/step-handler.md) | extended | Вердикт до вызова, цена в журнал, итог `fail` с причиной вердикта (KD-3, KD-4, KD-5) |
 | `ToolRegistry`, `ToolRunner`, `resolveStart` | [step-handler.md](../../code-system/patterns/step-handler.md), [run-snapshot.md](../../code-system/patterns/run-snapshot.md) | extended | Право на пару «сервер — инструмент»; проверка модели при запуске (KD-4) |
 | `TokenLedger` | [repository-over-transaction.md](../../code-system/patterns/repository-over-transaction.md) | extended | Цена в записи, `monthSpendByModel`, общий `monthOf` (KD-3) |
@@ -537,7 +537,7 @@ sequenceDiagram
 
 #### Пакеты — для `apps/api` и между пакетами
 
-- **`createAgents`** получает `access` (`AccessGate`) и `audit` (`AccessAudit`).
+- **`AgentsModule.forRootAsync`** получает `AccessGate` по токену `ACCESS_GATE` и `AccessAudit` по токену `ACCESS_AUDIT` из модулей в своём `imports`; в `apps/api` их отдаёт `AgentsPortsModule`.
 - **`AccessGate.tools(ownerId)`** — права сотрудника на инструменты: `owner_disabled` для заблокированного или неизвестного сотрудника, иначе ответ, который без базы говорит, разрешена ли пара «сервер — инструмент». Его спрашивают при сборке набора, при проверке вызова до подтверждения, ещё раз прямо перед каждым исполнением (`admit` в `ToolRunner`), в `Agents.mcp.connections` и в `Agents.mcp.usable` и `usableTools`; каждый отказ пары даёт одну запись аудита. На `owner_disabled` шаг завершает агента сбоем с этой причиной, а списки серверов пусты. Вызов, оставшийся в `sending` без результата, шаг инструментов закрывает до вопроса к порту, поэтому его закрывает и выход заблокированного сотрудника. У вызова встроенного инструмента ответ даёт только проверку «сотрудник включён»: пару «сервер — инструмент» проверяют только у MCP-инструментов.
 - **`AccessGate.model(ownerId, model)`** — вердикт: `allowed` с ценой; `refused` с причиной `owner_disabled`, `quota_exhausted` (и `spentUsd`, `quotaUsd`, `month`), `model_not_connected`, `model_not_allowed` или `no_models_allowed`. Модели эмбеддингов этот вопрос отвечает `model_not_connected`.
 - **`AccessGate.defaultChatModel()`**, **`AccessGate.embedding(ownerId)`** — модели по умолчанию и проверка эмбеддингов по [model-providers design-core](../model-providers/design-core.md), KD-5 и KD-6.

@@ -7,10 +7,10 @@
 
 import { consoleSink, createLogger } from '@agent-os/common';
 import { afterAll, describe, expect, it } from 'vitest';
-import { newUser } from '../support/new-user';
+import { newUser, waitFor } from '@agent-os/db/testing';
 import { Children, DEFAULT_SETTINGS, type RuntimeChild } from '../support/runtimeChild';
 import { handlersFor } from '../support/runtimeChildHandlers';
-import { closeRuntimeDb, eventsOf, statusesOf, waitFor } from '../support/runtimeDb';
+import { closeRuntimeDb, eventsOf, statusesOf } from '../support/runtimeDb';
 import { createRuntimeHarness, type RuntimeHarness } from '../support/runtimeHarness';
 import { uniqueType } from '../support/testHandlers';
 

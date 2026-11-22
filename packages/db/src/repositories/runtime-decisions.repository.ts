@@ -127,12 +127,14 @@ export class RuntimeDecisionsRepository {
     return row;
   }
 
-  /** Writes the resolution of a request the caller found `open`. */
-  async resolve(decisionId: string, resolution: unknown): Promise<void> {
-    await this.db.client
+  /** Writes the resolution of an `open` request; `false` when the request is not open. */
+  async resolve(decisionId: string, resolution: unknown): Promise<boolean> {
+    const rows = await this.db.client
       .update(runtimeDecisions)
       .set({ status: resolved, resolution: resolution ?? null, resolvedAt: sql`now()` })
-      .where(eq(runtimeDecisions.decisionId, decisionId));
+      .where(and(eq(runtimeDecisions.decisionId, decisionId), eq(runtimeDecisions.status, open)))
+      .returning({ decisionId: runtimeDecisions.decisionId });
+    return rows.length > 0;
   }
 
   /** Cancels the open requests of the given tasks. */

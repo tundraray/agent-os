@@ -16,7 +16,7 @@
 
 import { TASKS_FINISHED_KIND } from '@agent-os/contracts';
 import { afterAll, describe, expect, it } from 'vitest';
-import { newUser } from './support/new-user';
+import { newUser } from '@agent-os/db/testing';
 import { Children, type RuntimeChild } from './support/runtimeChild';
 import {
   type ChildTypes,

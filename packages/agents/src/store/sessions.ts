@@ -2,6 +2,7 @@ import { ChipRecordSchema, RecordKindSchema, type RunOrigin } from '@agent-os/co
 import {
   type AgentSessionRow,
   AgentSessionsRepository,
+  type RootSessionRow,
 } from '@agent-os/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
@@ -63,6 +64,25 @@ export interface Session {
   readonly closed: boolean;
   readonly lastInputTokens: number | null;
   readonly createdAt: Date;
+}
+
+/** A root session as its owner lists it: the conversation it is to the employee. */
+export interface RootSession {
+  readonly rootId: string;
+  readonly ownerId: string;
+  /** Empty until a title is written. */
+  readonly title: string;
+  readonly createdAt: Date;
+  /** The last change, in milliseconds: the key of the owner's list. */
+  readonly updatedAt: Date;
+}
+
+/** Reads a root's row as a root session; a row without a title or a list time is not a root's. */
+export function toRootSession(row: RootSessionRow): RootSession {
+  if (row.title === null || row.updatedAt === null) {
+    throw new Error(`Session ${row.rootId} is not a root session`);
+  }
+  return { ...row, title: row.title, updatedAt: row.updatedAt };
 }
 
 /** The task a session is written for: its place in the tree is copied into the row. */

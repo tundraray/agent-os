@@ -29,6 +29,7 @@ import {
   type UpdateRecordBody,
 } from '@agent-os/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitFor } from '@agent-os/db/testing';
 import {
   allowRole,
   grantTo,
@@ -38,7 +39,7 @@ import {
   type RunRole,
   useRunModels,
 } from './support/access';
-import { chatApi, expectBody, expectError, waitFor } from './support/api';
+import { chatApi, expectBody, expectError } from './support/api';
 import { createTestApp, type TestApp } from './support/createTestApp';
 import {
   auditOfRecord,
