@@ -70,5 +70,5 @@ anya@corp.example
 ## Used In
 
 - [docs/features/enterprise-access/uxrd.md](../../features/enterprise-access/uxrd.md) — разделы панели администратора, «Мой доступ».
-- [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — список записей на экране «Что узнал workflow» (KN-01).
+- [docs/features/self-learning/uxrd.md](../../features/self-learning/uxrd.md) — список записей на экране «Что узнал глубокий агент» (KN-01).
 - [docs/features/model-providers/uxrd.md](../../features/model-providers/uxrd.md) — провайдеры моделей с итогом проверки подключения (MP-02, MP-07), каталог моделей (MP-03).

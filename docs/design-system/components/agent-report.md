@@ -71,4 +71,4 @@
 ## Used In
 
 - [docs/features/agent-platform/uxrd.md](../../features/agent-platform/uxrd.md) — лента беседы и страница агента; заменяет ответ ресерча.
-- [docs/features/deep-agents/uxrd.md](../../features/deep-agents/uxrd.md) — ответ глубокого агента (DA-06); результат задачи в списке задач (DA-05).
+- [docs/features/deep-agents/uxrd.md](../../features/deep-agents/uxrd.md) — ответ глубокого агента (DA-06).
