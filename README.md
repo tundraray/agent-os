@@ -235,7 +235,7 @@ POSTGRES_PORT=5433 pnpm db:up
 | `pnpm --filter api test:e2e` | весь e2e-набор `apps/api` (беседы, агенты, решения, живой поток) |
 | `pnpm --filter @agent-os/runtime test:verify` | замеры по требованию: старт зависимой задачи (NFR-01) и время восстановления (NFR-04); в обычный набор не входят |
 
-Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — [`design-runtime.md`](docs/features/agent-platform/design-runtime.md#runtime-settings)). Неверное значение останавливает старт с именем переменной.
+Настройки runtime — переменные окружения `apps/api` (`apps/api/.env.example`, смысл и правила — [`design-runtime.md`](docs/features/agent-platform/design-runtime.md#runtime-settings)). Неверное значение останавливает старт с именем переменной. Настройки агентов (`AGENT_*`, `MCP_*`) — там же, в `.env.example`.
 
 | Переменная | По умолчанию |
 |---|---|
